@@ -1,13 +1,21 @@
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 
-const LOCAL_BACKEND = import.meta.env.VITE_LOCAL_BACKEND_URL || 'http://localhost:5000';
-const DEPLOYED_BACKEND = import.meta.env.VITE_BACKEND_URL || '';
+// Strip any trailing slashes so we never build a double-slash URL like
+// "https://host//api" (which the backend treats as a different, unmatched path).
+const stripSlash = (url) => (url || '').replace(/\/+$/, '');
 
-// Probe the local backend once on startup; use it if it's running, otherwise
-// fall back to the deployed (Railway) backend. The result is cached for the
-// lifetime of the page so we only probe once.
+const LOCAL_BACKEND = stripSlash(import.meta.env.VITE_LOCAL_BACKEND_URL) || 'http://localhost:5000';
+const DEPLOYED_BACKEND = stripSlash(import.meta.env.VITE_BACKEND_URL);
+
+// In dev, probe the local backend once on startup and use it if it's running,
+// otherwise fall back to the deployed (Railway) backend. In a production build
+// (e.g. the Vercel deployment) there's no point probing the visitor's localhost,
+// so go straight to the deployed backend.
 async function resolveBaseURL() {
+  if (import.meta.env.PROD) {
+    return DEPLOYED_BACKEND ? `${DEPLOYED_BACKEND}/api` : `${LOCAL_BACKEND}/api`;
+  }
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1500);
