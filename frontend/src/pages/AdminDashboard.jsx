@@ -1,0 +1,275 @@
+import { useEffect, useState } from 'react';
+import api from '../api/client';
+import { useAuthStore } from '../store/authStore';
+import PageHeader from '../components/PageHeader';
+
+const ROLES = ['SuperAdmin', 'HRManager', 'Employee'];
+
+const blankForm = {
+  email: '',
+  password: '',
+  firstName: '',
+  lastName: '',
+  phone: '',
+  role: 'Employee',
+  isActive: true,
+};
+
+// Whether the current viewer is allowed to manage a given user row
+function canManage(viewerRole, targetRole) {
+  if (viewerRole === 'SuperAdmin') return true;
+  return targetRole === 'Employee';
+}
+
+export default function AdminDashboard() {
+  const me = useAuthStore((s) => s.user);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(blankForm);
+  const [saving, setSaving] = useState(false);
+
+  const isSuperAdmin = me?.role === 'SuperAdmin';
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get('/admin/users');
+      setUsers(data.users);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load users');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(blankForm);
+    setShowModal(true);
+  };
+
+  const openEdit = (u) => {
+    setEditingId(u._id || u.id);
+    setForm({
+      email: u.email,
+      password: '',
+      firstName: u.firstName,
+      lastName: u.lastName,
+      phone: u.phone || '',
+      role: u.role,
+      isActive: u.isActive,
+    });
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setEditingId(null);
+    setForm(blankForm);
+  };
+
+  const onSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      if (editingId) {
+        const payload = { ...form };
+        if (!payload.password) delete payload.password;
+        delete payload.email;
+        await api.put(`/admin/users/${editingId}`, payload);
+      } else {
+        await api.post('/admin/users', form);
+      }
+      closeModal();
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onToggleActive = async (u) => {
+    const id = u._id || u.id;
+    try {
+      await api.patch(`/admin/users/${id}/${u.isActive ? 'deactivate' : 'activate'}`);
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Action failed');
+    }
+  };
+
+  const onDelete = async (u) => {
+    const id = u._id || u.id;
+    if (!window.confirm(`Permanently delete ${u.email}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/admin/users/${id}`);
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Delete failed');
+    }
+  };
+
+  return (
+    <div>
+      <PageHeader title="User Accounts" subtitle={`${users.length} user(s)`}>
+        <button
+          onClick={openCreate}
+          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm"
+        >
+          + Add User
+        </button>
+      </PageHeader>
+
+      {error && (
+        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+          {error}
+        </div>
+      )}
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200 text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Name</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Email</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Role</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
+              <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {loading ? (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+            ) : users.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
+            ) : users.map((u) => (
+              <tr key={u._id || u.id}>
+                <td className="px-4 py-3">{u.firstName} {u.lastName}</td>
+                <td className="px-4 py-3">{u.email}</td>
+                <td className="px-4 py-3">
+                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{u.role}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${
+                    u.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'
+                  }`}>
+                    {u.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right space-x-2">
+                  {canManage(me?.role, u.role) ? (
+                    <>
+                      <button onClick={() => openEdit(u)} className="text-blue-600 hover:underline">Edit</button>
+                      <button onClick={() => onToggleActive(u)} className="text-amber-600 hover:underline">
+                        {u.isActive ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-gray-400 italic">SuperAdmin only</span>
+                  )}
+                  {isSuperAdmin && (
+                    <button onClick={() => onDelete(u)} className="text-red-600 hover:underline">Delete</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
+            <h2 className="card-title mb-4">
+              {editingId ? 'Edit User' : 'Add User'}
+            </h2>
+            <form onSubmit={onSave} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">First name</label>
+                  <input required value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Last name</label>
+                  <input required value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700">Email</label>
+                <input type="email" required disabled={!!editingId} value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100" />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700">
+                  {editingId ? 'New password (leave blank to keep)' : 'Password'}
+                </label>
+                <input type="password" required={!editingId} minLength={editingId ? 0 : 8}
+                  value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Role</label>
+                  <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2">
+                    {ROLES.map((r) => {
+                      const blocked = r !== 'Employee' && !isSuperAdmin;
+                      return (
+                        <option key={r} value={r} disabled={blocked}>
+                          {r}{blocked ? ' (SuperAdmin only)' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {!isSuperAdmin && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      HR Managers can only create Employee accounts.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Phone</label>
+                  <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                    placeholder="+91XXXXXXXXXX" className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+              </div>
+
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={form.isActive}
+                  onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
+                Active
+              </label>
+
+              {error && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={closeModal}
+                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={saving}
+                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

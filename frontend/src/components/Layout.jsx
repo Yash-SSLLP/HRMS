@@ -1,0 +1,403 @@
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, Link, Outlet, useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../store/authStore';
+import { useThemeStore } from '../store/themeStore';
+import api from '../api/client';
+import ChatDock from './ChatDock';
+import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
+
+const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', Employee: 'Employee' };
+
+const NOTIF_POLL_MS = 20000;
+
+function initials(user) {
+  const a = (user?.firstName || '').trim()[0] || '';
+  const b = (user?.lastName || '').trim()[0] || '';
+  return (a + b).toUpperCase() || 'U';
+}
+
+function NotificationBell({ isAdmin }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [unread, setUnread] = useState(0);
+  const navigate = useNavigate();
+  const wrapRef = useRef(null);
+
+  const load = async () => {
+    try {
+      const { data } = await api.get('/notifications');
+      setItems(data.notifications);
+      setUnread(data.unreadCount);
+    } catch {
+      // Silent — the bell shouldn't break the page on a transient error.
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, NOTIF_POLL_MS);
+    return () => clearInterval(t);
+  }, []);
+
+  // Close dropdown on outside click.
+  useEffect(() => {
+    const onClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  const resolveLink = (n) => {
+    if (n.link === 'calendar') return isAdmin ? '/admin/calendar' : '/employee/calendar';
+    return n.link || null;
+  };
+
+  const openNotif = async (n) => {
+    setOpen(false);
+    try {
+      if (!n.readAt) {
+        await api.patch(`/notifications/${n._id}/read`);
+        setUnread((u) => Math.max(0, u - 1));
+        setItems((prev) => prev.map((x) => (x._id === n._id ? { ...x, readAt: new Date().toISOString() } : x)));
+      }
+    } catch {
+      // ignore
+    }
+    const target = resolveLink(n);
+    if (target) navigate(target);
+  };
+
+  const markAll = async () => {
+    try {
+      await api.patch('/notifications/read-all');
+      setUnread(0);
+      setItems((prev) => prev.map((x) => ({ ...x, readAt: x.readAt || new Date().toISOString() })));
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="topbar-icon-btn"
+        aria-label="Notifications"
+      >
+        <span className="text-lg">🔔</span>
+        {unread > 0 && (
+          <span className="absolute top-0.5 right-0.5 bg-red-600 text-white text-[10px] rounded-full px-1.5 py-0.5 leading-none">
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+            <span className="text-sm font-semibold text-gray-800">Notifications</span>
+            {unread > 0 && (
+              <button onClick={markAll} className="text-xs text-blue-600 hover:underline">Mark all read</button>
+            )}
+          </div>
+          <div className="max-h-96 overflow-y-auto">
+            {items.length === 0 ? (
+              <div className="px-3 py-8 text-center text-sm text-gray-500">No notifications</div>
+            ) : items.map((n) => (
+              <button
+                key={n._id}
+                onClick={() => openNotif(n)}
+                className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${
+                  n.readAt ? '' : 'bg-blue-50/60'
+                }`}
+              >
+                <div className="text-sm text-gray-900">{n.title}</div>
+                {n.body && <div className="text-xs text-gray-600 mt-0.5">{n.body}</div>}
+                <div className="text-[10px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString()}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Admin global employee search — debounced lookup against /employees?q= with a
+// results dropdown that navigates to the employee's detail page.
+function GlobalSearch() {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const wrapRef = useRef(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) {
+      setResults([]);
+      setLoading(false);
+      return undefined;
+    }
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/employees', { params: { q: term } });
+        setResults((data.profiles || []).slice(0, 8));
+      } catch {
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  useEffect(() => {
+    const onClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  const go = (p) => {
+    setOpen(false);
+    setQ('');
+    setResults([]);
+    navigate(`/admin/employees/${p._id}`);
+  };
+
+  const init = (p) =>
+    ((p.user?.firstName?.[0] || '') + (p.user?.lastName?.[0] || '')).toUpperCase() || 'E';
+
+  return (
+    <div className="hidden md:flex items-center flex-1 max-w-md relative" ref={wrapRef}>
+      <div className="relative w-full">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search employees by name, code, email…"
+          className="w-full pl-9 pr-3 py-2 text-sm bg-gray-100 border border-transparent rounded-lg focus:bg-white focus:border-gray-300 focus:outline-none"
+        />
+      </div>
+      {open && q.trim() && (
+        <div className="absolute top-full left-0 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+          {loading ? (
+            <div className="px-4 py-3 text-sm text-gray-500">Searching…</div>
+          ) : results.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-gray-500">No employees found</div>
+          ) : (
+            results.map((p) => (
+              <button
+                key={p._id}
+                onClick={() => go(p)}
+                className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-gray-50 border-b border-gray-50 last:border-0"
+              >
+                <span className="avatar-circle accent-bg text-white">{init(p)}</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-gray-900 truncate">
+                    {`${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode}
+                  </span>
+                  <span className="block text-xs text-gray-500 truncate">
+                    {p.employeeCode} · {p.designation || '—'} · {p.department || '—'}
+                  </span>
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProfileMenu({ user, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const onClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-gray-100">
+        <span className="avatar-circle accent-bg text-white">{initials(user)}</span>
+        <span className="hidden sm:flex flex-col items-start leading-tight">
+          <span className="text-sm font-medium text-gray-800">{user?.firstName} {user?.lastName}</span>
+          <span className="text-[11px] text-gray-500">{ROLE_LABELS[user?.role] || user?.role}</span>
+        </span>
+        <span className="text-gray-400 text-xs hidden sm:inline">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+            <span className="avatar-circle accent-bg text-white">{initials(user)}</span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-gray-900 truncate">{user?.firstName} {user?.lastName}</div>
+              <div className="text-xs text-gray-500 truncate">{user?.email}</div>
+            </div>
+          </div>
+          <Link to="/employee/profile" onClick={() => setOpen(false)}
+            className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">My Profile</Link>
+          <button onClick={() => { setOpen(false); onLogout(); }}
+            className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Log out</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Layout({ navItems = [], sectionTitle }) {
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
+  const mode = useThemeStore((s) => s.mode);
+  const toggleMode = useThemeStore((s) => s.toggle);
+  const navigate = useNavigate();
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const handleLogout = () => {
+    setConfirmLogout(false);
+    logout();
+    navigate('/login', { replace: true });
+  };
+
+  const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager');
+
+  // Close the mobile drawer whenever the route changes.
+  const closeMobile = () => setMobileOpen(false);
+
+  const sidebar = (
+    <div className="flex flex-col h-full">
+      <div className="h-16 flex items-center gap-2 px-5 border-b border-gray-100 shrink-0">
+        <Link to={isAdmin ? '/admin' : '/employee'} onClick={closeMobile} className="flex items-center gap-2 min-w-0">
+          <img src={COMPANY_LOGO} alt={COMPANY_NAME} className="h-8 w-auto" />
+          <span className="text-base font-bold text-gray-900 truncate">{COMPANY_NAME}</span>
+        </Link>
+      </div>
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
+        {sectionTitle && (
+          <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold px-3 pb-2">
+            {sectionTitle}
+          </div>
+        )}
+        {navItems.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            onClick={closeMobile}
+            className={({ isActive }) =>
+              `nav-link ${item.danger ? 'nav-link-danger' : ''} ${isActive ? 'nav-link-active' : ''}`}
+          >
+            <span className="nav-icon" aria-hidden="true">{item.icon || '•'}</span>
+            <span className="truncate">{item.label}</span>
+          </NavLink>
+        ))}
+      </nav>
+      <div className="border-t border-gray-100 p-3 shrink-0">
+        <div className="flex items-center gap-3 px-2 py-2 rounded-lg">
+          <span className="avatar-circle accent-bg text-white">{initials(user)}</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-gray-800 truncate">{user?.firstName} {user?.lastName}</div>
+            <div className="text-[11px] text-gray-500 truncate">{ROLE_LABELS[user?.role] || user?.role}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-full bg-gray-50">
+      <div className="h-1 accent-bg fixed top-0 inset-x-0 z-50" />
+
+      {/* Desktop fixed sidebar */}
+      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-64 bg-white border-r border-gray-200 z-40">
+        {sidebar}
+      </aside>
+
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={closeMobile} />
+          <aside className="fixed top-0 left-0 bottom-0 w-64 bg-white border-r border-gray-200 z-50 lg:hidden">
+            {sidebar}
+          </aside>
+        </>
+      )}
+
+      {/* Content column */}
+      <div className="lg:pl-64 flex flex-col min-h-screen">
+        <header className="sticky top-1 z-30 h-16 bg-white border-b border-gray-200 flex items-center gap-3 px-4 sm:px-6">
+          <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn lg:hidden" aria-label="Open menu">
+            <span className="text-xl leading-none">☰</span>
+          </button>
+
+          {isAdmin && <GlobalSearch />}
+
+          <div className="flex items-center gap-1 sm:gap-2 ml-auto">
+            {isAdmin && (
+              <Link to="/admin" className="hidden sm:inline text-sm text-gray-600 hover:text-gray-900 px-2">Admin</Link>
+            )}
+            <Link to="/employee" className="hidden sm:inline text-sm text-gray-600 hover:text-gray-900 px-2">My Portal</Link>
+            <button
+              onClick={toggleMode}
+              title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="topbar-icon-btn"
+            >
+              <span className="text-lg leading-none">{mode === 'dark' ? '☀️' : '🌙'}</span>
+            </button>
+            <NotificationBell isAdmin={isAdmin} />
+            <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
+            <ProfileMenu user={user} onLogout={() => setConfirmLogout(true)} />
+          </div>
+        </header>
+
+        <main className="flex-1 min-w-0 p-4 sm:p-6">
+          <Outlet />
+        </main>
+      </div>
+
+      {confirmLogout && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]"
+          onClick={() => setConfirmLogout(false)}>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-gray-900">Log out?</h2>
+            <p className="text-sm text-gray-500 mt-1 mb-5">
+              You’ll be signed out of {COMPANY_NAME} and returned to the login screen.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmLogout(false)}
+                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50"
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                Log out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ChatDock />
+    </div>
+  );
+}

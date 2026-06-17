@@ -1,0 +1,260 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+   Theme tokens
+   - Per-role accent colours (set via data-role on <html>).
+   - Light is the default; .dark overrides surfaces/text below.
+--------------------------------------------------------------------------- */
+:root {
+  --accent: #111827;       /* fallback (e.g. login, no role) */
+  --accent-700: #374151;
+  --bg: #f3f5f9;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #eef2f7;
+  --border: #e5e7eb;
+}
+
+html[data-role="SuperAdmin"] { --accent: #7c3aed; --accent-700: #6d28d9; } /* violet */
+html[data-role="HRManager"]  { --accent: #0d9488; --accent-700: #0f766e; } /* teal   */
+html[data-role="Employee"]   { --accent: #2563eb; --accent-700: #1d4ed8; } /* blue   */
+
+html.dark {
+  --bg: #0b1220;
+  --surface: #131c2b;
+  --surface-2: #1c2738;
+  --surface-3: #273244;
+  --border: #2a3650;
+}
+/* Brighten accents a touch in dark mode for contrast */
+html.dark[data-role="SuperAdmin"] { --accent: #a78bfa; --accent-700: #8b5cf6; }
+html.dark[data-role="HRManager"]  { --accent: #2dd4bf; --accent-700: #14b8a6; }
+html.dark[data-role="Employee"]   { --accent: #60a5fa; --accent-700: #3b82f6; }
+
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  background-color: var(--bg);
+  color: #0f172a;
+}
+
+/* Smooth theme + interaction transitions */
+a, button, input, select, textarea,
+.shadow, .shadow-sm, .shadow-md, .shadow-lg,
+[class*="bg-"], [class*="border"], [class*="text-"] {
+  transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease;
+}
+
+/* Softer, more modern card shadows */
+.shadow { box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 12px rgba(15, 23, 42, .06); }
+.shadow-lg { box-shadow: 0 10px 30px rgba(15, 23, 42, .18); }
+
+/* ---------------------------------------------------------------------------
+   Per-role accent — primary buttons & active nav (bg-gray-900 / hover gray-700)
+--------------------------------------------------------------------------- */
+.bg-gray-900 { background-color: var(--accent) !important; }
+.hover\:bg-gray-700:hover { background-color: var(--accent-700) !important; }
+.text-blue-600 { color: var(--accent) !important; }
+
+/* Accent strip / chips can use this */
+.accent-bg { background-color: var(--accent) !important; }
+.accent-text { color: var(--accent) !important; }
+
+/* ---------------------------------------------------------------------------
+   SmartHR-style component polish
+   Applied broadly via the shared utility vocabulary so every page inherits the
+   crisper card / table / control look without per-page edits.
+--------------------------------------------------------------------------- */
+/* Hairline border on elevated cards — the crisp SmartHR card edge. Scoped to
+   the .shadow elevation so modals (.shadow-lg / .shadow-xl) stay borderless. */
+.rounded-lg.shadow,
+.rounded-xl.shadow { border: 1px solid var(--border); }
+
+/* Reusable card surface for new components */
+.card {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 4px 14px rgba(15, 23, 42, .05);
+}
+
+/* Section header inside a card */
+.card-title { font-size: 1rem; font-weight: 600; color: #0f172a; }
+
+/* Top-bar round icon buttons (theme toggle, bell, hamburger) */
+.topbar-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 9999px;
+  color: #475569;
+}
+.topbar-icon-btn:hover {
+  background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+/* Avatar with initials */
+.avatar-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* Coloured icon tile used by dashboard stat cards */
+.stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.85rem;
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+/* Table polish — keep headers on one line, smooth row hover */
+table thead th { white-space: nowrap; }
+table tbody tr { transition: background-color .12s ease; }
+table tbody tr:hover > td { background-color: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+/* Slightly rounder form controls for the modern look */
+input, select, textarea { border-radius: 0.5rem; }
+
+html.dark .topbar-icon-btn { color: #aebacd; }
+html.dark .card-title { color: #f1f5f9; }
+
+/* ---------------------------------------------------------------------------
+   Sidebar nav buttons (My Portal / Admin)
+--------------------------------------------------------------------------- */
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.6rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #475569;
+  position: relative;
+  transition: background-color .15s ease, color .15s ease, transform .08s ease;
+}
+.nav-link:hover {
+  background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+.nav-link:active { transform: scale(.99); }
+
+.nav-link .nav-icon {
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.nav-link-active {
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.nav-link-active .nav-icon {
+  background-color: var(--accent);
+  filter: saturate(1.1);
+}
+
+html.dark .nav-link { color: #aebacd; }
+html.dark .nav-link:hover,
+html.dark .nav-link-active { color: #fff; }
+html.dark .nav-link:hover { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
+html.dark .nav-link-active { background-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+/* Danger nav item (e.g. Resignation) — always red, regardless of role accent */
+.nav-link-danger { color: #dc2626; }
+.nav-link-danger .nav-icon { background-color: color-mix(in srgb, #dc2626 12%, transparent); }
+.nav-link-danger:hover { background-color: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
+.nav-link-danger.nav-link-active {
+  background-color: color-mix(in srgb, #dc2626 16%, transparent);
+  color: #dc2626;
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+.nav-link-danger.nav-link-active .nav-icon { background-color: #dc2626; }
+html.dark .nav-link-danger { color: #f87171; }
+html.dark .nav-link-danger:hover,
+html.dark .nav-link-danger.nav-link-active { color: #fecaca; }
+html.dark .nav-link-danger:hover { background-color: color-mix(in srgb, #ef4444 25%, transparent); }
+html.dark .nav-link-danger.nav-link-active { background-color: color-mix(in srgb, #ef4444 32%, transparent); }
+
+/* ---------------------------------------------------------------------------
+   Dark mode — remap the small utility vocabulary used across the app.
+   Scoped under html.dark so light mode is untouched.
+--------------------------------------------------------------------------- */
+html.dark body { background-color: var(--bg); color: var(--text, #e5e7eb); }
+
+html.dark .bg-white { background-color: var(--surface) !important; }
+html.dark .bg-gray-50 { background-color: var(--surface-2) !important; }
+html.dark .bg-gray-100 { background-color: var(--surface-3) !important; }
+
+html.dark .text-gray-900 { color: #f1f5f9 !important; }
+html.dark .text-gray-800 { color: #e2e8f0 !important; }
+html.dark .text-gray-700 { color: #cbd5e1 !important; }
+html.dark .text-gray-600 { color: #9aa7bd !important; }
+html.dark .text-gray-500 { color: #8b98ad !important; }
+html.dark .text-gray-400 { color: #6b7890 !important; }
+
+html.dark .border,
+html.dark .border-gray-100,
+html.dark .border-gray-200,
+html.dark .border-gray-300 { border-color: var(--border) !important; }
+
+html.dark [class*="divide-gray-"] > * { border-color: var(--border) !important; }
+
+html.dark .hover\:bg-gray-50:hover { background-color: var(--surface-2) !important; }
+html.dark .hover\:bg-gray-100:hover { background-color: var(--surface-3) !important; }
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: var(--surface-2) !important;
+  color: #e5e7eb !important;
+  border-color: var(--border) !important;
+}
+html.dark ::placeholder { color: #64748b !important; }
+
+/* Keep code chips readable */
+html.dark code { background-color: var(--surface-3) !important; color: #e5e7eb; }
+
+/* Pastel status badges: dim their light backgrounds a little for dark mode */
+html.dark [class*="bg-green-50"],
+html.dark [class*="bg-amber-50"],
+html.dark [class*="bg-blue-50"],
+html.dark [class*="bg-red-50"],
+html.dark [class*="bg-purple-50"],
+html.dark [class*="bg-emerald-50"],
+html.dark [class*="bg-rose-50"],
+html.dark [class*="bg-orange-50"] { filter: brightness(.5) saturate(1.4); }
+
+/* Nicer scrollbars in dark mode */
+html.dark * {
+  scrollbar-color: var(--surface-3) transparent;
+}

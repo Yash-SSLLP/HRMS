@@ -1,0 +1,21 @@
+const mongoose = require('mongoose');
+
+const COMPOFF_STATUS = ['Pending', 'Approved', 'Rejected', 'Availed'];
+
+const compOffSchema = new mongoose.Schema(
+  {
+    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    workedDate: { type: Date, required: true }, // the holiday/weekend worked
+    reason: { type: String, required: true, trim: true },
+    status: { type: String, enum: COMPOFF_STATUS, default: 'Pending', index: true },
+    expiryDate: Date, // set on approval = workedDate + 90 days
+    availedOn: Date,
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: Date,
+    reviewNote: String,
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('CompOff', compOffSchema);
+module.exports.COMPOFF_STATUS = COMPOFF_STATUS;

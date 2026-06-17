@@ -1,0 +1,88 @@
+const mongoose = require('mongoose');
+
+const EXIT_TYPES = ['Resignation', 'Termination', 'Retirement'];
+const EXIT_STATUSES = ['Pending', 'InClearance', 'Completed', 'Cancelled'];
+
+const clearanceSchema = new mongoose.Schema(
+  {
+    itAssetsReturned: { type: Boolean, default: false },
+    accessRevoked: { type: Boolean, default: false },
+    knowledgeTransferDone: { type: Boolean, default: false },
+    finalSettlementDone: { type: Boolean, default: false },
+    documentsHandedOver: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
+const feedbackSchema = new mongoose.Schema(
+  {
+    primaryReason: {
+      type: String,
+      enum: [
+        'CareerGrowth', 'Compensation', 'WorkLifeBalance',
+        'Management', 'RoleMismatch', 'Relocation', 'Personal', 'Other',
+      ],
+    },
+    likedMost: String,
+    couldImprove: String,
+    recommendScore: { type: Number, min: 1, max: 5 }, // 1 = strongly no, 5 = strongly yes
+    openFeedback: String,
+    submittedAt: Date,
+    submittedFromIp: String,
+  },
+  { _id: false }
+);
+
+const exitRequestSchema = new mongoose.Schema(
+  {
+    employee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'EmployeeProfile',
+      required: true,
+      // NOTE: the partial-unique index on { employee: 1 } below already covers
+      // this field, so a field-level `index: true` here would be a duplicate.
+    },
+    type: { type: String, enum: EXIT_TYPES, default: 'Resignation' },
+    status: { type: String, enum: EXIT_STATUSES, default: 'Pending' },
+
+    resignationDate: { type: Date, default: Date.now }, // when submitted
+    lastWorkingDay: { type: Date, required: true },
+    noticePeriodDays: { type: Number, min: 0 },
+    reason: { type: String, maxlength: 1000 },
+
+    // The HR/Admin user responsible for this exit. The exit email is signed
+    // by this person and uses their email as Reply-To.
+    handledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+    clearance: { type: clearanceSchema, default: () => ({}) },
+
+    // Feedback flow
+    feedbackToken: { type: String, index: true },
+    feedbackTokenExpiresAt: Date,
+    feedback: { type: feedbackSchema, default: () => ({}) },
+
+    // Email send tracking (driven by the outbox worker)
+    exitEmailQueuedAt: Date,         // when the controller enqueued the message
+    exitEmailSentAt: Date,           // when the worker successfully delivered it
+    exitEmailMessageId: String,
+    exitEmailLastError: String,
+    exitEmailLastAttemptAt: Date,
+
+    initiatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    completedAt: Date,
+    cancelledAt: Date,
+    cancellationReason: String,
+  },
+  { timestamps: true }
+);
+
+// Only one open (non-Cancelled, non-Completed) exit per employee.
+// Mongoose partial indexes:
+exitRequestSchema.index(
+  { employee: 1 },
+  { unique: true, partialFilterExpression: { status: { $in: ['Pending', 'InClearance'] } } }
+);
+
+module.exports = mongoose.model('ExitRequest', exitRequestSchema);
+module.exports.EXIT_TYPES = EXIT_TYPES;
+module.exports.EXIT_STATUSES = EXIT_STATUSES;

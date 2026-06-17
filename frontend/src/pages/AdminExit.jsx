@@ -1,0 +1,481 @@
+import { useEffect, useState } from 'react';
+import api from '../api/client';
+import { useAuthStore } from '../store/authStore';
+import PageHeader from '../components/PageHeader';
+
+const STATUS_COLORS = {
+  Pending: 'bg-amber-100 text-amber-800',
+  InClearance: 'bg-blue-100 text-blue-800',
+  Completed: 'bg-green-100 text-green-800',
+  Cancelled: 'bg-gray-200 text-gray-700',
+};
+
+const TYPES = ['Resignation', 'Termination', 'Retirement'];
+const STATUSES = ['Pending', 'InClearance', 'Completed', 'Cancelled'];
+
+const CLEARANCE_LABELS = {
+  itAssetsReturned: 'IT assets returned',
+  accessRevoked: 'Access revoked',
+  knowledgeTransferDone: 'Knowledge transfer done',
+  finalSettlementDone: 'Final settlement done',
+  documentsHandedOver: 'Documents handed over',
+};
+
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
+const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-IN') : '—');
+
+const blankNew = {
+  employee: '',
+  type: 'Resignation',
+  lastWorkingDay: '',
+  noticePeriodDays: 30,
+  reason: '',
+  handledBy: '',
+};
+
+export default function AdminExit() {
+  const me = useAuthStore((s) => s.user);
+  const [exits, setExits] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [hrUsers, setHrUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newForm, setNewForm] = useState(blankNew);
+
+  const [detail, setDetail] = useState(null); // currently-open exit
+  const [savingDetail, setSavingDetail] = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (statusFilter) params.set('status', statusFilter);
+      const [exitRes, empRes, usersRes] = await Promise.all([
+        api.get(`/exits?${params}`),
+        api.get('/employees'),
+        api.get('/admin/users'),
+      ]);
+      setExits(exitRes.data.exits);
+      setEmployees(empRes.data.profiles);
+      setHrUsers(usersRes.data.users.filter(
+        (u) => u.role === 'HRManager' || u.role === 'SuperAdmin'
+      ));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
+
+  const openCreate = () => {
+    setNewForm({ ...blankNew, handledBy: me?._id || me?.id || '' });
+    setShowCreate(true);
+  };
+
+  // When the admin picks an employee in the create form, auto-fill Handled By
+  // with that employee's permanent HR partner (if set). Falls back to the
+  // current user. Admin can still override manually.
+  const onPickEmployee = (employeeId) => {
+    const profile = employees.find((p) => p._id === employeeId);
+    const partnerId = profile?.hrPartner?._id || profile?.hrPartner;
+    setNewForm({
+      ...newForm,
+      employee: employeeId,
+      handledBy: partnerId || me?._id || me?.id || '',
+    });
+  };
+
+  const submitCreate = async (e) => {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      await api.post('/exits', newForm);
+      setShowCreate(false);
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not create exit request');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const openDetail = async (exit) => {
+    setActionMsg('');
+    const { data } = await api.get(`/exits/${exit._id}`);
+    setDetail(data.exit);
+  };
+
+  const saveDetail = async () => {
+    setSavingDetail(true);
+    try {
+      const payload = {
+        type: detail.type,
+        lastWorkingDay: detail.lastWorkingDay,
+        noticePeriodDays: detail.noticePeriodDays,
+        reason: detail.reason,
+        handledBy: detail.handledBy?._id || detail.handledBy,
+        clearance: detail.clearance,
+        status: detail.status === 'Completed' || detail.status === 'Cancelled'
+          ? undefined : detail.status,
+      };
+      const { data } = await api.put(`/exits/${detail._id}`, payload);
+      setDetail(data.exit);
+      setActionMsg('Saved.');
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Save failed');
+    } finally {
+      setSavingDetail(false);
+    }
+  };
+
+  const complete = async () => {
+    if (!window.confirm(
+      `Mark exit complete?\n\nThis will:\n• Set Date of Exit on the employee profile\n• Deactivate the user's login\n• Email a feedback link to the employee from the handling HR person`
+    )) return;
+    try {
+      const { data } = await api.patch(`/exits/${detail._id}/complete`);
+      setDetail(data.exit);
+      setActionMsg(
+        data.email?.queued
+          ? 'Exit completed. Feedback email queued — will be delivered shortly (worker retries on failure).'
+          : `Exit completed but email could not be queued: ${data.email?.reason || 'unknown error'}`
+      );
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not complete exit');
+    }
+  };
+
+  const resendEmail = async () => {
+    try {
+      const { data } = await api.post(`/exits/${detail._id}/resend-email`);
+      setDetail(data.exit);
+      setActionMsg('Email re-queued — the worker will attempt delivery within 30 seconds.');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Resend failed');
+    }
+  };
+
+  const cancelExit = async () => {
+    const reason = window.prompt('Reason for cancelling this exit (optional):', '');
+    if (reason === null) return;
+    try {
+      const { data } = await api.patch(`/exits/${detail._id}/cancel`, { reason });
+      setDetail(data.exit);
+      setActionMsg('Exit cancelled.');
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Cancel failed');
+    }
+  };
+
+  const updateClearance = (key, value) => {
+    setDetail({ ...detail, clearance: { ...detail.clearance, [key]: value } });
+  };
+
+  const isFinal = detail && (detail.status === 'Completed' || detail.status === 'Cancelled');
+
+  return (
+    <div>
+      <PageHeader title="Exit Requests">
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          className="border rounded-lg px-2 py-1 text-sm">
+          <option value="">All statuses</option>
+          {STATUSES.map((s) => <option key={s}>{s}</option>)}
+        </select>
+        <button onClick={openCreate}
+          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
+          + Initiate Exit
+        </button>
+      </PageHeader>
+
+      {error && (
+        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+      )}
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200 text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Type</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Last Working Day</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Handled By</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Email</th>
+              <th className="px-4 py-3 text-right"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {loading ? (
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+            ) : exits.length === 0 ? (
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No exit requests</td></tr>
+            ) : exits.map((x) => (
+              <tr key={x._id}>
+                <td className="px-4 py-3">
+                  {x.employee?.user?.firstName} {x.employee?.user?.lastName}
+                  <div className="text-xs text-gray-500 font-mono">{x.employee?.employeeCode}</div>
+                </td>
+                <td className="px-4 py-3">{x.type}</td>
+                <td className="px-4 py-3">{fmtDate(x.lastWorkingDay)}</td>
+                <td className="px-4 py-3">
+                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[x.status]}`}>{x.status}</span>
+                </td>
+                <td className="px-4 py-3">
+                  {x.handledBy ? `${x.handledBy.firstName} ${x.handledBy.lastName}` : '—'}
+                </td>
+                <td className="px-4 py-3 text-xs">
+                  {x.exitEmailSentAt
+                    ? <span className="text-green-700">Sent {fmtDateTime(x.exitEmailSentAt)}</span>
+                    : x.exitEmailLastError
+                      ? <span className="text-red-700" title={x.exitEmailLastError}>Retrying…</span>
+                      : x.exitEmailQueuedAt
+                        ? <span className="text-blue-700">Queued</span>
+                        : <span className="text-gray-400">—</span>}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <button onClick={() => openDetail(x)} className="text-blue-600 hover:underline">Open</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ===== Create modal ===== */}
+      {showCreate && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
+            <h2 className="card-title mb-4">Initiate Exit</h2>
+            <form onSubmit={submitCreate} className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-700">Employee *</label>
+                <select required value={newForm.employee}
+                  onChange={(e) => onPickEmployee(e.target.value)}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2">
+                  <option value="">Select…</option>
+                  {employees.map((p) => (
+                    <option key={p._id} value={p._id}>
+                      {p.employeeCode} — {p.user?.firstName} {p.user?.lastName}
+                      {p.hrPartner ? ` · HR: ${p.hrPartner.firstName} ${p.hrPartner.lastName}` : ''}
+                    </option>
+                  ))}
+                </select>
+                {newForm.employee && (() => {
+                  const sel = employees.find((p) => p._id === newForm.employee);
+                  return sel?.hrPartner
+                    ? <p className="text-xs text-gray-500 mt-1">Handled By prefilled from this employee's HR partner.</p>
+                    : <p className="text-xs text-gray-500 mt-1">No permanent HR partner set — defaulting to you.</p>;
+                })()}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Type</label>
+                  <select value={newForm.type}
+                    onChange={(e) => setNewForm({ ...newForm, type: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2">
+                    {TYPES.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Last Working Day *</label>
+                  <input type="date" required value={newForm.lastWorkingDay}
+                    onChange={(e) => setNewForm({ ...newForm, lastWorkingDay: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Notice period (days)</label>
+                  <input type="number" min={0} value={newForm.noticePeriodDays}
+                    onChange={(e) => setNewForm({ ...newForm, noticePeriodDays: Number(e.target.value) || 0 })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Handled By (HR)</label>
+                  <select value={newForm.handledBy}
+                    onChange={(e) => setNewForm({ ...newForm, handledBy: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2">
+                    <option value="">Select…</option>
+                    {hrUsers.map((u) => (
+                      <option key={u._id} value={u._id}>
+                        {u.firstName} {u.lastName} ({u.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700">Reason / notes</label>
+                <textarea rows={3} value={newForm.reason}
+                  onChange={(e) => setNewForm({ ...newForm, reason: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setShowCreate(false)}
+                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={creating}
+                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  {creating ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Detail modal ===== */}
+      {detail && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h2 className="card-title">
+                  Exit — {detail.employee?.user?.firstName} {detail.employee?.user?.lastName}
+                  <span className="ml-2 text-xs font-mono text-gray-500">{detail.employee?.employeeCode}</span>
+                </h2>
+                <p className="text-xs text-gray-500">{detail.employee?.designation || ''}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`inline-block px-2 py-1 text-xs rounded-lg ${STATUS_COLORS[detail.status]}`}>
+                  {detail.status}
+                </span>
+                <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              </div>
+            </div>
+
+            {actionMsg && (
+              <div className="mb-3 text-sm bg-blue-50 border border-blue-200 text-blue-800 px-3 py-2 rounded-lg">{actionMsg}</div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs text-gray-500">Type</label>
+                <select disabled={isFinal} value={detail.type}
+                  onChange={(e) => setDetail({ ...detail, type: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100">
+                  {TYPES.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500">Status</label>
+                <select disabled={isFinal} value={detail.status}
+                  onChange={(e) => setDetail({ ...detail, status: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100">
+                  {STATUSES.filter((s) => s === 'Pending' || s === 'InClearance').map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500">Last Working Day</label>
+                <input type="date" disabled={isFinal}
+                  value={detail.lastWorkingDay ? String(detail.lastWorkingDay).slice(0, 10) : ''}
+                  onChange={(e) => setDetail({ ...detail, lastWorkingDay: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500">Notice period (days)</label>
+                <input type="number" disabled={isFinal} value={detail.noticePeriodDays || 0}
+                  onChange={(e) => setDetail({ ...detail, noticePeriodDays: Number(e.target.value) || 0 })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-500">Handled By (HR)</label>
+                <select disabled={isFinal}
+                  value={detail.handledBy?._id || detail.handledBy || ''}
+                  onChange={(e) => setDetail({ ...detail, handledBy: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100">
+                  <option value="">Select…</option>
+                  {hrUsers.map((u) => (
+                    <option key={u._id} value={u._id}>
+                      {u.firstName} {u.lastName} ({u.role}) — {u.email}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">This person's name signs the exit email; replies route to their address.</p>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-500">Reason / notes</label>
+                <textarea rows={2} disabled={isFinal} value={detail.reason || ''}
+                  onChange={(e) => setDetail({ ...detail, reason: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
+              </div>
+            </div>
+
+            {/* Clearance checklist */}
+            <div className="mb-4 bg-gray-50 rounded-lg p-3">
+              <h3 className="text-sm font-semibold mb-2">Clearance checklist</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(CLEARANCE_LABELS).map(([k, label]) => (
+                  <label key={k} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" disabled={isFinal}
+                      checked={!!detail.clearance?.[k]}
+                      onChange={(e) => updateClearance(k, e.target.checked)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Submitted feedback */}
+            {detail.feedback?.submittedAt && (
+              <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3">
+                <h3 className="text-sm font-semibold mb-2 text-green-900">Exit Feedback (submitted {fmtDateTime(detail.feedback.submittedAt)})</h3>
+                <dl className="grid grid-cols-2 gap-2 text-sm">
+                  <div><dt className="text-xs text-gray-500">Primary reason</dt><dd>{detail.feedback.primaryReason || '—'}</dd></div>
+                  <div><dt className="text-xs text-gray-500">Would recommend</dt><dd>{detail.feedback.recommendScore ?? '—'} / 5</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-gray-500">Liked most</dt><dd>{detail.feedback.likedMost || '—'}</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-gray-500">Could improve</dt><dd>{detail.feedback.couldImprove || '—'}</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-gray-500">Open feedback</dt><dd>{detail.feedback.openFeedback || '—'}</dd></div>
+                </dl>
+              </div>
+            )}
+
+            {/* Footer actions */}
+            <div className="flex items-center justify-between gap-2 pt-2 border-t">
+              <div className="flex gap-2">
+                {!isFinal && (
+                  <button onClick={cancelExit}
+                    className="px-3 py-2 text-sm border rounded-lg text-red-600 hover:bg-red-50">
+                    Cancel Exit
+                  </button>
+                )}
+                {detail.status === 'Completed' && (
+                  <button onClick={resendEmail}
+                    className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                    Resend Email
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {!isFinal && (
+                  <>
+                    <button onClick={saveDetail} disabled={savingDetail}
+                      className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                      {savingDetail ? 'Saving…' : 'Save'}
+                    </button>
+                    <button onClick={complete}
+                      className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
+                      Complete Exit & Send Email
+                    </button>
+                  </>
+                )}
+                <button onClick={() => setDetail(null)}
+                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
