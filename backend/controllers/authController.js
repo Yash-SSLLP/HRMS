@@ -66,4 +66,44 @@ const me = asyncHandler(async (req, res) => {
   res.json({ user: req.user.toJSON() });
 });
 
-module.exports = { signup, login, me };
+// PATCH /api/auth/me/credentials  (protected, SuperAdmin only)
+// Self-service email / password change. By policy, only SuperAdmin may change
+// their own credentials directly — everyone else must raise a change request
+// that their admin approves.
+const updateMyCredentials = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'SuperAdmin') {
+    res.status(403);
+    throw new Error('Only SuperAdmin may change their own credentials. Please raise a change request instead.');
+  }
+
+  const { currentPassword, email, newPassword } = req.body;
+  if (!currentPassword) {
+    res.status(400);
+    throw new Error('Your current password is required to make changes');
+  }
+  if (!email && !newPassword) {
+    res.status(400);
+    throw new Error('Provide a new email and/or a new password');
+  }
+
+  const user = await User.findById(req.user._id).select('+password');
+  if (!(await user.comparePassword(currentPassword))) {
+    res.status(401);
+    throw new Error('Current password is incorrect');
+  }
+
+  if (email && email.toLowerCase() !== user.email) {
+    const exists = await User.findOne({ email: email.toLowerCase(), _id: { $ne: user._id } });
+    if (exists) {
+      res.status(409);
+      throw new Error('That email is already in use');
+    }
+    user.email = email.toLowerCase();
+  }
+  if (newPassword) user.password = newPassword; // pre-save hook re-hashes
+
+  await user.save();
+  res.json({ user: user.toJSON() });
+});
+
+module.exports = { signup, login, me, updateMyCredentials };

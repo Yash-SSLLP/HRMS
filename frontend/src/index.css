@@ -258,3 +258,66 @@ html.dark [class*="bg-orange-50"] { filter: brightness(.5) saturate(1.4); }
 html.dark * {
   scrollbar-color: var(--surface-3) transparent;
 }
+
+/* ---------------------------------------------------------------------------
+   Per-portal palette (data-portal on <html>, set by Layout.jsx).
+   Gives the Admin portal and the employee "My Portal" a visibly different
+   look — even for the same admin user — in both light and dark mode.
+   Placed after the role/dark blocks so it wins by specificity + source order.
+     · Admin    → indigo / violet, cool slate surfaces
+     · Employee → teal / emerald, soft green surfaces
+--------------------------------------------------------------------------- */
+/* Admin — light */
+html[data-portal="admin"] {
+  --accent: #4f46e5;
+  --accent-700: #4338ca;
+  --bg: #eceefb;
+  --surface-3: #e6e9fb;
+}
+/* Admin — dark */
+html.dark[data-portal="admin"] {
+  --accent: #818cf8;
+  --accent-700: #6366f1;
+  --bg: #0b1024;
+  --surface: #161c34;
+  --surface-2: #1f2747;
+  --surface-3: #2a3360;
+  --border: #313c6b;
+}
+
+/* Employee / My Portal — light */
+html[data-portal="employee"] {
+  --accent: #0d9488;
+  --accent-700: #0f766e;
+  --bg: #ecf5f2;
+  --surface-3: #e3f1ec;
+}
+/* Employee / My Portal — dark */
+html.dark[data-portal="employee"] {
+  --accent: #2dd4bf;
+  --accent-700: #14b8a6;
+  --bg: #07150f;
+  --surface: #10211b;
+  --surface-2: #173028;
+  --surface-3: #204036;
+  --border: #265a4b;
+}
+
+/* ---------------------------------------------------------------------------
+   Login submit button — the login page has no role accent, so its default
+   near-black button blends into the dark card. Give it a bright, appealing
+   gradient + glow in dark mode so it clearly stands out.
+--------------------------------------------------------------------------- */
+html.dark .login-submit {
+  background-image: linear-gradient(135deg, #4f46e5, #2563eb) !important;
+  background-color: #2563eb !important;
+  color: #fff !important;
+  box-shadow: 0 8px 22px -6px rgba(37, 99, 235, .6);
+}
+html.dark .login-submit:hover {
+  background-image: linear-gradient(135deg, #4338ca, #1d4ed8) !important;
+  box-shadow: 0 10px 26px -6px rgba(37, 99, 235, .7);
+}
+html.dark .login-submit:disabled {
+  box-shadow: none;
+}

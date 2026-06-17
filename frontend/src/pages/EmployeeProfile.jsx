@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 
@@ -46,7 +47,14 @@ export default function EmployeeProfile() {
 
   return (
     <div>
-      <PageHeader title="My Profile" />
+      <PageHeader title="My Profile" subtitle="To update any detail, raise a change request — your admin will review it.">
+        <Link
+          to="/employee/account"
+          className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700"
+        >
+          Request a change
+        </Link>
+      </PageHeader>
 
       <div className="bg-white shadow rounded-lg p-6 space-y-6">
         <section>

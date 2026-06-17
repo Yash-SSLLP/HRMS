@@ -20,6 +20,8 @@ import EmployeeProfile from './pages/EmployeeProfile.jsx';
 import ExitFeedback from './pages/ExitFeedback.jsx';
 import EmployeeComplaints from './pages/EmployeeComplaints.jsx';
 import AdminComplaints from './pages/AdminComplaints.jsx';
+import EmployeeAccount from './pages/EmployeeAccount.jsx';
+import AdminChangeRequests from './pages/AdminChangeRequests.jsx';
 import Calendar from './pages/Calendar.jsx';
 import AdminHolidays from './pages/AdminHolidays.jsx';
 import AdminEvents from './pages/AdminEvents.jsx';
@@ -106,6 +108,7 @@ const adminNav = [
   { to: '/admin/announcements', label: 'Announcements', icon: '📢' },
   { to: '/admin/surveys', label: 'Surveys', icon: '🗳️' },
   { to: '/admin/complaints', label: 'Complaints', icon: '⚠️' },
+  { to: '/admin/change-requests', label: 'Change Requests', icon: '✏️' },
   { to: '/admin/knowledge-base', label: 'Knowledge Base', icon: '📚' },
   { to: '/admin/holidays', label: 'Holidays', icon: '🎉' },
   { to: '/admin/events', label: 'Events', icon: '📣' },
@@ -141,6 +144,7 @@ const employeeNav = [
   { to: '/employee/knowledge-base', label: 'Help / KB', icon: '📚' },
   { to: '/employee/exit', label: 'Resignation', icon: '🚪', danger: true },
   { to: '/employee/profile', label: 'Profile', icon: '👤' },
+  { to: '/employee/account', label: 'Account & Requests', icon: '🔐' },
 ];
 
 function RootRedirect() {
@@ -213,6 +217,7 @@ export default function App() {
         <Route path="announcements" element={<AdminAnnouncements />} />
         <Route path="surveys" element={<AdminSurveys />} />
         <Route path="complaints" element={<AdminComplaints />} />
+        <Route path="change-requests" element={<AdminChangeRequests />} />
         <Route path="knowledge-base" element={<AdminKnowledgeBase />} />
         <Route path="holidays" element={<AdminHolidays />} />
         <Route path="events" element={<AdminEvents />} />
@@ -255,6 +260,7 @@ export default function App() {
         <Route path="knowledge-base" element={<EmployeeKnowledgeBase />} />
         <Route path="exit" element={<EmployeeExit />} />
         <Route path="profile" element={<EmployeeProfile />} />
+        <Route path="account" element={<EmployeeAccount />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

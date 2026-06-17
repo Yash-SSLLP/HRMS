@@ -4,6 +4,8 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
+import PieChart from '../components/PieChart';
+import BarChart from '../components/BarChart';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
 
@@ -37,7 +39,13 @@ export default function AdminOverview() {
   }, []);
 
   const c = data?.cards || {};
-  const maxDept = Math.max(1, ...(data?.headcountByDepartment || []).map((d) => d.count));
+
+  const attendancePie = [
+    { label: 'Present', value: c.presentToday || 0, color: '#10b981' },
+    { label: 'On leave', value: c.onLeaveToday || 0, color: '#f59e0b' },
+    { label: 'Absent', value: c.absentToday || 0, color: '#ef4444' },
+  ];
+  const deptBars = (data?.headcountByDepartment || []).map((d) => ({ label: d.department, value: d.count }));
 
   const today = new Date().toLocaleDateString('en-IN', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -77,25 +85,29 @@ export default function AdminOverview() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Headcount by department */}
+        {/* Today's attendance — present vs on leave vs absent */}
         <div className="bg-white shadow rounded-lg p-5">
-          <h2 className="card-title mb-3">Headcount by Department</h2>
-          {(data?.headcountByDepartment || []).length === 0 ? (
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="card-title">Today's Attendance</h2>
+            <Link to="/admin/attendance" className="text-sm text-blue-600 hover:underline">Attendance →</Link>
+          </div>
+          {(c.totalEmployees ?? 0) === 0 ? (
             <p className="text-sm text-gray-400 italic">No employees yet</p>
           ) : (
-            <ul className="space-y-2">
-              {data.headcountByDepartment.map((d) => (
-                <li key={d.department}>
-                  <div className="flex items-center justify-between text-sm mb-0.5">
-                    <span className="text-gray-700">{d.department}</span>
-                    <span className="font-medium text-gray-900">{d.count}</span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded">
-                    <div className="h-2 accent-bg rounded" style={{ width: `${(d.count / maxDept) * 100}%` }} />
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <PieChart data={attendancePie} />
+          )}
+        </div>
+
+        {/* Active employees by department */}
+        <div className="bg-white shadow rounded-lg p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="card-title">Employees by Department</h2>
+            <Link to="/admin/departments" className="text-sm text-blue-600 hover:underline">Departments →</Link>
+          </div>
+          {deptBars.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No employees yet</p>
+          ) : (
+            <BarChart data={deptBars} />
           )}
         </div>
 

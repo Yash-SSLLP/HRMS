@@ -2,12 +2,15 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import { useThemeStore } from '../store/themeStore';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const setSession = useAuthStore((s) => s.setSession);
+  const mode = useThemeStore((s) => s.mode);
+  const toggleMode = useThemeStore((s) => s.toggle);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -34,7 +37,17 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 px-4 py-10">
+    <div className="relative min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 px-4 py-10">
+      <button
+        type="button"
+        onClick={toggleMode}
+        title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        className="absolute top-4 right-4 h-10 w-10 flex items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+      >
+        <span className="text-lg leading-none">{mode === 'dark' ? '☀️' : '🌙'}</span>
+      </button>
+
       <div className="w-full max-w-md bg-white shadow-lg rounded-2xl p-8 border border-gray-100">
         <div className="flex flex-col items-center text-center mb-6">
           <img src={COMPANY_LOGO} alt={COMPANY_NAME} className="h-14 w-auto mb-3" />
@@ -77,7 +90,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-gray-900 text-white py-2.5 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60"
+            className="login-submit w-full bg-gray-900 text-white py-2.5 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60"
           >
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>

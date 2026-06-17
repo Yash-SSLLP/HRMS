@@ -276,6 +276,14 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
   const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager');
 
+  // Which portal is being viewed drives the colour theme (Admin vs My Portal),
+  // so the same admin user gets a visibly different look in each. Applied to
+  // <html> as data-portal; index.css maps it to the accent + surface palette.
+  const portal = sectionTitle === 'Admin' ? 'admin' : 'employee';
+  useEffect(() => {
+    document.documentElement.setAttribute('data-portal', portal);
+  }, [portal]);
+
   // Close the mobile drawer whenever the route changes.
   const closeMobile = () => setMobileOpen(false);
 
@@ -320,7 +328,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
   );
 
   return (
-    <div className="min-h-full bg-gray-50">
+    <div className="min-h-full" style={{ backgroundColor: 'var(--bg)' }}>
       <div className="h-1 accent-bg fixed top-0 inset-x-0 z-50" />
 
       {/* Desktop fixed sidebar */}
@@ -349,9 +357,25 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
           <div className="flex items-center gap-1 sm:gap-2 ml-auto">
             {isAdmin && (
-              <Link to="/admin" className="hidden sm:inline text-sm text-gray-600 hover:text-gray-900 px-2">Admin</Link>
+              <div className="hidden sm:flex items-center gap-1 bg-gray-100 rounded-full p-0.5 mr-1">
+                <Link
+                  to="/admin"
+                  className={`text-sm px-3 py-1 rounded-full transition-colors ${
+                    portal === 'admin' ? 'accent-bg text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Admin
+                </Link>
+                <Link
+                  to="/employee"
+                  className={`text-sm px-3 py-1 rounded-full transition-colors ${
+                    portal === 'employee' ? 'accent-bg text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  My Portal
+                </Link>
+              </div>
             )}
-            <Link to="/employee" className="hidden sm:inline text-sm text-gray-600 hover:text-gray-900 px-2">My Portal</Link>
             <button
               onClick={toggleMode}
               title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
