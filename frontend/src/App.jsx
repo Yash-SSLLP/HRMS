@@ -109,6 +109,7 @@ const adminNav = [
   { to: '/admin/surveys', label: 'Surveys', icon: '🗳️' },
   { to: '/admin/complaints', label: 'Complaints', icon: '⚠️' },
   { to: '/admin/change-requests', label: 'Change Requests', icon: '✏️' },
+  { to: '/admin/account', label: 'My Account', icon: '🔐' },
   { to: '/admin/knowledge-base', label: 'Knowledge Base', icon: '📚' },
   { to: '/admin/holidays', label: 'Holidays', icon: '🎉' },
   { to: '/admin/events', label: 'Events', icon: '📣' },
@@ -218,6 +219,7 @@ export default function App() {
         <Route path="surveys" element={<AdminSurveys />} />
         <Route path="complaints" element={<AdminComplaints />} />
         <Route path="change-requests" element={<AdminChangeRequests />} />
+        <Route path="account" element={<EmployeeAccount />} />
         <Route path="knowledge-base" element={<AdminKnowledgeBase />} />
         <Route path="holidays" element={<AdminHolidays />} />
         <Route path="events" element={<AdminEvents />} />
@@ -228,7 +230,7 @@ export default function App() {
       <Route
         path="/employee"
         element={
-          <ProtectedRoute roles={['Employee', 'HRManager', 'SuperAdmin']}>
+          <ProtectedRoute roles={['Employee', 'HRManager']}>
             <Layout navItems={employeeNav} sectionTitle="My Portal" />
           </ProtectedRoute>
         }

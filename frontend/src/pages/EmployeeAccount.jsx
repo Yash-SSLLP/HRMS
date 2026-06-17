@@ -99,7 +99,7 @@ export default function EmployeeAccount() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* --- Credentials --- */}
-        <div className="bg-white shadow rounded-lg p-5">
+        <div className={`bg-white shadow rounded-lg p-5 ${isSuperAdmin ? 'lg:col-span-2' : ''}`}>
           <h2 className="card-title mb-3">Login Credentials</h2>
           {isSuperAdmin ? (
             <form onSubmit={submitCredentials} className="space-y-3">
@@ -142,7 +142,8 @@ export default function EmployeeAccount() {
           )}
         </div>
 
-        {/* --- Request a change --- */}
+        {/* --- Request a change (not for SuperAdmin, who edits directly) --- */}
+        {!isSuperAdmin && (
         <div className="bg-white shadow rounded-lg p-5">
           <h2 className="card-title mb-3">Request a Change</h2>
           <form onSubmit={submitRequest} className="space-y-3">
@@ -197,9 +198,11 @@ export default function EmployeeAccount() {
             </button>
           </form>
         </div>
+        )}
       </div>
 
       {/* --- My requests --- */}
+      {!isSuperAdmin && (
       <div className="bg-white shadow rounded-lg p-5 mt-4">
         <h2 className="card-title mb-3">My Requests</h2>
         {requests.length === 0 ? (
@@ -228,6 +231,7 @@ export default function EmployeeAccount() {
           </ul>
         )}
       </div>
+      )}
     </div>
   );
 }

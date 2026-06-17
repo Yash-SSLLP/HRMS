@@ -221,6 +221,11 @@ function ProfileMenu({ user, onLogout }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
+  // SuperAdmin has no employee profile/portal, so send them to their account
+  // page; everyone else goes to their profile (where they can raise change-
+  // request tickets for their own details).
+  const profilePath = user?.role === 'SuperAdmin' ? '/admin/account' : '/employee/profile';
+
   useEffect(() => {
     const onClick = (e) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
@@ -249,7 +254,7 @@ function ProfileMenu({ user, onLogout }) {
               <div className="text-xs text-gray-500 truncate">{user?.email}</div>
             </div>
           </div>
-          <Link to="/employee/profile" onClick={() => setOpen(false)}
+          <Link to={profilePath} onClick={() => setOpen(false)}
             className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">My Profile</Link>
           <button onClick={() => { setOpen(false); onLogout(); }}
             className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Log out</button>
@@ -275,6 +280,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
   };
 
   const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager');
+  // SuperAdmin is not an employee, so they have no "My Portal". Only roles with
+  // employee-portal access (Employee, HRManager) get the portal switcher.
+  const canEmployeePortal = user && user.role !== 'SuperAdmin';
 
   // Which portal is being viewed drives the colour theme (Admin vs My Portal),
   // so the same admin user gets a visibly different look in each. Applied to
@@ -356,7 +364,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
           {isAdmin && <GlobalSearch />}
 
           <div className="flex items-center gap-1 sm:gap-2 ml-auto">
-            {isAdmin && (
+            {isAdmin && canEmployeePortal && (
               <div className="hidden sm:flex items-center gap-1 bg-gray-100 rounded-full p-0.5 mr-1">
                 <Link
                   to="/admin"
