@@ -192,6 +192,12 @@ export default function EmployeeLeave() {
                     <td className="px-4 py-3 text-right">{r.totalDays}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
+                      {r.approver && (r.status === 'Approved' || r.status === 'Rejected') && (
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          by {r.approver.firstName} {r.approver.lastName}
+                        </div>
+                      )}
+                      {r.decisionNote && <div className="text-[11px] text-gray-400 mt-0.5 italic">“{r.decisionNote}”</div>}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {(r.status === 'Pending' || r.status === 'Approved') && (

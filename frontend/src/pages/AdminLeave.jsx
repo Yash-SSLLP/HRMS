@@ -96,6 +96,13 @@ function RequestsTab() {
                 <td className="px-4 py-3 max-w-xs truncate" title={r.reason}>{r.reason || '—'}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
+                  {r.approver && (r.status === 'Approved' || r.status === 'Rejected') && (
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      by {r.approver.firstName} {r.approver.lastName}
+                      {r.approver.role ? ` (${r.approver.role})` : ''}
+                      {r.decisionAt ? ` · ${fmtDate(r.decisionAt)}` : ''}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   {r.status === 'Pending' && (

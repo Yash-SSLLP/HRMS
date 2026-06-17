@@ -1,10 +1,56 @@
 const asyncHandler = require('express-async-handler');
 const { LeaveRequest, LeaveBalance, LEAVE_TYPES } = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const User = require('../models/User');
+const { enqueueMail } = require('../services/email');
 const { daysInclusive, currentYear } = require('../utils/dateHelpers');
 
 // Leave types that draw down from a tracked balance bucket
 const BALANCED_TYPES = ['EL', 'CL', 'SL', 'ML'];
+
+// Email the employee's HR partner (falling back to a SuperAdmin) about a new
+// leave request. Reply-To is the applicant's address so the HR can reply to the
+// employee directly. Best-effort — never blocks the leave application.
+async function emailLeaveToHr(profile, request, applicant) {
+  try {
+    let recipient = null;
+    if (profile.hrPartner) {
+      recipient = await User.findById(profile.hrPartner).select('email firstName lastName');
+    }
+    if (!recipient) {
+      recipient = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('email');
+    }
+    if (!recipient?.email) return;
+
+    const name = `${applicant.firstName || ''} ${applicant.lastName || ''}`.trim() || 'An employee';
+    const fmt = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const range = request.isHalfDay
+      ? `${fmt(request.startDate)} (${request.halfDaySession === 'FirstHalf' ? '1st half' : '2nd half'})`
+      : `${fmt(request.startDate)} – ${fmt(request.endDate)}`;
+
+    await enqueueMail(
+      {
+        to: recipient.email,
+        replyTo: applicant.email,
+        subject: `Leave request from ${name} (${request.leaveType}, ${request.totalDays}d)`,
+        text: [
+          `${name} has applied for leave and needs your approval.`,
+          '',
+          `Type       : ${request.leaveType}`,
+          `Dates      : ${range}`,
+          `Total days : ${request.totalDays}`,
+          `Reason     : ${request.reason || '—'}`,
+          '',
+          'Review and approve/reject it in the HRMS portal under Leave.',
+          `Reply to this email to reach ${name} directly.`,
+        ].join('\n'),
+      },
+      { type: 'leave', id: request._id }
+    );
+  } catch (err) {
+    console.error('Leave HR email failed:', err.message);
+  }
+}
 
 async function getMyProfileOrFail(userId, res) {
   const profile = await EmployeeProfile.findOne({ user: userId });
@@ -46,6 +92,7 @@ const getMyBalance = asyncHandler(async (req, res) => {
 const listMyRequests = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
   const requests = await LeaveRequest.find({ employee: profile._id })
+    .populate('approver', 'firstName lastName role')
     .sort({ appliedAt: -1 });
   res.json({ count: requests.length, requests });
 });
@@ -93,6 +140,9 @@ const applyForLeave = asyncHandler(async (req, res) => {
     totalDays,
     reason,
   });
+
+  // Notify the employee's HR (reply-to the employee). Best-effort.
+  await emailLeaveToHr(profile, request, req.user);
 
   res.status(201).json({ request });
 });
@@ -146,6 +196,7 @@ const listAllRequests = asyncHandler(async (req, res) => {
       select: 'employeeCode user',
       populate: { path: 'user', select: 'firstName lastName email' },
     })
+    .populate('approver', 'firstName lastName role')
     .sort({ appliedAt: -1 });
   res.json({ count: requests.length, requests });
 });

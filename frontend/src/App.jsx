@@ -18,6 +18,7 @@ import EmployeeDocuments from './pages/EmployeeDocuments.jsx';
 import EmployeeExit from './pages/EmployeeExit.jsx';
 import EmployeeProfile from './pages/EmployeeProfile.jsx';
 import ExitFeedback from './pages/ExitFeedback.jsx';
+import ApplyForm from './pages/ApplyForm.jsx';
 import EmployeeComplaints from './pages/EmployeeComplaints.jsx';
 import AdminComplaints from './pages/AdminComplaints.jsx';
 import EmployeeAccount from './pages/EmployeeAccount.jsx';
@@ -173,6 +174,9 @@ export default function App() {
 
       {/* Public — ex-employees access via tokenised link in email */}
       <Route path="/exit-feedback/:token" element={<ExitFeedback />} />
+
+      {/* Public — job application form (shareable link) */}
+      <Route path="/apply/:jobId" element={<ApplyForm />} />
 
       <Route
         path="/admin"
