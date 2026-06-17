@@ -321,3 +321,121 @@ html.dark .login-submit:hover {
 html.dark .login-submit:disabled {
   box-shadow: none;
 }
+
+/* ---------------------------------------------------------------------------
+   Responsive (phone / tablet) — site-wide safety nets so every page behaves
+   without per-page edits. Tailwind responsive utilities still win where used.
+--------------------------------------------------------------------------- */
+
+/* Never let stray wide content force the whole page to scroll sideways. */
+html, body { max-width: 100%; overflow-x: hidden; }
+
+/* Data tables sit in `…rounded-lg overflow-hidden` cards that clip overflow.
+   On any screen, let the card scroll horizontally so wide tables stay reachable
+   instead of being cut off (the !important overrides the card's overflow-hidden;
+   overflow-y stays hidden so only sideways scroll appears, and only when needed). */
+div:has(> table) {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Modal dialogs (full-screen overlay → inner panel): keep the panel inside the
+   viewport and let it scroll, so tall forms like the employee editor are fully
+   reachable and the action buttons aren't pushed off-screen on phones. */
+.fixed.inset-0 > div {
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+/* Tighter gutters on phones so cards get more usable width. */
+@media (max-width: 640px) {
+  main { padding-left: 0.85rem; padding-right: 0.85rem; }
+  .fixed.inset-0 > div { padding: 1.1rem; }
+}
+
+/* ---------------------------------------------------------------------------
+   Org chart — top-down "decision tree" of circular nodes joined by connector
+   lines (root → branches → leaves). Pure CSS; the page colours the dots.
+--------------------------------------------------------------------------- */
+.org-tree-wrap { overflow-x: auto; text-align: center; padding: 0.5rem 0 1rem; }
+.org-tree, .org-tree ul { list-style: none; margin: 0; padding: 0; }
+.org-tree { display: inline-block; min-width: 100%; }
+.org-tree ul { position: relative; padding-top: 28px; white-space: nowrap; text-align: center; }
+.org-tree li {
+  display: inline-block; vertical-align: top; text-align: center;
+  position: relative; padding: 28px 14px 0;
+}
+/* connectors up from each node to the shared horizontal bar */
+.org-tree li::before, .org-tree li::after {
+  content: ''; position: absolute; top: 0; right: 50%;
+  border-top: 2px solid #94a3b8; width: 50%; height: 28px;
+}
+.org-tree li::after { right: auto; left: 50%; border-left: 2px solid #94a3b8; }
+.org-tree li:only-child::before, .org-tree li:only-child::after { display: none; }
+.org-tree li:only-child { padding-top: 0; }
+.org-tree li:first-child::before, .org-tree li:last-child::after { border: 0 none; }
+.org-tree li:last-child::before { border-right: 2px solid #94a3b8; border-radius: 0 6px 0 0; }
+.org-tree li:first-child::after { border-radius: 6px 0 0 0; }
+/* vertical line down from a parent to its children's bar */
+.org-tree ul ul::before {
+  content: ''; position: absolute; top: 0; left: 50%;
+  border-left: 2px solid #94a3b8; width: 0; height: 28px;
+}
+.org-node {
+  display: inline-flex; flex-direction: column; align-items: center;
+  gap: 0.3rem; cursor: default; white-space: normal; width: 7.5rem;
+}
+.org-node.is-editable { cursor: pointer; }
+.org-dot {
+  width: 3rem; height: 3rem; border-radius: 9999px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 0.8rem;
+  box-shadow: 0 3px 8px rgba(0,0,0,.22);
+  transition: transform .12s ease;
+}
+.org-node.is-editable:hover .org-dot { transform: scale(1.08); }
+.org-name { font-size: 0.78rem; font-weight: 600; color: #111827; line-height: 1.15; }
+.org-meta { font-size: 0.68rem; color: #6b7280; line-height: 1.1; }
+html.dark .org-name { color: #e5e7eb; }
+html.dark .org-meta { color: #9aa7bd; }
+
+/* ---------------------------------------------------------------------------
+   Chart polish — attractive, interactive bars / pie / line.
+--------------------------------------------------------------------------- */
+@keyframes chartFadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.chart-col { animation: chartFadeUp .45s ease both; }
+
+.chart-bar {
+  border-radius: 8px 8px 3px 3px;
+  box-shadow: 0 5px 12px -4px rgba(15, 23, 42, .35);
+  transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
+}
+.chart-col:hover .chart-bar {
+  transform: translateY(-3px);
+  filter: saturate(1.15) brightness(1.07);
+  box-shadow: 0 9px 18px -5px rgba(15, 23, 42, .4);
+}
+/* Tooltip bubble shared by bars (and line points use the same look). */
+.chart-tip {
+  position: absolute; bottom: 100%; left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  margin-bottom: 8px;
+  background: #111827; color: #fff; font-size: 11px; font-weight: 600;
+  padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+  opacity: 0; pointer-events: none; z-index: 5;
+  transition: opacity .15s ease, transform .15s ease;
+}
+.chart-col:hover .chart-tip { opacity: 1; transform: translateX(-50%) translateY(0); }
+.chart-tip::after {
+  content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 4px solid transparent; border-top-color: #111827;
+}
+
+/* Pie/donut interactivity */
+.pie-seg { transition: stroke-width .15s ease, opacity .15s ease; cursor: pointer; }
+.pie-legend-row { transition: background-color .12s ease; border-radius: 6px; cursor: pointer; }
+.pie-legend-row:hover { background-color: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Line chart points enlarge on hover */
+.line-pt { transition: r .12s ease; cursor: pointer; }
+.line-pt:hover { r: 6; }

@@ -14,6 +14,9 @@ const FIELD_CATALOG = {
   lastName: { label: 'Last Name', model: 'User', path: 'lastName' },
   phone: { label: 'Phone', model: 'User', path: 'phone' },
 
+  // --- Personal (EmployeeProfile) ---
+  dateOfBirth: { label: 'Date of Birth', model: 'Profile', path: 'dateOfBirth', type: 'date' },
+
   // --- Employment (EmployeeProfile) ---
   designation: { label: 'Designation', model: 'Profile', path: 'designation' },
   department: { label: 'Department', model: 'Profile', path: 'department' },

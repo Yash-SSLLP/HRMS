@@ -16,6 +16,16 @@ function getPath(obj, path) {
   return path.split('.').reduce((acc, key) => (acc == null ? acc : acc[key]), obj);
 }
 
+// Stringify a value for display/snapshot. Date fields render as YYYY-MM-DD.
+function fmtVal(meta, val) {
+  if (val == null) return '';
+  if (meta.type === 'date') {
+    const d = new Date(val);
+    return Number.isNaN(d.getTime()) ? String(val) : d.toISOString().slice(0, 10);
+  }
+  return String(val);
+}
+
 // The admin who should decide this user's requests: their HR partner, else a
 // SuperAdmin. Mirrors the complaint-routing convention.
 async function resolveAssignee(userId) {
@@ -37,9 +47,15 @@ const getFields = asyncHandler(async (req, res) => {
     if (!meta.secret) {
       const source = meta.model === 'User' ? user : profile;
       const val = source ? getPath(source, meta.path) : undefined;
-      current = val == null ? '' : String(val);
+      current = fmtVal(meta, val);
     }
-    return { key, label: meta.label, secret: !!meta.secret, currentValue: current };
+    return {
+      key,
+      label: meta.label,
+      secret: !!meta.secret,
+      type: meta.type || (meta.secret ? 'password' : 'text'),
+      currentValue: current,
+    };
   });
 
   res.json({ fields });
@@ -69,7 +85,7 @@ const createChangeRequest = asyncHandler(async (req, res) => {
       const profile = await EmployeeProfile.findOne({ user: req.user._id }).lean();
       currentValue = profile ? getPath(profile, meta.path) : '';
     }
-    currentValue = currentValue == null ? '' : String(currentValue);
+    currentValue = fmtVal(meta, currentValue);
   }
 
   const assignedTo = await resolveAssignee(req.user._id);

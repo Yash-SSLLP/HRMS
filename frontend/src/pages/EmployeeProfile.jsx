@@ -12,20 +12,45 @@ function Field({ label, value, mono }) {
   );
 }
 
+const toInputDate = (d) => {
+  if (!d) return '';
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+};
+
 export default function EmployeeProfile() {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
+  const [dob, setDob] = useState('');
+  const [savingDob, setSavingDob] = useState(false);
+  const [dobMsg, setDobMsg] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get('/employees/me');
         setProfile(data.profile);
+        setDob(toInputDate(data.profile?.dateOfBirth));
       } catch (err) {
         setError(err.response?.data?.message || 'Failed to load profile');
       }
     })();
   }, []);
+
+  const saveBirthday = async () => {
+    if (!dob) { setDobMsg('Please pick a date.'); return; }
+    setSavingDob(true);
+    setDobMsg('');
+    try {
+      const { data } = await api.patch('/employees/me/birthday', { dateOfBirth: dob });
+      setProfile((p) => ({ ...p, dateOfBirth: data.profile.dateOfBirth }));
+      setDobMsg('Birthday saved!');
+    } catch (err) {
+      setDobMsg(err.response?.data?.message || 'Could not save birthday');
+    } finally {
+      setSavingDob(false);
+    }
+  };
 
   if (error) {
     return (
@@ -56,6 +81,36 @@ export default function EmployeeProfile() {
         </Link>
       </PageHeader>
 
+      {/* Birthday — self-service (no approval needed) */}
+      <div className="bg-white shadow rounded-lg p-5 mb-4">
+        <h2 className="card-title mb-1">🎂 Birthday</h2>
+        <p className="text-sm text-gray-500 mb-3">
+          Add your date of birth so the team can celebrate with you. You can set this yourself.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs uppercase tracking-wide text-gray-500 mb-1">Date of Birth</label>
+            <input
+              type="date"
+              value={dob}
+              max={toInputDate(new Date())}
+              onChange={(e) => { setDob(e.target.value); setDobMsg(''); }}
+              className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
+            />
+          </div>
+          <button
+            onClick={saveBirthday}
+            disabled={savingDob}
+            className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-60"
+          >
+            {savingDob ? 'Saving…' : profile.dateOfBirth ? 'Update' : 'Add Birthday'}
+          </button>
+          {dobMsg && (
+            <span className={`text-sm ${/saved/i.test(dobMsg) ? 'text-green-700' : 'text-red-700'}`}>{dobMsg}</span>
+          )}
+        </div>
+      </div>
+
       <div className="bg-white shadow rounded-lg p-6 space-y-6">
         <section>
           <h2 className="card-title mb-3">Personal</h2>
@@ -64,6 +119,7 @@ export default function EmployeeProfile() {
             <Field label="Name" value={`${u.firstName || ''} ${u.lastName || ''}`} />
             <Field label="Email" value={u.email} />
             <Field label="Phone" value={u.phone} />
+            <Field label="Date of Birth" value={profile.dateOfBirth && new Date(profile.dateOfBirth).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} />
             <Field label="Date of Joining" value={profile.dateOfJoining && new Date(profile.dateOfJoining).toLocaleDateString('en-IN')} />
             <Field label="Employment Type" value={profile.employmentType} />
             <Field label="Designation" value={profile.designation} />

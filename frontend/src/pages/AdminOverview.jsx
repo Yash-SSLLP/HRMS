@@ -6,6 +6,7 @@ import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
 import PieChart from '../components/PieChart';
 import BarChart from '../components/BarChart';
+import ClockInOutCard from '../components/ClockInOutCard';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
 
@@ -85,6 +86,9 @@ export default function AdminOverview() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Clock-In/Out board */}
+        <ClockInOutCard />
+
         {/* Today's attendance — present vs on leave vs absent */}
         <div className="bg-white shadow rounded-lg p-5">
           <div className="flex items-center justify-between mb-3">

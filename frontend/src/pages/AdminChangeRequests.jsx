@@ -15,6 +15,7 @@ function fmt(d) {
 
 function RequestRow({ r, onDecided }) {
   const isSecret = r.field === 'password';
+  const inputType = r.field === 'dateOfBirth' ? 'date' : isSecret ? 'password' : 'text';
   const [applied, setApplied] = useState(isSecret ? '' : r.requestedValue || '');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -70,7 +71,7 @@ function RequestRow({ r, onDecided }) {
                 Value to apply {isSecret && <span className="text-gray-400">(new password)</span>}
               </label>
               <input
-                type={isSecret ? 'password' : 'text'}
+                type={inputType}
                 value={applied}
                 onChange={(e) => setApplied(e.target.value)}
                 className="block w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-gray-300"

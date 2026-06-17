@@ -6,6 +6,7 @@ const {
   getAttendancePhoto,
   listMine,
   listAll,
+  todayBoard,
   createRecord,
   updateRecord,
   deleteRecord,
@@ -34,6 +35,8 @@ router.get('/me', listMine);
 router.get('/:id/photo/:which', getAttendancePhoto);
 
 router.use(restrictTo('SuperAdmin', 'HRManager'));
+
+router.get('/today-board', todayBoard);
 
 router.route('/')
   .get(listAll)

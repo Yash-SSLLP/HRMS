@@ -267,9 +267,17 @@ function ProfileMenu({ user, onLogout }) {
 export default function Layout({ navItems = [], sectionTitle }) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const setUser = useAuthStore((s) => s.setUser);
   const mode = useThemeStore((s) => s.mode);
   const toggleMode = useThemeStore((s) => s.toggle);
   const navigate = useNavigate();
+
+  // Re-sync the cached user from the server on load so the top-bar profile
+  // reflects any changes made since login (e.g. an approved name-change ticket
+  // or an admin edit), instead of showing the stale name until re-login.
+  useEffect(() => {
+    api.get('/auth/me').then(({ data }) => data?.user && setUser(data.user)).catch(() => {});
+  }, [setUser]);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 

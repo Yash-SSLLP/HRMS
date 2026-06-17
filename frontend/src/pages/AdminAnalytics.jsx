@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import PieChart from '../components/PieChart';
+import BarChart from '../components/BarChart';
+import LineChart from '../components/LineChart';
+
+// Slice colours for the pie charts.
+const PIE_COLORS = ['#2563eb', '#f59e0b', '#10b981', '#a855f7', '#ef4444', '#14b8a6', '#f97316', '#6366f1'];
 
 function StatCard({ icon, tint, value, label }) {
   return (
@@ -14,70 +20,26 @@ function StatCard({ icon, tint, value, label }) {
   );
 }
 
-// A card holding a horizontal CSS bar chart. `rows` is an array of
-// { key, label, count }; bar widths are scaled to the largest count.
-function BarCard({ title, rows }) {
-  const max = Math.max(1, ...rows.map((r) => r.count));
+function ChartCard({ title, empty, children }) {
   return (
-    <div className="bg-white shadow rounded-lg p-5">
+    <div className="bg-white shadow rounded-lg p-5 flex flex-col">
       <h2 className="card-title mb-3">{title}</h2>
-      {rows.length === 0 ? (
-        <p className="text-sm text-gray-400 italic">No data yet</p>
-      ) : (
-        <ul className="space-y-2">
-          {rows.map((r) => (
-            <li key={r.key}>
-              <div className="flex items-center justify-between text-sm mb-0.5">
-                <span className="text-gray-700">{r.label}</span>
-                <span className="font-medium text-gray-900">{r.count}</span>
-              </div>
-              <div className="h-2 bg-gray-100 rounded">
-                <div
-                  className="h-2 accent-bg rounded"
-                  style={{ width: `${(r.count / max) * 100}%` }}
-                />
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="flex-1 flex items-center justify-center min-h-[240px]">
+        {empty ? (
+          <p className="text-sm text-gray-400 italic">No data yet</p>
+        ) : (
+          <div className="w-full">{children}</div>
+        )}
+      </div>
     </div>
   );
 }
 
-// Short month label, e.g. "2026-06" -> "Jun"
+// "2026-06" -> "Jun"
 const monthLabel = (key) => {
   const [y, m] = key.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'short' });
 };
-
-function ExitsChart({ data }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
-  return (
-    <div className="bg-white shadow rounded-lg p-5">
-      <h2 className="card-title mb-3">Exits — last 12 months</h2>
-      {data.length === 0 ? (
-        <p className="text-sm text-gray-400 italic">No exit data yet</p>
-      ) : (
-        <div className="flex items-end justify-between gap-1 h-40">
-          {data.map((d) => (
-            <div key={d.month} className="flex-1 flex flex-col items-center justify-end h-full">
-              <span className="text-xs font-medium text-gray-700 mb-1">
-                {d.count > 0 ? d.count : ''}
-              </span>
-              <div
-                className="w-full accent-bg rounded-t"
-                style={{ height: `${(d.count / max) * 100}%`, minHeight: d.count > 0 ? '4px' : '0' }}
-                title={`${d.month}: ${d.count}`}
-              />
-              <span className="text-[10px] text-gray-400 mt-1">{monthLabel(d.month)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function AdminAnalytics() {
   const [data, setData] = useState(null);
@@ -110,9 +72,7 @@ export default function AdminAnalytics() {
     return (
       <div>
         <PageHeader title="Analytics & Reports" subtitle="Headcount, attrition & demographics" />
-        <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
-          {error}
-        </div>
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       </div>
     );
   }
@@ -130,21 +90,18 @@ export default function AdminAnalytics() {
     );
   }
 
-  const deptRows = (d.headcountByDepartment || []).map((x) => ({
-    key: x.department, label: x.department, count: x.count,
-  }));
-  const typeRows = (d.headcountByEmploymentType || []).map((x) => ({
-    key: x.type, label: x.type, count: x.count,
-  }));
-  const genderRows = (d.genderDiversity || []).map((x) => ({
-    key: x.gender, label: x.gender, count: x.count,
-  }));
-  const tenureRows = (d.tenureBuckets || []).map((x) => ({
-    key: x.bucket, label: x.bucket, count: x.count,
-  }));
-  const confirmRows = (d.confirmationBreakdown || []).map((x) => ({
-    key: x.status, label: x.status, count: x.count,
-  }));
+  // Bars: [{ label, value }]
+  const deptBars = (d.headcountByDepartment || []).map((x) => ({ label: x.department, value: x.count }));
+  const tenureBars = (d.tenureBuckets || []).map((x) => ({ label: x.bucket, value: x.count }));
+  const confirmBars = (d.confirmationBreakdown || []).map((x) => ({ label: x.status, value: x.count }));
+
+  // Pies: [{ label, value, color }]
+  const typePie = (d.headcountByEmploymentType || []).map((x, i) => ({ label: x.type, value: x.count, color: PIE_COLORS[i % PIE_COLORS.length] }));
+  const genderPie = (d.genderDiversity || []).map((x, i) => ({ label: x.gender, value: x.count, color: PIE_COLORS[i % PIE_COLORS.length] }));
+
+  // Line: [{ label, value }]
+  const exitsLine = (d.exitsByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count }));
+  const hiresLine = (d.hiresByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count }));
 
   return (
     <div>
@@ -158,14 +115,43 @@ export default function AdminAnalytics() {
         <StatCard icon="🚪" tint="bg-amber-100" value={d.exitsLast12mo ?? '—'} label="Exits (12mo)" />
       </div>
 
-      {/* Demographic / headcount bar charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <BarCard title="Headcount by Department" rows={deptRows} />
-        <BarCard title="Employment Type" rows={typeRows} />
-        <BarCard title="Gender Diversity" rows={genderRows} />
-        <BarCard title="Tenure Buckets" rows={tenureRows} />
-        <BarCard title="Confirmation Breakdown" rows={confirmRows} />
-        <ExitsChart data={d.exitsByMonth || []} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Headcount by Department — bar graph */}
+        <ChartCard title="Headcount by Department" empty={deptBars.length === 0}>
+          <BarChart data={deptBars} />
+        </ChartCard>
+
+        {/* Employment Type — pie chart */}
+        <ChartCard title="Employment Type" empty={typePie.length === 0}>
+          <PieChart data={typePie} />
+        </ChartCard>
+
+        {/* Gender Diversity — pie chart */}
+        <ChartCard title="Gender Diversity" empty={genderPie.length === 0}>
+          <PieChart data={genderPie} />
+        </ChartCard>
+
+        {/* Tenure Buckets — bar graph */}
+        <ChartCard title="Tenure Buckets" empty={tenureBars.length === 0}>
+          <BarChart data={tenureBars} />
+        </ChartCard>
+
+        {/* New Employees vs Exits — combined line chart (full width) */}
+        <div className="lg:col-span-2">
+          <ChartCard title="New Employees vs Exits — last 12 months" empty={hiresLine.length === 0 && exitsLine.length === 0}>
+            <LineChart
+              series={[
+                { name: 'New Employees', color: '#16a34a', data: hiresLine },
+                { name: 'Exits', color: '#ef4444', data: exitsLine },
+              ]}
+            />
+          </ChartCard>
+        </div>
+
+        {/* Confirmation breakdown — bar graph */}
+        <ChartCard title="Confirmation Breakdown" empty={confirmBars.length === 0}>
+          <BarChart data={confirmBars} />
+        </ChartCard>
       </div>
     </div>
   );

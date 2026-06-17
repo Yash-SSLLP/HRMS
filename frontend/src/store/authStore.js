@@ -8,6 +8,9 @@ export const useAuthStore = create(
       token: null,
 
       setSession: ({ user, token }) => set({ user, token }),
+      // Refresh just the cached user (e.g. after a name/email change) without
+      // touching the token, so the top-bar profile reflects the latest data.
+      setUser: (user) => set({ user }),
       logout: () => set({ user: null, token: null }),
 
       isAuthenticated: () => Boolean(get().token && get().user),

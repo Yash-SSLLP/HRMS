@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const {
   getMyProfile,
+  updateMyBirthday,
   listEmployees,
   employeesDocumentStatus,
   exportEmployeeZip,
@@ -33,6 +34,7 @@ router.use(protect);
 
 // Employee self-service
 router.get('/me', getMyProfile);
+router.patch('/me/birthday', updateMyBirthday);
 
 // HR/Admin only
 router.use(restrictTo('SuperAdmin', 'HRManager'));

@@ -56,6 +56,35 @@ async function validateHierarchy(body, linkedUserId) {
   }
 }
 
+// PATCH /api/employees/me/birthday  { dateOfBirth }
+// Self-service: an employee may set/update their own date of birth (used by the
+// birthday wisher). Low-sensitivity, so it doesn't go through a change request.
+const updateMyBirthday = asyncHandler(async (req, res) => {
+  const { dateOfBirth } = req.body;
+  if (!dateOfBirth) {
+    res.status(400);
+    throw new Error('A date of birth is required');
+  }
+  const dob = new Date(dateOfBirth);
+  if (Number.isNaN(dob.getTime())) {
+    res.status(400);
+    throw new Error('Invalid date of birth');
+  }
+  if (dob > new Date()) {
+    res.status(400);
+    throw new Error('Date of birth cannot be in the future');
+  }
+
+  const profile = await EmployeeProfile.findOne({ user: req.user._id });
+  if (!profile) {
+    res.status(404);
+    throw new Error('Profile not yet created. Contact HR.');
+  }
+  profile.dateOfBirth = dob;
+  await profile.save();
+  res.json({ profile: { _id: profile._id, dateOfBirth: profile.dateOfBirth } });
+});
+
 // GET /api/employees/me  -- the calling user's own profile
 const getMyProfile = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findOne({ user: req.user._id })
@@ -423,6 +452,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
 
 module.exports = {
   getMyProfile,
+  updateMyBirthday,
   listEmployees,
   employeesDocumentStatus,
   exportEmployeeZip,

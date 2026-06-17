@@ -55,6 +55,16 @@ const orgChart = asyncHandler(async (req, res) => {
   };
   const safeRoots = roots.map((r) => safe(r)).filter((r) => r !== null);
 
+  // Any node never reached is trapped in a manager cycle with no external root
+  // (e.g. A reports to B and B reports to A). Surface such nodes as roots so the
+  // whole chart never silently disappears when someone sets a circular manager.
+  for (const node of nodes.values()) {
+    if (!visited.has(node.id)) {
+      const r = safe(node);
+      if (r) safeRoots.push(r);
+    }
+  }
+
   res.json({ roots: safeRoots });
 });
 

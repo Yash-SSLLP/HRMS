@@ -3,6 +3,13 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
 
+const ROOT_TITLE = 'Sequence Surfaces';
+
+// Node colours, decision-tree style: black root, orange branches, blue leaves.
+const ROOT_COLOR = '#111827';
+const BRANCH_COLOR = '#f59e0b';
+const LEAF_COLOR = '#2563eb';
+
 // Derive up-to-two-letter initials from a full name.
 function initials(name) {
   const parts = (name || '').trim().split(/\s+/).filter(Boolean);
@@ -20,65 +27,55 @@ function flatten(nodes, acc = []) {
   return acc;
 }
 
-// Recursive tree node. Renders an avatar + identity row, and indents its
-// reports behind a left border. Collapsible when the node has reports.
-// SuperAdmins additionally get an inline "reports to" picker to set hierarchy.
-function Node({ node, editable, everyone, onSetManager, savingId }) {
-  const [open, setOpen] = useState(true);
+// A node with no department is treated as "unassigned".
+const isUnassigned = (n) => !n.department || !n.department.trim();
+
+// Order each group of siblings so unassigned employees sit on the LEFT,
+// then everyone else by name. Pure (returns new nodes), applied recursively.
+function sortTree(nodes) {
+  return [...nodes]
+    .map((n) => ({ ...n, reports: n.reports?.length ? sortTree(n.reports) : n.reports }))
+    .sort((a, b) => {
+      const ua = isUnassigned(a);
+      const ub = isUnassigned(b);
+      if (ua !== ub) return ua ? -1 : 1; // unassigned first → leftmost
+      return (a.name || '').localeCompare(b.name || '');
+    });
+}
+
+// One circular tree node + its branch of reports.
+function TreeNode({ node, depth, editable, selectedId, onSelect }) {
   const hasReports = Array.isArray(node.reports) && node.reports.length > 0;
+  const color = depth === 0 ? ROOT_COLOR : hasReports ? BRANCH_COLOR : LEAF_COLOR;
   const meta = [node.designation, node.department].filter(Boolean).join(' · ');
 
   return (
     <li>
-      <div className="flex items-center gap-3 py-2">
-        {hasReports ? (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-label={open ? 'Collapse' : 'Expand'}
-            className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-700"
-          >
-            {open ? '−' : '+'}
-          </button>
-        ) : (
-          <span className="w-5 h-5" />
-        )}
-        <div className="avatar-circle accent-bg text-white">{initials(node.name)}</div>
-        <div className="min-w-0">
-          <div className="font-semibold text-gray-900">{node.name || 'Unnamed'}</div>
-          {meta && <div className="text-sm text-gray-500">{meta}</div>}
-        </div>
-
-        {editable && (
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs text-gray-400 hidden sm:inline">reports to</span>
-            <select
-              value={node.managerId || ''}
-              disabled={savingId === node.profileId}
-              onChange={(e) => onSetManager(node, e.target.value)}
-              className="text-sm border rounded-lg px-2 py-1 max-w-[12rem]"
-            >
-              <option value="">— Top level —</option>
-              {everyone
-                .filter((p) => p.id !== node.id)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-            </select>
-          </div>
-        )}
+      <div
+        className={`org-node ${editable ? 'is-editable' : ''}`}
+        onClick={() => editable && onSelect(node)}
+        title={editable ? 'Click to set who this person reports to' : node.name}
+      >
+        <span
+          className="org-dot"
+          style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px' }}
+        >
+          {initials(node.name)}
+        </span>
+        <span className="org-name">{node.name || 'Unnamed'}</span>
+        {meta && <span className="org-meta">{meta}</span>}
       </div>
 
-      {hasReports && open && (
-        <ul className="ml-5 pl-4 border-l border-gray-200">
+      {hasReports && (
+        <ul>
           {node.reports.map((child) => (
-            <Node
+            <TreeNode
               key={child.id}
               node={child}
+              depth={depth + 1}
               editable={editable}
-              everyone={everyone}
-              onSetManager={onSetManager}
-              savingId={savingId}
+              selectedId={selectedId}
+              onSelect={onSelect}
             />
           ))}
         </ul>
@@ -94,6 +91,7 @@ export default function AdminOrgChart() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [savingId, setSavingId] = useState(null);
+  const [selected, setSelected] = useState(null);
 
   const load = async () => {
     try {
@@ -109,12 +107,14 @@ export default function AdminOrgChart() {
   useEffect(() => { load(); }, []);
 
   const everyone = flatten(roots);
+  const sortedRoots = sortTree(roots);
 
   const onSetManager = async (node, managerUserId) => {
     setSavingId(node.profileId);
     setError('');
     try {
       await api.put(`/employees/${node.profileId}`, { reportingManager: managerUserId || null });
+      setSelected(null);
       await load();
     } catch (err) {
       setError(err?.response?.data?.message || 'Could not update reporting manager.');
@@ -127,11 +127,33 @@ export default function AdminOrgChart() {
     <div>
       <PageHeader
         title="Org Chart"
-        subtitle={isSuperAdmin ? 'Reporting hierarchy — set who reports to whom' : 'Reporting hierarchy'}
+        subtitle={isSuperAdmin ? 'Reporting hierarchy — click a person to set who they report to' : 'Reporting hierarchy'}
       />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+      )}
+
+      {isSuperAdmin && selected && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 bg-white shadow rounded-lg px-4 py-3 text-sm">
+          <span className="text-gray-700">
+            <span className="font-semibold">{selected.name}</span> reports to:
+          </span>
+          <select
+            value={selected.managerId || ''}
+            disabled={savingId === selected.profileId}
+            onChange={(e) => onSetManager(selected, e.target.value)}
+            className="border rounded-lg px-2 py-1 max-w-[14rem]"
+          >
+            <option value="">— Top level —</option>
+            {everyone
+              .filter((p) => p.id !== selected.id)
+              .map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+          </select>
+          <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-gray-800 px-2">Done</button>
+        </div>
       )}
 
       <div className="bg-white shadow rounded-lg p-5">
@@ -142,18 +164,38 @@ export default function AdminOrgChart() {
         )}
 
         {!loading && roots.length > 0 && (
-          <ul>
-            {roots.map((node) => (
-              <Node
-                key={node.id}
-                node={node}
-                editable={isSuperAdmin}
-                everyone={everyone}
-                onSetManager={onSetManager}
-                savingId={savingId}
-              />
-            ))}
-          </ul>
+          <>
+            <h2 className="text-center text-2xl font-bold text-gray-900 mb-2">{ROOT_TITLE}</h2>
+            <div className="org-tree-wrap">
+              <ul className="org-tree">
+                {/* Synthetic company root (black), branching to the real org roots */}
+                <li>
+                  <div className="org-node" title={ROOT_TITLE}>
+                    <span className="org-dot" style={{ background: ROOT_COLOR }} aria-label={ROOT_TITLE} />
+                  </div>
+                  <ul>
+                    {sortedRoots.map((node) => (
+                      <TreeNode
+                        key={node.id}
+                        node={node}
+                        depth={1}
+                        editable={isSuperAdmin}
+                        selectedId={selected?.id}
+                        onSelect={setSelected}
+                      />
+                    ))}
+                  </ul>
+                </li>
+              </ul>
+            </div>
+
+            {/* Legend */}
+            <div className="flex items-center justify-center gap-4 mt-4 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: ROOT_COLOR }} /> Company</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: BRANCH_COLOR }} /> Manager</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: LEAF_COLOR }} /> Individual</span>
+            </div>
+          </>
         )}
       </div>
     </div>

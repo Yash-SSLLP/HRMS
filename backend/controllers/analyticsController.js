@@ -84,11 +84,13 @@ const overview = asyncHandler(async (req, res) => {
   // Seed the last 12 month buckets (oldest -> newest) so the chart is contiguous.
   const monthKeys = [];
   const exitsByMonthMap = {};
+  const hiresByMonthMap = {};
   for (let i = 11; i >= 0; i -= 1) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     monthKeys.push(key);
     exitsByMonthMap[key] = 0;
+    hiresByMonthMap[key] = 0;
   }
 
   let exitsLast12mo = 0;
@@ -115,13 +117,18 @@ const overview = asyncHandler(async (req, res) => {
   const avgHeadcount = totalActive + exitsLast12mo;
   const attritionRate = Math.round((exitsLast12mo / Math.max(1, avgHeadcount)) * 100 * 10) / 10;
 
-  // --- New hires in the last 12 months ---
+  // --- New hires in the last 12 months (total + by YYYY-MM) ---
   let newHiresLast12mo = 0;
   for (const p of profiles) {
     if (!p.dateOfJoining) continue;
     const join = new Date(p.dateOfJoining);
-    if (join >= twelveMonthsAgo && join <= now) newHiresLast12mo += 1;
+    if (join >= twelveMonthsAgo && join <= now) {
+      newHiresLast12mo += 1;
+      const key = `${join.getFullYear()}-${String(join.getMonth() + 1).padStart(2, '0')}`;
+      if (key in hiresByMonthMap) hiresByMonthMap[key] += 1;
+    }
   }
+  const hiresByMonth = monthKeys.map((month) => ({ month, count: hiresByMonthMap[month] }));
 
   res.json({
     totalActive,
@@ -134,6 +141,7 @@ const overview = asyncHandler(async (req, res) => {
     exitsLast12mo,
     attritionRate,
     newHiresLast12mo,
+    hiresByMonth,
   });
 });
 

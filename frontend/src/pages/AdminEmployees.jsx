@@ -283,7 +283,7 @@ export default function AdminEmployees() {
               {editingId ? 'Edit Employee Profile' : 'Create Employee Profile'}
             </h2>
             <form onSubmit={onSave} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">User account *</label>
                   <select
@@ -368,7 +368,7 @@ export default function AdminEmployees() {
                     )}
                   </select>
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">HR Partner</label>
                   {isSuperAdmin ? (
                     <select
@@ -397,7 +397,7 @@ export default function AdminEmployees() {
                     {!isSuperAdmin && ' Only a SuperAdmin can reassign the HR Partner.'}
                   </p>
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">Reporting Manager</label>
                   {isSuperAdmin ? (
                     <select
@@ -427,7 +427,7 @@ export default function AdminEmployees() {
                     {!isSuperAdmin && ' Only a SuperAdmin can set the reporting manager.'}
                   </p>
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="flex items-center gap-2 text-sm text-gray-700">
                     <input type="checkbox" checked={!!form.documentsVerified}
                       onChange={(e) => setForm({ ...form, documentsVerified: e.target.checked })} />
@@ -440,7 +440,7 @@ export default function AdminEmployees() {
               </div>
 
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Statutory IDs (India)</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">PAN</label>
                   <input value={form.pan}
@@ -470,7 +470,7 @@ export default function AdminEmployees() {
               </div>
 
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Bank Details</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Account Holder</label>
                   <input value={form.bankDetails.accountHolderName}

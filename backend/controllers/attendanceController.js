@@ -171,6 +171,63 @@ const listAll = asyncHandler(async (req, res) => {
   res.json({ year, month, count: records.length, records });
 });
 
+// GET /api/attendance/today-board?department=
+// Compact "Clock-In/Out" board for the admin dashboard: everyone who has
+// punched in today, split into on-time vs late, with their clock in/out and
+// production hours. "Late" = checked in after the standard start time.
+const WORKDAY_START_HOUR = 10; // 10:00 AM grace cut-off for lateness
+const todayBoard = asyncHandler(async (req, res) => {
+  const today = startOfDay(new Date());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+
+  const records = await Attendance.find({
+    date: { $gte: today, $lt: tomorrow },
+    checkIn: { $ne: null },
+  })
+    .populate({
+      path: 'employee',
+      select: 'employeeCode designation department user',
+      populate: { path: 'user', select: 'firstName lastName' },
+    })
+    .lean();
+
+  const startThreshold = new Date(today);
+  startThreshold.setHours(WORKDAY_START_HOUR, 0, 0, 0);
+
+  let rows = records
+    .filter((r) => r.employee && r.employee.user)
+    .map((r) => {
+      const p = r.employee;
+      const lateMs = new Date(r.checkIn) - startThreshold;
+      return {
+        id: String(p._id),
+        recordId: String(r._id),
+        name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.employeeCode,
+        designation: p.designation || '',
+        department: p.department || 'Unassigned',
+        checkIn: r.checkIn,
+        checkOut: r.checkOut || null,
+        hoursWorked: r.hoursWorked || 0,
+        lateMinutes: lateMs > 0 ? Math.round(lateMs / 60000) : 0,
+      };
+    });
+
+  const dept = req.query.department;
+  if (dept && dept !== 'all') rows = rows.filter((r) => r.department === dept);
+
+  rows.sort((a, b) => new Date(a.checkIn) - new Date(b.checkIn));
+
+  const departments = (await EmployeeProfile.distinct('department')).filter(Boolean).sort();
+
+  res.json({
+    date: today,
+    onTime: rows.filter((r) => r.lateMinutes === 0),
+    late: rows.filter((r) => r.lateMinutes > 0),
+    departments,
+  });
+});
+
 // POST /api/attendance  (manual admin entry)
 const createRecord = asyncHandler(async (req, res) => {
   const { employee, date, status, checkIn, checkOut, remarks } = req.body;
@@ -227,6 +284,7 @@ module.exports = {
   getAttendancePhoto,
   listMine,
   listAll,
+  todayBoard,
   createRecord,
   updateRecord,
   deleteRecord,

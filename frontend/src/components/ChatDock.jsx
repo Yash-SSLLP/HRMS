@@ -1,13 +1,52 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import { useThemeStore } from '../store/themeStore';
 
 const POLL_MS = 4000;
 
-// LinkedIn-style floating messaging dock, pinned to the bottom-right and present
-// on every page (rendered once from Layout). Shows an unread badge for unseen
-// messages, a collapsible conversation list, incoming requests, a people finder,
-// and a chat window popup for the open conversation.
+// WhatsApp-inspired colour palettes (light & dark).
+const WA_LIGHT = {
+  header: '#008069', headerText: '#ffffff',
+  panel: '#ffffff', listHover: '#f5f6f6',
+  chatBg: '#efeae2', bubbleOut: '#d9fdd3', bubbleIn: '#ffffff',
+  text: '#111b21', sub: '#667781', border: '#e9edef',
+  badge: '#25d366', inputBg: '#ffffff', composerBg: '#f0f2f5',
+};
+const WA_DARK = {
+  header: '#202c33', headerText: '#e9edef',
+  panel: '#111b21', listHover: '#202c33',
+  chatBg: '#0b141a', bubbleOut: '#005c4b', bubbleIn: '#202c33',
+  text: '#e9edef', sub: '#8696a0', border: '#2a3942',
+  badge: '#25d366', inputBg: '#2a3942', composerBg: '#202c33',
+};
+
+// Subtle WhatsApp-style chat wallpaper (faint dotted texture).
+const CHAT_PATTERN =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ccircle cx='3' cy='3' r='1.2' fill='%23000' fill-opacity='0.03'/%3E%3C/svg%3E\")";
+
+function initials(name = '') {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+}
+
+function Avatar({ name, size = 38 }) {
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-full font-semibold shrink-0"
+      style={{ width: size, height: size, fontSize: size * 0.38, background: '#6b7c85', color: '#fff' }}
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+// Floating WhatsApp-style messaging dock, pinned bottom-right, rendered once from
+// Layout. On phones it collapses to a circular FAB and opens full-screen.
 export default function ChatDock() {
+  const mode = useThemeStore((s) => s.mode);
+  const wa = mode === 'dark' ? WA_DARK : WA_LIGHT;
+
+  const [isMobile, setIsMobile] = useState(false);
   const [open, setOpen] = useState(false);
   const [connections, setConnections] = useState([]);
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
@@ -27,6 +66,14 @@ export default function ChatDock() {
 
   const active = connections.find((c) => c.connectionId === activeId);
   const unreadTotal = connections.reduce((sum, c) => sum + (c.unread || 0), 0);
+
+  // Track phone-sized viewports so the dock can become a circular FAB.
+  useEffect(() => {
+    const update = () => setIsMobile(window.innerWidth <= 639);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
 
   const loadLists = async () => {
     try {
@@ -139,162 +186,237 @@ export default function ChatDock() {
     (p.email || '').toLowerCase().includes(dirSearch.toLowerCase())
   );
 
+  const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // --- Phone, collapsed: a circular WhatsApp-style floating button ---
+  if (isMobile && !open && !showFind) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        aria-label="Open chats"
+        className="fixed bottom-5 right-5 z-40 w-14 h-14 rounded-full shadow-xl flex items-center justify-center print:hidden"
+        style={{ background: '#008069' }}
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff">
+          <path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z" />
+        </svg>
+        {unreadTotal > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 text-[10px] rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center font-bold"
+            style={{ background: wa.badge, color: '#0b141a', border: '2px solid #fff' }}>
+            {unreadTotal > 9 ? '9+' : unreadTotal}
+          </span>
+        )}
+      </button>
+    );
+  }
+
+  // Sizing differs between the phone full-screen view and the desktop dock.
+  const windowClass = isMobile
+    ? 'absolute inset-0 flex flex-col'
+    : 'w-80 max-w-[92vw] rounded-t-xl shadow-2xl flex flex-col overflow-hidden';
+  const windowStyle = isMobile
+    ? { background: wa.chatBg }
+    : { height: '28rem', background: wa.chatBg, border: `1px solid ${wa.border}` };
+  const panelClass = isMobile
+    ? 'absolute inset-0 flex flex-col'
+    : 'w-80 max-w-[92vw] rounded-t-xl shadow-2xl overflow-hidden';
+
   return (
-    <div className="fixed bottom-0 right-4 z-40 flex items-end gap-3 print:hidden">
-      {/* Open conversation window (sits to the left of the messaging panel) */}
+    <div className={isMobile ? 'fixed inset-0 z-50 print:hidden' : 'fixed bottom-0 right-4 z-40 flex items-end gap-3 print:hidden'}>
+      {/* Open conversation window */}
       {active && open && (
-        <div className="w-80 bg-white border border-gray-200 rounded-t-lg shadow-xl flex flex-col"
-          style={{ height: '28rem' }}>
-          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50 rounded-t-lg">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-gray-900 truncate">{active.person.fullName}</div>
-              <div className="text-[11px] text-gray-500">{active.person.role}</div>
+        <div className={windowClass} style={windowStyle}>
+          {/* Header */}
+          <div className="flex items-center gap-2 px-3 py-2" style={{ background: wa.header }}>
+            <button onClick={() => setActiveId(null)} className="text-2xl leading-none px-1" style={{ color: wa.headerText }} aria-label="Back">
+              {isMobile ? '‹' : '×'}
+            </button>
+            <Avatar name={active.person.fullName} size={36} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold truncate" style={{ color: wa.headerText }}>{active.person.fullName}</div>
+              <div className="text-[11px] truncate" style={{ color: mode === 'dark' ? '#8696a0' : 'rgba(255,255,255,.8)' }}>
+                {active.person.role}
+              </div>
             </div>
-            <button onClick={() => setActiveId(null)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">×</button>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 bg-gray-50">
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5" style={{ backgroundImage: CHAT_PATTERN, backgroundColor: wa.chatBg }}>
             {messages.map((m) => (
               <div key={m._id} className={`flex ${m.mine ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
-                  m.mine ? 'bg-gray-900 text-white' : 'bg-white border border-gray-200 text-gray-800'
-                }`}>
-                  <div className="break-words">{m.body}</div>
-                  <div className={`text-[10px] mt-1 ${m.mine ? 'text-gray-300' : 'text-gray-400'}`}>
-                    {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
+                <div
+                  className="max-w-[78%] px-2.5 py-1.5 text-sm shadow-sm"
+                  style={{
+                    background: m.mine ? wa.bubbleOut : wa.bubbleIn,
+                    color: m.mine ? (mode === 'dark' ? wa.text : '#111b21') : wa.text,
+                    borderRadius: m.mine ? '8px 8px 2px 8px' : '8px 8px 8px 2px',
+                  }}
+                >
+                  <span className="break-words whitespace-pre-wrap">{m.body}</span>
+                  <span className="text-[10px] ml-2 align-bottom" style={{ color: wa.sub }}>{fmtTime(m.createdAt)}</span>
                 </div>
               </div>
             ))}
             <div ref={bottomRef} />
           </div>
-          <form onSubmit={send} className="p-2 border-t border-gray-200 flex gap-2">
+
+          {/* Composer */}
+          <form onSubmit={send} className="flex items-center gap-2 p-2" style={{ background: wa.composerBg }}>
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="Write a message…"
-              className="flex-1 border rounded px-2 py-1.5 text-sm"
+              placeholder="Type a message"
+              className="flex-1 rounded-full px-4 py-2 text-sm outline-none"
+              style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }}
             />
-            <button type="submit" disabled={sending || !draft.trim()}
-              className="px-3 py-1.5 bg-gray-900 text-white rounded text-sm disabled:opacity-60">Send</button>
+            <button
+              type="submit" disabled={sending || !draft.trim()}
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 disabled:opacity-50"
+              style={{ background: '#008069', color: '#fff' }}
+              aria-label="Send"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+            </button>
           </form>
         </div>
       )}
 
-      {/* Messaging panel */}
-      <div className="w-80 bg-white border border-gray-200 rounded-t-lg shadow-xl">
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="w-full flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white rounded-t-lg"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-            <span>💬</span> Messaging
-            {unreadTotal > 0 && (
-              <span className="bg-red-600 text-white text-[10px] rounded-full px-1.5 py-0.5 leading-none">
-                {unreadTotal > 9 ? '9+' : unreadTotal}
+      {/* Messaging panel — hidden on phone while a conversation is open (the chat
+          window takes the full screen there). */}
+      {(!isMobile || !active) && (
+        <div className={panelClass} style={{ background: wa.panel, border: isMobile ? 'none' : `1px solid ${wa.border}` }}>
+          {/* Green header */}
+          <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: wa.header }}>
+            <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+              <span className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,.18)' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill={wa.headerText}><path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z"/></svg>
               </span>
-            )}
-          </span>
-          <span className="text-gray-400 text-xs">{open ? '▾' : '▴'}</span>
-        </button>
+              <span className="text-sm font-semibold" style={{ color: wa.headerText }}>Chats</span>
+              {unreadTotal > 0 && (
+                <span className="text-[10px] rounded-full px-1.5 py-0.5 leading-none font-bold" style={{ background: wa.badge, color: '#0b141a' }}>
+                  {unreadTotal > 9 ? '9+' : unreadTotal}
+                </span>
+              )}
+            </button>
+            <button onClick={openFind} title="Find people"
+              className="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90" style={{ background: 'rgba(255,255,255,.18)', color: wa.headerText }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
+            </button>
+            <button onClick={() => setOpen((o) => !o)} className="px-1 text-sm" style={{ color: wa.headerText }} aria-label="Collapse">
+              {isMobile ? '×' : (open ? '▾' : '▴')}
+            </button>
+          </div>
 
-        {open && (
-          <div className="flex flex-col" style={{ height: '24rem' }}>
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
-              <span className="text-xs text-gray-500">Your conversations</span>
-              <button onClick={openFind} className="text-xs text-blue-600 hover:underline">+ Find people</button>
-            </div>
-
-            {error && (
-              <div className="mx-3 mt-2 text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded">{error}</div>
-            )}
-
-            <div className="flex-1 overflow-y-auto">
-              {requests.incoming.length > 0 && (
-                <div className="p-3 border-b border-gray-100 bg-amber-50">
-                  <div className="text-[11px] font-semibold text-amber-800 mb-2">
-                    Connection requests ({requests.incoming.length})
-                  </div>
-                  <div className="space-y-2">
-                    {requests.incoming.map((r) => (
-                      <div key={r._id} className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-gray-800 truncate">{r.from.fullName}</span>
-                        <span className="flex gap-1 shrink-0">
-                          <button onClick={() => respond(r._id, 'accept')}
-                            className="text-[11px] px-2 py-0.5 bg-green-600 text-white rounded">Accept</button>
-                          <button onClick={() => respond(r._id, 'decline')}
-                            className="text-[11px] px-2 py-0.5 border rounded">Decline</button>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+          {open && (
+            <div className="flex flex-col" style={isMobile ? { flex: 1, minHeight: 0, background: wa.panel } : { height: '24rem', background: wa.panel }}>
+              {error && (
+                <div className="mx-3 mt-2 text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded">{error}</div>
               )}
 
-              {connections.length === 0 ? (
-                <div className="p-4 text-xs text-gray-500">
-                  No conversations yet. Use <strong>Find people</strong> to connect.
-                </div>
-              ) : connections.map((c) => (
-                <button
-                  key={c.connectionId}
-                  onClick={() => openConversation(c.connectionId)}
-                  className={`w-full text-left px-3 py-2 border-b border-gray-50 hover:bg-gray-50 ${
-                    activeId === c.connectionId ? 'bg-gray-100' : ''
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className={`text-sm truncate ${c.unread > 0 ? 'font-semibold text-gray-900' : 'text-gray-800'}`}>
-                      {c.person.fullName}
-                    </span>
-                    {c.unread > 0 && (
-                      <span className="ml-2 text-[10px] bg-blue-600 text-white rounded-full px-1.5 py-0.5">{c.unread}</span>
-                    )}
+              <div className="flex-1 overflow-y-auto">
+                {requests.incoming.length > 0 && (
+                  <div className="p-3" style={{ borderBottom: `1px solid ${wa.border}`, background: mode === 'dark' ? '#182229' : '#fff8e6' }}>
+                    <div className="text-[11px] font-semibold mb-2" style={{ color: wa.sub }}>
+                      Connection requests ({requests.incoming.length})
+                    </div>
+                    <div className="space-y-2">
+                      {requests.incoming.map((r) => (
+                        <div key={r._id} className="flex items-center gap-2">
+                          <Avatar name={r.from.fullName} size={30} />
+                          <span className="text-xs truncate flex-1" style={{ color: wa.text }}>{r.from.fullName}</span>
+                          <span className="flex gap-1 shrink-0">
+                            <button onClick={() => respond(r._id, 'accept')}
+                              className="text-[11px] px-2.5 py-1 rounded-full text-white" style={{ background: '#008069' }}>Accept</button>
+                            <button onClick={() => respond(r._id, 'decline')}
+                              className="text-[11px] px-2.5 py-1 rounded-full" style={{ border: `1px solid ${wa.border}`, color: wa.sub }}>Decline</button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className={`text-[11px] truncate ${c.unread > 0 ? 'text-gray-700' : 'text-gray-500'}`}>
-                    {c.lastMessage ? `${c.lastMessage.mine ? 'You: ' : ''}${c.lastMessage.body}` : c.person.role}
+                )}
+
+                {connections.length === 0 ? (
+                  <div className="p-6 text-center text-xs" style={{ color: wa.sub }}>
+                    No chats yet. Tap <span className="font-semibold">＋</span> in the header to find people.
                   </div>
-                </button>
-              ))}
+                ) : connections.map((c) => (
+                  <button
+                    key={c.connectionId}
+                    onClick={() => openConversation(c.connectionId)}
+                    className="w-full text-left px-3 py-2.5 flex items-center gap-3 transition-colors"
+                    style={{
+                      borderBottom: `1px solid ${wa.border}`,
+                      background: activeId === c.connectionId ? wa.listHover : 'transparent',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = wa.listHover; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = activeId === c.connectionId ? wa.listHover : 'transparent'; }}
+                  >
+                    <Avatar name={c.person.fullName} size={42} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm truncate font-medium" style={{ color: wa.text }}>{c.person.fullName}</span>
+                        {c.lastMessage && (
+                          <span className="text-[10px] shrink-0" style={{ color: c.unread > 0 ? wa.badge : wa.sub }}>
+                            {fmtTime(c.lastMessage.createdAt)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] truncate" style={{ color: wa.sub }}>
+                          {c.lastMessage ? `${c.lastMessage.mine ? 'You: ' : ''}${c.lastMessage.body}` : c.person.role}
+                        </span>
+                        {c.unread > 0 && (
+                          <span className="text-[10px] rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center font-bold shrink-0"
+                            style={{ background: wa.badge, color: '#0b141a' }}>{c.unread}</span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Find people modal */}
       {showFind && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6">
+          <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
             <div className="flex items-start justify-between mb-4">
-              <h2 className="text-lg font-semibold">Find people</h2>
-              <button onClick={() => setShowFind(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Find people</h2>
+              <button onClick={() => setShowFind(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
             </div>
             <input
               value={dirSearch}
               onChange={(e) => setDirSearch(e.target.value)}
               placeholder="Search by name or email…"
-              className="w-full border rounded px-3 py-2 text-sm mb-3"
+              className="w-full rounded-full px-4 py-2 text-sm mb-3 outline-none"
+              style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }}
             />
-            <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+            <div className="max-h-80 overflow-y-auto">
               {filteredDir.map((p) => (
-                <div key={p._id} className="flex items-center justify-between py-2">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">{p.fullName}</div>
-                    <div className="text-xs text-gray-500">{p.role} — {p.email}</div>
+                <div key={p._id} className="flex items-center gap-3 py-2" style={{ borderBottom: `1px solid ${wa.border}` }}>
+                  <Avatar name={p.fullName} size={38} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate" style={{ color: wa.text }}>{p.fullName}</div>
+                    <div className="text-xs truncate" style={{ color: wa.sub }}>{p.role} — {p.email}</div>
                   </div>
                   {p.connectionStatus === 'none' && (
                     <button onClick={() => sendRequest(p._id)}
-                      className="text-xs px-3 py-1.5 bg-gray-900 text-white rounded hover:bg-gray-700">Connect</button>
+                      className="text-xs px-3 py-1.5 rounded-full text-white shrink-0" style={{ background: '#008069' }}>Connect</button>
                   )}
-                  {p.connectionStatus === 'pending-out' && <span className="text-xs text-gray-500">Requested</span>}
+                  {p.connectionStatus === 'pending-out' && <span className="text-xs shrink-0" style={{ color: wa.sub }}>Requested</span>}
                   {p.connectionStatus === 'pending-in' && (
                     <button onClick={() => respond(p.connectionId, 'accept')}
-                      className="text-xs px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-700">Accept</button>
+                      className="text-xs px-3 py-1.5 rounded-full text-white shrink-0" style={{ background: '#008069' }}>Accept</button>
                   )}
-                  {p.connectionStatus === 'accepted' && <span className="text-xs text-green-700">Connected</span>}
+                  {p.connectionStatus === 'accepted' && <span className="text-xs shrink-0" style={{ color: '#25d366' }}>✓ Chatting</span>}
                 </div>
               ))}
               {filteredDir.length === 0 && (
-                <div className="py-6 text-center text-sm text-gray-500">No people found</div>
+                <div className="py-6 text-center text-sm" style={{ color: wa.sub }}>No people found</div>
               )}
             </div>
           </div>
