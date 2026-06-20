@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Link, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import api from '../api/client';
 import ChatDock from './ChatDock';
+import PageSkeleton from './PageSkeleton';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', Employee: 'Employee' };
@@ -406,7 +407,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
         </header>
 
         <main className="flex-1 min-w-0 p-4 sm:p-6">
-          <Outlet />
+          <Suspense fallback={<PageSkeleton />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 
