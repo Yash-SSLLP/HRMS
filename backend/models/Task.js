@@ -17,6 +17,8 @@ const taskSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+taskSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
+
 module.exports = mongoose.model('Task', taskSchema);
 module.exports.TASK_STATUS = TASK_STATUS;
 module.exports.TASK_PRIORITY = TASK_PRIORITY;

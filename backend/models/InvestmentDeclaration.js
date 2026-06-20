@@ -42,6 +42,8 @@ const investmentDeclarationSchema = new mongoose.Schema(
 
 investmentDeclarationSchema.index({ employee: 1, financialYear: 1 }, { unique: true });
 
+investmentDeclarationSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('InvestmentDeclaration', investmentDeclarationSchema);
 module.exports.REGIMES = REGIMES;
 module.exports.DECLARATION_STATUSES = DECLARATION_STATUSES;

@@ -4,7 +4,7 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
-const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'Hired', 'Rejected'];
+const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
 const STAGE_STYLES = {
   Applied: 'bg-gray-100 text-gray-700',
   Shortlisted: 'bg-indigo-100 text-indigo-800',
@@ -12,9 +12,12 @@ const STAGE_STYLES = {
   Interview: 'bg-amber-100 text-amber-800',
   Offer: 'bg-purple-100 text-purple-800',
   Onboarding: 'bg-teal-100 text-teal-800',
+  NewJoinee: 'bg-cyan-100 text-cyan-800',
   Hired: 'bg-green-100 text-green-800',
   Rejected: 'bg-red-100 text-red-700',
 };
+// Stages at/after onboarding — the offer/onboard actions no longer apply.
+const POST_ONBOARD = ['Onboarding', 'NewJoinee', 'Hired'];
 
 const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '');
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
@@ -50,6 +53,14 @@ export default function AdminRecruitment() {
   const [offerForm, setOfferForm] = useState(null);
   const [offerEmail, setOfferEmail] = useState(true);
 
+  // Documents review modal
+  const [docsCand, setDocsCand] = useState(null);
+  const [docsBusy, setDocsBusy] = useState(false);
+  const [docLinkCopied, setDocLinkCopied] = useState(false);
+
+  // Active users available to be assigned as interviewers.
+  const [users, setUsers] = useState([]);
+
   const load = async () => {
     setLoading(true);
     setError('');
@@ -65,6 +76,11 @@ export default function AdminRecruitment() {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [selectedJob]);
+
+  // Load active users once for the interviewer picker.
+  useEffect(() => {
+    api.get('/admin/users?active=true').then(({ data }) => setUsers(data.users)).catch(() => {});
+  }, []);
 
   // ----- Jobs -----
   const openJobCreate = () => { setJobEditId(null); setJobForm(blankJob); setJobModal(true); };
@@ -166,6 +182,40 @@ export default function AdminRecruitment() {
   const downloadOffer = (c) =>
     downloadFile(`/recruitment/candidates/${c._id}/offer/pdf`, c.offer?.letterName || 'offer-letter.pdf')
       .catch((err) => alert(err.response?.data?.message || 'Download failed'));
+
+  // ----- Candidate documents -----
+  const docLink = (c) => `${window.location.origin}/submit-documents/${c.documents?.token || ''}`;
+  const openDocs = (c) => { setDocsCand(c); setDocLinkCopied(false); };
+  const generateDocLink = async (c) => {
+    setDocsBusy(true);
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/documents/request`);
+      setDocsCand(data.candidate); await load();
+    } catch (err) { alert(err.response?.data?.message || 'Could not generate link'); }
+    finally { setDocsBusy(false); }
+  };
+  const copyDocLink = async (c) => {
+    const link = docLink(c);
+    try { await navigator.clipboard.writeText(link); } catch { window.prompt('Copy this link:', link); }
+    setDocLinkCopied(true);
+    setTimeout(() => setDocLinkCopied(false), 1600);
+  };
+  const confirmDocs = async (c) => {
+    setDocsBusy(true);
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/documents/confirm`);
+      setDocsCand(data.candidate); await load();
+    } catch (err) { alert(err.response?.data?.message || 'Could not confirm submission'); }
+    finally { setDocsBusy(false); }
+  };
+  const viewDoc = async (c, fileId) => {
+    try {
+      const res = await api.get(`/recruitment/candidates/${c._id}/documents/${fileId}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) { alert(err.response?.data?.message || 'Could not open document'); }
+  };
   const viewResume = async (c) => {
     try {
       const res = await api.get(`/recruitment/candidates/${c._id}/resume`, { responseType: 'blob' });
@@ -279,11 +329,19 @@ export default function AdminRecruitment() {
                     </button>
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                    {/* All rounds cleared → offer / onboard path */}
-                    {allCleared(c) && c.stage !== 'Rejected' && c.stage !== 'Onboarding' && c.stage !== 'Hired' && !c.offer?.generatedAt && (
+                    {/* All rounds cleared → collect documents, then offer / onboard */}
+                    {allCleared(c) && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && (
+                      <button onClick={() => openDocs(c)} className="text-indigo-600 hover:underline">
+                        Documents{c.documents?.submittedAt && !c.documents?.confirmedAt ? ' 🔴' : c.documents?.confirmedAt ? ' ✓' : ''}
+                      </button>
+                    )}
+                    {allCleared(c) && c.documents?.confirmedAt && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && !c.offer?.generatedAt && (
                       <button onClick={() => openOffer(c)} className="text-purple-600 font-medium hover:underline">Create Offer Letter</button>
                     )}
-                    {c.offer?.generatedAt && c.stage !== 'Onboarding' && c.stage !== 'Hired' && (
+                    {c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
+                      <button onClick={() => openOffer(c)} className="text-purple-600 hover:underline">Edit Offer</button>
+                    )}
+                    {c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
                       <button onClick={() => onboard(c)} className="text-teal-600 font-medium hover:underline">Onboard →</button>
                     )}
                     {c.offer?.hasLetter && (
@@ -328,12 +386,42 @@ export default function AdminRecruitment() {
                             >
                               {ROUND_STATUS.map((s) => <option key={s}>{s}</option>)}
                             </select>
+                            <select
+                              value={r.interviewer || ''}
+                              onChange={(e) => setRound(c, idx, { interviewer: e.target.value })}
+                              className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2"
+                              title="Assign interviewer"
+                            >
+                              <option value="">— Assign interviewer —</option>
+                              {users.map((u) => (
+                                <option key={u._id} value={u._id}>{u.firstName} {u.lastName}{u.role !== 'Employee' ? ` (${u.role})` : ''}</option>
+                              ))}
+                            </select>
                             <input
                               defaultValue={r.feedback || ''}
                               onBlur={(e) => { if (e.target.value !== (r.feedback || '')) setRound(c, idx, { feedback: e.target.value }); }}
                               placeholder="Feedback…"
                               className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
                             />
+                            {/* Google Meet link for this round */}
+                            <div className="mt-2">
+                              <div className="flex gap-1">
+                                <input
+                                  defaultValue={r.meetingLink || ''}
+                                  onBlur={(e) => { if (e.target.value !== (r.meetingLink || '')) setRound(c, idx, { meetingLink: e.target.value }); }}
+                                  placeholder="Meeting link…"
+                                  className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
+                                />
+                                <a
+                                  href="https://meet.google.com/new" target="_blank" rel="noopener noreferrer"
+                                  title="Create a new Google Meet, then paste the link here"
+                                  className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
+                                >＋ Meet</a>
+                              </div>
+                              {r.meetingLink && (
+                                <a href={r.meetingLink} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 text-[11px] text-blue-600 hover:underline">↗ Join meeting</a>
+                              )}
+                            </div>
                             {/* Audit trail: who last changed the status */}
                             {r.decidedByName && (
                               <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${h.status} — ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
@@ -411,12 +499,82 @@ export default function AdminRecruitment() {
         </div>
       )}
 
+      {/* Documents review modal */}
+      {docsCand && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
+            <div className="flex items-start justify-between mb-1">
+              <h2 className="card-title">Candidate Documents</h2>
+              <button onClick={() => setDocsCand(null)} className="text-xl leading-none text-gray-400 hover:text-gray-700">×</button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">{docsCand.name}{docsCand.email ? ` · ${docsCand.email}` : ''}</p>
+
+            {/* Submission link */}
+            {docsCand.documents?.token ? (
+              <div className="mb-4">
+                <label className="block text-xs text-gray-600 mb-1">Document submission link (share with candidate)</label>
+                <div className="flex gap-2">
+                  <input readOnly value={docLink(docsCand)} className="flex-1 border rounded-lg px-3 py-2 text-xs bg-gray-50" onFocus={(e) => e.target.select()} />
+                  <button onClick={() => copyDocLink(docsCand)} className="text-xs px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">{docLinkCopied ? 'Copied!' : 'Copy'}</button>
+                </div>
+                <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="text-[11px] text-gray-500 hover:underline mt-1">Regenerate link</button>
+              </div>
+            ) : (
+              <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="mb-4 px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                {docsBusy ? 'Generating…' : 'Generate submission link'}
+              </button>
+            )}
+
+            {/* Status */}
+            <div className="mb-3 text-xs">
+              {docsCand.documents?.confirmedAt ? (
+                <span className="text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">✓ Confirmed by {docsCand.documents.confirmedByName} · {fmtDateTime(docsCand.documents.confirmedAt)}</span>
+              ) : docsCand.documents?.submittedAt ? (
+                <span className="text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded">Submitted {fmtDateTime(docsCand.documents.submittedAt)} — awaiting your confirmation</span>
+              ) : (
+                <span className="text-gray-500 bg-gray-50 border border-gray-200 px-2 py-1 rounded">Awaiting the candidate's submission</span>
+              )}
+            </div>
+
+            {/* Files */}
+            <div className="space-y-1.5 mb-4 max-h-60 overflow-y-auto">
+              {(docsCand.documents?.files || []).length === 0 ? (
+                <div className="text-sm text-gray-400">No documents uploaded yet.</div>
+              ) : docsCand.documents.files.map((f) => (
+                <div key={f._id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-lg px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-sm text-gray-800 truncate">{f.label}</div>
+                    <div className="text-[11px] text-gray-400 truncate">{f.name}{f.sizeBytes ? ` · ${Math.max(1, Math.round(f.sizeBytes / 1024))} KB` : ''}</div>
+                  </div>
+                  <button onClick={() => viewDoc(docsCand, f._id)} className="text-blue-600 hover:underline text-sm shrink-0">View</button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setDocsCand(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+              {docsCand.documents?.submittedAt && !docsCand.documents?.confirmedAt && (
+                <button onClick={() => confirmDocs(docsCand)} disabled={docsBusy} className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">
+                  {docsBusy ? 'Confirming…' : 'Confirm submission'}
+                </button>
+              )}
+            </div>
+            {docsCand.documents?.confirmedAt && (
+              <p className="text-[11px] text-gray-400 mt-2">Documents confirmed — you can now create the offer letter from the candidate's row.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Offer letter modal */}
       {offerCand && offerForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-            <h2 className="card-title mb-1">Create Offer Letter</h2>
-            <p className="text-sm text-gray-500 mb-4">For <span className="font-medium text-gray-700">{offerCand.name}</span>{offerCand.email ? ` · ${offerCand.email}` : ''}</p>
+            <h2 className="card-title mb-1">{offerCand.offer?.generatedAt ? 'Edit Offer Letter' : 'Create Offer Letter'}</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              For <span className="font-medium text-gray-700">{offerCand.name}</span>{offerCand.email ? ` · ${offerCand.email}` : ''}
+              {offerCand.offer?.generatedAt && <span className="block text-xs text-gray-400 mt-0.5">Regenerating replaces the current letter (last issued {fmtDateTime(offerCand.offer.generatedAt)}).</span>}
+            </p>
             <form onSubmit={saveOffer} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-600 mb-1">Candidate address</label>
@@ -475,7 +633,7 @@ export default function AdminRecruitment() {
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
               <div className="sm:col-span-2 flex justify-end gap-2 pt-1">
                 <button type="button" onClick={() => { setOfferCand(null); setOfferForm(null); setError(''); }} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Generating…' : 'Generate & Save'}</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Saving…' : (offerCand.offer?.generatedAt ? 'Update Offer Letter' : 'Generate & Save')}</button>
               </div>
             </form>
           </div>

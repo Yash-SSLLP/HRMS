@@ -4,11 +4,15 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { startWorker: startEmailWorker } = require('./services/emailWorker');
+const { requestContext } = require('./middleware/requestContext');
 
 const app = express();
 
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
 app.use(express.json());
+// Carry the request (and, once authenticated, req.user) through async calls so
+// the audit plugin can attribute status changes to the acting user.
+app.use(requestContext);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'indian-hrms-backend' });
@@ -57,6 +61,7 @@ app.use('/api/travel', require('./routes/travelRoutes'));
 app.use('/api/courses', require('./routes/courseRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
+app.use('/api/audit', require('./routes/auditRoutes'));
 
 app.use(notFound);
 app.use(errorHandler);

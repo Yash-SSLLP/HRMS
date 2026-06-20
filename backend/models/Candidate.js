@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'Hired', 'Rejected'];
+const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const NUM_ROUNDS = 4;
 
@@ -23,6 +23,11 @@ const roundSchema = new mongoose.Schema(
     feedback: { type: String, trim: true },
     scheduledAt: { type: Date },
     decidedAt: { type: Date },
+    // Employee (User) HR assigned to take this interview round.
+    interviewer: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    interviewerName: { type: String, trim: true },
+    // Video-call link for this round (e.g. Google Meet).
+    meetingLink: { type: String, trim: true },
     // Who last changed this round's status (+ full change history).
     decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     decidedByName: { type: String, trim: true },
@@ -35,6 +40,18 @@ const roundSchema = new mongoose.Schema(
 function defaultRounds() {
   return Array.from({ length: NUM_ROUNDS }, (_, i) => ({ label: `Round ${i + 1}`, status: 'Pending' }));
 }
+
+// One uploaded document in a candidate's pre-offer submission.
+const candidateDocSchema = new mongoose.Schema(
+  {
+    label: { type: String, trim: true },
+    name: { type: String },
+    storagePath: { type: String },
+    sizeBytes: { type: Number },
+    uploadedAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
 
 const candidateSchema = new mongoose.Schema(
   {
@@ -64,6 +81,20 @@ const candidateSchema = new mongoose.Schema(
     // Four interview rounds whose status HR can change.
     rounds: { type: [roundSchema], default: defaultRounds },
 
+    // Pre-offer document collection: a tokenised link the candidate uploads to,
+    // then HR confirms before an offer letter can be created.
+    documents: {
+      token: { type: String, index: true },
+      requestedAt: { type: Date },
+      requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      requestedByName: { type: String, trim: true },
+      submittedAt: { type: Date },
+      confirmedAt: { type: Date },
+      confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      confirmedByName: { type: String, trim: true },
+      files: { type: [candidateDocSchema], default: [] },
+    },
+
     // Generated offer letter + the boilerplate fields HR filled in.
     offer: {
       generatedAt: { type: Date },
@@ -71,6 +102,7 @@ const candidateSchema = new mongoose.Schema(
       generatedByName: { type: String, trim: true },
       letterPath: { type: String },
       letterName: { type: String },
+      token: { type: String, index: true },
       emailedAt: { type: Date },
       data: {
         position: String,
@@ -95,6 +127,7 @@ const candidateSchema = new mongoose.Schema(
       generatedByName: { type: String, trim: true },
       letterPath: { type: String },
       letterName: { type: String },
+      token: { type: String, index: true },
       emailedAt: { type: Date },
       data: {
         designation: String,
@@ -126,6 +159,16 @@ const candidateSchema = new mongoose.Schema(
       notes: { type: String, trim: true },
     },
 
+    // Set once a New Joinee is converted into an actual User + EmployeeProfile.
+    employee: {
+      user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      profile: { type: mongoose.Schema.Types.ObjectId, ref: 'EmployeeProfile' },
+      employeeCode: { type: String, trim: true },
+      convertedAt: { type: Date },
+      convertedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      convertedByName: { type: String, trim: true },
+    },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }
@@ -139,10 +182,16 @@ candidateSchema.set('toJSON', {
     // Expose only whether a letter exists, never the filesystem path.
     if (ret.offer) { ret.offer.hasLetter = !!ret.offer.letterPath; delete ret.offer.letterPath; }
     if (ret.appointment) { ret.appointment.hasLetter = !!ret.appointment.letterPath; delete ret.appointment.letterPath; }
+    // Never leak document filesystem paths; keep id/label/name/size for HR review.
+    if (ret.documents && Array.isArray(ret.documents.files)) {
+      ret.documents.files.forEach((f) => { delete f.storagePath; });
+    }
     delete ret.__v;
     return ret;
   },
 });
+
+candidateSchema.plugin(require('./plugins/auditStatus'), { fields: ['stage'], label: (d) => d.name });
 
 module.exports = mongoose.model('Candidate', candidateSchema);
 module.exports.CANDIDATE_STAGES = CANDIDATE_STAGES;

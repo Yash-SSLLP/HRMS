@@ -17,5 +17,7 @@ const goalSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+goalSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
+
 module.exports = mongoose.model('Goal', goalSchema);
 module.exports.GOAL_STATUS = GOAL_STATUS;

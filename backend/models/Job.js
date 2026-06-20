@@ -20,5 +20,7 @@ const jobSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+jobSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
+
 module.exports = mongoose.model('Job', jobSchema);
 module.exports.JOB_STATUS = JOB_STATUS;

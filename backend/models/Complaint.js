@@ -16,5 +16,7 @@ const complaintSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+complaintSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.subject });
+
 module.exports = mongoose.model('Complaint', complaintSchema);
 module.exports.COMPLAINT_STATUSES = COMPLAINT_STATUSES;

@@ -16,5 +16,7 @@ const projectSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+projectSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.name });
+
 module.exports = mongoose.model('Project', projectSchema);
 module.exports.PROJECT_STATUS = PROJECT_STATUS;

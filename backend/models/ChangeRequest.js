@@ -75,6 +75,8 @@ const changeRequestSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+changeRequestSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('ChangeRequest', changeRequestSchema);
 module.exports.CHANGE_REQUEST_STATUSES = CHANGE_REQUEST_STATUSES;
 module.exports.FIELD_CATALOG = FIELD_CATALOG;

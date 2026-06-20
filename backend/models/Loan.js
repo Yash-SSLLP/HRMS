@@ -20,6 +20,8 @@ const loanSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+loanSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('Loan', loanSchema);
 module.exports.LOAN_TYPES = LOAN_TYPES;
 module.exports.LOAN_STATUS = LOAN_STATUS;

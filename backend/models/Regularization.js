@@ -26,6 +26,8 @@ const regularizationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+regularizationSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('Regularization', regularizationSchema);
 module.exports.REGULARIZATION_TYPES = REGULARIZATION_TYPES;
 module.exports.REGULARIZATION_STATUS = REGULARIZATION_STATUS;

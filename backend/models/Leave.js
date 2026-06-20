@@ -81,6 +81,7 @@ const leaveBalanceSchema = new mongoose.Schema(
 
 leaveBalanceSchema.index({ employee: 1, year: 1 }, { unique: true });
 
+leaveRequestSchema.plugin(require("./plugins/auditStatus"));
 const LeaveRequest = mongoose.model('LeaveRequest', leaveRequestSchema);
 const LeaveBalance = mongoose.model('LeaveBalance', leaveBalanceSchema);
 

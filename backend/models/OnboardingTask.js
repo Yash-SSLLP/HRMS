@@ -17,6 +17,8 @@ const onboardingTaskSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+onboardingTaskSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
+
 module.exports = mongoose.model('OnboardingTask', onboardingTaskSchema);
 module.exports.ONBOARDING_CATEGORIES = ONBOARDING_CATEGORIES;
 module.exports.ONBOARDING_STATUS = ONBOARDING_STATUS;

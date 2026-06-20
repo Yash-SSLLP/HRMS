@@ -5,6 +5,8 @@ import { useThemeStore } from './store/themeStore';
 import Login from './pages/Login.jsx';
 import ExitFeedback from './pages/ExitFeedback.jsx';
 import ApplyForm from './pages/ApplyForm.jsx';
+import DocumentSubmitForm from './pages/DocumentSubmitForm.jsx';
+import LetterDownload from './pages/LetterDownload.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Layout from './components/Layout.jsx';
 import { useAuthStore } from './store/authStore';
@@ -48,6 +50,8 @@ const AdminExpenses = lazy(() => import('./pages/AdminExpenses.jsx'));
 const EmployeeExpenses = lazy(() => import('./pages/EmployeeExpenses.jsx'));
 const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding.jsx'));
 const AdminHiringOnboarding = lazy(() => import('./pages/AdminHiringOnboarding.jsx'));
+const AdminNewJoinees = lazy(() => import('./pages/AdminNewJoinees.jsx'));
+const AdminAuditLog = lazy(() => import('./pages/AdminAuditLog.jsx'));
 const EmployeeOnboarding = lazy(() => import('./pages/EmployeeOnboarding.jsx'));
 const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
 const EmployeeAnnouncements = lazy(() => import('./pages/EmployeeAnnouncements.jsx'));
@@ -105,6 +109,7 @@ const adminNav = [
   { to: '/admin/tasks', label: 'Tasks', icon: '✅' },
   { to: '/admin/recruitment', label: 'Recruitment', icon: '🧲' },
   { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: '🚀' },
+  { to: '/admin/new-joinees', label: 'New Joinees', icon: '🧑‍💼' },
   { to: '/admin/assets', label: 'Assets', icon: '💻' },
   { to: '/admin/performance', label: 'Performance', icon: '📈' },
   { to: '/admin/review-cycles', label: 'Appraisals', icon: '📝' },
@@ -116,6 +121,7 @@ const adminNav = [
   { to: '/admin/surveys', label: 'Surveys', icon: '🗳️' },
   { to: '/admin/complaints', label: 'Complaints', icon: '⚠️' },
   { to: '/admin/change-requests', label: 'Change Requests', icon: '✏️' },
+  { to: '/admin/audit-log', label: 'Audit Log', icon: '🧾' },
   { to: '/admin/account', label: 'My Account', icon: '🔐' },
   { to: '/admin/knowledge-base', label: 'Knowledge Base', icon: '📚' },
   { to: '/admin/holidays', label: 'Holidays', icon: '🎉' },
@@ -184,6 +190,12 @@ export default function App() {
       {/* Public — job application form (shareable link) */}
       <Route path="/apply/:jobId" element={<ApplyForm />} />
 
+      {/* Public — candidate document submission (tokenised link) */}
+      <Route path="/submit-documents/:token" element={<DocumentSubmitForm />} />
+
+      {/* Public — candidate offer/appointment letter download (tokenised link) */}
+      <Route path="/letter/:token" element={<LetterDownload />} />
+
       <Route
         path="/admin"
         element={
@@ -219,6 +231,7 @@ export default function App() {
         <Route path="tasks" element={<AdminTasks />} />
         <Route path="recruitment" element={<AdminRecruitment />} />
         <Route path="hiring-onboarding" element={<AdminHiringOnboarding />} />
+        <Route path="new-joinees" element={<AdminNewJoinees />} />
         <Route path="assets" element={<AdminAssets />} />
         <Route path="performance" element={<AdminPerformance />} />
         <Route path="review-cycles" element={<AdminReviewCycles />} />
@@ -230,6 +243,7 @@ export default function App() {
         <Route path="surveys" element={<AdminSurveys />} />
         <Route path="complaints" element={<AdminComplaints />} />
         <Route path="change-requests" element={<AdminChangeRequests />} />
+        <Route path="audit-log" element={<AdminAuditLog />} />
         <Route path="account" element={<EmployeeAccount />} />
         <Route path="knowledge-base" element={<AdminKnowledgeBase />} />
         <Route path="holidays" element={<AdminHolidays />} />

@@ -16,5 +16,7 @@ const trainingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+trainingSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
+
 module.exports = mongoose.model('Training', trainingSchema);
 module.exports.TRAINING_STATUS = TRAINING_STATUS;

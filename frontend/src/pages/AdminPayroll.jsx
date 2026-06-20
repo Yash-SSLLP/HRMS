@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
+import { composeMail } from '../api/compose';
 import PageHeader from '../components/PageHeader';
 
 const MONTHS = [
@@ -124,6 +125,25 @@ export default function AdminPayroll() {
     }
   };
 
+  // Open a prefilled Gmail compose tab to email a payslip; the PDF downloads to attach.
+  const emailPayslip = (p) => {
+    const email = p.employee?.user?.email;
+    if (!email) { alert('No email on file for this employee.'); return; }
+    const period = `${MONTHS[p.payPeriodMonth - 1]} ${p.payPeriodYear}`;
+    const name = `${p.employee?.user?.firstName || ''} ${p.employee?.user?.lastName || ''}`.trim();
+    const filename = `payslip-${p.employee?.employeeCode || 'employee'}-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`;
+    composeMail({
+      to: email,
+      subject: `Payslip — ${period}`,
+      body:
+        `Dear ${name || 'Employee'},\n\n` +
+        `Please find attached your payslip for ${period}.\n\n` +
+        `(The payslip PDF has been downloaded to your device — please attach it before sending.)\n\n` +
+        `Regards,\nHR`,
+      attachments: [{ url: `/payroll/${p._id}/pdf`, filename }],
+    });
+  };
+
   const updateNum = (group, key, v) => {
     setForm((f) => ({ ...f, [group]: { ...f[group], [key]: Number(v) || 0 } }));
   };
@@ -209,12 +229,15 @@ export default function AdminPayroll() {
                     <button onClick={() => doAction(p._id, 'pay')} className="text-green-700 hover:underline">Mark Paid</button>
                   )}
                   {(p.status === 'Approved' || p.status === 'Paid') && (
-                    <button
-                      onClick={() => downloadFile(
-                        `/payroll/${p._id}/pdf`,
-                        `payslip-${p.employee?.employeeCode || 'employee'}-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`
-                      )}
-                      className="text-blue-600 hover:underline">PDF</button>
+                    <>
+                      <button
+                        onClick={() => downloadFile(
+                          `/payroll/${p._id}/pdf`,
+                          `payslip-${p.employee?.employeeCode || 'employee'}-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`
+                        )}
+                        className="text-blue-600 hover:underline">PDF</button>
+                      <button onClick={() => emailPayslip(p)} className="text-indigo-600 hover:underline">Email</button>
+                    </>
                   )}
                 </td>
               </tr>

@@ -99,9 +99,9 @@ const updateConfirmation = asyncHandler(async (req, res) => {
   res.json({ profile });
 });
 
-// GET /api/lifecycle/next-code
-// Suggest the next employee code based on existing codes.
-const nextEmployeeCode = asyncHandler(async (req, res) => {
+// Suggest the next employee code from existing codes (most-common prefix wins,
+// fallback 'EMP'). Reusable from other modules (e.g. candidate → employee).
+async function computeNextEmployeeCode() {
   const profiles = await EmployeeProfile.find({}, 'employeeCode').lean();
 
   const CODE_RE = /^([A-Za-z]+)(\d+)$/;
@@ -135,13 +135,17 @@ const nextEmployeeCode = asyncHandler(async (req, res) => {
   const max = prefixMax[prefix] != null ? prefixMax[prefix] : 0;
   const next = max + 1;
   const width = Math.max(3, maxNumWidth);
-  const suggestion = prefix + String(next).padStart(width, '0');
+  return { suggestion: prefix + String(next).padStart(width, '0'), prefix, next };
+}
 
-  res.json({ suggestion, prefix, next });
+// GET /api/lifecycle/next-code
+const nextEmployeeCode = asyncHandler(async (req, res) => {
+  res.json(await computeNextEmployeeCode());
 });
 
 module.exports = {
   listConfirmations,
   updateConfirmation,
   nextEmployeeCode,
+  computeNextEmployeeCode,
 };

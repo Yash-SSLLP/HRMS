@@ -44,6 +44,7 @@ const reviewSchema = new mongoose.Schema(
 );
 
 const ReviewCycle = mongoose.model('ReviewCycle', reviewCycleSchema);
+reviewSchema.plugin(require("./plugins/auditStatus"));
 const Review = mongoose.model('Review', reviewSchema);
 
 module.exports = ReviewCycle;

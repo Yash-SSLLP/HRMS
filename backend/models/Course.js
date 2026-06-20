@@ -39,6 +39,9 @@ const enrollmentSchema = new mongoose.Schema(
 
 enrollmentSchema.index({ course: 1, employee: 1 }, { unique: true });
 
+courseSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
+enrollmentSchema.plugin(require("./plugins/auditStatus"), { entity: 'Enrollment' });
+
 const Course = mongoose.model('Course', courseSchema);
 const Enrollment = mongoose.model('Enrollment', enrollmentSchema);
 

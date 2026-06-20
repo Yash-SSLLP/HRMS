@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
+import { composeMail } from '../api/compose';
+import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
@@ -22,7 +24,9 @@ export default function AdminHiringOnboarding() {
   const [drafts, setDrafts] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [savingId, setSavingId] = useState(null);
+  const [sendingOffer, setSendingOffer] = useState(null);
 
   // Appointment-letter modal
   const [apptCand, setApptCand] = useState(null);
@@ -68,6 +72,29 @@ export default function AdminHiringOnboarding() {
     downloadFile(`/recruitment/candidates/${c._id}/appointment/pdf`, c.appointment?.letterName || 'appointment-letter.pdf')
       .catch((err) => alert(err.response?.data?.message || 'Download failed'));
 
+  // Email the offer letter: open a prefilled compose tab with its download link.
+  const sendOffer = async (c) => {
+    if (!c.email) { setError('This candidate has no email address on file.'); return; }
+    if (!c.offer?.token) { setError('Please regenerate the offer letter to get a shareable download link.'); return; }
+    setSendingOffer(c._id); setError(''); setInfo('');
+    const link = `${window.location.origin}/letter/${c.offer.token}`;
+    try {
+      await composeMail({
+        to: c.email,
+        subject: `Offer Letter — ${COMPANY_NAME}`,
+        body:
+          `Dear ${c.name},\n\n` +
+          `Please find your Offer Letter from ${COMPANY_NAME}. You can download it from the link below:\n\n` +
+          `${link}\n\n` +
+          `Warm regards,`,
+      });
+      await api.post(`/recruitment/candidates/${c._id}/offer/mark-sent`);
+      setInfo(`Compose window opened for ${c.email} with the offer letter download link.`);
+      await load();
+    } catch (err) { setError(err.response?.data?.message || 'Could not open compose window'); }
+    finally { setSendingOffer(null); }
+  };
+
   // ----- Appointment letter -----
   const openAppt = (c) => {
     setApptCand(c);
@@ -108,6 +135,7 @@ export default function AdminHiringOnboarding() {
     <div>
       <PageHeader title="Onboarding" subtitle="Candidates who cleared interviews & received an offer — set joining details and release the appointment letter" />
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      {info && <div className="mb-4 text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">{info}</div>}
 
       {loading ? (
         <div className="text-gray-500">Loading…</div>
@@ -127,9 +155,20 @@ export default function AdminHiringOnboarding() {
                     Onboarding since {fmtDate(c.onboarding?.startedAt)}{c.onboarding?.startedByName ? ` · by ${c.onboarding.startedByName}` : ''}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {c.offer?.emailedAt && <span className="text-[10px] text-gray-400">offer already sent {fmtDate(c.offer.emailedAt)}</span>}
                   {c.offer?.hasLetter && (
                     <button onClick={() => downloadOffer(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Offer PDF</button>
+                  )}
+                  {c.offer?.hasLetter && (
+                    <button
+                      onClick={() => sendOffer(c)}
+                      disabled={!c.email || sendingOffer === c._id}
+                      title={!c.email ? 'No email on file for this candidate' : 'Email the offer letter to the candidate'}
+                      className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {sendingOffer === c._id ? 'Sending…' : c.offer?.emailedAt ? 'Resend Offer Letter' : 'Send Offer Letter'}
+                    </button>
                   )}
                   {c.appointment?.hasLetter && (
                     <button onClick={() => downloadAppointment(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Appointment PDF</button>

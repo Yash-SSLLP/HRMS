@@ -1,12 +1,19 @@
 const asyncHandler = require('express-async-handler');
 const path = require('path');
+const crypto = require('crypto');
 const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const { CANDIDATE_STAGES, ROUND_STATUS, defaultRounds } = require('../models/Candidate');
+const User = require('../models/User');
+const EmployeeProfile = require('../models/EmployeeProfile');
+const AuditLog = require('../models/AuditLog');
 const storage = require('../services/storage');
 const COMPANY = require('../config/company');
 const { renderOfferLetter, renderAppointmentLetter } = require('../services/letterPdf');
 const { enqueueMail } = require('../services/email');
+const { computeNextEmployeeCode } = require('./lifecycleController');
+
+const DEFAULT_NEW_USER_PASSWORD = process.env.DEFAULT_NEW_USER_PASSWORD || 'Welcome@123';
 
 // ===== Jobs =====
 const listJobs = asyncHandler(async (req, res) => {
@@ -101,6 +108,15 @@ const submitApplication = asyncHandler(async (req, res) => {
     throw new Error('Please attach your resume.');
   }
 
+  // One application per email per job — block re-applying with the same address.
+  // Checked before writing the resume so a rejected duplicate leaves no orphan file.
+  const normEmail = email.trim().toLowerCase();
+  const already = await Candidate.findOne({ job: job._id, email: normEmail });
+  if (already) {
+    res.status(409);
+    throw new Error('You have already applied for this position with this email address.');
+  }
+
   const { storagePath, sizeBytes } = storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'resume',
@@ -110,7 +126,7 @@ const submitApplication = asyncHandler(async (req, res) => {
 
   const candidate = await Candidate.create({
     name: name.trim(),
-    email: email.trim(),
+    email: normEmail,
     phone: phone?.trim(),
     job: job._id,
     stage: 'Applied',
@@ -197,6 +213,7 @@ const setRound = asyncHandler(async (req, res) => {
     throw new Error('Invalid round index');
   }
   const round = candidate.rounds[idx];
+  const prevStatus = round.status;
   const statusChanged = req.body.status !== undefined && req.body.status !== round.status;
   if (req.body.status !== undefined) {
     if (!ROUND_STATUS.includes(req.body.status)) {
@@ -208,6 +225,23 @@ const setRound = asyncHandler(async (req, res) => {
   }
   if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
   if (req.body.scheduledAt !== undefined) round.scheduledAt = req.body.scheduledAt || undefined;
+  if (req.body.meetingLink !== undefined) round.meetingLink = req.body.meetingLink || undefined;
+
+  // Assign / clear the employee taking this interview round.
+  if (req.body.interviewer !== undefined) {
+    if (!req.body.interviewer) {
+      round.interviewer = undefined;
+      round.interviewerName = undefined;
+    } else {
+      const interviewer = await User.findById(req.body.interviewer).select('firstName lastName');
+      if (!interviewer) {
+        res.status(400);
+        throw new Error('Selected interviewer not found');
+      }
+      round.interviewer = interviewer._id;
+      round.interviewerName = interviewer.fullName;
+    }
+  }
 
   // Audit trail: record WHO changed the status, when, and the feedback at that time.
   if (statusChanged) {
@@ -220,6 +254,31 @@ const setRound = asyncHandler(async (req, res) => {
       at: new Date(),
       feedback: req.body.feedback !== undefined ? req.body.feedback : round.feedback,
     });
+    // Also record interview-round status changes in the central audit log.
+    AuditLog.create({
+      entity: 'Candidate.round',
+      entityId: candidate._id,
+      entityLabel: candidate.name,
+      field: `Round ${idx + 1}${round.label ? ` (${round.label})` : ''}`,
+      fromStatus: prevStatus,
+      toStatus: round.status,
+      by: req.user._id,
+      byName: req.user.fullName,
+      byRole: req.user.role,
+      at: new Date(),
+    }).catch(() => {});
+  }
+
+  // Once every round is Cleared, auto-create the candidate's document-submission
+  // link so HR can share it immediately.
+  if (candidate.rounds.length && candidate.rounds.every((r) => r.status === 'Cleared') && !candidate.documents?.token) {
+    candidate.documents = {
+      ...(candidate.documents?.toObject?.() || candidate.documents || {}),
+      token: crypto.randomBytes(24).toString('hex'),
+      requestedAt: new Date(),
+      requestedBy: req.user._id,
+      requestedByName: req.user.fullName,
+    };
   }
 
   await candidate.save();
@@ -269,6 +328,8 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
       subject: `${label} — ${COMPANY.name}`,
       text,
       html,
+      // Send from the acting HR's mailbox so the candidate replies to them.
+      from: hr?.email ? `${hr.fullName} <${hr.email}>` : undefined,
       replyTo: hr?.email,
       attachments: [{ filename: letterName, storagePath: letterPath, contentType: 'application/pdf' }],
     },
@@ -290,6 +351,12 @@ const generateOffer = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Candidate not found');
   }
+  // Documents must be submitted and HR-confirmed before the first offer letter.
+  // (Re-generating/editing an existing offer is allowed without re-confirming.)
+  if (!candidate.offer?.generatedAt && !candidate.documents?.confirmedAt) {
+    res.status(400);
+    throw new Error('Confirm the candidate’s submitted documents before creating the offer letter.');
+  }
   const b = req.body || {};
   const data = {
     position: b.position || '',
@@ -309,6 +376,8 @@ const generateOffer = asyncHandler(async (req, res) => {
   const buffer = await renderOfferLetter({ ...data, candidateName: candidate.name });
   const letterName = `Offer-Letter-${safeName(candidate.name)}.pdf`;
   if (candidate.offer?.letterPath) storage.remove(candidate.offer.letterPath);
+  // Keep the same shareable token across re-generations so old links still work.
+  const offerToken = candidate.offer?.token || crypto.randomBytes(16).toString('hex');
   const { storagePath } = storage.saveBuffer({
     buffer, ownerType: 'offer', ownerId: candidate._id, originalName: letterName,
   });
@@ -319,6 +388,8 @@ const generateOffer = asyncHandler(async (req, res) => {
     generatedByName: req.user.fullName,
     letterPath: storagePath,
     letterName,
+    token: offerToken,
+    emailedAt: b.email && candidate.email ? new Date() : undefined,
     data,
   };
   if (candidate.stage !== 'Onboarding' && candidate.stage !== 'Hired') candidate.stage = 'Offer';
@@ -410,6 +481,7 @@ const generateAppointment = asyncHandler(async (req, res) => {
   });
   const letterName = `Appointment-Letter-${safeName(candidate.name)}.pdf`;
   if (candidate.appointment?.letterPath) storage.remove(candidate.appointment.letterPath);
+  const apptToken = candidate.appointment?.token || crypto.randomBytes(16).toString('hex');
   const { storagePath } = storage.saveBuffer({
     buffer, ownerType: 'appointment', ownerId: candidate._id, originalName: letterName,
   });
@@ -420,9 +492,13 @@ const generateAppointment = asyncHandler(async (req, res) => {
     generatedByName: req.user.fullName,
     letterPath: storagePath,
     letterName,
+    token: apptToken,
+    emailedAt: b.email && candidate.email ? new Date() : undefined,
     data,
   };
-  candidate.stage = 'Hired';
+  // Releasing the appointment letter completes onboarding → the candidate
+  // becomes a New Joinee (until converted into a User + EmployeeProfile).
+  if (candidate.stage !== 'Hired') candidate.stage = 'NewJoinee';
   await candidate.save();
 
   if (b.email) await emailLetter(candidate, 'appointment', storagePath, letterName, req.user);
@@ -440,11 +516,289 @@ const downloadAppointment = asyncHandler(async (req, res) => {
   streamLetter(res, candidate.appointment.letterPath, candidate.appointment.letterName || 'appointment-letter.pdf');
 });
 
+// GET /api/recruitment/letters/:token — public; candidate downloads their letter.
+const downloadLetterByToken = asyncHandler(async (req, res) => {
+  const { token } = req.params;
+  const candidate = await Candidate.findOne({
+    $or: [{ 'offer.token': token }, { 'appointment.token': token }],
+  });
+  const letter = candidate && (candidate.offer?.token === token ? candidate.offer : candidate.appointment);
+  if (!letter?.letterPath) {
+    res.status(404);
+    throw new Error('This letter link is invalid or has expired.');
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${letter.letterName || 'letter.pdf'}"`);
+  storage.readStream(letter.letterPath).pipe(res);
+});
+
+// Record that HR has sent a stored letter. Actual delivery happens from the HR's
+// own mailbox via the browser compose tab (see frontend api/compose.js), so this
+// just stamps emailedAt to drive the "already sent" remark.
+async function markLetterSent(req, res, kind) {
+  const candidate = await Candidate.findById(req.params.id);
+  const letter = candidate?.[kind];
+  if (!candidate || !letter?.letterPath) {
+    res.status(404);
+    throw new Error(`No ${kind === 'offer' ? 'offer' : 'appointment'} letter on file for this candidate`);
+  }
+  letter.emailedAt = new Date();
+  await candidate.save();
+  res.json({ candidate });
+}
+
+// POST /api/recruitment/candidates/:id/offer/mark-sent
+const markOfferSent = asyncHandler((req, res) => markLetterSent(req, res, 'offer'));
+// POST /api/recruitment/candidates/:id/appointment/mark-sent
+const markAppointmentSent = asyncHandler((req, res) => markLetterSent(req, res, 'appointment'));
+
+// Split a candidate's full name into first / last for the User record.
+function splitName(full = '') {
+  const parts = String(full).trim().split(/\s+/);
+  const firstName = parts.shift() || 'New';
+  const lastName = parts.join(' ') || 'Joinee';
+  return { firstName, lastName };
+}
+
+// POST /api/recruitment/candidates/:id/convert-to-employee
+// Turn a New Joinee into an actual login (User) + EmployeeProfile.
+const convertToEmployee = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id).populate('job', 'title department employmentType');
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  if (candidate.employee?.user) {
+    res.status(409);
+    throw new Error('This candidate has already been converted to an employee.');
+  }
+  const email = (req.body.email || candidate.email || '').trim().toLowerCase();
+  if (!email) {
+    res.status(400);
+    throw new Error('An email address is required to create the login account.');
+  }
+  if (await User.findOne({ email })) {
+    res.status(409);
+    throw new Error('A user with this email already exists.');
+  }
+
+  const dateOfJoining = req.body.dateOfJoining
+    || candidate.onboarding?.joiningDate
+    || candidate.appointment?.data?.joiningDate
+    || candidate.offer?.data?.joiningDate;
+  if (!dateOfJoining) {
+    res.status(400);
+    throw new Error('A date of joining is required (set it on the Onboarding page or in this form).');
+  }
+
+  const employeeCode = (req.body.employeeCode || (await computeNextEmployeeCode()).suggestion).toUpperCase();
+  if (await EmployeeProfile.findOne({ employeeCode })) {
+    res.status(409);
+    throw new Error(`Employee code "${employeeCode}" is already in use. Please choose another.`);
+  }
+
+  const { firstName: fnGuess, lastName: lnGuess } = splitName(candidate.name);
+  const password = req.body.password || DEFAULT_NEW_USER_PASSWORD;
+
+  // Create the login. The User pre-save hook hashes the password (bcrypt).
+  const user = await User.create({
+    email,
+    password,
+    firstName: req.body.firstName?.trim() || fnGuess,
+    lastName: req.body.lastName?.trim() || lnGuess,
+    phone: candidate.phone || undefined,
+    role: 'Employee',
+  });
+
+  // HRManagers own the employees they onboard (mirrors createEmployee).
+  const hrPartner = req.user.role === 'HRManager' ? req.user._id : (req.body.hrPartner || undefined);
+
+  let profile;
+  try {
+    profile = await EmployeeProfile.create({
+      user: user._id,
+      employeeCode,
+      dateOfJoining,
+      designation: req.body.designation
+        || candidate.appointment?.data?.designation
+        || candidate.offer?.data?.position
+        || candidate.job?.title,
+      department: req.body.department
+        || candidate.appointment?.data?.department
+        || candidate.offer?.data?.department
+        || candidate.job?.department,
+      employmentType: req.body.employmentType || candidate.job?.employmentType || 'FullTime',
+      workLocation: req.body.workLocation || candidate.appointment?.data?.location,
+      probationMonths: req.body.probationMonths != null
+        ? Number(req.body.probationMonths)
+        : (candidate.appointment?.data?.probationMonths ?? candidate.offer?.data?.probationMonths ?? 3),
+      hrPartner,
+    });
+  } catch (err) {
+    // Roll back the orphan user if the profile fails to validate/save.
+    await User.deleteOne({ _id: user._id });
+    throw err;
+  }
+
+  candidate.employee = {
+    user: user._id,
+    profile: profile._id,
+    employeeCode,
+    convertedAt: new Date(),
+    convertedBy: req.user._id,
+    convertedByName: req.user.fullName,
+  };
+  candidate.stage = 'Hired';
+  await candidate.save();
+
+  res.status(201).json({
+    candidate,
+    employeeCode,
+    user: { _id: user._id, email: user.email, firstName: user.firstName, lastName: user.lastName },
+    // Surface the initial password once so HR can share it; advise a reset on first login.
+    initialPassword: req.body.password ? undefined : DEFAULT_NEW_USER_PASSWORD,
+  });
+});
+
+// ===== Pre-offer document collection =====
+
+// Standard document types suggested to the candidate on the submission page.
+const DOC_TYPES = [
+  'Photo', 'PAN Card', 'Aadhaar / ID Proof', 'Educational Certificates',
+  'Experience / Relieving Letter', 'Latest Payslip', 'Bank Details', 'Other',
+];
+
+// POST /api/recruitment/candidates/:id/documents/request — (re)generate the link.
+const requestDocuments = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const prev = candidate.documents?.toObject?.() || candidate.documents || {};
+  candidate.documents = {
+    ...prev,
+    token: crypto.randomBytes(24).toString('hex'),
+    requestedAt: new Date(),
+    requestedBy: req.user._id,
+    requestedByName: req.user.fullName,
+  };
+  await candidate.save();
+  res.json({ candidate, token: candidate.documents.token });
+});
+
+// GET /api/recruitment/documents/:token — public; what the candidate sees.
+const getDocumentRequest = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findOne({ 'documents.token': req.params.token }).populate('job', 'title');
+  if (!candidate || !candidate.documents?.token) {
+    res.status(404);
+    throw new Error('This document submission link is invalid or has expired.');
+  }
+  res.json({
+    candidate: {
+      name: candidate.name,
+      jobTitle: candidate.job?.title || '',
+      submittedAt: candidate.documents.submittedAt,
+      confirmedAt: candidate.documents.confirmedAt,
+      files: (candidate.documents.files || []).map((f) => ({ label: f.label, name: f.name })),
+    },
+    docTypes: DOC_TYPES,
+  });
+});
+
+// POST /api/recruitment/documents/:token — public; candidate uploads documents.
+const submitDocuments = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findOne({ 'documents.token': req.params.token });
+  if (!candidate || !candidate.documents?.token) {
+    res.status(404);
+    throw new Error('This document submission link is invalid or has expired.');
+  }
+  if (candidate.documents.confirmedAt) {
+    res.status(400);
+    throw new Error('Your documents have already been received and confirmed.');
+  }
+  const files = req.files || [];
+  if (!files.length) {
+    res.status(400);
+    throw new Error('Please attach at least one document.');
+  }
+  const labels = Array.isArray(req.body.labels)
+    ? req.body.labels
+    : (req.body.labels != null ? [req.body.labels] : []);
+
+  const saved = files.map((file, i) => {
+    const { storagePath, sizeBytes } = storage.saveBuffer({
+      buffer: file.buffer,
+      ownerType: 'candidate-docs',
+      ownerId: candidate._id,
+      originalName: file.originalname || 'document',
+    });
+    return {
+      label: String(labels[i] || 'Document').slice(0, 80),
+      name: file.originalname || 'document',
+      storagePath,
+      sizeBytes,
+      uploadedAt: new Date(),
+    };
+  });
+
+  candidate.documents.files.push(...saved);
+  candidate.documents.submittedAt = new Date();
+  // A fresh submission must be re-confirmed by HR.
+  candidate.documents.confirmedAt = undefined;
+  candidate.documents.confirmedBy = undefined;
+  candidate.documents.confirmedByName = undefined;
+  await candidate.save();
+  res.status(201).json({ ok: true, count: saved.length });
+});
+
+// GET /api/recruitment/candidates/:id/documents/:fileId — HR streams one document.
+const downloadCandidateDocument = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  const file = candidate?.documents?.files?.id(req.params.fileId);
+  if (!file || !file.storagePath) {
+    res.status(404);
+    throw new Error('Document not found');
+  }
+  const ext = path.extname(file.storagePath).toLowerCase();
+  const type =
+    ext === '.pdf' ? 'application/pdf'
+      : ext === '.png' ? 'image/png'
+        : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg'
+          : ext === '.doc' ? 'application/msword'
+            : ext === '.docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              : 'application/octet-stream';
+  res.setHeader('Content-Type', type);
+  res.setHeader('Content-Disposition', `inline; filename="${file.name || 'document' + ext}"`);
+  storage.readStream(file.storagePath).pipe(res);
+});
+
+// POST /api/recruitment/candidates/:id/documents/confirm — HR confirms the submission.
+const confirmDocuments = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  if (!candidate.documents?.submittedAt) {
+    res.status(400);
+    throw new Error('The candidate has not submitted any documents yet.');
+  }
+  candidate.documents.confirmedAt = new Date();
+  candidate.documents.confirmedBy = req.user._id;
+  candidate.documents.confirmedByName = req.user.fullName;
+  await candidate.save();
+  res.json({ candidate });
+});
+
 module.exports = {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   setRound, downloadResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
-  generateAppointment, downloadAppointment,
+  generateAppointment, downloadAppointment, convertToEmployee,
+  markOfferSent, markAppointmentSent, downloadLetterByToken,
+  requestDocuments, getDocumentRequest, submitDocuments,
+  downloadCandidateDocument, confirmDocuments,
 };

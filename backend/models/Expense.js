@@ -20,6 +20,8 @@ const expenseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+expenseSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('Expense', expenseSchema);
 module.exports.EXPENSE_CATEGORIES = EXPENSE_CATEGORIES;
 module.exports.EXPENSE_STATUS = EXPENSE_STATUS;

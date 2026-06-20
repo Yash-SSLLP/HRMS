@@ -17,5 +17,7 @@ const compOffSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+compOffSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('CompOff', compOffSchema);
 module.exports.COMPOFF_STATUS = COMPOFF_STATUS;

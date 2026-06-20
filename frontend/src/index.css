@@ -66,6 +66,36 @@ a, button, input, select, textarea,
 .accent-text { color: var(--accent) !important; }
 
 /* ---------------------------------------------------------------------------
+   Link-style actions → buttons (portal-wide). Many table/row actions are
+   rendered as <button>/<a> styled like text links ("Edit", "View", "Reject",
+   "Join meeting" with `hover:underline`). Give them a consistent, compact
+   outlined-button look in their own colour, without editing every page.
+--------------------------------------------------------------------------- */
+button[class~="hover:underline"],
+a[class~="hover:underline"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  border-radius: 0.5rem;
+  background-color: color-mix(in srgb, currentColor 7%, transparent);
+  text-decoration: none !important;
+  font-weight: 500;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+button[class~="hover:underline"]:hover,
+a[class~="hover:underline"]:hover {
+  background-color: color-mix(in srgb, currentColor 16%, transparent);
+}
+button[class~="hover:underline"]:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
    SmartHR-style component polish
    Applied broadly via the shared utility vocabulary so every page inherits the
    crisper card / table / control look without per-page edits.

@@ -83,6 +83,8 @@ exitRequestSchema.index(
   { unique: true, partialFilterExpression: { status: { $in: ['Pending', 'InClearance'] } } }
 );
 
+exitRequestSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('ExitRequest', exitRequestSchema);
 module.exports.EXIT_TYPES = EXIT_TYPES;
 module.exports.EXIT_STATUSES = EXIT_STATUSES;

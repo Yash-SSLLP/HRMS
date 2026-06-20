@@ -23,6 +23,8 @@ const travelRequestSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+travelRequestSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('TravelRequest', travelRequestSchema);
 module.exports.TRAVEL_MODES = TRAVEL_MODES;
 module.exports.TRAVEL_STATUS = TRAVEL_STATUS;

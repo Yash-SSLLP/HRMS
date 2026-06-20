@@ -110,4 +110,6 @@ payrollSchema.pre('save', function computeTotals(next) {
   next();
 });
 
+payrollSchema.plugin(require("./plugins/auditStatus"));
+
 module.exports = mongoose.model('Payroll', payrollSchema);
