@@ -5,6 +5,8 @@ const {
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   setRound, downloadResume,
+  generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
+  generateAppointment, downloadAppointment,
 } = require('../controllers/recruitmentController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
@@ -38,6 +40,15 @@ router.route('/jobs/:id').put(updateJob).delete(deleteJob);
 router.route('/candidates').get(listCandidates).post(createCandidate);
 router.get('/candidates/:id/resume', downloadResume);
 router.patch('/candidates/:id/round', setRound);
+
+// Offer → Onboarding → Appointment lifecycle
+router.post('/candidates/:id/offer', generateOffer);
+router.get('/candidates/:id/offer/pdf', downloadOffer);
+router.post('/candidates/:id/onboard', onboardCandidate);
+router.patch('/candidates/:id/onboarding', updateOnboarding);
+router.post('/candidates/:id/appointment', generateAppointment);
+router.get('/candidates/:id/appointment/pdf', downloadAppointment);
+
 router.route('/candidates/:id').put(updateCandidate).delete(deleteCandidate);
 
 module.exports = router;

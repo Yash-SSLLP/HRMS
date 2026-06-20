@@ -20,6 +20,16 @@ const emailOutboxSchema = new mongoose.Schema(
     from: String,
     replyTo: String,
 
+    // Optional attachments — files already on storage (UPLOAD_DIR-relative path).
+    // The worker streams them from disk at send time so the DB stays light.
+    attachments: [
+      {
+        filename: String,
+        storagePath: String,
+        contentType: String,
+      },
+    ],
+
     status: { type: String, enum: STATUSES, default: 'Pending', index: true },
     attempts: { type: Number, default: 0 },
     maxAttempts: { type: Number, default: 6 },

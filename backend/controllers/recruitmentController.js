@@ -4,6 +4,9 @@ const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const { CANDIDATE_STAGES, ROUND_STATUS, defaultRounds } = require('../models/Candidate');
 const storage = require('../services/storage');
+const COMPANY = require('../config/company');
+const { renderOfferLetter, renderAppointmentLetter } = require('../services/letterPdf');
+const { enqueueMail } = require('../services/email');
 
 // ===== Jobs =====
 const listJobs = asyncHandler(async (req, res) => {
@@ -194,6 +197,7 @@ const setRound = asyncHandler(async (req, res) => {
     throw new Error('Invalid round index');
   }
   const round = candidate.rounds[idx];
+  const statusChanged = req.body.status !== undefined && req.body.status !== round.status;
   if (req.body.status !== undefined) {
     if (!ROUND_STATUS.includes(req.body.status)) {
       res.status(400);
@@ -204,6 +208,19 @@ const setRound = asyncHandler(async (req, res) => {
   }
   if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
   if (req.body.scheduledAt !== undefined) round.scheduledAt = req.body.scheduledAt || undefined;
+
+  // Audit trail: record WHO changed the status, when, and the feedback at that time.
+  if (statusChanged) {
+    round.decidedBy = req.user._id;
+    round.decidedByName = req.user.fullName;
+    round.history.push({
+      status: round.status,
+      by: req.user._id,
+      byName: req.user.fullName,
+      at: new Date(),
+      feedback: req.body.feedback !== undefined ? req.body.feedback : round.feedback,
+    });
+  }
 
   await candidate.save();
   res.json({ candidate });
@@ -227,9 +244,207 @@ const downloadResume = asyncHandler(async (req, res) => {
   storage.readStream(candidate.resumePath).pipe(res);
 });
 
+// ===== Offer / Onboarding / Appointment =====
+
+const num = (v) => (v === '' || v === undefined || v === null ? undefined : Number(v));
+const date = (v) => (v ? new Date(v) : undefined);
+const safeName = (s) => String(s || 'candidate').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+// Queue a letter email to the candidate with the generated PDF attached.
+function emailLetter(candidate, kind, letterPath, letterName, hr) {
+  if (!candidate.email) return;
+  const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
+  const text =
+    `Dear ${candidate.name},\n\nPlease find attached your ${label} from ${COMPANY.name}.\n\n` +
+    `Kindly review the document and revert with your acceptance.\n\n` +
+    `Warm regards,\n${hr?.fullName || 'HR Team'}\n${COMPANY.name}`;
+  const html =
+    `<p>Dear ${candidate.name},</p>` +
+    `<p>Please find attached your <strong>${label}</strong> from ${COMPANY.name}.</p>` +
+    `<p>Kindly review the document and revert with your acceptance.</p>` +
+    `<p>Warm regards,<br>${hr?.fullName || 'HR Team'}<br>${COMPANY.name}</p>`;
+  return enqueueMail(
+    {
+      to: candidate.email,
+      subject: `${label} — ${COMPANY.name}`,
+      text,
+      html,
+      replyTo: hr?.email,
+      attachments: [{ filename: letterName, storagePath: letterPath, contentType: 'application/pdf' }],
+    },
+    { type: kind, id: candidate._id }
+  );
+}
+
+// Stream a stored letter PDF inline.
+function streamLetter(res, relPath, filename) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  storage.readStream(relPath).pipe(res);
+}
+
+// POST /api/recruitment/candidates/:id/offer
+const generateOffer = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const b = req.body || {};
+  const data = {
+    position: b.position || '',
+    department: b.department || '',
+    address: b.address || '',
+    refInterviewDate: date(b.refInterviewDate),
+    salaryMonthly: num(b.salaryMonthly),
+    salaryAnnual: num(b.salaryAnnual),
+    probationMonths: num(b.probationMonths) ?? 3,
+    noticePeriodDays: num(b.noticePeriodDays) ?? 30,
+    joiningDate: date(b.joiningDate),
+    acceptanceDeadline: date(b.acceptanceDeadline),
+    signatoryName: b.signatoryName || COMPANY.defaultSignatoryName,
+    signatoryTitle: b.signatoryTitle || COMPANY.defaultSignatoryTitle,
+  };
+
+  const buffer = await renderOfferLetter({ ...data, candidateName: candidate.name });
+  const letterName = `Offer-Letter-${safeName(candidate.name)}.pdf`;
+  if (candidate.offer?.letterPath) storage.remove(candidate.offer.letterPath);
+  const { storagePath } = storage.saveBuffer({
+    buffer, ownerType: 'offer', ownerId: candidate._id, originalName: letterName,
+  });
+
+  candidate.offer = {
+    generatedAt: new Date(),
+    generatedBy: req.user._id,
+    generatedByName: req.user.fullName,
+    letterPath: storagePath,
+    letterName,
+    data,
+  };
+  if (candidate.stage !== 'Onboarding' && candidate.stage !== 'Hired') candidate.stage = 'Offer';
+  await candidate.save();
+
+  if (b.email) await emailLetter(candidate, 'offer', storagePath, letterName, req.user);
+
+  res.status(201).json({ candidate, emailed: !!(b.email && candidate.email) });
+});
+
+// GET /api/recruitment/candidates/:id/offer/pdf
+const downloadOffer = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate || !candidate.offer?.letterPath) {
+    res.status(404);
+    throw new Error('No offer letter on file for this candidate');
+  }
+  streamLetter(res, candidate.offer.letterPath, candidate.offer.letterName || 'offer-letter.pdf');
+});
+
+// POST /api/recruitment/candidates/:id/onboard — move a candidate into onboarding.
+const onboardCandidate = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  candidate.stage = 'Onboarding';
+  candidate.onboarding = {
+    ...(candidate.onboarding?.toObject?.() || candidate.onboarding || {}),
+    startedAt: candidate.onboarding?.startedAt || new Date(),
+    startedBy: candidate.onboarding?.startedBy || req.user._id,
+    startedByName: candidate.onboarding?.startedByName || req.user.fullName,
+  };
+  await candidate.save();
+  res.json({ candidate });
+});
+
+// PATCH /api/recruitment/candidates/:id/onboarding — joining date / notice period / notes.
+const updateOnboarding = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const current = candidate.onboarding?.toObject?.() || candidate.onboarding || {};
+  candidate.onboarding = {
+    ...current,
+    joiningDate: req.body.joiningDate !== undefined ? date(req.body.joiningDate) : current.joiningDate,
+    noticePeriod: req.body.noticePeriod !== undefined ? req.body.noticePeriod : current.noticePeriod,
+    notes: req.body.notes !== undefined ? req.body.notes : current.notes,
+  };
+  await candidate.save();
+  res.json({ candidate });
+});
+
+// POST /api/recruitment/candidates/:id/appointment
+const generateAppointment = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const b = req.body || {};
+  const data = {
+    designation: b.designation || candidate.offer?.data?.position || '',
+    department: b.department || candidate.offer?.data?.department || '',
+    reportingManager: b.reportingManager || '',
+    location: b.location || '',
+    workingHours: b.workingHours || '',
+    joiningDate: date(b.joiningDate) || candidate.onboarding?.joiningDate,
+    probationMonths: num(b.probationMonths) ?? 3,
+    noticePeriodDays: num(b.noticePeriodDays) ?? 30,
+    ctcAnnual: num(b.ctcAnnual),
+    basic: num(b.basic),
+    hra: num(b.hra),
+    specialAllowance: num(b.specialAllowance),
+    conveyance: num(b.conveyance),
+    employerPf: num(b.employerPf),
+    gratuity: num(b.gratuity),
+    otherAllowances: num(b.otherAllowances),
+  };
+
+  const buffer = await renderAppointmentLetter({
+    ...data,
+    candidateName: candidate.name,
+    signatoryName: b.signatoryName || COMPANY.defaultSignatoryName,
+    signatoryTitle: b.signatoryTitle || COMPANY.defaultSignatoryTitle,
+  });
+  const letterName = `Appointment-Letter-${safeName(candidate.name)}.pdf`;
+  if (candidate.appointment?.letterPath) storage.remove(candidate.appointment.letterPath);
+  const { storagePath } = storage.saveBuffer({
+    buffer, ownerType: 'appointment', ownerId: candidate._id, originalName: letterName,
+  });
+
+  candidate.appointment = {
+    generatedAt: new Date(),
+    generatedBy: req.user._id,
+    generatedByName: req.user.fullName,
+    letterPath: storagePath,
+    letterName,
+    data,
+  };
+  candidate.stage = 'Hired';
+  await candidate.save();
+
+  if (b.email) await emailLetter(candidate, 'appointment', storagePath, letterName, req.user);
+
+  res.status(201).json({ candidate, emailed: !!(b.email && candidate.email) });
+});
+
+// GET /api/recruitment/candidates/:id/appointment/pdf
+const downloadAppointment = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate || !candidate.appointment?.letterPath) {
+    res.status(404);
+    throw new Error('No appointment letter on file for this candidate');
+  }
+  streamLetter(res, candidate.appointment.letterPath, candidate.appointment.letterName || 'appointment-letter.pdf');
+});
+
 module.exports = {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   setRound, downloadResume,
+  generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
+  generateAppointment, downloadAppointment,
 };

@@ -9,6 +9,7 @@ const messageSchema = new mongoose.Schema(
     },
     sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     body: { type: String, required: true, trim: true, maxlength: 4000 },
+    deliveredAt: { type: Date },
     readAt: { type: Date },
   },
   { timestamps: true }

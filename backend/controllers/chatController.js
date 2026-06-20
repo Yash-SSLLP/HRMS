@@ -22,6 +22,16 @@ function otherParty(conn, meId) {
   return conn.requester.equals(meId) ? conn.recipient : conn.requester;
 }
 
+// WhatsApp-style delivery status for a message (from the sender's viewpoint).
+//  sent      → stored on the server, not yet pulled by the recipient
+//  delivered → the recipient's client has fetched it (single → double tick)
+//  seen      → the recipient opened the conversation (double blue tick)
+function messageStatus(m) {
+  if (m.readAt) return 'seen';
+  if (m.deliveredAt) return 'delivered';
+  return 'sent';
+}
+
 // GET /api/chat/directory  — active users (except self) with the caller's
 // connection status to each. Reused by the complaints target picker.
 const directory = asyncHandler(async (req, res) => {
@@ -147,6 +157,13 @@ const listConnections = asyncHandler(async (req, res) => {
     .populate('recipient', USER_FIELDS)
     .sort({ updatedAt: -1 });
 
+  // The caller is online and polling — mark messages addressed to them as
+  // delivered so the sender sees double ticks even before they're opened.
+  await Message.updateMany(
+    { connection: { $in: conns.map((c) => c._id) }, sender: { $ne: meId }, deliveredAt: null },
+    { $set: { deliveredAt: new Date() } }
+  );
+
   const out = await Promise.all(
     conns.map(async (c) => {
       const other = c.requester._id.equals(meId) ? c.recipient : c.requester;
@@ -191,9 +208,16 @@ const getMessages = asyncHandler(async (req, res) => {
   const meId = req.user._id;
   await loadParticipantConnection(req.params.connectionId, meId);
 
+  const now = new Date();
+  // Opening the thread marks the other party's messages as both delivered
+  // (if a poll hadn't already) and read/seen.
+  await Message.updateMany(
+    { connection: req.params.connectionId, sender: { $ne: meId }, deliveredAt: null },
+    { $set: { deliveredAt: now } }
+  );
   await Message.updateMany(
     { connection: req.params.connectionId, sender: { $ne: meId }, readAt: null },
-    { $set: { readAt: new Date() } }
+    { $set: { readAt: now } }
   );
 
   const messages = await Message.find({ connection: req.params.connectionId })
@@ -206,6 +230,7 @@ const getMessages = asyncHandler(async (req, res) => {
       body: m.body,
       createdAt: m.createdAt,
       mine: String(m.sender) === String(meId),
+      status: messageStatus(m),
     })),
   });
 });
@@ -222,7 +247,7 @@ const sendMessage = asyncHandler(async (req, res) => {
 
   const message = await Message.create({ connection: connectionId, sender: meId, body: body.trim() });
   res.status(201).json({
-    message: { _id: message._id, body: message.body, createdAt: message.createdAt, mine: true },
+    message: { _id: message._id, body: message.body, createdAt: message.createdAt, mine: true, status: 'sent' },
   });
 });
 

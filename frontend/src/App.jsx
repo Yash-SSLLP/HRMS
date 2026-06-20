@@ -47,6 +47,7 @@ const EmployeeGoals = lazy(() => import('./pages/EmployeeGoals.jsx'));
 const AdminExpenses = lazy(() => import('./pages/AdminExpenses.jsx'));
 const EmployeeExpenses = lazy(() => import('./pages/EmployeeExpenses.jsx'));
 const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding.jsx'));
+const AdminHiringOnboarding = lazy(() => import('./pages/AdminHiringOnboarding.jsx'));
 const EmployeeOnboarding = lazy(() => import('./pages/EmployeeOnboarding.jsx'));
 const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
 const EmployeeAnnouncements = lazy(() => import('./pages/EmployeeAnnouncements.jsx'));
@@ -85,7 +86,7 @@ const adminNav = [
   { to: '/admin/departments', label: 'Departments', icon: '🏢' },
   { to: '/admin/org-masters', label: 'Org Masters', icon: '🗂️' },
   { to: '/admin/org-chart', label: 'Org Chart', icon: '🌳' },
-  { to: '/admin/onboarding', label: 'Onboarding', icon: '🚀' },
+  { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: '✅' },
   { to: '/admin/confirmations', label: 'Confirmations', icon: '🛡️' },
   { to: '/admin/attendance', label: 'Attendance', icon: '🕒' },
   { to: '/admin/roster', label: 'Shifts & Roster', icon: '📆' },
@@ -103,6 +104,7 @@ const adminNav = [
   { to: '/admin/projects', label: 'Projects', icon: '📁' },
   { to: '/admin/tasks', label: 'Tasks', icon: '✅' },
   { to: '/admin/recruitment', label: 'Recruitment', icon: '🧲' },
+  { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: '🚀' },
   { to: '/admin/assets', label: 'Assets', icon: '💻' },
   { to: '/admin/performance', label: 'Performance', icon: '📈' },
   { to: '/admin/review-cycles', label: 'Appraisals', icon: '📝' },
@@ -216,6 +218,7 @@ export default function App() {
         <Route path="projects" element={<AdminProjects />} />
         <Route path="tasks" element={<AdminTasks />} />
         <Route path="recruitment" element={<AdminRecruitment />} />
+        <Route path="hiring-onboarding" element={<AdminHiringOnboarding />} />
         <Route path="assets" element={<AdminAssets />} />
         <Route path="performance" element={<AdminPerformance />} />
         <Route path="review-cycles" element={<AdminReviewCycles />} />

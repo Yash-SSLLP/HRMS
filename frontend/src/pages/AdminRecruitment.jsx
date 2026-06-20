@@ -1,18 +1,23 @@
 import { Fragment, useEffect, useState } from 'react';
 import api from '../api/client';
+import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
-const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Hired', 'Rejected'];
+const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'Hired', 'Rejected'];
 const STAGE_STYLES = {
   Applied: 'bg-gray-100 text-gray-700',
   Shortlisted: 'bg-indigo-100 text-indigo-800',
   Screening: 'bg-blue-100 text-blue-800',
   Interview: 'bg-amber-100 text-amber-800',
   Offer: 'bg-purple-100 text-purple-800',
+  Onboarding: 'bg-teal-100 text-teal-800',
   Hired: 'bg-green-100 text-green-800',
   Rejected: 'bg-red-100 text-red-700',
 };
+
+const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '');
+const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const ROUND_STYLES = {
   Pending: 'bg-gray-100 text-gray-600',
@@ -39,6 +44,11 @@ export default function AdminRecruitment() {
   const [saving, setSaving] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
   const [expanded, setExpanded] = useState(null);
+
+  // Offer-letter modal
+  const [offerCand, setOfferCand] = useState(null);
+  const [offerForm, setOfferForm] = useState(null);
+  const [offerEmail, setOfferEmail] = useState(true);
 
   const load = async () => {
     setLoading(true);
@@ -118,6 +128,44 @@ export default function AdminRecruitment() {
     try { await api.patch(`/recruitment/candidates/${c._id}/round`, { index, ...patch }); await load(); }
     catch (err) { alert(err.response?.data?.message || 'Round update failed'); }
   };
+
+  const allCleared = (c) => (c.rounds || []).length > 0 && c.rounds.every((r) => r.status === 'Cleared');
+
+  // ----- Offer letter -----
+  const openOffer = (c) => {
+    setOfferCand(c);
+    setOfferEmail(!!c.email);
+    const d = c.offer?.data || {};
+    setOfferForm({
+      position: d.position || c.job?.title || '',
+      department: d.department || c.job?.department || '',
+      address: d.address || '',
+      refInterviewDate: toDateInput(d.refInterviewDate),
+      salaryMonthly: d.salaryMonthly || '',
+      salaryAnnual: d.salaryAnnual || '',
+      probationMonths: d.probationMonths ?? 3,
+      noticePeriodDays: d.noticePeriodDays ?? 30,
+      joiningDate: toDateInput(d.joiningDate),
+      acceptanceDeadline: toDateInput(d.acceptanceDeadline),
+      signatoryName: d.signatoryName || '',
+      signatoryTitle: d.signatoryTitle || '',
+    });
+  };
+  const saveOffer = async (e) => {
+    e.preventDefault(); setSaving(true); setError('');
+    try {
+      await api.post(`/recruitment/candidates/${offerCand._id}/offer`, { ...offerForm, email: offerEmail });
+      setOfferCand(null); setOfferForm(null); await load();
+    } catch (err) { setError(err.response?.data?.message || 'Could not generate offer letter'); }
+    finally { setSaving(false); }
+  };
+  const onboard = async (c) => {
+    try { await api.post(`/recruitment/candidates/${c._id}/onboard`); await load(); }
+    catch (err) { alert(err.response?.data?.message || 'Could not onboard'); }
+  };
+  const downloadOffer = (c) =>
+    downloadFile(`/recruitment/candidates/${c._id}/offer/pdf`, c.offer?.letterName || 'offer-letter.pdf')
+      .catch((err) => alert(err.response?.data?.message || 'Download failed'));
   const viewResume = async (c) => {
     try {
       const res = await api.get(`/recruitment/candidates/${c._id}/resume`, { responseType: 'blob' });
@@ -231,10 +279,20 @@ export default function AdminRecruitment() {
                     </button>
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                    {c.stage !== 'Shortlisted' && c.stage !== 'Hired' && c.stage !== 'Rejected' && (
+                    {/* All rounds cleared → offer / onboard path */}
+                    {allCleared(c) && c.stage !== 'Rejected' && c.stage !== 'Onboarding' && c.stage !== 'Hired' && !c.offer?.generatedAt && (
+                      <button onClick={() => openOffer(c)} className="text-purple-600 font-medium hover:underline">Create Offer Letter</button>
+                    )}
+                    {c.offer?.generatedAt && c.stage !== 'Onboarding' && c.stage !== 'Hired' && (
+                      <button onClick={() => onboard(c)} className="text-teal-600 font-medium hover:underline">Onboard →</button>
+                    )}
+                    {c.offer?.hasLetter && (
+                      <button onClick={() => downloadOffer(c)} className="text-gray-600 hover:underline">Offer PDF</button>
+                    )}
+                    {!allCleared(c) && c.stage !== 'Shortlisted' && c.stage !== 'Hired' && c.stage !== 'Rejected' && (
                       <button onClick={() => setStage(c, 'Shortlisted')} className="text-green-600 hover:underline">Shortlist</button>
                     )}
-                    {c.stage !== 'Rejected' && (
+                    {c.stage !== 'Rejected' && c.stage !== 'Hired' && (
                       <button onClick={() => setStage(c, 'Rejected')} className="text-red-600 hover:underline">Reject</button>
                     )}
                     <button onClick={() => openCandEdit(c)} className="text-blue-600 hover:underline">Edit</button>
@@ -276,6 +334,14 @@ export default function AdminRecruitment() {
                               placeholder="Feedback…"
                               className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
                             />
+                            {/* Audit trail: who last changed the status */}
+                            {r.decidedByName && (
+                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${h.status} — ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
+                                Changed by <span className="font-medium text-gray-500">{r.decidedByName}</span>
+                                {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
+                                {(r.history?.length > 1) ? ` · ${r.history.length} changes` : ''}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -339,6 +405,77 @@ export default function AdminRecruitment() {
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setCandModal(false)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Offer letter modal */}
+      {offerCand && offerForm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
+            <h2 className="card-title mb-1">Create Offer Letter</h2>
+            <p className="text-sm text-gray-500 mb-4">For <span className="font-medium text-gray-700">{offerCand.name}</span>{offerCand.email ? ` · ${offerCand.email}` : ''}</p>
+            <form onSubmit={saveOffer} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-xs text-gray-600 mb-1">Candidate address</label>
+                <input value={offerForm.address} onChange={(e) => setOfferForm({ ...offerForm, address: e.target.value })} className="block w-full border rounded-lg px-3 py-2" placeholder="e.g. Bangalore, Karnataka" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Position / Designation *</label>
+                <input required value={offerForm.position} onChange={(e) => setOfferForm({ ...offerForm, position: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Department</label>
+                <input value={offerForm.department} onChange={(e) => setOfferForm({ ...offerForm, department: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">In-hand salary (₹ / month)</label>
+                <input type="number" min="0" value={offerForm.salaryMonthly} onChange={(e) => setOfferForm({ ...offerForm, salaryMonthly: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Annual salary (₹ / year)</label>
+                <input type="number" min="0" value={offerForm.salaryAnnual} onChange={(e) => setOfferForm({ ...offerForm, salaryAnnual: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Probation (months)</label>
+                <input type="number" min="0" value={offerForm.probationMonths} onChange={(e) => setOfferForm({ ...offerForm, probationMonths: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Notice period (days)</label>
+                <input type="number" min="0" value={offerForm.noticePeriodDays} onChange={(e) => setOfferForm({ ...offerForm, noticePeriodDays: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Interview reference date</label>
+                <input type="date" value={offerForm.refInterviewDate} onChange={(e) => setOfferForm({ ...offerForm, refInterviewDate: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Joining date</label>
+                <input type="date" value={offerForm.joiningDate} onChange={(e) => setOfferForm({ ...offerForm, joiningDate: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Acceptance deadline</label>
+                <input type="date" value={offerForm.acceptanceDeadline} onChange={(e) => setOfferForm({ ...offerForm, acceptanceDeadline: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Signatory name</label>
+                <input value={offerForm.signatoryName} onChange={(e) => setOfferForm({ ...offerForm, signatoryName: e.target.value })} placeholder="defaults to company HR" className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Signatory title</label>
+                <input value={offerForm.signatoryTitle} onChange={(e) => setOfferForm({ ...offerForm, signatoryTitle: e.target.value })} placeholder="e.g. HR Business Partner" className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+
+              <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${offerCand.email ? 'text-gray-700' : 'text-gray-400'}`}>
+                <input type="checkbox" checked={offerEmail && !!offerCand.email} disabled={!offerCand.email} onChange={(e) => setOfferEmail(e.target.checked)} />
+                Email the offer letter to the candidate{!offerCand.email && ' (no email on file)'}
+              </label>
+
+              {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+              <div className="sm:col-span-2 flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => { setOfferCand(null); setOfferForm(null); setError(''); }} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Generating…' : 'Generate & Save'}</button>
               </div>
             </form>
           </div>

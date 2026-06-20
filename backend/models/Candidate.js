@@ -1,8 +1,20 @@
 const mongoose = require('mongoose');
 
-const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Hired', 'Rejected'];
+const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'Hired', 'Rejected'];
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const NUM_ROUNDS = 4;
+
+// One entry per status change of a round — the audit trail of who decided what.
+const roundHistorySchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: ROUND_STATUS },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    byName: { type: String, trim: true },
+    at: { type: Date, default: Date.now },
+    feedback: { type: String, trim: true },
+  },
+  { _id: false }
+);
 
 const roundSchema = new mongoose.Schema(
   {
@@ -11,6 +23,10 @@ const roundSchema = new mongoose.Schema(
     feedback: { type: String, trim: true },
     scheduledAt: { type: Date },
     decidedAt: { type: Date },
+    // Who last changed this round's status (+ full change history).
+    decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    decidedByName: { type: String, trim: true },
+    history: { type: [roundHistorySchema], default: [] },
   },
   { _id: true }
 );
@@ -48,6 +64,68 @@ const candidateSchema = new mongoose.Schema(
     // Four interview rounds whose status HR can change.
     rounds: { type: [roundSchema], default: defaultRounds },
 
+    // Generated offer letter + the boilerplate fields HR filled in.
+    offer: {
+      generatedAt: { type: Date },
+      generatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      generatedByName: { type: String, trim: true },
+      letterPath: { type: String },
+      letterName: { type: String },
+      emailedAt: { type: Date },
+      data: {
+        position: String,
+        department: String,
+        address: String,
+        refInterviewDate: Date,
+        salaryMonthly: Number,
+        salaryAnnual: Number,
+        probationMonths: Number,
+        noticePeriodDays: Number,
+        joiningDate: Date,
+        acceptanceDeadline: Date,
+        signatoryName: String,
+        signatoryTitle: String,
+      },
+    },
+
+    // Generated appointment letter + its CTC-breakup fields.
+    appointment: {
+      generatedAt: { type: Date },
+      generatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      generatedByName: { type: String, trim: true },
+      letterPath: { type: String },
+      letterName: { type: String },
+      emailedAt: { type: Date },
+      data: {
+        designation: String,
+        department: String,
+        reportingManager: String,
+        location: String,
+        workingHours: String,
+        joiningDate: Date,
+        probationMonths: Number,
+        noticePeriodDays: Number,
+        ctcAnnual: Number,
+        basic: Number,
+        hra: Number,
+        specialAllowance: Number,
+        conveyance: Number,
+        employerPf: Number,
+        gratuity: Number,
+        otherAllowances: Number,
+      },
+    },
+
+    // Pre-joining onboarding details HR manages after an offer is made.
+    onboarding: {
+      joiningDate: { type: Date },
+      noticePeriod: { type: String, trim: true },
+      startedAt: { type: Date },
+      startedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      startedByName: { type: String, trim: true },
+      notes: { type: String, trim: true },
+    },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }
@@ -58,6 +136,9 @@ candidateSchema.set('toJSON', {
   transform: (_doc, ret) => {
     ret.hasResume = !!ret.resumePath;
     delete ret.resumePath;
+    // Expose only whether a letter exists, never the filesystem path.
+    if (ret.offer) { ret.offer.hasLetter = !!ret.offer.letterPath; delete ret.offer.letterPath; }
+    if (ret.appointment) { ret.appointment.hasLetter = !!ret.appointment.letterPath; delete ret.appointment.letterPath; }
     delete ret.__v;
     return ret;
   },

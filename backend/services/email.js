@@ -10,6 +10,19 @@
  */
 const nodemailer = require('nodemailer');
 const EmailOutbox = require('../models/EmailOutbox');
+const storage = require('./storage');
+
+// Map outbox attachment refs to nodemailer attachments, streaming from storage.
+function buildAttachments(attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return undefined;
+  return attachments
+    .filter((a) => a && a.storagePath)
+    .map((a) => ({
+      filename: a.filename || 'attachment',
+      content: storage.readStream(a.storagePath),
+      contentType: a.contentType || undefined,
+    }));
+}
 
 let cachedTransporter;
 
@@ -39,6 +52,9 @@ async function sendMail(opts) {
     console.log('From     :', from);
     console.log('Reply-To :', opts.replyTo || '(none)');
     console.log('Subject  :', opts.subject);
+    if (Array.isArray(opts.attachments) && opts.attachments.length) {
+      console.log('Attach   :', opts.attachments.map((a) => a.filename).join(', '));
+    }
     console.log('--- text ---');
     console.log(opts.text || '(no text body)');
     console.log('====================================================\n');
@@ -51,6 +67,7 @@ async function sendMail(opts) {
     text: opts.text,
     html: opts.html,
     replyTo: opts.replyTo,
+    attachments: buildAttachments(opts.attachments),
   });
   return { messageId: info.messageId, response: info.response };
 }
@@ -70,6 +87,7 @@ async function enqueueMail(opts, related = {}) {
     html: opts.html,
     from: opts.from,
     replyTo: opts.replyTo,
+    attachments: opts.attachments,
     status: 'Pending',
     attempts: 0,
     nextAttemptAt: new Date(),

@@ -10,6 +10,7 @@
  */
 const EmailOutbox = require('../models/EmailOutbox');
 const ExitRequest = require('../models/ExitRequest');
+const Candidate = require('../models/Candidate');
 const { sendMail } = require('./email');
 
 const POLL_INTERVAL_MS = 30_000;            // 30s
@@ -44,6 +45,7 @@ async function processOne() {
       html: row.html,
       from: row.from,
       replyTo: row.replyTo,
+      attachments: row.attachments,
     });
 
     row.status = 'Sent';
@@ -88,6 +90,11 @@ async function mirrorToRelated(row, outcome) {
       patch.exitEmailLastError = outcome.error;
     }
     await ExitRequest.updateOne({ _id: row.relatedId }, { $set: patch });
+  }
+  // Stamp when an offer / appointment letter email actually went out.
+  if (outcome.sent && (row.relatedType === 'offer' || row.relatedType === 'appointment')) {
+    const field = row.relatedType === 'offer' ? 'offer.emailedAt' : 'appointment.emailedAt';
+    await Candidate.updateOne({ _id: row.relatedId }, { $set: { [field]: row.sentAt } });
   }
   // Add other related types here as new modules use the outbox
 }
