@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
+import AttendanceHeatmap from '../components/AttendanceHeatmap';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
@@ -47,6 +48,7 @@ export default function EmployeeDashboard() {
   const [latestPayslip, setLatestPayslip] = useState(null);
   const [balance, setBalance] = useState(null);
   const [pendingLeaves, setPendingLeaves] = useState(0);
+  const [wishes, setWishes] = useState([]);
   const [errors, setErrors] = useState({});
 
   useEffect(() => {
@@ -72,6 +74,10 @@ export default function EmployeeDashboard() {
       try {
         const { data } = await api.get('/leave/me/requests');
         setPendingLeaves((data.requests || []).filter((r) => r.status === 'Pending').length);
+      } catch (_) { /* ignore */ }
+      try {
+        const { data } = await api.get('/celebrations/wishes/received');
+        setWishes(data.wishes || []);
       } catch (_) { /* ignore */ }
     })();
   }, []);
@@ -99,6 +105,30 @@ export default function EmployeeDashboard() {
         ]}
       />
       <p className="text-sm text-gray-500 -mt-2 mb-4">{today}</p>
+
+      {/* Wishes received (birthday / anniversary) */}
+      {wishes.length > 0 && (
+        <div className="mb-4 bg-white shadow rounded-lg p-4 border-l-4 border-purple-400">
+          <h2 className="card-title mb-2">🎉 Wishes for you</h2>
+          <ul className="space-y-2">
+            {wishes.map((w) => (
+              <li key={w._id} className="text-sm">
+                <span className="font-medium text-gray-800">{w.title}</span>
+                {w.body && <span className="text-gray-600"> — {w.body}</span>}
+                <span className="block text-[11px] text-gray-400">
+                  {new Date(w.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Attendance heatmap */}
+      <div className="bg-white shadow rounded-lg p-5 mb-4">
+        <h2 className="card-title mb-3">My Attendance</h2>
+        <AttendanceHeatmap />
+      </div>
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">

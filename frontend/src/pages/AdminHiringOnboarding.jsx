@@ -4,6 +4,7 @@ import { downloadFile } from '../api/download';
 import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
+import DesignationSelect from '../components/DesignationSelect';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '—');
@@ -233,7 +234,7 @@ export default function AdminHiringOnboarding() {
             <form onSubmit={saveAppt} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Designation *</label>
-                <input required value={apptForm.designation} onChange={(e) => setApptForm({ ...apptForm, designation: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                <DesignationSelect required value={apptForm.designation} onChange={(v) => setApptForm({ ...apptForm, designation: v })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Department</label>

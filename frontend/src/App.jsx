@@ -20,6 +20,7 @@ const AdminPayroll = lazy(() => import('./pages/AdminPayroll.jsx'));
 const AdminLeave = lazy(() => import('./pages/AdminLeave.jsx'));
 const AdminAttendance = lazy(() => import('./pages/AdminAttendance.jsx'));
 const AdminAttendanceReport = lazy(() => import('./pages/AdminAttendanceReport.jsx'));
+const EmployeeTeam = lazy(() => import('./pages/EmployeeTeam.jsx'));
 const AdminDocuments = lazy(() => import('./pages/AdminDocuments.jsx'));
 const AdminExit = lazy(() => import('./pages/AdminExit.jsx'));
 const EmployeeDashboard = lazy(() => import('./pages/EmployeeDashboard.jsx'));
@@ -136,6 +137,7 @@ const adminNav = [
 
 const employeeNav = [
   { to: '/employee', label: 'Overview', end: true, icon: '🏠' },
+  { to: '/employee/team', label: 'My Team', icon: '👥', roles: ['Manager'] },
   { to: '/employee/org-chart', label: 'Org Chart', icon: '🌳' },
   { to: '/employee/onboarding', label: 'Onboarding', icon: '🚀' },
   { to: '/employee/attendance', label: 'Attendance', icon: '🕒', highlight: true },
@@ -168,7 +170,10 @@ const employeeNav = [
 function RootRedirect() {
   const user = useAuthStore((s) => s.user);
   if (!user) return <Navigate to="/login" replace />;
-  return <Navigate to={user.role === 'Employee' ? '/employee' : '/admin'} replace />;
+  // Employees and Managers live in the employee portal; everyone else (admins
+  // and the read-only CEO/MD executives) goes to the admin portal.
+  const employeePortal = ['Employee', 'Manager'].includes(user.role);
+  return <Navigate to={employeePortal ? '/employee' : '/admin'} replace />;
 }
 
 export default function App() {
@@ -203,7 +208,7 @@ export default function App() {
       <Route
         path="/admin"
         element={
-          <ProtectedRoute roles={['SuperAdmin', 'HRManager']}>
+          <ProtectedRoute roles={['SuperAdmin', 'HRManager', 'CEO', 'MD']}>
             <Layout navItems={adminNav} sectionTitle="Admin" />
           </ProtectedRoute>
         }
@@ -261,12 +266,13 @@ export default function App() {
       <Route
         path="/employee"
         element={
-          <ProtectedRoute roles={['Employee', 'HRManager']}>
+          <ProtectedRoute roles={['Employee', 'HRManager', 'Manager']}>
             <Layout navItems={employeeNav} sectionTitle="My Portal" />
           </ProtectedRoute>
         }
       >
         <Route index element={<EmployeeDashboard />} />
+        <Route path="team" element={<EmployeeTeam />} />
         <Route path="org-chart" element={<AdminOrgChart />} />
         <Route path="onboarding" element={<EmployeeOnboarding />} />
         <Route path="attendance" element={<EmployeeAttendance />} />

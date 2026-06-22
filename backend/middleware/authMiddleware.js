@@ -33,13 +33,30 @@ const protect = asyncHandler(async (req, res, next) => {
   next();
 });
 
+// CEO / MD are read-only executives: they may VIEW anything an admin can, but
+// cannot change anything.
+const EXEC_VIEWERS = ['CEO', 'MD'];
+const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
 // Usage: restrictTo('SuperAdmin', 'HRManager')
 const restrictTo = (...roles) => (req, res, next) => {
-  if (!req.user || !roles.includes(req.user.role)) {
+  if (!req.user) {
     res.status(403);
     return next(new Error('You do not have permission to perform this action'));
   }
-  next();
+  if (roles.includes(req.user.role)) return next();
+
+  // On any admin-gated route, CEO/MD get read-only access: safe (GET) methods
+  // pass through; writes are rejected with a clear message.
+  const adminGated = roles.includes('SuperAdmin') || roles.includes('HRManager');
+  if (adminGated && EXEC_VIEWERS.includes(req.user.role)) {
+    if (SAFE_METHODS.includes(req.method)) return next();
+    res.status(403);
+    return next(new Error('CEO/MD accounts have read-only access and cannot make changes.'));
+  }
+
+  res.status(403);
+  return next(new Error('You do not have permission to perform this action'));
 };
 
-module.exports = { protect, restrictTo };
+module.exports = { protect, restrictTo, EXEC_VIEWERS };

@@ -4,6 +4,7 @@ const {
   upcomingCelebrations,
   monthCalendar,
   sendWish,
+  receivedWishes,
 } = require('../controllers/celebrationsController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -15,6 +16,7 @@ router.use(protect);
 router.get('/today', todayCelebrations);
 router.get('/upcoming', upcomingCelebrations);
 router.get('/calendar', monthCalendar);
+router.get('/wishes/received', receivedWishes);
 router.post('/wish', sendWish);
 
 module.exports = router;

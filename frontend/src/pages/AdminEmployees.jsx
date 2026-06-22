@@ -3,6 +3,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import DesignationSelect from '../components/DesignationSelect';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 
@@ -335,23 +336,10 @@ export default function AdminEmployees() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Designation</label>
-                  <select value={form.designation || ''}
-                    onChange={(e) => setForm({ ...form, designation: e.target.value })}
-                    className="mt-1 block w-full border rounded-lg px-3 py-2">
-                    <option value="">— Select —</option>
-                    {designations.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                    {/* Preserve a legacy/free-text value not in the managed list */}
-                    {form.designation && !designations.includes(form.designation) && (
-                      <option value={form.designation}>{form.designation}</option>
-                    )}
-                  </select>
-                  {designations.length === 0 && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      No designations yet — add them under Admin → Org Masters.
-                    </p>
-                  )}
+                  <DesignationSelect
+                    value={form.designation || ''}
+                    onChange={(v) => setForm({ ...form, designation: v })}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Department</label>

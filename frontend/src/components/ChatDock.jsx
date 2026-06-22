@@ -316,15 +316,17 @@ export default function ChatDock() {
     } catch (err) { setError(err.response?.data?.message || 'Could not add members'); }
   };
 
-  const leaveGroup = async () => {
-    if (!info) return;
-    if (!window.confirm('Leave this group? It will be removed from your chats.')) return;
+  // Leave a group and remove it from my chats. Works from the chat header or
+  // the group-info panel.
+  const leaveGroup = async (groupId = info?.groupId) => {
+    if (!groupId) return;
+    if (!window.confirm('Delete this group from your chats? You will leave the group and it will be removed for you.')) return;
     setError('');
     try {
-      await api.post(`/chat/groups/${info.groupId}/leave`);
+      await api.post(`/chat/groups/${groupId}/leave`);
       setShowInfo(false); setInfo(null); setActive(null);
       loadLists();
-    } catch (err) { setError(err.response?.data?.message || 'Could not leave group'); }
+    } catch (err) { setError(err.response?.data?.message || 'Could not delete group'); }
   };
 
   const togglePick = (id) => setGroupPick((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
@@ -384,6 +386,11 @@ export default function ChatDock() {
             <button onClick={clearChat} title="Clear chat" className="px-1.5" style={{ color: wa.headerText }} aria-label="Clear chat">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 7h12v2H6V7zm1 3h10l-1 11H8L7 10zm3-6h4l1 1h3v2H3V5h3l1-1z" /></svg>
             </button>
+            {active.kind === 'group' && (
+              <button onClick={() => leaveGroup(active.id)} title="Delete group for me" className="px-1.5" style={{ color: wa.headerText }} aria-label="Delete group">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 17v-2H3V9h7V7l5 5-5 5zm9 4H12v-2h7V5h-7V3h7a2 2 0 012 2v14a2 2 0 01-2 2z" /></svg>
+              </button>
+            )}
           </div>
 
           {/* Messages */}
@@ -731,7 +738,7 @@ export default function ChatDock() {
 
               {/* Footer */}
               <div className="px-5 py-3" style={{ borderTop: `1px solid ${wa.border}` }}>
-                <button onClick={leaveGroup} className="w-full text-sm px-4 py-2 rounded-lg font-medium" style={{ background: '#fee2e2', color: '#b91c1c' }}>
+                <button onClick={() => leaveGroup(info.groupId)} className="w-full text-sm px-4 py-2 rounded-lg font-medium" style={{ background: '#fee2e2', color: '#b91c1c' }}>
                   Leave &amp; delete group for me
                 </button>
               </div>

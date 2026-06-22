@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { fetchImageObjectUrl } from '../api/download';
 import PageHeader from '../components/PageHeader';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected', 'Completed'];
@@ -9,6 +10,13 @@ const STATUS_STYLES = {
   Approved: 'bg-green-100 text-green-800',
   Completed: 'bg-blue-100 text-blue-800',
   Rejected: 'bg-red-100 text-red-800',
+};
+
+const REIMB_STYLES = {
+  Pending: 'bg-amber-100 text-amber-800',
+  Approved: 'bg-green-100 text-green-800',
+  Rejected: 'bg-red-100 text-red-800',
+  Reimbursed: 'bg-blue-100 text-blue-800',
 };
 
 const inr = new Intl.NumberFormat('en-IN', {
@@ -56,6 +64,30 @@ export default function AdminTravel() {
     }
   };
 
+  const reviewReimb = async (t, status) => {
+    let note;
+    if (status === 'Rejected') note = window.prompt('Reason for rejecting the reimbursement (optional):') || '';
+    setBusyId(t._id);
+    setError('');
+    try {
+      await api.patch(`/travel/${t._id}/reimbursement`, { status, note });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Update failed');
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const openReceipt = async (id) => {
+    try {
+      const url = await fetchImageObjectUrl(`/travel/${id}/receipt`);
+      window.open(url, '_blank', 'noopener');
+    } catch {
+      setError('Could not open the receipt');
+    }
+  };
+
   return (
     <div>
       <PageHeader title="Travel Requests" subtitle="Review and approve employee travel.">
@@ -81,15 +113,16 @@ export default function AdminTravel() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Mode</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Est. cost</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Advance</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Reimbursement</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No travel requests</td></tr>
+              <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-500">No travel requests</td></tr>
             ) : items.map((t) => (
               <tr key={t._id}>
                 <td className="px-4 py-3">
@@ -104,6 +137,41 @@ export default function AdminTravel() {
                 <td className="px-4 py-3">{t.modeOfTravel}</td>
                 <td className="px-4 py-3 text-right">{inr.format(t.estimatedCost || 0)}</td>
                 <td className="px-4 py-3 text-right">{inr.format(t.advanceRequested || 0)}</td>
+                <td className="px-4 py-3">
+                  {t.reimbursementRequested ? (
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{inr.format(t.reimbursementAmount || 0)}</span>
+                        <span className="text-xs text-gray-400">paid by employee</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-lg ${REIMB_STYLES[t.reimbursementStatus] || 'bg-gray-100 text-gray-700'}`}>
+                          {t.reimbursementStatus}
+                        </span>
+                      </div>
+                      {t.reimbursementPaidOn && <div className="text-xs text-gray-400 mt-0.5">Paid on {new Date(t.reimbursementPaidOn).toLocaleDateString()}</div>}
+                      {t.reimbursementNote && <div className="text-xs text-gray-500 mt-0.5">{t.reimbursementNote}</div>}
+                      {t.reimbursementReceiptName && (
+                        <button onClick={() => openReceipt(t._id)} className="text-xs text-blue-600 hover:underline mt-0.5">View receipt</button>
+                      )}
+                      {t.reimbursementDecisionNote && <div className="text-xs text-gray-400 mt-0.5">Decision: {t.reimbursementDecisionNote}</div>}
+                      {t.reimbursementStatus !== 'Reimbursed' && t.reimbursementStatus !== 'Rejected' && (
+                        <div className="flex gap-2 mt-1 text-xs">
+                          {t.reimbursementStatus === 'Pending' && (
+                            <>
+                              <button disabled={busyId === t._id} onClick={() => reviewReimb(t, 'Approved')}
+                                className="text-green-600 hover:underline disabled:opacity-50">Approve</button>
+                              <button disabled={busyId === t._id} onClick={() => reviewReimb(t, 'Rejected')}
+                                className="text-red-600 hover:underline disabled:opacity-50">Reject</button>
+                            </>
+                          )}
+                          {t.reimbursementStatus === 'Approved' && (
+                            <button disabled={busyId === t._id} onClick={() => reviewReimb(t, 'Reimbursed')}
+                              className="text-blue-600 hover:underline disabled:opacity-50">Mark Reimbursed</button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : <span className="text-gray-400">—</span>}
+                </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs px-2 py-1 rounded-lg ${STATUS_STYLES[t.status]}`}>
                     {t.status}

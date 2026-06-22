@@ -3,7 +3,7 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 
-const ROLES = ['SuperAdmin', 'HRManager', 'Employee'];
+const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'Employee'];
 
 const blankForm = {
   email: '',

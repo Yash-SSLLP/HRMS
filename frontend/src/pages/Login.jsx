@@ -26,9 +26,10 @@ export default function Login() {
       const { data } = await api.post('/auth/login', { email, password });
       setSession({ user: data.user, token: data.token });
       const from = location.state?.from?.pathname;
-      const dest =
-        from ||
-        (data.user.role === 'Employee' ? '/employee' : '/admin');
+      // Employees and Managers use the employee portal; admins and the
+      // read-only CEO/MD executives use the admin portal.
+      const employeePortal = ['Employee', 'Manager'].includes(data.user.role);
+      const dest = from || (employeePortal ? '/employee' : '/admin');
       navigate(dest, { replace: true });
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed');

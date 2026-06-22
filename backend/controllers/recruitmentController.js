@@ -207,6 +207,11 @@ const setRound = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Candidate not found');
   }
+  // A candidate must be shortlisted before interview rounds can begin.
+  if (candidate.stage === 'Applied') {
+    res.status(400);
+    throw new Error('Shortlist this candidate before scheduling interview rounds.');
+  }
   const idx = Number(req.body.index);
   if (!Number.isInteger(idx) || idx < 0 || idx >= candidate.rounds.length) {
     res.status(400);

@@ -14,9 +14,9 @@ router.use(protect);
 // Everyone may read the department list (for dropdowns).
 router.get('/', listDepartments);
 
-// Only SuperAdmin may manage departments.
-router.post('/', restrictTo('SuperAdmin'), createDepartment);
-router.put('/:id', restrictTo('SuperAdmin'), updateDepartment);
+// HR and SuperAdmin may create and rename departments; only SuperAdmin may delete.
+router.post('/', restrictTo('SuperAdmin', 'HRManager'), createDepartment);
+router.put('/:id', restrictTo('SuperAdmin', 'HRManager'), updateDepartment);
 router.delete('/:id', restrictTo('SuperAdmin'), deleteDepartment);
 
 module.exports = router;

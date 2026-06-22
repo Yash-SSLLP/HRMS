@@ -11,7 +11,7 @@ const orgChart = asyncHandler(async (req, res) => {
   const hidden = await hiddenUserIds(req.user);
   const profiles = await EmployeeProfile.find(hidden.length ? { user: { $nin: hidden } } : {})
     .select('user reportingManager designation department')
-    .populate('user', 'firstName lastName email')
+    .populate('user', 'firstName lastName email photo role')
     .lean();
 
   // Build one node per employee, keyed by the user id.
@@ -26,6 +26,8 @@ const orgChart = asyncHandler(async (req, res) => {
       name,
       designation: p.designation || '',
       department: p.department || '',
+      hasPhoto: Boolean(p.user.photo),
+      role: p.user.role,
       managerId: p.reportingManager ? p.reportingManager.toString() : null,
       reports: [],
     });

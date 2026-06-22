@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import AuthImage from '../components/AuthImage';
 import { useAuthStore } from '../store/authStore';
 
 const ROOT_TITLE = 'Sequence Surfaces';
+
+// Roles SuperAdmin can assign from the org chart.
+const ASSIGNABLE_ROLES = ['Employee', 'Manager', 'CEO', 'MD', 'HRManager', 'SuperAdmin'];
 
 // Node colours, decision-tree style: black root, orange branches, blue leaves.
 const ROOT_COLOR = '#111827';
@@ -58,9 +62,17 @@ function TreeNode({ node, depth, editable, selectedId, onSelect }) {
       >
         <span
           className="org-dot"
-          style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px' }}
+          style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px', overflow: 'hidden' }}
         >
-          {initials(node.name)}
+          {node.hasPhoto ? (
+            <AuthImage
+              url={`/auth/users/${node.id}/avatar`}
+              alt={node.name}
+              className="w-full h-full rounded-full object-cover"
+              style={{ width: '100%', height: '100%' }}
+              fallback={<span>{initials(node.name)}</span>}
+            />
+          ) : initials(node.name)}
         </span>
         <span className="org-name">{node.name || 'Unnamed'}</span>
         {meta && <span className="org-meta">{meta}</span>}
@@ -123,6 +135,21 @@ export default function AdminOrgChart() {
     }
   };
 
+  // Change the person's system role (Employee / Manager / CEO / MD / …).
+  const onSetRole = async (node, role) => {
+    setSavingId(node.profileId);
+    setError('');
+    try {
+      await api.put(`/admin/users/${node.id}`, { role });
+      setSelected((s) => (s && s.id === node.id ? { ...s, role } : s));
+      await load();
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Could not update role.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -151,6 +178,15 @@ export default function AdminOrgChart() {
               .map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
+          </select>
+          <span className="text-gray-700">· role:</span>
+          <select
+            value={selected.role || 'Employee'}
+            disabled={savingId === selected.profileId}
+            onChange={(e) => onSetRole(selected, e.target.value)}
+            className="border rounded-lg px-2 py-1"
+          >
+            {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
           <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-gray-800 px-2">Done</button>
         </div>

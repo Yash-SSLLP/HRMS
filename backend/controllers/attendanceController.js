@@ -129,6 +129,73 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
   storage.readStream(relPath).pipe(res);
 });
 
+// Local YYYY-MM-DD key for a date (matches how the frontend builds grid keys).
+function ymdLocal(d) {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+
+// GET /api/attendance/me/heatmap?days=365
+// Returns the caller's day-by-day attendance classification over the trailing
+// window for a GitHub-style heatmap. Each day is one of:
+//   full | half | leave | compoff | absent   (days with no record are omitted).
+// Combines attendance records, approved leave ranges and availed comp-offs.
+// No employee profile (e.g. SuperAdmin) → empty list.
+const myHeatmap = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ user: req.user._id });
+  if (!profile) return res.json({ days: [] });
+
+  const span = Math.min(Number(req.query.days) || 365, 400);
+  const end = startOfDay(new Date());
+  const start = startOfDay(new Date());
+  start.setDate(start.getDate() - (span - 1));
+
+  const { LeaveRequest } = require('../models/Leave');
+  const CompOff = require('../models/CompOff');
+
+  const [records, leaves, comps] = await Promise.all([
+    Attendance.find({ employee: profile._id, date: { $gte: start, $lte: end } })
+      .select('date status').lean(),
+    LeaveRequest.find({ employee: profile._id, status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start } })
+      .select('startDate endDate isHalfDay').lean(),
+    CompOff.find({ employee: req.user._id, status: 'Availed', availedOn: { $gte: start, $lte: end } })
+      .select('availedOn').lean(),
+  ]);
+
+  const att = {};
+  for (const r of records) att[ymdLocal(r.date)] = r.status;
+
+  const compoffSet = new Set(comps.filter((c) => c.availedOn).map((c) => ymdLocal(c.availedOn)));
+
+  const leaveSet = new Set();
+  for (const lv of leaves) {
+    const d = startOfDay(new Date(lv.startDate));
+    const last = startOfDay(new Date(lv.endDate));
+    while (d <= last) {
+      if (d >= start && d <= end) leaveSet.add(ymdLocal(d));
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  // Classify each day in the window (worked days take priority over leave/absent).
+  const days = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    const key = ymdLocal(cur);
+    const status = att[key];
+    let category = null;
+    if (status === 'Present') category = 'full';
+    else if (status === 'HalfDay') category = 'half';
+    else if (compoffSet.has(key)) category = 'compoff';
+    else if (leaveSet.has(key) || status === 'OnLeave') category = 'leave';
+    else if (status === 'Absent') category = 'absent';
+    if (category) days.push({ date: key, category });
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  res.json({ from: ymdLocal(start), to: ymdLocal(end), days });
+});
+
 // GET /api/attendance/me?year=&month=
 const listMine = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -282,6 +349,7 @@ module.exports = {
   checkIn,
   checkOut,
   getAttendancePhoto,
+  myHeatmap,
   listMine,
   listAll,
   todayBoard,

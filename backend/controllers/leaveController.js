@@ -13,14 +13,22 @@ const BALANCED_TYPES = ['EL', 'CL', 'SL', 'ML'];
 // employee directly. Best-effort — never blocks the leave application.
 async function emailLeaveToHr(profile, request, applicant) {
   try {
-    let recipient = null;
+    // Notify the reporting manager (who can now approve) and the HR partner,
+    // falling back to a SuperAdmin if neither is set.
+    const recipients = new Set();
+    if (profile.reportingManager) {
+      const mgr = await User.findById(profile.reportingManager).select('email');
+      if (mgr?.email) recipients.add(mgr.email);
+    }
     if (profile.hrPartner) {
-      recipient = await User.findById(profile.hrPartner).select('email firstName lastName');
+      const hr = await User.findById(profile.hrPartner).select('email');
+      if (hr?.email) recipients.add(hr.email);
     }
-    if (!recipient) {
-      recipient = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('email');
+    if (recipients.size === 0) {
+      const sa = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('email');
+      if (sa?.email) recipients.add(sa.email);
     }
-    if (!recipient?.email) return;
+    if (recipients.size === 0) return;
 
     const name = `${applicant.firstName || ''} ${applicant.lastName || ''}`.trim() || 'An employee';
     const fmt = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -30,7 +38,7 @@ async function emailLeaveToHr(profile, request, applicant) {
 
     await enqueueMail(
       {
-        to: recipient.email,
+        to: [...recipients],
         replyTo: applicant.email,
         subject: `Leave request from ${name} (${request.leaveType}, ${request.totalDays}d)`,
         text: [
@@ -201,6 +209,39 @@ const listAllRequests = asyncHandler(async (req, res) => {
   res.json({ count: requests.length, requests });
 });
 
+// Shared approve/reject core — used by HR/admin and by managers (for their
+// direct reports). Mutates + saves the request; throws Error with a `.status`
+// on a bad transition or insufficient balance. Caller loads/guards the request.
+async function applyLeaveDecision(request, userId, action, note) {
+  if (request.status !== 'Pending') {
+    const err = new Error(`Cannot ${action} from status ${request.status}`);
+    err.status = 400;
+    throw err;
+  }
+  if (action === 'approve') {
+    const year = new Date(request.startDate).getFullYear();
+    const balance = await getOrCreateBalance(request.employee, year);
+    if (BALANCED_TYPES.includes(request.leaveType)) {
+      const available = balance.balances[request.leaveType]?.balance || 0;
+      if (available < request.totalDays) {
+        const err = new Error(`Insufficient ${request.leaveType} balance (have ${available}, need ${request.totalDays})`);
+        err.status = 400;
+        throw err;
+      }
+      adjustBalance(balance, request.leaveType, request.totalDays);
+      await balance.save();
+    }
+    request.status = 'Approved';
+  } else {
+    request.status = 'Rejected';
+  }
+  request.approver = userId;
+  request.decisionAt = new Date();
+  request.decisionNote = note;
+  await request.save();
+  return request;
+}
+
 // PATCH /api/leave/requests/:id/approve
 const approveRequest = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
@@ -208,31 +249,12 @@ const approveRequest = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Leave request not found');
   }
-  if (request.status !== 'Pending') {
-    res.status(400);
-    throw new Error(`Cannot approve from status ${request.status}`);
+  try {
+    await applyLeaveDecision(request, req.user._id, 'approve', req.body.note);
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
   }
-
-  const year = new Date(request.startDate).getFullYear();
-  const balance = await getOrCreateBalance(request.employee, year);
-
-  if (BALANCED_TYPES.includes(request.leaveType)) {
-    const available = balance.balances[request.leaveType]?.balance || 0;
-    if (available < request.totalDays) {
-      res.status(400);
-      throw new Error(
-        `Insufficient ${request.leaveType} balance (have ${available}, need ${request.totalDays})`
-      );
-    }
-    adjustBalance(balance, request.leaveType, request.totalDays);
-    await balance.save();
-  }
-
-  request.status = 'Approved';
-  request.approver = req.user._id;
-  request.decisionAt = new Date();
-  request.decisionNote = req.body.note;
-  await request.save();
   res.json({ request });
 });
 
@@ -243,15 +265,12 @@ const rejectRequest = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Leave request not found');
   }
-  if (request.status !== 'Pending') {
-    res.status(400);
-    throw new Error(`Cannot reject from status ${request.status}`);
+  try {
+    await applyLeaveDecision(request, req.user._id, 'reject', req.body.note);
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
   }
-  request.status = 'Rejected';
-  request.approver = req.user._id;
-  request.decisionAt = new Date();
-  request.decisionNote = req.body.note;
-  await request.save();
   res.json({ request });
 });
 
@@ -300,4 +319,5 @@ module.exports = {
   rejectRequest,
   listBalances,
   upsertBalance,
+  applyLeaveDecision,
 };

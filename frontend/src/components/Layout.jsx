@@ -8,7 +8,7 @@ import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
-const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', Employee: 'Employee' };
+const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', Employee: 'Employee' };
 
 const NOTIF_POLL_MS = 20000;
 
@@ -306,6 +306,8 @@ export default function Layout({ navItems = [], sectionTitle }) {
   };
 
   const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager');
+  // CEO/MD: read-only executives who can browse the whole admin portal.
+  const isExecViewer = user && (user.role === 'CEO' || user.role === 'MD');
   // SuperAdmin is not an employee, so they have no "My Portal". Only roles with
   // employee-portal access (Employee, HRManager) get the portal switcher.
   const canEmployeePortal = user && user.role !== 'SuperAdmin';
@@ -388,6 +390,13 @@ export default function Layout({ navItems = [], sectionTitle }) {
           </button>
 
           {isAdmin && <GlobalSearch />}
+
+          {isExecViewer && (
+            <span className="hidden sm:inline-flex items-center gap-1 ml-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200"
+              title="CEO/MD accounts can view everything but cannot make changes">
+              👁 View only
+            </span>
+          )}
 
           <div className="flex items-center gap-1 sm:gap-2 ml-auto">
             {isAdmin && canEmployeePortal && (

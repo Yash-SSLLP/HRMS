@@ -8,6 +8,7 @@ import PieChart from '../components/PieChart';
 import BarChart from '../components/BarChart';
 import ClockInOutCard from '../components/ClockInOutCard';
 import AttendanceReportWidget from '../components/AttendanceReportWidget';
+import AttendanceHeatmap from '../components/AttendanceHeatmap';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
 
@@ -84,6 +85,12 @@ export default function AdminOverview() {
         <StatCard icon="⚠️" tint="bg-rose-100" value={c.openComplaints ?? '—'} label="Open complaints" to="/admin/complaints" />
         <StatCard icon="🏢" tint="bg-sky-100" value={c.departments ?? '—'} label="Departments" to="/admin/departments" />
         <StatCard icon="📄" tint="bg-orange-100" value={c.documentsIncomplete ?? '—'} label="Docs incomplete" to="/admin/employees" />
+      </div>
+
+      {/* Attendance heatmap (the viewer's own present days) */}
+      <div className="bg-white shadow rounded-lg p-5 mb-4">
+        <h2 className="card-title mb-3">My Attendance</h2>
+        <AttendanceHeatmap />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

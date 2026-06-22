@@ -1,7 +1,11 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-const ROLES = ['SuperAdmin', 'HRManager', 'Employee'];
+// SuperAdmin/HRManager = portal admins. CEO/MD = read-only executives (can view
+// the whole admin portal but not change anything). Manager = an employee who
+// also approves leave for and sees the data of their direct reports. Employee =
+// standard self-service user.
+const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'Employee'];
 
 const userSchema = new mongoose.Schema(
   {

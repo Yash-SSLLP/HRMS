@@ -8,6 +8,9 @@ const blank = { name: '', isActive: true };
 export default function AdminDepartments() {
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
+  // HR + SuperAdmin can add/rename; only SuperAdmin can delete.
+  const canManage = isSuperAdmin || currentUser?.role === 'HRManager';
+  const canDelete = isSuperAdmin;
 
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -77,9 +80,9 @@ export default function AdminDepartments() {
     <div>
       <PageHeader
         title="Departments"
-        subtitle={!isSuperAdmin ? 'Only a SuperAdmin can add or edit departments.' : undefined}
+        subtitle={!canManage ? 'Only HR or a SuperAdmin can add or rename departments.' : undefined}
       >
-        {isSuperAdmin && (
+        {canManage && (
           <button onClick={openCreate}
             className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
             + Add Department
@@ -97,14 +100,14 @@ export default function AdminDepartments() {
             <tr>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Name</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
-              {isSuperAdmin && <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>}
+              {canManage && <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={isSuperAdmin ? 3 : 2} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={canManage ? 3 : 2} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
             ) : departments.length === 0 ? (
-              <tr><td colSpan={isSuperAdmin ? 3 : 2} className="px-4 py-6 text-center text-gray-500">No departments yet</td></tr>
+              <tr><td colSpan={canManage ? 3 : 2} className="px-4 py-6 text-center text-gray-500">No departments yet</td></tr>
             ) : departments.map((d) => (
               <tr key={d._id}>
                 <td className="px-4 py-3">{d.name}</td>
@@ -113,10 +116,10 @@ export default function AdminDepartments() {
                     {d.isActive ? 'Active' : 'Inactive'}
                   </span>
                 </td>
-                {isSuperAdmin && (
+                {canManage && (
                   <td className="px-4 py-3 text-right space-x-2">
-                    <button onClick={() => openEdit(d)} className="text-blue-600 hover:underline">Edit</button>
-                    <button onClick={() => remove(d)} className="text-red-600 hover:underline">Delete</button>
+                    <button onClick={() => openEdit(d)} className="text-blue-600 hover:underline">Rename</button>
+                    {canDelete && <button onClick={() => remove(d)} className="text-red-600 hover:underline">Delete</button>}
                   </td>
                 )}
               </tr>

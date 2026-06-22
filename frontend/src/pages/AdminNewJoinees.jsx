@@ -4,6 +4,7 @@ import { downloadFile } from '../api/download';
 import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
+import DesignationSelect from '../components/DesignationSelect';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '—');
@@ -196,7 +197,7 @@ export default function AdminNewJoinees() {
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Designation</label>
-                <input value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                <DesignationSelect value={form.designation} onChange={(v) => setForm({ ...form, designation: v })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Department</label>

@@ -28,6 +28,7 @@ export default function Calendar() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [hover, setHover] = useState(null); // { e, x, y } for the detail tooltip
 
   const load = async () => {
     setLoading(true);
@@ -72,6 +73,28 @@ export default function Calendar() {
   const isToday = (d) =>
     d === today.getDate() && month === today.getMonth() + 1 && year === today.getFullYear();
 
+  // Detail rows shown in the hover card, per event type.
+  const detailRows = (e) => {
+    const m = e.meta || {};
+    const rows = [];
+    if (e.type === 'holiday') {
+      if (m.holidayType) rows.push(['Type', m.holidayType]);
+      if (m.description) rows.push(['Details', m.description]);
+    } else if (e.type === 'event') {
+      if (m.time) rows.push(['Time', m.time]);
+      if (m.location) rows.push(['Location', m.location]);
+      if (m.description) rows.push(['Details', m.description]);
+    } else {
+      const role = [m.designation, m.department].filter(Boolean).join(' · ');
+      if (role) rows.push(['Role', role]);
+      if (m.employeeCode) rows.push(['Code', m.employeeCode]);
+      if (e.type === 'anniversary' && m.years) rows.push(['Years', `${m.years}`]);
+    }
+    return rows;
+  };
+
+  const showHover = (e, ev) => setHover({ e, x: ev.clientX, y: ev.clientY });
+
   return (
     <div>
       <PageHeader title="Calendar">
@@ -111,8 +134,11 @@ export default function Calendar() {
                   </div>
                   <div className="space-y-1">
                     {(eventsByDay[d] || []).map((e, i) => (
-                      <div key={i} title={`${TYPE_LABELS[e.type]}: ${e.label}`}
-                        className={`text-[10px] px-1 py-0.5 rounded truncate ${TYPE_STYLES[e.type]}`}>
+                      <div key={i}
+                        onMouseEnter={(ev) => showHover(e, ev)}
+                        onMouseMove={(ev) => showHover(e, ev)}
+                        onMouseLeave={() => setHover(null)}
+                        className={`text-[10px] px-1 py-0.5 rounded truncate cursor-default ${TYPE_STYLES[e.type]}`}>
                         {e.label}
                       </div>
                     ))}
@@ -124,6 +150,32 @@ export default function Calendar() {
         </div>
       </div>
       {loading && <p className="text-sm text-gray-500 mt-3">Loading…</p>}
+
+      {hover && (
+        <div
+          className="fixed z-[60] pointer-events-none"
+          style={{
+            left: Math.min(hover.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 274),
+            top: Math.min(hover.y + 14, (typeof window !== 'undefined' ? window.innerHeight : 800) - 140),
+            maxWidth: 260,
+          }}
+        >
+          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`inline-block w-2.5 h-2.5 rounded shrink-0 ${TYPE_STYLES[hover.e.type]}`} />
+              <span className="text-sm font-semibold text-gray-900 break-words">{hover.e.label}</span>
+            </div>
+            <div className="text-[11px] text-gray-500 mb-1.5">
+              {TYPE_LABELS[hover.e.type]} · {new Date(year, month - 1, hover.e.day).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            </div>
+            {detailRows(hover.e).map(([k, v]) => (
+              <div key={k} className="text-xs text-gray-700 break-words">
+                <span className="text-gray-400">{k}: </span>{v}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,6 +3,8 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Holiday = require('../models/Holiday');
 const Event = require('../models/Event');
 const Notification = require('../models/Notification');
+const Connection = require('../models/Connection');
+const Message = require('../models/Message');
 const { enqueueMail } = require('../services/email');
 const { hiddenUserIds } = require('../utils/visibility');
 
@@ -241,6 +243,23 @@ const sendWish = asyncHandler(async (req, res) => {
     body: wishLine,
   });
 
+  // Also drop the wish into the recipient's chat, from the sender. Ensure an
+  // accepted connection exists between the two so the message has a thread.
+  // Best-effort — never let a chat hiccup block the wish/email.
+  try {
+    const pairKey = Connection.buildPairKey(req.user._id, profile.user._id);
+    let conn = await Connection.findOne({ pairKey });
+    if (!conn) {
+      conn = await Connection.create({ requester: req.user._id, recipient: profile.user._id, status: 'accepted' });
+    } else if (conn.status !== 'accepted') {
+      conn.status = 'accepted';
+      await conn.save();
+    }
+    await Message.create({ connection: conn._id, sender: req.user._id, body: `${emoji} ${wishLine}` });
+  } catch (err) {
+    console.error('Wish chat delivery failed:', err.message);
+  }
+
   await enqueueMail({
     to: profile.user.email,
     subject: `${emoji} ${occasion} wishes from ${fromName}`,
@@ -258,4 +277,16 @@ const sendWish = asyncHandler(async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
-module.exports = { todayCelebrations, upcomingCelebrations, monthCalendar, sendWish };
+// GET /api/celebrations/wishes/received — recent birthday/anniversary wishes
+// received by the current user (drives the dashboard "Wishes for you" card).
+const receivedWishes = asyncHandler(async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 10, 50);
+  const wishes = await Notification.find({ recipient: req.user._id, type: 'celebration' })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .select('title body createdAt readAt')
+    .lean();
+  res.json({ count: wishes.length, wishes });
+});
+
+module.exports = { todayCelebrations, upcomingCelebrations, monthCalendar, sendWish, receivedWishes };

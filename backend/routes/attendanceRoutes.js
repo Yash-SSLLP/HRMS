@@ -4,6 +4,7 @@ const {
   checkIn,
   checkOut,
   getAttendancePhoto,
+  myHeatmap,
   listMine,
   listAll,
   todayBoard,
@@ -28,6 +29,7 @@ router.use(protect);
 
 router.post('/me/checkin', photoUpload.single('photo'), checkIn);
 router.post('/me/checkout', photoUpload.single('photo'), checkOut);
+router.get('/me/heatmap', myHeatmap);
 router.get('/me', listMine);
 
 // Photo view — auth (owner OR admin) handled inside the controller, so it lives

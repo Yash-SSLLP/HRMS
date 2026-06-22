@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import DesignationSelect from '../components/DesignationSelect';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -329,10 +330,10 @@ export default function AdminRecruitment() {
                     </button>
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                    {/* All rounds cleared → collect documents, then offer / onboard */}
+                    {/* All 4 rounds cleared → share the document-submission link */}
                     {allCleared(c) && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && (
-                      <button onClick={() => openDocs(c)} className="text-indigo-600 hover:underline">
-                        Documents{c.documents?.submittedAt && !c.documents?.confirmedAt ? ' 🔴' : c.documents?.confirmedAt ? ' ✓' : ''}
+                      <button onClick={() => openDocs(c)} className="text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 rounded-lg">
+                        📄 Document Link{c.documents?.submittedAt && !c.documents?.confirmedAt ? ' 🔴' : c.documents?.confirmedAt ? ' ✓' : ''}
                       </button>
                     )}
                     {allCleared(c) && c.documents?.confirmedAt && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && !c.offer?.generatedAt && (
@@ -347,8 +348,8 @@ export default function AdminRecruitment() {
                     {c.offer?.hasLetter && (
                       <button onClick={() => downloadOffer(c)} className="text-gray-600 hover:underline">Offer PDF</button>
                     )}
-                    {!allCleared(c) && c.stage !== 'Shortlisted' && c.stage !== 'Hired' && c.stage !== 'Rejected' && (
-                      <button onClick={() => setStage(c, 'Shortlisted')} className="text-green-600 hover:underline">Shortlist</button>
+                    {c.stage === 'Applied' && (
+                      <button onClick={() => setStage(c, 'Shortlisted')} className="text-white bg-green-600 hover:bg-green-700 px-2.5 py-1 rounded-lg">Shortlist</button>
                     )}
                     {c.stage !== 'Rejected' && c.stage !== 'Hired' && (
                       <button onClick={() => setStage(c, 'Rejected')} className="text-red-600 hover:underline">Reject</button>
@@ -372,6 +373,12 @@ export default function AdminRecruitment() {
                       )}
                       {/* Interview rounds */}
                       <div className="text-xs font-semibold text-gray-600 mb-2">Interview Rounds</div>
+                      {c.stage === 'Applied' ? (
+                        <div className="flex items-center gap-3 bg-white border border-dashed border-gray-300 rounded-lg px-4 py-4 text-sm text-gray-600">
+                          <span>Shortlist this candidate to begin interview rounds.</span>
+                          <button onClick={() => setStage(c, 'Shortlisted')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs">Shortlist</button>
+                        </div>
+                      ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                         {(c.rounds || []).map((r, idx) => (
                           <div key={r._id || idx} className="bg-white border border-gray-200 rounded-lg p-3">
@@ -433,6 +440,7 @@ export default function AdminRecruitment() {
                           </div>
                         ))}
                       </div>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -582,7 +590,7 @@ export default function AdminRecruitment() {
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Position / Designation *</label>
-                <input required value={offerForm.position} onChange={(e) => setOfferForm({ ...offerForm, position: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                <DesignationSelect required value={offerForm.position} onChange={(v) => setOfferForm({ ...offerForm, position: v })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Department</label>
