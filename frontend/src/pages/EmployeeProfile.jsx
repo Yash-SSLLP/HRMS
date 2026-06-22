@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import ProfilePhotoCard from '../components/ProfilePhotoCard';
 
 function Field({ label, value, mono }) {
   return (
@@ -80,6 +81,8 @@ export default function EmployeeProfile() {
           Request a change
         </Link>
       </PageHeader>
+
+      <ProfilePhotoCard />
 
       {/* Birthday — self-service (no approval needed) */}
       <div className="bg-white shadow rounded-lg p-5 mb-4">

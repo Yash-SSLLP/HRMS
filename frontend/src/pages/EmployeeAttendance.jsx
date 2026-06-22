@@ -20,6 +20,15 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
 const fmtTime = (d) =>
   d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—';
 
+// Milliseconds → HH:MM:SS for the live working-time clock.
+const fmtElapsed = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+};
+
 export default function EmployeeAttendance() {
   const now = new Date();
   const [filter, setFilter] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
@@ -28,6 +37,7 @@ export default function EmployeeAttendance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [, setTick] = useState(0); // forces a re-render each second for the live clock
 
   // Camera capture modal state
   const [capture, setCapture] = useState(null); // 'checkin' | 'checkout' | null
@@ -153,6 +163,18 @@ export default function EmployeeAttendance() {
   const canCheckIn = !today || !today.checkIn;
   const canCheckOut = today && today.checkIn && !today.checkOut;
 
+  // Live working-time clock: runs once checked in, freezes at check-out.
+  const running = Boolean(today?.checkIn && !today.checkOut);
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+
+  const elapsedMs = today?.checkIn
+    ? (today.checkOut ? new Date(today.checkOut) : new Date()) - new Date(today.checkIn)
+    : null;
+
   return (
     <div>
       <PageHeader title="Attendance" />
@@ -168,6 +190,28 @@ export default function EmployeeAttendance() {
             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[today.status]}`}>{today.status}</span>
           )}
         </div>
+        {today?.checkIn && (
+          <div className={`mb-4 flex items-center justify-between rounded-lg px-4 py-3 border ${
+            running ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+            <div>
+              <div className={`text-xs font-medium ${running ? 'text-green-700' : 'text-gray-500'}`}>
+                {running ? 'Time since check-in' : 'Total time worked today'}
+              </div>
+              <div className={`text-3xl font-mono font-bold tabular-nums ${running ? 'text-green-700' : 'text-gray-800'}`}>
+                {fmtElapsed(elapsedMs)}
+              </div>
+            </div>
+            {running ? (
+              <span className="flex items-center gap-2 text-sm font-medium text-green-700">
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+                Running
+              </span>
+            ) : (
+              <span className="text-sm text-gray-500">Checked out at {fmtTime(today.checkOut)}</span>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Check-in</div>

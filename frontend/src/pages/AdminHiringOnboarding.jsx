@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
-import { composeMail } from '../api/compose';
 import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
+import MailComposeModal from '../components/MailComposeModal';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '—');
@@ -26,7 +26,7 @@ export default function AdminHiringOnboarding() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [savingId, setSavingId] = useState(null);
-  const [sendingOffer, setSendingOffer] = useState(null);
+  const [mail, setMail] = useState(null); // editable compose modal payload
 
   // Appointment-letter modal
   const [apptCand, setApptCand] = useState(null);
@@ -72,27 +72,32 @@ export default function AdminHiringOnboarding() {
     downloadFile(`/recruitment/candidates/${c._id}/appointment/pdf`, c.appointment?.letterName || 'appointment-letter.pdf')
       .catch((err) => alert(err.response?.data?.message || 'Download failed'));
 
-  // Email the offer letter: open a prefilled compose tab with its download link.
-  const sendOffer = async (c) => {
+  // Email a generated letter: open the editable composer with a public download
+  // link already inserted. HR can tweak the subject/body before sending.
+  const sendLetter = (c, kind) => {
+    const letter = c[kind];
     if (!c.email) { setError('This candidate has no email address on file.'); return; }
-    if (!c.offer?.token) { setError('Please regenerate the offer letter to get a shareable download link.'); return; }
-    setSendingOffer(c._id); setError(''); setInfo('');
-    const link = `${window.location.origin}/letter/${c.offer.token}`;
-    try {
-      await composeMail({
-        to: c.email,
-        subject: `Offer Letter — ${COMPANY_NAME}`,
-        body:
-          `Dear ${c.name},\n\n` +
-          `Please find your Offer Letter from ${COMPANY_NAME}. You can download it from the link below:\n\n` +
-          `${link}\n\n` +
-          `Warm regards,`,
-      });
-      await api.post(`/recruitment/candidates/${c._id}/offer/mark-sent`);
-      setInfo(`Compose window opened for ${c.email} with the offer letter download link.`);
-      await load();
-    } catch (err) { setError(err.response?.data?.message || 'Could not open compose window'); }
-    finally { setSendingOffer(null); }
+    if (!letter?.token) { setError(`Please regenerate the ${kind === 'offer' ? 'offer' : 'appointment'} letter to get a shareable download link.`); return; }
+    setError(''); setInfo('');
+    const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
+    const link = `${window.location.origin}/letter/${letter.token}`;
+    setMail({
+      to: c.email,
+      title: `Send ${label}`,
+      link,
+      defaultSubject: `${label} — ${COMPANY_NAME}`,
+      defaultBody:
+        `Dear ${c.name},\n\n` +
+        `Please find your ${label} from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
+        `${link}\n\n` +
+        `Kindly review the document and revert with your acceptance.\n\n` +
+        `Warm regards,`,
+      onSent: async () => {
+        await api.post(`/recruitment/candidates/${c._id}/${kind}/mark-sent`);
+        setInfo(`Compose window opened for ${c.email} with the ${label.toLowerCase()} link.`);
+        await load();
+      },
+    });
   };
 
   // ----- Appointment letter -----
@@ -162,16 +167,26 @@ export default function AdminHiringOnboarding() {
                   )}
                   {c.offer?.hasLetter && (
                     <button
-                      onClick={() => sendOffer(c)}
-                      disabled={!c.email || sendingOffer === c._id}
+                      onClick={() => sendLetter(c, 'offer')}
+                      disabled={!c.email}
                       title={!c.email ? 'No email on file for this candidate' : 'Email the offer letter to the candidate'}
                       className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
                     >
-                      {sendingOffer === c._id ? 'Sending…' : c.offer?.emailedAt ? 'Resend Offer Letter' : 'Send Offer Letter'}
+                      {c.offer?.emailedAt ? 'Resend Offer Letter' : 'Send Offer Letter'}
                     </button>
                   )}
                   {c.appointment?.hasLetter && (
                     <button onClick={() => downloadAppointment(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Appointment PDF</button>
+                  )}
+                  {c.appointment?.hasLetter && (
+                    <button
+                      onClick={() => sendLetter(c, 'appointment')}
+                      disabled={!c.email}
+                      title={!c.email ? 'No email on file for this candidate' : 'Email the appointment letter to the candidate'}
+                      className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {c.appointment?.emailedAt ? 'Resend Appointment Letter' : 'Send Appointment Letter'}
+                    </button>
                   )}
                   <button onClick={() => openAppt(c)} className="text-xs px-2.5 py-1 rounded-lg bg-gray-900 text-white hover:bg-gray-700">
                     {c.appointment?.generatedAt ? 'Re-issue Appointment Letter' : 'Release Appointment Letter'}
@@ -282,6 +297,8 @@ export default function AdminHiringOnboarding() {
           </div>
         </div>
       )}
+
+      <MailComposeModal open={!!mail} onClose={() => setMail(null)} {...(mail || {})} />
     </div>
   );
 }

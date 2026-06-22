@@ -5,6 +5,7 @@ import { useThemeStore } from '../store/themeStore';
 import api from '../api/client';
 import ChatDock from './ChatDock';
 import PageSkeleton from './PageSkeleton';
+import AuthImage from './AuthImage';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', Employee: 'Employee' };
@@ -15,6 +16,22 @@ function initials(user) {
   const a = (user?.firstName || '').trim()[0] || '';
   const b = (user?.lastName || '').trim()[0] || '';
   return (a + b).toUpperCase() || 'U';
+}
+
+// User avatar: profile photo when set, otherwise initials on the accent colour.
+// The photo path (which changes on every upload) is used as a cache-buster so
+// the image refreshes immediately after a change.
+function UserAvatar({ user }) {
+  const fallback = <span className="avatar-circle accent-bg text-white">{initials(user)}</span>;
+  if (!user?.photo) return fallback;
+  return (
+    <AuthImage
+      url={`/auth/users/${user._id}/avatar?p=${encodeURIComponent(user.photo)}`}
+      alt={initials(user)}
+      className="avatar-circle object-cover"
+      fallback={fallback}
+    />
+  );
 }
 
 function NotificationBell({ isAdmin }) {
@@ -238,7 +255,7 @@ function ProfileMenu({ user, onLogout }) {
   return (
     <div className="relative" ref={wrapRef}>
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-gray-100">
-        <span className="avatar-circle accent-bg text-white">{initials(user)}</span>
+        <UserAvatar user={user} />
         <span className="hidden sm:flex flex-col items-start leading-tight">
           <span className="text-sm font-medium text-gray-800">{user?.firstName} {user?.lastName}</span>
           <span className="text-[11px] text-gray-500">{ROLE_LABELS[user?.role] || user?.role}</span>
@@ -249,7 +266,7 @@ function ProfileMenu({ user, onLogout }) {
       {open && (
         <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
-            <span className="avatar-circle accent-bg text-white">{initials(user)}</span>
+            <UserAvatar user={user} />
             <div className="min-w-0">
               <div className="text-sm font-medium text-gray-900 truncate">{user?.firstName} {user?.lastName}</div>
               <div className="text-xs text-gray-500 truncate">{user?.email}</div>
@@ -325,7 +342,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
             end={item.end}
             onClick={closeMobile}
             className={({ isActive }) =>
-              `nav-link ${item.danger ? 'nav-link-danger' : ''} ${isActive ? 'nav-link-active' : ''}`}
+              `nav-link ${item.danger ? 'nav-link-danger' : ''} ${item.highlight ? 'nav-link-highlight' : ''} ${isActive ? 'nav-link-active' : ''}`}
           >
             <span className="nav-icon" aria-hidden="true">{item.icon || '•'}</span>
             <span className="truncate">{item.label}</span>
@@ -334,7 +351,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
       </nav>
       <div className="border-t border-gray-100 p-3 shrink-0">
         <div className="flex items-center gap-3 px-2 py-2 rounded-lg">
-          <span className="avatar-circle accent-bg text-white">{initials(user)}</span>
+          <UserAvatar user={user} />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-gray-800 truncate">{user?.firstName} {user?.lastName}</div>
             <div className="text-[11px] text-gray-500 truncate">{ROLE_LABELS[user?.role] || user?.role}</div>

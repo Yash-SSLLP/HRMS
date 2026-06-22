@@ -1,6 +1,8 @@
 const asyncHandler = require('express-async-handler');
+const path = require('path');
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
+const storage = require('../services/storage');
 
 // POST /api/auth/signup  (public — creates Employee accounts only)
 // Privileged accounts (HRManager/SuperAdmin) must be created via /api/admin/users.
@@ -106,4 +108,61 @@ const updateMyCredentials = asyncHandler(async (req, res) => {
   res.json({ user: user.toJSON() });
 });
 
-module.exports = { signup, login, me, updateMyCredentials };
+// POST /api/auth/me/avatar  (protected, multipart: photo)
+// Self-service profile photo upload. Replaces any existing photo on disk.
+const uploadMyAvatar = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    res.status(400);
+    throw new Error('A photo is required');
+  }
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  const { storagePath } = storage.saveBuffer({
+    buffer: req.file.buffer,
+    ownerType: 'avatars',
+    ownerId: user._id,
+    originalName: req.file.originalname || 'avatar.jpg',
+  });
+  const previous = user.photo;
+  user.photo = storagePath;
+  await user.save();
+  if (previous && previous !== storagePath) {
+    try { storage.remove(previous); } catch { /* best effort */ }
+  }
+  res.json({ user: user.toJSON() });
+});
+
+// DELETE /api/auth/me/avatar  (protected) — remove my profile photo.
+const deleteMyAvatar = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  if (user.photo) {
+    try { storage.remove(user.photo); } catch { /* best effort */ }
+    user.photo = null;
+    await user.save();
+  }
+  res.json({ user: user.toJSON() });
+});
+
+// GET /api/auth/users/:id/avatar  (protected) — stream any active user's photo.
+// Any authenticated user may view avatars (used across chat, directory, etc.).
+const getUserAvatar = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id).select('photo isActive');
+  if (!user || !user.photo) {
+    res.status(404);
+    throw new Error('No photo for this user');
+  }
+  const ext = path.extname(user.photo).toLowerCase();
+  const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  res.setHeader('Content-Type', type);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  storage.readStream(user.photo).pipe(res);
+});
+
+module.exports = { signup, login, me, updateMyCredentials, uploadMyAvatar, deleteMyAvatar, getUserAvatar };

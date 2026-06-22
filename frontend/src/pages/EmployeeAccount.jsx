@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import ProfilePhotoCard from '../components/ProfilePhotoCard';
 import { useAuthStore } from '../store/authStore';
 
 const STATUS_BADGE = {
@@ -92,6 +93,8 @@ export default function EmployeeAccount() {
   return (
     <div>
       <PageHeader title="Account & Change Requests" subtitle="Update your login or request changes to your details" />
+
+      <ProfilePhotoCard />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

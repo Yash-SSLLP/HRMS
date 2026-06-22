@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
-import { composeMail } from '../api/compose';
 import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
+import MailComposeModal from '../components/MailComposeModal';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '—');
@@ -24,7 +24,7 @@ export default function AdminNewJoinees() {
   const [cand, setCand] = useState(null);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [sendingKind, setSendingKind] = useState(null); // `${id}:offer|appointment`
+  const [mail, setMail] = useState(null); // editable compose modal payload
 
   const load = async () => {
     setLoading(true); setError('');
@@ -44,31 +44,31 @@ export default function AdminNewJoinees() {
     downloadFile(`/recruitment/candidates/${c._id}/appointment/pdf`, c.appointment?.letterName || 'appointment-letter.pdf')
       .catch((err) => alert(err.response?.data?.message || 'Download failed'));
 
-  // Open a prefilled Gmail compose tab containing a public download link the
-  // candidate can use to fetch the letter (no attachment needed).
-  const sendLetter = async (c, kind) => {
+  // Open the editable composer with a public download link inserted; HR can
+  // tweak the subject/body before sending from their own mailbox.
+  const sendLetter = (c, kind) => {
     if (!c.email) { setError('This candidate has no email address on file.'); return; }
     const letter = kind === 'offer' ? c.offer : c.appointment;
     if (!letter?.token) { setError('Please regenerate the letter to get a shareable download link.'); return; }
-    setSendingKind(`${c._id}:${kind}`); setError(''); setInfo('');
+    setError(''); setInfo('');
     const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
     const link = `${window.location.origin}/letter/${letter.token}`;
-    try {
-      await composeMail({
-        to: c.email,
-        subject: `${label} — ${COMPANY_NAME}`,
-        body:
-          `Dear ${c.name},\n\n` +
-          `Please find your ${label} from ${COMPANY_NAME}. You can download it from the link below:\n\n` +
-          `${link}\n\n` +
-          `Warm regards,`,
-      });
-      // Record it as sent so the "already sent" remark shows.
-      await api.post(`/recruitment/candidates/${c._id}/${kind}/mark-sent`);
-      setInfo(`Compose window opened for ${c.email} with the ${label} download link.`);
-      await load();
-    } catch (err) { setError(err.response?.data?.message || 'Could not open compose window'); }
-    finally { setSendingKind(null); }
+    setMail({
+      to: c.email,
+      title: `Send ${label}`,
+      link,
+      defaultSubject: `${label} — ${COMPANY_NAME}`,
+      defaultBody:
+        `Dear ${c.name},\n\n` +
+        `Please find your ${label} from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
+        `${link}\n\n` +
+        `Warm regards,`,
+      onSent: async () => {
+        await api.post(`/recruitment/candidates/${c._id}/${kind}/mark-sent`);
+        setInfo(`Compose window opened for ${c.email} with the ${label.toLowerCase()} link.`);
+        await load();
+      },
+    });
   };
 
   const openConvert = async (c) => {
@@ -138,11 +138,11 @@ export default function AdminNewJoinees() {
                   )}
                   <button
                     onClick={() => sendLetter(c, 'offer')}
-                    disabled={!c.offer?.hasLetter || !c.email || sendingKind === `${c._id}:offer`}
+                    disabled={!c.offer?.hasLetter || !c.email}
                     title={!c.email ? 'No email on file for this candidate' : 'Email the offer letter to the candidate'}
                     className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
-                    {sendingKind === `${c._id}:offer` ? 'Sending…' : c.offer?.emailedAt ? 'Resend Offer Letter' : 'Send Offer Letter'}
+                    {c.offer?.emailedAt ? 'Resend Offer Letter' : 'Send Offer Letter'}
                   </button>
                 </div>
                 {/* Appointment letter */}
@@ -153,11 +153,11 @@ export default function AdminNewJoinees() {
                   )}
                   <button
                     onClick={() => sendLetter(c, 'appointment')}
-                    disabled={!c.appointment?.hasLetter || !c.email || sendingKind === `${c._id}:appointment`}
+                    disabled={!c.appointment?.hasLetter || !c.email}
                     title={!c.email ? 'No email on file for this candidate' : 'Email the appointment letter to the candidate'}
                     className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
-                    {sendingKind === `${c._id}:appointment` ? 'Sending…' : c.appointment?.emailedAt ? 'Resend Appointment Letter' : 'Send Appointment Letter'}
+                    {c.appointment?.emailedAt ? 'Resend Appointment Letter' : 'Send Appointment Letter'}
                   </button>
                 </div>
                 <button onClick={() => openConvert(c)} className="text-xs px-2.5 py-1 rounded-lg bg-gray-900 text-white hover:bg-gray-700">Make Employee &amp; User</button>
@@ -227,6 +227,8 @@ export default function AdminNewJoinees() {
           </div>
         </div>
       )}
+
+      <MailComposeModal open={!!mail} onClose={() => setMail(null)} {...(mail || {})} />
     </div>
   );
 }

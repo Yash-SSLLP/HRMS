@@ -213,6 +213,38 @@ html.dark .card-title { color: #f1f5f9; }
   filter: saturate(1.1);
 }
 
+/* Highlighted nav item (e.g. Attendance) — draws the eye with an accent tint
+   and a gently pulsing dot, so employees spot it quickly. */
+.nav-link-highlight {
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.nav-link-highlight .nav-icon {
+  background-color: var(--accent);
+  filter: saturate(1.1);
+}
+.nav-link-highlight::after {
+  content: "";
+  margin-left: auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--accent);
+  animation: navPulse 1.6s ease-in-out infinite;
+}
+@keyframes navPulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); opacity: 1; }
+  70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); opacity: .6; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-link-highlight::after { animation: none; }
+}
+html.dark .nav-link-highlight {
+  color: #fff;
+  background-color: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
 html.dark .nav-link { color: #aebacd; }
 html.dark .nav-link:hover,
 html.dark .nav-link-active { color: #fff; }

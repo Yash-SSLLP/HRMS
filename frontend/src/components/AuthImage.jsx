@@ -3,7 +3,7 @@ import { fetchImageObjectUrl } from '../api/download';
 
 // Renders an image from a protected API endpoint (needs the Bearer token, which
 // a plain <img src> can't send). Fetches as a blob and uses an object URL.
-export default function AuthImage({ url, alt = '', className = '', onClick }) {
+export default function AuthImage({ url, alt = '', className = '', style, onClick, fallback }) {
   const [src, setSrc] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -25,7 +25,7 @@ export default function AuthImage({ url, alt = '', className = '', onClick }) {
     };
   }, [url]);
 
-  if (failed) return <span className={`text-xs text-gray-400 ${className}`}>n/a</span>;
-  if (!src) return <span className={`inline-block bg-gray-100 animate-pulse ${className}`} />;
-  return <img src={src} alt={alt} className={className} onClick={onClick} />;
+  if (failed) return fallback !== undefined ? fallback : <span className={`text-xs text-gray-400 ${className}`} style={style}>n/a</span>;
+  if (!src) return <span className={`inline-block bg-gray-100 animate-pulse ${className}`} style={style} />;
+  return <img src={src} alt={alt} className={className} style={style} onClick={onClick} />;
 }

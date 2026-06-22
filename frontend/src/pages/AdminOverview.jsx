@@ -7,6 +7,7 @@ import WelcomeBanner from '../components/WelcomeBanner';
 import PieChart from '../components/PieChart';
 import BarChart from '../components/BarChart';
 import ClockInOutCard from '../components/ClockInOutCard';
+import AttendanceReportWidget from '../components/AttendanceReportWidget';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
 
@@ -113,6 +114,15 @@ export default function AdminOverview() {
           ) : (
             <BarChart data={deptBars} />
           )}
+        </div>
+
+        {/* Daily login / logout report (compact) */}
+        <div className="bg-white shadow rounded-lg p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="card-title">Daily Login / Logout</h2>
+            <Link to="/admin/attendance-report" className="text-sm text-blue-600 hover:underline">Full report →</Link>
+          </div>
+          <AttendanceReportWidget compact height={150} />
         </div>
 
         {/* Birthday wisher */}

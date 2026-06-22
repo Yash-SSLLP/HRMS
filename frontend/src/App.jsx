@@ -19,6 +19,7 @@ const AdminEmployeeDetail = lazy(() => import('./pages/AdminEmployeeDetail.jsx')
 const AdminPayroll = lazy(() => import('./pages/AdminPayroll.jsx'));
 const AdminLeave = lazy(() => import('./pages/AdminLeave.jsx'));
 const AdminAttendance = lazy(() => import('./pages/AdminAttendance.jsx'));
+const AdminAttendanceReport = lazy(() => import('./pages/AdminAttendanceReport.jsx'));
 const AdminDocuments = lazy(() => import('./pages/AdminDocuments.jsx'));
 const AdminExit = lazy(() => import('./pages/AdminExit.jsx'));
 const EmployeeDashboard = lazy(() => import('./pages/EmployeeDashboard.jsx'));
@@ -94,6 +95,7 @@ const adminNav = [
   { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: '✅' },
   { to: '/admin/confirmations', label: 'Confirmations', icon: '🛡️' },
   { to: '/admin/attendance', label: 'Attendance', icon: '🕒' },
+  { to: '/admin/attendance-report', label: 'Attendance Report', icon: '📉' },
   { to: '/admin/roster', label: 'Shifts & Roster', icon: '📆' },
   { to: '/admin/regularizations', label: 'Regularization', icon: '🛠️' },
   { to: '/admin/payroll', label: 'Payroll', icon: '💰' },
@@ -136,7 +138,7 @@ const employeeNav = [
   { to: '/employee', label: 'Overview', end: true, icon: '🏠' },
   { to: '/employee/org-chart', label: 'Org Chart', icon: '🌳' },
   { to: '/employee/onboarding', label: 'Onboarding', icon: '🚀' },
-  { to: '/employee/attendance', label: 'Attendance', icon: '🕒' },
+  { to: '/employee/attendance', label: 'Attendance', icon: '🕒', highlight: true },
   { to: '/employee/shifts', label: 'My Shifts', icon: '📆' },
   { to: '/employee/regularizations', label: 'Regularization', icon: '🛠️' },
   { to: '/employee/payslips', label: 'Payslips', icon: '💰' },
@@ -217,6 +219,7 @@ export default function App() {
         <Route path="onboarding" element={<AdminOnboarding />} />
         <Route path="confirmations" element={<AdminConfirmations />} />
         <Route path="attendance" element={<AdminAttendance />} />
+        <Route path="attendance-report" element={<AdminAttendanceReport />} />
         <Route path="roster" element={<AdminRoster />} />
         <Route path="regularizations" element={<AdminRegularizations />} />
         <Route path="payroll" element={<AdminPayroll />} />

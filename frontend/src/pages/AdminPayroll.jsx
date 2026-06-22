@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
-import { composeMail } from '../api/compose';
+import { apiPublicUrl } from '../api/compose';
 import PageHeader from '../components/PageHeader';
+import MailComposeModal from '../components/MailComposeModal';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -41,6 +42,7 @@ export default function AdminPayroll() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(blankSlip());
   const [saving, setSaving] = useState(false);
+  const [mail, setMail] = useState(null); // editable compose modal payload
 
   const load = async () => {
     setLoading(true);
@@ -125,23 +127,34 @@ export default function AdminPayroll() {
     }
   };
 
-  // Open a prefilled Gmail compose tab to email a payslip; the PDF downloads to attach.
-  const emailPayslip = (p) => {
+  // Email a payslip: generate a public (no-login) download link, then open the
+  // editable composer with that link inserted so HR can tweak before sending.
+  const emailPayslip = async (p) => {
     const email = p.employee?.user?.email;
     if (!email) { alert('No email on file for this employee.'); return; }
     const period = `${MONTHS[p.payPeriodMonth - 1]} ${p.payPeriodYear}`;
     const name = `${p.employee?.user?.firstName || ''} ${p.employee?.user?.lastName || ''}`.trim();
-    const filename = `payslip-${p.employee?.employeeCode || 'employee'}-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`;
-    composeMail({
-      to: email,
-      subject: `Payslip — ${period}`,
-      body:
-        `Dear ${name || 'Employee'},\n\n` +
-        `Please find attached your payslip for ${period}.\n\n` +
-        `(The payslip PDF has been downloaded to your device — please attach it before sending.)\n\n` +
-        `Regards,\nHR`,
-      attachments: [{ url: `/payroll/${p._id}/pdf`, filename }],
-    });
+    try {
+      const { data } = await api.post(`/payroll/${p._id}/share`);
+      const link = apiPublicUrl(`/payroll/public/${data.token}`);
+      setMail({
+        to: email,
+        title: 'Send payslip',
+        link,
+        defaultSubject: `Payslip — ${period}`,
+        defaultBody:
+          `Dear ${name || 'Employee'},\n\n` +
+          `Your payslip for ${period} is ready. You can view and download it from the link below:\n\n` +
+          `${link}\n\n` +
+          `Regards,\nHR`,
+        onSent: async () => {
+          await api.post(`/payroll/${p._id}/mark-sent`);
+          await load();
+        },
+      });
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not prepare the payslip link');
+    }
   };
 
   const updateNum = (group, key, v) => {
@@ -236,7 +249,7 @@ export default function AdminPayroll() {
                           `payslip-${p.employee?.employeeCode || 'employee'}-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`
                         )}
                         className="text-blue-600 hover:underline">PDF</button>
-                      <button onClick={() => emailPayslip(p)} className="text-indigo-600 hover:underline">Email</button>
+                      <button onClick={() => emailPayslip(p)} className="text-indigo-600 hover:underline">{p.emailedAt ? 'Resend' : 'Email'}</button>
                     </>
                   )}
                 </td>
@@ -355,6 +368,8 @@ export default function AdminPayroll() {
           </div>
         </div>
       )}
+
+      <MailComposeModal open={!!mail} onClose={() => setMail(null)} {...(mail || {})} />
     </div>
   );
 }

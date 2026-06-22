@@ -1,11 +1,13 @@
 const asyncHandler = require('express-async-handler');
+const path = require('path');
 const Connection = require('../models/Connection');
 const Message = require('../models/Message');
 const ChatGroup = require('../models/ChatGroup');
 const User = require('../models/User');
+const storage = require('../services/storage');
 const { hideSuperAdminFilter } = require('../utils/visibility');
 
-const USER_FIELDS = 'firstName lastName email role';
+const USER_FIELDS = 'firstName lastName email role photo';
 
 function publicUser(u) {
   if (!u) return null;
@@ -16,6 +18,7 @@ function publicUser(u) {
     fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
     email: u.email,
     role: u.role,
+    hasPhoto: Boolean(u.photo),
   };
 }
 
@@ -377,6 +380,8 @@ const listGroups = asyncHandler(async (req, res) => {
       mine.push({
         groupId: g._id,
         name: g.name,
+        hasPhoto: Boolean(g.photo),
+        myRole: mem.role,
         memberCount: g.members.filter((m) => m.status === 'accepted').length,
         lastMessage: lastMessage
           ? { body: lastMessage.body, createdAt: lastMessage.createdAt, mine: lastMessage.sender.equals(meId) }
@@ -385,7 +390,7 @@ const listGroups = asyncHandler(async (req, res) => {
       });
     } else if (mem.status === 'invited') {
       const owner = g.members.find((m) => m.role === 'owner');
-      invites.push({ groupId: g._id, name: g.name, from: publicUser(owner?.user), invitedAt: mem.invitedAt, memberCount: g.members.length });
+      invites.push({ groupId: g._id, name: g.name, hasPhoto: Boolean(g.photo), from: publicUser(owner?.user), invitedAt: mem.invitedAt, memberCount: g.members.length });
     }
   }
   res.json({ groups: mine, invites });
@@ -438,6 +443,8 @@ const getGroupMessages = asyncHandler(async (req, res) => {
 
   res.json({
     name: group.name,
+    hasPhoto: Boolean(group.photo),
+    myRole: mem.role,
     memberCount: group.members.filter((m) => m.status === 'accepted').length,
     messages: messages.map((m) => ({
       _id: m._id,
@@ -474,6 +481,242 @@ const clearGroup = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== Group management (admin actions, leave, settings) =====
+
+// Shared guard: load a group the caller manages (owner or admin).
+async function loadGroupForManager(groupId, meId) {
+  const group = await ChatGroup.findById(groupId);
+  if (!group || !group.isManager(meId)) {
+    const err = new Error('Only the group owner or an admin can do that');
+    err.status = 403;
+    throw err;
+  }
+  return group;
+}
+
+// Shape a member sub-doc (with populated user) for the settings panel.
+function shapeMember(m) {
+  return { ...publicUser(m.user), role: m.role, status: m.status };
+}
+
+// GET /api/chat/groups/:id — full group detail for the settings panel.
+const getGroupInfo = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const group = await ChatGroup.findById(req.params.id).populate('members.user', USER_FIELDS);
+  const mem = group && group.memberFor(meId);
+  if (!group || !mem || mem.status !== 'accepted') {
+    res.status(403);
+    throw new Error('You are not a member of this group');
+  }
+  // Accepted members first, then pending invites; owner/admin sorted to the top.
+  const order = { owner: 0, admin: 1, member: 2 };
+  const members = group.members
+    .filter((m) => m.user && m.status !== 'declined')
+    .sort((a, b) => (order[a.role] - order[b.role]))
+    .map(shapeMember);
+  res.json({
+    groupId: group._id,
+    name: group.name,
+    hasPhoto: Boolean(group.photo),
+    myRole: mem.role,
+    createdBy: String(group.createdBy),
+    members,
+  });
+});
+
+// PATCH /api/chat/groups/:id  { name } — rename the group (owner/admin).
+const renameGroup = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const { name } = req.body;
+  if (!name || !name.trim()) {
+    res.status(400);
+    throw new Error('Group name is required');
+  }
+  const group = await loadGroupForManager(req.params.id, meId);
+  group.name = name.trim().slice(0, 80);
+  await group.save();
+  res.json({ ok: true, name: group.name });
+});
+
+// POST /api/chat/groups/:id/photo  (multipart: photo) — set group photo (owner/admin).
+const uploadGroupPhoto = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  if (!req.file) {
+    res.status(400);
+    throw new Error('A photo is required');
+  }
+  const group = await loadGroupForManager(req.params.id, meId);
+  const { storagePath } = storage.saveBuffer({
+    buffer: req.file.buffer,
+    ownerType: 'groups',
+    ownerId: group._id,
+    originalName: req.file.originalname || 'group.jpg',
+  });
+  const previous = group.photo;
+  group.photo = storagePath;
+  await group.save();
+  if (previous && previous !== storagePath) {
+    try { storage.remove(previous); } catch { /* best effort */ }
+  }
+  res.json({ ok: true });
+});
+
+// DELETE /api/chat/groups/:id/photo — remove group photo (owner/admin).
+const deleteGroupPhoto = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const group = await loadGroupForManager(req.params.id, meId);
+  if (group.photo) {
+    try { storage.remove(group.photo); } catch { /* best effort */ }
+    group.photo = null;
+    await group.save();
+  }
+  res.json({ ok: true });
+});
+
+// GET /api/chat/groups/:id/photo — stream the group photo (members only).
+const getGroupPhoto = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const group = await ChatGroup.findById(req.params.id).select('photo members');
+  const mem = group && group.memberFor(meId);
+  if (!group || !mem || mem.status !== 'accepted') {
+    res.status(403);
+    throw new Error('You are not a member of this group');
+  }
+  if (!group.photo) {
+    res.status(404);
+    throw new Error('This group has no photo');
+  }
+  const ext = path.extname(group.photo).toLowerCase();
+  const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  res.setHeader('Content-Type', type);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  storage.readStream(group.photo).pipe(res);
+});
+
+// POST /api/chat/groups/:id/members  { memberIds: [] } — invite more people (owner/admin).
+const addGroupMembers = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const { memberIds } = req.body;
+  const group = await loadGroupForManager(req.params.id, meId);
+
+  let ids = Array.isArray(memberIds) ? [...new Set(memberIds.map(String))] : [];
+  if (ids.length === 0) {
+    res.status(400);
+    throw new Error('Pick at least one person to add');
+  }
+  const valid = await User.find({ _id: { $in: ids }, isActive: true, ...hideSuperAdminFilter(req.user) }).select('_id');
+
+  let added = 0;
+  for (const u of valid) {
+    const existing = group.memberFor(u._id);
+    if (!existing) {
+      // brand-new invitee
+      group.members.push({ user: u._id, role: 'member', status: 'invited' });
+      added += 1;
+    } else if (existing.status === 'declined') {
+      // re-invite someone who previously declined or was removed
+      existing.status = 'invited';
+      existing.role = 'member';
+      existing.invitedAt = new Date();
+      existing.respondedAt = undefined;
+      added += 1;
+    }
+  }
+  await group.save();
+  res.json({ ok: true, added });
+});
+
+// DELETE /api/chat/groups/:id/members/:userId — remove a member (owner/admin).
+const removeGroupMember = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const targetId = req.params.userId;
+  const group = await loadGroupForManager(req.params.id, meId);
+
+  if (String(targetId) === String(meId)) {
+    res.status(400);
+    throw new Error('Use "Leave group" to remove yourself');
+  }
+  const target = group.memberFor(targetId);
+  if (!target) {
+    res.status(404);
+    throw new Error('That person is not in this group');
+  }
+  if (target.role === 'owner') {
+    res.status(400);
+    throw new Error('The group owner cannot be removed');
+  }
+  // Only the owner may remove another admin.
+  const meMem = group.memberFor(meId);
+  if (target.role === 'admin' && meMem.role !== 'owner') {
+    res.status(403);
+    throw new Error('Only the owner can remove an admin');
+  }
+  group.members = group.members.filter((m) => String(m.user) !== String(targetId));
+  await group.save();
+  res.json({ ok: true });
+});
+
+// PATCH /api/chat/groups/:id/members/:userId  { role: 'admin' | 'member' }
+// Promote/demote a member. Owner only.
+const setMemberRole = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const targetId = req.params.userId;
+  const { role } = req.body;
+  if (!['admin', 'member'].includes(role)) {
+    res.status(400);
+    throw new Error("role must be 'admin' or 'member'");
+  }
+  const group = await ChatGroup.findById(req.params.id);
+  const meMem = group && group.memberFor(meId);
+  if (!group || !meMem || meMem.role !== 'owner') {
+    res.status(403);
+    throw new Error('Only the group owner can change roles');
+  }
+  const target = group.memberFor(targetId);
+  if (!target || target.status !== 'accepted') {
+    res.status(404);
+    throw new Error('That person is not an active member');
+  }
+  if (target.role === 'owner') {
+    res.status(400);
+    throw new Error('The owner role cannot be changed');
+  }
+  target.role = role;
+  await group.save();
+  res.json({ ok: true });
+});
+
+// POST /api/chat/groups/:id/leave — leave the group and clear it from my view.
+// If the owner leaves, ownership passes to an admin (or the longest-standing
+// member); if no one is left, the group and its messages are removed.
+const leaveGroup = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const { group, mem } = await loadGroupForMember(req.params.id, meId);
+  const wasOwner = mem.role === 'owner';
+
+  // Remove my membership and clear my view of the conversation.
+  group.members = group.members.filter((m) => String(m.user) !== String(meId));
+  await Message.updateMany({ group: group._id }, { $addToSet: { deletedFor: meId } });
+
+  const remaining = group.members.filter((m) => m.status === 'accepted');
+  if (remaining.length === 0) {
+    // Nobody left — delete the group, its messages and photo.
+    await Message.deleteMany({ group: group._id });
+    if (group.photo) { try { storage.remove(group.photo); } catch { /* best effort */ } }
+    await group.deleteOne();
+    return res.json({ ok: true, groupDeleted: true });
+  }
+
+  if (wasOwner) {
+    // Hand ownership to an existing admin, else the earliest-joined member.
+    const successor = remaining.find((m) => m.role === 'admin') || remaining[0];
+    successor.role = 'owner';
+    group.createdBy = successor.user;
+  }
+  await group.save();
+  res.json({ ok: true });
+});
+
 module.exports = {
   directory,
   sendRequest,
@@ -491,4 +734,13 @@ module.exports = {
   getGroupMessages,
   sendGroupMessage,
   clearGroup,
+  getGroupInfo,
+  renameGroup,
+  uploadGroupPhoto,
+  deleteGroupPhoto,
+  getGroupPhoto,
+  addGroupMembers,
+  removeGroupMember,
+  setMemberRole,
+  leaveGroup,
 };

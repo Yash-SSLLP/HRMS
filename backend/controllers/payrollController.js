@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const crypto = require('crypto');
 const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { renderPayslip } = require('../services/payslipPdf');
@@ -232,6 +233,64 @@ async function streamPayslipPdf(payslip, res) {
   res.send(buffer);
 }
 
+// POST /api/payroll/:id/share  (HR/Admin)
+// Ensure the payslip has a public token and return it, so HR can paste a
+// no-login download link into an email. Only Approved/Paid payslips can be
+// shared (Drafts/OnHold must not leak).
+const sharePayslip = asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findById(req.params.id);
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip not found');
+  }
+  if (!['Approved', 'Paid'].includes(payslip.status)) {
+    res.status(400);
+    throw new Error('Only Approved or Paid payslips can be shared');
+  }
+  if (!payslip.publicToken) {
+    payslip.publicToken = crypto.randomBytes(24).toString('hex');
+    await payslip.save();
+  }
+  res.json({ token: payslip.publicToken });
+});
+
+// POST /api/payroll/:id/mark-sent  (HR/Admin) — stamp emailedAt for the
+// "already sent" remark (delivery happens from HR's own mailbox via compose).
+const markPayslipSent = asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findById(req.params.id);
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip not found');
+  }
+  payslip.emailedAt = new Date();
+  await payslip.save();
+  res.json({ payslip });
+});
+
+// GET /api/payroll/public/:token  — public; opens a payslip PDF from the
+// shareable link with no login required.
+const downloadPublicPayslip = asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findOne({
+    publicToken: req.params.token,
+    status: { $in: ['Approved', 'Paid'] },
+  }).populate({
+    path: 'employee',
+    populate: { path: 'user', select: 'firstName lastName email' },
+  });
+  if (!payslip) {
+    res.status(404);
+    throw new Error('This payslip link is invalid or has expired.');
+  }
+  const ytd = await computeYtd(payslip);
+  const buffer = await renderPayslip(payslip, ytd);
+  const monthLabel = `${payslip.payPeriodYear}-${String(payslip.payPeriodMonth).padStart(2, '0')}`;
+  const empCode = payslip.employee?.employeeCode || 'employee';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="payslip-${empCode}-${monthLabel}.pdf"`);
+  res.setHeader('Content-Length', buffer.length);
+  res.send(buffer);
+});
+
 // DELETE /api/payroll/:id  (HR/Admin) — Draft only
 const deletePayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id);
@@ -259,4 +318,7 @@ module.exports = {
   deletePayslip,
   downloadPayslipPdf,
   downloadMyPayslipPdf,
+  sharePayslip,
+  markPayslipSent,
+  downloadPublicPayslip,
 };

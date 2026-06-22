@@ -72,6 +72,11 @@ const payrollSchema = new mongoose.Schema(
     paymentDate: Date,
     paymentReference: String,
     remarks: String,
+
+    // Shareable public link: a random token lets the employee open this payslip's
+    // PDF without logging in (generated on demand when HR shares it).
+    publicToken: { type: String, index: true },
+    emailedAt: { type: Date },
   },
   { timestamps: true }
 );

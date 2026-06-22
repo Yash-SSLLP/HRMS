@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import AuthImage from './AuthImage';
 import { useThemeStore } from '../store/themeStore';
+import { useAuthStore } from '../store/authStore';
 
 const POLL_MS = 4000;
 
@@ -47,21 +49,34 @@ function MsgTicks({ status, mode }) {
   );
 }
 
-function Avatar({ name, size = 38, group }) {
-  return (
+function Avatar({ name, size = 38, group, photoUrl }) {
+  const base = (
     <span className="inline-flex items-center justify-center rounded-full font-semibold shrink-0"
       style={{ width: size, height: size, fontSize: size * 0.38, background: group ? '#5b7c9d' : '#6b7c85', color: '#fff' }}>
       {group ? '👥' : initials(name)}
     </span>
   );
+  if (!photoUrl) return base;
+  return (
+    <AuthImage url={photoUrl} alt={name} fallback={base}
+      className="rounded-full object-cover shrink-0 bg-gray-200"
+      style={{ width: size, height: size }} />
+  );
 }
+
+// Build the avatar endpoint for a user / group, with a cache-busting suffix so
+// the image refreshes after a photo change (the backend ignores the query).
+const userPhotoUrl = (id, has, bust) => (has ? `/auth/users/${id}/avatar?b=${bust}` : null);
+const groupPhotoUrl = (id, has, bust) => (has ? `/chat/groups/${id}/photo?b=${bust}` : null);
 
 // Floating WhatsApp-style messaging dock with 1:1 + group chats.
 export default function ChatDock() {
   const mode = useThemeStore((s) => s.mode);
   const wa = mode === 'dark' ? WA_DARK : WA_LIGHT;
+  const me = useAuthStore((s) => s.user);
 
   const [isMobile, setIsMobile] = useState(false);
+  const [bust, setBust] = useState(0); // bump to force avatar/photo re-fetch
   const [open, setOpen] = useState(false);
   const [connections, setConnections] = useState([]);
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
@@ -83,8 +98,17 @@ export default function ChatDock() {
   const [error, setError] = useState('');
   const [menuFor, setMenuFor] = useState(null); // message id whose delete popover is open
 
+  // Group info / settings panel
+  const [showInfo, setShowInfo] = useState(false);
+  const [info, setInfo] = useState(null); // { groupId, name, hasPhoto, myRole, createdBy, members }
+  const [renameVal, setRenameVal] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [showAddMembers, setShowAddMembers] = useState(false);
+  const [addPick, setAddPick] = useState([]);
+
   const activeRef = useRef(null);
   const bottomRef = useRef(null);
+  const photoInputRef = useRef(null);
 
   const unreadTotal =
     connections.reduce((s, c) => s + (c.unread || 0), 0) +
@@ -214,7 +238,97 @@ export default function ChatDock() {
     catch (err) { setError(err.response?.data?.message || 'Could not clear chat'); }
   };
 
+  // ----- Group info / settings -----
+  const loadInfo = async (groupId) => {
+    try { const { data } = await api.get(`/chat/groups/${groupId}`); setInfo(data); setRenameVal(data.name); }
+    catch (err) { setError(err.response?.data?.message || 'Failed to load group info'); }
+  };
+
+  const openGroupInfo = async () => {
+    if (!active || active.kind !== 'group') return;
+    setShowInfo(true); setShowAddMembers(false); setError('');
+    await loadInfo(active.id);
+  };
+
+  const saveRename = async () => {
+    if (!info || !renameVal.trim() || renameVal.trim() === info.name) return;
+    setRenaming(true); setError('');
+    try {
+      const { data } = await api.patch(`/chat/groups/${info.groupId}`, { name: renameVal.trim() });
+      setInfo((i) => ({ ...i, name: data.name }));
+      setActive((a) => (a && a.kind === 'group' && a.id === info.groupId ? { ...a, name: data.name } : a));
+      loadLists();
+    } catch (err) { setError(err.response?.data?.message || 'Could not rename group'); }
+    finally { setRenaming(false); }
+  };
+
+  const onPickPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file
+    if (!file || !info) return;
+    setError('');
+    const form = new FormData();
+    form.append('photo', file);
+    try {
+      await api.post(`/chat/groups/${info.groupId}/photo`, form);
+      const next = bust + 1; setBust(next);
+      setInfo((i) => ({ ...i, hasPhoto: true }));
+      setActive((a) => (a && a.kind === 'group' && a.id === info.groupId ? { ...a, photoUrl: groupPhotoUrl(info.groupId, true, next) } : a));
+      loadLists();
+    } catch (err) { setError(err.response?.data?.message || 'Could not update photo'); }
+  };
+
+  const removeGroupPhoto = async () => {
+    if (!info) return;
+    setError('');
+    try {
+      await api.delete(`/chat/groups/${info.groupId}/photo`);
+      setBust((b) => b + 1);
+      setInfo((i) => ({ ...i, hasPhoto: false }));
+      setActive((a) => (a && a.kind === 'group' && a.id === info.groupId ? { ...a, photoUrl: null } : a));
+      loadLists();
+    } catch (err) { setError(err.response?.data?.message || 'Could not remove photo'); }
+  };
+
+  const removeMember = async (userId) => {
+    if (!info) return;
+    setError('');
+    try { await api.delete(`/chat/groups/${info.groupId}/members/${userId}`); await loadInfo(info.groupId); loadLists(); }
+    catch (err) { setError(err.response?.data?.message || 'Could not remove member'); }
+  };
+
+  const setRole = async (userId, role) => {
+    if (!info) return;
+    setError('');
+    try { await api.patch(`/chat/groups/${info.groupId}/members/${userId}`, { role }); await loadInfo(info.groupId); }
+    catch (err) { setError(err.response?.data?.message || 'Could not change role'); }
+  };
+
+  const openAddMembers = async () => { setShowAddMembers(true); setAddPick([]); setDirSearch(''); await loadDirectory(); };
+
+  const submitAddMembers = async () => {
+    if (!info || addPick.length === 0) { setShowAddMembers(false); return; }
+    setError('');
+    try {
+      await api.post(`/chat/groups/${info.groupId}/members`, { memberIds: addPick });
+      setShowAddMembers(false);
+      await loadInfo(info.groupId); loadLists();
+    } catch (err) { setError(err.response?.data?.message || 'Could not add members'); }
+  };
+
+  const leaveGroup = async () => {
+    if (!info) return;
+    if (!window.confirm('Leave this group? It will be removed from your chats.')) return;
+    setError('');
+    try {
+      await api.post(`/chat/groups/${info.groupId}/leave`);
+      setShowInfo(false); setInfo(null); setActive(null);
+      loadLists();
+    } catch (err) { setError(err.response?.data?.message || 'Could not leave group'); }
+  };
+
   const togglePick = (id) => setGroupPick((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const toggleAddPick = (id) => setAddPick((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   const filteredDir = directory.filter((p) =>
     p.fullName.toLowerCase().includes(dirSearch.toLowerCase()) ||
@@ -255,11 +369,18 @@ export default function ChatDock() {
             <button onClick={() => setActive(null)} className="text-2xl leading-none px-1" style={{ color: wa.headerText }} aria-label="Back">
               {isMobile ? '‹' : '×'}
             </button>
-            <Avatar name={active.name} size={36} group={active.kind === 'group'} />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold truncate" style={{ color: wa.headerText }}>{active.name}</div>
-              <div className="text-[11px] truncate" style={{ color: mode === 'dark' ? '#8696a0' : 'rgba(255,255,255,.8)' }}>{active.sub}</div>
-            </div>
+            <button
+              onClick={() => active.kind === 'group' && openGroupInfo()}
+              className={`flex items-center gap-2 min-w-0 flex-1 text-left ${active.kind === 'group' ? 'cursor-pointer' : 'cursor-default'}`}
+              title={active.kind === 'group' ? 'Group info' : undefined}>
+              <Avatar name={active.name} size={36} group={active.kind === 'group'} photoUrl={active.photoUrl} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold truncate" style={{ color: wa.headerText }}>{active.name}</div>
+                <div className="text-[11px] truncate" style={{ color: mode === 'dark' ? '#8696a0' : 'rgba(255,255,255,.8)' }}>
+                  {active.sub}{active.kind === 'group' ? ' · tap for info' : ''}
+                </div>
+              </div>
+            </button>
             <button onClick={clearChat} title="Clear chat" className="px-1.5" style={{ color: wa.headerText }} aria-label="Clear chat">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 7h12v2H6V7zm1 3h10l-1 11H8L7 10zm3-6h4l1 1h3v2H3V5h3l1-1z" /></svg>
             </button>
@@ -359,7 +480,7 @@ export default function ChatDock() {
                     <div className="space-y-2">
                       {requests.incoming.map((r) => (
                         <div key={r._id} className="flex items-center gap-2">
-                          <Avatar name={r.from.fullName} size={30} />
+                          <Avatar name={r.from.fullName} size={30} photoUrl={userPhotoUrl(r.from._id, r.from.hasPhoto, bust)} />
                           <span className="text-xs truncate flex-1" style={{ color: wa.text }}>{r.from.fullName}</span>
                           <span className="flex gap-1 shrink-0">
                             <button onClick={() => respond(r._id, 'accept')} className="text-[11px] px-2.5 py-1 rounded-full text-white" style={{ background: '#008069' }}>Accept</button>
@@ -369,7 +490,7 @@ export default function ChatDock() {
                       ))}
                       {groupInvites.map((g) => (
                         <div key={g.groupId} className="flex items-center gap-2">
-                          <Avatar name={g.name} size={30} group />
+                          <Avatar name={g.name} size={30} group photoUrl={groupPhotoUrl(g.groupId, g.hasPhoto, bust)} />
                           <span className="text-xs truncate flex-1" style={{ color: wa.text }}>
                             {g.name} <span style={{ color: wa.sub }}>· group from {g.from?.fullName || 'someone'}</span>
                           </span>
@@ -394,12 +515,12 @@ export default function ChatDock() {
                       const isActive = active?.kind === 'group' && active.id === g.groupId;
                       return (
                         <button key={`g-${g.groupId}`}
-                          onClick={() => openConversation({ kind: 'group', id: g.groupId, name: g.name, sub: `${g.memberCount} members` })}
+                          onClick={() => openConversation({ kind: 'group', id: g.groupId, name: g.name, sub: `${g.memberCount} members`, photoUrl: groupPhotoUrl(g.groupId, g.hasPhoto, bust) })}
                           className="w-full text-left px-3 py-2.5 flex items-center gap-3 transition-colors"
                           style={{ borderBottom: `1px solid ${wa.border}`, background: isActive ? wa.listHover : 'transparent' }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = wa.listHover; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = isActive ? wa.listHover : 'transparent'; }}>
-                          <Avatar name={g.name} size={42} group />
+                          <Avatar name={g.name} size={42} group photoUrl={groupPhotoUrl(g.groupId, g.hasPhoto, bust)} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-sm truncate font-medium" style={{ color: wa.text }}>{g.name}</span>
@@ -421,12 +542,12 @@ export default function ChatDock() {
                       const isActive = active?.kind === 'direct' && active.id === c.connectionId;
                       return (
                         <button key={`c-${c.connectionId}`}
-                          onClick={() => openConversation({ kind: 'direct', id: c.connectionId, name: c.person.fullName, sub: c.person.role })}
+                          onClick={() => openConversation({ kind: 'direct', id: c.connectionId, name: c.person.fullName, sub: c.person.role, photoUrl: userPhotoUrl(c.person._id, c.person.hasPhoto, bust) })}
                           className="w-full text-left px-3 py-2.5 flex items-center gap-3 transition-colors"
                           style={{ borderBottom: `1px solid ${wa.border}`, background: isActive ? wa.listHover : 'transparent' }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = wa.listHover; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = isActive ? wa.listHover : 'transparent'; }}>
-                          <Avatar name={c.person.fullName} size={42} />
+                          <Avatar name={c.person.fullName} size={42} photoUrl={userPhotoUrl(c.person._id, c.person.hasPhoto, bust)} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-sm truncate font-medium" style={{ color: wa.text }}>{c.person.fullName}</span>
@@ -463,7 +584,7 @@ export default function ChatDock() {
             <div className="max-h-80 overflow-y-auto">
               {filteredDir.map((p) => (
                 <div key={p._id} className="flex items-center gap-3 py-2" style={{ borderBottom: `1px solid ${wa.border}` }}>
-                  <Avatar name={p.fullName} size={38} />
+                  <Avatar name={p.fullName} size={38} photoUrl={userPhotoUrl(p._id, p.hasPhoto, bust)} />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate" style={{ color: wa.text }}>{p.fullName}</div>
                     <div className="text-xs truncate" style={{ color: wa.sub }}>{p.role} — {p.email}</div>
@@ -498,7 +619,7 @@ export default function ChatDock() {
               {filteredDir.map((p) => (
                 <label key={p._id} className="flex items-center gap-3 py-2 cursor-pointer" style={{ borderBottom: `1px solid ${wa.border}` }}>
                   <input type="checkbox" checked={groupPick.includes(p._id)} onChange={() => togglePick(p._id)} />
-                  <Avatar name={p.fullName} size={34} />
+                  <Avatar name={p.fullName} size={34} photoUrl={userPhotoUrl(p._id, p.hasPhoto, bust)} />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate" style={{ color: wa.text }}>{p.fullName}</div>
                     <div className="text-xs truncate" style={{ color: wa.sub }}>{p.role}</div>
@@ -514,6 +635,146 @@ export default function ChatDock() {
           </div>
         </div>
       )}
+
+      {/* Group info / settings panel */}
+      {showInfo && info && (() => {
+        const canManage = info.myRole === 'owner' || info.myRole === 'admin';
+        const isOwner = info.myRole === 'owner';
+        const photoUrl = groupPhotoUrl(info.groupId, info.hasPhoto, bust);
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[55]">
+            <div className="rounded-xl shadow-lg w-full max-w-lg flex flex-col max-h-[88vh]" style={{ background: wa.panel }}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: `1px solid ${wa.border}` }}>
+                <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Group info</h2>
+                <button onClick={() => { setShowInfo(false); setShowAddMembers(false); }} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+              </div>
+
+              <div className="overflow-y-auto p-5">
+                {error && <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded mb-3">{error}</div>}
+
+                {/* Photo + name */}
+                <div className="flex flex-col items-center text-center mb-5">
+                  <div className="relative">
+                    <Avatar name={info.name} size={96} group photoUrl={photoUrl} />
+                    {canManage && (
+                      <button onClick={() => photoInputRef.current?.click()} title="Change photo"
+                        className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full flex items-center justify-center shadow text-white" style={{ background: '#008069' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15.2A3.2 3.2 0 1012 8.8a3.2 3.2 0 000 6.4zM9 2l-1.8 2H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2h-3.2L15 2H9zm3 16a5 5 0 110-10 5 5 0 010 10z"/></svg>
+                      </button>
+                    )}
+                    <input ref={photoInputRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto} />
+                  </div>
+                  {canManage && info.hasPhoto && (
+                    <button onClick={removeGroupPhoto} className="text-[11px] mt-2" style={{ color: '#dc2626' }}>Remove photo</button>
+                  )}
+
+                  <div className="mt-3 w-full max-w-xs">
+                    {canManage ? (
+                      <div className="flex items-center gap-2">
+                        <input value={renameVal} onChange={(e) => setRenameVal(e.target.value)} maxLength={80}
+                          className="flex-1 rounded-lg px-3 py-2 text-sm text-center outline-none"
+                          style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
+                        <button onClick={saveRename} disabled={renaming || !renameVal.trim() || renameVal.trim() === info.name}
+                          className="text-xs px-3 py-2 rounded-lg text-white disabled:opacity-50" style={{ background: '#008069' }}>Save</button>
+                      </div>
+                    ) : (
+                      <div className="text-base font-semibold" style={{ color: wa.text }}>{info.name}</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Members */}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-semibold" style={{ color: wa.sub }}>
+                    {info.members.filter((m) => m.status === 'accepted').length} members
+                  </span>
+                  {canManage && (
+                    <button onClick={openAddMembers} className="text-xs px-3 py-1.5 rounded-full text-white" style={{ background: '#008069' }}>+ Add members</button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {info.members.map((m) => {
+                    const isMe = String(m._id) === String(me?._id);
+                    const canRemove = canManage && !isMe && m.role !== 'owner' && (isOwner || m.role !== 'admin');
+                    const canToggleRole = isOwner && !isMe && m.role !== 'owner' && m.status === 'accepted';
+                    return (
+                      <div key={m._id} className="flex items-center gap-3 py-1.5">
+                        <Avatar name={m.fullName} size={36} photoUrl={userPhotoUrl(m._id, m.hasPhoto, bust)} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm truncate" style={{ color: wa.text }}>
+                            {m.fullName}{isMe ? ' (You)' : ''}
+                            {m.status === 'invited' && <span className="text-[11px] ml-1" style={{ color: wa.sub }}>· invited</span>}
+                          </div>
+                          <div className="text-[11px] truncate" style={{ color: wa.sub }}>{m.email}</div>
+                        </div>
+                        {(m.role === 'owner' || m.role === 'admin') && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
+                            style={{ background: m.role === 'owner' ? '#fde68a' : '#bfdbfe', color: '#1f2937' }}>
+                            {m.role === 'owner' ? 'Owner' : 'Admin'}
+                          </span>
+                        )}
+                        {canToggleRole && (
+                          <button onClick={() => setRole(m._id, m.role === 'admin' ? 'member' : 'admin')}
+                            className="text-[11px] px-2 py-1 rounded shrink-0" style={{ border: `1px solid ${wa.border}`, color: wa.sub }}>
+                            {m.role === 'admin' ? 'Remove admin' : 'Make admin'}
+                          </button>
+                        )}
+                        {canRemove && (
+                          <button onClick={() => removeMember(m._id)} title="Remove" className="text-sm px-1.5 shrink-0" style={{ color: '#dc2626' }}>✕</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3" style={{ borderTop: `1px solid ${wa.border}` }}>
+                <button onClick={leaveGroup} className="w-full text-sm px-4 py-2 rounded-lg font-medium" style={{ background: '#fee2e2', color: '#b91c1c' }}>
+                  Leave &amp; delete group for me
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Add members modal */}
+      {showAddMembers && info && (() => {
+        const existing = new Set(info.members.filter((m) => m.status !== 'declined').map((m) => String(m._id)));
+        const addable = filteredDir.filter((p) => !existing.has(String(p._id)));
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]">
+            <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
+              <div className="flex items-start justify-between mb-4">
+                <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Add members</h2>
+                <button onClick={() => setShowAddMembers(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+              </div>
+              <input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search people to add…"
+                className="w-full rounded-full px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
+              <div className="text-[11px] mb-2" style={{ color: wa.sub }}>{addPick.length} selected · they must accept to join</div>
+              <div className="max-h-72 overflow-y-auto mb-3">
+                {addable.map((p) => (
+                  <label key={p._id} className="flex items-center gap-3 py-2 cursor-pointer" style={{ borderBottom: `1px solid ${wa.border}` }}>
+                    <input type="checkbox" checked={addPick.includes(p._id)} onChange={() => toggleAddPick(p._id)} />
+                    <Avatar name={p.fullName} size={34} photoUrl={userPhotoUrl(p._id, p.hasPhoto, bust)} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate" style={{ color: wa.text }}>{p.fullName}</div>
+                      <div className="text-xs truncate" style={{ color: wa.sub }}>{p.role}</div>
+                    </div>
+                  </label>
+                ))}
+                {addable.length === 0 && <div className="py-6 text-center text-sm" style={{ color: wa.sub }}>No one left to add</div>}
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowAddMembers(false)} className="px-4 py-2 text-sm rounded-lg" style={{ border: `1px solid ${wa.border}`, color: wa.sub }}>Cancel</button>
+                <button onClick={submitAddMembers} className="px-4 py-2 text-sm rounded-lg text-white" style={{ background: '#008069' }}>Add</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
