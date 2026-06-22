@@ -20,7 +20,6 @@ const blankProfile = {
   uan: '',
   pfNumber: '',
   esicNumber: '',
-  hrPartner: '',
   reportingManager: '',
   documentsVerified: false,
   bankDetails: {
@@ -132,7 +131,7 @@ export default function AdminEmployees() {
       ...blankProfile,
       ...p,
       user: p.user?._id || p.user,
-      hrPartner: p.hrPartner?._id || p.hrPartner || '',
+      hrPartner: undefined, // HR ownership removed — never send this field
       reportingManager: p.reportingManager?._id || p.reportingManager || '',
       dateOfJoining: p.dateOfJoining ? p.dateOfJoining.slice(0, 10) : '',
       bankDetails: { ...blankProfile.bankDetails, ...(p.bankDetails || {}) },
@@ -355,35 +354,6 @@ export default function AdminEmployees() {
                       <option value={form.department}>{form.department}</option>
                     )}
                   </select>
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-700">HR Partner</label>
-                  {isSuperAdmin ? (
-                    <select
-                      value={form.hrPartner || ''}
-                      onChange={(e) => setForm({ ...form, hrPartner: e.target.value })}
-                      className="mt-1 block w-full border rounded-lg px-3 py-2"
-                    >
-                      <option value="">— None —</option>
-                      {hrUsers.map((u) => (
-                        <option key={u._id} value={u._id}>
-                          {u.firstName} {u.lastName} ({u.role}) — {u.email}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700 text-sm">
-                      {(() => {
-                        const hr = hrUsers.find((u) => u._id === (form.hrPartner?._id || form.hrPartner));
-                        if (hr) return `${hr.firstName} ${hr.lastName} (${hr.role})`;
-                        return editingId ? '—' : 'You (assigned automatically)';
-                      })()}
-                    </div>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    Default HR contact for this employee. Auto-populates the exit-email handler.
-                    {!isSuperAdmin && ' Only a SuperAdmin can reassign the HR Partner.'}
-                  </p>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">Reporting Manager</label>

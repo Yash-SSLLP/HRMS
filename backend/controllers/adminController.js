@@ -1,6 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
+const { ensureEmployeeProfile } = require('../services/ensureProfile');
 
 // GET /api/admin/users?role=&active=&q=
 const listUsers = asyncHandler(async (req, res) => {
@@ -68,6 +69,12 @@ const createUser = asyncHandler(async (req, res) => {
     isActive: isActive !== undefined ? isActive : true,
   });
 
+  // HR managers are also employees — give them an employee profile so they show
+  // up in the employee list / org chart and can use attendance, leave, etc.
+  if (user.role === 'HRManager') {
+    try { await ensureEmployeeProfile(user); } catch (err) { console.error('HR profile auto-create failed:', err.message); }
+  }
+
   res.status(201).json({ user });
 });
 
@@ -107,6 +114,12 @@ const updateUser = asyncHandler(async (req, res) => {
   if (password) user.password = password; // pre-save hook re-hashes
 
   await user.save();
+
+  // Promoted to HR → ensure they have an employee profile too.
+  if (user.role === 'HRManager') {
+    try { await ensureEmployeeProfile(user); } catch (err) { console.error('HR profile auto-create failed:', err.message); }
+  }
+
   res.json({ user });
 });
 

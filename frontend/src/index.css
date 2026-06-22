@@ -245,6 +245,40 @@ html.dark .nav-link-highlight {
   background-color: color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
+/* Collapsible sidebar category groups (admin) */
+.nav-group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.25rem;
+  border-radius: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  transition: background-color .15s ease, color .15s ease;
+}
+.nav-group-header:hover {
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+}
+.nav-group-caret { transition: transform .2s ease; font-size: 0.7rem; opacity: .7; }
+.nav-group-caret.is-open { transform: rotate(90deg); }
+/* Smooth height animation via the grid 0fr→1fr trick (no JS measuring needed). */
+.nav-group-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .22s ease;
+}
+.nav-group-body.is-open { grid-template-rows: 1fr; }
+.nav-group-inner { overflow: hidden; min-height: 0; }
+html.dark .nav-group-header { color: #8b97a7; }
+html.dark .nav-group-header:hover { color: #fff; background-color: color-mix(in srgb, var(--accent) 20%, transparent); }
+
 html.dark .nav-link { color: #aebacd; }
 html.dark .nav-link:hover,
 html.dark .nav-link-active { color: #fff; }

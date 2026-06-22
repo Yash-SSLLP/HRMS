@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
-import { NavLink, Link, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import api from '../api/client';
@@ -32,6 +32,76 @@ function UserAvatar({ user }) {
       fallback={fallback}
     />
   );
+}
+
+// A single sidebar link.
+function NavLeaf({ item, onNavigate }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        `nav-link ${item.danger ? 'nav-link-danger' : ''} ${item.highlight ? 'nav-link-highlight' : ''} ${isActive ? 'nav-link-active' : ''}`}
+    >
+      <span className="nav-icon" aria-hidden="true">{item.icon || '•'}</span>
+      <span className="truncate">{item.label}</span>
+    </NavLink>
+  );
+}
+
+// Sidebar navigation. Accepts either a flat list of items (employee portal) or a
+// list of { group, items } category groups (admin portal), rendered as smooth
+// collapsible dropdowns. The group containing the current route auto-opens.
+function NavList({ items, user, onNavigate }) {
+  const { pathname } = useLocation();
+  const grouped = items.length > 0 && !!items[0].group;
+  const visible = (arr) => arr.filter((i) => !i.roles || i.roles.includes(user?.role));
+  const groupActive = (g) => (g.items || []).some((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
+
+  const [open, setOpen] = useState(() => {
+    const init = {};
+    if (grouped) items.forEach((g) => { init[g.group] = groupActive(g); });
+    return init;
+  });
+
+  useEffect(() => {
+    if (!grouped) return;
+    setOpen((prev) => {
+      const next = { ...prev };
+      items.forEach((g) => { if (groupActive(g)) next[g.group] = true; });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  if (!grouped) {
+    return visible(items).map((item) => <NavLeaf key={item.to} item={item} onNavigate={onNavigate} />);
+  }
+
+  return items.map((g) => {
+    const children = visible(g.items);
+    if (!children.length) return null;
+    const isOpen = !!open[g.group];
+    return (
+      <div key={g.group}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => ({ ...o, [g.group]: !o[g.group] }))}
+          className="nav-group-header"
+          aria-expanded={isOpen}
+        >
+          <span className="truncate">{g.group}</span>
+          <span className={`nav-group-caret ${isOpen ? 'is-open' : ''}`} aria-hidden="true">▸</span>
+        </button>
+        <div className={`nav-group-body ${isOpen ? 'is-open' : ''}`}>
+          <div className="nav-group-inner space-y-0.5">
+            {children.map((item) => <NavLeaf key={item.to} item={item} onNavigate={onNavigate} />)}
+          </div>
+        </div>
+      </div>
+    );
+  });
 }
 
 function NotificationBell({ isAdmin }) {
@@ -337,19 +407,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
             {sectionTitle}
           </div>
         )}
-        {navItems.filter((item) => !item.roles || item.roles.includes(user?.role)).map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            onClick={closeMobile}
-            className={({ isActive }) =>
-              `nav-link ${item.danger ? 'nav-link-danger' : ''} ${item.highlight ? 'nav-link-highlight' : ''} ${isActive ? 'nav-link-active' : ''}`}
-          >
-            <span className="nav-icon" aria-hidden="true">{item.icon || '•'}</span>
-            <span className="truncate">{item.label}</span>
-          </NavLink>
-        ))}
+        <NavList items={navItems} user={user} onNavigate={closeMobile} />
       </nav>
       <div className="border-t border-gray-100 p-3 shrink-0">
         <div className="flex items-center gap-3 px-2 py-2 rounded-lg">

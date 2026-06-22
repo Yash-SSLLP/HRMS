@@ -4,6 +4,7 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { startWorker: startEmailWorker } = require('./services/emailWorker');
+const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
 
 const app = express();
@@ -72,6 +73,7 @@ const PORT = process.env.PORT || 5000;
 connectDB()
   .then(() => {
     startEmailWorker();
+    backfillHrProfiles().catch((err) => console.error('HR profile backfill error:', err.message));
     app.listen(PORT, () => {
       console.log(`HRMS API listening on port ${PORT}`);
     });

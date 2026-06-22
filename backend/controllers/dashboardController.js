@@ -20,13 +20,11 @@ function startOfToday() {
 const adminSummary = asyncHandler(async (req, res) => {
   const isHR = req.user.role === 'HRManager';
 
-  // Resolve the set of employee profiles in scope.
-  const profileFilter = isHR ? { hrPartner: req.user._id } : {};
-  const profiles = await EmployeeProfile.find(profileFilter)
+  // All HR/SuperAdmin see the whole organisation — no per-HR employee scoping.
+  const profiles = await EmployeeProfile.find({})
     .select('_id department documentsVerified')
     .lean();
-  const ids = profiles.map((p) => p._id);
-  const empFilter = isHR ? { employee: { $in: ids } } : {};
+  const empFilter = {};
 
   const today = startOfToday();
   const tomorrow = new Date(today);
@@ -52,7 +50,7 @@ const adminSummary = asyncHandler(async (req, res) => {
     }),
     LeaveRequest.countDocuments({ ...empFilter, status: 'Pending' }),
     Department.countDocuments({}),
-    Document.find(isHR ? { employee: { $in: ids } } : {}).select('employee category').lean(),
+    Document.find({}).select('employee category').lean(),
     LeaveRequest.find({ ...empFilter, status: 'Pending' })
       .populate({ path: 'employee', select: 'employeeCode user', populate: { path: 'user', select: 'firstName lastName' } })
       .sort({ appliedAt: -1 })
@@ -93,7 +91,7 @@ const adminSummary = asyncHandler(async (req, res) => {
   const totalEmployees = profiles.length;
 
   res.json({
-    scope: isHR ? 'mine' : 'all',
+    scope: 'all',
     cards: {
       totalEmployees,
       presentToday,

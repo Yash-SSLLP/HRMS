@@ -215,16 +215,6 @@ export default function EmployeeDashboard() {
               <p className="text-sm font-mono text-gray-700">{profile.employeeCode}</p>
               <p className="text-sm">{profile.designation || '—'}</p>
               <p className="text-sm text-gray-500">{profile.department || ''}</p>
-              <p className="text-sm text-gray-500 mt-2">
-                Assigned HR:{' '}
-                {profile.hrPartner ? (
-                  <span className="text-gray-700">
-                    {`${profile.hrPartner.firstName || ''} ${profile.hrPartner.lastName || ''}`.trim()}
-                  </span>
-                ) : (
-                  <span className="text-gray-400 italic">Not assigned</span>
-                )}
-              </p>
               <Link to="/employee/profile" className="text-sm text-blue-600 hover:underline mt-2 inline-block">
                 View profile →
               </Link>

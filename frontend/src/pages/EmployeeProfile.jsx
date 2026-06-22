@@ -69,7 +69,6 @@ export default function EmployeeProfile() {
 
   const u = profile.user || {};
   const bank = profile.bankDetails || {};
-  const hr = profile.hrPartner || null;
 
   return (
     <div>
@@ -140,18 +139,6 @@ export default function EmployeeProfile() {
             <Field label="ESIC Number" value={profile.esicNumber} mono />
           </dl>
           <p className="text-xs text-gray-400 mt-2 italic">Aadhaar is hidden by default. Contact HR if you need to verify.</p>
-        </section>
-
-        <section>
-          <h2 className="card-title mb-3">HR Contact</h2>
-          {hr ? (
-            <dl className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <Field label="HR Partner" value={`${hr.firstName || ''} ${hr.lastName || ''}`.trim()} />
-              <Field label="Email" value={hr.email} />
-            </dl>
-          ) : (
-            <p className="text-sm text-gray-400 italic">No HR partner assigned. Contact HR if you have questions.</p>
-          )}
         </section>
 
         <section>

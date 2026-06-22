@@ -126,7 +126,6 @@ export default function AdminEmployeeDetail() {
           <Field label="Employment type" value={profile.employmentType} />
           <Field label="Date of joining" value={fmtDate(profile.dateOfJoining)} />
           <Field label="Reporting manager" value={fullName(profile.reportingManager)} />
-          <Field label="HR partner" value={fullName(profile.hrPartner)} />
           {profile.dateOfExit && <Field label="Date of exit" value={fmtDate(profile.dateOfExit)} />}
         </Card>
 

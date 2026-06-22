@@ -11,16 +11,14 @@ const { hiddenUserIds } = require('../utils/visibility');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
-// HRManagers may only see/manage employees assigned to them (hrPartner === self).
-// SuperAdmin has no such restriction.
-function scopeForHR(req) {
-  return req.user.role === 'HRManager' ? { hrPartner: req.user._id } : {};
+// Every HR/SuperAdmin sees and manages ALL employees — there is no per-HR
+// "assigned employees" ownership. (Kept as functions so call sites are unchanged.)
+function scopeForHR() {
+  return {};
 }
 
-// True when this HRManager is NOT the assigned partner of the given profile.
-function hrCannotManage(req, profile) {
-  if (req.user.role !== 'HRManager') return false;
-  return !profile.hrPartner || !profile.hrPartner.equals(req.user._id);
+function hrCannotManage() {
+  return false;
 }
 
 // Enforce the org hierarchy on a profile payload:
@@ -184,11 +182,6 @@ const createEmployee = asyncHandler(async (req, res) => {
   if (exists) {
     res.status(409);
     throw new Error('Profile already exists for this user');
-  }
-
-  // HRManagers may only create employees they own — force hrPartner to self.
-  if (req.user.role === 'HRManager') {
-    req.body.hrPartner = req.user._id;
   }
 
   await validateHierarchy(req.body, userId);
@@ -401,11 +394,6 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
           throw new Error(`HR Partner email "${p.hrPartnerEmail}" does not match any HRManager or SuperAdmin`);
         }
         hrPartnerId = partner._id;
-      }
-      // An HR Manager importing without an explicit HR Partner owns the row, so
-      // the new employee remains visible to them under the assigned-HR scoping.
-      if (!hrPartnerId && req.user.role === 'HRManager') {
-        hrPartnerId = req.user._id;
       }
 
       // ----- Create EmployeeProfile (rollback user on failure) -----
