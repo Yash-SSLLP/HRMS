@@ -7,6 +7,7 @@ const { REQUIRED_DOCUMENT_CATEGORIES } = require('../models/Document');
 const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
+const { hiddenUserIds } = require('../utils/visibility');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
@@ -102,6 +103,9 @@ const listEmployees = asyncHandler(async (req, res) => {
   const { q, department } = req.query;
   const filter = { ...scopeForHR(req) };
   if (department) filter.department = department;
+  // Hide SuperAdmin accounts from non-SuperAdmin viewers.
+  const hidden = await hiddenUserIds(req.user);
+  if (hidden.length) filter.user = { $nin: hidden };
   let query = EmployeeProfile.find(filter)
     .populate('user', 'firstName lastName email role isActive')
     .populate('hrPartner', 'firstName lastName email')

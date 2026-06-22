@@ -4,6 +4,7 @@ const Holiday = require('../models/Holiday');
 const Event = require('../models/Event');
 const Notification = require('../models/Notification');
 const { enqueueMail } = require('../services/email');
+const { hiddenUserIds } = require('../utils/visibility');
 
 function md(date) {
   const d = new Date(date);
@@ -37,17 +38,19 @@ function personPayload(p) {
   };
 }
 
-async function loadActiveProfiles() {
-  // Profiles for active users who have not exited
-  const profiles = await EmployeeProfile.find({
-    $or: [{ dateOfExit: null }, { dateOfExit: { $exists: false } }],
-  }).populate({ path: 'user', select: 'firstName lastName email isActive' });
+async function loadActiveProfiles(viewer) {
+  // Profiles for active users who have not exited (SuperAdmin hidden from others).
+  const hidden = await hiddenUserIds(viewer);
+  const filter = { $or: [{ dateOfExit: null }, { dateOfExit: { $exists: false } }] };
+  if (hidden.length) filter.user = { $nin: hidden };
+  const profiles = await EmployeeProfile.find(filter)
+    .populate({ path: 'user', select: 'firstName lastName email isActive' });
   return profiles.filter((p) => p.user && p.user.isActive !== false);
 }
 
 // GET /api/celebrations/today
 const todayCelebrations = asyncHandler(async (req, res) => {
-  const profiles = await loadActiveProfiles();
+  const profiles = await loadActiveProfiles(req.user);
   const t = md(new Date());
   const currentYear = new Date().getFullYear();
 
@@ -76,7 +79,7 @@ const todayCelebrations = asyncHandler(async (req, res) => {
 // GET /api/celebrations/upcoming?days=7
 const upcomingCelebrations = asyncHandler(async (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
-  const profiles = await loadActiveProfiles();
+  const profiles = await loadActiveProfiles(req.user);
   const range = nextNDays(days);
   const currentYear = new Date().getFullYear();
 
@@ -161,7 +164,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   }
 
   // --- Birthdays & anniversaries (recurring month/day) ---
-  const profiles = await loadActiveProfiles();
+  const profiles = await loadActiveProfiles(req.user);
   for (const p of profiles) {
     if (p.dateOfBirth) {
       const x = md(p.dateOfBirth);

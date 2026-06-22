@@ -52,6 +52,7 @@ const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding.jsx'));
 const AdminHiringOnboarding = lazy(() => import('./pages/AdminHiringOnboarding.jsx'));
 const AdminNewJoinees = lazy(() => import('./pages/AdminNewJoinees.jsx'));
 const AdminAuditLog = lazy(() => import('./pages/AdminAuditLog.jsx'));
+const AdminChatExport = lazy(() => import('./pages/AdminChatExport.jsx'));
 const EmployeeOnboarding = lazy(() => import('./pages/EmployeeOnboarding.jsx'));
 const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
 const EmployeeAnnouncements = lazy(() => import('./pages/EmployeeAnnouncements.jsx'));
@@ -122,6 +123,7 @@ const adminNav = [
   { to: '/admin/complaints', label: 'Complaints', icon: '⚠️' },
   { to: '/admin/change-requests', label: 'Change Requests', icon: '✏️' },
   { to: '/admin/audit-log', label: 'Audit Log', icon: '🧾' },
+  { to: '/admin/chat-export', label: 'Chat Export', icon: '🗂️', roles: ['SuperAdmin'] },
   { to: '/admin/account', label: 'My Account', icon: '🔐' },
   { to: '/admin/knowledge-base', label: 'Knowledge Base', icon: '📚' },
   { to: '/admin/holidays', label: 'Holidays', icon: '🎉' },
@@ -244,6 +246,7 @@ export default function App() {
         <Route path="complaints" element={<AdminComplaints />} />
         <Route path="change-requests" element={<AdminChangeRequests />} />
         <Route path="audit-log" element={<AdminAuditLog />} />
+        <Route path="chat-export" element={<AdminChatExport />} />
         <Route path="account" element={<EmployeeAccount />} />
         <Route path="knowledge-base" element={<AdminKnowledgeBase />} />
         <Route path="holidays" element={<AdminHolidays />} />

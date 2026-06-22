@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { hiddenUserIds } = require('../utils/visibility');
 
 // GET /api/org/chart
 // Builds a read-only reporting hierarchy from EmployeeProfile records.
@@ -7,7 +8,8 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 // the profile's `reportingManager` (also a User id). Employees with no
 // manager, or whose manager is not an employee in the set, surface as roots.
 const orgChart = asyncHandler(async (req, res) => {
-  const profiles = await EmployeeProfile.find({})
+  const hidden = await hiddenUserIds(req.user);
+  const profiles = await EmployeeProfile.find(hidden.length ? { user: { $nin: hidden } } : {})
     .select('user reportingManager designation department')
     .populate('user', 'firstName lastName email')
     .lean();

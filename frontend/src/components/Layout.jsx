@@ -318,7 +318,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
             {sectionTitle}
           </div>
         )}
-        {navItems.map((item) => (
+        {navItems.filter((item) => !item.roles || item.roles.includes(user?.role)).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

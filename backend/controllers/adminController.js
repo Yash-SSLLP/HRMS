@@ -13,6 +13,11 @@ const listUsers = asyncHandler(async (req, res) => {
     const re = new RegExp(q, 'i');
     filter.$or = [{ firstName: re }, { lastName: re }, { email: re }];
   }
+  // Hide SuperAdmin accounts from non-SuperAdmin viewers.
+  if (req.user.role !== 'SuperAdmin') {
+    if (!role) filter.role = { $ne: 'SuperAdmin' };
+    else if (role === 'SuperAdmin') filter._id = { $in: [] };
+  }
   const users = await User.find(filter).sort({ createdAt: -1 });
   res.json({ count: users.length, users });
 });
