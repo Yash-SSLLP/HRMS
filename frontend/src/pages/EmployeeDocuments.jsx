@@ -11,6 +11,12 @@ const fmtSize = (n) => {
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
 
+const STATUS_STYLES = {
+  Submitted: 'bg-amber-100 text-amber-800',
+  Verified: 'bg-green-100 text-green-800',
+  Rejected: 'bg-red-100 text-red-800',
+};
+
 export default function EmployeeDocuments() {
   const [docs, setDocs] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -137,14 +143,15 @@ export default function EmployeeDocuments() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">File</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Size</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Uploaded</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               <th className="px-4 py-3 text-right"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
             ) : docs.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No documents yet</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No documents yet</td></tr>
             ) : docs.map((d) => {
               const canDelete = !hrOnly.includes(d.category);
               return (
@@ -161,6 +168,10 @@ export default function EmployeeDocuments() {
                   </td>
                   <td className="px-4 py-3 text-gray-600">{fmtSize(d.sizeBytes)}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(d.createdAt)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[d.status || 'Submitted']}`}>{d.status || 'Submitted'}</span>
+                    {d.reviewNote && <div className="text-xs text-gray-500 mt-0.5">{d.reviewNote}</div>}
+                  </td>
                   <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                     <button onClick={() => onDownload(d)} className="text-blue-600 hover:underline">Download</button>
                     {canDelete && (

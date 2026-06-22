@@ -58,6 +58,13 @@ const documentSchema = new mongoose.Schema(
     isPii: { type: Boolean, default: false },
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     note: { type: String, maxlength: 500 },
+
+    // HR verification workflow: an employee-submitted doc starts 'Submitted';
+    // HR reviews and marks it 'Verified' (or 'Rejected' with a note).
+    status: { type: String, enum: ['Submitted', 'Verified', 'Rejected'], default: 'Submitted', index: true },
+    verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    verifiedAt: { type: Date },
+    reviewNote: { type: String, maxlength: 500 },
   },
   { timestamps: true }
 );

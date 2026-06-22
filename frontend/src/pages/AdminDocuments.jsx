@@ -10,6 +10,12 @@ const fmtSize = (n) => {
 };
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
 
+const STATUS_STYLES = {
+  Submitted: 'bg-amber-100 text-amber-800',
+  Verified: 'bg-green-100 text-green-800',
+  Rejected: 'bg-red-100 text-red-800',
+};
+
 export default function AdminDocuments() {
   const [employees, setEmployees] = useState([]);
   const [selectedEmployee, setSelectedEmployee] = useState('');
@@ -87,6 +93,17 @@ export default function AdminDocuments() {
   };
 
   const onDownload = (d) => downloadFile(`/documents/${d._id}/download`, d.fileName);
+
+  const setDocStatus = async (d, status) => {
+    let note;
+    if (status === 'Rejected') note = window.prompt('Reason for rejecting (optional):') || '';
+    try {
+      await api.patch(`/documents/${d._id}/status`, { status, note });
+      await loadDocs();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not update status');
+    }
+  };
 
   const onDelete = async (d) => {
     if (!window.confirm(`Delete "${d.fileName}"? This cannot be undone.`)) return;
@@ -167,14 +184,15 @@ export default function AdminDocuments() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">File</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Size</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Uploaded</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               <th className="px-4 py-3 text-right"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={selectedEmployee ? 5 : 6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={selectedEmployee ? 6 : 7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
             ) : docs.length === 0 ? (
-              <tr><td colSpan={selectedEmployee ? 5 : 6} className="px-4 py-6 text-center text-gray-500">No documents</td></tr>
+              <tr><td colSpan={selectedEmployee ? 6 : 7} className="px-4 py-6 text-center text-gray-500">No documents</td></tr>
             ) : docs.map((d) => (
               <tr key={d._id}>
                 {!selectedEmployee && (
@@ -195,7 +213,17 @@ export default function AdminDocuments() {
                 </td>
                 <td className="px-4 py-3 text-gray-600">{fmtSize(d.sizeBytes)}</td>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(d.createdAt)}</td>
+                <td className="px-4 py-3">
+                  <span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[d.status || 'Submitted']}`}>{d.status || 'Submitted'}</span>
+                  {d.reviewNote && <div className="text-xs text-gray-500 mt-0.5">{d.reviewNote}</div>}
+                </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
+                  {d.status !== 'Verified' && (
+                    <button onClick={() => setDocStatus(d, 'Verified')} className="text-green-700 hover:underline">Verify</button>
+                  )}
+                  {d.status !== 'Rejected' && (
+                    <button onClick={() => setDocStatus(d, 'Rejected')} className="text-amber-700 hover:underline">Reject</button>
+                  )}
                   <button onClick={() => onDownload(d)} className="text-blue-600 hover:underline">Download</button>
                   <button onClick={() => onDelete(d)} className="text-red-600 hover:underline">Delete</button>
                 </td>

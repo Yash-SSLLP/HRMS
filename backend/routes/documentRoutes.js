@@ -8,6 +8,7 @@ const {
   download,
   remove,
   categories,
+  setStatus,
 } = require('../controllers/documentController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
@@ -51,5 +52,6 @@ router.delete('/:id', remove);
 router.use(restrictTo('SuperAdmin', 'HRManager'));
 router.get('/', listForEmployee);
 router.post('/', upload.single('file'), uploadForEmployee);
+router.patch('/:id/status', setStatus);
 
 module.exports = router;

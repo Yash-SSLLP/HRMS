@@ -119,6 +119,10 @@ const employeeProfileSchema = new mongoose.Schema(
     // submitted regardless of which categories were uploaded.
     documentsVerified: { type: Boolean, default: false },
 
+    // Public, no-login document submission link. HR generates a token; the
+    // employee opens /employee-docs/<token> to upload their documents.
+    docToken: { type: String, index: true },
+
     bankDetails: bankDetailsSchema,
     address: {
       current: addressSchema,

@@ -90,6 +90,7 @@ export const adminNav = [
 export const employeeNav = [
   { group: 'Overview', items: [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },
+    { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
     { to: '/employee/org-chart', label: 'Org Chart', icon: FiGitBranch },
     { to: '/employee/onboarding', label: 'Onboarding', icon: FiLogIn },
   ] },

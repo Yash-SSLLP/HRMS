@@ -1,11 +1,13 @@
 import { lazy, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useThemeStore } from './store/themeStore';
+import { adminNav, employeeNav } from './config/nav';
 // Public auth/entry pages stay eager (they render outside the app shell).
 import Login from './pages/Login.jsx';
 import ExitFeedback from './pages/ExitFeedback.jsx';
 import ApplyForm from './pages/ApplyForm.jsx';
 import DocumentSubmitForm from './pages/DocumentSubmitForm.jsx';
+import EmployeeDocSubmit from './pages/EmployeeDocSubmit.jsx';
 import LetterDownload from './pages/LetterDownload.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Layout from './components/Layout.jsx';
@@ -86,112 +88,6 @@ const AdminReviewCycles = lazy(() => import('./pages/AdminReviewCycles.jsx'));
 const EmployeeReviews = lazy(() => import('./pages/EmployeeReviews.jsx'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
 
-// Admin sidebar, organised into collapsible category groups.
-const adminNav = [
-  { group: 'Overview, Reports & Admin Tools', items: [
-    { to: '/admin/dashboard', label: 'Dashboard', icon: '📊' },
-    { to: '/admin/analytics', label: 'Analytics', icon: '📈' },
-    { to: '/admin/audit-log', label: 'Audit Log', icon: '🧾' },
-    { to: '/admin/chat-export', label: 'Chat Export', icon: '🗂️', roles: ['SuperAdmin'] },
-  ] },
-  { group: 'Organization Setup', items: [
-    { to: '/admin/org-masters', label: 'Org Masters', icon: '🗂️' },
-    { to: '/admin/departments', label: 'Departments', icon: '🏢' },
-    { to: '/admin/org-chart', label: 'Org Chart', icon: '🌳' },
-    { to: '/admin/users', label: 'Users', icon: '👥' },
-    { to: '/admin/employees', label: 'Employees', icon: '🧑‍💼' },
-  ] },
-  { group: 'Recruitment & Onboarding', items: [
-    { to: '/admin/recruitment', label: 'Recruitment', icon: '🧲' },
-    { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: '🚀' },
-    { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: '✅' },
-    { to: '/admin/new-joinees', label: 'New Joinees', icon: '🧑‍💼' },
-    { to: '/admin/confirmations', label: 'Confirmations', icon: '🛡️' },
-  ] },
-  { group: 'Attendance & Time', items: [
-    { to: '/admin/attendance', label: 'Attendance', icon: '🕒' },
-    { to: '/admin/attendance-report', label: 'Attendance Report', icon: '📉' },
-    { to: '/admin/roster', label: 'Shifts & Roster', icon: '📆' },
-    { to: '/admin/regularizations', label: 'Regularization', icon: '🛠️' },
-  ] },
-  { group: 'Leave & Holidays', items: [
-    { to: '/admin/leave', label: 'Leave', icon: '🌴' },
-    { to: '/admin/compoff', label: 'Comp-off', icon: '🔁' },
-    { to: '/admin/holidays', label: 'Holidays', icon: '🎉' },
-  ] },
-  { group: 'Payroll & Compensation', items: [
-    { to: '/admin/payroll', label: 'Payroll', icon: '💰' },
-    { to: '/admin/salary-structures', label: 'Salary Structures', icon: '🧮' },
-    { to: '/admin/loans', label: 'Loans & Advances', icon: '🏦' },
-    { to: '/admin/declarations', label: 'Tax Declarations', icon: '🧾' },
-    { to: '/admin/compliance', label: 'Compliance', icon: '⚖️' },
-  ] },
-  { group: 'Expense & Travel', items: [
-    { to: '/admin/expenses', label: 'Expenses', icon: '💸' },
-    { to: '/admin/travel', label: 'Travel', icon: '✈️' },
-  ] },
-  { group: 'Performance & Learning', items: [
-    { to: '/admin/performance', label: 'Performance', icon: '📈' },
-    { to: '/admin/review-cycles', label: 'Appraisals', icon: '📝' },
-    { to: '/admin/training', label: 'Training', icon: '🎓' },
-    { to: '/admin/courses', label: 'Courses (LMS)', icon: '📖' },
-  ] },
-  { group: 'Work Management', items: [
-    { to: '/admin/projects', label: 'Projects', icon: '📁' },
-    { to: '/admin/tasks', label: 'Tasks', icon: '✅' },
-    { to: '/admin/assets', label: 'Assets', icon: '💻' },
-    { to: '/admin/documents', label: 'Documents', icon: '📄' },
-  ] },
-  { group: 'Engagement & Communication', items: [
-    { to: '/admin/announcements', label: 'Announcements', icon: '📢' },
-    { to: '/admin/surveys', label: 'Surveys', icon: '🗳️' },
-    { to: '/admin/events', label: 'Events', icon: '📣' },
-    { to: '/admin/calendar', label: 'Calendar', icon: '📅' },
-    { to: '/admin/recognition', label: 'Recognition', icon: '🏆' },
-    { to: '/admin/knowledge-base', label: 'Knowledge Base', icon: '📚' },
-  ] },
-  { group: 'Employee Self-Service / Requests', items: [
-    { to: '/admin/account', label: 'My Account', icon: '🔐' },
-    { to: '/admin/complaints', label: 'Complaints', icon: '⚠️' },
-    { to: '/admin/change-requests', label: 'Change Requests', icon: '✏️' },
-  ] },
-  { group: 'Exit', items: [
-    { to: '/admin/exits', label: 'Exits', icon: '🚪' },
-  ] },
-];
-
-const employeeNav = [
-  { to: '/employee', label: 'Overview', end: true, icon: '🏠' },
-  { to: '/employee/team', label: 'My Team', icon: '👥', roles: ['Manager'] },
-  { to: '/employee/org-chart', label: 'Org Chart', icon: '🌳' },
-  { to: '/employee/onboarding', label: 'Onboarding', icon: '🚀' },
-  { to: '/employee/attendance', label: 'Attendance', icon: '🕒', highlight: true },
-  { to: '/employee/shifts', label: 'My Shifts', icon: '📆' },
-  { to: '/employee/regularizations', label: 'Regularization', icon: '🛠️' },
-  { to: '/employee/payslips', label: 'Payslips', icon: '💰' },
-  { to: '/employee/loans', label: 'Loans & Advances', icon: '🏦' },
-  { to: '/employee/declaration', label: 'Tax Declaration', icon: '🧾' },
-  { to: '/employee/leave', label: 'Leave', icon: '🌴' },
-  { to: '/employee/compoff', label: 'Comp-off', icon: '🔁' },
-  { to: '/employee/expenses', label: 'Expenses', icon: '💸' },
-  { to: '/employee/travel', label: 'Travel', icon: '✈️' },
-  { to: '/employee/documents', label: 'Documents', icon: '📄' },
-  { to: '/employee/tasks', label: 'Tasks', icon: '✅' },
-  { to: '/employee/assets', label: 'Assets', icon: '💻' },
-  { to: '/employee/goals', label: 'Goals', icon: '🎯' },
-  { to: '/employee/reviews', label: 'My Reviews', icon: '📝' },
-  { to: '/employee/learning', label: 'Learning', icon: '📖' },
-  { to: '/employee/recognition', label: 'Recognition', icon: '🏆' },
-  { to: '/employee/announcements', label: 'Announcements', icon: '📢' },
-  { to: '/employee/surveys', label: 'Surveys', icon: '🗳️' },
-  { to: '/employee/calendar', label: 'Calendar', icon: '📅' },
-  { to: '/employee/complaints', label: 'Complaints', icon: '⚠️' },
-  { to: '/employee/knowledge-base', label: 'Help / KB', icon: '📚' },
-  { to: '/employee/exit', label: 'Resignation', icon: '🚪', danger: true },
-  { to: '/employee/profile', label: 'Profile', icon: '👤' },
-  { to: '/employee/account', label: 'Account & Requests', icon: '🔐' },
-];
-
 function RootRedirect() {
   const user = useAuthStore((s) => s.user);
   if (!user) return <Navigate to="/login" replace />;
@@ -226,6 +122,7 @@ export default function App() {
 
       {/* Public — candidate document submission (tokenised link) */}
       <Route path="/submit-documents/:token" element={<DocumentSubmitForm />} />
+      <Route path="/employee-docs/:token" element={<EmployeeDocSubmit />} />
 
       {/* Public — candidate offer/appointment letter download (tokenised link) */}
       <Route path="/letter/:token" element={<LetterDownload />} />

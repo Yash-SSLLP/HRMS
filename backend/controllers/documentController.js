@@ -181,6 +181,27 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+// PATCH /api/documents/:id/status  { status, note }  (HR/Admin)
+// Verify or reject an employee-submitted document.
+const setStatus = asyncHandler(async (req, res) => {
+  const { status, note } = req.body;
+  if (!['Submitted', 'Verified', 'Rejected'].includes(status)) {
+    res.status(400);
+    throw new Error('status must be Submitted, Verified or Rejected');
+  }
+  const doc = await Document.findById(req.params.id);
+  if (!doc) {
+    res.status(404);
+    throw new Error('Document not found');
+  }
+  doc.status = status;
+  doc.reviewNote = note || undefined;
+  doc.verifiedBy = status === 'Submitted' ? undefined : req.user._id;
+  doc.verifiedAt = status === 'Submitted' ? undefined : new Date();
+  await doc.save();
+  res.json({ document: doc.toJSON() });
+});
+
 // GET /api/documents/categories  (helper for forms)
 const categories = asyncHandler(async (req, res) => {
   res.json({
@@ -198,4 +219,5 @@ module.exports = {
   download,
   remove,
   categories,
+  setStatus,
 };

@@ -14,6 +14,9 @@ const {
   exportEmployeesXlsx,
   downloadImportTemplate,
   importEmployeesXlsx,
+  createDocLink,
+  getPublicDocRequest,
+  submitPublicDocs,
 } = require('../controllers/employeeController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
@@ -29,6 +32,22 @@ const xlsxUpload = multer({
     cb(ok ? null : new Error('Only .xlsx files are accepted'), ok);
   },
 });
+
+// 10 MB cap; documents the employee submits via the public link.
+const docUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf'
+      || file.mimetype === 'application/msword'
+      || file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    cb(ok ? null : new Error('Only PDF, Word or image files are accepted'), ok);
+  },
+});
+
+// Public, no-login document submission via tokenised link (before auth guard).
+router.get('/public-docs/:token', getPublicDocRequest);
+router.post('/public-docs/:token', docUpload.array('files', 20), submitPublicDocs);
 
 router.use(protect);
 
@@ -50,6 +69,7 @@ router.route('/')
   .get(listEmployees)
   .post(createEmployee);
 
+router.post('/:id/doc-link', createDocLink);
 router.get('/:id/export.zip', exportEmployeeZip);
 
 router.route('/:id')

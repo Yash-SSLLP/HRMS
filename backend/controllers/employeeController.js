@@ -2,8 +2,10 @@ const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
+const crypto = require('crypto');
 const Document = require('../models/Document');
-const { REQUIRED_DOCUMENT_CATEGORIES } = require('../models/Document');
+const { REQUIRED_DOCUMENT_CATEGORIES, SELF_UPLOAD_CATEGORIES, PII_CATEGORIES } = require('../models/Document');
+const storage = require('../services/storage');
 const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
@@ -442,9 +444,92 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
   });
 });
 
+// ===== Per-employee document submission link =====
+
+// POST /api/employees/:id/doc-link  (HR) — ensure a public submission token.
+const createDocLink = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findById(req.params.id);
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  if (!profile.docToken) {
+    profile.docToken = crypto.randomBytes(24).toString('hex');
+    await profile.save();
+  }
+  res.json({ token: profile.docToken });
+});
+
+// GET /api/employees/public-docs/:token  (public) — what the employee sees.
+const getPublicDocRequest = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ docToken: req.params.token })
+    .populate('user', 'firstName lastName');
+  if (!profile || !profile.docToken) {
+    res.status(404);
+    throw new Error('This document submission link is invalid or has expired.');
+  }
+  const docs = await Document.find({ employee: profile._id })
+    .select('category fileName status createdAt')
+    .sort({ createdAt: -1 })
+    .lean();
+  res.json({
+    employee: {
+      name: `${profile.user?.firstName || ''} ${profile.user?.lastName || ''}`.trim(),
+      employeeCode: profile.employeeCode,
+    },
+    docTypes: SELF_UPLOAD_CATEGORIES,
+    files: docs.map((d) => ({ category: d.category, fileName: d.fileName, status: d.status })),
+  });
+});
+
+// POST /api/employees/public-docs/:token  (public, multipart files[] + labels[])
+const submitPublicDocs = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ docToken: req.params.token });
+  if (!profile || !profile.docToken) {
+    res.status(404);
+    throw new Error('This document submission link is invalid or has expired.');
+  }
+  const files = req.files || [];
+  if (!files.length) {
+    res.status(400);
+    throw new Error('Please attach at least one document.');
+  }
+  const labels = Array.isArray(req.body.labels)
+    ? req.body.labels
+    : (req.body.labels != null ? [req.body.labels] : []);
+
+  let saved = 0;
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
+    const category = SELF_UPLOAD_CATEGORIES.includes(labels[i]) ? labels[i] : 'Other';
+    const { storagePath, sha256, sizeBytes } = storage.saveBuffer({
+      buffer: file.buffer,
+      ownerType: 'employee',
+      ownerId: profile._id,
+      originalName: file.originalname || 'document',
+    });
+    await Document.create({
+      employee: profile._id,
+      category,
+      fileName: file.originalname || 'document',
+      storagePath,
+      mime: file.mimetype,
+      sizeBytes,
+      sha256,
+      isPii: PII_CATEGORIES.includes(category),
+      status: 'Submitted',
+    });
+    saved += 1;
+  }
+  res.status(201).json({ ok: true, count: saved });
+});
+
 module.exports = {
   getMyProfile,
   updateMyBirthday,
+  createDocLink,
+  getPublicDocRequest,
+  submitPublicDocs,
   listEmployees,
   employeesDocumentStatus,
   exportEmployeeZip,

@@ -6,6 +6,7 @@ import api from '../api/client';
 import ChatDock from './ChatDock';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
+import { FiChevronRight } from 'react-icons/fi';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', Employee: 'Employee' };
@@ -34,8 +35,9 @@ function UserAvatar({ user }) {
   );
 }
 
-// A single sidebar link.
+// A single sidebar link. `item.icon` is a react-icon component.
 function NavLeaf({ item, onNavigate }) {
+  const Icon = item.icon;
   return (
     <NavLink
       to={item.to}
@@ -44,7 +46,7 @@ function NavLeaf({ item, onNavigate }) {
       className={({ isActive }) =>
         `nav-link ${item.danger ? 'nav-link-danger' : ''} ${item.highlight ? 'nav-link-highlight' : ''} ${isActive ? 'nav-link-active' : ''}`}
     >
-      <span className="nav-icon" aria-hidden="true">{item.icon || '•'}</span>
+      <span className="nav-icon" aria-hidden="true">{Icon ? <Icon size={15} /> : null}</span>
       <span className="truncate">{item.label}</span>
     </NavLink>
   );
@@ -59,6 +61,8 @@ function NavList({ items, user, onNavigate }) {
   const visible = (arr) => arr.filter((i) => !i.roles || i.roles.includes(user?.role));
   const groupActive = (g) => (g.items || []).some((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
 
+  // Multiple groups can be open at once. The active group auto-opens (without
+  // closing others).
   const [open, setOpen] = useState(() => {
     const init = {};
     if (grouped) items.forEach((g) => { init[g.group] = groupActive(g); });
@@ -83,16 +87,20 @@ function NavList({ items, user, onNavigate }) {
     const children = visible(g.items);
     if (!children.length) return null;
     const isOpen = !!open[g.group];
+    const hasHighlight = children.some((i) => i.highlight);
     return (
       <div key={g.group}>
         <button
           type="button"
           onClick={() => setOpen((o) => ({ ...o, [g.group]: !o[g.group] }))}
-          className="nav-group-header"
+          className={`nav-group-header ${isOpen ? 'is-open' : ''} ${hasHighlight ? 'nav-group-header-highlight' : ''}`}
           aria-expanded={isOpen}
         >
-          <span className="truncate">{g.group}</span>
-          <span className={`nav-group-caret ${isOpen ? 'is-open' : ''}`} aria-hidden="true">▸</span>
+          <span className="truncate flex-1 text-left min-w-0">{g.group}</span>
+          <span className="flex items-center gap-1.5 shrink-0">
+            {hasHighlight && <span className="nav-group-dot" aria-hidden="true" />}
+            <FiChevronRight className={`nav-group-caret ${isOpen ? 'is-open' : ''}`} aria-hidden="true" />
+          </span>
         </button>
         <div className={`nav-group-body ${isOpen ? 'is-open' : ''}`}>
           <div className="nav-group-inner space-y-0.5">
@@ -401,7 +409,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
           <span className="text-base font-bold text-gray-900 truncate">{COMPANY_NAME}</span>
         </Link>
       </div>
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 space-y-0.5">
         {sectionTitle && (
           <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold px-3 pb-2">
             {sectionTitle}
@@ -426,7 +434,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
       <div className="h-1 accent-bg fixed top-0 inset-x-0 z-50" />
 
       {/* Desktop fixed sidebar */}
-      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-64 bg-white border-r border-gray-200 z-40">
+      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-72 bg-white border-r border-gray-200 z-40">
         {sidebar}
       </aside>
 
@@ -434,14 +442,14 @@ export default function Layout({ navItems = [], sectionTitle }) {
       {mobileOpen && (
         <>
           <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={closeMobile} />
-          <aside className="fixed top-0 left-0 bottom-0 w-64 bg-white border-r border-gray-200 z-50 lg:hidden">
+          <aside className="fixed top-0 left-0 bottom-0 w-72 bg-white border-r border-gray-200 z-50 lg:hidden">
             {sidebar}
           </aside>
         </>
       )}
 
       {/* Content column */}
-      <div className="lg:pl-64 flex flex-col min-h-screen">
+      <div className="lg:pl-72 flex flex-col min-h-screen">
         <header className="sticky top-1 z-30 h-16 bg-white border-b border-gray-200 flex items-center gap-3 px-4 sm:px-6">
           <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn lg:hidden" aria-label="Open menu">
             <span className="text-xl leading-none">☰</span>

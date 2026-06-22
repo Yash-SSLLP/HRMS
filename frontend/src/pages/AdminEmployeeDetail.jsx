@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+
+const DOC_STATUS_STYLES = {
+  Submitted: 'bg-amber-100 text-amber-800',
+  Verified: 'bg-green-100 text-green-800',
+  Rejected: 'bg-red-100 text-red-800',
+};
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -43,6 +50,17 @@ export default function AdminEmployeeDetail() {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [docs, setDocs] = useState([]);
+  const [token, setToken] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [docBusy, setDocBusy] = useState(false);
+
+  const loadDocs = async () => {
+    try {
+      const { data } = await api.get(`/documents?employee=${id}`);
+      setDocs(data.documents || []);
+    } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -51,13 +69,46 @@ export default function AdminEmployeeDetail() {
       try {
         const { data } = await api.get(`/employees/${id}`);
         setProfile(data.profile);
+        setToken(data.profile?.docToken || '');
       } catch (err) {
         setError(err.response?.data?.message || 'Failed to load employee');
       } finally {
         setLoading(false);
       }
     })();
+    loadDocs();
   }, [id]);
+
+  const docLink = token ? `${window.location.origin}/employee-docs/${token}` : '';
+
+  const generateLink = async () => {
+    setDocBusy(true);
+    try {
+      const { data } = await api.post(`/employees/${id}/doc-link`);
+      setToken(data.token);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not generate link');
+    } finally {
+      setDocBusy(false);
+    }
+  };
+
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(docLink); } catch { window.prompt('Copy this link:', docLink); }
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1600);
+  };
+
+  const setDocStatus = async (docId, status) => {
+    let note;
+    if (status === 'Rejected') note = window.prompt('Reason for rejecting (optional):') || '';
+    try {
+      await api.patch(`/documents/${docId}/status`, { status, note });
+      await loadDocs();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not update status');
+    }
+  };
 
   if (loading) {
     return (
@@ -115,6 +166,60 @@ export default function AdminEmployeeDetail() {
             <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-gray-100 text-gray-700">{profile.employmentType || '—'}</span>
           </div>
         </div>
+      </div>
+
+      {/* Document submission link + verification */}
+      <div className="bg-white shadow rounded-lg p-5 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="card-title">Document Submission</h2>
+          {token ? (
+            <button onClick={generateLink} disabled={docBusy} className="text-xs text-gray-500 hover:underline">Regenerate link</button>
+          ) : null}
+        </div>
+        {token ? (
+          <div className="flex gap-2 mb-4">
+            <input readOnly value={docLink} onFocus={(e) => e.target.select()}
+              className="flex-1 border rounded-lg px-3 py-2 text-xs bg-gray-50" />
+            <button onClick={copyLink} className="text-xs px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">
+              {linkCopied ? 'Copied!' : 'Copy link'}
+            </button>
+          </div>
+        ) : (
+          <button onClick={generateLink} disabled={docBusy}
+            className="mb-4 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+            {docBusy ? 'Generating…' : 'Generate submission link'}
+          </button>
+        )}
+        <p className="text-xs text-gray-500 mb-3">
+          Share this link with {fullName(u) || 'the employee'} to collect documents. Submitted files appear below for you to verify.
+        </p>
+
+        {docs.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">No documents submitted yet.</p>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {docs.map((d) => (
+              <li key={d._id} className="py-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-gray-800 truncate">
+                    <span className="text-gray-500">{d.category}:</span> {d.fileName}
+                  </div>
+                  {d.reviewNote && <div className="text-xs text-gray-400">{d.reviewNote}</div>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-xs px-2 py-0.5 rounded-lg ${DOC_STATUS_STYLES[d.status || 'Submitted']}`}>{d.status || 'Submitted'}</span>
+                  <button onClick={() => downloadFile(`/documents/${d._id}/download`, d.fileName)} className="text-xs text-blue-600 hover:underline">View</button>
+                  {d.status !== 'Verified' && (
+                    <button onClick={() => setDocStatus(d._id, 'Verified')} className="text-xs text-green-700 hover:underline">Verify</button>
+                  )}
+                  {d.status !== 'Rejected' && (
+                    <button onClick={() => setDocStatus(d._id, 'Rejected')} className="text-xs text-amber-700 hover:underline">Reject</button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

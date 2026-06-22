@@ -266,16 +266,36 @@ html.dark .nav-link-highlight {
   background-color: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--accent);
 }
-.nav-group-caret { transition: transform .2s ease; font-size: 0.7rem; opacity: .7; }
-.nav-group-caret.is-open { transform: rotate(90deg); }
-/* Smooth height animation via the grid 0fr→1fr trick (no JS measuring needed). */
-.nav-group-body {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows .22s ease;
+/* Clearly show which section is open. */
+.nav-group-header.is-open {
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
-.nav-group-body.is-open { grid-template-rows: 1fr; }
-.nav-group-inner { overflow: hidden; min-height: 0; }
+.nav-group-caret { width: 15px; height: 15px; flex-shrink: 0; opacity: .6; transition: transform .2s ease; }
+.nav-group-caret.is-open { transform: rotate(90deg); }
+/* Accent indicator on a collapsed group that contains a highlighted item. */
+.nav-group-header-highlight { color: var(--accent); }
+.nav-group-dot {
+  width: 0.5rem; height: 0.5rem; border-radius: 9999px;
+  background-color: var(--accent); flex-shrink: 0;
+  animation: navPulse 1.6s ease-in-out infinite;
+}
+/* SVG nav icons inherit currentColor — keep them legible on the solid accent
+   chip used by the active / highlighted states. */
+.nav-link-active .nav-icon, .nav-link-highlight .nav-icon { color: #fff; }
+.nav-link-danger.nav-link-active .nav-icon { color: #fff; }
+/* Smooth, overlap-free collapse via max-height. Reliable when several groups
+   are open at once inside the scrolling sidebar (the grid 0fr/1fr trick could
+   collapse and overlap in that context). 600px clears the largest group. */
+.nav-group-body {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height .25s ease;
+}
+.nav-group-body.is-open { max-height: 600px; }
+.nav-group-inner { min-width: 0; }
+.nav-link { min-width: 0; }
+.nav-link > .truncate { min-width: 0; }
 html.dark .nav-group-header { color: #8b97a7; }
 html.dark .nav-group-header:hover { color: #fff; background-color: color-mix(in srgb, var(--accent) 20%, transparent); }
 
