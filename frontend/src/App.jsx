@@ -36,6 +36,7 @@ const EmployeeComplaints = lazy(() => import('./pages/EmployeeComplaints.jsx'));
 const AdminComplaints = lazy(() => import('./pages/AdminComplaints.jsx'));
 const EmployeeAccount = lazy(() => import('./pages/EmployeeAccount.jsx'));
 const AdminChangeRequests = lazy(() => import('./pages/AdminChangeRequests.jsx'));
+const AdminPasswordResets = lazy(() => import('./pages/AdminPasswordResets.jsx'));
 const Calendar = lazy(() => import('./pages/Calendar.jsx'));
 const AdminHolidays = lazy(() => import('./pages/AdminHolidays.jsx'));
 const AdminEvents = lazy(() => import('./pages/AdminEvents.jsx'));
@@ -175,6 +176,7 @@ export default function App() {
         <Route path="surveys" element={<AdminSurveys />} />
         <Route path="complaints" element={<AdminComplaints />} />
         <Route path="change-requests" element={<AdminChangeRequests />} />
+        <Route path="password-resets" element={<AdminPasswordResets />} />
         <Route path="audit-log" element={<AdminAuditLog />} />
         <Route path="chat-export" element={<AdminChatExport />} />
         <Route path="account" element={<EmployeeAccount />} />

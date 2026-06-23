@@ -104,38 +104,38 @@ const updateConfirmation = asyncHandler(async (req, res) => {
 async function computeNextEmployeeCode() {
   const profiles = await EmployeeProfile.find({}, 'employeeCode').lean();
 
-  const CODE_RE = /^([A-Za-z]+)(\d+)$/;
-  const prefixCounts = {}; // prefix -> count
-  const prefixMax = {}; // prefix -> max numeric value
-  let maxNumWidth = 0; // widest numeric portion seen across all codes
+  // prefix + optional separator (space / dash) + digits, e.g. "SSL 1", "EMP-001", "EMP007".
+  const CODE_RE = /^([A-Za-z]+)([\s-]*)(\d+)$/;
+  // prefix -> { count, max, sep, width } — sep & width copied from the highest-numbered code
+  // so the next suggestion keeps the exact style already in use (e.g. "SSL 8" -> "SSL 9").
+  const stats = {};
 
   for (const p of profiles) {
     if (!p.employeeCode) continue;
     const m = CODE_RE.exec(p.employeeCode.trim());
     if (!m) continue;
     const prefix = m[1].toUpperCase();
-    const digits = m[2];
+    const sep = m[2];
+    const digits = m[3];
     const num = parseInt(digits, 10);
 
-    prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
-    if (prefixMax[prefix] == null || num > prefixMax[prefix]) prefixMax[prefix] = num;
-    if (digits.length > maxNumWidth) maxNumWidth = digits.length;
+    const s = stats[prefix] || (stats[prefix] = { count: 0, max: -1, sep: ' ', width: 1 });
+    s.count += 1;
+    if (num >= s.max) { s.max = num; s.sep = sep; s.width = digits.length; }
   }
 
-  // Most common prefix wins; fallback 'EMP'.
-  let prefix = 'EMP';
-  let bestCount = 0;
-  for (const [pfx, count] of Object.entries(prefixCounts)) {
-    if (count > bestCount) {
-      bestCount = count;
-      prefix = pfx;
-    }
+  // Most common prefix wins; fallback to 'SSL ' when there are no codes yet.
+  let prefix = null;
+  let best = null;
+  for (const [pfx, s] of Object.entries(stats)) {
+    if (!best || s.count > best.count) { best = s; prefix = pfx; }
   }
 
-  const max = prefixMax[prefix] != null ? prefixMax[prefix] : 0;
-  const next = max + 1;
-  const width = Math.max(3, maxNumWidth);
-  return { suggestion: prefix + String(next).padStart(width, '0'), prefix, next };
+  if (!best) return { suggestion: 'SSL 1', prefix: 'SSL', next: 1 };
+
+  const next = best.max + 1;
+  const suggestion = prefix + best.sep + String(next).padStart(best.width, '0');
+  return { suggestion, prefix, next };
 }
 
 // GET /api/lifecycle/next-code

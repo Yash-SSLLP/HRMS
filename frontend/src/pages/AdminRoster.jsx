@@ -4,7 +4,14 @@ import PageHeader from '../components/PageHeader';
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-const timeRange = (s) => (s && s.startTime && s.endTime ? `${s.startTime} – ${s.endTime}` : '—');
+// "HH:mm" (24h) → "h:mm AM/PM"
+const to12h = (t) => {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h < 12 ? 'AM' : 'PM';
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+};
+const timeRange = (s) => (s && s.startTime && s.endTime ? `${to12h(s.startTime)} – ${to12h(s.endTime)}` : '—');
 
 const blankShift = { name: '', code: '', startTime: '', endTime: '', isActive: true };
 const blankAssign = { employee: '', date: '', shift: '', note: '' };
@@ -240,7 +247,7 @@ export default function AdminRoster() {
               <input required type="date" value={assignForm.date} onChange={(e) => setAssignForm({ ...assignForm, date: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <select required value={assignForm.shift} onChange={(e) => setAssignForm({ ...assignForm, shift: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 <option value="">— Select shift —</option>
-                {shifts.map((s) => <option key={s._id} value={s._id}>{s.name}{s.startTime && s.endTime ? ` (${s.startTime}–${s.endTime})` : ''}</option>)}
+                {shifts.map((s) => <option key={s._id} value={s._id}>{s.name}{s.startTime && s.endTime ? ` (${to12h(s.startTime)}–${to12h(s.endTime)})` : ''}</option>)}
               </select>
               <textarea rows={2} placeholder="Note" value={assignForm.note} onChange={(e) => setAssignForm({ ...assignForm, note: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}

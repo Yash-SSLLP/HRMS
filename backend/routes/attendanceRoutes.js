@@ -5,6 +5,7 @@ const {
   checkOut,
   getAttendancePhoto,
   myHeatmap,
+  orgHeatmap,
   listMine,
   listAll,
   todayBoard,
@@ -38,6 +39,7 @@ router.get('/:id/photo/:which', getAttendancePhoto);
 
 router.use(restrictTo('SuperAdmin', 'HRManager'));
 
+router.get('/org/heatmap', orgHeatmap);
 router.get('/today-board', todayBoard);
 
 router.route('/')

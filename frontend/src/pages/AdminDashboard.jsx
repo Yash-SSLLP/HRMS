@@ -30,6 +30,9 @@ export default function AdminDashboard() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(blankForm);
   const [saving, setSaving] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const isSuperAdmin = me?.role === 'SuperAdmin';
 
@@ -51,11 +54,17 @@ export default function AdminDashboard() {
   const openCreate = () => {
     setEditingId(null);
     setForm(blankForm);
+    setShowPassword(false);
+    setShowConfirm(false);
+    setConfirmPassword('');
     setShowModal(true);
   };
 
   const openEdit = (u) => {
     setEditingId(u._id || u.id);
+    setShowPassword(false);
+    setShowConfirm(false);
+    setConfirmPassword('');
     setForm({
       email: u.email,
       password: '',
@@ -72,12 +81,20 @@ export default function AdminDashboard() {
     setShowModal(false);
     setEditingId(null);
     setForm(blankForm);
+    setShowConfirm(false);
+    setConfirmPassword('');
   };
 
   const onSave = async (e) => {
     e.preventDefault();
-    setSaving(true);
     setError('');
+    // Validate confirm-password whenever a password is being set
+    // (always on create; on edit only if a new password was typed).
+    if ((form.password || !editingId) && form.password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    setSaving(true);
     try {
       if (editingId) {
         const payload = { ...form };
@@ -216,9 +233,57 @@ export default function AdminDashboard() {
                 <label className="block text-sm text-gray-700">
                   {editingId ? 'New password (leave blank to keep)' : 'Password'}
                 </label>
-                <input type="password" required={!editingId} minLength={editingId ? 0 : 8}
-                  value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                <div className="relative mt-1">
+                  <input type={showPassword ? 'text' : 'password'} required={!editingId} minLength={editingId ? 0 : 8}
+                    value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    className="block w-full border rounded-lg px-3 py-2 pr-16" />
+                  <button type="button" onClick={() => setShowPassword((s) => !s)}
+                    className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-700"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    title={showPassword ? 'Hide password' : 'Show password'}>
+                    {showPassword ? (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-700">
+                  {editingId ? 'Confirm new password' : 'Confirm password'}
+                </label>
+                <div className="relative mt-1">
+                  <input type={showConfirm ? 'text' : 'password'} required={!editingId} minLength={editingId ? 0 : 8}
+                    value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="block w-full border rounded-lg px-3 py-2 pr-16" />
+                  <button type="button" onClick={() => setShowConfirm((s) => !s)}
+                    className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-700"
+                    aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                    title={showConfirm ? 'Hide password' : 'Show password'}>
+                    {showConfirm ? (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                {confirmPassword && form.password !== confirmPassword && (
+                  <p className="text-xs text-red-600 mt-1">Passwords do not match</p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

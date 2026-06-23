@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 
-const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '—');
 
 const ROLE_STYLES = {
   SuperAdmin: 'bg-violet-100 text-violet-800',

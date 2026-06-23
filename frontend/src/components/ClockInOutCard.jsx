@@ -8,7 +8,7 @@ function initials(name = '') {
 }
 
 const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—';
+  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
 
 // Decimal hours (e.g. 9.35) -> "09:21 Hrs"
 const fmtHours = (h) => {

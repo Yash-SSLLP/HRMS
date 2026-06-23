@@ -3,7 +3,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—');
+const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
 
 const STATUS_COLORS = {

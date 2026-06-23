@@ -336,7 +336,7 @@ export default function ChatDock() {
     p.fullName.toLowerCase().includes(dirSearch.toLowerCase()) ||
     (p.email || '').toLowerCase().includes(dirSearch.toLowerCase()));
 
-  const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
   // --- Phone, collapsed: a circular floating button ---
   if (isMobile && !open && !showFind && !showGroup) {

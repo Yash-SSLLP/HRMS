@@ -11,13 +11,14 @@ const STATUS_BADGE = {
 };
 
 function fmt(d) {
-  return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
 }
 
 export default function EmployeeAccount() {
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const setSession = useAuthStore((s) => s.setSession);
+  const logout = useAuthStore((s) => s.logout);
   const isSuperAdmin = user?.role === 'SuperAdmin';
 
   const [fields, setFields] = useState([]);
@@ -80,6 +81,13 @@ export default function EmployeeAccount() {
     setCredBusy(true);
     try {
       const { data } = await api.patch('/auth/me/credentials', cred);
+      if (cred.newPassword) {
+        // Changing the password invalidates every session (including this one),
+        // so log out here and send the user back to the login screen.
+        setCredMsg('Password changed. Logging you out of all devices…');
+        setTimeout(() => { logout(); window.location.assign('/login'); }, 1200);
+        return;
+      }
       setSession({ user: data.user, token });
       setCred({ email: data.user.email, currentPassword: '', newPassword: '' });
       setCredMsg('Credentials updated.');

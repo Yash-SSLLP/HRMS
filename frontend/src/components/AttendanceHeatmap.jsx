@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 
-// Attendance heatmap of the caller's last ~12 months, segregated into month
-// blocks (each month = its own column-group with a label), centered. Each day is
-// coloured by its classification.
+// Attendance heatmap of the trailing ~12 months, split into month blocks.
+//   • Personal mode (default): each day coloured by the caller's classification.
+//   • Org mode (org=true, admins): each day shaded by how many employees were
+//     present — darker = more present — with a hover card showing the breakdown.
 
 const EMPTY = '#ebedf0';
 const CATEGORIES = [
@@ -17,28 +18,48 @@ const COLOR_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.color]))
 const LABEL_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]));
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// GitHub-style green ramp for the org "present count" intensity.
+const ORG_RAMP = ['#9be9a8', '#40c463', '#30a14e', '#216e39'];
+const orgColor = (present, max) => {
+  if (!present) return EMPTY;
+  if (max <= 0) return ORG_RAMP[0];
+  const r = present / max;
+  if (r <= 0.25) return ORG_RAMP[0];
+  if (r <= 0.5) return ORG_RAMP[1];
+  if (r <= 0.75) return ORG_RAMP[2];
+  return ORG_RAMP[3];
+};
+
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const colorFor = (rec) => (rec && COLOR_BY_CAT[rec.category]) || EMPTY;
 
 const CELL = 12, GAP = 3;
 
-export default function AttendanceHeatmap({ days = 365 }) {
+export default function AttendanceHeatmap({ days = 365, org = false }) {
   const [byDate, setByDate] = useState({});
+  const [maxPresent, setMaxPresent] = useState(0);
+  const [total, setTotal] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [tip, setTip] = useState(null); // org hover card: { x, y, cell }
 
   useEffect(() => {
     let active = true;
+    setLoaded(false);
     (async () => {
       try {
-        const { data } = await api.get(`/attendance/me/heatmap?days=${days}`);
+        const url = org ? `/attendance/org/heatmap?days=${days}` : `/attendance/me/heatmap?days=${days}`;
+        const { data } = await api.get(url);
         const map = {};
         for (const d of data.days || []) map[d.date] = d;
-        if (active) setByDate(map);
+        if (active) {
+          setByDate(map);
+          setMaxPresent(data.maxPresent || 0);
+          setTotal(data.totalEmployees || 0);
+        }
       } catch { /* leave empty */ }
       finally { if (active) setLoaded(true); }
     })();
     return () => { active = false; };
-  }, [days]);
+  }, [days, org]);
 
   // Build the trailing 12 month-blocks; each is weeks(columns) × 7 weekday rows.
   const months = useMemo(() => {
@@ -63,22 +84,42 @@ export default function AttendanceHeatmap({ days = 365 }) {
     return list;
   }, [byDate]);
 
+  const cellColor = (cell) => {
+    if (!cell || cell.future) return 'transparent';
+    if (org) return orgColor(cell.rec?.present || 0, maxPresent);
+    return (cell.rec && COLOR_BY_CAT[cell.rec.category]) || EMPTY;
+  };
+
+  // Personal mode: simple native tooltip.
   const fmtTip = (cell) => {
     const dStr = cell.date.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
     if (cell.future) return dStr;
     return `${dStr} — ${cell.rec ? LABEL_BY_CAT[cell.rec.category] : 'No record'}`;
   };
 
+  const dateLabel = (d) => d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
   return (
     <div>
       <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-1 mb-3" style={{ fontSize: 11, color: '#4b5563' }}>
         {!loaded && <span className="text-gray-400">Loading…</span>}
-        {CATEGORIES.map((c) => (
-          <span key={c.key} className="flex items-center gap-1.5">
-            <span className="inline-block rounded-sm" style={{ width: CELL, height: CELL, background: c.color }} />
-            {c.label}
+        {org ? (
+          <span className="flex items-center gap-1.5">
+            Fewer present
+            <span className="inline-block rounded-sm" style={{ width: CELL, height: CELL, background: EMPTY }} />
+            {ORG_RAMP.map((c) => (
+              <span key={c} className="inline-block rounded-sm" style={{ width: CELL, height: CELL, background: c }} />
+            ))}
+            More present
           </span>
-        ))}
+        ) : (
+          CATEGORIES.map((c) => (
+            <span key={c.key} className="flex items-center gap-1.5">
+              <span className="inline-block rounded-sm" style={{ width: CELL, height: CELL, background: c.color }} />
+              {c.label}
+            </span>
+          ))
+        )}
       </div>
 
       <div className="overflow-x-auto">
@@ -89,18 +130,20 @@ export default function AttendanceHeatmap({ days = 365 }) {
               <div className="flex" style={{ gap: GAP }}>
                 {mo.cols.map((wcol, ci) => (
                   <div key={ci} className="flex flex-col" style={{ gap: GAP }}>
-                    {wcol.map((cell, di) => (
-                      <div
-                        key={di}
-                        title={cell ? fmtTip(cell) : undefined}
-                        className="rounded-sm"
-                        style={{
-                          width: CELL,
-                          height: CELL,
-                          background: cell && !cell.future ? colorFor(cell.rec) : 'transparent',
-                        }}
-                      />
-                    ))}
+                    {wcol.map((cell, di) => {
+                      const interactive = org && cell && !cell.future;
+                      return (
+                        <div
+                          key={di}
+                          title={cell && !org ? fmtTip(cell) : undefined}
+                          onMouseEnter={interactive ? (e) => setTip({ x: e.clientX, y: e.clientY, cell }) : undefined}
+                          onMouseMove={interactive ? (e) => setTip((t) => (t ? { ...t, x: e.clientX, y: e.clientY } : t)) : undefined}
+                          onMouseLeave={interactive ? () => setTip(null) : undefined}
+                          className="rounded-sm"
+                          style={{ width: CELL, height: CELL, background: cellColor(cell) }}
+                        />
+                      );
+                    })}
                   </div>
                 ))}
               </div>
@@ -108,6 +151,29 @@ export default function AttendanceHeatmap({ days = 365 }) {
           ))}
         </div>
       </div>
+
+      {org && tip && (
+        <div
+          className="fixed z-50 pointer-events-none bg-gray-900 text-white text-xs rounded-lg shadow-lg px-3 py-2"
+          style={{ left: tip.x + 12, top: tip.y + 12, minWidth: 150 }}
+        >
+          <div className="font-semibold mb-1">{dateLabel(tip.cell.date)}</div>
+          {tip.cell.rec ? (
+            <div className="space-y-0.5">
+              <div className="font-medium">
+                {tip.cell.rec.present} present{total ? ` / ${total}` : ''}
+              </div>
+              <div className="text-gray-300">Full day: {tip.cell.rec.full}</div>
+              <div className="text-gray-300">Half day: {tip.cell.rec.half}</div>
+              <div className="text-gray-300">Leave: {tip.cell.rec.leave}</div>
+              <div className="text-gray-300">Comp off: {tip.cell.rec.compoff}</div>
+              <div className="text-gray-300">Absent: {tip.cell.rec.absent}</div>
+            </div>
+          ) : (
+            <div className="text-gray-300">No attendance recorded</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

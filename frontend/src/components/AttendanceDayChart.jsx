@@ -11,7 +11,15 @@
 //   value labels — for embedding in a small dashboard card (values stay on hover).
 
 const pad = (n) => String(n).padStart(2, '0');
-const hhmm = (m) => `${pad(Math.floor(m / 60))}:${pad(Math.round(m % 60))}`;
+// minutes since midnight → 12-hour clock time, e.g. 540 → "9:00 AM"
+const hhmm = (m) => {
+  const total = Math.round(m);
+  const h24 = Math.floor(total / 60);
+  const mm = total % 60;
+  const ampm = h24 < 12 ? 'AM' : 'PM';
+  const h12 = h24 % 12 || 12;
+  return `${h12}:${pad(mm)} ${ampm}`;
+};
 const dur = (m) => {
   const h = Math.floor(m / 60);
   const mm = Math.round(m % 60);

@@ -123,7 +123,7 @@ export default function EmployeeRecognition() {
                   </div>
                   <p className="text-sm text-gray-700 mt-2 whitespace-pre-line">{r.message}</p>
                   <p className="text-xs text-gray-400 mt-2">
-                    {new Date(r.createdAt).toLocaleString()}
+                    {new Date(r.createdAt).toLocaleString([], { hour12: true })}
                   </p>
                 </div>
               </div>

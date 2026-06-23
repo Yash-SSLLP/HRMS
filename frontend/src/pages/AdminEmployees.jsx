@@ -119,10 +119,18 @@ export default function AdminEmployees() {
 
   useEffect(() => { load(); }, []);
 
-  const openCreate = () => {
+  const openCreate = async () => {
     setEditingId(null);
     setForm(blankProfile);
     setShowModal(true);
+    // Prefill the next employee code (continues the last one, e.g. SSL 8 → SSL 9).
+    // It stays editable; failure is non-fatal and just leaves the field blank.
+    try {
+      const { data } = await api.get('/lifecycle/next-code');
+      if (data?.suggestion) setForm((f) => ({ ...f, employeeCode: data.suggestion }));
+    } catch {
+      /* ignore — admin can type the code manually */
+    }
   };
 
   const openEdit = (p) => {
@@ -310,7 +318,7 @@ export default function AdminEmployees() {
                     required
                     value={form.employeeCode}
                     onChange={(e) => setForm({ ...form, employeeCode: e.target.value })}
-                    placeholder="EMP-001"
+                    placeholder="SSL 1"
                     className="mt-1 block w-full border rounded-lg px-3 py-2 uppercase"
                   />
                 </div>

@@ -81,6 +81,7 @@ export const adminNav = [
     { to: '/admin/account', label: 'My Account', icon: FiKey },
     { to: '/admin/complaints', label: 'Complaints', icon: FiAlertTriangle },
     { to: '/admin/change-requests', label: 'Change Requests', icon: FiEdit3 },
+    { to: '/admin/password-resets', label: 'Password Resets', icon: FiKey },
   ] },
   { group: 'Exit', items: [
     { to: '/admin/exits', label: 'Exits', icon: FiLogOut },

@@ -28,6 +28,12 @@ const protect = asyncHandler(async (req, res, next) => {
     res.status(403);
     throw new Error('Account is deactivated');
   }
+  // A password change bumps tokenVersion; tokens minted before that no longer
+  // match and are rejected, logging every other device out.
+  if ((decoded.tokenVersion || 0) !== (user.tokenVersion || 0)) {
+    res.status(401);
+    throw new Error('Session expired. Please log in again.');
+  }
 
   req.user = user;
   next();

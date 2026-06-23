@@ -87,10 +87,11 @@ export default function AdminOverview() {
         <StatCard icon="📄" tint="bg-orange-100" value={c.documentsIncomplete ?? '—'} label="Docs incomplete" to="/admin/employees" />
       </div>
 
-      {/* Attendance heatmap (the viewer's own present days) */}
+      {/* Attendance heatmap. SuperAdmin sees an org-wide "present count" heatmap;
+          everyone else sees their own present days. */}
       <div className="bg-white shadow rounded-lg p-5 mb-4">
-        <h2 className="card-title mb-3">My Attendance</h2>
-        <AttendanceHeatmap />
+        <h2 className="card-title mb-3">{user?.role === 'SuperAdmin' ? 'Team Attendance' : 'My Attendance'}</h2>
+        <AttendanceHeatmap org={user?.role === 'SuperAdmin'} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

@@ -10,7 +10,7 @@ const STATUS_BADGE = {
 };
 
 function fmt(d) {
-  return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
 }
 
 function RequestRow({ r, onDecided }) {

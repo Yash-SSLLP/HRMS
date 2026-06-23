@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
@@ -20,7 +20,7 @@ const STAGE_STYLES = {
 // Stages at/after onboarding — the offer/onboard actions no longer apply.
 const POST_ONBOARD = ['Onboarding', 'NewJoinee', 'Hired'];
 
-const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '');
+const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '');
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const ROUND_STYLES = {
@@ -226,6 +226,30 @@ export default function AdminRecruitment() {
     } catch (err) { alert(err.response?.data?.message || 'No resume on file'); }
   };
 
+  // Resume upload/replace: a single hidden file input shared by every row.
+  const resumeInputRef = useRef(null);
+  const [resumeTarget, setResumeTarget] = useState(null);
+  const [resumeBusyId, setResumeBusyId] = useState(null);
+  const pickResume = (c) => { setResumeTarget(c._id); resumeInputRef.current?.click(); };
+  const onResumePicked = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const id = resumeTarget;
+    if (!file || !id) { setResumeTarget(null); return; }
+    setResumeBusyId(id);
+    try {
+      const fd = new FormData();
+      fd.append('resume', file);
+      await api.post(`/recruitment/candidates/${id}/resume`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Resume upload failed');
+    } finally {
+      setResumeBusyId(null);
+      setResumeTarget(null);
+    }
+  };
+
   const roundSummary = (c) => {
     const cleared = (c.rounds || []).filter((r) => r.status === 'Cleared').length;
     return `${cleared}/${(c.rounds || []).length} cleared`;
@@ -294,6 +318,8 @@ export default function AdminRecruitment() {
         </h2>
         <button onClick={openCandCreate} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Candidate</button>
       </div>
+      {/* Shared hidden input for resume upload/replace from any candidate row. */}
+      <input ref={resumeInputRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={onResumePicked} />
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50"><tr>
@@ -319,9 +345,16 @@ export default function AdminRecruitment() {
                   </td>
                   <td className="px-4 py-3 text-gray-600">{c.job?.title || '—'}</td>
                   <td className="px-4 py-3">
-                    {c.hasResume ? (
-                      <button onClick={() => viewResume(c)} className="text-blue-600 hover:underline">View</button>
-                    ) : <span className="text-gray-400">—</span>}
+                    {resumeBusyId === c._id ? (
+                      <span className="text-gray-400 text-xs">Uploading…</span>
+                    ) : c.hasResume ? (
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => viewResume(c)} className="text-blue-600 hover:underline">View</button>
+                        <button onClick={() => pickResume(c)} className="text-gray-400 hover:text-gray-700 text-xs">Replace</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => pickResume(c)} className="text-blue-600 hover:underline">Upload</button>
+                    )}
                   </td>
                   <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STAGE_STYLES[c.stage] || ''}`}>{c.stage}</span></td>
                   <td className="px-4 py-3">

@@ -18,7 +18,7 @@ const STATUS_COLORS = {
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
 const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—';
+  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
 
 // Milliseconds → HH:MM:SS for the live working-time clock.
 const fmtElapsed = (ms) => {

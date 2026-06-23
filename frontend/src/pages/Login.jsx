@@ -5,6 +5,10 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
+const BLANK_RESET = {
+  name: '', email: '', employeeCode: '', phone: '', designation: '', department: '', reason: '',
+};
+
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -17,6 +21,34 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  // "Forgot password?" → a form sent to HR/Admin (no email client needed).
+  const [showReset, setShowReset] = useState(false);
+  const [reset, setReset] = useState(BLANK_RESET);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetMsg, setResetMsg] = useState('');
+  const [resetErr, setResetErr] = useState('');
+
+  const openReset = () => {
+    setResetErr(''); setResetMsg('');
+    setReset({ ...BLANK_RESET, email: email || '' });
+    setShowReset(true);
+  };
+
+  const submitReset = async (e) => {
+    e.preventDefault();
+    setResetErr(''); setResetMsg('');
+    setResetBusy(true);
+    try {
+      await api.post('/password-reset-requests', reset);
+      setReset(BLANK_RESET);
+      setResetMsg('Request sent. HR will reset your password and get back to you.');
+    } catch (err) {
+      setResetErr(err.response?.data?.message || 'Could not send your request. Please try again.');
+    } finally {
+      setResetBusy(false);
+    }
+  };
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -102,6 +134,15 @@ export default function Login() {
                 )}
               </button>
             </div>
+            <div className="flex justify-end mt-1.5">
+              <button
+                type="button"
+                onClick={openReset}
+                className="text-xs font-medium text-gray-500 hover:text-gray-800 hover:underline"
+              >
+                Forgot password?
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -123,6 +164,93 @@ export default function Login() {
           © {new Date().getFullYear()} {COMPANY_NAME}. All rights reserved.
         </p>
       </div>
+
+      {showReset && (
+        <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-2xl shadow-lg w-full max-w-lg p-6">
+            <div className="flex items-start justify-between mb-1">
+              <h2 className="text-lg font-bold text-gray-900">Password reset request</h2>
+              <button onClick={() => setShowReset(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">
+              Fill in your details and HR will reset your password for you.
+            </p>
+
+            {resetMsg ? (
+              <div className="space-y-4">
+                <div className="text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">
+                  {resetMsg}
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={() => setShowReset(false)}
+                    className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">Close</button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={submitReset} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Name *</label>
+                    <input required value={reset.name}
+                      onChange={(e) => setReset({ ...reset, name: e.target.value })}
+                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Employee ID *</label>
+                    <input required value={reset.employeeCode}
+                      onChange={(e) => setReset({ ...reset, employeeCode: e.target.value })}
+                      placeholder="SSL 1"
+                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 uppercase outline-none focus:ring-2 focus:ring-gray-300" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Email ID *</label>
+                    <input type="email" required value={reset.email}
+                      onChange={(e) => setReset({ ...reset, email: e.target.value })}
+                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Phone number *</label>
+                    <input required value={reset.phone}
+                      onChange={(e) => setReset({ ...reset, phone: e.target.value })}
+                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Designation *</label>
+                    <input required value={reset.designation}
+                      onChange={(e) => setReset({ ...reset, designation: e.target.value })}
+                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-1">Department *</label>
+                    <input required value={reset.department}
+                      onChange={(e) => setReset({ ...reset, department: e.target.value })}
+                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Reason to change <span className="text-gray-400">(optional)</span></label>
+                  <textarea rows={2} value={reset.reason}
+                    onChange={(e) => setReset({ ...reset, reason: e.target.value })}
+                    className="block w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300" />
+                </div>
+
+                {resetErr && (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{resetErr}</div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button type="button" onClick={() => setShowReset(false)}
+                    className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                  <button type="submit" disabled={resetBusy}
+                    className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                    {resetBusy ? 'Sending…' : 'Send request'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

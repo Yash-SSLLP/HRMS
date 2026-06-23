@@ -210,7 +210,7 @@ function NotificationBell({ isAdmin }) {
               >
                 <div className="text-sm text-gray-900">{n.title}</div>
                 {n.body && <div className="text-xs text-gray-600 mt-0.5">{n.body}</div>}
-                <div className="text-[10px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString()}</div>
+                <div className="text-[10px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString([], { hour12: true })}</div>
               </button>
             ))}
           </div>

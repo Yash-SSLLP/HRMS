@@ -32,6 +32,7 @@ app.use('/api/exits', require('./routes/exitRoutes'));
 app.use('/api/chat', require('./routes/chatRoutes'));
 app.use('/api/complaints', require('./routes/complaintRoutes'));
 app.use('/api/change-requests', require('./routes/changeRequestRoutes'));
+app.use('/api/password-reset-requests', require('./routes/passwordResetRoutes'));
 app.use('/api/holidays', require('./routes/holidayRoutes'));
 app.use('/api/events', require('./routes/eventRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));

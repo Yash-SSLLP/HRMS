@@ -31,7 +31,7 @@ const signup = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     user: user.toJSON(),
-    token: generateToken(user._id, user.role),
+    token: generateToken(user._id, user.role, user.tokenVersion),
   });
 });
 
@@ -59,7 +59,7 @@ const login = asyncHandler(async (req, res) => {
 
   res.json({
     user: user.toJSON(),
-    token: generateToken(user._id, user.role),
+    token: generateToken(user._id, user.role, user.tokenVersion),
   });
 });
 

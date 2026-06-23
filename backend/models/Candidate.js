@@ -73,10 +73,15 @@ const candidateSchema = new mongoose.Schema(
     expectedCtc: { type: String, trim: true },
     coverNote: { type: String, trim: true },
 
-    // Uploaded resume (storage-relative path; served through an auth route).
+    // Uploaded resume. The bytes live in the DB (resumeData) so they survive
+    // redeploys — the filesystem is ephemeral. select:false keeps list queries
+    // light; downloadResume selects it explicitly. resumePath is kept only for
+    // legacy resumes that were written to disk before DB storage.
     resumePath: { type: String },
     resumeName: { type: String },
     resumeSizeBytes: { type: Number },
+    resumeData: { type: Buffer, select: false },
+    resumeContentType: { type: String },
 
     // Four interview rounds whose status HR can change.
     rounds: { type: [roundSchema], default: defaultRounds },
@@ -177,8 +182,9 @@ const candidateSchema = new mongoose.Schema(
 // Never leak the filesystem path; expose only whether a resume exists.
 candidateSchema.set('toJSON', {
   transform: (_doc, ret) => {
-    ret.hasResume = !!ret.resumePath;
+    ret.hasResume = !!(ret.resumePath || ret.resumeName);
     delete ret.resumePath;
+    delete ret.resumeData;
     // Expose only whether a letter exists, never the filesystem path.
     if (ret.offer) { ret.offer.hasLetter = !!ret.offer.letterPath; delete ret.offer.letterPath; }
     if (ret.appointment) { ret.appointment.hasLetter = !!ret.appointment.letterPath; delete ret.appointment.letterPath; }

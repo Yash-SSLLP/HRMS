@@ -40,6 +40,10 @@ const userSchema = new mongoose.Schema(
       match: [/^(\+91)?[6-9]\d{9}$/, 'Invalid Indian mobile number'],
     },
     isActive: { type: Boolean, default: true },
+    // Bumped on every password change and embedded in issued JWTs. A token whose
+    // tokenVersion no longer matches the user's is rejected — so changing the
+    // password logs the account out of every device/session.
+    tokenVersion: { type: Number, default: 0 },
     lastLoginAt: { type: Date },
     // Profile photo, stored as a path relative to UPLOAD_DIR (served via the
     // /api/auth/users/:id/avatar endpoint). Null when the user has no photo.
@@ -52,6 +56,9 @@ userSchema.pre('save', async function hashPassword(next) {
   if (!this.isModified('password')) return next();
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+  // Invalidate all previously-issued tokens whenever the password changes.
+  // Skip the initial hash on a brand-new account (no sessions to invalidate yet).
+  if (!this.isNew) this.tokenVersion = (this.tokenVersion || 0) + 1;
   next();
 });
 

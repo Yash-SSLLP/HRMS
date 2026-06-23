@@ -4,7 +4,14 @@ import PageHeader from '../components/PageHeader';
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-const timeRange = (s) => (s && s.startTime && s.endTime ? `${s.startTime} – ${s.endTime}` : '—');
+// "HH:mm" (24h) → "h:mm AM/PM"
+const to12h = (t) => {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h < 12 ? 'AM' : 'PM';
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+};
+const timeRange = (s) => (s && s.startTime && s.endTime ? `${to12h(s.startTime)} – ${to12h(s.endTime)}` : '—');
 
 export default function EmployeeShifts() {
   const [entries, setEntries] = useState([]);

@@ -117,13 +117,6 @@ const submitApplication = asyncHandler(async (req, res) => {
     throw new Error('You have already applied for this position with this email address.');
   }
 
-  const { storagePath, sizeBytes } = storage.saveBuffer({
-    buffer: req.file.buffer,
-    ownerType: 'resume',
-    ownerId: job._id,
-    originalName: req.file.originalname || 'resume',
-  });
-
   const candidate = await Candidate.create({
     name: name.trim(),
     email: normEmail,
@@ -136,9 +129,11 @@ const submitApplication = asyncHandler(async (req, res) => {
     noticePeriod: noticePeriod?.trim(),
     expectedCtc: expectedCtc?.trim(),
     coverNote: coverNote?.trim(),
-    resumePath: storagePath,
+    // Store the resume bytes in the DB so they persist across redeploys.
+    resumeData: req.file.buffer,
+    resumeContentType: req.file.mimetype || 'application/octet-stream',
     resumeName: req.file.originalname || 'resume',
-    resumeSizeBytes: sizeBytes,
+    resumeSizeBytes: req.file.size || req.file.buffer.length,
     rounds: defaultRounds(),
   });
 
@@ -183,6 +178,10 @@ const updateCandidate = asyncHandler(async (req, res) => {
   // Don't let a general update clobber the resume or rounds — those have
   // dedicated routes.
   delete req.body.resumePath;
+  delete req.body.resumeData;
+  delete req.body.resumeContentType;
+  delete req.body.resumeName;
+  delete req.body.resumeSizeBytes;
   delete req.body.rounds;
   Object.assign(candidate, req.body);
   await candidate.save();
@@ -290,22 +289,60 @@ const setRound = asyncHandler(async (req, res) => {
   res.json({ candidate });
 });
 
-// GET /api/recruitment/candidates/:id/resume — stream the resume (HR auth).
+// GET /api/recruitment/candidates/:id/resume — serve the resume (HR auth).
+// Prefers the DB-stored bytes; falls back to legacy on-disk resumes.
 const downloadResume = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id);
-  if (!candidate || !candidate.resumePath) {
+  const candidate = await Candidate.findById(req.params.id).select('+resumeData resumeContentType resumeName resumePath');
+  if (!candidate || (!candidate.resumeData && !candidate.resumePath)) {
     res.status(404);
     throw new Error('No resume on file for this candidate');
   }
-  const ext = path.extname(candidate.resumePath).toLowerCase();
-  const type =
+
+  const typeForExt = (ext) =>
     ext === '.pdf' ? 'application/pdf'
       : ext === '.doc' ? 'application/msword'
         : ext === '.docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
           : 'application/octet-stream';
-  res.setHeader('Content-Type', type);
+  const name = candidate.resumeName || 'resume';
+
+  // Preferred path: bytes in the DB.
+  if (candidate.resumeData && candidate.resumeData.length) {
+    const type = candidate.resumeContentType || typeForExt(path.extname(name).toLowerCase());
+    res.setHeader('Content-Type', type);
+    res.setHeader('Content-Disposition', `inline; filename="${name}"`);
+    return res.send(candidate.resumeData);
+  }
+
+  // Legacy fallback: stream from disk.
+  const ext = path.extname(candidate.resumePath).toLowerCase();
+  res.setHeader('Content-Type', typeForExt(ext));
   res.setHeader('Content-Disposition', `inline; filename="${candidate.resumeName || 'resume' + ext}"`);
   storage.readStream(candidate.resumePath).pipe(res);
+});
+
+// POST /api/recruitment/candidates/:id/resume — HR uploads/replaces a resume
+// (multipart: resume). Stored in the DB so it's always viewable.
+const uploadResume = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  if (!req.file) {
+    res.status(400);
+    throw new Error('Please attach a resume file.');
+  }
+  // Drop any legacy on-disk copy now that the bytes live in the DB.
+  if (candidate.resumePath) {
+    try { storage.remove(candidate.resumePath); } catch { /* best effort */ }
+    candidate.resumePath = undefined;
+  }
+  candidate.resumeData = req.file.buffer;
+  candidate.resumeContentType = req.file.mimetype || 'application/octet-stream';
+  candidate.resumeName = req.file.originalname || 'resume';
+  candidate.resumeSizeBytes = req.file.size || req.file.buffer.length;
+  await candidate.save();
+  res.json({ candidate });
 });
 
 // ===== Offer / Onboarding / Appointment =====
@@ -800,7 +837,7 @@ module.exports = {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
-  setRound, downloadResume,
+  setRound, downloadResume, uploadResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken,

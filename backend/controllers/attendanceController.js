@@ -196,6 +196,87 @@ const myHeatmap = asyncHandler(async (req, res) => {
   res.json({ from: ymdLocal(start), to: ymdLocal(end), days });
 });
 
+// GET /api/attendance/org/heatmap?days=365  (HR/Admin)
+// Org-wide daily attendance counts for a heatmap: per day, how many employees
+// were full-day / half-day / on leave / comp-off / absent. Intensity = number
+// present (full + half). One category per employee per day, same precedence as
+// the personal heatmap: worked > comp-off > leave > absent.
+const orgHeatmap = asyncHandler(async (req, res) => {
+  const span = Math.min(Number(req.query.days) || 365, 400);
+  const end = startOfDay(new Date());
+  const start = startOfDay(new Date());
+  start.setDate(start.getDate() - (span - 1));
+
+  const { LeaveRequest } = require('../models/Leave');
+  const CompOff = require('../models/CompOff');
+
+  const [profiles, records, leaves, comps] = await Promise.all([
+    EmployeeProfile.find({}).select('_id user').lean(),
+    Attendance.find({ date: { $gte: start, $lte: end } }).select('employee date status').lean(),
+    LeaveRequest.find({ status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start } })
+      .select('employee startDate endDate').lean(),
+    CompOff.find({ status: 'Availed', availedOn: { $gte: start, $lte: end } })
+      .select('employee availedOn').lean(),
+  ]);
+
+  const totalEmployees = profiles.length;
+  // CompOff.employee is a User id; map it to the EmployeeProfile id used elsewhere.
+  const userToEmp = {};
+  for (const p of profiles) userToEmp[String(p.user)] = String(p._id);
+
+  // One category per (employee, day).
+  const cls = new Map(); // `${empId}|${ymd}` -> category
+
+  for (const r of records) {
+    const key = `${String(r.employee)}|${ymdLocal(r.date)}`;
+    if (r.status === 'Present') cls.set(key, 'full');
+    else if (r.status === 'HalfDay') cls.set(key, 'half');
+    else if (r.status === 'OnLeave') cls.set(key, 'leave');
+    else if (r.status === 'Absent') cls.set(key, 'absent');
+  }
+
+  // Approved leave ranges fill in days that are empty or only marked absent.
+  for (const lv of leaves) {
+    const emp = String(lv.employee);
+    const d = startOfDay(new Date(lv.startDate));
+    const last = startOfDay(new Date(lv.endDate));
+    while (d <= last) {
+      if (d >= start && d <= end) {
+        const key = `${emp}|${ymdLocal(d)}`;
+        const cur = cls.get(key);
+        if (!cur || cur === 'absent') cls.set(key, 'leave');
+      }
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  // Availed comp-off beats everything except an actual worked day.
+  for (const c of comps) {
+    if (!c.availedOn) continue;
+    const emp = userToEmp[String(c.employee)];
+    if (!emp) continue;
+    const key = `${emp}|${ymdLocal(c.availedOn)}`;
+    const cur = cls.get(key);
+    if (cur !== 'full' && cur !== 'half') cls.set(key, 'compoff');
+  }
+
+  const byDay = {};
+  for (const [key, cat] of cls) {
+    const ymd = key.split('|')[1];
+    const b = byDay[ymd] || (byDay[ymd] = { date: ymd, full: 0, half: 0, leave: 0, compoff: 0, absent: 0 });
+    b[cat] += 1;
+  }
+
+  let maxPresent = 0;
+  const days = Object.values(byDay).map((b) => {
+    const present = b.full + b.half;
+    if (present > maxPresent) maxPresent = present;
+    return { ...b, present };
+  });
+
+  res.json({ from: ymdLocal(start), to: ymdLocal(end), totalEmployees, maxPresent, days });
+});
+
 // GET /api/attendance/me?year=&month=
 const listMine = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -350,6 +431,7 @@ module.exports = {
   checkOut,
   getAttendancePhoto,
   myHeatmap,
+  orgHeatmap,
   listMine,
   listAll,
   todayBoard,
