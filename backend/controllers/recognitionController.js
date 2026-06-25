@@ -1,8 +1,8 @@
 const asyncHandler = require('express-async-handler');
 const Recognition = require('../models/Recognition');
 const { RECOGNITION_BADGES } = require('../models/Recognition');
-const Notification = require('../models/Notification');
 const User = require('../models/User');
+const { notify } = require('../services/notify');
 
 const USER_FIELDS = 'firstName lastName role';
 
@@ -47,11 +47,12 @@ const giveRecognition = asyncHandler(async (req, res) => {
     message,
   });
 
-  await Notification.create({
+  await notify({
     recipient: to,
     type: 'recognition',
     title: `🏆 ${req.user.firstName} ${req.user.lastName} recognized you: ${chosenBadge}`,
     body: message,
+    link: 'recognition',
   });
 
   res.status(201).json({ recognition });

@@ -52,6 +52,7 @@ function TreeNode({ node, depth, editable, selectedId, onSelect }) {
   const hasReports = Array.isArray(node.reports) && node.reports.length > 0;
   const color = depth === 0 ? ROOT_COLOR : hasReports ? BRANCH_COLOR : LEAF_COLOR;
   const meta = [node.designation, node.department].filter(Boolean).join(' · ');
+  const isCeo = node.role === 'CEO';
 
   return (
     <li>
@@ -61,7 +62,8 @@ function TreeNode({ node, depth, editable, selectedId, onSelect }) {
         title={editable ? 'Click to set who this person reports to' : node.name}
       >
         <span
-          className="org-dot"
+          className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}
+          title={isCeo ? 'CEO' : undefined}
           style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px', overflow: 'hidden' }}
         >
           {node.hasPhoto ? (

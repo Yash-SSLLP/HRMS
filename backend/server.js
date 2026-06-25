@@ -4,6 +4,7 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { startWorker: startEmailWorker } = require('./services/emailWorker');
+const { startWorker: startCelebrationWorker } = require('./services/celebrationWorker');
 const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
 
@@ -36,6 +37,7 @@ app.use('/api/password-reset-requests', require('./routes/passwordResetRoutes'))
 app.use('/api/holidays', require('./routes/holidayRoutes'));
 app.use('/api/events', require('./routes/eventRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/devices', require('./routes/deviceRoutes'));
 app.use('/api/departments', require('./routes/departmentRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/projects', require('./routes/projectRoutes'));
@@ -74,6 +76,7 @@ const PORT = process.env.PORT || 5000;
 connectDB()
   .then(() => {
     startEmailWorker();
+    startCelebrationWorker();
     backfillHrProfiles().catch((err) => console.error('HR profile backfill error:', err.message));
     app.listen(PORT, () => {
       console.log(`HRMS API listening on port ${PORT}`);

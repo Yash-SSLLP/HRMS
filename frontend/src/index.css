@@ -510,6 +510,24 @@ div:has(> table) {
   transition: transform .12s ease;
 }
 .org-node.is-editable:hover .org-dot { transform: scale(1.08); }
+
+/* CEO node — a premium pulsing golden glow to mark the top executive. */
+@keyframes ceoGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, .55), 0 0 8px 2px rgba(245, 158, 11, .50), 0 3px 8px rgba(0,0,0,.22);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, .9), 0 0 24px 7px rgba(245, 158, 11, .8), 0 3px 8px rgba(0,0,0,.22);
+  }
+}
+.org-dot--ceo {
+  border: 2px solid #fde68a;
+  animation: ceoGlow 2.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .org-dot--ceo { animation: none; box-shadow: 0 0 0 3px rgba(245,158,11,.85), 0 0 16px 4px rgba(245,158,11,.7), 0 3px 8px rgba(0,0,0,.22); }
+}
+
 .org-name { font-size: 0.78rem; font-weight: 600; color: #111827; line-height: 1.15; }
 .org-meta { font-size: 0.68rem; color: #6b7280; line-height: 1.1; }
 html.dark .org-name { color: #e5e7eb; }

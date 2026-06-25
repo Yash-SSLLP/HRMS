@@ -1,7 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const Event = require('../models/Event');
-const Notification = require('../models/Notification');
 const User = require('../models/User');
+const { notifyMany } = require('../services/notify');
 
 function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -37,19 +37,15 @@ const createEvent = asyncHandler(async (req, res) => {
     createdBy: req.user._id,
   });
 
-  // Notify all active users except the creator.
+  // Notify (in-app + push) all active users except the creator.
   const recipients = await User.find({ isActive: true, _id: { $ne: req.user._id } }).select('_id');
-  if (recipients.length) {
-    const detail = [event.time, event.location].filter(Boolean).join(' · ');
-    const notifications = recipients.map((u) => ({
-      recipient: u._id,
-      type: 'event',
-      title: `New event: ${event.title}`,
-      body: `${fmtDate(event.date)}${detail ? ` — ${detail}` : ''}`,
-      link: 'calendar',
-    }));
-    await Notification.insertMany(notifications);
-  }
+  const detail = [event.time, event.location].filter(Boolean).join(' · ');
+  await notifyMany(recipients.map((u) => u._id), {
+    type: 'event',
+    title: `New event: ${event.title}`,
+    body: `${fmtDate(event.date)}${detail ? ` — ${detail}` : ''}`,
+    link: 'calendar',
+  });
 
   res.status(201).json({ event, notified: recipients.length });
 });

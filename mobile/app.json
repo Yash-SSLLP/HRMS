@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "SSLLP HRMS",
+    "slug": "ssllp-hrms",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "ssllphrms",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#4f46e5"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ssllp.hrms"
+    },
+    "android": {
+      "package": "com.ssllp.hrms",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4f46e5"
+      },
+      "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE"],
+      "useNextNotificationsApi": true
+    },
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#4f46e5",
+      "androidMode": "default",
+      "androidCollapsedTitle": "SSLLP HRMS"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#4f46e5"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow SSLLP HRMS to use the camera for attendance check-in selfies."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow SSLLP HRMS to use Face ID to unlock the app."
+        }
+      ]
+    ],
+    "extra": {
+      "apiBaseUrl": "https://hrms-production-97a8.up.railway.app",
+      "eas": {
+        "projectId": "00000000-0000-0000-0000-000000000000"
+      }
+    }
+  }
+}

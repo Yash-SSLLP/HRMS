@@ -6,6 +6,13 @@ const ChatGroup = require('../models/ChatGroup');
 const User = require('../models/User');
 const storage = require('../services/storage');
 const { hideSuperAdminFilter } = require('../utils/visibility');
+const { notify, notifyMany } = require('../services/notify');
+
+// Trim a chat body to a notification-friendly preview.
+function preview(text) {
+  const clean = (text || '').trim();
+  return clean.length > 120 ? `${clean.slice(0, 117)}…` : clean;
+}
 
 const USER_FIELDS = 'firstName lastName email role photo';
 
@@ -86,6 +93,11 @@ const sendRequest = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
+  // A SuperAdmin may message anyone without waiting for approval — their
+  // connections are accepted immediately (and any pending request is accepted).
+  const isSuper = req.user.role === 'SuperAdmin';
+  const initialStatus = isSuper ? 'accepted' : 'pending';
+
   const pairKey = Connection.buildPairKey(meId, recipientId);
   let conn = await Connection.findOne({ pairKey });
 
@@ -95,16 +107,22 @@ const sendRequest = asyncHandler(async (req, res) => {
       throw new Error('You are already connected');
     }
     if (conn.status === 'pending') {
+      // SuperAdmin: instantly accept whichever direction is pending.
+      if (isSuper) {
+        conn.status = 'accepted';
+        await conn.save();
+        return res.status(201).json({ connection: conn });
+      }
       res.status(409);
       throw new Error('A request is already pending');
     }
-    // Previously declined — revive as a fresh request from the caller.
+    // Previously declined — revive from the caller (auto-accepted for SuperAdmin).
     conn.requester = meId;
     conn.recipient = recipientId;
-    conn.status = 'pending';
+    conn.status = initialStatus;
     await conn.save();
   } else {
-    conn = await Connection.create({ requester: meId, recipient: recipientId });
+    conn = await Connection.create({ requester: meId, recipient: recipientId, status: initialStatus });
   }
 
   res.status(201).json({ connection: conn });
@@ -249,9 +267,22 @@ const sendMessage = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('connectionId and body are required');
   }
-  await loadParticipantConnection(connectionId, meId);
+  const conn = await loadParticipantConnection(connectionId, meId);
 
   const message = await Message.create({ connection: connectionId, sender: meId, body: body.trim() });
+
+  // Notify the other party (in-app + push). Best-effort — never block the send.
+  const recipientId = otherParty(conn, meId);
+  const fromName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'New message';
+  notify({
+    recipient: recipientId,
+    type: 'chat',
+    title: fromName,
+    body: preview(body),
+    link: 'chat',
+    data: { connectionId: String(connectionId) },
+  }).catch((err) => console.error('chat notify failed:', err.message));
+
   res.status(201).json({
     message: { _id: message._id, body: message.body, createdAt: message.createdAt, mine: true, status: 'sent' },
   });
@@ -468,6 +499,20 @@ const sendGroupMessage = asyncHandler(async (req, res) => {
   const message = await Message.create({ group: group._id, sender: meId, body: body.trim() });
   group.markModified('updatedAt');
   await group.save(); // bump updatedAt so the group rises in the list
+
+  // Notify every other accepted member (in-app + push).
+  const recipients = group.members
+    .filter((m) => m.status === 'accepted' && String(m.user?._id || m.user) !== String(meId))
+    .map((m) => m.user?._id || m.user);
+  const fromName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'Someone';
+  notifyMany(recipients, {
+    type: 'chat',
+    title: group.name,
+    body: `${fromName}: ${preview(body)}`,
+    link: 'chat',
+    data: { groupId: String(group._id) },
+  }).catch((err) => console.error('group notify failed:', err.message));
+
   res.status(201).json({
     message: { _id: message._id, body: message.body, createdAt: message.createdAt, mine: true, senderName: req.user.fullName },
   });

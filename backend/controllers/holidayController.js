@@ -1,6 +1,12 @@
 const asyncHandler = require('express-async-handler');
 const Holiday = require('../models/Holiday');
 const { HOLIDAY_TYPES } = require('../models/Holiday');
+const User = require('../models/User');
+const { notifyMany } = require('../services/notify');
+
+function fmtDate(d) {
+  return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 // GET /api/holidays?year=YYYY   (any authenticated user)
 const listHolidays = asyncHandler(async (req, res) => {
@@ -34,6 +40,16 @@ const createHoliday = asyncHandler(async (req, res) => {
     description,
     createdBy: req.user._id,
   });
+
+  // Announce the newly added holiday to all active users (in-app + push).
+  const recipients = await User.find({ isActive: true, _id: { $ne: req.user._id } }).select('_id');
+  await notifyMany(recipients.map((u) => u._id), {
+    type: 'holiday',
+    title: `New holiday: ${holiday.name}`,
+    body: `${fmtDate(holiday.date)} — ${holiday.type} holiday`,
+    link: 'calendar',
+  });
+
   res.status(201).json({ holiday });
 });
 
