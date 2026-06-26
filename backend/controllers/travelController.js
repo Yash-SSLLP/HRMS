@@ -177,7 +177,7 @@ const getReceipt = asyncHandler(async (req, res) => {
         : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Content-Disposition', `inline; filename="${item.reimbursementReceiptName || 'receipt'}"`);
-  storage.readStream(item.reimbursementReceiptPath).pipe(res);
+  if (!storage.streamTo(item.reimbursementReceiptPath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 module.exports = { listMine, createRequest, listAll, reviewRequest, reviewReimbursement, uploadReceipt, getReceipt };

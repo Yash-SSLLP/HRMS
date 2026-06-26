@@ -162,7 +162,12 @@ const getUserAvatar = asyncHandler(async (req, res) => {
   const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  storage.readStream(user.photo).pipe(res);
+  // The DB row can point at a file that no longer exists on disk — stream
+  // safely and 404 rather than crashing the server on an ENOENT stream error.
+  if (!storage.streamTo(user.photo, res)) {
+    res.status(404);
+    throw new Error('No photo for this user');
+  }
 });
 
 module.exports = { signup, login, me, updateMyCredentials, uploadMyAvatar, deleteMyAvatar, getUserAvatar };

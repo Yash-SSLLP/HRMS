@@ -54,6 +54,32 @@ function readStream(relPath) {
   return fs.createReadStream(absoluteOf(relPath));
 }
 
+// True if the stored file actually exists on disk. DB rows can outlive their
+// files (manual cleanup, failed write, migrated storage), so callers should
+// check before streaming to avoid an unhandled ReadStream 'error' crash.
+function exists(relPath) {
+  try {
+    return fs.existsSync(absoluteOf(relPath));
+  } catch {
+    return false;
+  }
+}
+
+// Safely stream a stored file to an Express response. Returns false (without
+// touching the response) when the file is missing, so the caller can 404.
+// Attaches an error handler so a mid-stream failure ends the response instead
+// of crashing the process.
+function streamTo(relPath, res) {
+  if (!exists(relPath)) return false;
+  const stream = fs.createReadStream(absoluteOf(relPath));
+  stream.on('error', () => {
+    if (!res.headersSent) res.status(404).end();
+    else res.destroy();
+  });
+  stream.pipe(res);
+  return true;
+}
+
 function remove(relPath) {
   try {
     fs.unlinkSync(absoluteOf(relPath));
@@ -62,4 +88,4 @@ function remove(relPath) {
   }
 }
 
-module.exports = { saveBuffer, readStream, remove };
+module.exports = { saveBuffer, readStream, remove, exists, streamTo };

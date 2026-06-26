@@ -317,7 +317,7 @@ const downloadResume = asyncHandler(async (req, res) => {
   const ext = path.extname(candidate.resumePath).toLowerCase();
   res.setHeader('Content-Type', typeForExt(ext));
   res.setHeader('Content-Disposition', `inline; filename="${candidate.resumeName || 'resume' + ext}"`);
-  storage.readStream(candidate.resumePath).pipe(res);
+  if (!storage.streamTo(candidate.resumePath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 // POST /api/recruitment/candidates/:id/resume — HR uploads/replaces a resume
@@ -383,7 +383,7 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
 function streamLetter(res, relPath, filename) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-  storage.readStream(relPath).pipe(res);
+  if (!storage.streamTo(relPath, res)) return res.status(404).json({ message: 'File not found' });
 }
 
 // POST /api/recruitment/candidates/:id/offer
@@ -571,7 +571,7 @@ const downloadLetterByToken = asyncHandler(async (req, res) => {
   }
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${letter.letterName || 'letter.pdf'}"`);
-  storage.readStream(letter.letterPath).pipe(res);
+  if (!storage.streamTo(letter.letterPath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 // Record that HR has sent a stored letter. Actual delivery happens from the HR's
@@ -812,7 +812,7 @@ const downloadCandidateDocument = asyncHandler(async (req, res) => {
               : 'application/octet-stream';
   res.setHeader('Content-Type', type);
   res.setHeader('Content-Disposition', `inline; filename="${file.name || 'document' + ext}"`);
-  storage.readStream(file.storagePath).pipe(res);
+  if (!storage.streamTo(file.storagePath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 // POST /api/recruitment/candidates/:id/documents/confirm — HR confirms the submission.

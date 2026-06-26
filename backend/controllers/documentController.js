@@ -150,7 +150,7 @@ const download = asyncHandler(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
   res.setHeader('Content-Length', doc.sizeBytes);
 
-  storage.readStream(doc.storagePath).pipe(res);
+  if (!storage.streamTo(doc.storagePath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 // DELETE /api/documents/:id

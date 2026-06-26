@@ -635,7 +635,7 @@ const getGroupPhoto = asyncHandler(async (req, res) => {
   const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  storage.readStream(group.photo).pipe(res);
+  if (!storage.streamTo(group.photo, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 // POST /api/chat/groups/:id/members  { memberIds: [] } — invite more people (owner/admin).

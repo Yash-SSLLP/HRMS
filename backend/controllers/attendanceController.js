@@ -126,7 +126,7 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
   const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  storage.readStream(relPath).pipe(res);
+  if (!storage.streamTo(relPath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 // Local YYYY-MM-DD key for a date (matches how the frontend builds grid keys).
