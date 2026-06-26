@@ -3,21 +3,14 @@ const path = require('path');
 const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
+// All attendance "day" logic is anchored to the IST calendar day so it is
+// independent of the server's timezone (the deployed backend runs in UTC).
+// This keeps a punch made from any client (mobile or web) on the same IST day
+// the user sees, so it surfaces correctly on the website's attendance views.
+const { startOfDayIST: startOfDay, monthRangeIST: monthRange, ymdIST: ymdLocal } = require('../utils/dateHelpers');
 
 function isAdmin(user) {
   return user.role === 'SuperAdmin' || user.role === 'HRManager';
-}
-
-function startOfDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function monthRange(year, month) {
-  const start = new Date(Number(year), Number(month) - 1, 1, 0, 0, 0, 0);
-  const end = new Date(Number(year), Number(month), 1, 0, 0, 0, 0);
-  return { start, end };
 }
 
 async function getMyProfileOrFail(userId, res) {
@@ -128,12 +121,6 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
   res.setHeader('Cache-Control', 'private, max-age=86400');
   if (!storage.streamTo(relPath, res)) return res.status(404).json({ message: 'File not found' });
 });
-
-// Local YYYY-MM-DD key for a date (matches how the frontend builds grid keys).
-function ymdLocal(d) {
-  const x = new Date(d);
-  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
-}
 
 // GET /api/attendance/me/heatmap?days=365
 // Returns the caller's day-by-day attendance classification over the trailing
@@ -340,8 +327,9 @@ const todayBoard = asyncHandler(async (req, res) => {
     })
     .lean();
 
-  const startThreshold = new Date(today);
-  startThreshold.setHours(WORKDAY_START_HOUR, 0, 0, 0);
+  // `today` is IST midnight; add the grace hours to get 10:00 AM IST exactly,
+  // independent of the server's timezone.
+  const startThreshold = new Date(today.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
 
   let rows = records
     .filter((r) => r.employee && r.employee.user)

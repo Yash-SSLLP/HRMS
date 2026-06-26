@@ -9,13 +9,16 @@ import BarChart from '../components/BarChart';
 import ClockInOutCard from '../components/ClockInOutCard';
 import AttendanceReportWidget from '../components/AttendanceReportWidget';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import {
+  FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiGrid, FiFileText,
+} from 'react-icons/fi';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
 
-function StatCard({ icon, tint, value, label, to }) {
+function StatCard({ icon, tint, iconColor, value, label, to }) {
   const body = (
     <div className="bg-white shadow rounded-lg p-5 h-full flex items-center gap-4">
-      <span className={`stat-icon ${tint}`}>{icon}</span>
+      <span className={`stat-icon ${tint} ${iconColor || ''}`}>{icon}</span>
       <div className="min-w-0">
         <div className="text-2xl font-semibold text-gray-900">{value}</div>
         <div className="text-sm text-gray-500">{label}</div>
@@ -77,14 +80,14 @@ export default function AdminOverview() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <StatCard icon="🧑‍💼" tint="bg-indigo-100" value={c.totalEmployees ?? '—'} label="Employees" to="/admin/employees" />
-        <StatCard icon="✅" tint="bg-emerald-100" value={c.presentToday ?? '—'} label="Present today" to="/admin/attendance" />
-        <StatCard icon="🌴" tint="bg-purple-100" value={c.onLeaveToday ?? '—'} label="On leave today" to="/admin/leave" />
-        <StatCard icon="🚫" tint="bg-red-100" value={c.absentToday ?? '—'} label="Absent today" to="/admin/attendance" />
-        <StatCard icon="⏳" tint="bg-amber-100" value={c.pendingLeaves ?? '—'} label="Pending leaves" to="/admin/leave" />
-        <StatCard icon="⚠️" tint="bg-rose-100" value={c.openComplaints ?? '—'} label="Open complaints" to="/admin/complaints" />
-        <StatCard icon="🏢" tint="bg-sky-100" value={c.departments ?? '—'} label="Departments" to="/admin/departments" />
-        <StatCard icon="📄" tint="bg-orange-100" value={c.documentsIncomplete ?? '—'} label="Docs incomplete" to="/admin/employees" />
+        <StatCard icon={<FiUsers />} tint="bg-indigo-100" iconColor="text-indigo-600" value={c.totalEmployees ?? '—'} label="Employees" to="/admin/employees" />
+        <StatCard icon={<FiUserCheck />} tint="bg-emerald-100" iconColor="text-emerald-600" value={c.presentToday ?? '—'} label="Present today" to="/admin/attendance" />
+        <StatCard icon={<FiSun />} tint="bg-purple-100" iconColor="text-purple-600" value={c.onLeaveToday ?? '—'} label="On leave today" to="/admin/leave" />
+        <StatCard icon={<FiUserX />} tint="bg-red-100" iconColor="text-red-600" value={c.absentToday ?? '—'} label="Absent today" to="/admin/attendance" />
+        <StatCard icon={<FiClock />} tint="bg-amber-100" iconColor="text-amber-600" value={c.pendingLeaves ?? '—'} label="Pending leaves" to="/admin/leave" />
+        <StatCard icon={<FiAlertTriangle />} tint="bg-rose-100" iconColor="text-rose-600" value={c.openComplaints ?? '—'} label="Open complaints" to="/admin/complaints" />
+        <StatCard icon={<FiGrid />} tint="bg-sky-100" iconColor="text-sky-600" value={c.departments ?? '—'} label="Departments" to="/admin/departments" />
+        <StatCard icon={<FiFileText />} tint="bg-orange-100" iconColor="text-orange-600" value={c.documentsIncomplete ?? '—'} label="Docs incomplete" to="/admin/employees" />
       </div>
 
       {/* Attendance heatmap. SuperAdmin sees an org-wide "present count" heatmap;

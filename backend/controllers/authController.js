@@ -170,4 +170,66 @@ const getUserAvatar = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { signup, login, me, updateMyCredentials, uploadMyAvatar, deleteMyAvatar, getUserAvatar };
+// POST /api/auth/me/banner  (protected, multipart: photo) — cover/banner photo.
+const uploadMyBanner = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    res.status(400);
+    throw new Error('A photo is required');
+  }
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  const { storagePath } = storage.saveBuffer({
+    buffer: req.file.buffer,
+    ownerType: 'banners',
+    ownerId: user._id,
+    originalName: req.file.originalname || 'banner.jpg',
+  });
+  const previous = user.banner;
+  user.banner = storagePath;
+  await user.save();
+  if (previous && previous !== storagePath) {
+    try { storage.remove(previous); } catch { /* best effort */ }
+  }
+  res.json({ user: user.toJSON() });
+});
+
+// DELETE /api/auth/me/banner  (protected) — remove my banner photo.
+const deleteMyBanner = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  if (user.banner) {
+    try { storage.remove(user.banner); } catch { /* best effort */ }
+    user.banner = null;
+    await user.save();
+  }
+  res.json({ user: user.toJSON() });
+});
+
+// GET /api/auth/users/:id/banner  (protected) — stream any active user's banner.
+const getUserBanner = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id).select('banner isActive');
+  if (!user || !user.banner) {
+    res.status(404);
+    throw new Error('No banner for this user');
+  }
+  const ext = path.extname(user.banner).toLowerCase();
+  const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  res.setHeader('Content-Type', type);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  if (!storage.streamTo(user.banner, res)) {
+    res.status(404);
+    throw new Error('No banner for this user');
+  }
+});
+
+module.exports = {
+  signup, login, me, updateMyCredentials,
+  uploadMyAvatar, deleteMyAvatar, getUserAvatar,
+  uploadMyBanner, deleteMyBanner, getUserBanner,
+};

@@ -8,12 +8,18 @@ const stripSlash = (url) => (url || '').replace(/\/+$/, '');
 const LOCAL_BACKEND = stripSlash(import.meta.env.VITE_LOCAL_BACKEND_URL) || 'http://localhost:5000';
 const DEPLOYED_BACKEND = stripSlash(import.meta.env.VITE_BACKEND_URL);
 
+// Set VITE_FORCE_DEPLOYED_BACKEND=true in frontend/.env to make `npm run dev`
+// talk to the DEPLOYED (Railway) backend instead of your local one. Use this
+// when you want the website to share the SAME database as the Android app
+// (which always uses Railway) — e.g. to see attendance punched from the app.
+const FORCE_DEPLOYED = String(import.meta.env.VITE_FORCE_DEPLOYED_BACKEND).toLowerCase() === 'true';
+
 // In dev, probe the local backend once on startup and use it if it's running,
 // otherwise fall back to the deployed (Railway) backend. In a production build
 // (e.g. the Vercel deployment) there's no point probing the visitor's localhost,
 // so go straight to the deployed backend.
 async function resolveBaseURL() {
-  if (import.meta.env.PROD) {
+  if (import.meta.env.PROD || FORCE_DEPLOYED) {
     return DEPLOYED_BACKEND ? `${DEPLOYED_BACKEND}/api` : `${LOCAL_BACKEND}/api`;
   }
   try {

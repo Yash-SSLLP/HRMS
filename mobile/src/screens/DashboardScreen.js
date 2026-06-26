@@ -2,12 +2,21 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
-import api from '../api/client';
+import api, { mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
 import { colors, radius, spacing, shadow, font, roleAccent, notifStyle } from '../theme';
-import { Screen, Card, Avatar, StatTile, SectionHeader, Pill, refresher, Ionicons } from '../components/ui';
-import { greeting, fmtTime, fmtDate, timeAgo } from '../utils/format';
-import { showsAdminEntry, isExec } from '../utils/roles';
+import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, refresher, Ionicons } from '../components/ui';
+import { greeting, fmtTime, fmtDate, timeAgo, rupees } from '../utils/format';
+import { showsAdminEntry, isExec, canEmployeeSelf } from '../utils/roles';
+import AttendanceHeatmap from '../components/AttendanceHeatmap';
+
+const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const LEAVE_TYPES = [
+  { key: 'EL', label: 'Earned (EL)', tint: '#0ea5e9' },
+  { key: 'CL', label: 'Casual (CL)', tint: '#16a34a' },
+  { key: 'SL', label: 'Sick (SL)', tint: '#dc2626' },
+  { key: 'ML', label: 'Maternity (ML)', tint: '#db2777' },
+];
 
 const QUICK_ACTIONS = [
   { key: 'Leave', label: 'Leave', icon: 'airplane', tint: '#0ea5e9' },
@@ -16,6 +25,18 @@ const QUICK_ACTIONS = [
   { key: 'Tasks', label: 'Tasks', icon: 'checkbox', tint: '#2563eb' },
   { key: 'Expenses', label: 'Expenses', icon: 'receipt', tint: '#ef4444' },
   { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
+  { key: 'Announcements', label: 'Notices', icon: 'megaphone', tint: '#4f46e5' },
+  { key: 'Menu', label: 'More', icon: 'grid', tint: '#0d9488' },
+];
+
+// SuperAdmin has no employee self-service — surface admin shortcuts instead.
+const ADMIN_ACTIONS = [
+  { key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a' },
+  { key: 'TodayAttendance', label: 'Attendance', icon: 'finger-print', tint: '#0ea5e9' },
+  { key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea' },
+  { key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' },
+  { key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' },
+  { key: 'AddEmployee', label: 'Add', icon: 'person-add', tint: '#0d9488' },
   { key: 'Announcements', label: 'Notices', icon: 'megaphone', tint: '#4f46e5' },
   { key: 'Menu', label: 'More', icon: 'grid', tint: '#0d9488' },
 ];
@@ -29,24 +50,30 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const calls = [
-      api.get('/leave/me/balance').catch(() => null),
-      api.get('/attendance/me').catch(() => null),
+    const isEmp = canEmployeeSelf(user?.role);
+    const base = [
       api.get('/celebrations/today').catch(() => null),
       api.get('/celebrations/upcoming?days=14').catch(() => null),
       api.get('/notifications').catch(() => null),
-      api.get('/payroll/me').catch(() => null),
     ];
-    const [bal, att, today, upcoming, notif, pay] = await Promise.all(calls);
+    // Employee self-service data — skipped entirely for SuperAdmin (no profile).
+    const emp = isEmp ? [
+      api.get('/leave/me/balance').catch(() => null),
+      api.get('/attendance/me').catch(() => null),
+      api.get('/payroll/me').catch(() => null),
+      api.get('/employees/me').catch(() => null),
+    ] : [];
+    const [today, upcoming, notif, bal, att, pay, me] = await Promise.all([...base, ...emp]);
     setData({
       balances: bal?.data?.balance?.balances || null,
       todayAtt: att?.data?.today || null,
       celebToday: today?.data || { birthdays: [], anniversaries: [] },
       upcoming: upcoming?.data?.events || [],
       notifs: notif?.data?.notifications || [],
-      payslips: pay?.data?.payslips || pay?.data?.count || [],
+      payslips: pay?.data?.payslips || [],
+      profile: me?.data?.profile || me?.data || null,
     });
-  }, []);
+  }, [user?.role]);
 
   useFocusEffect(
     useCallback(() => {
@@ -60,13 +87,16 @@ export default function DashboardScreen() {
     setRefreshing(false);
   };
 
-  const balAvail = (k) => Number(data.balances?.[k]?.balance ?? 0);
   const att = data.todayAtt;
+  const employeeSelf = canEmployeeSelf(user?.role);
+  const avatarUri = user?.photo ? `${mediaUrl(`/auth/users/${user._id}/avatar`)}?p=${encodeURIComponent(user.photo)}` : null;
   const celebs = [
     ...(data.celebToday?.birthdays || []).map((b) => ({ ...b, kind: 'birthday' })),
     ...(data.celebToday?.anniversaries || []).map((a) => ({ ...a, kind: 'anniversary' })),
   ];
-  const payslipCount = Array.isArray(data.payslips) ? data.payslips.length : data.payslips || 0;
+  const leaveTypes = LEAVE_TYPES.filter((lt) => data.balances?.[lt.key]);
+  const latestPay = Array.isArray(data.payslips) && data.payslips.length ? data.payslips[0] : null;
+  const quickActions = employeeSelf ? QUICK_ACTIONS : ADMIN_ACTIONS;
 
   return (
     <Screen>
@@ -83,7 +113,7 @@ export default function DashboardScreen() {
               <Pill label={user?.role} tone="primary" />
             </View>
           </View>
-          <Avatar name={`${user?.firstName} ${user?.lastName}`} size={52} color={accent} />
+          <Avatar name={`${user?.firstName} ${user?.lastName}`} uri={avatarUri} size={52} color={accent} />
         </View>
 
         {/* Admin / manager entry (privileged roles only) */}
@@ -98,42 +128,70 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Attendance punch card */}
-        <Card style={[styles.punchCard, { borderColor: accent + '33' }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={[styles.punchIcon, { backgroundColor: accent + '1a' }]}>
-              <Ionicons name="finger-print" size={26} color={accent} />
-            </View>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={font.label}>Today · {fmtDate(new Date())}</Text>
-              <Text style={styles.punchStatus}>
-                {!att?.checkIn ? 'Not checked in yet' : att?.checkOut ? 'Checked out' : 'Checked in'}
-              </Text>
-              {att?.checkIn ? (
-                <Text style={font.small}>
-                  In {fmtTime(att.checkIn)}{att?.checkOut ? `  ·  Out ${fmtTime(att.checkOut)}` : ''}
+        {/* Attendance punch card — employees only (SuperAdmin has no attendance) */}
+        {employeeSelf && (
+          <Card style={[styles.punchCard, { borderColor: accent + '33' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={[styles.punchIcon, { backgroundColor: accent + '1a' }]}>
+                <Ionicons name="finger-print" size={26} color={accent} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={font.label}>Today · {fmtDate(new Date())}</Text>
+                <Text style={styles.punchStatus}>
+                  {!att?.checkIn ? 'Not checked in yet' : att?.checkOut ? 'Checked out' : 'Checked in'}
                 </Text>
-              ) : null}
+                {att?.checkIn ? (
+                  <Text style={font.small}>
+                    In {fmtTime(att.checkIn)}{att?.checkOut ? `  ·  Out ${fmtTime(att.checkOut)}` : ''}
+                  </Text>
+                ) : null}
+              </View>
+              <TouchableOpacity style={[styles.punchBtn, { backgroundColor: accent }]} onPress={() => nav.navigate('Attendance')}>
+                <Text style={styles.punchBtnText}>{!att?.checkIn ? 'Check in' : att?.checkOut ? 'View' : 'Check out'}</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity style={[styles.punchBtn, { backgroundColor: accent }]} onPress={() => nav.navigate('Attendance')}>
-              <Text style={styles.punchBtnText}>{!att?.checkIn ? 'Check in' : att?.checkOut ? 'View' : 'Check out'}</Text>
-            </TouchableOpacity>
-          </View>
-        </Card>
+          </Card>
+        )}
 
-        {/* Leave balance stats */}
-        <View style={styles.statRow}>
-          <StatTile icon="sunny" label="Earned (EL)" value={balAvail('EL')} tint="#0ea5e9" onPress={() => nav.navigate('Leave')} />
-          <View style={{ width: spacing(3) }} />
-          <StatTile icon="cafe" label="Casual (CL)" value={balAvail('CL')} tint="#16a34a" onPress={() => nav.navigate('Leave')} />
-          <View style={{ width: spacing(3) }} />
-          <StatTile icon="medkit" label="Sick (SL)" value={balAvail('SL')} tint="#dc2626" onPress={() => nav.navigate('Leave')} />
-        </View>
+        {/* Leave balance breakdown */}
+        {leaveTypes.length > 0 && (
+          <>
+            <SectionHeader title="My leaves" action="Apply" onAction={() => nav.navigate('Leave')} />
+            <Card style={{ marginBottom: spacing(4) }}>
+              {leaveTypes.map((lt, i) => {
+                const b = data.balances[lt.key] || {};
+                const total = Number(b.opening || 0) + Number(b.granted || 0);
+                const used = Number(b.used || 0);
+                const bal = Number(b.balance ?? total - used);
+                return (
+                  <View key={lt.key} style={i > 0 ? styles.leaveRowDivider : null}>
+                    <View style={styles.leaveHead}>
+                      <Text style={font.body}>{lt.label}</Text>
+                      <Text style={[styles.leaveBal, { color: lt.tint }]}>{bal} <Text style={font.small}>left</Text></Text>
+                    </View>
+                    <ProgressBar value={total ? (used / total) * 100 : 0} tint={lt.tint} />
+                    <Text style={[font.small, { marginTop: 4 }]}>{used} used of {total || '—'}</Text>
+                  </View>
+                );
+              })}
+            </Card>
+          </>
+        )}
+
+        {/* Attendance heatmap — employees only */}
+        {employeeSelf && (
+          <>
+            <SectionHeader title="My attendance" action="Details" onAction={() => nav.navigate('Attendance')} />
+            <Card style={{ marginBottom: spacing(4) }}>
+              <AttendanceHeatmap />
+            </Card>
+          </>
+        )}
 
         {/* Quick actions */}
         <SectionHeader title="Quick actions" />
         <View style={styles.actionGrid}>
-          {QUICK_ACTIONS.map((a) => (
+          {quickActions.map((a) => (
             <TouchableOpacity
               key={a.key}
               style={styles.action}
@@ -147,6 +205,32 @@ export default function DashboardScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* Latest payslip */}
+        {latestPay && (
+          <>
+            <SectionHeader title="Latest payslip" action="All" onAction={() => nav.navigate('Payslips')} />
+            <Card style={[styles.payCard, { marginBottom: spacing(4) }]} onPress={() => nav.navigate('Payslips')}>
+              <View style={{ flex: 1 }}>
+                <Text style={font.label}>{MONTHS[latestPay.payPeriodMonth] || ''} {latestPay.payPeriodYear} · Net pay</Text>
+                <Text style={styles.payValue}>{rupees(latestPay.netPay)}</Text>
+              </View>
+              <Pill label={latestPay.status} tone={latestPay.status === 'Paid' ? 'success' : 'info'} />
+            </Card>
+          </>
+        )}
+
+        {/* My profile */}
+        {data.profile && (
+          <>
+            <SectionHeader title="My profile" />
+            <Card style={{ marginBottom: spacing(4) }}>
+              <ProfileRow label="Employee code" value={data.profile.employeeCode || '—'} />
+              <ProfileRow label="Designation" value={data.profile.designation || '—'} />
+              <ProfileRow label="Department" value={data.profile.department || '—'} />
+            </Card>
+          </>
+        )}
 
         {/* Today's celebrations */}
         {celebs.length > 0 && (
@@ -213,8 +297,23 @@ export default function DashboardScreen() {
   );
 }
 
+function ProfileRow({ label, value }) {
+  return (
+    <View style={styles.profileRow}>
+      <Text style={font.label}>{label}</Text>
+      <Text style={[font.body, { fontWeight: '600' }]}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(4), marginTop: spacing(2) },
+  leaveRowDivider: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing(3), paddingTop: spacing(3) },
+  leaveHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  leaveBal: { fontSize: 16, fontWeight: '800' },
+  payCard: { flexDirection: 'row', alignItems: 'center' },
+  payValue: { fontSize: 24, fontWeight: '800', color: colors.text, marginTop: 2 },
+  profileRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
   greeting: { ...font.label, fontSize: 14 },
   name: { fontSize: 24, fontWeight: '800', color: colors.text, marginTop: 2 },
   adminCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.text, borderRadius: radius.lg, padding: spacing(4), marginBottom: spacing(4) },

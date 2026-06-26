@@ -48,6 +48,8 @@ const userSchema = new mongoose.Schema(
     // Profile photo, stored as a path relative to UPLOAD_DIR (served via the
     // /api/auth/users/:id/avatar endpoint). Null when the user has no photo.
     photo: { type: String, default: null },
+    // Cover/banner photo, served via /api/auth/users/:id/banner. Null when unset.
+    banner: { type: String, default: null },
   },
   { timestamps: true }
 );

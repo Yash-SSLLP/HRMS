@@ -6,7 +6,7 @@ import api from '../api/client';
 import ChatDock from './ChatDock';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiChevronRight } from 'react-icons/fi';
+import { FiPlus, FiMinus } from 'react-icons/fi';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', Employee: 'Employee' };
@@ -86,10 +86,29 @@ function NavList({ items, user, onNavigate }) {
   return items.map((g) => {
     const children = visible(g.items);
     if (!children.length) return null;
+
+    // A category with a single (visible) item isn't worth a dropdown — render
+    // it as a plain section link straight to that item.
+    if (children.length === 1) {
+      const only = children[0];
+      return (
+        <NavLink
+          key={g.group}
+          to={only.to}
+          end={only.end}
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            `nav-section-link ${only.danger ? 'nav-link-danger' : ''} ${isActive ? 'is-active' : ''}`}
+        >
+          {g.group}
+        </NavLink>
+      );
+    }
+
     const isOpen = !!open[g.group];
     const hasHighlight = children.some((i) => i.highlight);
     return (
-      <div key={g.group}>
+      <div key={g.group} className={`nav-group ${isOpen ? 'is-open' : ''}`}>
         <button
           type="button"
           onClick={() => setOpen((o) => ({ ...o, [g.group]: !o[g.group] }))}
@@ -97,9 +116,11 @@ function NavList({ items, user, onNavigate }) {
           aria-expanded={isOpen}
         >
           <span className="truncate flex-1 text-left min-w-0">{g.group}</span>
-          <span className="flex items-center gap-1.5 shrink-0">
+          <span className="nav-group-toggle">
             {hasHighlight && <span className="nav-group-dot" aria-hidden="true" />}
-            <FiChevronRight className={`nav-group-caret ${isOpen ? 'is-open' : ''}`} aria-hidden="true" />
+            {isOpen
+              ? <FiMinus className="nav-group-pm" aria-hidden="true" />
+              : <FiPlus className="nav-group-pm" aria-hidden="true" />}
           </span>
         </button>
         <div className={`nav-group-body ${isOpen ? 'is-open' : ''}`}>
@@ -434,7 +455,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
       <div className="h-1 accent-bg fixed top-0 inset-x-0 z-50" />
 
       {/* Desktop fixed sidebar */}
-      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-72 bg-white border-r border-gray-200 z-40">
+      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-80 bg-white border-r border-gray-200 z-40">
         {sidebar}
       </aside>
 
@@ -442,14 +463,14 @@ export default function Layout({ navItems = [], sectionTitle }) {
       {mobileOpen && (
         <>
           <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={closeMobile} />
-          <aside className="fixed top-0 left-0 bottom-0 w-72 bg-white border-r border-gray-200 z-50 lg:hidden">
+          <aside className="fixed top-0 left-0 bottom-0 w-80 max-w-[85vw] bg-white border-r border-gray-200 z-50 lg:hidden">
             {sidebar}
           </aside>
         </>
       )}
 
       {/* Content column */}
-      <div className="lg:pl-72 flex flex-col min-h-screen">
+      <div className="lg:pl-80 flex flex-col min-h-screen">
         <header className="sticky top-1 z-30 h-16 bg-white border-b border-gray-200 flex items-center gap-3 px-4 sm:px-6">
           <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn lg:hidden" aria-label="Open menu">
             <span className="text-xl leading-none">☰</span>

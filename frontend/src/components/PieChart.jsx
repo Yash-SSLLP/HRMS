@@ -30,7 +30,7 @@ export default function PieChart({ data = [], size = 180 }) {
   const centerSub = shown ? shown.label : 'total';
 
   return (
-    <div className="flex items-center justify-center gap-6 flex-wrap py-2">
+    <div className="pie-chart flex items-center justify-center gap-6 flex-wrap py-2">
       <svg
         width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0"
         style={{ filter: 'drop-shadow(0 4px 10px rgba(15,23,42,.18))', overflow: 'visible' }}

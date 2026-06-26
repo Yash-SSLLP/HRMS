@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,16 @@ import {
   Image,
   RefreshControl,
   Platform,
+  Modal as RNModal,
+  ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { colors, radius, shadow, font, spacing } from '../theme';
 import { toYMD, toHM, to12h, fmtDate } from '../utils/format';
+import { useAuth } from '../store/auth';
 
 // Uses a plain View + safe-area insets (via the hook the tab bar already uses)
 // rather than the native SafeAreaView component, which can render its children
@@ -142,14 +146,26 @@ export function TimeField({ value, onChange, placeholder = 'Select time' }) {
 }
 
 export function Avatar({ name, uri, size = 44, color = colors.primary }) {
+  // The avatar endpoint is auth-protected, so a bare <Image uri> 401s and shows
+  // nothing. Attach the bearer token as a request header, and fall back to
+  // initials if the image still fails to load (no photo / stale path).
+  const token = useAuth((s) => s.token);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [uri]);
   const initials = (name || '?')
     .split(' ')
     .filter(Boolean)
     .slice(0, 2)
     .map((s) => s[0]?.toUpperCase())
     .join('');
-  if (uri) {
-    return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.border }} />;
+  if (uri && !failed) {
+    return (
+      <Image
+        source={{ uri, headers: token ? { Authorization: `Bearer ${token}` } : undefined }}
+        onError={() => setFailed(true)}
+        style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.border }}
+      />
+    );
   }
   return (
     <View
@@ -248,6 +264,69 @@ export function EmptyState({ icon = 'file-tray', title, subtitle }) {
 // (realme/ColorOS). Returning the RefreshControl directly avoids that.
 export function refresher(refreshing, onRefresh) {
   return <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />;
+}
+
+// A bottom-sheet style modal with a scrollable body and an optional sticky
+// footer (for save/cancel buttons). Used by the recruitment forms.
+export function ModalSheet({ visible, onClose, title, children, footer }) {
+  return (
+    <RNModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <Text style={font.h2}>{title}</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Ionicons name="close" size={22} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing(2) }}>
+            {children}
+          </ScrollView>
+          {footer ? <View style={styles.modalFooter}>{footer}</View> : null}
+        </View>
+      </KeyboardAvoidingView>
+    </RNModal>
+  );
+}
+
+// A simple inline chip selector used across the recruitment forms.
+export function ChipSelect({ options, value, onChange, getLabel = (o) => o, getValue = (o) => o }) {
+  return (
+    <View style={styles.chipsWrap}>
+      {options.map((o) => {
+        const v = getValue(o);
+        const active = v === value;
+        return (
+          <TouchableOpacity key={String(v)} onPress={() => onChange(v)} style={[styles.chip, active && styles.chipActive]}>
+            <Text style={[styles.chipText, active && { color: '#fff' }]}>{getLabel(o)}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+// Read-only / editable 0–5 star rating.
+export function Stars({ value = 0, onChange, size = 22 }) {
+  return (
+    <View style={{ flexDirection: 'row' }}>
+      {[1, 2, 3, 4, 5].map((n) => {
+        const filled = n <= Math.round(value);
+        const Star = (
+          <Ionicons name={filled ? 'star' : 'star-outline'} size={size} color={filled ? '#f59e0b' : colors.borderStrong} style={{ marginRight: 4 }} />
+        );
+        return onChange ? (
+          <TouchableOpacity key={n} onPress={() => onChange(n === value ? 0 : n)} hitSlop={{ top: 6, bottom: 6, left: 2, right: 2 }}>
+            {Star}
+          </TouchableOpacity>
+        ) : (
+          <View key={n}>{Star}</View>
+        );
+      })}
+    </View>
+  );
 }
 
 const buttonVariants = {
@@ -359,6 +438,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'flex-end' },
+  modalSheet: {
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: spacing(4),
+    paddingTop: spacing(2),
+    paddingBottom: spacing(4),
+    maxHeight: '90%',
+  },
+  modalHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: spacing(3) },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing(3) },
+  modalFooter: { paddingTop: spacing(3), borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing(2) },
+  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { paddingHorizontal: 14, height: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipText: { fontWeight: '700', fontSize: 13, color: colors.textMuted },
 });
 
 export { Ionicons };

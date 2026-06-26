@@ -7,6 +7,12 @@
 export const isAdmin = (role) => role === 'SuperAdmin' || role === 'HRManager';
 export const isExec = (role) => role === 'CEO' || role === 'MD';
 export const isManager = (role) => role === 'Manager';
+export const isSuperAdmin = (role) => role === 'SuperAdmin';
+
+// SuperAdmin is a pure portal admin with no employee profile — so they get NO
+// employee self-service (no attendance punch, leave, payslips, etc.), only the
+// admin surface. Everyone else (incl. HRManager, CEO/MD) is also an employee.
+export const canEmployeeSelf = (role) => role !== 'SuperAdmin';
 
 // Can view the admin portal data (admins + read-only execs).
 export const canViewAdmin = (role) => isAdmin(role) || isExec(role);

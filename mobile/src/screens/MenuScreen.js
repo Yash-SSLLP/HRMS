@@ -1,11 +1,16 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
 import { useAuth } from '../store/auth';
-import { showsAdminEntry, canViewAdmin, hasTeam } from '../utils/roles';
+import { showsAdminEntry, canViewAdmin, canApprove, hasTeam, canEmployeeSelf } from '../utils/roles';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Ionicons } from '../components/ui';
+
+// Enable the smooth expand/collapse animation on Android.
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 // Grouped module directory. `tab` items jump to a bottom tab; the rest push
 // within the Home stack.
@@ -24,8 +29,8 @@ const GROUPS = [
     title: 'Money',
     items: [
       { key: 'Payslips', label: 'Payslips', icon: 'cash', tint: '#9333ea' },
-      { key: 'Expenses', label: 'Expenses', icon: 'receipt', tint: '#ef4444' },
-      { key: 'Travel', label: 'Travel', icon: 'airplane', tint: '#0ea5e9' },
+      { key: 'Expenses', label: 'Expenses', icon: 'bag-handle', tint: '#ef4444' },
+      { key: 'Travel', label: 'Travel', icon: 'map', tint: '#0ea5e9' },
       { key: 'Loans', label: 'Loans', icon: 'wallet', tint: '#16a34a' },
     ],
   },
@@ -73,8 +78,8 @@ export default function MenuScreen() {
     else nav.navigate(item.key);
   };
 
-  // Append a role-gated Admin group.
-  const groups = [...GROUPS];
+  // Employee self-service groups — hidden for SuperAdmin (admin-only account).
+  const groups = canEmployeeSelf(role) ? [...GROUPS] : [];
   if (showsAdminEntry(role)) {
     const adminItems = [{ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: '#111827' }];
     if (hasTeam(role)) adminItems.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb' });
@@ -86,45 +91,71 @@ export default function MenuScreen() {
         { key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' }
       );
     }
+    if (canApprove(role)) adminItems.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' });
     groups.push({ title: 'Admin & Manager', items: adminItems });
   }
 
+  // First section open by default; the rest collapsed (accordion).
+  const [open, setOpen] = useState(() => ({ [groups[0].title]: true }));
+
+  const toggle = (title) => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(200, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+    setOpen((o) => ({ ...o, [title]: !o[title] }));
+  };
+
   return (
     <Screen edges={[]}>
-      <ScrollView contentContainerStyle={{ padding: spacing(4), paddingBottom: 32 }}>
-        {groups.map((g) => (
-          <View key={g.title} style={{ marginBottom: spacing(5) }}>
-            <Text style={styles.groupTitle}>{g.title.toUpperCase()}</Text>
-            <View style={styles.grid}>
-              {g.items.map((item) => (
-                <TouchableOpacity key={item.key} style={styles.tile} activeOpacity={0.85} onPress={() => go(item)}>
-                  <View style={[styles.tileIcon, { backgroundColor: item.tint + '1a' }]}>
-                    <Ionicons name={item.icon} size={24} color={item.tint} />
-                  </View>
-                  <Text style={styles.tileLabel}>{item.label}</Text>
-                </TouchableOpacity>
-              ))}
+      <ScrollView contentContainerStyle={{ paddingVertical: spacing(2), paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+        <Text style={styles.kicker}>ALL MODULES</Text>
+        {groups.map((g) => {
+          const isOpen = !!open[g.title];
+          return (
+            <View key={g.title} style={styles.section}>
+              <TouchableOpacity style={styles.header} activeOpacity={0.6} onPress={() => toggle(g.title)}>
+                <Text style={styles.headerText}>{g.title.toUpperCase()}</Text>
+                <View style={[styles.plus, isOpen && styles.plusOpen]}>
+                  <Ionicons name={isOpen ? 'remove' : 'add'} size={20} color={isOpen ? '#fff' : colors.text} />
+                </View>
+              </TouchableOpacity>
+              {isOpen && (
+                <View style={styles.items}>
+                  {g.items.map((item) => (
+                    <TouchableOpacity key={item.key} style={styles.row} activeOpacity={0.6} onPress={() => go(item)}>
+                      <View style={[styles.iconWrap, { backgroundColor: item.tint + '1a' }]}>
+                        <Ionicons name={item.icon} size={18} color={item.tint} />
+                      </View>
+                      <Text style={styles.rowLabel}>{item.label}</Text>
+                      <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
-          </View>
-        ))}
+          );
+        })}
       </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  groupTitle: { ...font.label, marginBottom: spacing(3), letterSpacing: 0.5 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  tile: {
-    width: '31%',
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    paddingVertical: spacing(4),
-    alignItems: 'center',
-    marginBottom: spacing(3),
-    borderWidth: 1,
-    borderColor: colors.border,
+  kicker: { ...font.small, letterSpacing: 1.5, color: colors.textFaint, fontWeight: '700', paddingHorizontal: spacing(5), paddingTop: spacing(2), paddingBottom: spacing(3) },
+  section: { borderTopWidth: 1, borderTopColor: colors.border },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing(5), paddingVertical: spacing(4.5),
   },
-  tileIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  tileLabel: { fontSize: 11.5, fontWeight: '600', color: colors.textMuted, textAlign: 'center' },
+  headerText: { fontSize: 15, fontWeight: '800', letterSpacing: 1, color: colors.text },
+  plus: {
+    width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  plusOpen: { backgroundColor: colors.primary, borderColor: colors.primary },
+  items: { paddingBottom: spacing(2) },
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing(3),
+    paddingHorizontal: spacing(5), paddingVertical: spacing(3),
+  },
+  iconWrap: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  rowLabel: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.text },
 });

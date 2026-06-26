@@ -13,6 +13,18 @@ const configured =
 const stripSlash = (u) => (u || '').replace(/\/+$/, '');
 export const API_BASE = `${stripSlash(configured)}/api`;
 
+// The public website origin (where candidate-facing pages like the application
+// form and document-upload page live). Used only to build shareable links that
+// HR sends to candidates. Defaults to the API origin; override via
+// app.json -> expo.extra.webBaseUrl if the web portal is hosted elsewhere.
+export const WEB_BASE = stripSlash(Constants.expoConfig?.extra?.webBaseUrl || configured);
+
+// Build a public web link (e.g. webUrl(`/apply/${jobId}`)).
+export function webUrl(p) {
+  if (!p) return WEB_BASE;
+  return p.startsWith('http') ? p : `${WEB_BASE}${p}`;
+}
+
 const api = axios.create({ baseURL: API_BASE, timeout: 20000 });
 
 // Attach the bearer token from the auth store on every request.

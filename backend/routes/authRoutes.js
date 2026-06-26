@@ -8,6 +8,9 @@ const {
   uploadMyAvatar,
   deleteMyAvatar,
   getUserAvatar,
+  uploadMyBanner,
+  deleteMyBanner,
+  getUserBanner,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -32,5 +35,10 @@ router.patch('/me/credentials', protect, updateMyCredentials);
 router.post('/me/avatar', protect, avatarUpload.single('photo'), uploadMyAvatar);
 router.delete('/me/avatar', protect, deleteMyAvatar);
 router.get('/users/:id/avatar', protect, getUserAvatar);
+
+// Cover/banner photo (self-service upload/remove + viewing any user's banner)
+router.post('/me/banner', protect, avatarUpload.single('photo'), uploadMyBanner);
+router.delete('/me/banner', protect, deleteMyBanner);
+router.get('/users/:id/banner', protect, getUserBanner);
 
 module.exports = router;

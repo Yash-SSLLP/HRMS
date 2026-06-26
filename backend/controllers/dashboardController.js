@@ -7,11 +7,12 @@ const { REQUIRED_DOCUMENT_CATEGORIES } = require('../models/Document');
 const Complaint = require('../models/Complaint');
 const Department = require('../models/Department');
 const Holiday = require('../models/Holiday');
+// Anchor "today" to the IST calendar day (server runs in UTC) so the
+// "Present today" count matches the day attendance punches are filed under.
+const { startOfDayIST } = require('../utils/dateHelpers');
 
 function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return startOfDayIST();
 }
 
 // GET /api/dashboard/admin

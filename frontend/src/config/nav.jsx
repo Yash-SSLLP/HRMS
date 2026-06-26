@@ -4,12 +4,12 @@
 import {
   FiHome, FiBarChart2, FiFileText, FiMessageSquare,
   FiLayers, FiGrid, FiGitBranch, FiUsers, FiBriefcase,
-  FiUserPlus, FiLogIn, FiCheckSquare, FiUserCheck, FiShield,
+  FiUserPlus, FiCheckSquare, FiUserCheck, FiShield,
   FiClock, FiActivity, FiCalendar, FiTool,
-  FiUmbrella, FiRepeat, FiGift,
-  FiDollarSign, FiSliders, FiCreditCard, FiClipboard,
-  FiNavigation, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
-  FiFolder, FiList, FiMonitor, FiFile,
+  FiUmbrella, FiRepeat, FiSun,
+  FiDollarSign, FiSliders, FiCreditCard, FiClipboard, FiCheckCircle,
+  FiShoppingBag, FiMap, FiPercent, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
+  FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
   FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget,
 } from 'react-icons/fi';
@@ -30,7 +30,7 @@ export const adminNav = [
   ] },
   { group: 'Recruitment & Onboarding', items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus },
-    { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: FiLogIn },
+    { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: FiClipboard },
     { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: FiCheckSquare },
     { to: '/admin/new-joinees', label: 'New Joinees', icon: FiUserCheck },
     { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield },
@@ -44,18 +44,18 @@ export const adminNav = [
   { group: 'Leave & Holidays', items: [
     { to: '/admin/leave', label: 'Leave', icon: FiUmbrella },
     { to: '/admin/compoff', label: 'Comp-off', icon: FiRepeat },
-    { to: '/admin/holidays', label: 'Holidays', icon: FiGift },
+    { to: '/admin/holidays', label: 'Holidays', icon: FiSun },
   ] },
   { group: 'Payroll & Compensation', items: [
     { to: '/admin/payroll', label: 'Payroll', icon: FiDollarSign },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders },
     { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard },
-    { to: '/admin/declarations', label: 'Tax Declarations', icon: FiFileText },
-    { to: '/admin/compliance', label: 'Compliance', icon: FiClipboard },
+    { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent },
+    { to: '/admin/compliance', label: 'Compliance', icon: FiCheckCircle },
   ] },
   { group: 'Expense & Travel', items: [
-    { to: '/admin/expenses', label: 'Expenses', icon: FiCreditCard },
-    { to: '/admin/travel', label: 'Travel', icon: FiNavigation },
+    { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag },
+    { to: '/admin/travel', label: 'Travel', icon: FiMap },
   ] },
   { group: 'Performance & Learning', items: [
     { to: '/admin/performance', label: 'Performance', icon: FiTrendingUp },
@@ -66,7 +66,7 @@ export const adminNav = [
   { group: 'Work Management', items: [
     { to: '/admin/projects', label: 'Projects', icon: FiFolder },
     { to: '/admin/tasks', label: 'Tasks', icon: FiList },
-    { to: '/admin/assets', label: 'Assets', icon: FiMonitor },
+    { to: '/admin/assets', label: 'Assets', icon: FiPackage },
     { to: '/admin/documents', label: 'Documents', icon: FiFile },
   ] },
   { group: 'Engagement & Communication', items: [
@@ -93,7 +93,7 @@ export const employeeNav = [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },
     { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
     { to: '/employee/org-chart', label: 'Org Chart', icon: FiGitBranch },
-    { to: '/employee/onboarding', label: 'Onboarding', icon: FiLogIn },
+    { to: '/employee/onboarding', label: 'Onboarding', icon: FiClipboard },
   ] },
   { group: 'Attendance & Time', items: [
     { to: '/employee/attendance', label: 'Attendance', icon: FiClock, highlight: true },
@@ -107,9 +107,9 @@ export const employeeNav = [
   { group: 'Payroll & Expenses', items: [
     { to: '/employee/payslips', label: 'Payslips', icon: FiDollarSign },
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
-    { to: '/employee/declaration', label: 'Tax Declaration', icon: FiFileText },
-    { to: '/employee/expenses', label: 'Expenses', icon: FiCreditCard },
-    { to: '/employee/travel', label: 'Travel', icon: FiNavigation },
+    { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
+    { to: '/employee/expenses', label: 'Expenses', icon: FiShoppingBag },
+    { to: '/employee/travel', label: 'Travel', icon: FiMap },
   ] },
   { group: 'Performance & Learning', items: [
     { to: '/employee/goals', label: 'Goals', icon: FiTarget },
@@ -118,7 +118,7 @@ export const employeeNav = [
   ] },
   { group: 'Work Management', items: [
     { to: '/employee/tasks', label: 'Tasks', icon: FiList },
-    { to: '/employee/assets', label: 'Assets', icon: FiMonitor },
+    { to: '/employee/assets', label: 'Assets', icon: FiPackage },
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
   ] },
   { group: 'Engagement & Communication', items: [

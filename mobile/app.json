@@ -55,6 +55,7 @@
     ],
     "extra": {
       "apiBaseUrl": "https://hrms-production-97a8.up.railway.app",
+      "webBaseUrl": "https://hrms-production-97a8.up.railway.app",
       "eas": {
         "projectId": "00000000-0000-0000-0000-000000000000"
       }
