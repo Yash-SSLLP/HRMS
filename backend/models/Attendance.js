@@ -2,6 +2,16 @@ const mongoose = require('mongoose');
 
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
+// GPS location captured by the client at the moment of a punch photo.
+const locationSchema = new mongoose.Schema(
+  {
+    lat: Number,
+    lng: Number,
+    accuracy: Number, // metres
+  },
+  { _id: false }
+);
+
 const attendanceSchema = new mongoose.Schema(
   {
     employee: {
@@ -18,6 +28,12 @@ const attendanceSchema = new mongoose.Schema(
     // Storage-relative paths to the selfie captured at each punch (see services/storage.js)
     checkInPhoto: String,
     checkOutPhoto: String,
+    // GPS location captured alongside each punch photo
+    checkInLocation: locationSchema,
+    checkOutLocation: locationSchema,
+    // Whether the punch was made while working from home
+    checkInWfh: { type: Boolean, default: false },
+    checkOutWfh: { type: Boolean, default: false },
     hoursWorked: { type: Number, default: 0, min: 0 },
     remarks: String,
   },

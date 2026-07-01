@@ -65,7 +65,12 @@ export async function registerForPush() {
 
     return token;
   } catch (err) {
-    console.warn('Push registration failed:', err?.message);
+    // Push needs Firebase/FCM configured in the build (google-services.json +
+    // a real EAS projectId). When it isn't, getExpoPushTokenAsync rejects with
+    // "Default FirebaseApp is not initialized". Log quietly (console.log, not
+    // warn) so it doesn't pop a LogBox warning in dev, and carry on — the rest
+    // of the app is unaffected; only push notifications are unavailable.
+    console.log('Push registration skipped (notifications not configured):', err?.message);
     return null;
   }
 }

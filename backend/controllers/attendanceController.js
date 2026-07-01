@@ -2,7 +2,9 @@ const asyncHandler = require('express-async-handler');
 const path = require('path');
 const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const Setting = require('../models/Setting');
 const storage = require('../services/storage');
+const { haversineMeters } = require('../utils/geo');
 // All attendance "day" logic is anchored to the IST calendar day so it is
 // independent of the server's timezone (the deployed backend runs in UTC).
 // This keeps a punch made from any client (mobile or web) on the same IST day
@@ -40,6 +42,15 @@ function savePunchPhoto(req, profileId) {
   return storagePath;
 }
 
+// Parse the GPS location sent with a punch, if present and valid.
+function parsePunchLocation(body) {
+  const lat = parseFloat(body.latitude);
+  const lng = parseFloat(body.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  const accuracy = parseFloat(body.accuracy);
+  return { lat, lng, accuracy: Number.isFinite(accuracy) ? accuracy : undefined };
+}
+
 // POST /api/attendance/me/checkin   (multipart: photo)
 const checkIn = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -56,6 +67,9 @@ const checkIn = asyncHandler(async (req, res) => {
   }
   record.checkIn = new Date();
   record.checkInPhoto = photoPath;
+  const loc = parsePunchLocation(req.body);
+  if (loc) record.checkInLocation = loc;
+  record.checkInWfh = req.body.wfh === 'true';
   record.status = 'Present';
   await record.save();
   res.status(201).json({ record });
@@ -78,6 +92,9 @@ const checkOut = asyncHandler(async (req, res) => {
   const photoPath = savePunchPhoto(req, profile._id);
   record.checkOut = new Date();
   record.checkOutPhoto = photoPath;
+  const loc = parsePunchLocation(req.body);
+  if (loc) record.checkOutLocation = loc;
+  record.checkOutWfh = req.body.wfh === 'true';
   // Allow the employee to (re)mark this day as a half day at punch-out.
   if (req.body.halfDay === 'true') record.status = 'HalfDay';
   else if (req.body.halfDay === 'false') record.status = 'Present';
@@ -303,7 +320,23 @@ const listAll = asyncHandler(async (req, res) => {
     })
     .sort({ date: -1, createdAt: -1 });
 
-  res.json({ year, month, count: records.length, records });
+  // Attach each punch's distance from the configured office, for HR review.
+  const settings = await Setting.getSettings();
+  const office = settings.office;
+  const out = records.map((r) => {
+    const o = r.toJSON();
+    o.checkInDistanceM = haversineMeters(office, o.checkInLocation);
+    o.checkOutDistanceM = haversineMeters(office, o.checkOutLocation);
+    return o;
+  });
+
+  res.json({
+    year,
+    month,
+    count: out.length,
+    records: out,
+    settings: { office, geofenceThresholdM: settings.geofenceThresholdM },
+  });
 });
 
 // GET /api/attendance/today-board?department=
@@ -403,6 +436,28 @@ const updateRecord = asyncHandler(async (req, res) => {
   res.json({ record });
 });
 
+// GET /api/attendance/settings  (HR/Admin)
+// Returns the office location + geofence threshold used for punch distances.
+const getSettings = asyncHandler(async (req, res) => {
+  const s = await Setting.getSettings();
+  res.json({ office: s.office, geofenceThresholdM: s.geofenceThresholdM });
+});
+
+// PUT /api/attendance/settings  (HR/Admin)
+// Update the office coordinates/label and/or the geofence threshold (metres).
+const updateSettings = asyncHandler(async (req, res) => {
+  const s = await Setting.getSettings();
+  const { lat, lng, label } = req.body.office || {};
+  if (lat != null && Number.isFinite(Number(lat))) s.office.lat = Number(lat);
+  if (lng != null && Number.isFinite(Number(lng))) s.office.lng = Number(lng);
+  if (typeof label === 'string' && label.trim()) s.office.label = label.trim();
+  if (req.body.geofenceThresholdM != null && Number.isFinite(Number(req.body.geofenceThresholdM))) {
+    s.geofenceThresholdM = Math.max(0, Number(req.body.geofenceThresholdM));
+  }
+  await s.save();
+  res.json({ office: s.office, geofenceThresholdM: s.geofenceThresholdM });
+});
+
 // DELETE /api/attendance/:id
 const deleteRecord = asyncHandler(async (req, res) => {
   const record = await Attendance.findById(req.params.id);
@@ -426,4 +481,6 @@ module.exports = {
   createRecord,
   updateRecord,
   deleteRecord,
+  getSettings,
+  updateSettings,
 };

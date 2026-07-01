@@ -12,6 +12,8 @@ const {
   createRecord,
   updateRecord,
   deleteRecord,
+  getSettings,
+  updateSettings,
 } = require('../controllers/attendanceController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
@@ -41,6 +43,10 @@ router.use(restrictTo('SuperAdmin', 'HRManager'));
 
 router.get('/org/heatmap', orgHeatmap);
 router.get('/today-board', todayBoard);
+
+router.route('/settings')
+  .get(getSettings)
+  .put(updateSettings);
 
 router.route('/')
   .get(listAll)

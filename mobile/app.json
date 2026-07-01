@@ -23,7 +23,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#4f46e5"
       },
-      "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE"],
+      "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
       "useNextNotificationsApi": true
     },
     "notification": {
@@ -50,6 +50,12 @@
         "expo-local-authentication",
         {
           "faceIDPermission": "Allow SSLLP HRMS to use Face ID to unlock the app."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow SSLLP HRMS to record your location when you check in or out for attendance."
         }
       ]
     ],

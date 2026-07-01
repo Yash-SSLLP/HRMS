@@ -23,6 +23,31 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
 const fmtTime = (d) =>
   d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
 
+// Distance of a punch from the office: metres under 1 km, else km.
+const fmtDist = (m) => (m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
+const mapLink = (loc) => (loc ? `https://www.google.com/maps?q=${loc.lat},${loc.lng}` : null);
+
+// One punch's location: a distance pill linking to the captured coordinates.
+// Punches beyond the configured geofence threshold are flagged amber. WFH
+// punches are expected to be away from the office, so they are never flagged.
+function DistanceTag({ label, loc, distanceM, thresholdM, wfh }) {
+  if (!loc || distanceM == null) {
+    return <div className="text-xs text-gray-300">{label}: —</div>;
+  }
+  const far = !wfh && thresholdM != null && distanceM > thresholdM;
+  return (
+    <div className="text-xs whitespace-nowrap flex items-center gap-1">
+      <span className="text-gray-400">{label}:</span>
+      <a href={mapLink(loc)} target="_blank" rel="noreferrer"
+        className={`font-medium hover:underline ${wfh ? 'text-indigo-600' : far ? 'text-amber-600' : 'text-green-600'}`}
+        title={`${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`}>
+        {fmtDist(distanceM)}
+      </a>
+      {wfh && <span className="px-1 rounded bg-indigo-100 text-indigo-700 text-[10px] font-medium">WFH</span>}
+    </div>
+  );
+}
+
 const blankEntry = {
   employee: '',
   date: new Date().toISOString().slice(0, 10),
@@ -48,6 +73,11 @@ export default function AdminAttendance() {
   const [saving, setSaving] = useState(false);
   const [photoModal, setPhotoModal] = useState(null); // { url, label }
 
+  // Office / geofence settings (editable by SuperAdmin & HR)
+  const [settings, setSettings] = useState({ office: { lat: 0, lng: 0, label: '' }, geofenceThresholdM: 200 });
+  const [settingsForm, setSettingsForm] = useState(null); // non-null while the editor is open
+  const [savingSettings, setSavingSettings] = useState(false);
+
   const load = async () => {
     setLoading(true);
     setError('');
@@ -62,10 +92,56 @@ export default function AdminAttendance() {
       ]);
       setRecords(recRes.data.records);
       setEmployees(empRes.data.profiles);
+      if (recRes.data.settings) setSettings(recRes.data.settings);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openSettings = () =>
+    setSettingsForm({
+      office: { ...settings.office },
+      geofenceThresholdM: settings.geofenceThresholdM,
+    });
+
+  const useMyLocation = () => {
+    if (!('geolocation' in navigator)) {
+      setError('Location is not supported on this device.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        setSettingsForm((f) => ({
+          ...f,
+          office: { ...f.office, lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) },
+        })),
+      () => setError('Could not read your current location.'),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  const saveSettings = async (e) => {
+    e.preventDefault();
+    setSavingSettings(true);
+    setError('');
+    try {
+      const { data } = await api.put('/attendance/settings', {
+        office: {
+          lat: Number(settingsForm.office.lat),
+          lng: Number(settingsForm.office.lng),
+          label: settingsForm.office.label,
+        },
+        geofenceThresholdM: Number(settingsForm.geofenceThresholdM),
+      });
+      setSettings(data);
+      setSettingsForm(null);
+      await load(); // recompute punch distances against the new office
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to save settings');
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -120,6 +196,10 @@ export default function AdminAttendance() {
   return (
     <div>
       <PageHeader title="Attendance">
+        <button onClick={openSettings}
+          className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
+          ⚙ Office &amp; Geofence
+        </button>
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + Manual Entry
@@ -168,15 +248,16 @@ export default function AdminAttendance() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">In</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Out</th>
               <th className="px-4 py-3 text-center font-medium text-gray-700">Photos</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Location</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Hrs</th>
               <th className="px-4 py-3 text-right"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
             ) : records.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No records for this period</td></tr>
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No records for this period</td></tr>
             ) : records.map((r) => (
               <tr key={r._id}>
                 <td className="px-4 py-3">{fmtDate(r.date)}</td>
@@ -209,6 +290,12 @@ export default function AdminAttendance() {
                     ) : <span className="text-xs text-gray-300">—</span>}
                   </div>
                 </td>
+                <td className="px-4 py-3">
+                  <DistanceTag label="In" loc={r.checkInLocation} distanceM={r.checkInDistanceM}
+                    thresholdM={settings.geofenceThresholdM} wfh={r.checkInWfh} />
+                  <DistanceTag label="Out" loc={r.checkOutLocation} distanceM={r.checkOutDistanceM}
+                    thresholdM={settings.geofenceThresholdM} wfh={r.checkOutWfh} />
+                </td>
                 <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '—'}</td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline">Edit</button>
@@ -229,6 +316,63 @@ export default function AdminAttendance() {
               <button onClick={() => setPhotoModal(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
             </div>
             <AuthImage url={photoModal.url} alt={photoModal.label} className="w-full rounded" />
+          </div>
+        </div>
+      )}
+
+      {settingsForm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
+            <h2 className="card-title mb-1">Office &amp; Geofence</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Punch distances are measured from this office location. Punches farther than the
+              threshold are flagged for review.
+            </p>
+            <form onSubmit={saveSettings} className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-700">Office name / label</label>
+                <input type="text" value={settingsForm.office.label}
+                  onChange={(e) => setSettingsForm({ ...settingsForm, office: { ...settingsForm.office, label: e.target.value } })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Latitude</label>
+                  <input type="number" step="any" required value={settingsForm.office.lat}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, office: { ...settingsForm.office, lat: e.target.value } })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2 font-mono" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Longitude</label>
+                  <input type="number" step="any" required value={settingsForm.office.lng}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, office: { ...settingsForm.office, lng: e.target.value } })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2 font-mono" />
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={useMyLocation}
+                  className="text-sm text-blue-600 hover:underline">📍 Use my current location</button>
+                {settingsForm.office.lat && settingsForm.office.lng && (
+                  <a href={`https://www.google.com/maps?q=${settingsForm.office.lat},${settingsForm.office.lng}`}
+                    target="_blank" rel="noreferrer" className="text-sm text-gray-500 hover:underline">Preview on map</a>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700">Geofence threshold (metres)</label>
+                <input type="number" min="0" required value={settingsForm.geofenceThresholdM}
+                  onChange={(e) => setSettingsForm({ ...settingsForm, geofenceThresholdM: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setSettingsForm(null)}
+                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={savingSettings}
+                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  {savingSettings ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

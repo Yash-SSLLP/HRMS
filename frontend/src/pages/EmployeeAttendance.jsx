@@ -42,12 +42,14 @@ export default function EmployeeAttendance() {
   // Camera capture modal state
   const [capture, setCapture] = useState(null); // 'checkin' | 'checkout' | null
   const [halfDay, setHalfDay] = useState(false); // mark this day as a half day
+  const [wfh, setWfh] = useState(false); // mark this punch as work-from-home
   const [snapshot, setSnapshot] = useState(null); // { blob, url }
   const [camError, setCamError] = useState('');
+  const [geo, setGeo] = useState(null); // { lat, lng, accuracy } captured at the punch
+  const [geoError, setGeoError] = useState('');
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
-  const fileRef = useRef(null);
 
   const stopStream = () => {
     if (streamRef.current) {
@@ -66,15 +68,36 @@ export default function EmployeeAttendance() {
         await videoRef.current.play().catch(() => {});
       }
     } catch {
-      setCamError('Camera unavailable or permission denied. Use "Upload a photo" instead.');
+      setCamError('Camera unavailable or permission denied. Please allow camera access to punch.');
     }
+  };
+
+  // Best-effort GPS fix for the punch. Started when the modal opens and
+  // refreshed at the moment of capture so it reflects the capture location.
+  const captureLocation = () => {
+    if (!('geolocation' in navigator)) {
+      setGeoError('Location is not supported on this device.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+        setGeoError('');
+      },
+      () => setGeoError('Location permission denied. Allow location access to record your punch location.'),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   };
 
   const openCapture = (action) => {
     setSnapshot(null);
     setCamError('');
+    setGeo(null);
+    setGeoError('');
     // Preserve an existing half-day mark when re-opening at checkout.
     setHalfDay(action === 'checkout' ? today?.status === 'HalfDay' : false);
+    // At checkout, default WFH to whatever was recorded at check-in.
+    setWfh(action === 'checkout' ? Boolean(today?.checkInWfh) : false);
     setCapture(action);
   };
 
@@ -82,13 +105,17 @@ export default function EmployeeAttendance() {
     stopStream();
     if (snapshot?.url) URL.revokeObjectURL(snapshot.url);
     setSnapshot(null);
+    setGeo(null);
+    setGeoError('');
     setCapture(null);
   };
 
-  // Start/stop the camera as the modal opens/closes.
+  // Start/stop the camera as the modal opens/closes, and warm up a GPS fix.
   useEffect(() => {
-    if (capture && !snapshot) startCamera();
-    else stopStream();
+    if (capture && !snapshot) {
+      startCamera();
+      captureLocation();
+    } else stopStream();
     return stopStream;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capture, snapshot]);
@@ -104,18 +131,13 @@ export default function EmployeeAttendance() {
     canvas.width = w;
     canvas.height = h;
     canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+    // Re-read GPS at the instant of capture so the stored location is the
+    // location of this photo, not wherever the modal was first opened.
+    captureLocation();
     canvas.toBlob((blob) => {
       if (blob) setSnapshot({ blob, url: URL.createObjectURL(blob) });
       stopStream();
     }, 'image/jpeg', 0.85);
-  };
-
-  const onFilePicked = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      stopStream();
-      setSnapshot({ blob: file, url: URL.createObjectURL(file) });
-    }
   };
 
   const retake = () => {
@@ -130,6 +152,13 @@ export default function EmployeeAttendance() {
     try {
       const fd = new FormData();
       fd.append('photo', snapshot.blob, 'punch.jpg');
+      // Attach the GPS location captured with the photo, if available.
+      if (geo) {
+        fd.append('latitude', geo.lat);
+        fd.append('longitude', geo.lng);
+        if (geo.accuracy != null) fd.append('accuracy', geo.accuracy);
+      }
+      fd.append('wfh', wfh ? 'true' : 'false');
       // Half-day can only be marked at checkout.
       if (capture === 'checkout') fd.append('halfDay', halfDay ? 'true' : 'false');
       await api.post(`/attendance/me/${capture}`, fd, {
@@ -262,7 +291,27 @@ export default function EmployeeAttendance() {
               <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">{camError}</div>
             )}
 
-            <input ref={fileRef} type="file" accept="image/*" capture="user" className="hidden" onChange={onFilePicked} />
+            {/* Captured location readout */}
+            {geo ? (
+              <div className="mb-3 text-xs text-gray-600 bg-gray-50 border border-gray-200 px-2 py-1.5 rounded-lg flex items-center gap-1.5">
+                <span>📍</span>
+                <a href={`https://www.google.com/maps?q=${geo.lat},${geo.lng}`} target="_blank" rel="noreferrer"
+                  className="font-mono text-blue-600 hover:underline">
+                  {geo.lat.toFixed(6)}, {geo.lng.toFixed(6)}
+                </a>
+                {geo.accuracy != null && <span className="text-gray-400">±{Math.round(geo.accuracy)} m</span>}
+              </div>
+            ) : geoError ? (
+              <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">{geoError}</div>
+            ) : (
+              <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting your location…</div>
+            )}
+
+            <label className="flex items-center gap-2 mb-2 text-sm text-gray-700 select-none cursor-pointer">
+              <input type="checkbox" checked={wfh} onChange={(e) => setWfh(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+              🏠 Working from home (WFH)
+            </label>
 
             {capture === 'checkout' && (
               <label className="flex items-center gap-2 mb-3 text-sm text-gray-700 select-none cursor-pointer">
@@ -273,8 +322,6 @@ export default function EmployeeAttendance() {
             )}
 
             <div className="flex flex-wrap gap-2 justify-end">
-              <button onClick={() => fileRef.current?.click()}
-                className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Upload a photo</button>
               {!snapshot ? (
                 <button onClick={takeSnapshot} disabled={!!camError}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">

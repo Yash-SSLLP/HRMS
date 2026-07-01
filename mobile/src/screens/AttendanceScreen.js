@@ -1,7 +1,8 @@
-import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Alert, Switch } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
@@ -10,12 +11,32 @@ import { fmtDate, fmtTime, fmtHours } from '../utils/format';
 
 const STATUS_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info', Holiday: 'neutral', WeekOff: 'neutral' };
 
+// Milliseconds → HH:MM:SS for the live working-time clock.
+const fmtElapsed = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+};
+
 export default function AttendanceScreen() {
   const [today, setToday] = useState(null);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [wfh, setWfh] = useState(false);
+  const [, setTick] = useState(0); // re-render each second to advance the live clock
+
+  // Tick once per second while the user is checked in but not yet checked out,
+  // so the working-time clock counts up live. Frozen otherwise.
+  const isRunning = Boolean(today?.checkIn && !today?.checkOut);
+  useEffect(() => {
+    if (!isRunning) return undefined;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [isRunning]);
 
   const load = useCallback(async () => {
     const { data } = await api.get('/attendance/me').catch(() => ({ data: {} }));
@@ -39,13 +60,33 @@ export default function AttendanceScreen() {
     return result.assets[0];
   };
 
+  // Best-effort GPS fix for the punch. Returns null if permission is denied or
+  // the location can't be read — the punch still proceeds without coordinates.
+  const getLocation = async () => {
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (!perm.granted) return null;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      return pos?.coords || null;
+    } catch {
+      return null;
+    }
+  };
+
   const punch = async (which) => {
     const asset = await capture();
     if (!asset) return;
+    const coords = await getLocation();
     setBusy(true);
     try {
       const form = new FormData();
       form.append('photo', { uri: asset.uri, name: 'punch.jpg', type: 'image/jpeg' });
+      form.append('wfh', wfh ? 'true' : 'false');
+      if (coords) {
+        form.append('latitude', String(coords.latitude));
+        form.append('longitude', String(coords.longitude));
+        if (coords.accuracy != null) form.append('accuracy', String(coords.accuracy));
+      }
       await api.post(`/attendance/me/${which}`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await load();
       Alert.alert('Done', `You have checked ${which === 'checkin' ? 'in' : 'out'} successfully.`);
@@ -62,6 +103,11 @@ export default function AttendanceScreen() {
 
   const checkedIn = Boolean(today?.checkIn);
   const checkedOut = Boolean(today?.checkOut);
+
+  // Live elapsed time: counts up from check-in, freezes at check-out.
+  const elapsedMs = today?.checkIn
+    ? (today.checkOut ? new Date(today.checkOut) : new Date()) - new Date(today.checkIn)
+    : 0;
 
   return (
     <Screen edges={[]}>
@@ -82,6 +128,33 @@ export default function AttendanceScreen() {
               <Text style={font.small}>Check out</Text>
             </View>
           </View>
+
+          {checkedIn && (
+            <View style={[styles.clockBox, isRunning ? styles.clockRunning : styles.clockDone]}>
+              <Text style={[styles.clockLabel, isRunning && { color: colors.success }]}>
+                {isRunning ? 'Time since check-in' : 'Total time worked today'}
+              </Text>
+              <Text style={[styles.clockValue, { color: isRunning ? colors.success : colors.text }]}>
+                {fmtElapsed(elapsedMs)}
+              </Text>
+              {isRunning && (
+                <View style={styles.liveRow}>
+                  <View style={styles.liveDot} />
+                  <Text style={styles.liveText}>Running</Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {(!checkedIn || !checkedOut) && (
+            <View style={styles.wfhRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="home" size={16} color={colors.textMuted} />
+                <Text style={font.body}>Working from home</Text>
+              </View>
+              <Switch value={wfh} onValueChange={setWfh} />
+            </View>
+          )}
 
           {!checkedIn ? (
             <AppButton title="Check in with selfie" icon="camera" variant="success" loading={busy} onPress={() => punch('checkin')} />
@@ -127,6 +200,15 @@ const styles = StyleSheet.create({
   timeBox: { flex: 1, alignItems: 'center' },
   timeValue: { fontSize: 22, fontWeight: '800', color: colors.text, marginVertical: 4 },
   divider: { width: 1, height: 48, backgroundColor: colors.border },
+  clockBox: { alignItems: 'center', borderRadius: radius.md, borderWidth: 1, paddingVertical: spacing(3), marginBottom: spacing(3) },
+  clockRunning: { backgroundColor: colors.successSoft, borderColor: colors.success },
+  clockDone: { backgroundColor: colors.surfaceAlt, borderColor: colors.border },
+  clockLabel: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
+  clockValue: { fontSize: 34, fontWeight: '800', fontVariant: ['tabular-nums'], letterSpacing: 1, marginTop: 2 },
+  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
+  liveText: { fontSize: 12, fontWeight: '700', color: colors.success },
+  wfhRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing(3) },
   doneBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.successSoft, borderRadius: radius.md, padding: 12 },
   doneText: { color: colors.success, fontWeight: '700', marginLeft: 8, flex: 1 },
   recRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(2.5) },
