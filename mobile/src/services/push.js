@@ -1,7 +1,6 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-import Constants from 'expo-constants';
 import api from '../api/client';
 
 // Foreground behaviour: still show the banner + play sound while the app is open.
@@ -28,8 +27,9 @@ async function ensureAndroidChannel() {
   });
 }
 
-// Ask permission, get the Expo push token, and register it with the backend.
-// Returns the token string, or null if unavailable (e.g. simulator / denied).
+// Ask permission, get the native FCM device token, and register it with the
+// backend (which sends via Firebase Admin / FCM). Returns the token string, or
+// null if unavailable (e.g. simulator / denied / FCM not configured).
 export async function registerForPush() {
   try {
     await ensureAndroidChannel();
@@ -47,14 +47,11 @@ export async function registerForPush() {
     }
     if (status !== 'granted') return null;
 
-    const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ||
-      Constants.easConfig?.projectId;
-
-    const tokenResp = await Notifications.getExpoPushTokenAsync(
-      projectId ? { projectId } : undefined
-    );
+    // Native FCM (Android) / APNs (iOS) device token — sent to our backend
+    // which delivers through Firebase Cloud Messaging directly.
+    const tokenResp = await Notifications.getDevicePushTokenAsync();
     const token = tokenResp.data;
+    if (!token) return null;
     cachedToken = token;
 
     await api.post('/devices/register', {
@@ -65,11 +62,11 @@ export async function registerForPush() {
 
     return token;
   } catch (err) {
-    // Push needs Firebase/FCM configured in the build (google-services.json +
-    // a real EAS projectId). When it isn't, getExpoPushTokenAsync rejects with
-    // "Default FirebaseApp is not initialized". Log quietly (console.log, not
-    // warn) so it doesn't pop a LogBox warning in dev, and carry on — the rest
-    // of the app is unaffected; only push notifications are unavailable.
+    // Push needs Firebase/FCM configured in the build (google-services.json).
+    // When it isn't, getDevicePushTokenAsync rejects with "Default FirebaseApp
+    // is not initialized". Log quietly (console.log, not warn) so it doesn't pop
+    // a LogBox warning in dev, and carry on — the rest of the app is unaffected;
+    // only push notifications are unavailable.
     console.log('Push registration skipped (notifications not configured):', err?.message);
     return null;
   }

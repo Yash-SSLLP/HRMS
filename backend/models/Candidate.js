@@ -28,6 +28,8 @@ const roundSchema = new mongoose.Schema(
     interviewerName: { type: String, trim: true },
     // Video-call link for this round (e.g. Google Meet).
     meetingLink: { type: String, trim: true },
+    // Google Calendar event id backing an auto-created Meet link, if any.
+    meetEventId: { type: String, trim: true },
     // Who last changed this round's status (+ full change history).
     decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     decidedByName: { type: String, trim: true },

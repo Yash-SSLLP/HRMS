@@ -27,23 +27,39 @@ const fmtTime = (d) =>
 const fmtDist = (m) => (m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
 const mapLink = (loc) => (loc ? `https://www.google.com/maps?q=${loc.lat},${loc.lng}` : null);
 
+// True when a punch was made beyond the configured geofence. WFH punches are
+// expected to be away from the office, so they are never treated as out-of-range.
+const isOutsideOffice = (distanceM, thresholdM, wfh) =>
+  !wfh && thresholdM != null && distanceM != null && distanceM > thresholdM;
+
+// A record is flagged when either its check-in or check-out was outside office premises.
+const isRecordFlagged = (r, thresholdM) =>
+  isOutsideOffice(r.checkInDistanceM, thresholdM, r.checkInWfh) ||
+  isOutsideOffice(r.checkOutDistanceM, thresholdM, r.checkOutWfh);
+
 // One punch's location: a distance pill linking to the captured coordinates.
-// Punches beyond the configured geofence threshold are flagged amber. WFH
-// punches are expected to be away from the office, so they are never flagged.
+// Punches beyond the configured geofence threshold get an explicit "Outside
+// office" flag for HR/admin review. WFH punches are never flagged.
 function DistanceTag({ label, loc, distanceM, thresholdM, wfh }) {
   if (!loc || distanceM == null) {
     return <div className="text-xs text-gray-300">{label}: —</div>;
   }
-  const far = !wfh && thresholdM != null && distanceM > thresholdM;
+  const far = isOutsideOffice(distanceM, thresholdM, wfh);
   return (
     <div className="text-xs whitespace-nowrap flex items-center gap-1">
       <span className="text-gray-400">{label}:</span>
       <a href={mapLink(loc)} target="_blank" rel="noreferrer"
-        className={`font-medium hover:underline ${wfh ? 'text-indigo-600' : far ? 'text-amber-600' : 'text-green-600'}`}
+        className={`font-medium hover:underline ${wfh ? 'text-indigo-600' : far ? 'text-amber-700' : 'text-green-600'}`}
         title={`${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`}>
         {fmtDist(distanceM)}
       </a>
       {wfh && <span className="px-1 rounded bg-indigo-100 text-indigo-700 text-[10px] font-medium">WFH</span>}
+      {far && (
+        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold"
+          title={`${label === 'In' ? 'Check-in' : 'Check-out'} was ${fmtDist(distanceM)} from the office (outside the ${fmtDist(thresholdM)} geofence).`}>
+          ⚠ Outside office
+        </span>
+      )}
     </div>
   );
 }
@@ -259,8 +275,13 @@ export default function AdminAttendance() {
             ) : records.length === 0 ? (
               <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No records for this period</td></tr>
             ) : records.map((r) => (
-              <tr key={r._id}>
-                <td className="px-4 py-3">{fmtDate(r.date)}</td>
+              <tr key={r._id} className={isRecordFlagged(r, settings.geofenceThresholdM) ? 'bg-amber-50' : ''}>
+                <td className="px-4 py-3">
+                  {fmtDate(r.date)}
+                  {isRecordFlagged(r, settings.geofenceThresholdM) && (
+                    <span className="ml-1 text-amber-600" title="A punch was made outside office premises">⚠</span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   {r.employee?.user?.firstName} {r.employee?.user?.lastName}
                   <div className="text-xs text-gray-500 font-mono">{r.employee?.employeeCode}</div>

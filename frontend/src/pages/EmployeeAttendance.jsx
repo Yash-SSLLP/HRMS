@@ -29,6 +29,21 @@ const fmtElapsed = (ms) => {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 };
 
+// The GPS location recorded with a punch, shown as a Google Maps link. Renders
+// nothing when the punch has no coordinates (older records or denied location).
+const PunchLocation = ({ loc, className = '' }) =>
+  loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng) ? (
+    <a
+      href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
+      target="_blank"
+      rel="noreferrer"
+      title={loc.accuracy != null ? `Accuracy ±${Math.round(loc.accuracy)} m` : 'View on map'}
+      className={`inline-flex items-center gap-0.5 text-xs text-blue-600 hover:underline font-normal ${className}`}
+    >
+      📍 {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
+    </a>
+  ) : null;
+
 export default function EmployeeAttendance() {
   const now = new Date();
   const [filter, setFilter] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
@@ -245,10 +260,12 @@ export default function EmployeeAttendance() {
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Check-in</div>
             <div className="text-lg font-mono">{fmtTime(today?.checkIn)}</div>
+            <PunchLocation loc={today?.checkInLocation} className="mt-1" />
           </div>
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Check-out</div>
             <div className="text-lg font-mono">{fmtTime(today?.checkOut)}</div>
+            <PunchLocation loc={today?.checkOutLocation} className="mt-1" />
           </div>
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Hours</div>
@@ -380,8 +397,14 @@ export default function EmployeeAttendance() {
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
                 </td>
-                <td className="px-4 py-3 font-mono">{fmtTime(r.checkIn)}</td>
-                <td className="px-4 py-3 font-mono">{fmtTime(r.checkOut)}</td>
+                <td className="px-4 py-3 font-mono">
+                  {fmtTime(r.checkIn)}
+                  <PunchLocation loc={r.checkInLocation} className="mt-0.5 flex" />
+                </td>
+                <td className="px-4 py-3 font-mono">
+                  {fmtTime(r.checkOut)}
+                  <PunchLocation loc={r.checkOutLocation} className="mt-0.5 flex" />
+                </td>
                 <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '—'}</td>
                 <td className="px-4 py-3 text-gray-500">{r.remarks || '—'}</td>
               </tr>

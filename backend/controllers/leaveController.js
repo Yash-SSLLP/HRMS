@@ -3,6 +3,7 @@ const { LeaveRequest, LeaveBalance, LEAVE_TYPES } = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { enqueueMail } = require('../services/email');
+const { notify } = require('../services/notify');
 const { daysInclusive, currentYear } = require('../utils/dateHelpers');
 
 // Leave types that draw down from a tracked balance bucket
@@ -239,6 +240,26 @@ async function applyLeaveDecision(request, userId, action, note) {
   request.decisionAt = new Date();
   request.decisionNote = note;
   await request.save();
+
+  // Notify the applicant of the decision (in-app + push). Best-effort — a
+  // notification failure must never undo a saved leave decision.
+  try {
+    const prof = await EmployeeProfile.findById(request.employee).select('user');
+    if (prof?.user) {
+      const approved = request.status === 'Approved';
+      const days = `${request.totalDays} day${request.totalDays === 1 ? '' : 's'}`;
+      await notify({
+        recipient: prof.user,
+        type: 'leave',
+        title: approved ? 'Leave approved' : 'Leave rejected',
+        body: `Your ${request.leaveType} leave (${days}) has been ${approved ? 'approved' : 'rejected'}.${note ? ` Note: ${note}` : ''}`,
+        link: 'leave',
+      });
+    }
+  } catch (err) {
+    console.error('leave decision notify failed:', err.message);
+  }
+
   return request;
 }
 

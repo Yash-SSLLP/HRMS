@@ -11,6 +11,7 @@ const storage = require('../services/storage');
 const COMPANY = require('../config/company');
 const { renderOfferLetter, renderAppointmentLetter } = require('../services/letterPdf');
 const { enqueueMail } = require('../services/email');
+const googleCalendar = require('../services/googleCalendar');
 const { computeNextEmployeeCode } = require('./lifecycleController');
 
 const DEFAULT_NEW_USER_PASSWORD = process.env.DEFAULT_NEW_USER_PASSWORD || 'Welcome@123';
@@ -287,6 +288,83 @@ const setRound = asyncHandler(async (req, res) => {
 
   await candidate.save();
   res.json({ candidate });
+});
+
+// POST /api/recruitment/candidates/:id/round/meet  { index, scheduledAt?, durationMinutes? }
+// Auto-creates a real Google Meet link (via Calendar API) for the round and
+// emails the invite to the candidate, the assigned interviewer, and HR (the
+// caller) — Google sends the calendar invite with the Meet link to all of them.
+const createRoundMeet = asyncHandler(async (req, res) => {
+  if (!googleCalendar.isConfigured()) {
+    res.status(503);
+    throw new Error(
+      'Google Meet is not configured on the server. Set GOOGLE_OAUTH_CLIENT_ID / _SECRET / _REFRESH_TOKEN.'
+    );
+  }
+
+  const candidate = await Candidate.findById(req.params.id).populate('job', 'title');
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const idx = Number(req.body.index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= candidate.rounds.length) {
+    res.status(400);
+    throw new Error('Invalid round index');
+  }
+  const round = candidate.rounds[idx];
+
+  // Schedule: use the provided time, else the round's existing time, else start
+  // in 15 minutes. The Meet link works anytime regardless, but the invite email
+  // shows this slot.
+  const start = req.body.scheduledAt
+    ? new Date(req.body.scheduledAt)
+    : round.scheduledAt
+    ? new Date(round.scheduledAt)
+    : new Date(Date.now() + 15 * 60 * 1000);
+  if (Number.isNaN(start.getTime())) {
+    res.status(400);
+    throw new Error('Invalid scheduledAt date');
+  }
+  const durationMin = Math.min(Math.max(Number(req.body.durationMinutes) || 45, 15), 240);
+  const end = new Date(start.getTime() + durationMin * 60 * 1000);
+
+  // Attendees: candidate, assigned interviewer (look up their email), and HR (caller).
+  const attendees = [];
+  if (candidate.email) attendees.push(candidate.email);
+  if (round.interviewer) {
+    const iv = await User.findById(round.interviewer).select('email');
+    if (iv?.email) attendees.push(iv.email);
+  }
+  if (req.user?.email) attendees.push(req.user.email);
+
+  const roundLabel = round.label || `Round ${idx + 1}`;
+  const jobTitle = candidate.job?.title ? ` — ${candidate.job.title}` : '';
+
+  let result;
+  try {
+    result = await googleCalendar.createMeetEvent({
+      summary: `Interview: ${candidate.name}${jobTitle} (${roundLabel})`,
+      description:
+        `Interview round: ${roundLabel}\n` +
+        `Candidate: ${candidate.name}${candidate.email ? ` <${candidate.email}>` : ''}\n` +
+        (round.interviewerName ? `Interviewer: ${round.interviewerName}\n` : '') +
+        `\nJoin with Google Meet using the link in this invitation.`,
+      start,
+      end,
+      attendees,
+    });
+  } catch (err) {
+    res.status(502);
+    throw new Error(err.message || 'Failed to create the Google Meet link');
+  }
+
+  round.meetingLink = result.meetingLink;
+  round.meetEventId = result.eventId;
+  round.scheduledAt = start;
+  await candidate.save();
+
+  res.json({ candidate, meetingLink: result.meetingLink, invited: attendees });
 });
 
 // GET /api/recruitment/candidates/:id/resume — serve the resume (HR auth).
@@ -837,7 +915,7 @@ module.exports = {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
-  setRound, downloadResume, uploadResume,
+  setRound, createRoundMeet, downloadResume, uploadResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken,

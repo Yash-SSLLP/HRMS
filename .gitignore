@@ -10,3 +10,7 @@ npm-debug.log*
 .vscode/
 .idea/
 coverage/
+
+# Firebase service-account key (backend push) — secret, never commit
+backend/config/firebase-service-account.json
+firebase-service-account*.json

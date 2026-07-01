@@ -48,6 +48,8 @@ export default function AdminRecruitment() {
   const [saving, setSaving] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const [meetTimes, setMeetTimes] = useState({}); // per-round chosen datetime (keyed `${candId}:${idx}`)
+  const [meetBusy, setMeetBusy] = useState(''); // key of the round whose Meet link is being created
 
   // Offer-letter modal
   const [offerCand, setOfferCand] = useState(null);
@@ -144,6 +146,34 @@ export default function AdminRecruitment() {
   const setRound = async (c, index, patch) => {
     try { await api.patch(`/recruitment/candidates/${c._id}/round`, { index, ...patch }); await load(); }
     catch (err) { alert(err.response?.data?.message || 'Round update failed'); }
+  };
+
+  // An ISO/Date → value for a <input type="datetime-local"> (in local time).
+  const toLocalInput = (d) => {
+    if (!d) return '';
+    const dt = new Date(d);
+    return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+
+  // Auto-create a real Google Meet for this round and email the invite (with the
+  // link) to the candidate, the assigned interviewer, and HR.
+  const createMeet = async (c, idx) => {
+    const key = `${c._id}:${idx}`;
+    const local = meetTimes[key];
+    const scheduledAt = local ? new Date(local).toISOString() : (c.rounds?.[idx]?.scheduledAt || undefined);
+    if (!c.email && !window.confirm("This candidate has no email on file, so they won't get the invite. Create the meeting anyway?")) return;
+    if (!c.rounds?.[idx]?.interviewer && !window.confirm('No interviewer is assigned to this round, so they won\'t be invited. Continue?')) return;
+    setMeetBusy(key);
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet`, { index: idx, scheduledAt });
+      await load();
+      const who = (data.invited || []).join(', ') || 'no valid email addresses';
+      alert(`Google Meet created and invite sent to: ${who}\n\n${data.meetingLink}`);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to create Google Meet');
+    } finally {
+      setMeetBusy('');
+    }
   };
 
   const allCleared = (c) => (c.rounds || []).length > 0 && c.rounds.every((r) => r.status === 'Cleared');
@@ -443,8 +473,20 @@ export default function AdminRecruitment() {
                               placeholder="Feedback…"
                               className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
                             />
-                            {/* Google Meet link for this round */}
-                            <div className="mt-2">
+                            {/* Interview schedule + auto Google Meet for this round */}
+                            <div className="mt-2 space-y-1">
+                              <input
+                                type="datetime-local"
+                                defaultValue={toLocalInput(r.scheduledAt)}
+                                onChange={(e) => setMeetTimes((m) => ({ ...m, [`${c._id}:${idx}`]: e.target.value }))}
+                                onBlur={(e) => {
+                                  const v = e.target.value;
+                                  const iso = v ? new Date(v).toISOString() : '';
+                                  if (iso !== (r.scheduledAt ? new Date(r.scheduledAt).toISOString() : '')) setRound(c, idx, { scheduledAt: iso });
+                                }}
+                                title="Interview date & time (used for the calendar invite)"
+                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
+                              />
                               <div className="flex gap-1">
                                 <input
                                   defaultValue={r.meetingLink || ''}
@@ -452,11 +494,13 @@ export default function AdminRecruitment() {
                                   placeholder="Meeting link…"
                                   className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
                                 />
-                                <a
-                                  href="https://meet.google.com/new" target="_blank" rel="noopener noreferrer"
-                                  title="Create a new Google Meet, then paste the link here"
-                                  className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
-                                >＋ Meet</a>
+                                <button
+                                  type="button"
+                                  onClick={() => createMeet(c, idx)}
+                                  disabled={meetBusy === `${c._id}:${idx}`}
+                                  title="Create a Google Meet and email the invite (with the link) to the candidate, interviewer and you"
+                                  className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
+                                >{meetBusy === `${c._id}:${idx}` ? '…' : '＋ Meet'}</button>
                               </div>
                               {r.meetingLink && (
                                 <a href={r.meetingLink} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 text-[11px] text-blue-600 hover:underline">↗ Join meeting</a>
