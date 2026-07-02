@@ -35,12 +35,22 @@ const attendanceSchema = new mongoose.Schema(
     checkInWfh: { type: Boolean, default: false },
     checkOutWfh: { type: Boolean, default: false },
     hoursWorked: { type: Number, default: 0, min: 0 },
+    // Set by the nightly auto-close worker when the day ended with a check-in
+    // but no check-out ("forgot to punch out"). Cleared automatically if a
+    // check-out is later filled in (HR edit / regularization).
+    noPunchOut: { type: Boolean, default: false },
     remarks: String,
   },
   { timestamps: true }
 );
 
 attendanceSchema.index({ employee: 1, date: 1 }, { unique: true });
+
+// A later-filled check-out (HR edit / regularization) clears the no-punch-out mark.
+attendanceSchema.pre('save', function clearNoPunchOut(next) {
+  if (this.checkOut && this.noPunchOut) this.noPunchOut = false;
+  next();
+});
 
 // Auto-compute hoursWorked when both punches are present
 attendanceSchema.pre('save', function computeHours(next) {

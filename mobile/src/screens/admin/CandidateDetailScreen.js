@@ -13,6 +13,7 @@ import {
   Screen, Card, Avatar, Pill, AppButton, Input, Field, Loader, refresher,
   SectionHeader, ModalSheet, ChipSelect, Stars, DateField, TimeField, Ionicons,
 } from '../../components/ui';
+import MailComposeSheet from '../../components/MailComposeSheet';
 import { stageTone } from './RecruitmentScreen';
 
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -39,6 +40,7 @@ export default function CandidateDetailScreen() {
   const [modal, setModal] = useState(null); // 'edit' | 'round' | 'docs' | 'offer' | 'appointment' | 'onboarding' | 'convert'
   const [form, setForm] = useState({});
   const [roundIdx, setRoundIdx] = useState(0);
+  const [mailSheet, setMailSheet] = useState(null); // editable email preview payload
 
   const load = useCallback(async () => {
     const [cRes, eRes] = await Promise.all([
@@ -195,21 +197,25 @@ export default function CandidateDetailScreen() {
   });
 
   const saveOffer = () => run(async () => {
-    await api.post(`/recruitment/candidates/${id}/offer`, {
+    const { data } = await api.post(`/recruitment/candidates/${id}/offer`, {
       position: form.position, department: form.department, address: form.address,
       salaryMonthly: form.salaryMonthly, salaryAnnual: form.salaryAnnual,
       probationMonths: form.probationMonths, noticePeriodDays: form.noticePeriodDays,
       refInterviewDate: form.refInterviewDate || undefined, joiningDate: form.joiningDate || undefined,
       acceptanceDeadline: form.acceptanceDeadline || undefined,
       signatoryName: form.signatoryName || undefined, signatoryTitle: form.signatoryTitle || undefined,
-      email: form.email,
     });
     setModal(null);
+    // Emailing goes through the editable preview sheet, never silently.
+    if (form.email && data.candidate?.email) await openLetterSheet('offer');
   }, 'Could not generate offer');
 
   const saveAppointment = () => run(async () => {
-    await api.post(`/recruitment/candidates/${id}/appointment`, { ...form, email: form.email });
+    const { email: wantEmail, ...body } = form;
+    const { data } = await api.post(`/recruitment/candidates/${id}/appointment`, body);
     setModal(null);
+    // Emailing goes through the editable preview sheet, never silently.
+    if (wantEmail && data.candidate?.email) await openLetterSheet('appointment');
   }, 'Could not generate appointment letter');
 
   const saveOnboarding = () => run(async () => {
@@ -232,6 +238,74 @@ export default function CandidateDetailScreen() {
       const pw = data.initialPassword ? `\nTemporary password: ${data.initialPassword}` : '';
       Alert.alert('Employee created', `${cand.name} is now an employee.\nEmployee code: ${data.employeeCode}${pw}`);
     }, 'Could not convert to employee');
+  };
+
+  // ---------- editable email previews (nothing is sent silently) ----------
+
+  // Interview invite: server-sent to candidate + interviewer with the résumé attached.
+  const openInviteSheet = (idx, mailData) => {
+    setMailSheet({
+      title: 'Interview invite email',
+      note: 'Review and edit the invite — it goes to the candidate and interviewer with the résumé attached.',
+      to: mailData.to,
+      subject: mailData.subject,
+      body: mailData.body,
+      attachments: mailData.attachments || [],
+      sendLabel: 'Send invite',
+      onSend: async ({ subject, body }) => {
+        await api.post(`/recruitment/candidates/${id}/round/meet/email`, { index: idx, subject, body });
+        Alert.alert('Invite sent', `Emailed to ${Array.isArray(mailData.to) ? mailData.to.join(', ') : mailData.to}.`);
+      },
+    });
+  };
+
+  // Auto-create a Google Meet for the round, then preview the invite email.
+  const createMeet = async (idx) => {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${id}/round/meet`, { index: idx, sendEmail: false });
+      await load();
+      if (data.mail?.to?.length) openInviteSheet(idx, data.mail);
+      else Alert.alert('Meet created', 'No email on file for the candidate or interviewer, so there is no one to invite by mail.');
+    } catch (err) {
+      Alert.alert('Could not create Meet', errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Preview + (re)send the invite for a round that already has a meeting link.
+  const emailInvite = async (idx) => {
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${id}/round/meet/email`, { index: idx, preview: true });
+      openInviteSheet(idx, data);
+    } catch (err) {
+      Alert.alert('Could not load the invite email', errMsg(err));
+    }
+  };
+
+  // Offer / appointment letter: server-sent with the letter PDF attached.
+  const openLetterSheet = async (kind) => {
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${id}/letters/${kind}/email`, { preview: true });
+      setMailSheet({
+        title: kind === 'offer' ? 'Send offer letter' : 'Send appointment letter',
+        note: 'Review and edit the message — it goes to the candidate with the letter PDF attached.',
+        to: data.to,
+        subject: data.subject,
+        body: data.body,
+        attachments: data.attachments || [],
+        link: data.link,
+        sendLabel: 'Send letter',
+        onSend: async ({ subject, body }) => {
+          await api.post(`/recruitment/candidates/${id}/letters/${kind}/email`, { subject, body });
+          await load();
+          Alert.alert('Letter sent', `Emailed to ${data.to}.`);
+        },
+      });
+    } catch (err) {
+      Alert.alert('Could not prepare the email', errMsg(err));
+    }
   };
 
   const onboard = () => run(() => api.post(`/recruitment/candidates/${id}/onboard`));
@@ -316,9 +390,19 @@ export default function CandidateDetailScreen() {
                     {r.scheduledAt ? ` · ${fmtDateTime(r.scheduledAt)}` : ''}
                   </Text>
                   {r.feedback ? <Text style={[font.small, { color: colors.textMuted, marginTop: 2 }]} numberOfLines={2}>{r.feedback}</Text> : null}
-                  {r.meetingLink ? (
-                    <TouchableOpacity onPress={() => Linking.openURL(r.meetingLink)}><Text style={styles.link}>Join meeting</Text></TouchableOpacity>
-                  ) : null}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
+                    {r.meetingLink ? (
+                      <TouchableOpacity onPress={() => Linking.openURL(r.meetingLink)}><Text style={styles.link}>Join meeting</Text></TouchableOpacity>
+                    ) : null}
+                    {writable && r.meetingLink ? (
+                      <TouchableOpacity onPress={() => emailInvite(i)}><Text style={styles.link}>Email invite</Text></TouchableOpacity>
+                    ) : null}
+                    {writable && !r.meetingLink ? (
+                      <TouchableOpacity onPress={() => createMeet(i)} disabled={busy}>
+                        <Text style={styles.link}>{busy ? 'Creating…' : '+ Create Meet'}</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                 </View>
                 <Pill label={r.status} tone={roundTone(r.status)} />
                 {writable ? <Ionicons name="chevron-forward" size={16} color={colors.textFaint} style={{ marginLeft: 6 }} /> : null}
@@ -378,6 +462,7 @@ export default function CandidateDetailScreen() {
               <View style={styles.actRowWrap}>
                 <AppButton title={offerDone ? 'Edit offer' : 'Create offer'} icon="document-outline" variant={offerDone ? 'ghost' : 'primary'} style={styles.actBtn} onPress={openOffer} />
                 {offerDone && <AppButton title="View PDF" icon="eye-outline" variant="outline" style={styles.actBtn} loading={downloading === 'offer'} onPress={() => downloadAndShare(`/recruitment/candidates/${id}/offer/pdf`, cand.offer.letterName || 'offer.pdf', 'offer')} />}
+                {offerDone && cand.email ? <AppButton title={cand.offer?.emailedAt ? 'Resend email' : 'Email letter'} icon="mail-outline" variant="outline" style={styles.actBtn} onPress={() => openLetterSheet('offer')} /> : null}
                 {offerDone && <AppButton title="Share link" icon="share-social-outline" variant="ghost" style={styles.actBtn} onPress={() => shareLetterLink('offer')} />}
                 {offerDone && stage === 'Offer' && <AppButton title="Onboard →" icon="rocket-outline" variant="success" style={styles.actBtn} loading={busy} onPress={onboard} />}
               </View>
@@ -397,6 +482,7 @@ export default function CandidateDetailScreen() {
                 <AppButton title="Edit details" icon="create-outline" variant="ghost" style={styles.actBtn} onPress={openOnboarding} />
                 <AppButton title={apptDone ? 'Edit appointment' : 'Appointment letter'} icon="document-text-outline" variant={apptDone ? 'ghost' : 'primary'} style={styles.actBtn} onPress={openAppointment} />
                 {apptDone && <AppButton title="View PDF" icon="eye-outline" variant="outline" style={styles.actBtn} loading={downloading === 'appt'} onPress={() => downloadAndShare(`/recruitment/candidates/${id}/appointment/pdf`, cand.appointment.letterName || 'appointment.pdf', 'appt')} />}
+                {apptDone && cand.email ? <AppButton title={cand.appointment?.emailedAt ? 'Resend email' : 'Email letter'} icon="mail-outline" variant="outline" style={styles.actBtn} onPress={() => openLetterSheet('appointment')} /> : null}
                 {apptDone && <AppButton title="Share link" icon="share-social-outline" variant="ghost" style={styles.actBtn} onPress={() => shareLetterLink('appointment')} />}
               </View>
             )}
@@ -476,7 +562,7 @@ export default function CandidateDetailScreen() {
           <View style={{ flex: 1 }}><Field label="Signatory name"><Input value={form.signatoryName} onChangeText={(v) => upd(setForm, 'signatoryName', v)} placeholder="Default" /></Field></View>
           <View style={{ flex: 1 }}><Field label="Signatory title"><Input value={form.signatoryTitle} onChangeText={(v) => upd(setForm, 'signatoryTitle', v)} placeholder="Default" /></Field></View>
         </View>
-        <Toggle label="Email the offer letter to the candidate" value={form.email} onToggle={() => upd(setForm, 'email', !form.email)} disabled={!cand.email} />
+        <Toggle label="Email the offer letter to the candidate (preview opens first)" value={form.email} onToggle={() => upd(setForm, 'email', !form.email)} disabled={!cand.email} />
       </ModalSheet>
 
       <ModalSheet visible={modal === 'appointment'} onClose={() => setModal(null)} title={apptDone ? 'Edit appointment letter' : 'Appointment letter'}
@@ -514,7 +600,7 @@ export default function CandidateDetailScreen() {
           <View style={{ flex: 1 }}><Field label="Signatory name"><Input value={form.signatoryName} onChangeText={(v) => upd(setForm, 'signatoryName', v)} placeholder="Default" /></Field></View>
           <View style={{ flex: 1 }}><Field label="Signatory title"><Input value={form.signatoryTitle} onChangeText={(v) => upd(setForm, 'signatoryTitle', v)} placeholder="Default" /></Field></View>
         </View>
-        <Toggle label="Email the appointment letter to the candidate" value={form.email} onToggle={() => upd(setForm, 'email', !form.email)} disabled={!cand.email} />
+        <Toggle label="Email the appointment letter to the candidate (preview opens first)" value={form.email} onToggle={() => upd(setForm, 'email', !form.email)} disabled={!cand.email} />
       </ModalSheet>
 
       <ModalSheet visible={modal === 'onboarding'} onClose={() => setModal(null)} title="Onboarding details"
@@ -539,6 +625,8 @@ export default function CandidateDetailScreen() {
         <Field label="Department"><Input value={form.department} onChangeText={(v) => upd(setForm, 'department', v)} /></Field>
         <Field label="Temporary password"><Input value={form.password} onChangeText={(v) => upd(setForm, 'password', v)} placeholder="Defaults to Welcome@123" autoCapitalize="none" /></Field>
       </ModalSheet>
+
+      <MailComposeSheet visible={!!mailSheet} onClose={() => setMailSheet(null)} mail={mailSheet} />
     </Screen>
   );
 }

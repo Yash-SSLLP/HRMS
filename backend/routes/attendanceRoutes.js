@@ -8,6 +8,7 @@ const {
   orgHeatmap,
   listMine,
   listAll,
+  monthSummary,
   todayBoard,
   createRecord,
   updateRecord,
@@ -42,6 +43,7 @@ router.get('/:id/photo/:which', getAttendancePhoto);
 router.use(restrictTo('SuperAdmin', 'HRManager'));
 
 router.get('/org/heatmap', orgHeatmap);
+router.get('/month-summary', monthSummary);
 router.get('/today-board', todayBoard);
 
 router.route('/settings')

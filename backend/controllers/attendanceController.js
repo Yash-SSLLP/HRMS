@@ -339,6 +339,92 @@ const listAll = asyncHandler(async (req, res) => {
   });
 });
 
+// GET /api/attendance/month-summary?employee=&year=&month=
+// One employee's whole month for HR/admin review: every day's punches with
+// late / distance / no-punch-out flags, plus the roll-up counts shown in the
+// summary bar (working days, on-time, late, leave …).
+const monthSummary = asyncHandler(async (req, res) => {
+  if (!req.query.employee) {
+    res.status(400);
+    throw new Error('employee is required');
+  }
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const { start, end } = monthRange(year, month);
+
+  const [profile, records, settings, holidays] = await Promise.all([
+    EmployeeProfile.findById(req.query.employee)
+      .select('employeeCode designation department user')
+      .populate('user', 'firstName lastName email'),
+    Attendance.find({ employee: req.query.employee, date: { $gte: start, $lt: end } }).sort({ date: -1 }),
+    Setting.getSettings(),
+    require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date name').catch(() => []),
+  ]);
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+
+  const office = settings.office;
+  const threshold = settings.geofenceThresholdM;
+  const todayStart = startOfDay(new Date());
+  const holidayKeys = new Set((holidays || []).map((h) => ymdLocal(h.date)));
+
+  const days = records.map((r) => {
+    const o = r.toJSON();
+    // Late = checked in after the standard start (r.date is IST midnight).
+    const lateCutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+    const lateMs = r.checkIn ? new Date(r.checkIn) - lateCutoff : 0;
+    o.lateMinutes = lateMs > 0 ? Math.round(lateMs / 60000) : 0;
+    o.checkInDistanceM = haversineMeters(office, o.checkInLocation);
+    o.checkOutDistanceM = haversineMeters(office, o.checkOutLocation);
+    o.distantPunch = Boolean(
+      threshold &&
+      ((o.checkInDistanceM != null && o.checkInDistanceM > threshold && !o.checkInWfh) ||
+        (o.checkOutDistanceM != null && o.checkOutDistanceM > threshold && !o.checkOutWfh))
+    );
+    // Show "no punch-out" as soon as the day is over, even before the nightly
+    // worker stamps it.
+    o.noPunchOut = o.noPunchOut || Boolean(r.checkIn && !r.checkOut && startOfDay(r.date) < todayStart);
+    return o;
+  });
+
+  // Working days this month = calendar days minus Sundays minus listed holidays.
+  const daysInMonth = Math.round((end - start) / 86400000);
+  let workingDays = 0;
+  for (let i = 0; i < daysInMonth; i += 1) {
+    const d = new Date(start.getTime() + i * 86400000 + 12 * 3600000); // midday, DST-safe
+    const key = ymdLocal(d);
+    const istDow = new Date(d.getTime()).getUTCDay(); // d is IST-anchored midday
+    if (istDow !== 0 && !holidayKeys.has(key)) workingDays += 1;
+  }
+
+  const present = days.filter((d) => ['Present', 'HalfDay'].includes(d.status) && d.checkIn);
+  const summary = {
+    workingDays,
+    presentDays: present.length,
+    onTime: present.filter((d) => d.lateMinutes === 0).length,
+    late: present.filter((d) => d.lateMinutes > 0).length,
+    leave: days.filter((d) => d.status === 'OnLeave').length,
+    halfDay: days.filter((d) => d.status === 'HalfDay').length,
+    absent: days.filter((d) => d.status === 'Absent').length,
+    holiday: days.filter((d) => ['Holiday', 'WeeklyOff'].includes(d.status)).length,
+    noPunchOut: days.filter((d) => d.noPunchOut).length,
+    distantPunches: days.filter((d) => d.distantPunch).length,
+    totalHours: +days.reduce((a, d) => a + (d.hoursWorked || 0), 0).toFixed(1),
+  };
+
+  res.json({
+    year,
+    month,
+    employee: profile,
+    summary,
+    records: days,
+    settings: { office, geofenceThresholdM: threshold },
+  });
+});
+
 // GET /api/attendance/today-board?department=
 // Compact "Clock-In/Out" board for the admin dashboard: everyone who has
 // punched in today, split into on-time vs late, with their clock in/out and
@@ -477,6 +563,7 @@ module.exports = {
   orgHeatmap,
   listMine,
   listAll,
+  monthSummary,
   todayBoard,
   createRecord,
   updateRecord,

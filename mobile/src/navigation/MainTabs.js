@@ -42,6 +42,7 @@ import ComplaintsScreen from '../screens/ComplaintsScreen';
 import ChangeRequestScreen from '../screens/ChangeRequestScreen';
 import DeclarationScreen from '../screens/DeclarationScreen';
 import ResignationScreen from '../screens/ResignationScreen';
+import MyInterviewsScreen from '../screens/MyInterviewsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import AdminHubScreen from '../screens/admin/AdminHubScreen';
 import ApprovalsScreen from '../screens/admin/ApprovalsScreen';
@@ -53,6 +54,7 @@ import AddEmployeeScreen from '../screens/admin/AddEmployeeScreen';
 import PayrollScreen from '../screens/admin/PayrollScreen';
 import RecruitmentScreen from '../screens/admin/RecruitmentScreen';
 import CandidateDetailScreen from '../screens/admin/CandidateDetailScreen';
+import AttendanceMonthScreen from '../screens/admin/AttendanceMonthScreen';
 
 const Tab = createBottomTabNavigator();
 const HomeStackNav = createStackNavigator();
@@ -95,6 +97,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="ChangeRequest" component={ChangeRequestScreen} options={{ title: 'Change Requests' }} />
       <HomeStackNav.Screen name="Declaration" component={DeclarationScreen} options={{ title: 'Investment Declaration' }} />
       <HomeStackNav.Screen name="Resignation" component={ResignationScreen} options={{ title: 'Resignation' }} />
+      <HomeStackNav.Screen name="MyInterviews" component={MyInterviewsScreen} options={{ title: 'My Interviews' }} />
       {/* Admin / manager surface (screens self-gate by role) */}
       <HomeStackNav.Screen name="AdminHub" component={AdminHubScreen} options={{ title: 'Admin Console' }} />
       <HomeStackNav.Screen name="Approvals" component={ApprovalsScreen} options={{ title: 'Approvals' }} />
@@ -106,6 +109,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="PayrollAdmin" component={PayrollScreen} options={{ title: 'Payroll' }} />
       <HomeStackNav.Screen name="Recruitment" component={RecruitmentScreen} options={{ title: 'Recruitment' }} />
       <HomeStackNav.Screen name="CandidateDetail" component={CandidateDetailScreen} options={({ route }) => ({ title: route.params?.name || 'Candidate' })} />
+      <HomeStackNav.Screen name="AttendanceMonth" component={AttendanceMonthScreen} options={{ title: 'Monthly Attendance' }} />
     </HomeStackNav.Navigator>
   );
 }

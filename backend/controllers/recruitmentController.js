@@ -11,10 +11,13 @@ const storage = require('../services/storage');
 const COMPANY = require('../config/company');
 const { renderOfferLetter, renderAppointmentLetter } = require('../services/letterPdf');
 const { enqueueMail } = require('../services/email');
+const { notify } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
 const { computeNextEmployeeCode } = require('./lifecycleController');
 
 const DEFAULT_NEW_USER_PASSWORD = process.env.DEFAULT_NEW_USER_PASSWORD || 'Welcome@123';
+// Public website origin, for candidate-facing letter-download links in emails.
+const APP_BASE_URL = () => (process.env.APP_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '');
 
 // ===== Jobs =====
 const listJobs = asyncHandler(async (req, res) => {
@@ -243,8 +246,22 @@ const setRound = asyncHandler(async (req, res) => {
         res.status(400);
         throw new Error('Selected interviewer not found');
       }
+      const isNewAssignee = String(round.interviewer || '') !== String(interviewer._id);
       round.interviewer = interviewer._id;
       round.interviewerName = interviewer.fullName;
+      // Tell the newly assigned interviewer in-app (+ push) — they act on it
+      // from the "My Interviews" section of the portal/app.
+      if (isNewAssignee) {
+        notify({
+          recipient: interviewer._id,
+          type: 'interview',
+          title: `Interview assigned: ${candidate.name} (${round.label || `Round ${idx + 1}`})`,
+          body: round.scheduledAt
+            ? `Scheduled ${new Date(round.scheduledAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short', hour12: true })} (IST). Open My Interviews to join, give feedback and set the result.`
+            : 'Open My Interviews to see the schedule, join the call, give feedback and set the result.',
+          link: 'interviews',
+        }).catch(() => {});
+      }
     }
   }
 
@@ -288,6 +305,148 @@ const setRound = asyncHandler(async (req, res) => {
 
   await candidate.save();
   res.json({ candidate });
+});
+
+// ===== Interviewer self-service =====
+// Any signed-in employee can see and act on the interview rounds where THEY
+// are the assigned interviewer: join the meeting, leave feedback, and set the
+// round status. HR sees the same status/feedback (+ audit trail) in admin.
+
+// Shape one round for the interviewer-facing list.
+function interviewItem(c, r, idx) {
+  return {
+    candidateId: c._id,
+    candidateName: c.name,
+    candidateEmail: c.email || '',
+    jobTitle: c.job?.title || '',
+    stage: c.stage,
+    hasResume: !!(c.resumeName || c.resumePath),
+    index: idx,
+    label: r.label || `Round ${idx + 1}`,
+    status: r.status,
+    feedback: r.feedback || '',
+    scheduledAt: r.scheduledAt,
+    meetingLink: r.meetingLink || '',
+    decidedAt: r.decidedAt,
+  };
+}
+
+// GET /api/recruitment/my-interviews — rounds assigned to the calling user.
+const myInterviews = asyncHandler(async (req, res) => {
+  const candidates = await Candidate.find({ 'rounds.interviewer': req.user._id })
+    .populate('job', 'title department')
+    .sort({ updatedAt: -1 });
+  const interviews = [];
+  candidates.forEach((c) => {
+    (c.rounds || []).forEach((r, idx) => {
+      if (r.interviewer && String(r.interviewer) === String(req.user._id)) {
+        interviews.push(interviewItem(c, r, idx));
+      }
+    });
+  });
+  // Open rounds first (soonest schedule at the top), decided ones after.
+  const openRank = (i) => (['Pending', 'Scheduled'].includes(i.status) ? 0 : 1);
+  interviews.sort((a, b) =>
+    openRank(a) - openRank(b) ||
+    new Date(a.scheduledAt || 8640000000000000) - new Date(b.scheduledAt || 8640000000000000)
+  );
+  res.json({ interviews });
+});
+
+// PATCH /api/recruitment/my-interviews/:id/round  { index, status?, feedback? }
+// The assigned interviewer records their decision/feedback for their round.
+const setMyInterviewRound = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id).populate('job', 'title');
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const idx = Number(req.body.index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= candidate.rounds.length) {
+    res.status(400);
+    throw new Error('Invalid round index');
+  }
+  const round = candidate.rounds[idx];
+  if (!round.interviewer || String(round.interviewer) !== String(req.user._id)) {
+    res.status(403);
+    throw new Error('You are not the assigned interviewer for this round.');
+  }
+
+  const prevStatus = round.status;
+  const statusChanged = req.body.status !== undefined && req.body.status !== round.status;
+  if (req.body.status !== undefined) {
+    if (!ROUND_STATUS.includes(req.body.status)) {
+      res.status(400);
+      throw new Error(`status must be one of ${ROUND_STATUS.join(', ')}`);
+    }
+    round.status = req.body.status;
+    round.decidedAt = ['Cleared', 'Rejected'].includes(req.body.status) ? new Date() : undefined;
+  }
+  if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
+
+  // Same audit trail HR edits get, so HR sees who decided what and when.
+  if (statusChanged) {
+    round.decidedBy = req.user._id;
+    round.decidedByName = req.user.fullName;
+    round.history.push({
+      status: round.status,
+      by: req.user._id,
+      byName: req.user.fullName,
+      at: new Date(),
+      feedback: req.body.feedback !== undefined ? req.body.feedback : round.feedback,
+    });
+    AuditLog.create({
+      entity: 'Candidate.round',
+      entityId: candidate._id,
+      entityLabel: candidate.name,
+      field: `Round ${idx + 1}${round.label ? ` (${round.label})` : ''}`,
+      fromStatus: prevStatus,
+      toStatus: round.status,
+      by: req.user._id,
+      byName: req.user.fullName,
+      byRole: req.user.role,
+      at: new Date(),
+    }).catch(() => {});
+  }
+
+  // Keep the all-cleared → document-link automation in sync with HR edits.
+  if (candidate.rounds.length && candidate.rounds.every((r) => r.status === 'Cleared') && !candidate.documents?.token) {
+    candidate.documents = {
+      ...(candidate.documents?.toObject?.() || candidate.documents || {}),
+      token: crypto.randomBytes(24).toString('hex'),
+      requestedAt: new Date(),
+      requestedBy: req.user._id,
+      requestedByName: req.user.fullName,
+    };
+  }
+
+  await candidate.save();
+  res.json({ interview: interviewItem(candidate, round, idx) });
+});
+
+// GET /api/recruitment/my-interviews/:id/resume — the assigned interviewer can
+// view the candidate's résumé for any round they're interviewing.
+const downloadMyInterviewResume = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id).select('+resumeData rounds name resumeName resumePath resumeContentType');
+  const mine = candidate && (candidate.rounds || []).some(
+    (r) => r.interviewer && String(r.interviewer) === String(req.user._id)
+  );
+  if (!mine) {
+    res.status(403);
+    throw new Error('You are not an assigned interviewer for this candidate.');
+  }
+  if (!candidate.resumeData && !candidate.resumePath) {
+    res.status(404);
+    throw new Error('No resume on file for this candidate');
+  }
+  const name = candidate.resumeName || 'resume';
+  if (candidate.resumeData && candidate.resumeData.length) {
+    res.setHeader('Content-Type', candidate.resumeContentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${name}"`);
+    return res.send(candidate.resumeData);
+  }
+  res.setHeader('Content-Disposition', `inline; filename="${name}"`);
+  if (!storage.streamTo(candidate.resumePath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
 // Default invite email (subject + plain-text body) for a round's meeting link.
@@ -424,6 +583,17 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   round.meetDurationMinutes = durationMin;
   await candidate.save();
 
+  // Portal notification (+ push) for the assigned interviewer with the link.
+  if (round.interviewer) {
+    notify({
+      recipient: round.interviewer,
+      type: 'interview',
+      title: `Interview scheduled: ${candidate.name} (${roundLabel})`,
+      body: `${start.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short', hour12: true })} (IST) · Join from My Interviews.`,
+      link: 'interviews',
+    }).catch(() => {});
+  }
+
   // The branded invite email (Meet link + résumé attached) for the candidate
   // and interviewer. Sent right away unless the caller wants to review it
   // first (sendEmail: false) — the defaults are returned either way.
@@ -453,7 +623,12 @@ const createRoundMeet = asyncHandler(async (req, res) => {
     meetingLink: result.meetingLink,
     invited: attendees,
     mailed: mailedTo,
-    mail: { to: mailTo, subject: mailDefaults.subject, body: mailDefaults.body },
+    mail: {
+      to: mailTo,
+      subject: mailDefaults.subject,
+      body: mailDefaults.body,
+      attachments: [resumeAttachment(candidate)?.filename].filter(Boolean),
+    },
   });
 });
 
@@ -489,7 +664,12 @@ const sendRoundMeetEmail = asyncHandler(async (req, res) => {
 
   const defaults = buildMeetInviteMail(candidate, round, idx);
   if (req.body.preview) {
-    return res.json({ to, subject: defaults.subject, body: defaults.body });
+    return res.json({
+      to,
+      subject: defaults.subject,
+      body: defaults.body,
+      attachments: [resumeAttachment(candidate)?.filename].filter(Boolean),
+    });
   }
 
   const subject = String(req.body.subject || '').trim() || defaults.subject;
@@ -591,6 +771,72 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
     { type: kind, id: candidate._id }
   );
 }
+
+// POST /api/recruitment/candidates/:id/letters/:kind/email  { subject?, body?, preview? }
+// Preview or send the offer / appointment letter email with the PDF attached
+// (plus the public download link when available). Used by the mobile app and
+// anywhere HR needs a server-side send: HR sees and can edit the exact
+// subject + body before anything goes out. Sending stamps emailedAt.
+const sendLetterEmail = asyncHandler(async (req, res) => {
+  const kind = ['offer', 'appointment'].includes(req.params.kind) ? req.params.kind : null;
+  if (!kind) {
+    res.status(400);
+    throw new Error('Unknown letter type');
+  }
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const letter = candidate[kind];
+  if (!letter?.letterPath) {
+    res.status(400);
+    throw new Error(`Generate the ${kind === 'offer' ? 'offer' : 'appointment'} letter first.`);
+  }
+  if (!candidate.email) {
+    res.status(400);
+    throw new Error('This candidate has no email on file.');
+  }
+
+  const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
+  const link = letter.token ? `${APP_BASE_URL()}/letter/${letter.token}` : '';
+  const defaults = {
+    subject: `${label} — ${COMPANY.name}`,
+    body:
+      `Dear ${candidate.name},\n\n` +
+      `Please find attached your ${label} from ${COMPANY.name}.` +
+      (link ? ` You can also view and download it anytime from the link below:\n\n${link}\n` : '\n') +
+      `\nKindly review the document and revert with your acceptance.\n\n` +
+      `Warm regards,\n${req.user?.fullName || 'HR Team'}\n${COMPANY.name}`,
+  };
+  if (req.body.preview) {
+    return res.json({
+      to: candidate.email,
+      subject: defaults.subject,
+      body: defaults.body,
+      attachments: [letter.letterName].filter(Boolean),
+      link,
+    });
+  }
+
+  const subject = String(req.body.subject || '').trim() || defaults.subject;
+  const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
+  await enqueueMail(
+    {
+      to: candidate.email,
+      subject,
+      text: body,
+      // Send from the acting HR's mailbox so the candidate replies to them.
+      from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,
+      replyTo: req.user?.email,
+      attachments: [{ filename: letter.letterName || `${label}.pdf`, storagePath: letter.letterPath, contentType: 'application/pdf' }],
+    },
+    { type: kind, id: candidate._id }
+  );
+  letter.emailedAt = new Date();
+  await candidate.save();
+  res.json({ mailed: [candidate.email] });
+});
 
 // Stream a stored letter PDF inline.
 function streamLetter(res, relPath, filename) {
@@ -1051,9 +1297,10 @@ module.exports = {
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
+  myInterviews, setMyInterviewRound, downloadMyInterviewResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
-  markOfferSent, markAppointmentSent, downloadLetterByToken,
+  markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,
   requestDocuments, getDocumentRequest, submitDocuments,
   downloadCandidateDocument, confirmDocuments,
 };

@@ -14,6 +14,7 @@ import { composeMail } from '../api/compose';
  *   defaultSubject     prefilled, editable
  *   defaultBody        prefilled, editable (include the public link here)
  *   attachments        [{ url, filename }] optional — downloaded on send
+ *   attachedNames      [string] optional — files the server attaches on send
  *   link               optional public link, shown as a copyable hint
  *   title              modal heading
  *   note               optional explanation shown under the heading
@@ -29,6 +30,7 @@ export default function MailComposeModal({
   defaultSubject = '',
   defaultBody = '',
   attachments = [],
+  attachedNames = [],
   link,
   title = 'Send email',
   note,
@@ -120,6 +122,13 @@ export default function MailComposeModal({
           {attachments.length > 0 && (
             <div className="text-[11px] text-gray-500">
               {attachments.length} attachment{attachments.length > 1 ? 's' : ''} will download so you can attach {attachments.length > 1 ? 'them' : 'it'} in the compose window.
+            </div>
+          )}
+
+          {attachedNames.length > 0 && (
+            <div className="flex items-center gap-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <span className="text-gray-500 shrink-0">📎 Attached:</span>
+              <span className="truncate text-gray-700 flex-1">{attachedNames.join(', ')}</span>
             </div>
           )}
 

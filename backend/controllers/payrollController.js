@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { renderPayslip } = require('../services/payslipPdf');
+// (exportPayroll below builds the month CSV by hand — no spreadsheet lib needed)
 
 async function getMyProfileOrFail(userId, res) {
   const profile = await EmployeeProfile.findOne({ user: userId });
@@ -58,6 +59,70 @@ const listPayslips = asyncHandler(async (req, res) => {
     })
     .sort({ payPeriodYear: -1, payPeriodMonth: -1, createdAt: -1 });
   res.json({ count: payslips.length, payslips });
+});
+
+// GET /api/payroll/export?year=&month=&status=  (HR/Admin)
+// Excel-compatible CSV of the whole month's payroll — one row per employee
+// with every earning/deduction component. Opens directly in Excel.
+const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+const exportPayroll = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const filter = { payPeriodYear: year, payPeriodMonth: month };
+  if (req.query.status) filter.status = req.query.status;
+
+  const payslips = await Payroll.find(filter)
+    .populate({
+      path: 'employee',
+      select: 'employeeCode designation department user',
+      populate: { path: 'user', select: 'firstName lastName email' },
+    })
+    .sort({ 'employee.employeeCode': 1, createdAt: 1 });
+
+  const esc = (v) => {
+    const s = v === undefined || v === null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = [
+    'Employee Code', 'Name', 'Email', 'Designation', 'Department',
+    'Month', 'Year', 'Working Days', 'Paid Days', 'LOP Days',
+    'Basic', 'HRA', 'Special Allowance', 'Conveyance', 'Medical', 'LTA', 'Bonus', 'Overtime', 'Other Earnings',
+    'Gross Salary',
+    'EPF', 'ESIC', 'Professional Tax', 'TDS', 'Loan Recovery', 'Other Deductions',
+    'Total Deductions', 'Net Pay',
+    'Employer EPF', 'Employer EPS', 'Employer ESIC', 'Gratuity',
+    'Status', 'Payment Date', 'Payment Reference',
+  ];
+  const rows = payslips.map((p) => {
+    const u = p.employee?.user || {};
+    const e = p.earnings || {};
+    const d = p.deductions || {};
+    const c = p.employerContributions || {};
+    return [
+      p.employee?.employeeCode, `${u.firstName || ''} ${u.lastName || ''}`.trim(), u.email,
+      p.employee?.designation, p.employee?.department,
+      MONTH_NAMES[p.payPeriodMonth], p.payPeriodYear, p.workingDays, p.paidDays, p.lopDays,
+      e.basic, e.hra, e.specialAllowance, e.conveyanceAllowance, e.medicalAllowance, e.lta, e.bonus, e.overtime, e.otherEarnings,
+      p.grossSalary,
+      d.epf, d.esic, d.professionalTax, d.tds, d.loanRecovery, d.otherDeductions,
+      p.totalDeductions, p.netPay,
+      c.epf, c.eps, c.esic, c.gratuity,
+      p.status,
+      p.paymentDate ? new Date(p.paymentDate).toLocaleDateString('en-IN') : '',
+      p.paymentReference,
+    ].map(esc).join(',');
+  });
+  const csv = [header.map(esc).join(','), ...rows].join('\r\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="payroll-${year}-${String(month).padStart(2, '0')}.csv"`
+  );
+  // BOM so Excel detects UTF-8 (₹, names with accents, etc.).
+  res.send('﻿' + csv);
 });
 
 // GET /api/payroll/:id  (HR/Admin)
@@ -310,6 +375,7 @@ module.exports = {
   listMyPayslips,
   getMyPayslip,
   listPayslips,
+  exportPayroll,
   getPayslip,
   createPayslip,
   updatePayslip,

@@ -170,6 +170,7 @@ export default function AdminRecruitment() {
       note: "Review and edit the invite below — it's emailed from the company mailbox to the candidate and interviewer, with the candidate's résumé attached.",
       defaultSubject: mailData.subject,
       defaultBody: mailData.body,
+      attachedNames: mailData.attachments || [],
       onSend: async ({ subject, body }) => {
         const { data } = await api.post(`/recruitment/candidates/${candId}/round/meet/email`, { index: idx, subject, body });
         toast.success(`Invite emailed to ${(data.mailed || []).join(', ')}`);

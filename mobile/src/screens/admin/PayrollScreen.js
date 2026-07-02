@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -9,6 +9,7 @@ import { useAuth } from '../../store/auth';
 import { canApprove } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, Avatar, Pill, Loader, EmptyState, refresher, Ionicons } from '../../components/ui';
+import MailComposeSheet from '../../components/MailComposeSheet';
 import { rupees } from '../../utils/format';
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -29,6 +30,7 @@ export default function PayrollScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [mailSheet, setMailSheet] = useState(null); // editable email preview payload
 
   const load = useCallback(async (y, m, s) => {
     setLoading(true);
@@ -81,6 +83,59 @@ export default function PayrollScreen() {
     }
   };
 
+  // Download the whole month's payroll as an Excel-compatible CSV and hand it
+  // to the OS share sheet (save / send anywhere).
+  const exportExcel = async () => {
+    setBusyId('export');
+    try {
+      const fileUri = `${FileSystem.cacheDirectory}payroll-${year}-${String(month).padStart(2, '0')}.csv`;
+      const q = `year=${year}&month=${month}${status !== 'All' ? `&status=${status}` : ''}`;
+      const res = await FileSystem.downloadAsync(`${API_BASE}/payroll/export?${q}`, fileUri, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.status !== 200) throw new Error('Export not available');
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri, { mimeType: 'text/csv' });
+    } catch (err) {
+      Alert.alert('Export failed', err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Email a payslip: mint the public (no-login) download link, show the
+  // editable preview, then hand the edited mail to the phone's email app.
+  const emailPayslip = async (p) => {
+    const email = p.employee?.user?.email;
+    if (!email) { Alert.alert('No email', 'No email on file for this employee.'); return; }
+    setBusyId(p._id);
+    try {
+      const { data } = await api.post(`/payroll/${p._id}/share`);
+      const link = `${API_BASE}/payroll/public/${data.token}`;
+      const period = `${MONTHS_FULL[p.payPeriodMonth]} ${p.payPeriodYear}`;
+      const name = fullName(p.employee?.user);
+      setMailSheet({
+        title: 'Send payslip',
+        note: 'Review and edit the message — it opens in your email app to send.',
+        to: email,
+        subject: `Payslip — ${period}`,
+        body:
+          `Dear ${name || 'Employee'},\n\n` +
+          `Your payslip for ${period} is ready. You can view and download it from the link below:\n\n` +
+          `${link}\n\n` +
+          `Regards,\nHR`,
+        link,
+        sendLabel: 'Open in email app',
+        onSend: async ({ subject, body }) => {
+          await Linking.openURL(`mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+          await api.post(`/payroll/${p._id}/mark-sent`);
+          await load(year, month, status);
+        },
+      });
+    } catch (err) {
+      Alert.alert('Could not prepare the payslip link', errMsg(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const totalNet = payslips.reduce((a, p) => a + (p.netPay || 0), 0);
 
   return (
@@ -102,6 +157,10 @@ export default function PayrollScreen() {
             <Text style={[styles.chipText, status === s && { color: '#fff' }]}>{s}</Text>
           </TouchableOpacity>
         ))}
+        <TouchableOpacity onPress={exportExcel} disabled={busyId === 'export'} style={[styles.chip, { flexDirection: 'row', alignItems: 'center', gap: 5 }]}>
+          <Ionicons name="download-outline" size={14} color={colors.primary} />
+          <Text style={[styles.chipText, { color: colors.primary }]}>{busyId === 'export' ? 'Exporting…' : 'Excel'}</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {loading ? (
@@ -131,6 +190,12 @@ export default function PayrollScreen() {
                     <Ionicons name="download" size={16} color={colors.primary} />
                     <Text style={[styles.actText, { color: colors.primary }]}>PDF</Text>
                   </TouchableOpacity>
+                  {writable && ['Approved', 'Paid'].includes(p.status) && p.employee?.user?.email && (
+                    <TouchableOpacity style={[styles.actBtn, styles.ghost]} disabled={busyId === p._id} onPress={() => emailPayslip(p)}>
+                      <Ionicons name="mail-outline" size={16} color={colors.primary} />
+                      <Text style={[styles.actText, { color: colors.primary }]}>{p.emailedAt ? 'Resend' : 'Email'}</Text>
+                    </TouchableOpacity>
+                  )}
                   {writable && (p.status === 'Draft' || p.status === 'OnHold') && (
                     <TouchableOpacity style={[styles.actBtn, styles.approve]} disabled={busyId === p._id} onPress={() => act(p, 'approve')}>
                       <Ionicons name="checkmark" size={16} color="#fff" />
@@ -149,6 +214,8 @@ export default function PayrollScreen() {
           )}
         </ScrollView>
       )}
+
+      <MailComposeSheet visible={!!mailSheet} onClose={() => setMailSheet(null)} mail={mailSheet} />
     </Screen>
   );
 }

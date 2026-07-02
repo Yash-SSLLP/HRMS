@@ -38,6 +38,7 @@ const GROUPS = [
     title: 'Growth',
     items: [
       { key: 'Tasks', label: 'My Tasks', icon: 'checkbox', tint: '#2563eb' },
+      { key: 'MyInterviews', label: 'My Interviews', icon: 'videocam', tint: '#7c3aed' },
       { key: 'Goals', label: 'Goals', icon: 'flag', tint: '#dc2626' },
       { key: 'Reviews', label: 'Reviews', icon: 'clipboard', tint: '#9333ea' },
       { key: 'Learning', label: 'Learning', icon: 'school', tint: '#0d9488' },
@@ -87,6 +88,7 @@ export default function MenuScreen() {
       adminItems.push(
         { key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a' },
         { key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9' },
+        { key: 'AttendanceMonth', label: 'Monthly Attendance', icon: 'calendar', tint: '#ea580c' },
         { key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea' },
         { key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' }
       );

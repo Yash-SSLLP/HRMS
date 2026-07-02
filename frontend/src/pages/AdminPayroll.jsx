@@ -164,6 +164,17 @@ export default function AdminPayroll() {
   return (
     <div>
       <PageHeader title="Payroll">
+        <button
+          onClick={() => {
+            const m = Number(filter.month) || new Date().getMonth() + 1;
+            const q = `year=${filter.year}&month=${m}${filter.status ? `&status=${filter.status}` : ''}`;
+            downloadFile(`/payroll/export?${q}`, `payroll-${filter.year}-${String(m).padStart(2, '0')}.csv`)
+              .catch((err) => alert(err.response?.data?.message || 'Export failed'));
+          }}
+          title={filter.month ? 'Download this month\'s payroll as an Excel-compatible sheet' : 'No month selected — exports the current month'}
+          className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm mr-2">
+          ⬇ Download Excel
+        </button>
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + New Payslip

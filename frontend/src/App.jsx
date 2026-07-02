@@ -22,7 +22,9 @@ const AdminPayroll = lazy(() => import('./pages/AdminPayroll.jsx'));
 const AdminLeave = lazy(() => import('./pages/AdminLeave.jsx'));
 const AdminAttendance = lazy(() => import('./pages/AdminAttendance.jsx'));
 const AdminAttendanceReport = lazy(() => import('./pages/AdminAttendanceReport.jsx'));
+const AdminAttendanceMonth = lazy(() => import('./pages/AdminAttendanceMonth.jsx'));
 const EmployeeTeam = lazy(() => import('./pages/EmployeeTeam.jsx'));
+const EmployeeInterviews = lazy(() => import('./pages/EmployeeInterviews.jsx'));
 const AdminDocuments = lazy(() => import('./pages/AdminDocuments.jsx'));
 const AdminExit = lazy(() => import('./pages/AdminExit.jsx'));
 const EmployeeDashboard = lazy(() => import('./pages/EmployeeDashboard.jsx'));
@@ -148,6 +150,7 @@ export default function App() {
         <Route path="confirmations" element={<AdminConfirmations />} />
         <Route path="attendance" element={<AdminAttendance />} />
         <Route path="attendance-report" element={<AdminAttendanceReport />} />
+        <Route path="attendance-month" element={<AdminAttendanceMonth />} />
         <Route path="roster" element={<AdminRoster />} />
         <Route path="regularizations" element={<AdminRegularizations />} />
         <Route path="payroll" element={<AdminPayroll />} />
@@ -197,6 +200,7 @@ export default function App() {
       >
         <Route index element={<EmployeeDashboard />} />
         <Route path="team" element={<EmployeeTeam />} />
+        <Route path="interviews" element={<EmployeeInterviews />} />
         <Route path="org-chart" element={<AdminOrgChart />} />
         <Route path="onboarding" element={<EmployeeOnboarding />} />
         <Route path="attendance" element={<EmployeeAttendance />} />

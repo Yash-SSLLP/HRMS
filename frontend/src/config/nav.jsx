@@ -38,6 +38,7 @@ export const adminNav = [
   { group: 'Attendance & Time', items: [
     { to: '/admin/attendance', label: 'Attendance', icon: FiClock },
     { to: '/admin/attendance-report', label: 'Attendance Report', icon: FiActivity },
+    { to: '/admin/attendance-month', label: 'Monthly View', icon: FiCalendar },
     { to: '/admin/roster', label: 'Shifts & Roster', icon: FiCalendar },
     { to: '/admin/regularizations', label: 'Regularization', icon: FiTool },
   ] },
@@ -92,6 +93,7 @@ export const employeeNav = [
   { group: 'Overview', items: [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },
     { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
+    { to: '/employee/interviews', label: 'My Interviews', icon: FiUserCheck },
     { to: '/employee/org-chart', label: 'Org Chart', icon: FiGitBranch },
     { to: '/employee/onboarding', label: 'Onboarding', icon: FiClipboard },
   ] },

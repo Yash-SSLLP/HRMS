@@ -5,6 +5,7 @@ const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { startWorker: startEmailWorker } = require('./services/emailWorker');
 const { startWorker: startCelebrationWorker } = require('./services/celebrationWorker');
+const { startWorker: startAttendanceWorker } = require('./services/attendanceWorker');
 const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
 
@@ -77,6 +78,7 @@ connectDB()
   .then(() => {
     startEmailWorker();
     startCelebrationWorker();
+    startAttendanceWorker();
     backfillHrProfiles().catch((err) => console.error('HR profile backfill error:', err.message));
     app.listen(PORT, () => {
       console.log(`HRMS API listening on port ${PORT}`);

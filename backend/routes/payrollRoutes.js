@@ -14,6 +14,7 @@ const {
   sharePayslip,
   markPayslipSent,
   downloadPublicPayslip,
+  exportPayroll,
 } = require('../controllers/payrollController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
@@ -36,6 +37,8 @@ router.use(restrictTo('SuperAdmin', 'HRManager'));
 router.route('/')
   .get(listPayslips)
   .post(createPayslip);
+
+router.get('/export', exportPayroll);
 
 router.route('/:id')
   .get(getPayslip)

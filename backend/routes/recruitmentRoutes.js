@@ -5,9 +5,10 @@ const {
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
+  myInterviews, setMyInterviewRound, downloadMyInterviewResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
-  markOfferSent, markAppointmentSent, downloadLetterByToken,
+  markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,
   requestDocuments, getDocumentRequest, submitDocuments,
   downloadCandidateDocument, confirmDocuments,
 } = require('../controllers/recruitmentController');
@@ -58,6 +59,11 @@ router.post('/documents/:token', docUpload.array('files', 20), submitDocuments);
 // ----- Public letter download (no auth, tokenised) -----
 router.get('/letters/:token', downloadLetterByToken);
 
+// ----- Interviewer self-service (any signed-in employee) -----
+router.get('/my-interviews', protect, myInterviews);
+router.patch('/my-interviews/:id/round', protect, setMyInterviewRound);
+router.get('/my-interviews/:id/resume', protect, downloadMyInterviewResume);
+
 // ----- HR / Admin only -----
 router.use(protect, restrictTo('SuperAdmin', 'HRManager'));
 
@@ -80,6 +86,7 @@ router.get('/candidates/:id/documents/:fileId', downloadCandidateDocument);
 router.post('/candidates/:id/offer', generateOffer);
 router.get('/candidates/:id/offer/pdf', downloadOffer);
 router.post('/candidates/:id/offer/mark-sent', markOfferSent);
+router.post('/candidates/:id/letters/:kind/email', sendLetterEmail);
 router.post('/candidates/:id/appointment/mark-sent', markAppointmentSent);
 router.post('/candidates/:id/onboard', onboardCandidate);
 router.patch('/candidates/:id/onboarding', updateOnboarding);
