@@ -519,7 +519,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
           </div>
         </header>
 
-        <main className="flex-1 min-w-0 p-4 sm:p-6">
+        {/* pb-24 keeps page content (e.g. bottom action buttons) clear of the
+            fixed ChatDock bar in the bottom-right corner. */}
+        <main className="flex-1 min-w-0 p-4 sm:p-6 pb-24">
           <Suspense fallback={<PageSkeleton />}>
             <Outlet />
           </Suspense>

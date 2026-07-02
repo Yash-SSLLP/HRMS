@@ -278,12 +278,25 @@ async function computeEmployeeRun(profile, year, month) {
   }
   const gross = earnings ? Object.values(earnings).reduce((a, v) => a + v, 0) : 0;
 
+  // Working-hours roll-up. A "worked day" is any day with real punch hours.
+  // Sundays and holidays are excluded from the average — unless the employee
+  // actually worked that day, in which case its hours count and the day is
+  // earned back as a compensatory off (comp-off).
+  const isRestDay = (r) =>
+    new Date(r.date).getDay() === 0 || r.status === 'Holiday' || r.status === 'WeeklyOff';
+  const workedRecords = records.filter((r) => (r.hoursWorked || 0) > 0);
+  const totalHours = +workedRecords.reduce((a, r) => a + (r.hoursWorked || 0), 0).toFixed(2);
+  const daysPresent = workedRecords.length;
+  const avgHours = daysPresent ? +(totalHours / daysPresent).toFixed(2) : 0;
+  const compOff = workedRecords.filter(isRestDay).length;
+
   return {
     daysInMonth,
     counts: {
       present: count('Present'), halfDay, onLeave: count('OnLeave'),
       absent, weeklyOff: count('WeeklyOff'), holiday: count('Holiday'),
     },
+    hours: { daysPresent, totalHours, avgHours, compOff },
     paidDays, lopDays,
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
     loanRecovery,

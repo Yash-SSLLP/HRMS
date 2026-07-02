@@ -248,6 +248,19 @@ export default function AdminPayrollRun() {
                   <Stat label="Leave" value={c.counts.onLeave} />
                   <Stat label="Absent" value={c.counts.absent} warn={c.counts.absent > 0} />
                 </div>
+                {c.hours && (
+                  <>
+                    <h4 className="font-semibold text-gray-700 mt-4 mb-2 text-sm">Working hours — {MONTHS[att.month - 1]}</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+                      <Stat label="Days present" value={`${c.hours.daysPresent} days`} />
+                      <Stat label="Avg working hours" value={`${c.hours.avgHours} hrs`} />
+                      <Stat label="Comp-off earned" value={c.hours.compOff} warn={c.hours.compOff > 0} />
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-2">
+                      Average is over days actually worked. Sundays &amp; holidays are excluded unless worked — those count as comp-offs.
+                    </p>
+                  </>
+                )}
               </div>
 
               {/* Computation + actions */}
