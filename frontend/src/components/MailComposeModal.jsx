@@ -3,18 +3,24 @@ import { composeMail } from '../api/compose';
 
 /**
  * Editable email composer. Prefills an editable subject + body (with any public
- * document link already inserted), then opens the user's Gmail compose tab with
- * the edited values. Attachments, if any, download for manual attaching.
+ * document link already inserted). By default it opens the user's Gmail compose
+ * tab with the edited values (attachments, if any, download for manual
+ * attaching); pass `onSend` to instead deliver the edited mail yourself
+ * (e.g. via a server endpoint that sends from the company mailbox).
  *
  * Props:
  *   open, onClose
- *   to                 recipient email (shown read-only)
+ *   to                 recipient email(s) (shown read-only)
  *   defaultSubject     prefilled, editable
  *   defaultBody        prefilled, editable (include the public link here)
  *   attachments        [{ url, filename }] optional — downloaded on send
  *   link               optional public link, shown as a copyable hint
  *   title              modal heading
- *   onSent             async callback after the compose tab is opened
+ *   note               optional explanation shown under the heading
+ *   sendLabel          optional label for the send button
+ *   onSend             optional async ({ subject, body }) — custom delivery
+ *                      instead of opening Gmail compose
+ *   onSent             async callback after the mail is sent / compose opened
  */
 export default function MailComposeModal({
   open,
@@ -25,6 +31,9 @@ export default function MailComposeModal({
   attachments = [],
   link,
   title = 'Send email',
+  note,
+  sendLabel,
+  onSend,
   onSent,
 }) {
   const [subject, setSubject] = useState(defaultSubject);
@@ -50,11 +59,12 @@ export default function MailComposeModal({
     setSending(true);
     setError('');
     try {
-      await composeMail({ to, subject, body, attachments });
+      if (onSend) await onSend({ subject, body });
+      else await composeMail({ to, subject, body, attachments });
       if (onSent) await onSent();
       onClose();
     } catch (err) {
-      setError(err.response?.data?.message || err.message || 'Could not open the email window');
+      setError(err.response?.data?.message || err.message || (onSend ? 'Could not send the email' : 'Could not open the email window'));
     } finally {
       setSending(false);
     }
@@ -72,7 +82,10 @@ export default function MailComposeModal({
           <button onClick={onClose} className="text-xl leading-none text-gray-400 hover:text-gray-600">×</button>
         </div>
         <p className="text-sm text-gray-500 mb-4">
-          Review and edit the message, then open it in your email to send. {to ? <>To: <span className="font-medium text-gray-700">{to}</span></> : null}
+          {note || (onSend
+            ? 'Review and edit the message below — it is sent from the company mailbox.'
+            : 'Review and edit the message, then open it in your email to send.')}{' '}
+          {to ? <>To: <span className="font-medium text-gray-700">{to}</span></> : null}
         </p>
 
         <div className="space-y-3">
@@ -120,7 +133,7 @@ export default function MailComposeModal({
             disabled={sending}
             className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60"
           >
-            {sending ? 'Opening…' : 'Open in email'}
+            {sending ? (onSend ? 'Sending…' : 'Opening…') : (sendLabel || (onSend ? 'Send email' : 'Open in email'))}
           </button>
         </div>
       </div>

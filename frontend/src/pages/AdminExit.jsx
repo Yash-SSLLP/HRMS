@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import MailComposeModal from '../components/MailComposeModal';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -49,6 +50,7 @@ export default function AdminExit() {
   const [detail, setDetail] = useState(null); // currently-open exit
   const [savingDetail, setSavingDetail] = useState(false);
   const [actionMsg, setActionMsg] = useState('');
+  const [mail, setMail] = useState(null); // editable compose modal payload
 
   const load = async () => {
     setLoading(true);
@@ -137,19 +139,38 @@ export default function AdminExit() {
     }
   };
 
+  // Editable preview of the exit feedback email; sending queues it server-side.
+  const openExitMail = (exitId, mailData) => {
+    setMail({
+      to: mailData.to,
+      title: 'Exit feedback email',
+      link: mailData.feedbackUrl,
+      sendLabel: 'Send email',
+      note: "Review and edit the message below — it's emailed to the employee from the company mailbox.",
+      defaultSubject: mailData.subject,
+      defaultBody: mailData.body,
+      onSend: async ({ subject, body }) => {
+        const { data } = await api.post(`/exits/${exitId}/resend-email`, { subject, body });
+        setDetail(data.exit);
+        setActionMsg('Exit email queued — the worker will attempt delivery within 30 seconds.');
+      },
+    });
+  };
+
   const complete = async () => {
     if (!window.confirm(
-      `Mark exit complete?\n\nThis will:\n• Set Date of Exit on the employee profile\n• Deactivate the user's login\n• Email a feedback link to the employee from the handling HR person`
+      `Mark exit complete?\n\nThis will:\n• Set Date of Exit on the employee profile\n• Deactivate the user's login\n• Prepare the feedback email for you to review, edit and send`
     )) return;
     try {
       const { data } = await api.patch(`/exits/${detail._id}/complete`);
       setDetail(data.exit);
       setActionMsg(
-        data.email?.queued
-          ? 'Exit completed. Feedback email queued — will be delivered shortly (worker retries on failure).'
-          : `Exit completed but email could not be queued: ${data.email?.reason || 'unknown error'}`
+        data.mail
+          ? 'Exit completed. Review the feedback email and send it.'
+          : `Exit completed${data.email?.reason ? ` — email not prepared: ${data.email.reason}` : ''}`
       );
       await load();
+      if (data.mail) openExitMail(data.exit._id, { ...data.mail, feedbackUrl: data.feedbackUrl });
     } catch (err) {
       alert(err.response?.data?.message || 'Could not complete exit');
     }
@@ -157,11 +178,10 @@ export default function AdminExit() {
 
   const resendEmail = async () => {
     try {
-      const { data } = await api.post(`/exits/${detail._id}/resend-email`);
-      setDetail(data.exit);
-      setActionMsg('Email re-queued — the worker will attempt delivery within 30 seconds.');
+      const { data } = await api.post(`/exits/${detail._id}/resend-email`, { preview: true });
+      openExitMail(detail._id, data);
     } catch (err) {
-      alert(err.response?.data?.message || 'Resend failed');
+      alert(err.response?.data?.message || 'Could not load the email');
     }
   };
 
@@ -451,8 +471,9 @@ export default function AdminExit() {
                 )}
                 {detail.status === 'Completed' && (
                   <button onClick={resendEmail}
+                    title="Preview, edit and (re)send the feedback email"
                     className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
-                    Resend Email
+                    {detail.exitEmailQueuedAt ? 'Resend Email' : 'Send Email'}
                   </button>
                 )}
               </div>
@@ -465,7 +486,7 @@ export default function AdminExit() {
                     </button>
                     <button onClick={complete}
                       className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
-                      Complete Exit & Send Email
+                      Complete Exit & Review Email
                     </button>
                   </>
                 )}
@@ -476,6 +497,8 @@ export default function AdminExit() {
           </div>
         </div>
       )}
+
+      <MailComposeModal open={!!mail} onClose={() => setMail(null)} {...(mail || {})} />
     </div>
   );
 }

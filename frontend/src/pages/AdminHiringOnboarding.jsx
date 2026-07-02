@@ -131,8 +131,11 @@ export default function AdminHiringOnboarding() {
   const saveAppt = async (e) => {
     e.preventDefault(); setSaving(true); setError('');
     try {
-      await api.post(`/recruitment/candidates/${apptCand._id}/appointment`, { ...apptForm, email: apptEmail });
+      const { data } = await api.post(`/recruitment/candidates/${apptCand._id}/appointment`, { ...apptForm });
+      const wantEmail = apptEmail;
       setApptCand(null); setApptForm(null); await load();
+      // Emailing goes through the editable compose modal, never silently.
+      if (wantEmail && data.candidate?.email && data.candidate?.appointment?.token) sendLetter(data.candidate, 'appointment');
     } catch (err) { setError(err.response?.data?.message || 'Could not generate appointment letter'); }
     finally { setSaving(false); }
   };
@@ -286,7 +289,7 @@ export default function AdminHiringOnboarding() {
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${apptCand.email ? 'text-gray-700' : 'text-gray-400'}`}>
                 <input type="checkbox" checked={apptEmail && !!apptCand.email} disabled={!apptCand.email} onChange={(e) => setApptEmail(e.target.checked)} />
-                Email the appointment letter to the candidate{!apptCand.email && ' (no email on file)'}
+                Email the appointment letter to the candidate — an editable preview opens after generating{!apptCand.email && ' (no email on file)'}
               </label>
 
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}

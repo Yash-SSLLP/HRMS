@@ -2,8 +2,10 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
+import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
+import MailComposeModal from '../components/MailComposeModal';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -51,6 +53,7 @@ export default function AdminRecruitment() {
   const [expanded, setExpanded] = useState(null);
   const [meetTimes, setMeetTimes] = useState({}); // per-round chosen datetime (keyed `${candId}:${idx}`)
   const [meetBusy, setMeetBusy] = useState(''); // key of the round whose Meet link is being created
+  const [mail, setMail] = useState(null); // editable compose modal payload
 
   // Offer-letter modal
   const [offerCand, setOfferCand] = useState(null);
@@ -156,8 +159,26 @@ export default function AdminRecruitment() {
     return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   };
 
-  // Auto-create a real Google Meet for this round and email the invite (with the
-  // link) to the candidate, the assigned interviewer, and HR.
+  // Editable preview of the interview-invite email (sent server-side from the
+  // company mailbox, résumé attached) for the given round.
+  const openInviteModal = (candId, idx, mailData, meetingLink) => {
+    setMail({
+      to: (mailData.to || []).join(', '),
+      title: 'Interview invite email',
+      link: meetingLink,
+      sendLabel: 'Send invite',
+      note: "Review and edit the invite below — it's emailed from the company mailbox to the candidate and interviewer, with the candidate's résumé attached.",
+      defaultSubject: mailData.subject,
+      defaultBody: mailData.body,
+      onSend: async ({ subject, body }) => {
+        const { data } = await api.post(`/recruitment/candidates/${candId}/round/meet/email`, { index: idx, subject, body });
+        toast.success(`Invite emailed to ${(data.mailed || []).join(', ')}`);
+      },
+    });
+  };
+
+  // Auto-create a real Google Meet for this round, then show the invite email
+  // (editable) so HR sends it only after reviewing it.
   const createMeet = async (c, idx) => {
     const key = `${c._id}:${idx}`;
     const local = meetTimes[key];
@@ -166,14 +187,24 @@ export default function AdminRecruitment() {
     if (!c.rounds?.[idx]?.interviewer && !window.confirm('No interviewer is assigned to this round, so they won\'t be invited. Continue?')) return;
     setMeetBusy(key);
     try {
-      const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet`, { index: idx, scheduledAt });
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet`, { index: idx, scheduledAt, sendEmail: false });
       await load();
-      const who = (data.mailed || data.invited || []);
-      toast.success(who.length ? `Meet created · mail sent to ${who.join(', ')}` : 'Google Meet created');
+      toast.success('Google Meet created');
+      if (data.mail?.to?.length) openInviteModal(c._id, idx, data.mail, data.meetingLink);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to create Google Meet');
     } finally {
       setMeetBusy('');
+    }
+  };
+
+  // (Re)send the invite email for a round that already has a meeting link.
+  const openInviteMail = async (c, idx) => {
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet/email`, { index: idx, preview: true });
+      openInviteModal(c._id, idx, data, c.rounds?.[idx]?.meetingLink);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load the invite email');
     }
   };
 
@@ -199,11 +230,36 @@ export default function AdminRecruitment() {
       signatoryTitle: d.signatoryTitle || '',
     });
   };
+  // Editable compose modal for the offer letter (public download link in the
+  // body); marks the offer as sent once the compose window is opened.
+  const composeOfferMail = (c) => {
+    if (!c.email || !c.offer?.token) return;
+    const link = `${window.location.origin}/letter/${c.offer.token}`;
+    setMail({
+      to: c.email,
+      title: 'Send Offer Letter',
+      link,
+      defaultSubject: `Offer Letter — ${COMPANY_NAME}`,
+      defaultBody:
+        `Dear ${c.name},\n\n` +
+        `Please find your Offer Letter from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
+        `${link}\n\n` +
+        `Kindly review the document and revert with your acceptance.\n\n` +
+        `Warm regards,`,
+      onSent: async () => {
+        await api.post(`/recruitment/candidates/${c._id}/offer/mark-sent`);
+        await load();
+      },
+    });
+  };
   const saveOffer = async (e) => {
     e.preventDefault(); setSaving(true); setError('');
     try {
-      await api.post(`/recruitment/candidates/${offerCand._id}/offer`, { ...offerForm, email: offerEmail });
+      const { data } = await api.post(`/recruitment/candidates/${offerCand._id}/offer`, { ...offerForm });
+      const wantEmail = offerEmail;
       setOfferCand(null); setOfferForm(null); await load();
+      // Emailing goes through the editable compose modal, never silently.
+      if (wantEmail && data.candidate?.email && data.candidate?.offer?.token) composeOfferMail(data.candidate);
     } catch (err) { setError(err.response?.data?.message || 'Could not generate offer letter'); }
     finally { setSaving(false); }
   };
@@ -499,12 +555,20 @@ export default function AdminRecruitment() {
                                   type="button"
                                   onClick={() => createMeet(c, idx)}
                                   disabled={meetBusy === `${c._id}:${idx}`}
-                                  title="Create a Google Meet and email the invite (with the link) to the candidate, interviewer and you"
+                                  title="Create a Google Meet for this round — you review and edit the invite email before it's sent"
                                   className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
                                 >{meetBusy === `${c._id}:${idx}` ? '…' : '＋ Meet'}</button>
                               </div>
                               {r.meetingLink && (
-                                <a href={r.meetingLink} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 text-[11px] text-blue-600 hover:underline">↗ Join meeting</a>
+                                <div className="mt-1 flex items-center gap-2">
+                                  <a href={r.meetingLink} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-600 hover:underline">↗ Join meeting</a>
+                                  <button
+                                    type="button"
+                                    onClick={() => openInviteMail(c, idx)}
+                                    title="Preview, edit and (re)send the invite email to the candidate and interviewer"
+                                    className="text-[11px] text-indigo-600 hover:underline"
+                                  >✉ Email invite</button>
+                                </div>
                               )}
                             </div>
                             {/* Audit trail: who last changed the status */}
@@ -713,7 +777,7 @@ export default function AdminRecruitment() {
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${offerCand.email ? 'text-gray-700' : 'text-gray-400'}`}>
                 <input type="checkbox" checked={offerEmail && !!offerCand.email} disabled={!offerCand.email} onChange={(e) => setOfferEmail(e.target.checked)} />
-                Email the offer letter to the candidate{!offerCand.email && ' (no email on file)'}
+                Email the offer letter to the candidate — an editable preview opens after generating{!offerCand.email && ' (no email on file)'}
               </label>
 
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -725,6 +789,8 @@ export default function AdminRecruitment() {
           </div>
         </div>
       )}
+
+      <MailComposeModal open={!!mail} onClose={() => setMail(null)} {...(mail || {})} />
     </div>
   );
 }

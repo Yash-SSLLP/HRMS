@@ -173,7 +173,9 @@ const completeExit = asyncHandler(async (req, res) => {
   exit.completedAt = new Date();
   await exit.save();
 
-  // 4) Enqueue the email — worker delivers + retries with backoff
+  // 4) Hand the feedback email to the caller for review — HR sees and can edit
+  //    the subject/body in the compose modal, then sends it through
+  //    POST /exits/:id/resend-email. Nothing is emailed silently.
   const feedbackUrl = `${APP_BASE_URL()}/exit-feedback/${exit.feedbackToken}`;
   const empEmail = profile.user?.email;
   if (!empEmail) {
@@ -192,29 +194,18 @@ const completeExit = asyncHandler(async (req, res) => {
     lastWorkingDay: exit.lastWorkingDay,
     feedbackUrl,
   });
-  const outboxRow = await enqueueMail(
-    {
-      to: empEmail,
-      subject: msg.subject,
-      text: msg.text,
-      html: msg.html,
-      replyTo: exit.handledBy?.email,
-    },
-    { type: 'exit', id: exit._id }
-  );
-
-  exit.exitEmailQueuedAt = new Date();
-  exit.exitEmailLastError = undefined;
-  await exit.save();
-
   res.json({
     exit,
-    email: { queued: true, outboxId: outboxRow._id },
+    email: { queued: false, pending: true },
     feedbackUrl,
+    mail: { to: empEmail, subject: msg.subject, body: msg.text },
   });
 });
 
-// POST /api/exits/:id/resend-email  — enqueue a fresh delivery attempt
+// POST /api/exits/:id/resend-email  { subject?, body?, preview? }
+// Preview or enqueue the exit feedback email. With preview: true it returns
+// the default recipient/subject/body for the compose modal; otherwise it
+// queues the mail, honouring any HR-edited subject/body.
 const resendExitEmail = asyncHandler(async (req, res) => {
   const exit = await ExitRequest.findById(req.params.id)
     .populate({ path: 'employee', populate: { path: 'user' } })
@@ -244,12 +235,20 @@ const resendExitEmail = asyncHandler(async (req, res) => {
     lastWorkingDay: exit.lastWorkingDay,
     feedbackUrl,
   });
+  if (req.body?.preview) {
+    return res.json({ to: empEmail, subject: msg.subject, body: msg.text, feedbackUrl });
+  }
+
+  const subject = String(req.body?.subject || '').trim() || msg.subject;
+  const customBody = String(req.body?.body || '').trim();
   const outboxRow = await enqueueMail(
     {
       to: empEmail,
-      subject: msg.subject,
-      text: msg.text,
-      html: msg.html,
+      subject,
+      text: customBody || msg.text,
+      // The branded HTML alternative is only safe when the body is unedited —
+      // what HR approved must be exactly what's delivered.
+      html: customBody ? undefined : msg.html,
       replyTo: exit.handledBy?.email,
     },
     { type: 'exit', id: exit._id }

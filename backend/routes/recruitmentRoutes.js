@@ -4,7 +4,7 @@ const {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
-  setRound, createRoundMeet, downloadResume, uploadResume,
+  setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken,
@@ -69,6 +69,7 @@ router.get('/candidates/:id/resume', downloadResume);
 router.post('/candidates/:id/resume', resumeUpload.single('resume'), uploadResume);
 router.patch('/candidates/:id/round', setRound);
 router.post('/candidates/:id/round/meet', createRoundMeet);
+router.post('/candidates/:id/round/meet/email', sendRoundMeetEmail);
 
 // Pre-offer document collection (HR)
 router.post('/candidates/:id/documents/request', requestDocuments);

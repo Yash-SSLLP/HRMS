@@ -30,6 +30,8 @@ const roundSchema = new mongoose.Schema(
     meetingLink: { type: String, trim: true },
     // Google Calendar event id backing an auto-created Meet link, if any.
     meetEventId: { type: String, trim: true },
+    // Planned duration of the interview slot (used in the invite email).
+    meetDurationMinutes: { type: Number },
     // Who last changed this round's status (+ full change history).
     decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     decidedByName: { type: String, trim: true },

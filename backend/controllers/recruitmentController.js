@@ -290,10 +290,71 @@ const setRound = asyncHandler(async (req, res) => {
   res.json({ candidate });
 });
 
-// POST /api/recruitment/candidates/:id/round/meet  { index, scheduledAt?, durationMinutes? }
-// Auto-creates a real Google Meet link (via Calendar API) for the round and
-// emails the invite to the candidate, the assigned interviewer, and HR (the
-// caller) — Google sends the calendar invite with the Meet link to all of them.
+// Default invite email (subject + plain-text body) for a round's meeting link.
+// Built server-side so the compose modal shows exactly what would be sent.
+function buildMeetInviteMail(candidate, round, idx) {
+  const roundLabel = round.label || `Round ${idx + 1}`;
+  const durationMin = round.meetDurationMinutes || 45;
+  const when = round.scheduledAt
+    ? new Date(round.scheduledAt).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata', weekday: 'long', day: '2-digit', month: 'long',
+        year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+      })
+    : null;
+  const roleLine = candidate.job?.title ? ` for the ${candidate.job.title} role` : '';
+  const subject = `Interview scheduled: ${candidate.name}${candidate.job?.title ? ` — ${candidate.job.title}` : ''} (${roundLabel})`;
+  const body = [
+    `Hello,`,
+    ``,
+    `This is to confirm the ${roundLabel} interview${roleLine}.`,
+    ``,
+    `Candidate   : ${candidate.name}`,
+    round.interviewerName ? `Interviewer : ${round.interviewerName}` : null,
+    when ? `Date & time : ${when} (IST)` : null,
+    `Duration    : ${durationMin} minutes`,
+    ``,
+    `Join the meeting: ${round.meetingLink}`,
+    ``,
+    `The candidate's résumé is attached for reference.`,
+    ``,
+    `Regards,`,
+    `${COMPANY.name || 'HR'} — Talent Acquisition`,
+  ].filter((l) => l !== null).join('\n');
+  return { subject, body };
+}
+
+// The candidate's résumé as an outbox attachment (DB bytes preferred, legacy
+// on-disk file as fallback). Null when no résumé is on file.
+function resumeAttachment(candidate) {
+  const filename = candidate.resumeName || `${String(candidate.name || 'candidate').replace(/\s+/g, '_')}_resume.pdf`;
+  if (candidate.resumeData && candidate.resumeData.length) {
+    return {
+      filename,
+      content: candidate.resumeData.toString('base64'),
+      contentType: candidate.resumeContentType || 'application/pdf',
+    };
+  }
+  if (candidate.resumePath) return { filename, storagePath: candidate.resumePath };
+  return null;
+}
+
+// Recipients of the invite email: the candidate + the assigned interviewer.
+async function meetInviteRecipients(candidate, round) {
+  const to = [];
+  if (candidate.email) to.push(candidate.email);
+  if (round.interviewer) {
+    const iv = await User.findById(round.interviewer).select('email');
+    if (iv?.email) to.push(iv.email);
+  }
+  return to;
+}
+
+// POST /api/recruitment/candidates/:id/round/meet  { index, scheduledAt?, durationMinutes?, sendEmail? }
+// Auto-creates a real Google Meet link (via Calendar API) for the round —
+// Google sends the calendar invite with the Meet link to all attendees.
+// With sendEmail !== false it also emails the branded invite right away;
+// pass sendEmail: false to review/edit that email first (the response's
+// `mail` object holds the editable defaults for the compose modal).
 const createRoundMeet = asyncHandler(async (req, res) => {
   if (!googleCalendar.isConfigured()) {
     res.status(503);
@@ -332,13 +393,8 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   const end = new Date(start.getTime() + durationMin * 60 * 1000);
 
   // Attendees: candidate, assigned interviewer (look up their email), and HR (caller).
-  const attendees = [];
-  let interviewerEmail = '';
-  if (candidate.email) attendees.push(candidate.email);
-  if (round.interviewer) {
-    const iv = await User.findById(round.interviewer).select('email');
-    if (iv?.email) { interviewerEmail = iv.email; attendees.push(iv.email); }
-  }
+  const mailTo = await meetInviteRecipients(candidate, round);
+  const attendees = [...mailTo];
   if (req.user?.email) attendees.push(req.user.email);
 
   const roundLabel = round.label || `Round ${idx + 1}`;
@@ -365,52 +421,26 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   round.meetingLink = result.meetingLink;
   round.meetEventId = result.eventId;
   round.scheduledAt = start;
+  round.meetDurationMinutes = durationMin;
   await candidate.save();
 
-  // Also send a branded email to the candidate + interviewer with the Meet link
-  // and the candidate's résumé attached. Best-effort — never fail the request.
-  const mailedTo = [candidate.email, interviewerEmail].filter(Boolean);
-  if (mailedTo.length) {
+  // The branded invite email (Meet link + résumé attached) for the candidate
+  // and interviewer. Sent right away unless the caller wants to review it
+  // first (sendEmail: false) — the defaults are returned either way.
+  const mailDefaults = buildMeetInviteMail(candidate, round, idx);
+  const sendEmail = req.body.sendEmail !== false;
+  const mailedTo = sendEmail ? mailTo : [];
+  if (sendEmail && mailTo.length) {
     try {
-      const when = start.toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata', weekday: 'long', day: '2-digit', month: 'long',
-        year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
-      });
-      const roleLine = candidate.job?.title ? ` for the ${candidate.job.title} role` : '';
-      const subject = `Interview scheduled: ${candidate.name}${candidate.job?.title ? ` — ${candidate.job.title}` : ''} (${roundLabel})`;
-      const text = [
-        `Hello,`,
-        ``,
-        `This is to confirm the ${roundLabel} interview${roleLine}.`,
-        ``,
-        `Candidate   : ${candidate.name}`,
-        round.interviewerName ? `Interviewer : ${round.interviewerName}` : null,
-        `Date & time : ${when} (IST)`,
-        `Duration    : ${durationMin} minutes`,
-        ``,
-        `Join Google Meet: ${result.meetingLink}`,
-        ``,
-        `The candidate's résumé is attached for reference.`,
-        ``,
-        `Regards,`,
-        `${COMPANY.name || 'HR'} — Talent Acquisition`,
-      ].filter((l) => l !== null).join('\n');
-
-      // Attach the résumé: DB-stored bytes inline, else the legacy on-disk file.
-      const attachments = [];
-      const resumeName = candidate.resumeName || `${candidate.name.replace(/\s+/g, '_')}_resume.pdf`;
-      if (candidate.resumeData && candidate.resumeData.length) {
-        attachments.push({
-          filename: resumeName,
-          content: candidate.resumeData.toString('base64'),
-          contentType: candidate.resumeContentType || 'application/pdf',
-        });
-      } else if (candidate.resumePath) {
-        attachments.push({ filename: resumeName, storagePath: candidate.resumePath });
-      }
-
+      const attachment = resumeAttachment(candidate);
       await enqueueMail(
-        { to: mailedTo, subject, text, replyTo: req.user?.email, attachments },
+        {
+          to: mailTo,
+          subject: mailDefaults.subject,
+          text: mailDefaults.body,
+          replyTo: req.user?.email,
+          attachments: attachment ? [attachment] : [],
+        },
         { type: 'recruitment', id: candidate._id }
       );
     } catch (err) {
@@ -418,7 +448,58 @@ const createRoundMeet = asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ candidate, meetingLink: result.meetingLink, invited: attendees, mailed: mailedTo });
+  res.json({
+    candidate,
+    meetingLink: result.meetingLink,
+    invited: attendees,
+    mailed: mailedTo,
+    mail: { to: mailTo, subject: mailDefaults.subject, body: mailDefaults.body },
+  });
+});
+
+// POST /api/recruitment/candidates/:id/round/meet/email  { index, subject?, body?, preview? }
+// Preview or send the interview-invite email for a round that already has a
+// meeting link (auto-created or pasted). HR/admin sees and can edit the exact
+// subject + body in the compose modal before it goes out; empty fields fall
+// back to the defaults. The candidate's résumé is attached.
+const sendRoundMeetEmail = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id)
+    .select('+resumeData')
+    .populate('job', 'title');
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const idx = Number(req.body.index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= candidate.rounds.length) {
+    res.status(400);
+    throw new Error('Invalid round index');
+  }
+  const round = candidate.rounds[idx];
+  if (!round.meetingLink) {
+    res.status(400);
+    throw new Error('This round has no meeting link yet — create or paste one first.');
+  }
+
+  const to = await meetInviteRecipients(candidate, round);
+  if (!to.length) {
+    res.status(400);
+    throw new Error('Neither the candidate nor the assigned interviewer has an email on file.');
+  }
+
+  const defaults = buildMeetInviteMail(candidate, round, idx);
+  if (req.body.preview) {
+    return res.json({ to, subject: defaults.subject, body: defaults.body });
+  }
+
+  const subject = String(req.body.subject || '').trim() || defaults.subject;
+  const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
+  const attachment = resumeAttachment(candidate);
+  await enqueueMail(
+    { to, subject, text: body, replyTo: req.user?.email, attachments: attachment ? [attachment] : [] },
+    { type: 'recruitment', id: candidate._id }
+  );
+  res.json({ mailed: to });
 });
 
 // GET /api/recruitment/candidates/:id/resume — serve the resume (HR auth).
@@ -969,7 +1050,7 @@ module.exports = {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
-  setRound, createRoundMeet, downloadResume, uploadResume,
+  setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken,
