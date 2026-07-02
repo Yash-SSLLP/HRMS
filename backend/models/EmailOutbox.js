@@ -20,12 +20,15 @@ const emailOutboxSchema = new mongoose.Schema(
     from: String,
     replyTo: String,
 
-    // Optional attachments — files already on storage (UPLOAD_DIR-relative path).
-    // The worker streams them from disk at send time so the DB stays light.
+    // Optional attachments. Either reference a file on storage (storagePath —
+    // streamed from disk at send time so the DB stays light) OR embed the bytes
+    // inline as base64 in `content` (used for DB-stored files like résumés that
+    // have no storage path).
     attachments: [
       {
         filename: String,
         storagePath: String,
+        content: String, // base64-encoded bytes when there is no storagePath
         contentType: String,
       },
     ],

@@ -302,7 +302,9 @@ const createRoundMeet = asyncHandler(async (req, res) => {
     );
   }
 
-  const candidate = await Candidate.findById(req.params.id).populate('job', 'title');
+  const candidate = await Candidate.findById(req.params.id)
+    .select('+resumeData')
+    .populate('job', 'title');
   if (!candidate) {
     res.status(404);
     throw new Error('Candidate not found');
@@ -331,10 +333,11 @@ const createRoundMeet = asyncHandler(async (req, res) => {
 
   // Attendees: candidate, assigned interviewer (look up their email), and HR (caller).
   const attendees = [];
+  let interviewerEmail = '';
   if (candidate.email) attendees.push(candidate.email);
   if (round.interviewer) {
     const iv = await User.findById(round.interviewer).select('email');
-    if (iv?.email) attendees.push(iv.email);
+    if (iv?.email) { interviewerEmail = iv.email; attendees.push(iv.email); }
   }
   if (req.user?.email) attendees.push(req.user.email);
 
@@ -364,7 +367,58 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   round.scheduledAt = start;
   await candidate.save();
 
-  res.json({ candidate, meetingLink: result.meetingLink, invited: attendees });
+  // Also send a branded email to the candidate + interviewer with the Meet link
+  // and the candidate's résumé attached. Best-effort — never fail the request.
+  const mailedTo = [candidate.email, interviewerEmail].filter(Boolean);
+  if (mailedTo.length) {
+    try {
+      const when = start.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata', weekday: 'long', day: '2-digit', month: 'long',
+        year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+      });
+      const roleLine = candidate.job?.title ? ` for the ${candidate.job.title} role` : '';
+      const subject = `Interview scheduled: ${candidate.name}${candidate.job?.title ? ` — ${candidate.job.title}` : ''} (${roundLabel})`;
+      const text = [
+        `Hello,`,
+        ``,
+        `This is to confirm the ${roundLabel} interview${roleLine}.`,
+        ``,
+        `Candidate   : ${candidate.name}`,
+        round.interviewerName ? `Interviewer : ${round.interviewerName}` : null,
+        `Date & time : ${when} (IST)`,
+        `Duration    : ${durationMin} minutes`,
+        ``,
+        `Join Google Meet: ${result.meetingLink}`,
+        ``,
+        `The candidate's résumé is attached for reference.`,
+        ``,
+        `Regards,`,
+        `${COMPANY.name || 'HR'} — Talent Acquisition`,
+      ].filter((l) => l !== null).join('\n');
+
+      // Attach the résumé: DB-stored bytes inline, else the legacy on-disk file.
+      const attachments = [];
+      const resumeName = candidate.resumeName || `${candidate.name.replace(/\s+/g, '_')}_resume.pdf`;
+      if (candidate.resumeData && candidate.resumeData.length) {
+        attachments.push({
+          filename: resumeName,
+          content: candidate.resumeData.toString('base64'),
+          contentType: candidate.resumeContentType || 'application/pdf',
+        });
+      } else if (candidate.resumePath) {
+        attachments.push({ filename: resumeName, storagePath: candidate.resumePath });
+      }
+
+      await enqueueMail(
+        { to: mailedTo, subject, text, replyTo: req.user?.email, attachments },
+        { type: 'recruitment', id: candidate._id }
+      );
+    } catch (err) {
+      console.error('Interview meet email failed:', err.message);
+    }
+  }
+
+  res.json({ candidate, meetingLink: result.meetingLink, invited: attendees, mailed: mailedTo });
 });
 
 // GET /api/recruitment/candidates/:id/resume — serve the resume (HR auth).

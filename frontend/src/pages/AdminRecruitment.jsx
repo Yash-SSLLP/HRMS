@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
@@ -104,7 +105,7 @@ export default function AdminRecruitment() {
   const removeJob = async (j) => {
     if (!window.confirm(`Delete job "${j.title}" and its candidates?`)) return;
     try { await api.delete(`/recruitment/jobs/${j._id}`); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   const shareLink = (j) => `${window.location.origin}/apply/${j._id}`;
@@ -136,16 +137,16 @@ export default function AdminRecruitment() {
   const removeCand = async (c) => {
     if (!window.confirm(`Delete candidate "${c.name}"?`)) return;
     try { await api.delete(`/recruitment/candidates/${c._id}`); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   const setStage = async (c, stage) => {
     try { await api.put(`/recruitment/candidates/${c._id}`, { stage }); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Update failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Update failed'); }
   };
   const setRound = async (c, index, patch) => {
     try { await api.patch(`/recruitment/candidates/${c._id}/round`, { index, ...patch }); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Round update failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Round update failed'); }
   };
 
   // An ISO/Date → value for a <input type="datetime-local"> (in local time).
@@ -167,10 +168,10 @@ export default function AdminRecruitment() {
     try {
       const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet`, { index: idx, scheduledAt });
       await load();
-      const who = (data.invited || []).join(', ') || 'no valid email addresses';
-      alert(`Google Meet created and invite sent to: ${who}\n\n${data.meetingLink}`);
+      const who = (data.mailed || data.invited || []);
+      toast.success(who.length ? `Meet created · mail sent to ${who.join(', ')}` : 'Google Meet created');
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to create Google Meet');
+      toast.error(err.response?.data?.message || 'Failed to create Google Meet');
     } finally {
       setMeetBusy('');
     }
@@ -208,11 +209,11 @@ export default function AdminRecruitment() {
   };
   const onboard = async (c) => {
     try { await api.post(`/recruitment/candidates/${c._id}/onboard`); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Could not onboard'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Could not onboard'); }
   };
   const downloadOffer = (c) =>
     downloadFile(`/recruitment/candidates/${c._id}/offer/pdf`, c.offer?.letterName || 'offer-letter.pdf')
-      .catch((err) => alert(err.response?.data?.message || 'Download failed'));
+      .catch((err) => toast.error(err.response?.data?.message || 'Download failed'));
 
   // ----- Candidate documents -----
   const docLink = (c) => `${window.location.origin}/submit-documents/${c.documents?.token || ''}`;
@@ -222,7 +223,7 @@ export default function AdminRecruitment() {
     try {
       const { data } = await api.post(`/recruitment/candidates/${c._id}/documents/request`);
       setDocsCand(data.candidate); await load();
-    } catch (err) { alert(err.response?.data?.message || 'Could not generate link'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Could not generate link'); }
     finally { setDocsBusy(false); }
   };
   const copyDocLink = async (c) => {
@@ -236,7 +237,7 @@ export default function AdminRecruitment() {
     try {
       const { data } = await api.post(`/recruitment/candidates/${c._id}/documents/confirm`);
       setDocsCand(data.candidate); await load();
-    } catch (err) { alert(err.response?.data?.message || 'Could not confirm submission'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Could not confirm submission'); }
     finally { setDocsBusy(false); }
   };
   const viewDoc = async (c, fileId) => {
@@ -245,7 +246,7 @@ export default function AdminRecruitment() {
       const url = URL.createObjectURL(res.data);
       window.open(url, '_blank', 'noopener');
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (err) { alert(err.response?.data?.message || 'Could not open document'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Could not open document'); }
   };
   const viewResume = async (c) => {
     try {
@@ -253,7 +254,7 @@ export default function AdminRecruitment() {
       const url = URL.createObjectURL(res.data);
       window.open(url, '_blank', 'noopener');
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (err) { alert(err.response?.data?.message || 'No resume on file'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'No resume on file'); }
   };
 
   // Resume upload/replace: a single hidden file input shared by every row.
@@ -273,7 +274,7 @@ export default function AdminRecruitment() {
       await api.post(`/recruitment/candidates/${id}/resume`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Resume upload failed');
+      toast.error(err.response?.data?.message || 'Resume upload failed');
     } finally {
       setResumeBusyId(null);
       setResumeTarget(null);

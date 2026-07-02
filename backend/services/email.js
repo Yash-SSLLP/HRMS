@@ -12,16 +12,18 @@ const nodemailer = require('nodemailer');
 const EmailOutbox = require('../models/EmailOutbox');
 const storage = require('./storage');
 
-// Map outbox attachment refs to nodemailer attachments, streaming from storage.
+// Map outbox attachment refs to nodemailer attachments. Prefers a storage path
+// (streamed from disk), else uses inline base64 bytes embedded in `content`.
 function buildAttachments(attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return undefined;
-  return attachments
-    .filter((a) => a && a.storagePath)
+  const out = attachments
+    .filter((a) => a && (a.storagePath || a.content))
     .map((a) => ({
       filename: a.filename || 'attachment',
-      content: storage.readStream(a.storagePath),
+      content: a.storagePath ? storage.readStream(a.storagePath) : Buffer.from(a.content, 'base64'),
       contentType: a.contentType || undefined,
     }));
+  return out.length ? out : undefined;
 }
 
 let cachedTransporter;
