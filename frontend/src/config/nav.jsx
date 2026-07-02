@@ -49,6 +49,7 @@ export const adminNav = [
   ] },
   { group: 'Payroll & Compensation', items: [
     { to: '/admin/payroll', label: 'Payroll', icon: FiDollarSign },
+    { to: '/admin/payroll-run', label: 'Monthly Payroll Run', icon: FiRepeat },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders },
     { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent },

@@ -43,18 +43,19 @@ export default function AdminAttendanceMonth() {
     // eslint-disable-next-line
   }, []);
 
-  const load = async () => {
-    if (!employee) return;
+  const load = async (emp = employee) => {
+    if (!emp) return;
     setLoading(true); setError('');
     try {
-      const { data } = await api.get(`/attendance/month-summary?employee=${employee}&year=${year}&month=${month}`);
+      const { data } = await api.get(`/attendance/month-summary?employee=${emp}&year=${year}&month=${month}`);
       setData(data);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
       setData(null);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [employee, year, month]);
+  // Load once when the employee list arrives; after that, filters apply on OK.
+  useEffect(() => { if (employee && !data) load(employee); /* eslint-disable-next-line */ }, [employee]);
 
   const s = data?.summary;
   const barTotal = s ? Math.max(s.workingDays, s.onTime + s.late + s.leave, 1) : 1;
@@ -140,6 +141,10 @@ export default function AdminAttendanceMonth() {
         <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
           {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
         </select>
+        <button onClick={() => load()} disabled={loading || !employee}
+          className="px-5 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+          {loading ? 'Loading…' : 'OK'}
+        </button>
       </div>
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -150,7 +155,7 @@ export default function AdminAttendanceMonth() {
           {/* Summary card — mirrors the mobile-style month header */}
           <div className="bg-white shadow rounded-xl p-5 mb-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-lg font-bold text-gray-900">{MONTHS[month - 1]} {year}</h2>
+              <h2 className="text-lg font-bold text-gray-900">{MONTHS[data.month - 1]} {data.year}</h2>
               <span className="text-sm text-gray-500">{s.workingDays} Working Days</span>
             </div>
             <div className="flex h-2 rounded-full overflow-hidden bg-gray-200 mt-3">

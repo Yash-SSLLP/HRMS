@@ -125,6 +125,117 @@ const exportPayroll = asyncHandler(async (req, res) => {
   res.send('﻿' + csv);
 });
 
+// ===== Monthly payroll run =====
+// "Initiate salaries" for a whole month: every active employee gets a Draft
+// payslip for the period, seeded from their most recent payslip (new joiners
+// get a blank draft for HR to fill in). Preview with GET, execute with POST.
+
+async function buildRunRows(year, month) {
+  const profiles = await EmployeeProfile.find()
+    .select('employeeCode designation department user')
+    .populate('user', 'firstName lastName email isActive')
+    .sort('employeeCode');
+  const active = profiles.filter((p) => p.user && p.user.isActive !== false);
+
+  const existing = await Payroll.find({ payPeriodYear: year, payPeriodMonth: month });
+  const existingByEmp = new Map(existing.map((p) => [String(p.employee), p]));
+
+  // Most recent payslip per employee from any earlier period (small-org scale).
+  const priorSlips = await Payroll.find({
+    $or: [
+      { payPeriodYear: { $lt: year } },
+      { payPeriodYear: year, payPeriodMonth: { $lt: month } },
+    ],
+  }).sort({ payPeriodYear: -1, payPeriodMonth: -1 });
+  const lastByEmp = new Map();
+  priorSlips.forEach((p) => {
+    const k = String(p.employee);
+    if (!lastByEmp.has(k)) lastByEmp.set(k, p);
+  });
+
+  return active.map((p) => {
+    const k = String(p._id);
+    const cur = existingByEmp.get(k);
+    const last = lastByEmp.get(k);
+    return {
+      profile: p,
+      existing: cur || null,
+      last: last || null,
+      row: {
+        employeeId: p._id,
+        employeeCode: p.employeeCode,
+        name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim(),
+        designation: p.designation || '',
+        department: p.department || '',
+        existingStatus: cur ? cur.status : null,
+        source: last ? `${MONTH_NAMES[last.payPeriodMonth]} ${last.payPeriodYear}` : null,
+        lastNetPay: last ? last.netPay : null,
+      },
+    };
+  });
+}
+
+// GET /api/payroll/run?year=&month=  — preview who gets what
+const previewPayrollRun = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const rows = await buildRunRows(year, month);
+  res.json({
+    year,
+    month,
+    count: rows.length,
+    alreadyGenerated: rows.filter((r) => r.existing).length,
+    toGenerate: rows.filter((r) => !r.existing).length,
+    rows: rows.map((r) => r.row),
+  });
+});
+
+// POST /api/payroll/run  { year, month }  — create the Draft payslips
+const runPayroll = asyncHandler(async (req, res) => {
+  const year = Number(req.body.year);
+  const month = Number(req.body.month);
+  if (!year || !month || month < 1 || month > 12) {
+    res.status(400);
+    throw new Error('A valid year and month are required');
+  }
+
+  const rows = await buildRunRows(year, month);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const created = [];
+  const blank = [];
+  for (const r of rows) {
+    if (r.existing) continue; // never overwrite an existing payslip
+    const seed = r.last;
+    const payslip = await Payroll.create({
+      employee: r.profile._id,
+      payPeriodYear: year,
+      payPeriodMonth: month,
+      workingDays: daysInMonth,
+      paidDays: daysInMonth,
+      lopDays: 0,
+      earnings: seed ? seed.earnings?.toObject?.() || seed.earnings : {},
+      deductions: seed ? seed.deductions?.toObject?.() || seed.deductions : {},
+      employerContributions: seed ? seed.employerContributions?.toObject?.() || seed.employerContributions : {},
+      status: 'Draft',
+      remarks: seed
+        ? `Payroll run: copied from ${MONTH_NAMES[seed.payPeriodMonth]} ${seed.payPeriodYear}`
+        : 'Payroll run: no earlier payslip — set the salary components',
+    });
+    created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
+    if (!seed) blank.push(r.row.name);
+  }
+
+  res.status(201).json({
+    year,
+    month,
+    created: created.length,
+    skippedExisting: rows.filter((r) => r.existing).length,
+    needsSetup: blank,
+    payslips: created,
+  });
+});
+
 // GET /api/payroll/:id  (HR/Admin)
 const getPayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id).populate({
@@ -376,6 +487,8 @@ module.exports = {
   getMyPayslip,
   listPayslips,
   exportPayroll,
+  previewPayrollRun,
+  runPayroll,
   getPayslip,
   createPayslip,
   updatePayslip,

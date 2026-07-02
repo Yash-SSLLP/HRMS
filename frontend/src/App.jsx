@@ -19,6 +19,7 @@ const AdminDashboard = lazy(() => import('./pages/AdminDashboard.jsx'));
 const AdminEmployees = lazy(() => import('./pages/AdminEmployees.jsx'));
 const AdminEmployeeDetail = lazy(() => import('./pages/AdminEmployeeDetail.jsx'));
 const AdminPayroll = lazy(() => import('./pages/AdminPayroll.jsx'));
+const AdminPayrollRun = lazy(() => import('./pages/AdminPayrollRun.jsx'));
 const AdminLeave = lazy(() => import('./pages/AdminLeave.jsx'));
 const AdminAttendance = lazy(() => import('./pages/AdminAttendance.jsx'));
 const AdminAttendanceReport = lazy(() => import('./pages/AdminAttendanceReport.jsx'));
@@ -154,6 +155,7 @@ export default function App() {
         <Route path="roster" element={<AdminRoster />} />
         <Route path="regularizations" element={<AdminRegularizations />} />
         <Route path="payroll" element={<AdminPayroll />} />
+        <Route path="payroll-run" element={<AdminPayrollRun />} />
         <Route path="salary-structures" element={<AdminSalaryStructures />} />
         <Route path="loans" element={<AdminLoans />} />
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
