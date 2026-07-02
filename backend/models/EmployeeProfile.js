@@ -115,6 +115,11 @@ const employeeProfileSchema = new mongoose.Schema(
     // governed by the OrgMaster catalogue managed under Admin → Org Masters).
     grade: { type: String, trim: true },
 
+    // Salary setup used by the monthly payroll run: earnings are computed from
+    // the assigned structure's component percentages applied to the annual CTC.
+    salaryStructure: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryStructure' },
+    annualCtc: { type: Number, min: 0 },
+
     // HR/Admin manual override: marks the employee's document set as fully
     // submitted regardless of which categories were uploaded.
     documentsVerified: { type: Boolean, default: false },

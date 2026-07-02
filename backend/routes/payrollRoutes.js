@@ -17,6 +17,8 @@ const {
   exportPayroll,
   previewPayrollRun,
   runPayroll,
+  previewEmployeeRun,
+  runEmployeePayroll,
 } = require('../controllers/payrollController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
@@ -42,6 +44,7 @@ router.route('/')
 
 router.get('/export', exportPayroll);
 router.route('/run').get(previewPayrollRun).post(runPayroll);
+router.route('/run-employee').get(previewEmployeeRun).post(runEmployeePayroll);
 
 router.route('/:id')
   .get(getPayslip)

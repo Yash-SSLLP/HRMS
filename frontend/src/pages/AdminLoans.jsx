@@ -27,14 +27,18 @@ export default function AdminLoans() {
   const load = async () => {
     setLoading(true);
     setError('');
-    try {
-      const q = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
-      const [lRes, uRes] = await Promise.all([api.get(`/loans${q}`), api.get('/admin/users')]);
-      setLoans(lRes.data.loans);
-      setUsers(uRes.data.users);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to load');
-    } finally { setLoading(false); }
+    // Load the two lists independently so a failing employee lookup doesn't
+    // blank the whole page (and vice versa).
+    const q = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
+    const [lRes, uRes] = await Promise.allSettled([
+      api.get(`/loans${q}`),
+      api.get('/admin/users?active=true'),
+    ]);
+    if (lRes.status === 'fulfilled') setLoans(lRes.value.data.loans);
+    else setError(lRes.reason?.response?.data?.message || 'Failed to load loans');
+    if (uRes.status === 'fulfilled') setUsers(uRes.value.data.users);
+    else if (lRes.status === 'fulfilled') setError(uRes.reason?.response?.data?.message || 'Could not load the employee list for the form — reload and try again.');
+    setLoading(false);
   };
   useEffect(() => { load(); }, [statusFilter]);
 

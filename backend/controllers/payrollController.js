@@ -2,6 +2,9 @@ const asyncHandler = require('express-async-handler');
 const crypto = require('crypto');
 const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const Attendance = require('../models/Attendance');
+const Loan = require('../models/Loan');
+const { monthRangeIST } = require('../utils/dateHelpers');
 const { renderPayslip } = require('../services/payslipPdf');
 // (exportPayroll below builds the month CSV by hand — no spreadsheet lib needed)
 
@@ -234,6 +237,123 @@ const runPayroll = asyncHandler(async (req, res) => {
     needsSetup: blank,
     payslips: created,
   });
+});
+
+// ===== Per-employee payroll run (calendar view) =====
+// Salary comes from the employee's assigned SalaryStructure percentages ×
+// annual CTC, prorated by paid days derived from their actual punch-in/out
+// attendance for the month, with active loan/advance EMIs as deductions.
+
+async function computeEmployeeRun(profile, year, month) {
+  const { start, end } = monthRangeIST(year, month);
+  const records = await Attendance.find({ employee: profile._id, date: { $gte: start, $lt: end } });
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const count = (s) => records.filter((r) => r.status === s).length;
+  const halfDay = count('HalfDay');
+  const absent = count('Absent');
+  // Paid days: everything except Absent (full LOP) and half of each HalfDay.
+  const paidDays = +(daysInMonth - absent - 0.5 * halfDay).toFixed(1);
+  const lopDays = +(daysInMonth - paidDays).toFixed(1);
+
+  // Active loan/advance recovery for this employee (Loan.employee is the User).
+  const userId = profile.user?._id || profile.user;
+  const loans = await Loan.find({ employee: userId, status: { $in: ['Approved', 'Active'] } });
+  const loanRecovery = Math.round(loans.reduce((a, l) => a + (l.emi || 0), 0));
+
+  const st = profile.salaryStructure; // populated
+  const ctc = profile.annualCtc || 0;
+  let earnings = null;
+  if (st && ctc > 0) {
+    const c = st.components || {};
+    const factor = daysInMonth ? paidDays / daysInMonth : 1;
+    const comp = (pct) => Math.round((((pct || 0) / 100) * ctc / 12) * factor);
+    earnings = {
+      basic: comp(c.basicPct),
+      hra: comp(c.hraPct),
+      specialAllowance: comp(c.specialAllowancePct),
+      conveyanceAllowance: comp(c.conveyancePct),
+      medicalAllowance: comp(c.medicalPct),
+      lta: comp(c.ltaPct),
+    };
+  }
+  const gross = earnings ? Object.values(earnings).reduce((a, v) => a + v, 0) : 0;
+
+  return {
+    daysInMonth,
+    counts: {
+      present: count('Present'), halfDay, onLeave: count('OnLeave'),
+      absent, weeklyOff: count('WeeklyOff'), holiday: count('Holiday'),
+    },
+    paidDays, lopDays,
+    loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
+    loanRecovery,
+    earnings, gross,
+    estimatedNet: gross - loanRecovery,
+    needsSetup: !earnings,
+  };
+}
+
+// GET /api/payroll/run-employee?employee=&year=&month=
+const previewEmployeeRun = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const profile = await EmployeeProfile.findById(req.query.employee)
+    .select('employeeCode designation department user salaryStructure annualCtc')
+    .populate('user', 'firstName lastName email')
+    .populate('salaryStructure');
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  const computed = await computeEmployeeRun(profile, year, month);
+  const payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
+  res.json({ year, month, employee: profile, computed, payslip });
+});
+
+// POST /api/payroll/run-employee  { employee, year, month }
+// Create or refresh the month's Draft payslip from structure + attendance + loans.
+const runEmployeePayroll = asyncHandler(async (req, res) => {
+  const year = Number(req.body.year);
+  const month = Number(req.body.month);
+  if (!year || !month || month < 1 || month > 12) {
+    res.status(400);
+    throw new Error('A valid year and month are required');
+  }
+  const profile = await EmployeeProfile.findById(req.body.employee)
+    .populate('user', 'firstName lastName')
+    .populate('salaryStructure');
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  const computed = await computeEmployeeRun(profile, year, month);
+  if (computed.needsSetup) {
+    res.status(400);
+    throw new Error('Assign a salary structure and annual CTC to this employee first.');
+  }
+
+  let payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
+  if (payslip && ['Approved', 'Paid'].includes(payslip.status)) {
+    res.status(400);
+    throw new Error(`The ${MONTH_NAMES[month]} payslip is already ${payslip.status} — it can't be regenerated.`);
+  }
+  const fields = {
+    workingDays: computed.daysInMonth,
+    paidDays: computed.paidDays,
+    lopDays: computed.lopDays,
+    earnings: computed.earnings,
+    deductions: { ...(payslip?.deductions?.toObject?.() || {}), loanRecovery: computed.loanRecovery },
+    status: 'Draft',
+    remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${profile.annualCtc.toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`,
+  };
+  if (payslip) {
+    Object.assign(payslip, fields);
+    await payslip.save();
+  } else {
+    payslip = await Payroll.create({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month, ...fields });
+  }
+  res.status(201).json({ payslip, computed });
 });
 
 // GET /api/payroll/:id  (HR/Admin)
@@ -489,6 +609,8 @@ module.exports = {
   exportPayroll,
   previewPayrollRun,
   runPayroll,
+  previewEmployeeRun,
+  runEmployeePayroll,
   getPayslip,
   createPayslip,
   updatePayslip,
