@@ -11,6 +11,13 @@ import { fmtDate, fmtTime, fmtHours } from '../utils/format';
 
 const STATUS_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info', Holiday: 'neutral', WeekOff: 'neutral' };
 
+// GPS accuracy tuning for the punch location. The first fix a device returns is
+// usually coarse (network based); a real GPS fix converges over a few seconds,
+// so we watch briefly and keep the most accurate reading instead of trusting
+// the first one, which was recording misleading locations.
+const GPS_GOOD_ENOUGH_M = 25;   // resolve early once a fix is at least this accurate
+const GPS_MAX_WAIT_MS = 12000;  // otherwise accept the best fix within this window
+
 // Milliseconds → HH:MM:SS for the live working-time clock.
 const fmtElapsed = (ms) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -60,14 +67,41 @@ export default function AttendanceScreen() {
     return result.assets[0];
   };
 
-  // Best-effort GPS fix for the punch. Returns null if permission is denied or
-  // the location can't be read — the punch still proceeds without coordinates.
+  // Accurate GPS fix for the punch. Rather than trusting the first (coarse)
+  // reading, watch for a few seconds and keep the most accurate fix, resolving
+  // early once it is good enough. Returns null if permission is denied or no
+  // fix arrives — the punch still proceeds without coordinates.
   const getLocation = async () => {
     try {
       const perm = await Location.requestForegroundPermissionsAsync();
       if (!perm.granted) return null;
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      return pos?.coords || null;
+      return await new Promise((resolve) => {
+        let best = null;
+        let sub = null;
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          if (sub) sub.remove();
+          resolve(best);
+        };
+        const timer = setTimeout(finish, GPS_MAX_WAIT_MS);
+        Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.Highest, timeInterval: 1000, distanceInterval: 0 },
+          (pos) => {
+            const c = pos?.coords;
+            if (!c) return;
+            if (!best || (c.accuracy != null && c.accuracy < best.accuracy)) best = c;
+            if (best.accuracy != null && best.accuracy <= GPS_GOOD_ENOUGH_M) finish();
+          }
+        )
+          .then((s) => {
+            sub = s;
+            if (done) s.remove(); // max-wait already elapsed before the watch started
+          })
+          .catch(() => finish());
+      });
     } catch {
       return null;
     }
