@@ -34,6 +34,11 @@ const attendanceSchema = new mongoose.Schema(
     // Whether the punch was made while working from home
     checkInWfh: { type: Boolean, default: false },
     checkOutWfh: { type: Boolean, default: false },
+    // Captured at punch time: the punch was made beyond the office geofence and
+    // was not a WFH punch. Persisted so the violation is recorded even if the
+    // office coordinates / threshold are changed later. WFH punches are exempt.
+    checkInOutsideGeofence: { type: Boolean, default: false },
+    checkOutOutsideGeofence: { type: Boolean, default: false },
     hoursWorked: { type: Number, default: 0, min: 0 },
     // Set by the nightly auto-close worker when the day ended with a check-in
     // but no check-out ("forgot to punch out"). Cleared automatically if a

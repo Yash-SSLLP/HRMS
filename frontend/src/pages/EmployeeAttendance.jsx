@@ -16,6 +16,11 @@ const STATUS_COLORS = {
   OnLeave: 'bg-purple-100 text-purple-800',
 };
 
+// GPS accuracy tuning for the punch location watch.
+const GPS_GOOD_ENOUGH_M = 25;   // stop refining once a fix is at least this accurate
+const GPS_MAX_WAIT_MS = 15000;  // how long to keep refining before accepting the best fix
+const GPS_POOR_M = 100;         // fixes coarser than this are flagged as unreliable
+
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
 const fmtTime = (d) =>
   d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
@@ -62,9 +67,12 @@ export default function EmployeeAttendance() {
   const [camError, setCamError] = useState('');
   const [geo, setGeo] = useState(null); // { lat, lng, accuracy } captured at the punch
   const [geoError, setGeoError] = useState('');
+  const [locating, setLocating] = useState(false); // GPS watch still refining the fix
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+  const watchRef = useRef(null);   // navigator.geolocation.watchPosition id
+  const watchTimerRef = useRef(null); // max-wait timer for the watch
 
   const stopStream = () => {
     if (streamRef.current) {
@@ -87,21 +95,69 @@ export default function EmployeeAttendance() {
     }
   };
 
-  // Best-effort GPS fix for the punch. Started when the modal opens and
-  // refreshed at the moment of capture so it reflects the capture location.
+  const clearWatch = () => {
+    if (watchRef.current != null) {
+      navigator.geolocation.clearWatch(watchRef.current);
+      watchRef.current = null;
+    }
+    if (watchTimerRef.current) {
+      clearTimeout(watchTimerRef.current);
+      watchTimerRef.current = null;
+    }
+    setLocating(false);
+  };
+
+  // Acquire an *accurate* GPS fix for the punch. The first position a browser
+  // returns is usually coarse (WiFi/IP based — off by hundreds of metres to
+  // kilometres); a real GPS fix converges over a few seconds. So instead of
+  // trusting the first reading, we watch and keep the most accurate one, then
+  // stop once it is good enough or the max wait elapses. Requesting high
+  // accuracy with no cached fix (maximumAge: 0) is what avoids the misleading
+  // location that was being recorded before.
   const captureLocation = () => {
     if (!('geolocation' in navigator)) {
       setGeoError('Location is not supported on this device.');
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    setGeoError('');
+    setGeo(null);
+    clearWatch();
+    setLocating(true);
+
+    let best = null;
+    watchRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        setGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
-        setGeoError('');
+        const c = pos.coords;
+        // Keep only strictly better (more accurate) fixes as they arrive.
+        if (!best || (c.accuracy != null && c.accuracy < best.accuracy)) {
+          best = { lat: c.latitude, lng: c.longitude, accuracy: c.accuracy };
+          setGeo(best);
+        }
+        if (best.accuracy != null && best.accuracy <= GPS_GOOD_ENOUGH_M) clearWatch();
       },
-      () => setGeoError('Location permission denied. Allow location access to record your punch location.'),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      (err) => {
+        // Only surface an error if we never obtained any fix; a transient error
+        // mid-watch must not discard a good reading we already have.
+        if (!best) {
+          setGeoError(
+            err.code === err.PERMISSION_DENIED
+              ? 'Location permission denied. Allow location access in your browser to record your punch location.'
+              : 'Could not get your location. Move near a window or outdoors, then retry.'
+          );
+        }
+        clearWatch();
+      },
+      { enableHighAccuracy: true, timeout: GPS_MAX_WAIT_MS, maximumAge: 0 }
     );
+
+    // Stop refining after the max wait and accept the best fix so far. watch
+    // callbacks only fire on new positions, so this timer is the reliable stop.
+    watchTimerRef.current = setTimeout(() => {
+      if (!best) {
+        setGeoError('Could not get an accurate location. Move outdoors or near a window, then retry.');
+      }
+      clearWatch();
+    }, GPS_MAX_WAIT_MS);
   };
 
   const openCapture = (action) => {
@@ -118,6 +174,7 @@ export default function EmployeeAttendance() {
 
   const closeCapture = () => {
     stopStream();
+    clearWatch();
     if (snapshot?.url) URL.revokeObjectURL(snapshot.url);
     setSnapshot(null);
     setGeo(null);
@@ -135,7 +192,7 @@ export default function EmployeeAttendance() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capture, snapshot]);
 
-  useEffect(() => () => stopStream(), []);
+  useEffect(() => () => { stopStream(); clearWatch(); }, []);
 
   const takeSnapshot = () => {
     const video = videoRef.current;
@@ -146,9 +203,9 @@ export default function EmployeeAttendance() {
     canvas.width = w;
     canvas.height = h;
     canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-    // Re-read GPS at the instant of capture so the stored location is the
-    // location of this photo, not wherever the modal was first opened.
-    captureLocation();
+    // The GPS watch has been running (and converging) since the modal opened,
+    // so `geo` already holds the best fix for this location — no need to restart
+    // it here, which would only reset to a coarse first reading again.
     canvas.toBlob((blob) => {
       if (blob) setSnapshot({ blob, url: URL.createObjectURL(blob) });
       stopStream();
@@ -310,18 +367,40 @@ export default function EmployeeAttendance() {
 
             {/* Captured location readout */}
             {geo ? (
-              <div className="mb-3 text-xs text-gray-600 bg-gray-50 border border-gray-200 px-2 py-1.5 rounded-lg flex items-center gap-1.5">
-                <span>📍</span>
-                <a href={`https://www.google.com/maps?q=${geo.lat},${geo.lng}`} target="_blank" rel="noreferrer"
-                  className="font-mono text-blue-600 hover:underline">
-                  {geo.lat.toFixed(6)}, {geo.lng.toFixed(6)}
-                </a>
-                {geo.accuracy != null && <span className="text-gray-400">±{Math.round(geo.accuracy)} m</span>}
-              </div>
+              (() => {
+                const poor = geo.accuracy != null && geo.accuracy > GPS_POOR_M;
+                return (
+                  <div className={`mb-3 text-xs px-2 py-1.5 rounded-lg border ${
+                    poor ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200'}`}>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>📍</span>
+                      <a href={`https://www.google.com/maps?q=${geo.lat},${geo.lng}`} target="_blank" rel="noreferrer"
+                        className="font-mono text-blue-600 hover:underline">
+                        {geo.lat.toFixed(6)}, {geo.lng.toFixed(6)}
+                      </a>
+                      {geo.accuracy != null && (
+                        <span className={poor ? 'text-amber-700 font-medium' : 'text-gray-400'}>±{Math.round(geo.accuracy)} m</span>
+                      )}
+                      {locating && <span className="text-gray-400">· refining…</span>}
+                    </div>
+                    {poor && !locating && (
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span>This fix looks imprecise. Move near a window or outdoors for a better one.</span>
+                        <button type="button" onClick={() => captureLocation()}
+                          className="shrink-0 font-medium text-amber-800 underline hover:no-underline">Retry</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             ) : geoError ? (
-              <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">{geoError}</div>
+              <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg flex items-center justify-between gap-2">
+                <span>{geoError}</span>
+                <button type="button" onClick={() => captureLocation()}
+                  className="shrink-0 font-medium text-amber-800 underline hover:no-underline">Retry</button>
+              </div>
             ) : (
-              <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting your location…</div>
+              <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting an accurate location…</div>
             )}
 
             <label className="flex items-center gap-2 mb-2 text-sm text-gray-700 select-none cursor-pointer">
@@ -347,9 +426,15 @@ export default function EmployeeAttendance() {
               ) : (
                 <>
                   <button onClick={retake} className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Retake</button>
-                  <button onClick={submitPunch} disabled={busy}
+                  <button onClick={submitPunch} disabled={busy || locating || (!geo && !geoError)}
                     className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">
-                    {busy ? 'Submitting…' : `Confirm ${capture === 'checkin' ? 'Check In' : 'Check Out'}`}
+                    {busy
+                      ? 'Submitting…'
+                      : locating
+                        ? 'Refining location…'
+                        : !geo && !geoError
+                          ? 'Getting location…'
+                          : `Confirm ${capture === 'checkin' ? 'Check In' : 'Check Out'}`}
                   </button>
                 </>
               )}

@@ -51,6 +51,29 @@ function parsePunchLocation(body) {
   return { lat, lng, accuracy: Number.isFinite(accuracy) ? accuracy : undefined };
 }
 
+// Apply the Office & Geofence rule to a punch. A punch made beyond the
+// configured radius from the office (and not marked WFH) is captured as an
+// out-of-office punch — the punch is never blocked. WFH punches are exempt,
+// as they are expected to be away from the office. Returns the distance in
+// metres (or null when no location was captured) so callers can note it.
+function evaluateGeofence(loc, wfh, settings) {
+  const threshold = settings.geofenceThresholdM;
+  const distanceM = loc ? haversineMeters(settings.office, loc) : null;
+  const outside = Boolean(
+    !wfh && threshold && distanceM != null && distanceM > threshold
+  );
+  return { distanceM, outside };
+}
+
+// Append a note to a record's remarks without dropping any existing text, and
+// without duplicating the same note if the punch is retried/edited.
+function appendRemark(existing, note) {
+  const base = (existing || '').trim();
+  if (!base) return note;
+  if (base.includes(note)) return base;
+  return `${base} ${note}`;
+}
+
 // POST /api/attendance/me/checkin   (multipart: photo)
 const checkIn = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -70,6 +93,13 @@ const checkIn = asyncHandler(async (req, res) => {
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkInLocation = loc;
   record.checkInWfh = req.body.wfh === 'true';
+  // Office & Geofence rule: capture (but never block) an out-of-office punch.
+  const settings = await Setting.getSettings();
+  const { distanceM, outside } = evaluateGeofence(loc, record.checkInWfh, settings);
+  record.checkInOutsideGeofence = outside;
+  if (outside) {
+    record.remarks = appendRemark(record.remarks, `Check-in outside office (${distanceM} m).`);
+  }
   record.status = 'Present';
   await record.save();
   res.status(201).json({ record });
@@ -95,6 +125,13 @@ const checkOut = asyncHandler(async (req, res) => {
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkOutLocation = loc;
   record.checkOutWfh = req.body.wfh === 'true';
+  // Office & Geofence rule: capture (but never block) an out-of-office punch.
+  const settings = await Setting.getSettings();
+  const { distanceM, outside } = evaluateGeofence(loc, record.checkOutWfh, settings);
+  record.checkOutOutsideGeofence = outside;
+  if (outside) {
+    record.remarks = appendRemark(record.remarks, `Check-out outside office (${distanceM} m).`);
+  }
   // Allow the employee to (re)mark this day as a half day at punch-out.
   if (req.body.halfDay === 'true') record.status = 'HalfDay';
   else if (req.body.halfDay === 'false') record.status = 'Present';
