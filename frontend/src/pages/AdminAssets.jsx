@@ -84,7 +84,7 @@ export default function AdminAssets() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : assets.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No assets</td></tr>
             ) : assets.map((a) => (
@@ -92,7 +92,7 @@ export default function AdminAssets() {
                 <td className="px-4 py-3 font-medium text-gray-900">{a.name}<div className="text-xs text-gray-500">{a.serialNumber}</div></td>
                 <td className="px-4 py-3 font-mono text-xs">{a.assetTag}</td>
                 <td className="px-4 py-3 text-gray-600">{a.category}</td>
-                <td className="px-4 py-3">{a.assignedTo ? `${a.assignedTo.firstName} ${a.assignedTo.lastName}` : '—'}</td>
+                <td className="px-4 py-3">{a.assignedTo ? `${a.assignedTo.firstName} ${a.assignedTo.lastName}` : '-'}</td>
                 <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[a.status]}`}>{a.status}</span></td>
                 <td className="px-4 py-3 text-right space-x-2">
                   <button onClick={() => { setAssignFor(a); setAssignUser(a.assignedTo?._id || ''); }} className="text-emerald-700 hover:underline">{a.assignedTo ? 'Reassign' : 'Assign'}</button>
@@ -135,7 +135,7 @@ export default function AdminAssets() {
             <p className="text-xs text-gray-500 mb-4">Choose an employee, or leave blank to return the asset to stock.</p>
             <form onSubmit={doAssign} className="space-y-3">
               <select value={assignUser} onChange={(e) => setAssignUser(e.target.value)} className="block w-full border rounded-lg px-3 py-2">
-                <option value="">— Return to stock —</option>
+                <option value="">Return to stock</option>
                 {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
               </select>
               <div className="flex justify-end gap-2 pt-2">

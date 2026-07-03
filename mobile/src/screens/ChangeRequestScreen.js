@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, Pill, Loader, EmptyState, refresher, SectionHeader, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, Pill, Loader, EmptyState, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
 import { timeAgo } from '../utils/format';
 
 const STATUS_TONE = { Pending: 'warning', Approved: 'success', Rejected: 'danger' };
@@ -52,7 +52,7 @@ export default function ChangeRequestScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading requests" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

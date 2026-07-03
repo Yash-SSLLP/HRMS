@@ -10,9 +10,9 @@ const STATUS_STYLES = {
 };
 
 const fmtDate = (d) => {
-  if (!d) return '—';
+  if (!d) return '-';
   const date = new Date(d);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleDateString();
 };
 
@@ -88,7 +88,7 @@ export default function AdminConfirmations() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : items.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No employees</td></tr>
             ) : items.map((row) => {
@@ -100,9 +100,9 @@ export default function AdminConfirmations() {
               return (
                 <tr key={row._id}>
                   <td className="px-4 py-3 font-medium text-gray-900">{row.name}<div className="text-xs font-mono text-gray-500">{row.employeeCode}</div></td>
-                  <td className="px-4 py-3 text-gray-600">{[row.designation, row.department].filter(Boolean).join(' · ') || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{[row.designation, row.department].filter(Boolean).join(' · ') || '-'}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(row.dateOfJoining)}</td>
-                  <td className="px-4 py-3 text-gray-600">{row.probationMonths != null ? `${row.probationMonths} mo` : '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{row.probationMonths != null ? `${row.probationMonths} mo` : '-'}</td>
                   <td className={`px-4 py-3 ${dueClass}`}>
                     {fmtDate(row.dueDate)}
                     {flagged && <div className="text-xs">{days < 0 ? `${Math.abs(days)}d overdue` : `in ${days}d`}</div>}

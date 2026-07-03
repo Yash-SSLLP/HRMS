@@ -11,7 +11,7 @@ const DOC_STATUS_STYLES = {
 };
 
 const fmtDate = (d) =>
-  d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 
 function initials(p) {
   const a = (p?.user?.firstName || '')[0] || '';
@@ -23,7 +23,7 @@ function Field({ label, value }) {
   return (
     <div>
       <dt className="text-xs uppercase tracking-wide text-gray-400">{label}</dt>
-      <dd className="text-sm text-gray-800 mt-0.5">{value || <span className="text-gray-400">—</span>}</dd>
+      <dd className="text-sm text-gray-800 mt-0.5">{value || <span className="text-gray-400">-</span>}</dd>
     </div>
   );
 }
@@ -142,7 +142,7 @@ export default function AdminEmployeeDetail() {
 
   return (
     <div>
-      <PageHeader title={fullName(u) || profile.employeeCode} subtitle={`${profile.designation || '—'} · ${profile.department || '—'}`}>
+      <PageHeader title={fullName(u) || profile.employeeCode} subtitle={`${profile.designation || '-'} · ${profile.department || '-'}`}>
         <Link to="/admin/employees" className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">← All employees</Link>
       </PageHeader>
 
@@ -152,9 +152,9 @@ export default function AdminEmployeeDetail() {
           {initials(profile)}
         </span>
         <div className="min-w-0">
-          <div className="text-lg font-semibold text-gray-900">{fullName(u) || '—'}</div>
+          <div className="text-lg font-semibold text-gray-900">{fullName(u) || '-'}</div>
           <div className="text-sm text-gray-500">
-            <span className="font-mono">{profile.employeeCode}</span> · {u.email || '—'}
+            <span className="font-mono">{profile.employeeCode}</span> · {u.email || '-'}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${u.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
@@ -163,7 +163,7 @@ export default function AdminEmployeeDetail() {
             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${CONFIRM_BADGE[profile.confirmationStatus] || 'bg-gray-100 text-gray-700'}`}>
               {profile.confirmationStatus || 'Probation'}
             </span>
-            <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-gray-100 text-gray-700">{profile.employmentType || '—'}</span>
+            <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-gray-100 text-gray-700">{profile.employmentType || '-'}</span>
           </div>
         </div>
       </div>

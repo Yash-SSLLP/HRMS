@@ -8,7 +8,7 @@ function Field({ label, value, mono }) {
   return (
     <div>
       <dt className="text-xs uppercase tracking-wide text-gray-500">{label}</dt>
-      <dd className={`text-sm text-gray-900 ${mono ? 'font-mono' : ''}`}>{value || '—'}</dd>
+      <dd className={`text-sm text-gray-900 ${mono ? 'font-mono' : ''}`}>{value || '-'}</dd>
     </div>
   );
 }
@@ -72,7 +72,7 @@ export default function EmployeeProfile() {
 
   return (
     <div>
-      <PageHeader title="My Profile" subtitle="To update any detail, raise a change request — your admin will review it.">
+      <PageHeader title="My Profile" subtitle="To update any detail, raise a change request · your admin will review it.">
         <Link
           to="/employee/account"
           className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700"

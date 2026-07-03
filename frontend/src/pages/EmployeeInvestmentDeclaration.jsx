@@ -10,14 +10,14 @@ const inr = new Intl.NumberFormat('en-IN', {
 
 // Section fields, in display order, with clear labels.
 const SECTION_FIELDS = [
-  { key: 'section80C', label: '80C — PF / ELSS / LIC / PPF (max 1,50,000)' },
-  { key: 'section80CCD1B', label: '80CCD(1B) — NPS (max 50,000)' },
-  { key: 'section80D', label: '80D — Medical Insurance' },
-  { key: 'section24B', label: '24B — Home Loan Interest (max 2,00,000)' },
-  { key: 'section80E', label: '80E — Education Loan Interest' },
-  { key: 'section80G', label: '80G — Donations' },
-  { key: 'hraAnnualRent', label: 'HRA — Annual Rent Paid' },
-  { key: 'ltaClaimed', label: 'LTA — Leave Travel Allowance Claimed' },
+  { key: 'section80C', label: '80C · PF / ELSS / LIC / PPF (max 1,50,000)' },
+  { key: 'section80CCD1B', label: '80CCD(1B) · NPS (max 50,000)' },
+  { key: 'section80D', label: '80D · Medical Insurance' },
+  { key: 'section24B', label: '24B · Home Loan Interest (max 2,00,000)' },
+  { key: 'section80E', label: '80E · Education Loan Interest' },
+  { key: 'section80G', label: '80G · Donations' },
+  { key: 'hraAnnualRent', label: 'HRA · Annual Rent Paid' },
+  { key: 'ltaClaimed', label: 'LTA · Leave Travel Allowance Claimed' },
   { key: 'otherDeductions', label: 'Other Deductions' },
 ];
 
@@ -144,7 +144,7 @@ export default function EmployeeInvestmentDeclaration() {
     <div>
       <PageHeader
         title="Investment Declaration"
-        subtitle="Form 12BB — declare tax-saving investments"
+        subtitle="Form 12BB · declare tax-saving investments"
       >
         <input
           type="text"

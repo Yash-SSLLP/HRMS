@@ -127,7 +127,7 @@ export default function CoursePlayerPage() {
               <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap mb-6">{active.content || 'No content.'}</div>
               <button onClick={() => markText(active, !completedSet.has(String(active._id)))} disabled={busyText}
                 className={`px-4 py-2 text-sm rounded-lg disabled:opacity-60 ${completedSet.has(String(active._id)) ? 'border hover:bg-gray-100' : 'bg-green-600 text-white hover:bg-green-700'}`}>
-                {completedSet.has(String(active._id)) ? '✓ Completed — mark unread' : 'Mark as complete'}
+                {completedSet.has(String(active._id)) ? '✓ Completed · mark unread' : 'Mark as complete'}
               </button>
             </div>
           ) : (

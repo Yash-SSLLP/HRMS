@@ -141,7 +141,7 @@ export default function AdminPayroll() {
         to: email,
         title: 'Send payslip',
         link,
-        defaultSubject: `Payslip — ${period}`,
+        defaultSubject: `Payslip · ${period}`,
         defaultBody:
           `Dear ${name || 'Employee'},\n\n` +
           `Your payslip for ${period} is ready. You can view and download it from the link below:\n\n` +
@@ -171,7 +171,7 @@ export default function AdminPayroll() {
             downloadFile(`/payroll/export?${q}`, `payroll-${filter.year}-${String(m).padStart(2, '0')}.csv`)
               .catch((err) => alert(err.response?.data?.message || 'Export failed'));
           }}
-          title={filter.month ? 'Download this month\'s payroll as an Excel-compatible sheet' : 'No month selected — exports the current month'}
+          title={filter.month ? 'Download this month\'s payroll as an Excel-compatible sheet' : 'No month selected · exports the current month'}
           className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm mr-2">
           ⬇ Download Excel
         </button>
@@ -225,7 +225,7 @@ export default function AdminPayroll() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : payslips.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No payslips</td></tr>
             ) : payslips.map((p) => (
@@ -289,7 +289,7 @@ export default function AdminPayroll() {
                     <option value="">Select…</option>
                     {employees.map((e) => (
                       <option key={e._id} value={e._id}>
-                        {e.employeeCode} — {e.user?.firstName} {e.user?.lastName}
+                        {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
                       </option>
                     ))}
                   </select>

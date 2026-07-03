@@ -6,7 +6,7 @@ import api from '../api/client';
 import ChatDock from './ChatDock';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus } from 'react-icons/fi';
+import { FiPlus, FiMinus, FiSun, FiMoon, FiBell } from 'react-icons/fi';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', Employee: 'Employee' };
@@ -206,9 +206,9 @@ function NotificationBell({ isAdmin }) {
         className="topbar-icon-btn"
         aria-label="Notifications"
       >
-        <span className="text-lg">🔔</span>
+        <FiBell size={19} strokeWidth={2} />
         {unread > 0 && (
-          <span className="absolute top-0.5 right-0.5 bg-red-600 text-white text-[10px] rounded-full px-1.5 py-0.5 leading-none">
+          <span className="bell-badge absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] px-1 bg-red-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center shadow-sm">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
@@ -326,7 +326,7 @@ function GlobalSearch() {
                     {`${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode}
                   </span>
                   <span className="block text-xs text-gray-500 truncate">
-                    {p.employeeCode} · {p.designation || '—'} · {p.department || '—'}
+                    {p.employeeCode} · {p.designation || '-'} · {p.department || '-'}
                   </span>
                 </span>
               </button>
@@ -515,7 +515,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
               title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               className="topbar-icon-btn"
             >
-              <span className="text-lg leading-none">{mode === 'dark' ? '☀️' : '🌙'}</span>
+              {mode === 'dark' ? <FiSun size={19} strokeWidth={2} /> : <FiMoon size={18} strokeWidth={2} />}
             </button>
             <NotificationBell isAdmin={isAdmin} />
             <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />

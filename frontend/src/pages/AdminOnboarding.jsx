@@ -9,7 +9,7 @@ const STATUS_STYLES = {
   InProgress: 'bg-blue-100 text-blue-800',
   Done: 'bg-green-100 text-green-800',
 };
-const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const blank = { employee: '', title: '', category: 'Other', dueDate: '', description: '' };
 
@@ -94,12 +94,12 @@ export default function AdminOnboarding() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : tasks.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No onboarding tasks</td></tr>
             ) : tasks.map((t) => (
               <tr key={t._id}>
-                <td className="px-4 py-3">{t.employee ? `${t.employee.firstName} ${t.employee.lastName}` : '—'}</td>
+                <td className="px-4 py-3">{t.employee ? `${t.employee.firstName} ${t.employee.lastName}` : '-'}</td>
                 <td className="px-4 py-3">
                   <div className="font-medium text-gray-900">{t.title}</div>
                   {t.description && <div className="text-xs text-gray-500 max-w-md truncate">{t.description}</div>}

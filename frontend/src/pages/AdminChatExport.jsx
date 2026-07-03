@@ -25,7 +25,7 @@ export default function AdminChatExport() {
     return (
       <div>
         <PageHeader title="Chat Export" />
-        <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">This tool is available to SuperAdmin only.</div>
+        <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">This tool isn't available for your account.</div>
       </div>
     );
   }
@@ -72,20 +72,20 @@ export default function AdminChatExport() {
 
   return (
     <div>
-      <PageHeader title="Chat Export" subtitle="Extract the full conversation between any two people — including messages they deleted from their own view" />
+      <PageHeader title="Chat Export" subtitle="Extract the full conversation between any two people · including messages they deleted from their own view" />
 
       <div className="bg-white shadow rounded-lg p-4 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
         <div>
           <label className="block text-xs text-gray-600 mb-1">Person A</label>
           <select value={a} onChange={(e) => setA(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
-            <option value="">— Select —</option>
+            <option value="">Select…</option>
             {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
           </select>
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Person B</label>
           <select value={b} onChange={(e) => setB(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
-            <option value="">— Select —</option>
+            <option value="">Select…</option>
             {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
           </select>
         </div>

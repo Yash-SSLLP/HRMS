@@ -109,7 +109,7 @@ export default function SettingsScreen() {
               <Ionicons name="shield-checkmark" size={18} color={colors.textMuted} />
             </View>
             <Text style={[styles.rowLabel, { flex: 1, color: colors.textMuted }]}>
-              {lockEnabled ? 'The app re-locks each time it goes to the background.' : 'Off — anyone with the phone can open the app.'}
+              {lockEnabled ? 'The app re-locks each time it goes to the background.' : 'Off · anyone with the phone can open the app.'}
             </Text>
           </View>
         </Card>

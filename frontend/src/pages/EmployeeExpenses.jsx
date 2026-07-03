@@ -82,7 +82,7 @@ export default function EmployeeExpenses() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : expenses.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No claims submitted</td></tr>
             ) : expenses.map((x) => (
@@ -90,7 +90,7 @@ export default function EmployeeExpenses() {
                 <td className="px-4 py-3 text-gray-600">{new Date(x.expenseDate).toLocaleDateString()}</td>
                 <td className="px-4 py-3 text-gray-600">{x.category}</td>
                 <td className="px-4 py-3">
-                  {x.merchant || '—'}
+                  {x.merchant || '-'}
                   {x.description && <div className="text-xs text-gray-500">{x.description}</div>}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">{inr.format(x.amount)}</td>

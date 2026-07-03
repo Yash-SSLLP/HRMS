@@ -5,15 +5,14 @@ import api, { errMsg } from '../../api/client';
 import { colors, radius, spacing, font } from '../../theme';
 import {
   Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher,
-  ModalSheet, ChipSelect, Ionicons,
-} from '../../components/ui';
+  ModalSheet, ChipSelect, Ionicons, SkeletonScreen } from '../../components/ui';
 
 const MONTHS_FULL = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const REG_TYPES = ['Missing Punch', 'Wrong Time', 'Forgot Check-in', 'Forgot Check-out', 'On Duty', 'Other'];
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—');
+const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const toHM = (d) => {
   if (!d) return '';
   const t = new Date(d);
@@ -115,7 +114,7 @@ export default function AttendanceMonthScreen() {
     finally { setBusy(false); }
   };
 
-  if (loading) return <Screen><Loader text="Loading attendance" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const s = data?.summary;
   const barTotal = s ? Math.max(s.workingDays, s.onTime + s.late + s.leave, 1) : 1;
@@ -128,7 +127,7 @@ export default function AttendanceMonthScreen() {
       <TouchableOpacity style={styles.pickerBtn} onPress={() => setPickerOpen(true)} activeOpacity={0.7}>
         <Ionicons name="person-outline" size={16} color={colors.primary} />
         <Text style={styles.pickerText} numberOfLines={1}>
-          {selected ? `${fullName(selected.user)} (${selected.employeeCode || '—'})` : 'Select employee'}
+          {selected ? `${fullName(selected.user)} (${selected.employeeCode || '-'})` : 'Select employee'}
         </Text>
         <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
       </TouchableOpacity>
@@ -221,7 +220,7 @@ export default function AttendanceMonthScreen() {
         {employees.map((p) => (
           <TouchableOpacity key={p._id} style={styles.empRow} onPress={() => { setEmployee(p._id); setPickerOpen(false); }}>
             <Text style={[font.body, p._id === employee && { color: colors.primary, fontWeight: '700' }]}>
-              {fullName(p.user)} ({p.employeeCode || '—'})
+              {fullName(p.user)} ({p.employeeCode || '-'})
             </Text>
             {p._id === employee ? <Ionicons name="checkmark" size={18} color={colors.primary} /> : null}
           </TouchableOpacity>

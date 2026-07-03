@@ -4,7 +4,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Pill, ProgressBar, Loader, EmptyState, SectionHeader, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Pill, ProgressBar, Loader, EmptyState, SectionHeader, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 
 const STATUS_TONE = { Enrolled: 'info', InProgress: 'warning', Completed: 'success' };
 
@@ -51,7 +51,7 @@ export default function LearningScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading courses" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const approved = enrollments.filter((e) => e.approvalStatus === 'Approved' && e.course);
   const pending = enrollments.filter((e) => e.approvalStatus === 'Pending' && e.course);
@@ -106,7 +106,7 @@ export default function LearningScreen() {
                 <Text style={font.h3} numberOfLines={2}>{e.course.title}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
                   <Ionicons name="hourglass-outline" size={16} color={colors.warning} />
-                  <Text style={[font.label, { color: colors.warning, marginLeft: 6, fontWeight: '700' }]}>Requested — awaiting approval</Text>
+                  <Text style={[font.label, { color: colors.warning, marginLeft: 6, fontWeight: '700' }]}>Requested · awaiting approval</Text>
                 </View>
               </Card>
             ))}

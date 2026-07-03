@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, EmptyState, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, EmptyState, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate, rupees } from '../utils/format';
 
 const MODES = ['Flight', 'Train', 'Bus', 'Car', 'Other'];
@@ -43,7 +43,7 @@ export default function TravelScreen() {
     finally { setSubmitting(false); }
   };
 
-  if (loading) return <Screen><Loader text="Loading travel" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

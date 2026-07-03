@@ -9,7 +9,7 @@ const STATUS_STYLES = {
   Done: 'bg-green-100 text-green-800',
 };
 const CATEGORY_STYLE = 'bg-gray-100 text-gray-700';
-const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 
 export default function EmployeeOnboarding() {
   const [tasks, setTasks] = useState([]);

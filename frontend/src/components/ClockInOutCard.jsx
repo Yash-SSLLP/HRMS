@@ -8,11 +8,11 @@ function initials(name = '') {
 }
 
 const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
 
 // Decimal hours (e.g. 9.35) -> "09:21 Hrs"
 const fmtHours = (h) => {
-  if (!h || h <= 0) return '—';
+  if (!h || h <= 0) return '-';
   const hh = Math.floor(h);
   const mm = Math.round((h - hh) * 60);
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')} Hrs`;

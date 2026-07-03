@@ -24,7 +24,7 @@ const CATEGORY_STYLES = {
 
 const blank = { title: '', category: 'General', published: true, tags: '', body: '' };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '-');
 
 export default function AdminKnowledgeBase() {
   const [articles, setArticles] = useState([]);
@@ -99,7 +99,7 @@ export default function AdminKnowledgeBase() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : articles.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No articles</td></tr>
             ) : articles.map((a) => (

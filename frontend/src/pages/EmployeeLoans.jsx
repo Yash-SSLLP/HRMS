@@ -62,7 +62,7 @@ export default function EmployeeLoans() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : loans.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No loans or advances yet</td></tr>
             ) : loans.map((l) => (
@@ -72,7 +72,7 @@ export default function EmployeeLoans() {
                 <td className="px-4 py-3 text-right text-gray-600">{inr.format(l.emi || 0)}</td>
                 <td className="px-4 py-3 text-right text-gray-700">{inr.format(l.balance || 0)}</td>
                 <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[l.status] || 'bg-gray-100 text-gray-700'}`}>{l.status}</span></td>
-                <td className="px-4 py-3 text-gray-500 text-xs">{l.reviewNote || '—'}</td>
+                <td className="px-4 py-3 text-gray-500 text-xs">{l.reviewNote || '-'}</td>
               </tr>
             ))}
           </tbody>

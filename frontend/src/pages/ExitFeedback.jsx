@@ -70,7 +70,7 @@ export default function ExitFeedback() {
       <div className="max-w-2xl mx-auto">
         <header className="text-center mb-6">
           <h1 className="text-2xl font-semibold text-gray-900">
-            {ctx?.orgName || 'Sequence Surface'} — Exit Feedback
+            {ctx?.orgName || 'Sequence Surface'} · Exit Feedback
           </h1>
           <p className="text-sm text-gray-500 mt-1">
             Your honest input helps us improve. This takes about 2 minutes.

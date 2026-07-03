@@ -6,7 +6,7 @@ import * as Location from 'expo-location';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Pill, Loader, refresher, SectionHeader, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Pill, Loader, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate, fmtTime, fmtHours } from '../utils/format';
 
 const STATUS_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info', Holiday: 'neutral', WeekOff: 'neutral' };
@@ -133,7 +133,7 @@ export default function AttendanceScreen() {
 
   const workedHours = (r) => (r.checkIn && r.checkOut ? (new Date(r.checkOut) - new Date(r.checkIn)) / 3600000 : null);
 
-  if (loading) return <Screen><Loader text="Loading attendance" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const checkedIn = Boolean(today?.checkIn);
   const checkedOut = Boolean(today?.checkOut);

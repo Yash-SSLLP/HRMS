@@ -9,6 +9,7 @@ const {
   listMine,
   listAll,
   monthSummary,
+  dailyStats,
   todayBoard,
   createRecord,
   updateRecord,
@@ -44,6 +45,7 @@ router.use(restrictTo('SuperAdmin', 'HRManager'));
 
 router.get('/org/heatmap', orgHeatmap);
 router.get('/month-summary', monthSummary);
+router.get('/daily-stats', dailyStats);
 router.get('/today-board', todayBoard);
 
 router.route('/settings')

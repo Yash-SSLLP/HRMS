@@ -134,9 +134,10 @@ const deactivateUser = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('You cannot deactivate your own account');
   }
-  if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee') {
+  // Only SuperAdmin may change an account's active status.
+  if (req.user.role !== 'SuperAdmin') {
     res.status(403);
-    throw new Error('Only SuperAdmin may deactivate admin accounts');
+    throw new Error('Only SuperAdmin may change account status');
   }
   user.isActive = false;
   await user.save();
@@ -150,9 +151,10 @@ const activateUser = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('User not found');
   }
-  if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee') {
+  // Only SuperAdmin may change an account's active status.
+  if (req.user.role !== 'SuperAdmin') {
     res.status(403);
-    throw new Error('Only SuperAdmin may activate admin accounts');
+    throw new Error('Only SuperAdmin may change account status');
   }
   user.isActive = true;
   await user.save();

@@ -17,14 +17,14 @@ const STATUS_STYLES = {
 };
 
 const SECTION_FIELDS = [
-  { key: 'section80C', label: '80C — PF / ELSS / LIC / PPF' },
-  { key: 'section80CCD1B', label: '80CCD(1B) — NPS' },
-  { key: 'section80D', label: '80D — Medical Insurance' },
-  { key: 'section24B', label: '24B — Home Loan Interest' },
-  { key: 'section80E', label: '80E — Education Loan Interest' },
-  { key: 'section80G', label: '80G — Donations' },
-  { key: 'hraAnnualRent', label: 'HRA — Annual Rent Paid' },
-  { key: 'ltaClaimed', label: 'LTA — Claimed' },
+  { key: 'section80C', label: '80C · PF / ELSS / LIC / PPF' },
+  { key: 'section80CCD1B', label: '80CCD(1B) · NPS' },
+  { key: 'section80D', label: '80D · Medical Insurance' },
+  { key: 'section24B', label: '24B · Home Loan Interest' },
+  { key: 'section80E', label: '80E · Education Loan Interest' },
+  { key: 'section80G', label: '80G · Donations' },
+  { key: 'hraAnnualRent', label: 'HRA · Annual Rent Paid' },
+  { key: 'ltaClaimed', label: 'LTA · Claimed' },
   { key: 'otherDeductions', label: 'Other Deductions' },
 ];
 
@@ -35,8 +35,8 @@ function totalOf(d) {
 
 function employeeName(d) {
   const e = d.employee;
-  if (!e) return '—';
-  return `${e.firstName || ''} ${e.lastName || ''}`.trim() || e.email || '—';
+  if (!e) return '-';
+  return `${e.firstName || ''} ${e.lastName || ''}`.trim() || e.email || '-';
 }
 
 export default function AdminInvestmentDeclarations() {
@@ -132,7 +132,7 @@ export default function AdminInvestmentDeclarations() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : declarations.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No declarations found</td></tr>
             ) : declarations.map((d) => (
@@ -210,7 +210,7 @@ export default function AdminInvestmentDeclarations() {
                           {p.url}
                         </a>
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-gray-400">-</span>
                       )}
                     </li>
                   ))}

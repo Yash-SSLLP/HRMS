@@ -57,7 +57,7 @@ export default function AdminPerformance() {
 
   return (
     <div>
-      <PageHeader title="Performance — Goals">
+      <PageHeader title="Performance · Goals">
         <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Goal</button>
       </PageHeader>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -74,14 +74,14 @@ export default function AdminPerformance() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : goals.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No goals yet</td></tr>
             ) : goals.map((g) => (
               <tr key={g._id}>
-                <td className="px-4 py-3">{g.employee ? `${g.employee.firstName} ${g.employee.lastName}` : '—'}</td>
+                <td className="px-4 py-3">{g.employee ? `${g.employee.firstName} ${g.employee.lastName}` : '-'}</td>
                 <td className="px-4 py-3"><div className="font-medium text-gray-900">{g.title}</div>{g.rating > 0 && <div className="text-xs text-amber-600">{'★'.repeat(g.rating)}</div>}</td>
-                <td className="px-4 py-3 text-gray-600">{g.period || '—'}</td>
+                <td className="px-4 py-3 text-gray-600">{g.period || '-'}</td>
                 <td className="px-4 py-3 w-40">
                   <div className="h-2 bg-gray-100 rounded"><div className="h-2 bg-gray-800 rounded" style={{ width: `${g.progress || 0}%` }} /></div>
                   <div className="text-xs text-gray-500 mt-0.5">{g.progress || 0}%</div>

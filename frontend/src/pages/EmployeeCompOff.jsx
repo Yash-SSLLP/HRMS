@@ -9,7 +9,7 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '-');
 
 export default function EmployeeCompOff() {
   const [items, setItems] = useState([]);
@@ -89,7 +89,7 @@ export default function EmployeeCompOff() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : items.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No comp-off requests</td></tr>
             ) : items.map((it) => (
@@ -111,7 +111,7 @@ export default function EmployeeCompOff() {
                   {it.status === 'Approved' ? (
                     <button onClick={() => avail(it._id)} className="text-blue-600 hover:underline">Avail</button>
                   ) : (
-                    <span className="text-gray-400">—</span>
+                    <span className="text-gray-400">-</span>
                   )}
                 </td>
               </tr>

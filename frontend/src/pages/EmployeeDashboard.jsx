@@ -114,7 +114,7 @@ export default function EmployeeDashboard() {
             {wishes.map((w) => (
               <li key={w._id} className="text-sm">
                 <span className="font-medium text-gray-800">{w.title}</span>
-                {w.body && <span className="text-gray-600"> — {w.body}</span>}
+                {w.body && <span className="text-gray-600"> · {w.body}</span>}
                 <span className="block text-[11px] text-gray-400">
                   {new Date(w.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}
                 </span>
@@ -132,17 +132,17 @@ export default function EmployeeDashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-        <StatCard icon="🏖️" tint="bg-emerald-100" value={balance ? remaining : '—'}
+        <StatCard icon="🏖️" tint="bg-emerald-100" value={balance ? remaining : '-'}
           label="Remaining leave" sub="EL + CL + SL" to="/employee/leave" />
         <StatCard icon="⏳" tint="bg-amber-100" value={pendingLeaves}
           label="Pending requests" sub="awaiting approval" to="/employee/leave" />
         <StatCard icon="💰" tint="bg-blue-100"
-          value={latestPayslip ? inr(latestPayslip.netPay) : '—'}
+          value={latestPayslip ? inr(latestPayslip.netPay) : '-'}
           label="Latest net pay"
           sub={latestPayslip ? `${MONTHS[latestPayslip.payPeriodMonth - 1]} ${latestPayslip.payPeriodYear}` : 'No payslips yet'}
           to="/employee/payslips" />
         <StatCard icon="🪪" tint="bg-purple-100"
-          value={profile?.employeeCode || '—'}
+          value={profile?.employeeCode || '-'}
           label={profile?.designation || 'Employee'}
           sub={profile?.department || ''}
           to="/employee/profile" />
@@ -213,7 +213,7 @@ export default function EmployeeDashboard() {
           {profile ? (
             <>
               <p className="text-sm font-mono text-gray-700">{profile.employeeCode}</p>
-              <p className="text-sm">{profile.designation || '—'}</p>
+              <p className="text-sm">{profile.designation || '-'}</p>
               <p className="text-sm text-gray-500">{profile.department || ''}</p>
               <Link to="/employee/profile" className="text-sm text-blue-600 hover:underline mt-2 inline-block">
                 View profile →

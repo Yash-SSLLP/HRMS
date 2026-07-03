@@ -162,7 +162,7 @@ export default function AdminPayrollRun() {
       {/* Filters + OK */}
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
         <select value={employee} onChange={(e) => setEmployee(e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[210px]">
-          {employees.map((p) => <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '—'})</option>)}
+          {employees.map((p) => <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '-'})</option>)}
         </select>
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
           {Array.from({ length: 4 }, (_, i) => now.getFullYear() + 1 - i).map((y) => <option key={y}>{y}</option>)}
@@ -228,11 +228,11 @@ export default function AdminPayrollRun() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Setup + attendance roll-up */}
               <div className="bg-white shadow rounded-xl p-5">
-                <h3 className="font-semibold text-gray-800 mb-3">Salary setup — {fullName(run.employee.user)}</h3>
+                <h3 className="font-semibold text-gray-800 mb-3">Salary setup · {fullName(run.employee.user)}</h3>
                 <div className="flex flex-wrap gap-2 items-center mb-4">
                   <select value={setup.salaryStructure} onChange={(e) => setSetup({ ...setup, salaryStructure: e.target.value })}
                     className="border rounded-lg px-3 py-2 text-sm bg-white flex-1 min-w-[160px]">
-                    <option value="">— Salary structure —</option>
+                    <option value="">Salary structure</option>
                     {structures.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
                   </select>
                   <input type="number" min="0" placeholder="Annual CTC (₹)" value={setup.annualCtc}
@@ -250,14 +250,14 @@ export default function AdminPayrollRun() {
                 </div>
                 {c.hours && (
                   <>
-                    <h4 className="font-semibold text-gray-700 mt-4 mb-2 text-sm">Working hours — {MONTHS[att.month - 1]}</h4>
+                    <h4 className="font-semibold text-gray-700 mt-4 mb-2 text-sm">Working hours · {MONTHS[att.month - 1]}</h4>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
                       <Stat label="Days present" value={`${c.hours.daysPresent} days`} />
                       <Stat label="Avg working hours" value={`${c.hours.avgHours} hrs`} />
                       <Stat label="Comp-off earned" value={c.hours.compOff} warn={c.hours.compOff > 0} />
                     </div>
                     <p className="text-[11px] text-gray-400 mt-2">
-                      Average is over days actually worked. Sundays &amp; holidays are excluded unless worked — those count as comp-offs.
+                      Average is over days actually worked. Sundays &amp; holidays are excluded unless worked · those count as comp-offs.
                     </p>
                   </>
                 )}
@@ -265,7 +265,7 @@ export default function AdminPayrollRun() {
 
               {/* Computation + actions */}
               <div className="bg-white shadow rounded-xl p-5 flex flex-col">
-                <h3 className="font-semibold text-gray-800 mb-3">Computed salary — {MONTHS[att.month - 1]} {att.year}</h3>
+                <h3 className="font-semibold text-gray-800 mb-3">Computed salary · {MONTHS[att.month - 1]} {att.year}</h3>
                 {c.needsSetup ? (
                   <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                     Assign a salary structure and annual CTC above to compute this employee's salary.

@@ -17,6 +17,13 @@ const listAudit = asyncHandler(async (req, res) => {
     const re = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     filter.$or = [{ entityLabel: re }, { byName: re }, { toStatus: re }, { fromStatus: re }];
   }
+  // Non-SuperAdmin viewers must never learn a SuperAdmin account exists: hide
+  // entries performed by a SuperAdmin and any role change to/from SuperAdmin.
+  if (req.user.role !== 'SuperAdmin') {
+    filter.byRole = { $ne: 'SuperAdmin' };
+    filter.fromStatus = { $ne: 'SuperAdmin' };
+    filter.toStatus = { $ne: 'SuperAdmin' };
+  }
 
   const limit = Math.min(Number(req.query.limit) || 200, 500);
   const [items, entities] = await Promise.all([

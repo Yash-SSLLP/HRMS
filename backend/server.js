@@ -40,6 +40,7 @@ app.use('/api/events', require('./routes/eventRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/devices', require('./routes/deviceRoutes'));
 app.use('/api/departments', require('./routes/departmentRoutes'));
+app.use('/api/work-locations', require('./routes/workLocationRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/projects', require('./routes/projectRoutes'));
 app.use('/api/tasks', require('./routes/taskRoutes'));

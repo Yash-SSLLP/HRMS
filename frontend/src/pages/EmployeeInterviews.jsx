@@ -60,7 +60,7 @@ export default function EmployeeInterviews() {
 
   return (
     <div>
-      <PageHeader title="My Interviews" subtitle="Interview rounds where you're the assigned interviewer — join the call, record feedback and set the result" />
+      <PageHeader title="My Interviews" subtitle="Interview rounds where you're the assigned interviewer · join the call, record feedback and set the result" />
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {loading ? (

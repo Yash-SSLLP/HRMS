@@ -3,7 +3,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 
 const fmtDate = (d) =>
-  d ? new Date(d).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  d ? new Date(d).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 // "HH:mm" (24h) → "h:mm AM/PM"
 const to12h = (t) => {
   if (!t) return '';
@@ -11,7 +11,7 @@ const to12h = (t) => {
   const ampm = h < 12 ? 'AM' : 'PM';
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
 };
-const timeRange = (s) => (s && s.startTime && s.endTime ? `${to12h(s.startTime)} – ${to12h(s.endTime)}` : '—');
+const timeRange = (s) => (s && s.startTime && s.endTime ? `${to12h(s.startTime)} – ${to12h(s.endTime)}` : '-');
 
 export default function EmployeeShifts() {
   const [entries, setEntries] = useState([]);
@@ -45,13 +45,13 @@ export default function EmployeeShifts() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={3} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : entries.length === 0 ? (
               <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-500">No shifts scheduled</td></tr>
             ) : entries.map((en) => (
               <tr key={en._id}>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(en.date)}</td>
-                <td className="px-4 py-3 font-medium text-gray-900">{en.shift ? en.shift.name : '—'}</td>
+                <td className="px-4 py-3 font-medium text-gray-900">{en.shift ? en.shift.name : '-'}</td>
                 <td className="px-4 py-3 text-gray-600">{timeRange(en.shift)}</td>
               </tr>
             ))}

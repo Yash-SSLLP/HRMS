@@ -6,7 +6,7 @@ import api, { mediaUrl, errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
 import { canApprove } from '../../utils/roles';
 import { colors, radius, spacing, font, roleAccent } from '../../theme';
-import { Screen, Card, Avatar, AppButton, Input, Field, Pill, Loader, Ionicons } from '../../components/ui';
+import { Screen, Card, Avatar, AppButton, Input, Field, Pill, Loader, Ionicons, SkeletonScreen, ChipSelect } from '../../components/ui';
 import { fmtDate } from '../../utils/format';
 
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
@@ -30,27 +30,38 @@ export default function EmployeeDetailScreen({ route }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState({ designation: '', department: '', workLocation: '' });
+  const [edit, setEdit] = useState({ designation: '', department: '', workLocation: '', workLocationRef: '' });
+  const [workLocations, setWorkLocations] = useState([]);
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await api.get(`/employees/${id}`).catch(() => ({ data: {} }));
-    setProfile(data.profile || null);
+    const [pr, wl] = await Promise.all([
+      api.get(`/employees/${id}`).catch(() => ({ data: {} })),
+      api.get('/work-locations').catch(() => ({ data: { locations: [] } })),
+    ]);
+    setProfile(pr.data.profile || null);
+    setWorkLocations(wl.data.locations || []);
     setLoading(false);
   }, [id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const openEdit = () => {
-    setEdit({ designation: profile.designation || '', department: profile.department || '', workLocation: profile.workLocation || '' });
+    setEdit({
+      designation: profile.designation || '',
+      department: profile.department || '',
+      workLocation: profile.workLocation || '',
+      workLocationRef: profile.workLocationRef?._id || profile.workLocationRef || '',
+    });
     setEditing(true);
   };
 
   const saveEdit = async () => {
     setSaving(true);
     try {
-      await api.put(`/employees/${id}`, edit);
+      // Empty picker clears the geofence assignment (null, not '').
+      await api.put(`/employees/${id}`, { ...edit, workLocationRef: edit.workLocationRef || null });
       setEditing(false);
       await load();
     } catch (err) {
@@ -87,7 +98,7 @@ export default function EmployeeDetailScreen({ route }) {
     );
   };
 
-  if (loading) return <Screen><Loader text="Loading employee" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
   if (!profile) return <Screen><View style={styles.center}><Text style={font.label}>Employee not found.</Text></View></Screen>;
 
   const u = profile.user;
@@ -108,7 +119,7 @@ export default function EmployeeDetailScreen({ route }) {
           )}
           <Avatar name={fullName(u)} uri={u?.photo ? mediaUrl(`/auth/users/${u._id}/avatar`) : null} size={86} color="#fff" />
           <Text style={styles.name}>{fullName(u)}</Text>
-          <Text style={styles.sub}>{profile.designation || '—'}{profile.department ? ` · ${profile.department}` : ''}</Text>
+          <Text style={styles.sub}>{profile.designation || '-'}{profile.department ? ` · ${profile.department}` : ''}</Text>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
             <Pill label={profile.employeeCode} tone="primary" />
             {u?.isActive === false ? <Pill label="Inactive" tone="danger" /> : <Pill label={u?.role} tone="primary" />}
@@ -133,6 +144,9 @@ export default function EmployeeDetailScreen({ route }) {
             <Detail icon="briefcase" label="Designation" value={profile.designation} />
             <Detail icon="business" label="Department" value={profile.department} />
             <Detail icon="location" label="Location" value={profile.workLocation} />
+            <Detail icon="navigate-circle" label="Check-in site" value={
+              workLocations.find((l) => String(l._id) === String(profile.workLocationRef?._id || profile.workLocationRef || ''))?.name || 'Default (office)'
+            } />
             <Detail icon="document-text" label="Type" value={profile.employmentType} />
             <Detail icon="calendar" label="Joined" value={profile.dateOfJoining ? fmtDate(profile.dateOfJoining) : null} />
             <Detail icon="people" label="Reports to" value={fullName(profile.reportingManager) || null} />
@@ -191,6 +205,15 @@ export default function EmployeeDetailScreen({ route }) {
             <Field label="Designation"><Input value={edit.designation} onChangeText={(v) => setEdit((p) => ({ ...p, designation: v }))} placeholder="Software Engineer" /></Field>
             <Field label="Department"><Input value={edit.department} onChangeText={(v) => setEdit((p) => ({ ...p, department: v }))} placeholder="Engineering" /></Field>
             <Field label="Work location"><Input value={edit.workLocation} onChangeText={(v) => setEdit((p) => ({ ...p, workLocation: v }))} placeholder="Mumbai" /></Field>
+            <Field label="Check-in site (geofence)">
+              <ChipSelect
+                options={[{ _id: '', name: 'Default (office)' }, ...workLocations.filter((l) => l.active)]}
+                value={edit.workLocationRef || ''}
+                onChange={(v) => setEdit((p) => ({ ...p, workLocationRef: v }))}
+                getValue={(o) => o._id}
+                getLabel={(o) => o.name}
+              />
+            </Field>
             <AppButton title="Save changes" icon="save" onPress={saveEdit} loading={saving} />
           </View>
         </View>

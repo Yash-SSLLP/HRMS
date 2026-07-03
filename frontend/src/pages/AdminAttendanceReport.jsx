@@ -16,7 +16,7 @@ const minutesOfDay = (d) => {
 const pad = (n) => String(n).padStart(2, '0');
 // minutes since midnight → 12-hour clock time, e.g. 540 → "9:00 AM"
 const hhmm = (m) => {
-  if (m == null) return '—';
+  if (m == null) return '-';
   const total = Math.round(m);
   const h24 = Math.floor(total / 60);
   const mm = total % 60;
@@ -25,7 +25,7 @@ const hhmm = (m) => {
   return `${h12}:${pad(mm)} ${ampm}`;
 };
 const dur = (m) => {
-  if (!m) return '—';
+  if (!m) return '-';
   const h = Math.floor(m / 60);
   const mm = Math.round(m % 60);
   return mm ? `${h}h ${mm}m` : `${h}h`;
@@ -111,7 +111,7 @@ export default function AdminAttendanceReport() {
             className="border rounded-lg px-2 py-1 min-w-[14rem]">
             <option value="">Select employee…</option>
             {employees.map((e) => (
-              <option key={e._id} value={e._id}>{e.employeeCode} — {e.user?.firstName} {e.user?.lastName}</option>
+              <option key={e._id} value={e._id}>{e.employeeCode} · {e.user?.firstName} {e.user?.lastName}</option>
             ))}
           </select>
         </div>

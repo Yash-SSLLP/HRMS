@@ -170,7 +170,7 @@ export default function DashboardScreen() {
                       <Text style={[styles.leaveBal, { color: lt.tint }]}>{bal} <Text style={font.small}>left</Text></Text>
                     </View>
                     <ProgressBar value={total ? (used / total) * 100 : 0} tint={lt.tint} />
-                    <Text style={[font.small, { marginTop: 4 }]}>{used} used of {total || '—'}</Text>
+                    <Text style={[font.small, { marginTop: 4 }]}>{used} used of {total || '-'}</Text>
                   </View>
                 );
               })}
@@ -225,9 +225,9 @@ export default function DashboardScreen() {
           <>
             <SectionHeader title="My profile" />
             <Card style={{ marginBottom: spacing(4) }}>
-              <ProfileRow label="Employee code" value={data.profile.employeeCode || '—'} />
-              <ProfileRow label="Designation" value={data.profile.designation || '—'} />
-              <ProfileRow label="Department" value={data.profile.department || '—'} />
+              <ProfileRow label="Employee code" value={data.profile.employeeCode || '-'} />
+              <ProfileRow label="Designation" value={data.profile.designation || '-'} />
+              <ProfileRow label="Department" value={data.profile.department || '-'} />
             </Card>
           </>
         )}

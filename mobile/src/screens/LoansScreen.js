@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, Pill, Loader, refresher, SectionHeader, EmptyState } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, Pill, Loader, refresher, SectionHeader, EmptyState, SkeletonScreen } from '../components/ui';
 import { rupees } from '../utils/format';
 
 const TYPES = ['Salary Advance', 'Personal Loan', 'Emergency', 'Other'];
@@ -41,7 +41,7 @@ export default function LoansScreen() {
     finally { setSubmitting(false); }
   };
 
-  if (loading) return <Screen><Loader text="Loading loans" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

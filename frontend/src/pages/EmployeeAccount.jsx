@@ -148,7 +148,7 @@ export default function EmployeeAccount() {
           ) : (
             <div className="text-sm text-gray-600 space-y-2">
               <p>For security, you can't change your own email or password directly.</p>
-              <p>Use <span className="font-medium">Request a Change</span> on the right — your admin will review and apply it.</p>
+              <p>Use <span className="font-medium">Request a Change</span> on the right · your admin will review and apply it.</p>
             </div>
           )}
         </div>
@@ -176,7 +176,7 @@ export default function EmployeeAccount() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Current value</label>
                 <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 min-h-[2.4rem]">
-                  {selected.currentValue || <span className="italic text-gray-400">— empty —</span>}
+                  {selected.currentValue || <span className="italic text-gray-400">empty</span>}
                 </div>
               </div>
             )}

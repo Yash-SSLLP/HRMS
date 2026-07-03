@@ -52,6 +52,7 @@ import TodayAttendanceScreen from '../screens/admin/TodayAttendanceScreen';
 import DirectoryScreen from '../screens/admin/DirectoryScreen';
 import EmployeeDetailScreen from '../screens/admin/EmployeeDetailScreen';
 import AddEmployeeScreen from '../screens/admin/AddEmployeeScreen';
+import WorkLocationsScreen from '../screens/admin/WorkLocationsScreen';
 import PayrollScreen from '../screens/admin/PayrollScreen';
 import RecruitmentScreen from '../screens/admin/RecruitmentScreen';
 import CandidateDetailScreen from '../screens/admin/CandidateDetailScreen';
@@ -108,6 +109,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="Directory" component={DirectoryScreen} options={{ title: 'Directory' }} />
       <HomeStackNav.Screen name="EmployeeDetail" component={EmployeeDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Employee' })} />
       <HomeStackNav.Screen name="AddEmployee" component={AddEmployeeScreen} options={{ title: 'Add Employee' }} />
+      <HomeStackNav.Screen name="WorkLocations" component={WorkLocationsScreen} options={{ title: 'Work Locations' }} />
       <HomeStackNav.Screen name="PayrollAdmin" component={PayrollScreen} options={{ title: 'Payroll' }} />
       <HomeStackNav.Screen name="Recruitment" component={RecruitmentScreen} options={{ title: 'Recruitment' }} />
       <HomeStackNav.Screen name="CandidateDetail" component={CandidateDetailScreen} options={({ route }) => ({ title: route.params?.name || 'Candidate' })} />

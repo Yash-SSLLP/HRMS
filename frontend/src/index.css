@@ -170,6 +170,104 @@ html.dark .topbar-icon-btn { color: #aebacd; }
 html.dark .card-title { color: #f1f5f9; }
 
 /* ---------------------------------------------------------------------------
+   Premium controls — buttons, dropdowns, inputs & modals get a richer, more
+   tactile feel app-wide. Applied through the shared Tailwind vocabulary so
+   every page inherits it without per-page edits.
+--------------------------------------------------------------------------- */
+
+/* Buttons: pointer, weight, crisp accent focus ring. */
+button, [role="button"] { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* Filled action buttons (any solid colour, excluding light/ghost variants):
+   soft elevation, a gentle lift on hover and a press-down on click. */
+button[class*="bg-"]:not([class*="bg-white"]):not([class*="bg-gray-50"]):not([class*="bg-gray-100"]):not([class*="bg-gray-200"]):not([class*="bg-transparent"]):not([class~="hover:underline"]) {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .10), 0 1px 3px rgba(15, 23, 42, .06);
+}
+button[class*="bg-"]:not([class*="bg-white"]):not([class*="bg-gray-50"]):not([class*="bg-gray-100"]):not([class*="bg-gray-200"]):not([class*="bg-transparent"]):not([class~="hover:underline"]):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .16);
+}
+button[class*="bg-"]:not([class*="bg-transparent"]):not([class~="hover:underline"]):not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
+}
+
+/* Primary (accent) buttons: a subtle top-light gradient for depth. */
+button.bg-gray-900, a.bg-gray-900 {
+  background-image: linear-gradient(180deg, color-mix(in srgb, #fff 14%, transparent), transparent 60%);
+}
+
+/* Secondary / outline buttons (border, no fill): refined accent hover. */
+button[class*="border"]:not([class*="bg-"]):not([class~="hover:underline"]):not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+/* Dropdowns: custom chevron, roomier hit area, accent hover/focus. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 1rem;
+  padding-right: 2.25rem !important;
+  cursor: pointer;
+}
+select:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+html.dark select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+}
+
+/* Inputs / selects / textareas: a soft accent focus ring app-wide. */
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* Modals: frosted backdrop + a smooth scale-in for the panel. */
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(10px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+.fixed.inset-0[class*="bg-black/40"],
+.fixed.inset-0[class*="bg-black/50"],
+.fixed.inset-0[class*="bg-black/60"] {
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: overlay-in .16s ease both;
+}
+.fixed.inset-0[class*="bg-black/40"] > div,
+.fixed.inset-0[class*="bg-black/50"] > div,
+.fixed.inset-0[class*="bg-black/60"] > div {
+  animation: modal-in .22s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+/* Premium unread badges (notification bell + chat), with a soft pulsing halo. */
+@keyframes bell-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .55); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+@keyframes chat-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, .55); }
+  70% { box-shadow: 0 0 0 6px rgba(37, 211, 102, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0); }
+}
+.bell-badge { animation: bell-pulse 1.9s ease-out infinite; }
+.chat-badge { animation: chat-pulse 1.9s ease-out infinite; }
+
+/* ---------------------------------------------------------------------------
    Sidebar nav buttons (My Portal / Admin)
 --------------------------------------------------------------------------- */
 .nav-link {

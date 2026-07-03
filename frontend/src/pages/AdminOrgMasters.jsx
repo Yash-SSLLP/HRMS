@@ -120,14 +120,14 @@ export default function AdminOrgMasters() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : masters.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No {activeLabel.toLowerCase()} yet</td></tr>
             ) : masters.map((m) => (
               <tr key={m._id}>
                 <td className="px-4 py-3">{m.name}</td>
-                <td className="px-4 py-3 text-gray-600">{m.code || '—'}</td>
-                <td className="px-4 py-3 text-gray-600">{m.description || '—'}</td>
+                <td className="px-4 py-3 text-gray-600">{m.code || '-'}</td>
+                <td className="px-4 py-3 text-gray-600">{m.description || '-'}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${m.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
                     {m.isActive ? 'Active' : 'Inactive'}

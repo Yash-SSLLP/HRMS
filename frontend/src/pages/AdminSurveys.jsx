@@ -153,7 +153,7 @@ export default function AdminSurveys() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : surveys.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No surveys yet</td></tr>
             ) : surveys.map((s) => (
@@ -265,7 +265,7 @@ export default function AdminSurveys() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
             <div className="flex items-start justify-between gap-3 mb-1">
-              <h2 className="card-title">{resultsFor.title} — Results</h2>
+              <h2 className="card-title">{resultsFor.title} · Results</h2>
               <button type="button" onClick={() => setResultsFor(null)} className="text-gray-500 hover:text-gray-800 text-sm">✕</button>
             </div>
             {resultsLoading ? (

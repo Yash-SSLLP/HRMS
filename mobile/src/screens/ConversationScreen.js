@@ -13,7 +13,7 @@ import {
 import api from '../api/client';
 import { useBadges } from '../store/badges';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Loader, Ionicons } from '../components/ui';
+import { Screen, Loader, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtTime } from '../utils/format';
 
 export default function ConversationScreen({ route }) {

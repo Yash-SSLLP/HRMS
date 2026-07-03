@@ -113,9 +113,9 @@ export default function PayrollScreen() {
       const name = fullName(p.employee?.user);
       setMailSheet({
         title: 'Send payslip',
-        note: 'Review and edit the message — it opens in your email app to send.',
+        note: 'Review and edit the message · it opens in your email app to send.',
         to: email,
-        subject: `Payslip — ${period}`,
+        subject: `Payslip · ${period}`,
         body:
           `Dear ${name || 'Employee'},\n\n` +
           `Your payslip for ${period} is ready. You can view and download it from the link below:\n\n` +

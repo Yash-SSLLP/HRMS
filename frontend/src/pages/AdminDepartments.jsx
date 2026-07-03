@@ -80,7 +80,7 @@ export default function AdminDepartments() {
     <div>
       <PageHeader
         title="Departments"
-        subtitle={!canManage ? 'Only HR or a SuperAdmin can add or rename departments.' : undefined}
+        subtitle={!canManage ? 'Only HR can add or rename departments.' : undefined}
       >
         {canManage && (
           <button onClick={openCreate}
@@ -105,7 +105,7 @@ export default function AdminDepartments() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={canManage ? 3 : 2} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={canManage ? 3 : 2} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : departments.length === 0 ? (
               <tr><td colSpan={canManage ? 3 : 2} className="px-4 py-6 text-center text-gray-500">No departments yet</td></tr>
             ) : departments.map((d) => (

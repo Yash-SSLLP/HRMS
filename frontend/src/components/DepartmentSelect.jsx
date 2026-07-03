@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 
-// Designation picker backed by the OrgMaster 'Designation' list. HR can pick an
-// existing designation or add a new one inline (which is saved to the master so
-// it's available everywhere afterwards).
-export default function DesignationSelect({ value = '', onChange, required = false, className }) {
+// Department picker backed by the managed Department list. HR/SuperAdmin can pick
+// an existing department or add a new one inline (saved to the list so it's
+// available everywhere afterwards). Mirrors DesignationSelect.
+export default function DepartmentSelect({ value = '', onChange, required = false, className }) {
   const [options, setOptions] = useState([]);
 
   const load = async () => {
     try {
-      const { data } = await api.get('/org-masters?kind=Designation');
-      setOptions((data.masters || []).filter((m) => m.isActive !== false).map((m) => m.name));
+      const { data } = await api.get('/departments');
+      setOptions((data.departments || []).filter((d) => d.isActive !== false).map((d) => d.name));
     } catch { /* leave empty */ }
   };
   useEffect(() => { load(); }, []);
@@ -18,14 +18,14 @@ export default function DesignationSelect({ value = '', onChange, required = fal
   const handle = async (e) => {
     const v = e.target.value;
     if (v === '__add__') {
-      const name = (window.prompt('New designation name:') || '').trim();
+      const name = (window.prompt('New department name:') || '').trim();
       if (!name) return;
       try {
-        await api.post('/org-masters', { kind: 'Designation', name });
+        await api.post('/departments', { name });
         await load();
         onChange(name);
       } catch (err) {
-        alert(err.response?.data?.message || 'Could not add designation');
+        alert(err.response?.data?.message || 'Could not add department');
       }
       return;
     }
@@ -43,7 +43,7 @@ export default function DesignationSelect({ value = '', onChange, required = fal
       {options.map((d) => <option key={d} value={d}>{d}</option>)}
       {/* Preserve a legacy/free-text value not in the managed list */}
       {value && !options.includes(value) && <option value={value}>{value}</option>}
-      <option value="__add__">＋ Add new designation…</option>
+      <option value="__add__">＋ Add new department…</option>
     </select>
   );
 }

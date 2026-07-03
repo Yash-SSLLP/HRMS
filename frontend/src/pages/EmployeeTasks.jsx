@@ -10,7 +10,7 @@ const STATUS_STYLES = {
   Done: 'bg-green-100 text-green-800',
 };
 const PRIORITY_STYLES = { Low: 'text-gray-500', Medium: 'text-blue-600', High: 'text-amber-600', Urgent: 'text-red-600' };
-const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 export default function EmployeeTasks() {
   const [tasks, setTasks] = useState([]);
@@ -56,7 +56,7 @@ export default function EmployeeTasks() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : tasks.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No tasks assigned to you</td></tr>
             ) : tasks.map((t) => (
@@ -65,7 +65,7 @@ export default function EmployeeTasks() {
                   <div className="font-medium text-gray-900">{t.title}</div>
                   {t.description && <div className="text-xs text-gray-500 max-w-md truncate">{t.description}</div>}
                 </td>
-                <td className="px-4 py-3 text-gray-600">{t.project?.name || '—'}</td>
+                <td className="px-4 py-3 text-gray-600">{t.project?.name || '-'}</td>
                 <td className={`px-4 py-3 font-medium ${PRIORITY_STYLES[t.priority]}`}>{t.priority}</td>
                 <td className="px-4 py-3 text-gray-600">{fmt(t.dueDate)}</td>
                 <td className="px-4 py-3">

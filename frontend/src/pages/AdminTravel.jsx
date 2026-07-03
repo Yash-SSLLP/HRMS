@@ -120,13 +120,13 @@ export default function AdminTravel() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : items.length === 0 ? (
               <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-500">No travel requests</td></tr>
             ) : items.map((t) => (
               <tr key={t._id}>
                 <td className="px-4 py-3">
-                  {t.employee ? `${t.employee.firstName} ${t.employee.lastName}` : '—'}
+                  {t.employee ? `${t.employee.firstName} ${t.employee.lastName}` : '-'}
                   <div className="text-xs text-gray-500">{t.employee?.email}</div>
                 </td>
                 <td className="px-4 py-3">{t.purpose}</td>
@@ -170,7 +170,7 @@ export default function AdminTravel() {
                         </div>
                       )}
                     </div>
-                  ) : <span className="text-gray-400">—</span>}
+                  ) : <span className="text-gray-400">-</span>}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs px-2 py-1 rounded-lg ${STATUS_STYLES[t.status]}`}>

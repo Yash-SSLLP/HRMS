@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const ICON = { Laptop: 'laptop', Desktop: 'desktop', Phone: 'phone-portrait', Monitor: 'tv', Accessory: 'headset', Furniture: 'bed', Vehicle: 'car', Other: 'cube' };
@@ -23,7 +23,7 @@ export default function AssetsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  if (loading) return <Screen><Loader text="Loading assets" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

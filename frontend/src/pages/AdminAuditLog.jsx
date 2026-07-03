@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 
-const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '-');
 
 const ROLE_STYLES = {
   SuperAdmin: 'bg-violet-100 text-violet-800',
@@ -40,7 +40,7 @@ export default function AdminAuditLog() {
 
   return (
     <div>
-      <PageHeader title="Audit Log" subtitle="Every status change across the portal — who changed what, and when" />
+      <PageHeader title="Audit Log" subtitle="Every status change across the portal · who changed what, and when" />
 
       <div className="bg-white shadow rounded-lg p-3 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div>
@@ -77,7 +77,7 @@ export default function AdminAuditLog() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : items.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No matching changes recorded</td></tr>
             ) : items.map((it) => (
@@ -91,16 +91,16 @@ export default function AdminAuditLog() {
                 <td className="px-4 py-3 text-gray-800">{it.entityLabel || <span className="text-gray-400 font-mono text-xs">{String(it.entityId || '').slice(-6)}</span>}</td>
                 <td className="px-4 py-3">
                   <span className="text-xs text-gray-500">{it.field}:</span>{' '}
-                  <span className="text-gray-500 line-through">{it.fromStatus || '—'}</span>
+                  <span className="text-gray-500 line-through">{it.fromStatus || '-'}</span>
                   <span className="mx-1 text-gray-400">→</span>
-                  <span className="font-medium text-gray-900">{it.toStatus || '—'}</span>
+                  <span className="font-medium text-gray-900">{it.toStatus || '-'}</span>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {items.length >= 200 && <p className="text-xs text-gray-400 mt-2">Showing the latest 200 changes — narrow the filters to see more specific results.</p>}
+      {items.length >= 200 && <p className="text-xs text-gray-400 mt-2">Showing the latest 200 changes · narrow the filters to see more specific results.</p>}
     </div>
   );
 }

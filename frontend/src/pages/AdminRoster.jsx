@@ -3,7 +3,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 
 const fmtDate = (d) =>
-  d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 // "HH:mm" (24h) → "h:mm AM/PM"
 const to12h = (t) => {
   if (!t) return '';
@@ -11,7 +11,7 @@ const to12h = (t) => {
   const ampm = h < 12 ? 'AM' : 'PM';
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
 };
-const timeRange = (s) => (s && s.startTime && s.endTime ? `${to12h(s.startTime)} – ${to12h(s.endTime)}` : '—');
+const timeRange = (s) => (s && s.startTime && s.endTime ? `${to12h(s.startTime)} – ${to12h(s.endTime)}` : '-');
 
 const blankShift = { name: '', code: '', startTime: '', endTime: '', isActive: true };
 const blankAssign = { employee: '', date: '', shift: '', note: '' };
@@ -136,13 +136,13 @@ export default function AdminRoster() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : shifts.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No shifts</td></tr>
             ) : shifts.map((s) => (
               <tr key={s._id}>
                 <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
-                <td className="px-4 py-3 font-mono text-xs">{s.code || '—'}</td>
+                <td className="px-4 py-3 font-mono text-xs">{s.code || '-'}</td>
                 <td className="px-4 py-3 text-gray-600">{timeRange(s)}</td>
                 <td className="px-4 py-3">
                   <span className={`text-xs px-2 py-0.5 rounded-lg ${s.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
@@ -182,17 +182,17 @@ export default function AdminRoster() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : entries.length === 0 ? (
               <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No roster entries</td></tr>
             ) : entries.map((en) => (
               <tr key={en._id}>
                 <td className="px-4 py-3 font-medium text-gray-900">
-                  {en.employee ? `${en.employee.firstName} ${en.employee.lastName}` : '—'}
+                  {en.employee ? `${en.employee.firstName} ${en.employee.lastName}` : '-'}
                 </td>
                 <td className="px-4 py-3 text-gray-600">{fmtDate(en.date)}</td>
                 <td className="px-4 py-3">
-                  {en.shift ? en.shift.name : '—'}
+                  {en.shift ? en.shift.name : '-'}
                   <div className="text-xs text-gray-500">{timeRange(en.shift)}</div>
                 </td>
                 <td className="px-4 py-3 text-right">
@@ -241,12 +241,12 @@ export default function AdminRoster() {
             <h2 className="card-title mb-4">Assign Shift</h2>
             <form onSubmit={saveAssign} className="space-y-3">
               <select required value={assignForm.employee} onChange={(e) => setAssignForm({ ...assignForm, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
-                <option value="">— Select employee —</option>
+                <option value="">Select employee</option>
                 {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
               </select>
               <input required type="date" value={assignForm.date} onChange={(e) => setAssignForm({ ...assignForm, date: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <select required value={assignForm.shift} onChange={(e) => setAssignForm({ ...assignForm, shift: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
-                <option value="">— Select shift —</option>
+                <option value="">Select shift</option>
                 {shifts.map((s) => <option key={s._id} value={s._id}>{s.name}{s.startTime && s.endTime ? ` (${to12h(s.startTime)}–${to12h(s.endTime)})` : ''}</option>)}
               </select>
               <textarea rows={2} placeholder="Note" value={assignForm.note} onChange={(e) => setAssignForm({ ...assignForm, note: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />

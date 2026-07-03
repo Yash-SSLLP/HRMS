@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, EmptyState } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, EmptyState, SkeletonScreen } from '../components/ui';
 import { fmtDate, rupees } from '../utils/format';
 
 const CATEGORIES = ['Travel', 'Food', 'Accommodation', 'Supplies', 'Medical', 'Communication', 'Other'];
@@ -51,7 +51,7 @@ export default function ExpensesScreen() {
 
   const totalPending = expenses.filter((e) => e.status === 'Pending').reduce((a, e) => a + e.amount, 0);
 
-  if (loading) return <Screen><Loader text="Loading expenses" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

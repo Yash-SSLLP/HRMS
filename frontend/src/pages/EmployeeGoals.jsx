@@ -41,7 +41,7 @@ export default function EmployeeGoals() {
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
       ) : goals.length === 0 ? (
         <p className="text-sm text-gray-500">No goals assigned to you yet.</p>
       ) : (

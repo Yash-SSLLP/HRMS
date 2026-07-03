@@ -79,7 +79,7 @@ export default function EmployeeLearning() {
       {/* My Courses */}
       <h2 className="card-title mb-3">My Courses</h2>
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
       ) : approved.length === 0 ? (
         <p className="text-sm text-gray-500 mb-8">No active courses yet. Request one from the catalog below, or wait to be assigned.</p>
       ) : (
@@ -112,7 +112,7 @@ export default function EmployeeLearning() {
               <div key={e._id} className="bg-white border border-amber-200 rounded-xl p-5">
                 <div className="font-medium text-gray-900">{e.course.title}</div>
                 <div className="text-xs text-gray-400 mt-0.5">{e.course.category}</div>
-                <div className="mt-3 text-sm text-amber-700 font-medium">⏳ Requested — awaiting approval</div>
+                <div className="mt-3 text-sm text-amber-700 font-medium">⏳ Requested · awaiting approval</div>
               </div>
             ))}
           </div>
@@ -122,7 +122,7 @@ export default function EmployeeLearning() {
       {/* Catalog */}
       <h2 className="card-title mb-3">Course Catalog</h2>
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
       ) : catalog.length === 0 ? (
         <p className="text-sm text-gray-500">No courses available.</p>
       ) : (

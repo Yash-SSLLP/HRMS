@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors as C, radius as R, spacing as S, font as F } from '../theme';
-import { Screen, Card, ProgressBar, Pill, Loader, EmptyState, refresher } from '../components/ui';
+import { Screen, Card, ProgressBar, Pill, Loader, EmptyState, refresher, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const STATUSES = ['Pending', 'InProgress', 'Done'];
@@ -35,7 +35,7 @@ export default function OnboardingScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading onboarding" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const done = tasks.filter((t) => t.status === 'Done').length;
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;

@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const STATUSES = ['Todo', 'InProgress', 'Review', 'Done'];
@@ -36,7 +36,7 @@ export default function TasksScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading tasks" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

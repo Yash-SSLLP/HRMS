@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 export default function KnowledgeBaseScreen() {
@@ -28,7 +28,7 @@ export default function KnowledgeBaseScreen() {
     return !q || a.title?.toLowerCase().includes(q) || a.body?.toLowerCase().includes(q) || (a.tags || []).some((t) => t.toLowerCase().includes(q));
   });
 
-  if (loading) return <Screen><Loader text="Loading knowledge base" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

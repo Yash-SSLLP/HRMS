@@ -13,7 +13,7 @@ import {
   FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiGrid, FiFileText,
 } from 'react-icons/fi';
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 function StatCard({ icon, tint, iconColor, value, label, to }) {
   const body = (
@@ -31,6 +31,7 @@ function StatCard({ icon, tint, iconColor, value, label, to }) {
 export default function AdminOverview() {
   const user = useAuthStore((s) => s.user);
   const [data, setData] = useState(null);
+  const [daily, setDaily] = useState([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -42,7 +43,14 @@ export default function AdminOverview() {
         setError(err.response?.data?.message || 'Failed to load dashboard');
       }
     })();
+    // Per-day attendance for the two trend charts (best-effort; charts hide if empty).
+    api.get('/attendance/daily-stats', { params: { days: 14 } })
+      .then(({ data: d }) => setDaily(d.days || []))
+      .catch(() => {});
   }, []);
+
+  const avgHoursBars = daily.map((d) => ({ label: d.label, value: d.avgHours }));
+  const presentBars = daily.map((d) => ({ label: d.label, value: d.presentCount }));
 
   const c = data?.cards || {};
 
@@ -80,14 +88,14 @@ export default function AdminOverview() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <StatCard icon={<FiUsers />} tint="bg-indigo-100" iconColor="text-indigo-600" value={c.totalEmployees ?? '—'} label="Employees" to="/admin/employees" />
-        <StatCard icon={<FiUserCheck />} tint="bg-emerald-100" iconColor="text-emerald-600" value={c.presentToday ?? '—'} label="Present today" to="/admin/attendance" />
-        <StatCard icon={<FiSun />} tint="bg-purple-100" iconColor="text-purple-600" value={c.onLeaveToday ?? '—'} label="On leave today" to="/admin/leave" />
-        <StatCard icon={<FiUserX />} tint="bg-red-100" iconColor="text-red-600" value={c.absentToday ?? '—'} label="Absent today" to="/admin/attendance" />
-        <StatCard icon={<FiClock />} tint="bg-amber-100" iconColor="text-amber-600" value={c.pendingLeaves ?? '—'} label="Pending leaves" to="/admin/leave" />
-        <StatCard icon={<FiAlertTriangle />} tint="bg-rose-100" iconColor="text-rose-600" value={c.openComplaints ?? '—'} label="Open complaints" to="/admin/complaints" />
-        <StatCard icon={<FiGrid />} tint="bg-sky-100" iconColor="text-sky-600" value={c.departments ?? '—'} label="Departments" to="/admin/departments" />
-        <StatCard icon={<FiFileText />} tint="bg-orange-100" iconColor="text-orange-600" value={c.documentsIncomplete ?? '—'} label="Docs incomplete" to="/admin/employees" />
+        <StatCard icon={<FiUsers />} tint="bg-indigo-100" iconColor="text-indigo-600" value={c.totalEmployees ?? '-'} label="Employees" to="/admin/employees" />
+        <StatCard icon={<FiUserCheck />} tint="bg-emerald-100" iconColor="text-emerald-600" value={c.presentToday ?? '-'} label="Present today" to="/admin/attendance" />
+        <StatCard icon={<FiSun />} tint="bg-purple-100" iconColor="text-purple-600" value={c.onLeaveToday ?? '-'} label="On leave today" to="/admin/leave" />
+        <StatCard icon={<FiUserX />} tint="bg-red-100" iconColor="text-red-600" value={c.absentToday ?? '-'} label="Absent today" to="/admin/attendance" />
+        <StatCard icon={<FiClock />} tint="bg-amber-100" iconColor="text-amber-600" value={c.pendingLeaves ?? '-'} label="Pending leaves" to="/admin/leave" />
+        <StatCard icon={<FiAlertTriangle />} tint="bg-rose-100" iconColor="text-rose-600" value={c.openComplaints ?? '-'} label="Open complaints" to="/admin/complaints" />
+        <StatCard icon={<FiGrid />} tint="bg-sky-100" iconColor="text-sky-600" value={c.departments ?? '-'} label="Departments" to="/admin/departments" />
+        <StatCard icon={<FiFileText />} tint="bg-orange-100" iconColor="text-orange-600" value={c.documentsIncomplete ?? '-'} label="Docs incomplete" to="/admin/employees" />
       </div>
 
       {/* Attendance heatmap. SuperAdmin sees an org-wide "present count" heatmap;
@@ -95,6 +103,32 @@ export default function AdminOverview() {
       <div className="bg-white shadow rounded-lg p-5 mb-4">
         <h2 className="card-title mb-3">{user?.role === 'SuperAdmin' ? 'Team Attendance' : 'My Attendance'}</h2>
         <AttendanceHeatmap org={user?.role === 'SuperAdmin'} />
+      </div>
+
+      {/* Per-day attendance trends */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div className="bg-white shadow rounded-lg p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="card-title">Avg login hours / day</h2>
+            <Link to="/admin/attendance-report" className="text-sm text-blue-600 hover:underline">Report →</Link>
+          </div>
+          {avgHoursBars.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No attendance data yet</p>
+          ) : (
+            <BarChart data={avgHoursBars} />
+          )}
+        </div>
+        <div className="bg-white shadow rounded-lg p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="card-title">Present employees / day</h2>
+            <Link to="/admin/attendance" className="text-sm text-blue-600 hover:underline">Attendance →</Link>
+          </div>
+          {presentBars.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No attendance data yet</p>
+          ) : (
+            <BarChart data={presentBars} />
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

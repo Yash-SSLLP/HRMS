@@ -4,17 +4,17 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, Pill, Loader, refresher, SectionHeader, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, Pill, Loader, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
 import { rupees } from '../utils/format';
 
 const SECTIONS = [
-  { key: 'section80C', label: '80C — PF / ELSS / LIC', hint: 'Max ₹1.5 L' },
-  { key: 'section80CCD1B', label: '80CCD(1B) — NPS', hint: 'Max ₹50 k' },
-  { key: 'section80D', label: '80D — Medical insurance' },
-  { key: 'section24B', label: '24B — Home loan interest' },
-  { key: 'section80E', label: '80E — Education loan interest' },
-  { key: 'section80G', label: '80G — Donations' },
-  { key: 'hraAnnualRent', label: 'HRA — Annual rent paid' },
+  { key: 'section80C', label: '80C · PF / ELSS / LIC', hint: 'Max ₹1.5 L' },
+  { key: 'section80CCD1B', label: '80CCD(1B) · NPS', hint: 'Max ₹50 k' },
+  { key: 'section80D', label: '80D · Medical insurance' },
+  { key: 'section24B', label: '24B · Home loan interest' },
+  { key: 'section80E', label: '80E · Education loan interest' },
+  { key: 'section80G', label: '80G · Donations' },
+  { key: 'hraAnnualRent', label: 'HRA · Annual rent paid' },
   { key: 'ltaClaimed', label: 'LTA claimed' },
   { key: 'otherDeductions', label: 'Other deductions' },
 ];
@@ -88,7 +88,7 @@ export default function DeclarationScreen() {
     ]);
   };
 
-  if (loading) return <Screen><Loader text="Loading declaration" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>
@@ -146,7 +146,7 @@ export default function DeclarationScreen() {
         ) : (
           <View style={[styles.note, { marginTop: spacing(4) }]}>
             <Ionicons name="lock-closed" size={18} color={colors.textMuted} />
-            <Text style={styles.noteText}>Submitted — locked until HR reviews it.</Text>
+            <Text style={styles.noteText}>Submitted · locked until HR reviews it.</Text>
           </View>
         )}
       </ScrollView>

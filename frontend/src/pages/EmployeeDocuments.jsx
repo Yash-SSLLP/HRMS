@@ -21,6 +21,7 @@ export default function EmployeeDocuments() {
   const [docs, setDocs] = useState([]);
   const [categories, setCategories] = useState([]);
   const [hrOnly, setHrOnly] = useState([]);
+  const [required, setRequired] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -40,6 +41,7 @@ export default function EmployeeDocuments() {
       setDocs(docsRes.data.documents);
       setCategories(catRes.data.selfUpload || []);
       setHrOnly(catRes.data.hrOnly || []);
+      setRequired(catRes.data.required || []);
       if (!category && catRes.data.selfUpload?.length) {
         setCategory(catRes.data.selfUpload[0]);
       }
@@ -99,6 +101,42 @@ export default function EmployeeDocuments() {
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
+      {/* Missing required documents — prompt the employee to upload what's pending. */}
+      {(() => {
+        if (loading) return null;
+        const submitted = new Set(docs.map((d) => d.category));
+        const missing = required.filter((c) => !submitted.has(c));
+        if (missing.length === 0) {
+          return docs.length > 0 ? (
+            <div className="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-800">
+              ✓ All required documents submitted.
+            </div>
+          ) : null;
+        }
+        const missingSelf = missing.filter((c) => categories.includes(c));
+        const missingHr = missing.filter((c) => hrOnly.includes(c));
+        return (
+          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="text-sm font-semibold text-amber-900">Documents to submit ({missing.length})</div>
+            <p className="text-xs text-amber-800 mt-0.5">
+              Please upload the required documents below{missingHr.length ? ' — items marked “HR” are added for you by HR' : ''}.
+            </p>
+            <div className="flex flex-wrap gap-2 mt-2.5">
+              {missingSelf.map((c) => (
+                <button key={c} type="button"
+                  onClick={() => { setCategory(c); fileRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-900 hover:bg-amber-100">
+                  {c} <span className="text-amber-500 font-medium">＋ upload</span>
+                </button>
+              ))}
+              {missingHr.map((c) => (
+                <span key={c} className="text-xs px-2.5 py-1 rounded-lg bg-white border border-gray-200 text-gray-500">{c} · HR</span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="bg-white shadow rounded-lg p-5 mb-6">
         <h2 className="card-title mb-3">Upload a document</h2>
         <form onSubmit={onUpload} className="space-y-3">
@@ -149,7 +187,7 @@ export default function EmployeeDocuments() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : docs.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No documents yet</td></tr>
             ) : docs.map((d) => {

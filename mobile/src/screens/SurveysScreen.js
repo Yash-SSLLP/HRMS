@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, AppButton, Input, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Pill, AppButton, Input, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 
 export default function SurveysScreen() {
   const [surveys, setSurveys] = useState([]);
@@ -65,7 +65,7 @@ export default function SurveysScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading surveys" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

@@ -60,7 +60,7 @@ export default function AdminEvents() {
         setInfo('');
       } else {
         const { data } = await api.post('/events', form);
-        setInfo(`Event created — ${data.notified} employee(s) notified.`);
+        setInfo(`Event created · ${data.notified} employee(s) notified.`);
       }
       setShowModal(false);
       await load();
@@ -113,7 +113,7 @@ export default function AdminEvents() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : events.length === 0 ? (
               <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No events for {year}</td></tr>
             ) : events.map((ev) => (
@@ -126,7 +126,7 @@ export default function AdminEvents() {
                   {ev.description && <div className="text-xs text-gray-500 max-w-md truncate">{ev.description}</div>}
                 </td>
                 <td className="px-4 py-3 text-gray-600">
-                  {[ev.time, ev.location].filter(Boolean).join(' · ') || '—'}
+                  {[ev.time, ev.location].filter(Boolean).join(' · ') || '-'}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
                   <button onClick={() => openEdit(ev)} className="text-blue-600 hover:underline">Edit</button>

@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const STATUS_TONE = { Pending: 'warning', InClearance: 'info', Completed: 'success', Cancelled: 'neutral' };
@@ -50,7 +50,7 @@ export default function ResignationScreen() {
     ]);
   };
 
-  if (loading) return <Screen><Loader text="Loading" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   // Existing exit — show status, not the form.
   const open = exit && ['Pending', 'InClearance'].includes(exit.status);
@@ -68,8 +68,8 @@ export default function ResignationScreen() {
               <Pill label={exit.status} tone={STATUS_TONE[exit.status] || 'neutral'} />
             </View>
             <View style={styles.divider} />
-            <Row label="Resigned on" value={exit.resignationDate ? fmtDate(exit.resignationDate) : '—'} />
-            <Row label="Last working day" value={exit.lastWorkingDay ? fmtDate(exit.lastWorkingDay) : '—'} />
+            <Row label="Resigned on" value={exit.resignationDate ? fmtDate(exit.resignationDate) : '-'} />
+            <Row label="Last working day" value={exit.lastWorkingDay ? fmtDate(exit.lastWorkingDay) : '-'} />
             {exit.noticePeriodDays ? <Row label="Notice period" value={`${exit.noticePeriodDays} days`} /> : null}
             {exit.reason ? <Row label="Reason" value={exit.reason} /> : null}
             {exit.handledBy ? <Row label="HR contact" value={`${exit.handledBy.firstName} ${exit.handledBy.lastName}`} /> : null}

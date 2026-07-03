@@ -6,7 +6,7 @@ import { Video, ResizeMode } from 'expo-av';
 import api, { API_BASE, errMsg } from '../api/client';
 import { useAuth } from '../store/auth';
 import { colors, spacing, radius, font } from '../theme';
-import { Screen, Card, AppButton, Loader, ProgressBar, Pill, ModalSheet, ChipSelect, Stars, Input, Ionicons, refresher } from '../components/ui';
+import { Screen, Card, AppButton, Loader, ProgressBar, Pill, ModalSheet, ChipSelect, Stars, Input, Ionicons, refresher, SkeletonScreen } from '../components/ui';
 
 const REPORT_CATEGORIES = ['Video quality', 'Audio / sound', 'Playback / buffering', 'Content error', 'Other'];
 const GOOD = 0.95; // fraction watched that counts a video as complete
@@ -116,7 +116,7 @@ export default function CoursePlayerScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading course" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
   if (error || !course) {
     return (
       <Screen>
@@ -152,7 +152,7 @@ export default function CoursePlayerScreen() {
             <Text style={[font.h2, { marginTop: 4, marginBottom: 10 }]}>{active.title}</Text>
             <Text style={[font.body, { color: colors.textMuted, lineHeight: 21 }]}>{active.content || 'No content.'}</Text>
             <AppButton
-              title={activeDone ? '✓ Completed — mark unread' : 'Mark as complete'}
+              title={activeDone ? '✓ Completed · mark unread' : 'Mark as complete'}
               variant={activeDone ? 'ghost' : 'success'}
               style={{ marginTop: 16 }}
               onPress={() => markText(!activeDone)}

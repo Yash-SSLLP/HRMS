@@ -20,7 +20,7 @@ const parseDriveId = (input) => {
 
 const blankModule = () => ({ type: 'video', title: '', driveUrl: '', content: '' });
 const blank = () => ({ title: '', description: '', category: 'Other', durationHours: 0, deadlineDays: 0, active: true, modules: [] });
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
 
 export default function AdminCourses() {
   const [courses, setCourses] = useState([]);
@@ -158,7 +158,7 @@ export default function AdminCourses() {
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
       ) : courses.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">No courses yet. Create your first course.</div>
       ) : (
@@ -398,16 +398,16 @@ function RosterModal({ course, onClose }) {
   };
 
   return (
-    <Modal title={`Roster — ${course.title}`} onClose={onClose}>
+    <Modal title={`Roster · ${course.title}`} onClose={onClose}>
       {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
-      {!rows ? <p className="text-sm text-gray-500">Loading…</p> : rows.length === 0 ? (
+      {!rows ? <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div> : rows.length === 0 ? (
         <p className="text-sm text-gray-500">No enrollments yet.</p>
       ) : (
         <div className="max-h-96 overflow-y-auto divide-y">
           {rows.map((e) => (
             <div key={e._id} className="py-2.5 flex items-center gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '—'}</div>
+                <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '-'}</div>
                 <div className="text-xs text-gray-400">Due {fmtDate(e.dueDate)} · {e.source}</div>
                 {e.feedback?.rating && (
                   <div className="text-xs text-amber-600 mt-0.5" title={e.feedback.comment || ''}>
@@ -456,14 +456,14 @@ function ApprovalsModal({ onClose, onChange }) {
   return (
     <Modal title="Enrollment approvals" onClose={onClose}>
       {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
-      {!rows ? <p className="text-sm text-gray-500">Loading…</p> : rows.length === 0 ? (
+      {!rows ? <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div> : rows.length === 0 ? (
         <p className="text-sm text-gray-500">No pending requests.</p>
       ) : (
         <div className="max-h-96 overflow-y-auto divide-y">
           {rows.map((e) => (
             <div key={e._id} className="py-3 flex items-center gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '—'}</div>
+                <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '-'}</div>
                 <div className="text-xs text-gray-400 truncate">wants “{e.course?.title || 'a course'}”</div>
               </div>
               <button disabled={busyId === e._id} onClick={() => act(e._id, 'approve')} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Approve</button>
@@ -511,7 +511,7 @@ function ReportsModal({ onClose, onChange }) {
         ))}
       </div>
       {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
-      {!rows ? <p className="text-sm text-gray-500">Loading…</p> : rows.length === 0 ? (
+      {!rows ? <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div> : rows.length === 0 ? (
         <p className="text-sm text-gray-500">No {status.toLowerCase()} reports.</p>
       ) : (
         <div className="max-h-96 overflow-y-auto divide-y">
@@ -521,11 +521,11 @@ function ReportsModal({ onClose, onChange }) {
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-gray-900">
                     <span className="font-medium">{r.category}</span>
-                    <span className="text-gray-400"> · {r.course?.title || 'Course'}{r.moduleTitle ? ` — ${r.moduleTitle}` : ''}</span>
+                    <span className="text-gray-400"> · {r.course?.title || 'Course'}{r.moduleTitle ? ` · ${r.moduleTitle}` : ''}</span>
                   </div>
                   {r.note && <div className="text-sm text-gray-600 mt-0.5">“{r.note}”</div>}
                   <div className="text-xs text-gray-400 mt-0.5">
-                    {r.employee ? `${r.employee.firstName || ''} ${r.employee.lastName || ''}`.trim() || r.employee.email : '—'} · {fmtDate(r.createdAt)}
+                    {r.employee ? `${r.employee.firstName || ''} ${r.employee.lastName || ''}`.trim() || r.employee.email : '-'} · {fmtDate(r.createdAt)}
                   </div>
                 </div>
                 {status === 'Open' ? (

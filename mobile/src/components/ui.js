@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   Modal as RNModal,
   ScrollView,
   KeyboardAvoidingView,
+  Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -227,6 +228,30 @@ export function StatTile({ icon, label, value, tint = colors.primary, onPress })
   );
 }
 
+// Lightweight horizontally-scrollable vertical bar chart (no chart lib).
+// data = [{ label, value }].
+export function MiniBarChart({ data = [], height = 130, tint = colors.primary }) {
+  if (!data.length) return <Text style={font.label}>No data yet.</Text>;
+  const max = Math.max(1, ...data.map((d) => d.value || 0));
+  const plotH = height - 30;
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', height }}>
+        {data.map((d, i) => {
+          const h = Math.max(3, Math.round(((d.value || 0) / max) * plotH));
+          return (
+            <View key={i} style={{ alignItems: 'center', width: 30 }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textMuted, marginBottom: 3 }}>{d.value}</Text>
+              <View style={{ width: 16, height: h, borderRadius: 5, backgroundColor: tint }} />
+              <Text style={{ fontSize: 9, color: colors.textFaint, marginTop: 4 }} numberOfLines={1}>{d.label}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </ScrollView>
+  );
+}
+
 export function ProgressBar({ value = 0, tint = colors.primary, height = 8 }) {
   const pct = Math.max(0, Math.min(100, value));
   return (
@@ -241,6 +266,46 @@ export function Loader({ text }) {
     <View style={styles.center}>
       <ActivityIndicator color={colors.primary} size="large" />
       {text ? <Text style={[font.label, { marginTop: 12 }]}>{text}</Text> : null}
+    </View>
+  );
+}
+
+// A single shimmering placeholder bar. Pulses opacity on the native driver.
+export function SkeletonBlock({ width = '100%', height = 14, radius = 8, style }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration: 750, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0, duration: 750, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [anim]);
+  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.9] });
+  return <Animated.View style={[{ width, height, borderRadius: radius, backgroundColor: colors.border, opacity }, style]} />;
+}
+
+// Full-screen skeleton: a title bar + a few card placeholders. Drop-in for the
+// <Loader> that most screens show while their first data load is in flight.
+export function SkeletonScreen({ cards = 4 }) {
+  return (
+    <View style={{ padding: spacing(4) }}>
+      <SkeletonBlock width={150} height={22} style={{ marginBottom: spacing(4) }} />
+      {Array.from({ length: cards }).map((_, i) => (
+        <View key={i} style={styles.skelCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing(3) }}>
+            <SkeletonBlock width={40} height={40} radius={20} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <SkeletonBlock width="55%" height={14} style={{ marginBottom: 8 }} />
+              <SkeletonBlock width="35%" height={11} />
+            </View>
+          </View>
+          <SkeletonBlock width="100%" height={11} style={{ marginBottom: 8 }} />
+          <SkeletonBlock width="80%" height={11} />
+        </View>
+      ))}
     </View>
   );
 }
@@ -430,6 +495,7 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 20, fontWeight: '800', color: colors.text },
   statLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2, fontWeight: '600' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  skelCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing(4), marginBottom: spacing(3) },
   emptyIcon: {
     width: 64,
     height: 64,

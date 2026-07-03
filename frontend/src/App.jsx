@@ -44,6 +44,7 @@ const Calendar = lazy(() => import('./pages/Calendar.jsx'));
 const AdminHolidays = lazy(() => import('./pages/AdminHolidays.jsx'));
 const AdminEvents = lazy(() => import('./pages/AdminEvents.jsx'));
 const AdminDepartments = lazy(() => import('./pages/AdminDepartments.jsx'));
+const AdminWorkLocations = lazy(() => import('./pages/AdminWorkLocations.jsx'));
 const AdminOverview = lazy(() => import('./pages/AdminOverview.jsx'));
 const AdminProjects = lazy(() => import('./pages/AdminProjects.jsx'));
 const AdminTasks = lazy(() => import('./pages/AdminTasks.jsx'));
@@ -146,6 +147,7 @@ export default function App() {
         <Route path="employees" element={<AdminEmployees />} />
         <Route path="employees/:id" element={<AdminEmployeeDetail />} />
         <Route path="departments" element={<AdminDepartments />} />
+        <Route path="work-locations" element={<AdminWorkLocations />} />
         <Route path="org-masters" element={<AdminOrgMasters />} />
         <Route path="org-chart" element={<AdminOrgChart />} />
         <Route path="onboarding" element={<AdminOnboarding />} />

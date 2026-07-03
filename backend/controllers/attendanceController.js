@@ -16,7 +16,7 @@ function isAdmin(user) {
 }
 
 async function getMyProfileOrFail(userId, res) {
-  const profile = await EmployeeProfile.findOne({ user: userId });
+  const profile = await EmployeeProfile.findOne({ user: userId }).populate('workLocationRef');
   if (!profile) {
     res.status(404);
     throw new Error('No employee profile linked to this account');
@@ -51,16 +51,29 @@ function parsePunchLocation(body) {
   return { lat, lng, accuracy: Number.isFinite(accuracy) ? accuracy : undefined };
 }
 
-// Apply the Office & Geofence rule to a punch. A punch made beyond the
-// configured radius from the office (and not marked WFH) is captured as an
-// out-of-office punch — the punch is never blocked. WFH punches are exempt,
-// as they are expected to be away from the office. Returns the distance in
+// The geofence a punch is measured against: the employee's assigned work
+// location if they have one, otherwise the global office (Setting.office).
+// Returns { center:{lat,lng}, radiusM, label }.
+function resolveGeofence(profile, settings) {
+  const wl = profile && profile.workLocationRef;
+  if (wl && wl.lat != null && wl.lng != null) {
+    return {
+      center: { lat: wl.lat, lng: wl.lng },
+      radiusM: wl.radiusM != null ? wl.radiusM : settings.geofenceThresholdM,
+      label: wl.name || 'work location',
+    };
+  }
+  return { center: settings.office, radiusM: settings.geofenceThresholdM, label: settings.office?.label || 'office' };
+}
+
+// Apply the geofence rule to a punch against a given center + radius. A punch
+// beyond the radius (and not marked WFH) is captured as an out-of-range punch —
+// the punch is never blocked; WFH punches are exempt. Returns the distance in
 // metres (or null when no location was captured) so callers can note it.
-function evaluateGeofence(loc, wfh, settings) {
-  const threshold = settings.geofenceThresholdM;
-  const distanceM = loc ? haversineMeters(settings.office, loc) : null;
+function evaluateGeofence(loc, wfh, center, radiusM) {
+  const distanceM = loc ? haversineMeters(center, loc) : null;
   const outside = Boolean(
-    !wfh && threshold && distanceM != null && distanceM > threshold
+    !wfh && radiusM && distanceM != null && distanceM > radiusM
   );
   return { distanceM, outside };
 }
@@ -93,12 +106,14 @@ const checkIn = asyncHandler(async (req, res) => {
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkInLocation = loc;
   record.checkInWfh = req.body.wfh === 'true';
-  // Office & Geofence rule: capture (but never block) an out-of-office punch.
+  // Geofence rule: capture (but never block) a punch outside the employee's
+  // assigned work location (or the global office if unassigned).
   const settings = await Setting.getSettings();
-  const { distanceM, outside } = evaluateGeofence(loc, record.checkInWfh, settings);
+  const geo = resolveGeofence(profile, settings);
+  const { distanceM, outside } = evaluateGeofence(loc, record.checkInWfh, geo.center, geo.radiusM);
   record.checkInOutsideGeofence = outside;
   if (outside) {
-    record.remarks = appendRemark(record.remarks, `Check-in outside office (${distanceM} m).`);
+    record.remarks = appendRemark(record.remarks, `Check-in outside ${geo.label} (${distanceM} m).`);
   }
   record.status = 'Present';
   await record.save();
@@ -125,12 +140,14 @@ const checkOut = asyncHandler(async (req, res) => {
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkOutLocation = loc;
   record.checkOutWfh = req.body.wfh === 'true';
-  // Office & Geofence rule: capture (but never block) an out-of-office punch.
+  // Geofence rule: capture (but never block) a punch outside the employee's
+  // assigned work location (or the global office if unassigned).
   const settings = await Setting.getSettings();
-  const { distanceM, outside } = evaluateGeofence(loc, record.checkOutWfh, settings);
+  const geo = resolveGeofence(profile, settings);
+  const { distanceM, outside } = evaluateGeofence(loc, record.checkOutWfh, geo.center, geo.radiusM);
   record.checkOutOutsideGeofence = outside;
   if (outside) {
-    record.remarks = appendRemark(record.remarks, `Check-out outside office (${distanceM} m).`);
+    record.remarks = appendRemark(record.remarks, `Check-out outside ${geo.label} (${distanceM} m).`);
   }
   // Allow the employee to (re)mark this day as a half day at punch-out.
   if (req.body.halfDay === 'true') record.status = 'HalfDay';
@@ -352,18 +369,25 @@ const listAll = asyncHandler(async (req, res) => {
   const records = await Attendance.find(filter)
     .populate({
       path: 'employee',
-      select: 'employeeCode user',
-      populate: { path: 'user', select: 'firstName lastName email' },
+      select: 'employeeCode user workLocationRef',
+      populate: [
+        { path: 'user', select: 'firstName lastName email' },
+        { path: 'workLocationRef', select: 'name lat lng radiusM' },
+      ],
     })
     .sort({ date: -1, createdAt: -1 });
 
-  // Attach each punch's distance from the configured office, for HR review.
+  // Attach each punch's distance from the employee's own work location (or the
+  // global office if unassigned), plus that location's name/radius, for HR review.
   const settings = await Setting.getSettings();
   const office = settings.office;
   const out = records.map((r) => {
     const o = r.toJSON();
-    o.checkInDistanceM = haversineMeters(office, o.checkInLocation);
-    o.checkOutDistanceM = haversineMeters(office, o.checkOutLocation);
+    const geo = resolveGeofence(r.employee, settings);
+    o.checkInDistanceM = haversineMeters(geo.center, o.checkInLocation);
+    o.checkOutDistanceM = haversineMeters(geo.center, o.checkOutLocation);
+    o.geofenceRadiusM = geo.radiusM;
+    o.locationName = geo.label;
     return o;
   });
 
@@ -392,8 +416,9 @@ const monthSummary = asyncHandler(async (req, res) => {
 
   const [profile, records, settings, holidays] = await Promise.all([
     EmployeeProfile.findById(req.query.employee)
-      .select('employeeCode designation department user')
-      .populate('user', 'firstName lastName email'),
+      .select('employeeCode designation department user workLocationRef')
+      .populate('user', 'firstName lastName email')
+      .populate('workLocationRef', 'name lat lng radiusM'),
     Attendance.find({ employee: req.query.employee, date: { $gte: start, $lt: end } }).sort({ date: -1 }),
     Setting.getSettings(),
     require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date name').catch(() => []),
@@ -405,6 +430,8 @@ const monthSummary = asyncHandler(async (req, res) => {
 
   const office = settings.office;
   const threshold = settings.geofenceThresholdM;
+  // This employee's geofence: their assigned work location, or the office.
+  const geo = resolveGeofence(profile, settings);
   const todayStart = startOfDay(new Date());
   const holidayKeys = new Set((holidays || []).map((h) => ymdLocal(h.date)));
 
@@ -414,12 +441,14 @@ const monthSummary = asyncHandler(async (req, res) => {
     const lateCutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
     const lateMs = r.checkIn ? new Date(r.checkIn) - lateCutoff : 0;
     o.lateMinutes = lateMs > 0 ? Math.round(lateMs / 60000) : 0;
-    o.checkInDistanceM = haversineMeters(office, o.checkInLocation);
-    o.checkOutDistanceM = haversineMeters(office, o.checkOutLocation);
+    o.checkInDistanceM = haversineMeters(geo.center, o.checkInLocation);
+    o.checkOutDistanceM = haversineMeters(geo.center, o.checkOutLocation);
+    o.geofenceRadiusM = geo.radiusM;
+    o.locationName = geo.label;
     o.distantPunch = Boolean(
-      threshold &&
-      ((o.checkInDistanceM != null && o.checkInDistanceM > threshold && !o.checkInWfh) ||
-        (o.checkOutDistanceM != null && o.checkOutDistanceM > threshold && !o.checkOutWfh))
+      geo.radiusM &&
+      ((o.checkInDistanceM != null && o.checkInDistanceM > geo.radiusM && !o.checkInWfh) ||
+        (o.checkOutDistanceM != null && o.checkOutDistanceM > geo.radiusM && !o.checkOutWfh))
     );
     // Show "no punch-out" as soon as the day is over, even before the nightly
     // worker stamps it.
@@ -460,6 +489,48 @@ const monthSummary = asyncHandler(async (req, res) => {
     records: days,
     settings: { office, geofenceThresholdM: threshold },
   });
+});
+
+// GET /api/attendance/daily-stats?days=14  (admin)
+// Per-day org attendance for the dashboard bar charts: number of present
+// employees and their average hours worked, over the trailing N IST days.
+const dailyStats = asyncHandler(async (req, res) => {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const days = Math.min(Math.max(Number(req.query.days) || 14, 1), 60);
+  const end = startOfDay(new Date());
+  const start = startOfDay(new Date());
+  start.setDate(start.getDate() - (days - 1));
+
+  const records = await Attendance.find({ date: { $gte: start, $lte: end } })
+    .select('date status checkIn hoursWorked')
+    .lean();
+
+  // Seed every day in the window so the chart has no gaps.
+  const byDay = {};
+  for (let i = 0; i < days; i += 1) {
+    const key = ymdLocal(new Date(start.getTime() + i * 86400000));
+    byDay[key] = { date: key, present: 0, hoursSum: 0 };
+  }
+  for (const r of records) {
+    const b = byDay[ymdLocal(r.date)];
+    if (b && ['Present', 'HalfDay'].includes(r.status) && r.checkIn) {
+      b.present += 1;
+      b.hoursSum += r.hoursWorked || 0;
+    }
+  }
+
+  const out = Object.values(byDay)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((b) => {
+      const [, m, d] = b.date.split('-').map(Number);
+      return {
+        date: b.date,
+        label: `${d} ${MONTHS[m - 1]}`,
+        presentCount: b.present,
+        avgHours: b.present ? +(b.hoursSum / b.present).toFixed(1) : 0,
+      };
+    });
+  res.json({ days: out });
 });
 
 // GET /api/attendance/today-board?department=
@@ -601,6 +672,7 @@ module.exports = {
   listMine,
   listAll,
   monthSummary,
+  dailyStats,
   todayBoard,
   createRecord,
   updateRecord,

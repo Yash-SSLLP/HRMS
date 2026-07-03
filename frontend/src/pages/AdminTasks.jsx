@@ -14,7 +14,7 @@ const PRIORITY_STYLES = {
   Low: 'text-gray-500', Medium: 'text-blue-600', High: 'text-amber-600', Urgent: 'text-red-600',
 };
 const blank = { title: '', description: '', project: '', assignedTo: '', status: 'Todo', priority: 'Medium', dueDate: '' };
-const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 export default function AdminTasks() {
   const [tasks, setTasks] = useState([]);
@@ -104,14 +104,14 @@ export default function AdminTasks() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : tasks.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No tasks</td></tr>
             ) : tasks.map((t) => (
               <tr key={t._id}>
                 <td className="px-4 py-3 font-medium text-gray-900">{t.title}</td>
-                <td className="px-4 py-3 text-gray-600">{t.project?.name || '—'}</td>
-                <td className="px-4 py-3">{t.assignedTo ? `${t.assignedTo.firstName} ${t.assignedTo.lastName}` : '—'}</td>
+                <td className="px-4 py-3 text-gray-600">{t.project?.name || '-'}</td>
+                <td className="px-4 py-3">{t.assignedTo ? `${t.assignedTo.firstName} ${t.assignedTo.lastName}` : '-'}</td>
                 <td className={`px-4 py-3 font-medium ${PRIORITY_STYLES[t.priority]}`}>{t.priority}</td>
                 <td className="px-4 py-3 text-gray-600">{fmt(t.dueDate)}</td>
                 <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[t.status]}`}>{t.status}</span></td>
@@ -145,7 +145,7 @@ export default function AdminTasks() {
                   <label className="block text-sm text-gray-700">Project</label>
                   <select value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
-                    <option value="">—</option>
+                    <option value="">-</option>
                     {projects.map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}
                   </select>
                 </div>
@@ -153,7 +153,7 @@ export default function AdminTasks() {
                   <label className="block text-sm text-gray-700">Assignee</label>
                   <select value={form.assignedTo} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
-                    <option value="">—</option>
+                    <option value="">-</option>
                     {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
                   </select>
                 </div>

@@ -76,7 +76,7 @@ export default function EmployeeSurveys() {
 
   return (
     <div>
-      <PageHeader title="Surveys & Polls" subtitle="Share your feedback — your voice helps shape the workplace." />
+      <PageHeader title="Surveys & Polls" subtitle="Share your feedback · your voice helps shape the workplace." />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const TYPES = [
@@ -82,7 +82,7 @@ export default function LeaveScreen() {
 
   const bucket = (k) => Number(balances?.[k]?.balance ?? 0);
 
-  if (loading) return <Screen><Loader text="Loading leave" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

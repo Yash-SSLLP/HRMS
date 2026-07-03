@@ -21,9 +21,9 @@ const GPS_GOOD_ENOUGH_M = 25;   // stop refining once a fix is at least this acc
 const GPS_MAX_WAIT_MS = 15000;  // how long to keep refining before accepting the best fix
 const GPS_POOR_M = 100;         // fixes coarser than this are flagged as unreliable
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
 const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
 
 // Milliseconds → HH:MM:SS for the live working-time clock.
 const fmtElapsed = (ms) => {
@@ -286,7 +286,7 @@ export default function EmployeeAttendance() {
 
       <div className="bg-white shadow rounded-lg p-5 mb-6">
         <div className="flex items-center gap-2 mb-3">
-          <h2 className="text-sm font-semibold text-gray-700">Today — {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long' })}</h2>
+          <h2 className="text-sm font-semibold text-gray-700">Today · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long' })}</h2>
           {today?.status && (
             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[today.status]}`}>{today.status}</span>
           )}
@@ -326,7 +326,7 @@ export default function EmployeeAttendance() {
           </div>
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Hours</div>
-            <div className="text-lg font-mono">{today?.hoursWorked ?? '—'}</div>
+            <div className="text-lg font-mono">{today?.hoursWorked ?? '-'}</div>
           </div>
         </div>
         <div className="flex gap-2 items-center">
@@ -347,7 +347,7 @@ export default function EmployeeAttendance() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-5">
             <div className="flex items-center justify-between mb-3">
               <h2 className="card-title">
-                {capture === 'checkin' ? 'Check In' : 'Check Out'} — take your photo
+                {capture === 'checkin' ? 'Check In' : 'Check Out'} · take your photo
               </h2>
               <button onClick={closeCapture} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
             </div>
@@ -473,7 +473,7 @@ export default function EmployeeAttendance() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : records.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No records</td></tr>
             ) : records.map((r) => (
@@ -490,8 +490,8 @@ export default function EmployeeAttendance() {
                   {fmtTime(r.checkOut)}
                   <PunchLocation loc={r.checkOutLocation} className="mt-0.5 flex" />
                 </td>
-                <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '—'}</td>
-                <td className="px-4 py-3 text-gray-500">{r.remarks || '—'}</td>
+                <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '-'}</td>
+                <td className="px-4 py-3 text-gray-500">{r.remarks || '-'}</td>
               </tr>
             ))}
           </tbody>

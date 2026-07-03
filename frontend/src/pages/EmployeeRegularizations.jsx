@@ -93,7 +93,7 @@ export default function EmployeeRegularizations() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : items.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No regularization requests</td></tr>
             ) : items.map((r) => (
@@ -101,7 +101,7 @@ export default function EmployeeRegularizations() {
                 <td className="px-4 py-3 text-gray-700">{new Date(r.date).toLocaleDateString()}</td>
                 <td className="px-4 py-3">{r.type}</td>
                 <td className="px-4 py-3 text-gray-700">
-                  {r.requestedCheckIn || '—'} – {r.requestedCheckOut || '—'}
+                  {r.requestedCheckIn || '-'} – {r.requestedCheckOut || '-'}
                 </td>
                 <td className="px-4 py-3">
                   {r.reason}

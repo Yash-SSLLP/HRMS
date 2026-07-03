@@ -348,7 +348,7 @@ export default function ChatDock() {
           <path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z" />
         </svg>
         {unreadTotal > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 text-[10px] rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center font-bold"
+          <span className="chat-badge absolute -top-0.5 -right-0.5 text-[10px] rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center font-bold"
             style={{ background: wa.badge, color: '#0b141a', border: '2px solid #fff' }}>
             {unreadTotal > 9 ? '9+' : unreadTotal}
           </span>
@@ -455,7 +455,7 @@ export default function ChatDock() {
               </span>
               <span className="text-sm font-semibold" style={{ color: wa.headerText }}>Chats</span>
               {unreadTotal > 0 && (
-                <span className="text-[10px] rounded-full px-1.5 py-0.5 leading-none font-bold" style={{ background: wa.badge, color: '#0b141a' }}>
+                <span className="chat-badge text-[10px] rounded-full min-w-[18px] h-[18px] px-1.5 flex items-center justify-center leading-none font-bold" style={{ background: wa.badge, color: '#0b141a' }}>
                   {unreadTotal > 9 ? '9+' : unreadTotal}
                 </span>
               )}
@@ -594,7 +594,7 @@ export default function ChatDock() {
                   <Avatar name={p.fullName} size={38} photoUrl={userPhotoUrl(p._id, p.hasPhoto, bust)} />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate" style={{ color: wa.text }}>{p.fullName}</div>
-                    <div className="text-xs truncate" style={{ color: wa.sub }}>{p.role} — {p.email}</div>
+                    <div className="text-xs truncate" style={{ color: wa.sub }}>{p.role} · {p.email}</div>
                   </div>
                   {p.connectionStatus === 'none' && <button onClick={() => sendRequest(p._id)} className="text-xs px-3 py-1.5 rounded-full text-white shrink-0" style={{ background: '#008069' }}>Connect</button>}
                   {p.connectionStatus === 'pending-out' && <span className="text-xs shrink-0" style={{ color: wa.sub }}>Requested</span>}

@@ -111,7 +111,7 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
                       </span>
                     </div>
                     <div className="text-xs text-gray-500 truncate">
-                      {(e.designation || '—')}{e.department ? ` · ${e.department}` : ''}
+                      {(e.designation || '-')}{e.department ? ` · ${e.department}` : ''}
                     </div>
                   </div>
                   <span className="text-xs text-gray-500 shrink-0">{whenLabel(e.daysAway)}</span>

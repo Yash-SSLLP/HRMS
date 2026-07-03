@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Avatar, AppButton, Input, Field, Loader, refresher, SectionHeader, EmptyState, Ionicons } from '../components/ui';
+import { Screen, Card, Avatar, AppButton, Input, Field, Loader, refresher, SectionHeader, EmptyState, Ionicons, SkeletonScreen } from '../components/ui';
 import { timeAgo } from '../utils/format';
 
 const BADGES = ['Team Player', 'Innovation', 'Leadership', 'Extra Mile', 'Customer Hero', 'Above & Beyond'];
@@ -54,7 +54,7 @@ export default function RecognitionScreen() {
 
   const name = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
-  if (loading) return <Screen><Loader text="Loading recognition" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

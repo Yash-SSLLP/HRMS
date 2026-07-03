@@ -4,7 +4,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api, { mediaUrl } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Avatar, Loader, Pill, Ionicons } from '../components/ui';
+import { Screen, Avatar, Loader, Pill, Ionicons, SkeletonScreen } from '../components/ui';
 
 // Connection statuses returned by /chat/directory.
 const STATUS_META = {
@@ -87,7 +87,7 @@ export default function NewChatScreen() {
     );
   };
 
-  if (loading) return <Screen edges={[]}><Loader text="Loading directory" /></Screen>;
+  if (loading) return <Screen edges={[]}><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

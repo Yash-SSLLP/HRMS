@@ -7,7 +7,7 @@ import api, { errMsg, mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
 import { unregisterPush } from '../services/push';
 import { colors, radius, spacing, font, roleAccent } from '../theme';
-import { Screen, Card, Avatar, Pill, Loader, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Avatar, Pill, Loader, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 export default function ProfileScreen() {
@@ -77,7 +77,7 @@ export default function ProfileScreen() {
     ]);
   };
 
-  if (loading) return <Screen><Loader text="Loading profile" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const avatarUri = user?.photo ? mediaUrl(`/auth/users/${user._id}/avatar`) + `?b=${avatarBust}` : null;
   const bannerUri = user?.banner ? mediaUrl(`/auth/users/${user._id}/banner`) + `?b=${bannerBust}` : null;
@@ -154,7 +154,7 @@ function Detail({ icon, label, value, last }) {
     <View style={[styles.detail, !last && styles.detailBorder]}>
       <Ionicons name={icon} size={18} color={colors.textMuted} style={{ width: 26 }} />
       <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue} numberOfLines={1}>{value || '—'}</Text>
+      <Text style={styles.detailValue} numberOfLines={1}>{value || '-'}</Text>
     </View>
   );
 }

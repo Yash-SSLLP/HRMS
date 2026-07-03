@@ -6,7 +6,7 @@ import api from '../../api/client';
 import { useAuth } from '../../store/auth';
 import { canViewAdmin, canApprove, isExec, hasTeam } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
-import { Screen, Card, Pill, ProgressBar, refresher, SectionHeader, Loader, EmptyState, Ionicons } from '../../components/ui';
+import { Screen, Card, Pill, ProgressBar, refresher, SectionHeader, Loader, EmptyState, Ionicons, SkeletonScreen, MiniBarChart } from '../../components/ui';
 import { fmtDate } from '../../utils/format';
 import AttendanceHeatmap from '../../components/AttendanceHeatmap';
 
@@ -16,13 +16,18 @@ export default function AdminHubScreen() {
   const viewAdmin = canViewAdmin(role);
 
   const [data, setData] = useState(null);
+  const [daily, setDaily] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     if (!viewAdmin) { setLoading(false); return; }
-    const res = await api.get('/dashboard/admin').catch(() => ({ data: null }));
+    const [res, ds] = await Promise.all([
+      api.get('/dashboard/admin').catch(() => ({ data: null })),
+      api.get('/attendance/daily-stats', { params: { days: 14 } }).catch(() => ({ data: { days: [] } })),
+    ]);
     setData(res?.data || null);
+    setDaily(ds?.data?.days || []);
     setLoading(false);
   }, [viewAdmin]);
 
@@ -42,11 +47,12 @@ export default function AdminHubScreen() {
   tiles.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9', show: viewAdmin });
   tiles.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea', show: viewAdmin });
   tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canApprove(role) });
+  tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canApprove(role) });
   tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: canApprove(role) });
   tiles.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a', show: viewAdmin });
   const visibleTiles = tiles.filter((t) => t.show);
 
-  if (loading) return <Screen><Loader text="Loading console" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>
@@ -86,6 +92,21 @@ export default function AdminHubScreen() {
             <SplitBar label="On leave" value={cards.onLeaveToday} total={cards.totalEmployees} tint="#0ea5e9" />
             <SplitBar label="Absent" value={cards.absentToday} total={cards.totalEmployees} tint="#dc2626" />
           </Card>
+        )}
+
+        {/* Per-day attendance trends */}
+        {viewAdmin && daily.length > 0 && (
+          <>
+            <SectionHeader title="Per-day trends" />
+            <Card style={{ marginBottom: spacing(3) }}>
+              <Text style={[font.h3, { marginBottom: spacing(2) }]}>Avg login hours / day</Text>
+              <MiniBarChart data={daily.map((d) => ({ label: d.label, value: d.avgHours }))} tint={colors.primary} />
+            </Card>
+            <Card style={{ marginBottom: spacing(2) }}>
+              <Text style={[font.h3, { marginBottom: spacing(2) }]}>Present employees / day</Text>
+              <MiniBarChart data={daily.map((d) => ({ label: d.label, value: d.presentCount }))} tint={colors.success} />
+            </Card>
+          </>
         )}
 
         {/* Manage tiles */}
@@ -187,7 +208,7 @@ function Stat({ label, value, icon, tint, onPress }) {
       <View style={[styles.statIcon, { backgroundColor: tint + '1a' }]}>
         <Ionicons name={icon} size={18} color={tint} />
       </View>
-      <Text style={styles.statValue}>{value ?? '—'}</Text>
+      <Text style={styles.statValue}>{value ?? '-'}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </Comp>
   );

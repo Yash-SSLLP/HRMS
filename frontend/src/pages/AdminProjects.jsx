@@ -11,7 +11,7 @@ const STATUS_STYLES = {
   Cancelled: 'bg-red-100 text-red-700',
 };
 const blank = { name: '', description: '', status: 'Planning', startDate: '', endDate: '', manager: '', members: [] };
-const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 
 export default function AdminProjects() {
   const [projects, setProjects] = useState([]);
@@ -91,7 +91,7 @@ export default function AdminProjects() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : projects.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No projects yet</td></tr>
             ) : projects.map((p) => (
@@ -101,7 +101,7 @@ export default function AdminProjects() {
                   <div className="text-xs text-gray-500">{(p.members || []).length} member(s)</div>
                 </td>
                 <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[p.status]}`}>{p.status}</span></td>
-                <td className="px-4 py-3">{p.manager ? `${p.manager.firstName} ${p.manager.lastName}` : '—'}</td>
+                <td className="px-4 py-3">{p.manager ? `${p.manager.firstName} ${p.manager.lastName}` : '-'}</td>
                 <td className="px-4 py-3 text-gray-600">{fmt(p.startDate)} → {fmt(p.endDate)}</td>
                 <td className="px-4 py-3 text-right space-x-2">
                   <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
@@ -138,7 +138,7 @@ export default function AdminProjects() {
                   <label className="block text-sm text-gray-700">Manager</label>
                   <select value={form.manager} onChange={(e) => setForm({ ...form, manager: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
-                    <option value="">—</option>
+                    <option value="">-</option>
                     {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
                   </select>
                 </div>

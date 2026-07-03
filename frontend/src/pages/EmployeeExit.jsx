@@ -9,7 +9,7 @@ const STATUS_COLORS = {
   Cancelled: 'bg-gray-200 text-gray-700',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
 
 export default function EmployeeExit() {
   const [exit, setExit] = useState(null);
@@ -62,7 +62,7 @@ export default function EmployeeExit() {
       )}
 
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
       ) : exit ? (
         <div className="bg-white shadow rounded-lg p-6 space-y-4">
           <div className="flex items-start justify-between">
@@ -86,7 +86,7 @@ export default function EmployeeExit() {
             </div>
             <div>
               <dt className="text-xs text-gray-500">Notice Period</dt>
-              <dd>{exit.noticePeriodDays ?? '—'} days</dd>
+              <dd>{exit.noticePeriodDays ?? '-'} days</dd>
             </div>
             <div>
               <dt className="text-xs text-gray-500">HR Contact</dt>
@@ -98,7 +98,7 @@ export default function EmployeeExit() {
             </div>
             <div className="col-span-2">
               <dt className="text-xs text-gray-500">Reason</dt>
-              <dd>{exit.reason || '—'}</dd>
+              <dd>{exit.reason || '-'}</dd>
             </div>
           </dl>
 

@@ -159,7 +159,7 @@ export default function EmployeeReviews() {
       {/* Feedback about me */}
       <section>
         <h2 className="card-title mb-3">Feedback about me</h2>
-        <p className="text-xs text-gray-500 mb-3">Submitted feedback is shown anonymously — reviewer identities are hidden.</p>
+        <p className="text-xs text-gray-500 mb-3">Submitted feedback is shown anonymously · reviewer identities are hidden.</p>
         {loading ? (
           <div className="text-sm text-gray-500">Loading…</div>
         ) : about.length === 0 ? (
@@ -180,7 +180,7 @@ export default function EmployeeReviews() {
                     <li key={i} className="text-sm">
                       <div className="flex items-center justify-between">
                         <span className="text-gray-700">{rt.competency}</span>
-                        <span className="text-gray-900 font-medium">{rt.score ? `${rt.score}/5` : '—'}</span>
+                        <span className="text-gray-900 font-medium">{rt.score ? `${rt.score}/5` : '-'}</span>
                       </div>
                       {rt.comment && <div className="text-xs text-gray-500 mt-0.5">{rt.comment}</div>}
                     </li>
@@ -221,7 +221,7 @@ export default function EmployeeReviews() {
                         onChange={(e) => setRating(idx, 'score', e.target.value)}
                         className="border rounded-lg px-2 py-1 text-sm"
                       >
-                        <option value={0}>— Rate —</option>
+                        <option value={0}>Rate…</option>
                         {SCORES.map((s) => (
                           <option key={s} value={s}>{'★'.repeat(s)} ({s})</option>
                         ))}
@@ -244,7 +244,7 @@ export default function EmployeeReviews() {
                   onChange={(e) => setForm({ ...form, overallRating: e.target.value })}
                   className="border rounded-lg px-2 py-1 text-sm"
                 >
-                  <option value={0}>— Rate —</option>
+                  <option value={0}>Rate…</option>
                   {SCORES.map((s) => (
                     <option key={s} value={s}>{'★'.repeat(s)} ({s})</option>
                   ))}

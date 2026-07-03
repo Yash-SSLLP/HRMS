@@ -10,8 +10,7 @@ import { colors, radius, spacing, font } from '../theme';
 import { fmtDateTime } from '../utils/format';
 import {
   Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher,
-  ModalSheet, ChipSelect, Ionicons,
-} from '../components/ui';
+  ModalSheet, ChipSelect, Ionicons, SkeletonScreen } from '../components/ui';
 
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const tone = (s) => ({ Pending: 'neutral', Scheduled: 'info', Cleared: 'success', Rejected: 'danger' }[s] || 'neutral');
@@ -77,7 +76,7 @@ export default function MyInterviewsScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading interviews" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

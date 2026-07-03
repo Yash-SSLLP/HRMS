@@ -6,6 +6,7 @@ const {
   ALL_CATEGORIES,
   HR_ONLY_CATEGORIES,
   PII_CATEGORIES,
+  REQUIRED_DOCUMENT_CATEGORIES,
 } = require('../models/Document');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
@@ -208,6 +209,7 @@ const categories = asyncHandler(async (req, res) => {
     selfUpload: SELF_UPLOAD_CATEGORIES,
     hrOnly: HR_ONLY_CATEGORIES,
     all: ALL_CATEGORIES,
+    required: REQUIRED_DOCUMENT_CATEGORIES,
   });
 });
 

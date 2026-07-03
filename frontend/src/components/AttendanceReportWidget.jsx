@@ -73,7 +73,7 @@ export default function AttendanceReportWidget({ compact = false, height }) {
         >
           <option value="">Select employee…</option>
           {employees.map((e) => (
-            <option key={e._id} value={e._id}>{e.employeeCode} — {e.user?.firstName} {e.user?.lastName}</option>
+            <option key={e._id} value={e._id}>{e.employeeCode} · {e.user?.firstName} {e.user?.lastName}</option>
           ))}
         </select>
         <select

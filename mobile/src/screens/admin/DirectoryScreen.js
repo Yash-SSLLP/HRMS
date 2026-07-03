@@ -6,7 +6,7 @@ import api, { mediaUrl } from '../../api/client';
 import { useAuth } from '../../store/auth';
 import { canApprove } from '../../utils/roles';
 import { colors, radius, spacing, font, shadow } from '../../theme';
-import { Screen, Avatar, Pill, Loader, EmptyState, refresher, Ionicons } from '../../components/ui';
+import { Screen, Avatar, Pill, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../../components/ui';
 
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
@@ -32,7 +32,7 @@ export default function DirectoryScreen() {
     return !q || fullName(p.user).toLowerCase().includes(q) || (p.employeeCode || '').toLowerCase().includes(q) || (p.designation || '').toLowerCase().includes(q) || (p.department || '').toLowerCase().includes(q);
   });
 
-  if (loading) return <Screen><Loader text="Loading directory" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>
@@ -52,7 +52,7 @@ export default function DirectoryScreen() {
             <Avatar name={fullName(item.user)} uri={item.user?.photo ? mediaUrl(`/auth/users/${item.user._id}/avatar`) : null} size={46} />
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={font.h3}>{fullName(item.user)}</Text>
-              <Text style={font.label}>{item.designation || '—'}{item.department ? ` · ${item.department}` : ''}</Text>
+              <Text style={font.label}>{item.designation || '-'}{item.department ? ` · ${item.department}` : ''}</Text>
               <Text style={font.small}>{item.employeeCode}{item.user?.email ? ` · ${item.user.email}` : ''}</Text>
             </View>
             {item.user?.isActive === false ? <Pill label="Inactive" tone="danger" /> : <Pill label={item.user?.role} tone="primary" />}

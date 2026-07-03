@@ -7,7 +7,7 @@ import MailComposeModal from '../components/MailComposeModal';
 import DesignationSelect from '../components/DesignationSelect';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '-');
 
 const APPT_NUM_FIELDS = [
   ['ctcAnnual', 'Annual CTC (₹)'],
@@ -86,7 +86,7 @@ export default function AdminHiringOnboarding() {
       to: c.email,
       title: `Send ${label}`,
       link,
-      defaultSubject: `${label} — ${COMPANY_NAME}`,
+      defaultSubject: `${label} · ${COMPANY_NAME}`,
       defaultBody:
         `Dear ${c.name},\n\n` +
         `Please find your ${label} from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
@@ -142,7 +142,7 @@ export default function AdminHiringOnboarding() {
 
   return (
     <div>
-      <PageHeader title="Onboarding" subtitle="Candidates who cleared interviews & received an offer — set joining details and release the appointment letter" />
+      <PageHeader title="Onboarding" subtitle="Candidates who cleared interviews & received an offer · set joining details and release the appointment letter" />
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
       {info && <div className="mb-4 text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">{info}</div>}
 
@@ -159,7 +159,7 @@ export default function AdminHiringOnboarding() {
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
                   <div className="font-semibold text-gray-900">{c.name}</div>
-                  <div className="text-xs text-gray-500">{c.job?.title || '—'}{c.email ? ` · ${c.email}` : ''}</div>
+                  <div className="text-xs text-gray-500">{c.job?.title || '-'}{c.email ? ` · ${c.email}` : ''}</div>
                   <div className="text-[11px] text-gray-400 mt-0.5">
                     Onboarding since {fmtDate(c.onboarding?.startedAt)}{c.onboarding?.startedByName ? ` · by ${c.onboarding.startedByName}` : ''}
                   </div>
@@ -270,7 +270,7 @@ export default function AdminHiringOnboarding() {
                 </div>
               </div>
 
-              <div className="sm:col-span-2 mt-1 text-xs font-semibold text-gray-600">CTC breakup (Annexure A) — annual ₹</div>
+              <div className="sm:col-span-2 mt-1 text-xs font-semibold text-gray-600">CTC breakup (Annexure A) · annual ₹</div>
               {APPT_NUM_FIELDS.map(([key, label]) => (
                 <div key={key}>
                   <label className="block text-xs text-gray-600 mb-1">{label}</label>
@@ -289,7 +289,7 @@ export default function AdminHiringOnboarding() {
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${apptCand.email ? 'text-gray-700' : 'text-gray-400'}`}>
                 <input type="checkbox" checked={apptEmail && !!apptCand.email} disabled={!apptCand.email} onChange={(e) => setApptEmail(e.target.checked)} />
-                Email the appointment letter to the candidate — an editable preview opens after generating{!apptCand.email && ' (no email on file)'}
+                Email the appointment letter to the candidate · an editable preview opens after generating{!apptCand.email && ' (no email on file)'}
               </label>
 
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}

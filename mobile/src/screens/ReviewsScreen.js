@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const STATUS_TONE = { Pending: 'warning', Submitted: 'success', Draft: 'neutral' };
@@ -59,7 +59,7 @@ export default function ReviewsScreen() {
 
   const name = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
-  if (loading) return <Screen><Loader text="Loading reviews" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

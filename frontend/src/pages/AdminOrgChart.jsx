@@ -156,7 +156,7 @@ export default function AdminOrgChart() {
     <div>
       <PageHeader
         title="Org Chart"
-        subtitle={isSuperAdmin ? 'Reporting hierarchy — click a person to set who they report to' : 'Reporting hierarchy'}
+        subtitle={isSuperAdmin ? 'Reporting hierarchy · click a person to set who they report to' : 'Reporting hierarchy'}
       />
 
       {error && (
@@ -174,7 +174,7 @@ export default function AdminOrgChart() {
             onChange={(e) => onSetManager(selected, e.target.value)}
             className="border rounded-lg px-2 py-1 max-w-[14rem]"
           >
-            <option value="">— Top level —</option>
+            <option value="">Top level</option>
             {everyone
               .filter((p) => p.id !== selected.id)
               .map((p) => (

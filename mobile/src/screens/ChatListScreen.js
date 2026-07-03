@@ -6,7 +6,7 @@ import api, { mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
 import { useBadges } from '../store/badges';
 import { colors, radius, spacing, font, shadow } from '../theme';
-import { Screen, Avatar, EmptyState, Loader, refresher, AppButton, Ionicons } from '../components/ui';
+import { Screen, Avatar, EmptyState, Loader, refresher, AppButton, Ionicons, SkeletonScreen } from '../components/ui';
 import { timeAgo } from '../utils/format';
 
 export default function ChatListScreen() {
@@ -109,7 +109,7 @@ export default function ChatListScreen() {
     </TouchableOpacity>
   );
 
-  if (loading) return <Screen><Loader text="Loading chats" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

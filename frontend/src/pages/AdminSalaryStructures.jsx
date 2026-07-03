@@ -198,7 +198,7 @@ export default function AdminSalaryStructures() {
               structures.map((s) => (
                 <tr key={s._id}>
                   <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
-                  <td className="px-4 py-3 text-gray-600">{s.description || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{s.description || '-'}</td>
                   <td className="px-4 py-3 text-xs text-gray-500">{summary(s.components)}</td>
                   <td className="px-4 py-3">
                     <span
@@ -284,7 +284,7 @@ export default function AdminSalaryStructures() {
                   }`}
                 >
                   Total: {totalPct}%
-                  {overLimit && <span className="ml-2">— must not exceed 100%</span>}
+                  {overLimit && <span className="ml-2">- must not exceed 100%</span>}
                 </div>
               </div>
 
@@ -318,7 +318,7 @@ export default function AdminSalaryStructures() {
       {previewFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <h2 className="card-title mb-1">Preview — {previewFor.name}</h2>
+            <h2 className="card-title mb-1">Preview · {previewFor.name}</h2>
             <p className="text-xs text-gray-500 mb-4">
               Enter an annual CTC to see the monthly and annual breakdown.
             </p>

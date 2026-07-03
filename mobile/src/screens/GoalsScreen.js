@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, ProgressBar, Loader, EmptyState, refresher } from '../components/ui';
+import { Screen, Card, Pill, ProgressBar, Loader, EmptyState, refresher, SkeletonScreen } from '../components/ui';
 
 const STATUS_TONE = { Draft: 'neutral', Active: 'info', Completed: 'success', Cancelled: 'danger' };
 const STEPS = [0, 25, 50, 75, 100];
@@ -33,7 +33,7 @@ export default function GoalsScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading goals" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

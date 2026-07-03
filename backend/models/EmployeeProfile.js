@@ -64,6 +64,9 @@ const employeeProfileSchema = new mongoose.Schema(
     designation: { type: String, trim: true },
     department: { type: String, trim: true },
     workLocation: { type: String, trim: true },
+    // Assigned work site whose geofence a punch is measured against. Unset ⇒
+    // falls back to the global office (Setting.office).
+    workLocationRef: { type: mongoose.Schema.Types.ObjectId, ref: 'WorkLocation' },
     employmentType: {
       type: String,
       enum: ['FullTime', 'PartTime', 'Contract', 'Intern'],

@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api from '../../api/client';
 import { colors, radius, spacing, font } from '../../theme';
-import { Screen, Card, Avatar, Loader, refresher, SectionHeader, EmptyState, Ionicons } from '../../components/ui';
+import { Screen, Card, Avatar, Loader, refresher, SectionHeader, EmptyState, Ionicons, SkeletonScreen } from '../../components/ui';
 import { fmtTime, fmtHours } from '../../utils/format';
 
 export default function TodayAttendanceScreen() {
@@ -23,7 +23,7 @@ export default function TodayAttendanceScreen() {
   useFocusEffect(useCallback(() => { load(dept); }, [load, dept]));
   const onRefresh = async () => { setRefreshing(true); await load(dept); setRefreshing(false); };
 
-  if (loading) return <Screen><Loader text="Loading attendance" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const total = data.onTime.length + data.late.length;
   const filters = ['all', ...data.departments];

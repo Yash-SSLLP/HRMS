@@ -3,8 +3,8 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—');
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
+const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 const STATUS_COLORS = {
   Present: 'bg-green-100 text-green-800',
@@ -78,7 +78,7 @@ export default function EmployeeTeam() {
 
   return (
     <div>
-      <PageHeader title="My Team" subtitle="Your direct reports — approve their leave and see today's attendance" />
+      <PageHeader title="My Team" subtitle="Your direct reports · approve their leave and see today's attendance" />
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
@@ -147,7 +147,7 @@ export default function EmployeeTeam() {
                             </div>
                           </div>
                         </td>
-                        <td className="py-2 pr-4 text-gray-600">{m.designation || '—'}</td>
+                        <td className="py-2 pr-4 text-gray-600">{m.designation || '-'}</td>
                         <td className="py-2 pr-4">
                           {m.today ? (
                             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[m.today.status] || 'bg-gray-100 text-gray-700'}`}>{m.today.status}</span>
@@ -155,7 +155,7 @@ export default function EmployeeTeam() {
                         </td>
                         <td className="py-2 pr-4 font-mono">{fmtTime(m.today?.checkIn)}</td>
                         <td className="py-2 pr-4 font-mono">{fmtTime(m.today?.checkOut)}</td>
-                        <td className="py-2 pr-4 font-mono text-right">{m.today?.hoursWorked || '—'}</td>
+                        <td className="py-2 pr-4 font-mono text-right">{m.today?.hoursWorked || '-'}</td>
                       </tr>
                     ))}
                   </tbody>

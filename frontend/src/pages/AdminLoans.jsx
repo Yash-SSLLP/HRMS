@@ -37,7 +37,7 @@ export default function AdminLoans() {
     if (lRes.status === 'fulfilled') setLoans(lRes.value.data.loans);
     else setError(lRes.reason?.response?.data?.message || 'Failed to load loans');
     if (uRes.status === 'fulfilled') setUsers(uRes.value.data.users);
-    else if (lRes.status === 'fulfilled') setError(uRes.reason?.response?.data?.message || 'Could not load the employee list for the form — reload and try again.');
+    else if (lRes.status === 'fulfilled') setError(uRes.reason?.response?.data?.message || 'Could not load the employee list for the form · reload and try again.');
     setLoading(false);
   };
   useEffect(() => { load(); }, [statusFilter]);
@@ -101,13 +101,13 @@ export default function AdminLoans() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : loans.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No loans</td></tr>
             ) : loans.map((l) => (
               <tr key={l._id}>
                 <td className="px-4 py-3 font-medium text-gray-900">
-                  {l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : '—'}
+                  {l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : '-'}
                   <div className="text-xs text-gray-500">{l.employee?.email}</div>
                 </td>
                 <td className="px-4 py-3 text-gray-600">{l.type}</td>
@@ -138,7 +138,7 @@ export default function AdminLoans() {
             <h2 className="card-title mb-4">New Loan / Advance</h2>
             <form onSubmit={save} className="space-y-3">
               <select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
-                <option value="">— Select employee * —</option>
+                <option value="">Select employee *</option>
                 {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.email})</option>)}
               </select>
               <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="block w-full border rounded-lg px-3 py-2">

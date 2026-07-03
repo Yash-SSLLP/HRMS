@@ -139,7 +139,7 @@ export default function AdminCompliance() {
 
   const renderCell = (col, value) => {
     if (col.money) return inr.format(Number(value) || 0);
-    return value == null || value === '' ? '—' : value;
+    return value == null || value === '' ? '-' : value;
   };
 
   const downloadCsv = () => {

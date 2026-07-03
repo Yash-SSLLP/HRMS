@@ -128,7 +128,7 @@ export default function AdminDocuments() {
             <option value="">All employees</option>
             {employees.map((e) => (
               <option key={e._id} value={e._id}>
-                {e.employeeCode} — {e.user?.firstName} {e.user?.lastName}
+                {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
               </option>
             ))}
           </select>
@@ -190,7 +190,7 @@ export default function AdminDocuments() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={selectedEmployee ? 6 : 7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={selectedEmployee ? 6 : 7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : docs.length === 0 ? (
               <tr><td colSpan={selectedEmployee ? 6 : 7} className="px-4 py-6 text-center text-gray-500">No documents</td></tr>
             ) : docs.map((d) => (

@@ -23,6 +23,7 @@ function canManage(viewerRole, targetRole) {
 
 export default function AdminDashboard() {
   const me = useAuthStore((s) => s.user);
+  const myId = String(me?._id || me?.id || '');
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -164,7 +165,7 @@ export default function AdminDashboard() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : users.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
             ) : users.map((u) => (
@@ -175,22 +176,30 @@ export default function AdminDashboard() {
                   <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{u.role}</span>
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${
-                    u.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'
-                  }`}>
-                    {u.isActive ? 'Active' : 'Inactive'}
-                  </span>
+                  {/* Nobody may see their own active status — hide it on your own row. */}
+                  {String(u._id || u.id) === myId ? (
+                    <span className="text-xs text-gray-400">-</span>
+                  ) : (
+                    <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${
+                      u.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'
+                    }`}>
+                      {u.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
                   {canManage(me?.role, u.role) ? (
                     <>
                       <button onClick={() => openEdit(u)} className="text-blue-600 hover:underline">Edit</button>
-                      <button onClick={() => onToggleActive(u)} className="text-amber-600 hover:underline">
-                        {u.isActive ? 'Deactivate' : 'Activate'}
-                      </button>
+                      {/* Only SuperAdmin may change an account's active status (never their own). */}
+                      {isSuperAdmin && String(u._id || u.id) !== myId && (
+                        <button onClick={() => onToggleActive(u)} className="text-amber-600 hover:underline">
+                          {u.isActive ? 'Deactivate' : 'Activate'}
+                        </button>
+                      )}
                     </>
                   ) : (
-                    <span className="text-xs text-gray-400 italic">SuperAdmin only</span>
+                    <span className="text-xs text-gray-400 italic">Restricted</span>
                   )}
                   {isSuperAdmin && (
                     <button onClick={() => onDelete(u)} className="text-red-600 hover:underline">Delete</button>
@@ -291,14 +300,11 @@ export default function AdminDashboard() {
                   <label className="block text-sm text-gray-700">Role</label>
                   <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
-                    {ROLES.map((r) => {
-                      const blocked = r !== 'Employee' && !isSuperAdmin;
-                      return (
-                        <option key={r} value={r} disabled={blocked}>
-                          {r}{blocked ? ' (SuperAdmin only)' : ''}
-                        </option>
-                      );
-                    })}
+                    {/* Only show roles the viewer can actually create. Non-admins
+                        (HR) can only create Employees — and never see other roles. */}
+                    {(isSuperAdmin ? ROLES : ['Employee']).map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
                   </select>
                   {!isSuperAdmin && (
                     <p className="text-xs text-gray-500 mt-1">

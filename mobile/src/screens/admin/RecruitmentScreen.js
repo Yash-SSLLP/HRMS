@@ -8,8 +8,7 @@ import { canApprove } from '../../utils/roles';
 import { colors, radius, spacing, font, shadow } from '../../theme';
 import {
   Screen, Card, Avatar, Pill, AppButton, Input, Field, Loader, EmptyState, refresher,
-  ModalSheet, ChipSelect, Stars, Ionicons,
-} from '../../components/ui';
+  ModalSheet, ChipSelect, Stars, Ionicons, SkeletonScreen } from '../../components/ui';
 
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
@@ -154,7 +153,7 @@ export default function RecruitmentScreen() {
     }
   };
 
-  if (loading) return <Screen><Loader text="Loading recruitment" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

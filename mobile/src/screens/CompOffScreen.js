@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, EmptyState } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, EmptyState, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const STATUS_TONE = { Pending: 'warning', Approved: 'success', Rejected: 'danger', Availed: 'info' };
@@ -46,7 +46,7 @@ export default function CompOffScreen() {
     ]);
   };
 
-  if (loading) return <Screen><Loader text="Loading comp-off" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

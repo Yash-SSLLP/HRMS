@@ -22,8 +22,8 @@ const CLEARANCE_LABELS = {
   documentsHandedOver: 'Documents handed over',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
-const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 
 const blankNew = {
   employee: '',
@@ -146,13 +146,13 @@ export default function AdminExit() {
       title: 'Exit feedback email',
       link: mailData.feedbackUrl,
       sendLabel: 'Send email',
-      note: "Review and edit the message below — it's emailed to the employee from the company mailbox.",
+      note: "Review and edit the message below · it's emailed to the employee from the company mailbox.",
       defaultSubject: mailData.subject,
       defaultBody: mailData.body,
       onSend: async ({ subject, body }) => {
         const { data } = await api.post(`/exits/${exitId}/resend-email`, { subject, body });
         setDetail(data.exit);
-        setActionMsg('Exit email queued — the worker will attempt delivery within 30 seconds.');
+        setActionMsg('Exit email queued · the worker will attempt delivery within 30 seconds.');
       },
     });
   };
@@ -167,7 +167,7 @@ export default function AdminExit() {
       setActionMsg(
         data.mail
           ? 'Exit completed. Review the feedback email and send it.'
-          : `Exit completed${data.email?.reason ? ` — email not prepared: ${data.email.reason}` : ''}`
+          : `Exit completed${data.email?.reason ? ` · email not prepared: ${data.email.reason}` : ''}`
       );
       await load();
       if (data.mail) openExitMail(data.exit._id, { ...data.mail, feedbackUrl: data.feedbackUrl });
@@ -237,7 +237,7 @@ export default function AdminExit() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : exits.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No exit requests</td></tr>
             ) : exits.map((x) => (
@@ -252,7 +252,7 @@ export default function AdminExit() {
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[x.status]}`}>{x.status}</span>
                 </td>
                 <td className="px-4 py-3">
-                  {x.handledBy ? `${x.handledBy.firstName} ${x.handledBy.lastName}` : '—'}
+                  {x.handledBy ? `${x.handledBy.firstName} ${x.handledBy.lastName}` : '-'}
                 </td>
                 <td className="px-4 py-3 text-xs">
                   {x.exitEmailSentAt
@@ -261,7 +261,7 @@ export default function AdminExit() {
                       ? <span className="text-red-700" title={x.exitEmailLastError}>Retrying…</span>
                       : x.exitEmailQueuedAt
                         ? <span className="text-blue-700">Queued</span>
-                        : <span className="text-gray-400">—</span>}
+                        : <span className="text-gray-400">-</span>}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <button onClick={() => openDetail(x)} className="text-blue-600 hover:underline">Open</button>
@@ -286,7 +286,7 @@ export default function AdminExit() {
                   <option value="">Select…</option>
                   {employees.map((p) => (
                     <option key={p._id} value={p._id}>
-                      {p.employeeCode} — {p.user?.firstName} {p.user?.lastName}
+                      {p.employeeCode} · {p.user?.firstName} {p.user?.lastName}
                       {p.hrPartner ? ` · HR: ${p.hrPartner.firstName} ${p.hrPartner.lastName}` : ''}
                     </option>
                   ))}
@@ -295,7 +295,7 @@ export default function AdminExit() {
                   const sel = employees.find((p) => p._id === newForm.employee);
                   return sel?.hrPartner
                     ? <p className="text-xs text-gray-500 mt-1">Handled By prefilled from this employee's HR partner.</p>
-                    : <p className="text-xs text-gray-500 mt-1">No permanent HR partner set — defaulting to you.</p>;
+                    : <p className="text-xs text-gray-500 mt-1">No permanent HR partner set · defaulting to you.</p>;
                 })()}
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -361,7 +361,7 @@ export default function AdminExit() {
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h2 className="card-title">
-                  Exit — {detail.employee?.user?.firstName} {detail.employee?.user?.lastName}
+                  Exit · {detail.employee?.user?.firstName} {detail.employee?.user?.lastName}
                   <span className="ml-2 text-xs font-mono text-gray-500">{detail.employee?.employeeCode}</span>
                 </h2>
                 <p className="text-xs text-gray-500">{detail.employee?.designation || ''}</p>
@@ -417,7 +417,7 @@ export default function AdminExit() {
                   <option value="">Select…</option>
                   {hrUsers.map((u) => (
                     <option key={u._id} value={u._id}>
-                      {u.firstName} {u.lastName} ({u.role}) — {u.email}
+                      {u.firstName} {u.lastName} ({u.role}) · {u.email}
                     </option>
                   ))}
                 </select>
@@ -451,11 +451,11 @@ export default function AdminExit() {
               <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3">
                 <h3 className="text-sm font-semibold mb-2 text-green-900">Exit Feedback (submitted {fmtDateTime(detail.feedback.submittedAt)})</h3>
                 <dl className="grid grid-cols-2 gap-2 text-sm">
-                  <div><dt className="text-xs text-gray-500">Primary reason</dt><dd>{detail.feedback.primaryReason || '—'}</dd></div>
-                  <div><dt className="text-xs text-gray-500">Would recommend</dt><dd>{detail.feedback.recommendScore ?? '—'} / 5</dd></div>
-                  <div className="col-span-2"><dt className="text-xs text-gray-500">Liked most</dt><dd>{detail.feedback.likedMost || '—'}</dd></div>
-                  <div className="col-span-2"><dt className="text-xs text-gray-500">Could improve</dt><dd>{detail.feedback.couldImprove || '—'}</dd></div>
-                  <div className="col-span-2"><dt className="text-xs text-gray-500">Open feedback</dt><dd>{detail.feedback.openFeedback || '—'}</dd></div>
+                  <div><dt className="text-xs text-gray-500">Primary reason</dt><dd>{detail.feedback.primaryReason || '-'}</dd></div>
+                  <div><dt className="text-xs text-gray-500">Would recommend</dt><dd>{detail.feedback.recommendScore ?? '-'} / 5</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-gray-500">Liked most</dt><dd>{detail.feedback.likedMost || '-'}</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-gray-500">Could improve</dt><dd>{detail.feedback.couldImprove || '-'}</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-gray-500">Open feedback</dt><dd>{detail.feedback.openFeedback || '-'}</dd></div>
                 </dl>
               </div>
             )}

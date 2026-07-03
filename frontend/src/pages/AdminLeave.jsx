@@ -77,7 +77,7 @@ function RequestsTab() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : requests.length === 0 ? (
               <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No requests</td></tr>
             ) : requests.map((r) => (
@@ -93,7 +93,7 @@ function RequestsTab() {
                 <td className="px-4 py-3">{fmtDate(r.startDate)}</td>
                 <td className="px-4 py-3">{fmtDate(r.endDate)}</td>
                 <td className="px-4 py-3 text-right">{r.totalDays}</td>
-                <td className="px-4 py-3 max-w-xs truncate" title={r.reason}>{r.reason || '—'}</td>
+                <td className="px-4 py-3 max-w-xs truncate" title={r.reason}>{r.reason || '-'}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
                   {r.approver && (r.status === 'Approved' || r.status === 'Rejected') && (
@@ -207,7 +207,7 @@ function BalancesTab() {
 
   const cell = (b, type) => {
     const v = b?.balances?.[type];
-    if (!v) return <span className="text-gray-400">—</span>;
+    if (!v) return <span className="text-gray-400">-</span>;
     return (
       <span title={`opening ${v.opening ?? 0} + granted ${v.granted ?? 0} − used ${v.used ?? 0}`}>
         <strong>{v.balance ?? 0}</strong>
@@ -246,7 +246,7 @@ function BalancesTab() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No employees</td></tr>
             ) : rows.map((row) => (
@@ -274,7 +274,7 @@ function BalancesTab() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
             <h2 className="card-title">
-              Leave Grants — {editing.employee.user?.firstName} {editing.employee.user?.lastName}
+              Leave Grants · {editing.employee.user?.firstName} {editing.employee.user?.lastName}
             </h2>
             <p className="text-sm text-gray-500 mb-4">Year {year}</p>
 

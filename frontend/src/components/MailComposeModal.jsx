@@ -85,7 +85,7 @@ export default function MailComposeModal({
         </div>
         <p className="text-sm text-gray-500 mb-4">
           {note || (onSend
-            ? 'Review and edit the message below — it is sent from the company mailbox.'
+            ? 'Review and edit the message below · it is sent from the company mailbox.'
             : 'Review and edit the message, then open it in your email to send.')}{' '}
           {to ? <>To: <span className="font-medium text-gray-700">{to}</span></> : null}
         </p>

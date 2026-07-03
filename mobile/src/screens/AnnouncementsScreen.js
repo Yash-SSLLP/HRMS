@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Pill, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { timeAgo } from '../utils/format';
 
 const CAT_TONE = { General: 'neutral', Policy: 'info', Event: 'primary', Holiday: 'warning', Benefits: 'success', Urgent: 'danger' };
@@ -23,7 +23,7 @@ export default function AnnouncementsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  if (loading) return <Screen><Loader text="Loading announcements" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

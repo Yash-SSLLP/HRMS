@@ -84,7 +84,7 @@ export default function AdminAnalytics() {
       <div>
         <PageHeader title="Analytics & Reports" subtitle="Headcount, attrition & demographics" />
         <div className="bg-white shadow rounded-lg p-8 text-center">
-          <p className="text-sm text-gray-400 italic">No employees yet — analytics will appear once profiles exist.</p>
+          <p className="text-sm text-gray-400 italic">No employees yet · analytics will appear once profiles exist.</p>
         </div>
       </div>
     );
@@ -109,10 +109,10 @@ export default function AdminAnalytics() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <StatCard icon="🧑‍💼" tint="bg-indigo-100" value={d.totalActive ?? '—'} label="Total Active" />
-        <StatCard icon="🌱" tint="bg-emerald-100" value={d.newHiresLast12mo ?? '—'} label="New Hires (12mo)" />
+        <StatCard icon="🧑‍💼" tint="bg-indigo-100" value={d.totalActive ?? '-'} label="Total Active" />
+        <StatCard icon="🌱" tint="bg-emerald-100" value={d.newHiresLast12mo ?? '-'} label="New Hires (12mo)" />
         <StatCard icon="📉" tint="bg-rose-100" value={`${d.attritionRate ?? 0}%`} label="Attrition Rate" />
-        <StatCard icon="🚪" tint="bg-amber-100" value={d.exitsLast12mo ?? '—'} label="Exits (12mo)" />
+        <StatCard icon="🚪" tint="bg-amber-100" value={d.exitsLast12mo ?? '-'} label="Exits (12mo)" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -138,7 +138,7 @@ export default function AdminAnalytics() {
 
         {/* New Employees vs Exits — combined line chart (full width) */}
         <div className="lg:col-span-2">
-          <ChartCard title="New Employees vs Exits — last 12 months" empty={hiresLine.length === 0 && exitsLine.length === 0}>
+          <ChartCard title="New Employees vs Exits · last 12 months" empty={hiresLine.length === 0 && exitsLine.length === 0}>
             <LineChart
               series={[
                 { name: 'New Employees', color: '#16a34a', data: hiresLine },

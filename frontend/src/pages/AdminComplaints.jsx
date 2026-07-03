@@ -91,7 +91,7 @@ export default function AdminComplaints() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : complaints.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No complaints</td></tr>
             ) : complaints.map((c) => (
@@ -101,10 +101,10 @@ export default function AdminComplaints() {
                   <div className="text-xs text-gray-500 max-w-md truncate">{c.description}</div>
                 </td>
                 <td className="px-4 py-3">
-                  {c.complainant ? `${c.complainant.firstName} ${c.complainant.lastName}` : '—'}
+                  {c.complainant ? `${c.complainant.firstName} ${c.complainant.lastName}` : '-'}
                 </td>
                 <td className="px-4 py-3">
-                  {c.against ? `${c.against.firstName} ${c.against.lastName}` : '—'}
+                  {c.against ? `${c.against.firstName} ${c.against.lastName}` : '-'}
                   <div className="text-xs text-gray-500">{c.against?.role}</div>
                 </td>
                 <td className="px-4 py-3">

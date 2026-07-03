@@ -24,6 +24,7 @@ export const adminNav = [
   { group: 'Organization Setup', items: [
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers },
     { to: '/admin/departments', label: 'Departments', icon: FiGrid },
+    { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap },
     { to: '/admin/org-chart', label: 'Org Chart', icon: FiGitBranch },
     { to: '/admin/users', label: 'Users', icon: FiUsers },
     { to: '/admin/employees', label: 'Employees', icon: FiBriefcase },

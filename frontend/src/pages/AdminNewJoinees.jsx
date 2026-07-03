@@ -7,7 +7,7 @@ import MailComposeModal from '../components/MailComposeModal';
 import DesignationSelect from '../components/DesignationSelect';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '-');
 const EMP_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 
 const splitName = (full = '') => {
@@ -58,7 +58,7 @@ export default function AdminNewJoinees() {
       to: c.email,
       title: `Send ${label}`,
       link,
-      defaultSubject: `${label} — ${COMPANY_NAME}`,
+      defaultSubject: `${label} · ${COMPANY_NAME}`,
       defaultBody:
         `Dear ${c.name},\n\n` +
         `Please find your ${label} from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
@@ -100,7 +100,7 @@ export default function AdminNewJoinees() {
       const { data } = await api.post(`/recruitment/candidates/${cand._id}/convert-to-employee`, form);
       setCand(null); setForm(null);
       setInfo(`${cand.name} is now an employee (code ${data.employeeCode}).` +
-        (data.initialPassword ? ` Initial login: ${data.user.email} / ${data.initialPassword} — ask them to change it on first login.` : ''));
+        (data.initialPassword ? ` Initial login: ${data.user.email} / ${data.initialPassword} · ask them to change it on first login.` : ''));
       await load();
     } catch (err) { setError(err.response?.data?.message || 'Could not convert to employee'); }
     finally { setSaving(false); }
@@ -108,7 +108,7 @@ export default function AdminNewJoinees() {
 
   return (
     <div>
-      <PageHeader title="New Joinees" subtitle="Candidates who completed onboarding — convert them into an employee with a login account" />
+      <PageHeader title="New Joinees" subtitle="Candidates who completed onboarding · convert them into an employee with a login account" />
       {error && !cand && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
       {info && <div className="mb-4 text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">{info}</div>}
 
@@ -124,7 +124,7 @@ export default function AdminNewJoinees() {
             <div key={c._id} className="bg-white shadow rounded-lg p-4 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="font-semibold text-gray-900">{c.name}</div>
-                <div className="text-xs text-gray-500">{c.job?.title || '—'}{c.email ? ` · ${c.email}` : ' · no email on file'}</div>
+                <div className="text-xs text-gray-500">{c.job?.title || '-'}{c.email ? ` · ${c.email}` : ' · no email on file'}</div>
                 <div className="text-[11px] text-gray-400 mt-0.5">
                   Joining {fmtDate(c.onboarding?.joiningDate)}
                   {c.appointment?.generatedAt ? ` · appointment letter issued ${fmtDate(c.appointment.generatedAt)}` : ''}

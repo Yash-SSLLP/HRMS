@@ -78,7 +78,7 @@ export default function AdminAnnouncements() {
         setInfo('');
       } else {
         const { data } = await api.post('/announcements', form);
-        setInfo(`Announcement posted — ${data.notified} employee(s) notified.`);
+        setInfo(`Announcement posted · ${data.notified} employee(s) notified.`);
       }
       setShowModal(false);
       await load();

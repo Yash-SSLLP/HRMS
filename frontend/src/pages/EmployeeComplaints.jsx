@@ -64,7 +64,7 @@ export default function EmployeeComplaints() {
     <div>
       <PageHeader
         title="My Complaints"
-        subtitle="Complaints about a colleague go to your HR Manager. Complaints about your HR Manager are escalated directly to the SuperAdmin."
+        subtitle="Complaints about a colleague go to your HR Manager. Complaints about your HR Manager are escalated directly to senior management."
       >
         <button onClick={() => setShowModal(true)}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
@@ -89,7 +89,7 @@ export default function EmployeeComplaints() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : complaints.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No complaints raised</td></tr>
             ) : complaints.map((c) => (
@@ -101,11 +101,11 @@ export default function EmployeeComplaints() {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  {c.against ? `${c.against.firstName} ${c.against.lastName}` : '—'}
+                  {c.against ? `${c.against.firstName} ${c.against.lastName}` : '-'}
                   <div className="text-xs text-gray-500">{c.against?.role}</div>
                 </td>
                 <td className="px-4 py-3">
-                  {c.assignedTo ? `${c.assignedTo.firstName} ${c.assignedTo.lastName}` : '—'}
+                  {c.assignedTo ? `${c.assignedTo.firstName} ${c.assignedTo.lastName}` : '-'}
                   <div className="text-xs text-gray-500">{c.assignedTo?.role}</div>
                 </td>
                 <td className="px-4 py-3">

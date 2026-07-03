@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 export default function RosterScreen() {
@@ -26,7 +26,7 @@ export default function RosterScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  if (loading) return <Screen><Loader text="Loading roster" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const isToday = (d) => new Date(d).toDateString() === new Date().toDateString();
 
@@ -48,7 +48,7 @@ export default function RosterScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
                 <Ionicons name="time-outline" size={14} color={colors.textMuted} />
                 <Text style={[font.label, { marginLeft: 4 }]}>
-                  {item.shift?.startTime || '—'} – {item.shift?.endTime || '—'}
+                  {item.shift?.startTime || '-'} – {item.shift?.endTime || '-'}
                 </Text>
               </View>
             </View>

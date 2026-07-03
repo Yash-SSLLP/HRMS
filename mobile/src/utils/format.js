@@ -2,11 +2,11 @@
 // portal convention (durations are exempt).
 
 export function fmtDate(d, opts = { day: 'numeric', month: 'short', year: 'numeric' }) {
-  if (!d) return '—';
+  if (!d) return '-';
   try {
     return new Date(d).toLocaleDateString('en-IN', opts);
   } catch {
-    return '—';
+    return '-';
   }
 }
 
@@ -20,7 +20,7 @@ export function fmtTime(d) {
 }
 
 export function fmtDateTime(d) {
-  if (!d) return '—';
+  if (!d) return '-';
   return `${fmtDate(d)} · ${fmtTime(d)}`;
 }
 
@@ -46,7 +46,7 @@ export function rupees(n) {
 
 // Duration in hours -> "8h 30m" (durations stay 24h-agnostic).
 export function fmtHours(h) {
-  if (h == null) return '—';
+  if (h == null) return '-';
   const total = Math.round(Number(h) * 60);
   const hh = Math.floor(total / 60);
   const mm = total % 60;

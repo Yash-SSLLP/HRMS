@@ -131,7 +131,7 @@ export default function EmployeeTravel() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : items.length === 0 ? (
               <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No travel requests yet</td></tr>
             ) : items.map((t) => (
@@ -159,7 +159,7 @@ export default function EmployeeTravel() {
                         <div className="text-xs text-gray-500 mt-1">Note: {t.reimbursementDecisionNote}</div>
                       )}
                     </div>
-                  ) : <span className="text-gray-400">—</span>}
+                  ) : <span className="text-gray-400">-</span>}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs px-2 py-1 rounded-lg ${STATUS_STYLES[t.status]}`}>
@@ -249,7 +249,7 @@ export default function EmployeeTravel() {
                   <input type="checkbox" checked={form.reimbursementRequested}
                     onChange={(e) => setForm({ ...form, reimbursementRequested: e.target.checked })}
                     className="h-4 w-4 rounded border-gray-300" />
-                  I’ve already paid for expenses — request reimbursement
+                  I’ve already paid for expenses · request reimbursement
                 </label>
                 {form.reimbursementRequested && (
                   <div className="mt-3 space-y-3">

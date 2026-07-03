@@ -19,32 +19,37 @@ const STATUS_COLORS = {
   OnLeave: 'bg-purple-100 text-purple-800',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
 const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
 
 // Distance of a punch from the office: metres under 1 km, else km.
 const fmtDist = (m) => (m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
 const mapLink = (loc) => (loc ? `https://www.google.com/maps?q=${loc.lat},${loc.lng}` : null);
 
-// True when a punch was made beyond the configured geofence. WFH punches are
-// expected to be away from the office, so they are never treated as out-of-range.
+// True when a punch was made beyond the geofence. WFH punches are expected to
+// be away, so they are never treated as out-of-range.
 const isOutsideOffice = (distanceM, thresholdM, wfh) =>
   !wfh && thresholdM != null && distanceM != null && distanceM > thresholdM;
 
-// A record is flagged when either its check-in or check-out was outside office premises.
-const isRecordFlagged = (r, thresholdM) =>
-  isOutsideOffice(r.checkInDistanceM, thresholdM, r.checkInWfh) ||
-  isOutsideOffice(r.checkOutDistanceM, thresholdM, r.checkOutWfh);
+// The geofence radius that applies to a record: the employee's assigned work
+// location's range (from the API), falling back to the global office threshold.
+const radiusFor = (r, fallback) => (r.geofenceRadiusM != null ? r.geofenceRadiusM : fallback);
+
+// A record is flagged when either punch was outside the employee's work area.
+const isRecordFlagged = (r, fallback) =>
+  isOutsideOffice(r.checkInDistanceM, radiusFor(r, fallback), r.checkInWfh) ||
+  isOutsideOffice(r.checkOutDistanceM, radiusFor(r, fallback), r.checkOutWfh);
 
 // One punch's location: a distance pill linking to the captured coordinates.
-// Punches beyond the configured geofence threshold get an explicit "Outside
-// office" flag for HR/admin review. WFH punches are never flagged.
-function DistanceTag({ label, loc, distanceM, thresholdM, wfh }) {
+// Punches beyond the employee's work-location geofence get an explicit "Outside"
+// flag for HR/admin review. WFH punches are never flagged.
+function DistanceTag({ label, loc, distanceM, thresholdM, wfh, locationName }) {
   if (!loc || distanceM == null) {
-    return <div className="text-xs text-gray-300">{label}: —</div>;
+    return <div className="text-xs text-gray-300">{label}: -</div>;
   }
   const far = isOutsideOffice(distanceM, thresholdM, wfh);
+  const place = locationName || 'work area';
   return (
     <div className="text-xs whitespace-nowrap flex items-center gap-1">
       <span className="text-gray-400">{label}:</span>
@@ -56,8 +61,8 @@ function DistanceTag({ label, loc, distanceM, thresholdM, wfh }) {
       {wfh && <span className="px-1 rounded bg-indigo-100 text-indigo-700 text-[10px] font-medium">WFH</span>}
       {far && (
         <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold"
-          title={`${label === 'In' ? 'Check-in' : 'Check-out'} was ${fmtDist(distanceM)} from the office (outside the ${fmtDist(thresholdM)} geofence).`}>
-          ⚠ Outside office
+          title={`${label === 'In' ? 'Check-in' : 'Check-out'} was ${fmtDist(distanceM)} from ${place} (outside the ${fmtDist(thresholdM)} range).`}>
+          ⚠ Outside {place}
         </span>
       )}
     </div>
@@ -243,7 +248,7 @@ export default function AdminAttendance() {
             <option value="">All</option>
             {employees.map((e) => (
               <option key={e._id} value={e._id}>
-                {e.employeeCode} — {e.user?.firstName} {e.user?.lastName}
+                {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
               </option>
             ))}
           </select>
@@ -271,7 +276,7 @@ export default function AdminAttendance() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : records.length === 0 ? (
               <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No records for this period</td></tr>
             ) : records.map((r) => (
@@ -279,7 +284,7 @@ export default function AdminAttendance() {
                 <td className="px-4 py-3">
                   {fmtDate(r.date)}
                   {isRecordFlagged(r, settings.geofenceThresholdM) && (
-                    <span className="ml-1 text-amber-600" title="A punch was made outside office premises">⚠</span>
+                    <span className="ml-1 text-amber-600" title={`A punch was made outside ${r.locationName || 'the work area'}`}>⚠</span>
                   )}
                 </td>
                 <td className="px-4 py-3">
@@ -300,7 +305,7 @@ export default function AdminAttendance() {
                         className="w-9 h-9 rounded object-cover border cursor-pointer"
                         onClick={() => setPhotoModal({ url: `/attendance/${r._id}/photo/checkin`, label: 'Check-in photo' })}
                       />
-                    ) : <span className="text-xs text-gray-300">—</span>}
+                    ) : <span className="text-xs text-gray-300">-</span>}
                     {r.hasCheckOutPhoto ? (
                       <AuthImage
                         url={`/attendance/${r._id}/photo/checkout`}
@@ -308,16 +313,16 @@ export default function AdminAttendance() {
                         className="w-9 h-9 rounded object-cover border cursor-pointer"
                         onClick={() => setPhotoModal({ url: `/attendance/${r._id}/photo/checkout`, label: 'Check-out photo' })}
                       />
-                    ) : <span className="text-xs text-gray-300">—</span>}
+                    ) : <span className="text-xs text-gray-300">-</span>}
                   </div>
                 </td>
                 <td className="px-4 py-3">
                   <DistanceTag label="In" loc={r.checkInLocation} distanceM={r.checkInDistanceM}
-                    thresholdM={settings.geofenceThresholdM} wfh={r.checkInWfh} />
+                    thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkInWfh} locationName={r.locationName} />
                   <DistanceTag label="Out" loc={r.checkOutLocation} distanceM={r.checkOutDistanceM}
-                    thresholdM={settings.geofenceThresholdM} wfh={r.checkOutWfh} />
+                    thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkOutWfh} locationName={r.locationName} />
                 </td>
-                <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '—'}</td>
+                <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '-'}</td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline">Edit</button>
                   <button onClick={() => onDelete(r)} className="text-red-600 hover:underline">Delete</button>
@@ -414,7 +419,7 @@ export default function AdminAttendance() {
                   <option value="">Select…</option>
                   {employees.map((e) => (
                     <option key={e._id} value={e._id}>
-                      {e.employeeCode} — {e.user?.firstName} {e.user?.lastName}
+                      {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
                     </option>
                   ))}
                 </select>

@@ -11,8 +11,7 @@ import { colors, radius, spacing, font } from '../../theme';
 import { fmtDate, fmtDateTime, toYMD, toHM } from '../../utils/format';
 import {
   Screen, Card, Avatar, Pill, AppButton, Input, Field, Loader, refresher,
-  SectionHeader, ModalSheet, ChipSelect, Stars, DateField, TimeField, Ionicons,
-} from '../../components/ui';
+  SectionHeader, ModalSheet, ChipSelect, Stars, DateField, TimeField, Ionicons, SkeletonScreen } from '../../components/ui';
 import MailComposeSheet from '../../components/MailComposeSheet';
 import { stageTone } from './RecruitmentScreen';
 
@@ -92,7 +91,7 @@ export default function CandidateDetailScreen() {
     { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await api.delete(`/recruitment/candidates/${id}`); nav.goBack(); }) },
   ]);
 
-  if (loading) return <Screen><Loader text="Loading candidate" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
   if (!cand) {
     return (
       <Screen>
@@ -246,7 +245,7 @@ export default function CandidateDetailScreen() {
   const openInviteSheet = (idx, mailData) => {
     setMailSheet({
       title: 'Interview invite email',
-      note: 'Review and edit the invite — it goes to the candidate and interviewer with the résumé attached.',
+      note: 'Review and edit the invite · it goes to the candidate and interviewer with the résumé attached.',
       to: mailData.to,
       subject: mailData.subject,
       body: mailData.body,
@@ -290,7 +289,7 @@ export default function CandidateDetailScreen() {
       const { data } = await api.post(`/recruitment/candidates/${id}/letters/${kind}/email`, { preview: true });
       setMailSheet({
         title: kind === 'offer' ? 'Send offer letter' : 'Send appointment letter',
-        note: 'Review and edit the message — it goes to the candidate with the letter PDF attached.',
+        note: 'Review and edit the message · it goes to the candidate with the letter PDF attached.',
         to: data.to,
         subject: data.subject,
         body: data.body,
@@ -424,7 +423,7 @@ export default function CandidateDetailScreen() {
               <>
                 <View style={styles.docStatus}>
                   <Pill
-                    label={docsConfirmed ? `Confirmed${docs.confirmedByName ? ` · ${docs.confirmedByName}` : ''}` : docs.submittedAt ? 'Submitted — review pending' : 'Awaiting submission'}
+                    label={docsConfirmed ? `Confirmed${docs.confirmedByName ? ` · ${docs.confirmedByName}` : ''}` : docs.submittedAt ? 'Submitted · review pending' : 'Awaiting submission'}
                     tone={docsConfirmed ? 'success' : docs.submittedAt ? 'warning' : 'neutral'}
                   />
                 </View>
@@ -456,7 +455,7 @@ export default function CandidateDetailScreen() {
             {offerDone ? (
               <Text style={font.small}>Generated {fmtDate(cand.offer.generatedAt)}{cand.offer.emailedAt ? ` · emailed ${fmtDate(cand.offer.emailedAt)}` : ''}</Text>
             ) : (
-              <Text style={font.small}>Documents confirmed — you can now create the offer letter.</Text>
+              <Text style={font.small}>Documents confirmed · you can now create the offer letter.</Text>
             )}
             {writable && (
               <View style={styles.actRowWrap}>
@@ -474,7 +473,7 @@ export default function CandidateDetailScreen() {
         {showOnboarding && (
           <Card style={{ marginTop: spacing(3) }}>
             <SectionHeader title="Onboarding" />
-            <DetailRow label="Joining date" value={cand.onboarding?.joiningDate ? fmtDate(cand.onboarding.joiningDate) : '—'} />
+            <DetailRow label="Joining date" value={cand.onboarding?.joiningDate ? fmtDate(cand.onboarding.joiningDate) : '-'} />
             {cand.onboarding?.noticePeriod ? <DetailRow label="Notice period" value={cand.onboarding.noticePeriod} /> : null}
             {cand.onboarding?.notes ? <DetailRow label="Notes" value={cand.onboarding.notes} /> : null}
             {writable && (

@@ -5,7 +5,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import api from '../api/client';
 import { useBadges } from '../store/badges';
 import { colors, radius, spacing, font, notifStyle } from '../theme';
-import { Screen, EmptyState, Loader, refresher, Ionicons } from '../components/ui';
+import { Screen, EmptyState, Loader, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { timeAgo } from '../utils/format';
 import { routeForNotification } from '../navigation/navRef';
 
@@ -83,7 +83,7 @@ export default function NotificationsScreen() {
     );
   };
 
-  if (loading) return <Screen><Loader text="Loading notifications" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen>

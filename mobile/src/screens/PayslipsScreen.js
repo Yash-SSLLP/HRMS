@@ -7,7 +7,7 @@ import * as Sharing from 'expo-sharing';
 import api, { API_BASE } from '../api/client';
 import { useAuth } from '../store/auth';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Pill, Loader, refresher, EmptyState, Ionicons } from '../components/ui';
+import { Screen, Card, AppButton, Pill, Loader, refresher, EmptyState, Ionicons, SkeletonScreen } from '../components/ui';
 import { rupees } from '../utils/format';
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -52,7 +52,7 @@ export default function PayslipsScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  if (loading) return <Screen><Loader text="Loading payslips" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

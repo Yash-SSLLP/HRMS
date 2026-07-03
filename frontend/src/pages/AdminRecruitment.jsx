@@ -167,7 +167,7 @@ export default function AdminRecruitment() {
       title: 'Interview invite email',
       link: meetingLink,
       sendLabel: 'Send invite',
-      note: "Review and edit the invite below — it's emailed from the company mailbox to the candidate and interviewer, with the candidate's résumé attached.",
+      note: "Review and edit the invite below · it's emailed from the company mailbox to the candidate and interviewer, with the candidate's résumé attached.",
       defaultSubject: mailData.subject,
       defaultBody: mailData.body,
       attachedNames: mailData.attachments || [],
@@ -240,7 +240,7 @@ export default function AdminRecruitment() {
       to: c.email,
       title: 'Send Offer Letter',
       link,
-      defaultSubject: `Offer Letter — ${COMPANY_NAME}`,
+      defaultSubject: `Offer Letter · ${COMPANY_NAME}`,
       defaultBody:
         `Dear ${c.name},\n\n` +
         `Please find your Offer Letter from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
@@ -365,13 +365,13 @@ export default function AdminRecruitment() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : jobs.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No job openings</td></tr>
             ) : jobs.map((j) => (
               <tr key={j._id} className={selectedJob === j._id ? 'bg-gray-50' : ''}>
                 <td className="px-4 py-3 font-medium text-gray-900">{j.title}</td>
-                <td className="px-4 py-3 text-gray-600">{j.department || '—'}{j.location ? ` · ${j.location}` : ''}</td>
+                <td className="px-4 py-3 text-gray-600">{j.department || '-'}{j.location ? ` · ${j.location}` : ''}</td>
                 <td className="px-4 py-3">
                   <button onClick={() => setSelectedJob(selectedJob === j._id ? '' : j._id)} className="text-blue-600 hover:underline">{j.candidateCount} →</button>
                 </td>
@@ -431,7 +431,7 @@ export default function AdminRecruitment() {
                     </div>
                     <div className="text-xs text-gray-500">{c.email || ''}{c.phone ? ` · ${c.phone}` : ''}</div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{c.job?.title || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{c.job?.title || '-'}</td>
                   <td className="px-4 py-3">
                     {resumeBusyId === c._id ? (
                       <span className="text-gray-400 text-xs">Uploading…</span>
@@ -520,7 +520,7 @@ export default function AdminRecruitment() {
                               className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2"
                               title="Assign interviewer"
                             >
-                              <option value="">— Assign interviewer —</option>
+                              <option value="">Assign interviewer</option>
                               {users.map((u) => (
                                 <option key={u._id} value={u._id}>{u.firstName} {u.lastName}{u.role !== 'Employee' ? ` (${u.role})` : ''}</option>
                               ))}
@@ -556,7 +556,7 @@ export default function AdminRecruitment() {
                                   type="button"
                                   onClick={() => createMeet(c, idx)}
                                   disabled={meetBusy === `${c._id}:${idx}`}
-                                  title="Create a Google Meet for this round — you review and edit the invite email before it's sent"
+                                  title="Create a Google Meet for this round · you review and edit the invite email before it's sent"
                                   className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
                                 >{meetBusy === `${c._id}:${idx}` ? '…' : '＋ Meet'}</button>
                               </div>
@@ -574,7 +574,7 @@ export default function AdminRecruitment() {
                             </div>
                             {/* Audit trail: who last changed the status */}
                             {r.decidedByName && (
-                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${h.status} — ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
+                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${h.status} · ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
                                 Changed by <span className="font-medium text-gray-500">{r.decidedByName}</span>
                                 {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
                                 {(r.history?.length > 1) ? ` · ${r.history.length} changes` : ''}
@@ -630,7 +630,7 @@ export default function AdminRecruitment() {
                 <input placeholder="Email" value={candForm.email} onChange={(e) => setCandForm({ ...candForm, email: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <input placeholder="Phone" value={candForm.phone} onChange={(e) => setCandForm({ ...candForm, phone: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <select value={candForm.job} onChange={(e) => setCandForm({ ...candForm, job: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
-                  <option value="">— Job —</option>
+                  <option value="">Job</option>
                   {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
                 </select>
                 <select value={candForm.stage} onChange={(e) => setCandForm({ ...candForm, stage: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
@@ -681,7 +681,7 @@ export default function AdminRecruitment() {
               {docsCand.documents?.confirmedAt ? (
                 <span className="text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">✓ Confirmed by {docsCand.documents.confirmedByName} · {fmtDateTime(docsCand.documents.confirmedAt)}</span>
               ) : docsCand.documents?.submittedAt ? (
-                <span className="text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded">Submitted {fmtDateTime(docsCand.documents.submittedAt)} — awaiting your confirmation</span>
+                <span className="text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded">Submitted {fmtDateTime(docsCand.documents.submittedAt)} · awaiting your confirmation</span>
               ) : (
                 <span className="text-gray-500 bg-gray-50 border border-gray-200 px-2 py-1 rounded">Awaiting the candidate's submission</span>
               )}
@@ -711,7 +711,7 @@ export default function AdminRecruitment() {
               )}
             </div>
             {docsCand.documents?.confirmedAt && (
-              <p className="text-[11px] text-gray-400 mt-2">Documents confirmed — you can now create the offer letter from the candidate's row.</p>
+              <p className="text-[11px] text-gray-400 mt-2">Documents confirmed · you can now create the offer letter from the candidate's row.</p>
             )}
           </div>
         </div>
@@ -778,7 +778,7 @@ export default function AdminRecruitment() {
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${offerCand.email ? 'text-gray-700' : 'text-gray-400'}`}>
                 <input type="checkbox" checked={offerEmail && !!offerCand.email} disabled={!offerCand.email} onChange={(e) => setOfferEmail(e.target.checked)} />
-                Email the offer letter to the candidate — an editable preview opens after generating{!offerCand.email && ' (no email on file)'}
+                Email the offer letter to the candidate · an editable preview opens after generating{!offerCand.email && ' (no email on file)'}
               </label>
 
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}

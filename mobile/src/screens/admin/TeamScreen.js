@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg, mediaUrl } from '../../api/client';
 import { colors, radius, spacing, font } from '../../theme';
-import { Screen, Card, Avatar, Pill, Loader, refresher, SectionHeader, EmptyState, Ionicons } from '../../components/ui';
+import { Screen, Card, Avatar, Pill, Loader, refresher, SectionHeader, EmptyState, Ionicons, SkeletonScreen } from '../../components/ui';
 import { fmtDate, fmtTime } from '../../utils/format';
 
 const ATT_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info' };
@@ -49,7 +49,7 @@ export default function TeamScreen() {
     ]);
   };
 
-  if (loading) return <Screen><Loader text="Loading team" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   if (!team.length && !leave.length) {
     return (

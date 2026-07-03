@@ -25,7 +25,7 @@ const blankCycle = {
 };
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '');
-const userName = (u) => (u ? `${u.firstName} ${u.lastName}` : '—');
+const userName = (u) => (u ? `${u.firstName} ${u.lastName}` : '-');
 
 export default function AdminReviewCycles() {
   const [cycles, setCycles] = useState([]);
@@ -179,7 +179,7 @@ export default function AdminReviewCycles() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : cycles.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No cycles yet</td></tr>
             ) : cycles.map((c) => (
@@ -292,7 +292,7 @@ export default function AdminReviewCycles() {
                         <td className="px-3 py-2 text-gray-700">{userName(r.reviewer)}</td>
                         <td className="px-3 py-2 text-gray-600">{REL_LABELS[r.relationship] || r.relationship}</td>
                         <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded-lg ${REVIEW_STATUS_STYLES[r.status]}`}>{r.status}</span></td>
-                        <td className="px-3 py-2 text-gray-700">{r.overallRating ? `${r.overallRating}/5` : '—'}</td>
+                        <td className="px-3 py-2 text-gray-700">{r.overallRating ? `${r.overallRating}/5` : '-'}</td>
                       </tr>
                     ))}
                   </tbody>

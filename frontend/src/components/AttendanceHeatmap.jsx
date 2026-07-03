@@ -94,7 +94,7 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
   const fmtTip = (cell) => {
     const dStr = cell.date.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
     if (cell.future) return dStr;
-    return `${dStr} — ${cell.rec ? LABEL_BY_CAT[cell.rec.category] : 'No record'}`;
+    return `${dStr} · ${cell.rec ? LABEL_BY_CAT[cell.rec.category] : 'No record'}`;
   };
 
   const dateLabel = (d) => d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });

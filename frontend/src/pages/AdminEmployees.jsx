@@ -4,6 +4,7 @@ import { downloadFile } from '../api/download';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
+import DepartmentSelect from '../components/DepartmentSelect';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 
@@ -15,6 +16,7 @@ const blankProfile = {
   department: '',
   grade: '',
   workLocation: '',
+  workLocationRef: '',
   employmentType: 'FullTime',
   pan: '',
   uan: '',
@@ -35,12 +37,13 @@ const blankProfile = {
 export default function AdminEmployees() {
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
+  const myId = String(currentUser?._id || currentUser?.id || '');
   const [profiles, setProfiles] = useState([]);
   const [users, setUsers] = useState([]);
   const [hrUsers, setHrUsers] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
-  const [departments, setDepartments] = useState([]);
   const [designations, setDesignations] = useState([]);
+  const [workLocations, setWorkLocations] = useState([]);
   const [docStatus, setDocStatus] = useState({}); // employeeId -> { complete, verified, missing }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -48,6 +51,11 @@ export default function AdminEmployees() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(blankProfile);
   const [saving, setSaving] = useState(false);
+  // Per-employee document submission link (Edit modal)
+  const [docToken, setDocToken] = useState('');
+  const [docBusy, setDocBusy] = useState(false);
+  const [docCopied, setDocCopied] = useState(false);
+  const [editEmail, setEditEmail] = useState('');
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -87,13 +95,13 @@ export default function AdminEmployees() {
     setLoading(true);
     setError('');
     try {
-      const [profilesRes, usersRes, allUsersRes, deptRes, docRes, desigRes] = await Promise.all([
+      const [profilesRes, usersRes, allUsersRes, docRes, desigRes, wlRes] = await Promise.all([
         api.get('/employees'),
         api.get('/admin/users?role=Employee'),
         api.get('/admin/users'),
-        api.get('/departments'),
         api.get('/employees/documents-status'),
         api.get('/org-masters?kind=Designation'),
+        api.get('/work-locations').catch(() => ({ data: { locations: [] } })),
       ]);
       setProfiles(profilesRes.data.profiles);
       setUsers(usersRes.data.users);
@@ -101,7 +109,7 @@ export default function AdminEmployees() {
       setHrUsers(allUsersRes.data.users.filter(
         (u) => u.role === 'HRManager' || u.role === 'SuperAdmin'
       ));
-      setDepartments(deptRes.data.departments);
+      setWorkLocations(wlRes.data.locations || []);
       setDesignations(
         (desigRes.data.masters || [])
           .filter((m) => m.isActive !== false)
@@ -119,9 +127,13 @@ export default function AdminEmployees() {
 
   useEffect(() => { load(); }, []);
 
+  const resetDocLink = () => { setDocToken(''); setDocCopied(false); setDocBusy(false); };
+
   const openCreate = async () => {
     setEditingId(null);
     setForm(blankProfile);
+    setEditEmail('');
+    resetDocLink();
     setShowModal(true);
     // Prefill the next employee code (continues the last one, e.g. SSL 8 → SSL 9).
     // It stays editable; failure is non-fatal and just leaves the field blank.
@@ -135,11 +147,13 @@ export default function AdminEmployees() {
 
   const openEdit = (p) => {
     setEditingId(p._id);
+    setEditEmail(p.user?.email || '');
+    resetDocLink();
     setForm({
       ...blankProfile,
       ...p,
       user: p.user?._id || p.user,
-      hrPartner: undefined, // HR ownership removed — never send this field
+      hrPartner: undefined, // HR ownership removed · never send this field
       reportingManager: p.reportingManager?._id || p.reportingManager || '',
       dateOfJoining: p.dateOfJoining ? p.dateOfJoining.slice(0, 10) : '',
       bankDetails: { ...blankProfile.bankDetails, ...(p.bankDetails || {}) },
@@ -147,15 +161,36 @@ export default function AdminEmployees() {
     setShowModal(true);
   };
 
+  // Per-employee public document-submission link (created lazily on demand).
+  const docLink = docToken ? `${window.location.origin}/employee-docs/${docToken}` : '';
+  const copyDocLink = async () => {
+    if (!editingId) return;
+    setDocBusy(true);
+    try {
+      const token = docToken || (await api.post(`/employees/${editingId}/doc-link`)).data.token;
+      if (!docToken) setDocToken(token);
+      const link = `${window.location.origin}/employee-docs/${token}`;
+      try { await navigator.clipboard.writeText(link); } catch { window.prompt('Copy this link:', link); }
+      setDocCopied(true);
+      setTimeout(() => setDocCopied(false), 1600);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not create the submission link');
+    } finally {
+      setDocBusy(false);
+    }
+  };
+
   const onSave = async (e) => {
     e.preventDefault();
     setSaving(true);
     setError('');
     try {
+      // Empty work-location select must clear the ref (null), not send '' (bad ObjectId).
+      const payload = { ...form, workLocationRef: form.workLocationRef || null };
       if (editingId) {
-        await api.put(`/employees/${editingId}`, form);
+        await api.put(`/employees/${editingId}`, payload);
       } else {
-        await api.post('/employees', form);
+        await api.post('/employees', payload);
       }
       setShowModal(false);
       await load();
@@ -173,6 +208,26 @@ export default function AdminEmployees() {
       await load();
     } catch (err) {
       alert(err.response?.data?.message || 'Delete failed');
+    }
+  };
+
+  // Activate / deactivate the employee's user account (SuperAdmin only). An
+  // inactive account cannot log in, even with the correct password.
+  const toggleActive = async (p) => {
+    const uid = p.user?._id || p.user;
+    if (!uid) return;
+    const active = p.user?.isActive;
+    const name = p.user?.firstName || 'this employee';
+    if (!window.confirm(
+      active
+        ? `Deactivate ${name}'s account? They will no longer be able to log in.`
+        : `Reactivate ${name}'s account? They will be able to log in again.`
+    )) return;
+    try {
+      await api.patch(`/admin/users/${uid}/${active ? 'deactivate' : 'activate'}`);
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not update status');
     }
   };
 
@@ -233,24 +288,25 @@ export default function AdminEmployees() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Designation</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">PAN</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Documents</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : profiles.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No profiles yet</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No profiles yet</td></tr>
             ) : profiles.map((p) => (
               <tr key={p._id}>
                 <td className="px-4 py-3 font-mono text-xs">{p.employeeCode}</td>
                 <td className="px-4 py-3">{p.user?.firstName} {p.user?.lastName}<div className="text-xs text-gray-500">{p.user?.email}</div></td>
-                <td className="px-4 py-3">{p.designation || '—'}<div className="text-xs text-gray-500">{p.department || ''}</div></td>
-                <td className="px-4 py-3 font-mono text-xs">{p.pan || '—'}</td>
+                <td className="px-4 py-3">{p.designation || '-'}<div className="text-xs text-gray-500">{p.department || ''}</div></td>
+                <td className="px-4 py-3 font-mono text-xs">{p.pan || '-'}</td>
                 <td className="px-4 py-3">
                   {(() => {
                     const s = docStatus[String(p._id)];
-                    if (!s) return <span className="text-xs text-gray-400">—</span>;
+                    if (!s) return <span className="text-xs text-gray-400">-</span>;
                     if (s.complete) {
                       return (
                         <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-green-100 text-green-800"
@@ -267,6 +323,16 @@ export default function AdminEmployees() {
                     );
                   })()}
                 </td>
+                <td className="px-4 py-3">
+                  {/* Nobody may see their own active status — hide it on your own row. */}
+                  {String(p.user?._id || '') === myId ? (
+                    <span className="text-xs text-gray-400">-</span>
+                  ) : (
+                    <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${p.user?.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
+                      {p.user?.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right space-x-2">
                   <button
                     onClick={() => downloadFile(`/employees/${p._id}/export.zip`, `${p.employeeCode || 'employee'}.zip`)}
@@ -275,6 +341,12 @@ export default function AdminEmployees() {
                   >
                     ZIP
                   </button>
+                  {/* Only SuperAdmin may change an account's active status (never their own). */}
+                  {isSuperAdmin && String(p.user?._id || '') !== myId && (
+                    <button onClick={() => toggleActive(p)} className="text-amber-600 hover:underline">
+                      {p.user?.isActive ? 'Deactivate' : 'Activate'}
+                    </button>
+                  )}
                   <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
                   <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>
                 </td>
@@ -307,7 +379,7 @@ export default function AdminEmployees() {
                       : usersWithoutProfile
                     ).map((u) => (
                       <option key={u._id} value={u._id}>
-                        {u.firstName} {u.lastName} — {u.email}
+                        {u.firstName} {u.lastName} · {u.email}
                       </option>
                     ))}
                   </select>
@@ -350,17 +422,19 @@ export default function AdminEmployees() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Department</label>
-                  <select value={form.department || ''}
-                    onChange={(e) => setForm({ ...form, department: e.target.value })}
+                  <DepartmentSelect
+                    value={form.department || ''}
+                    onChange={(v) => setForm({ ...form, department: v })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Work location <span className="text-gray-400 font-normal">(check-in geofence)</span></label>
+                  <select value={form.workLocationRef || ''} onChange={(e) => setForm({ ...form, workLocationRef: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
-                    <option value="">— Select —</option>
-                    {departments.map((d) => (
-                      <option key={d._id} value={d.name}>{d.name}</option>
+                    <option value="">Default (office)</option>
+                    {workLocations.filter((l) => l.active).map((l) => (
+                      <option key={l._id} value={l._id}>{l.name}</option>
                     ))}
-                    {/* Preserve a legacy/free-text value not in the managed list */}
-                    {form.department && !departments.some((d) => d.name === form.department) && (
-                      <option value={form.department}>{form.department}</option>
-                    )}
                   </select>
                 </div>
                 <div className="sm:col-span-2">
@@ -371,12 +445,12 @@ export default function AdminEmployees() {
                       onChange={(e) => setForm({ ...form, reportingManager: e.target.value })}
                       className="mt-1 block w-full border rounded-lg px-3 py-2"
                     >
-                      <option value="">— None (top level) —</option>
+                      <option value="">None (top level)</option>
                       {allUsers
                         .filter((u) => u._id !== (form.user?._id || form.user))
                         .map((u) => (
                           <option key={u._id} value={u._id}>
-                            {u.firstName} {u.lastName} ({u.role}) — {u.email}
+                            {u.firstName} {u.lastName} ({u.role}) · {u.email}
                           </option>
                         ))}
                     </select>
@@ -384,25 +458,63 @@ export default function AdminEmployees() {
                     <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700 text-sm">
                       {(() => {
                         const mgr = allUsers.find((u) => u._id === (form.reportingManager?._id || form.reportingManager));
-                        return mgr ? `${mgr.firstName} ${mgr.lastName} (${mgr.role})` : '—';
+                        return mgr ? `${mgr.firstName} ${mgr.lastName} (${mgr.role})` : '-';
                       })()}
                     </div>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
                     Sets the reporting hierarchy shown on the Org Chart.
-                    {!isSuperAdmin && ' Only a SuperAdmin can set the reporting manager.'}
                   </p>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="flex items-center gap-2 text-sm text-gray-700">
                     <input type="checkbox" checked={!!form.documentsVerified}
                       onChange={(e) => setForm({ ...form, documentsVerified: e.target.checked })} />
-                    Documents verified — mark all documents as submitted
+                    Documents verified · mark all documents as submitted
                   </label>
                   <p className="text-xs text-gray-500 mt-1">
                     Overrides the document checklist and shows this employee as “Complete”.
                   </p>
                 </div>
+
+                {/* Document submission link — send to the employee to collect any missing docs. */}
+                {editingId && (
+                  <div className="sm:col-span-2 border rounded-lg p-3 bg-gray-50">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-gray-700">Document submission link</span>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={copyDocLink} disabled={docBusy}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60">
+                          {docBusy ? 'Working…' : docCopied ? 'Copied!' : docToken ? 'Copy link' : 'Create & copy link'}
+                        </button>
+                        {docToken && editEmail && (
+                          <a
+                            href={`mailto:${editEmail}?subject=${encodeURIComponent('Please submit your documents')}&body=${encodeURIComponent(`Hi,\n\nPlease upload your documents using this secure link:\n${docLink}\n\nThank you.`)}`}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
+                          >
+                            Email link
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    {(() => {
+                      const miss = docStatus[editingId]?.missing || [];
+                      return miss.length > 0 ? (
+                        <p className="text-xs text-amber-700 mt-1.5">
+                          Missing: {miss.join(', ')}. Share this link so they can upload the missing documents.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-500 mt-1.5">
+                          All required documents are in. You can still share this link for re-uploads.
+                        </p>
+                      );
+                    })()}
+                    {docToken && (
+                      <input readOnly value={docLink} onFocus={(e) => e.target.select()}
+                        className="mt-2 block w-full border rounded-lg px-2 py-1.5 text-xs bg-white font-mono" />
+                    )}
+                  </div>
+                )}
               </div>
 
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Statutory IDs (India)</h3>
@@ -542,7 +654,7 @@ export default function AdminEmployees() {
 
                     {importResult.createdCount > 0 && (
                       <p className="text-sm text-gray-700">
-                        Default password for newly-created accounts: <code className="bg-gray-100 px-1 py-0.5 rounded">{importResult.defaultPassword}</code> — communicate this to the employees so they can sign in and change it.
+                        Default password for newly-created accounts: <code className="bg-gray-100 px-1 py-0.5 rounded">{importResult.defaultPassword}</code> · communicate this to the employees so they can sign in and change it.
                       </p>
                     )}
 

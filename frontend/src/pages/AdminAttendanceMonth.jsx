@@ -8,7 +8,7 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
 const REG_TYPES = ['Missing Punch', 'Wrong Time', 'Forgot Check-in', 'Forgot Check-out', 'On Duty', 'Other'];
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—');
+const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const toHM = (d) => {
   if (!d) return '';
   const t = new Date(d);
@@ -118,7 +118,7 @@ export default function AdminAttendanceMonth() {
     const worst = Math.max(r.checkInDistanceM ?? -1, r.checkOutDistanceM ?? -1);
     if (worst <= th) return null;
     return (
-      <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700" title={`Check-in ${r.checkInDistanceM ?? '—'} m · Check-out ${r.checkOutDistanceM ?? '—'} m from office`}>
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700" title={`Check-in ${r.checkInDistanceM ?? '-'} m · Check-out ${r.checkOutDistanceM ?? '-'} m from office`}>
         {worst >= 1000 ? `${(worst / 1000).toFixed(1)} km` : `${worst} m`} away
       </span>
     );
@@ -126,13 +126,13 @@ export default function AdminAttendanceMonth() {
 
   return (
     <div>
-      <PageHeader title="Monthly Attendance" subtitle="Whole-month view per employee — logins, logouts, late & distant punches; edit or regularize any day" />
+      <PageHeader title="Monthly Attendance" subtitle="Whole-month view per employee · logins, logouts, late & distant punches; edit or regularize any day" />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4">
         <select value={employee} onChange={(e) => setEmployee(e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[220px]">
           {employees.map((p) => (
-            <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '—'})</option>
+            <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '-'})</option>
           ))}
         </select>
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
@@ -263,7 +263,7 @@ export default function AdminAttendanceMonth() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
             <h2 className="card-title mb-1">Regularize attendance</h2>
             <p className="text-sm text-gray-500 mb-4">
-              {fullName(data.employee.user)} — applied to the day's record immediately (recorded as HR-approved).
+              {fullName(data.employee.user)} · applied to the day's record immediately (recorded as HR-approved).
             </p>
             <form onSubmit={saveReg} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">

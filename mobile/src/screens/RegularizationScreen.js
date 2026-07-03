@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Input, Field, DateField, TimeField, Pill, Loader, refresher, SectionHeader, EmptyState } from '../components/ui';
+import { Screen, Card, AppButton, Input, Field, DateField, TimeField, Pill, Loader, refresher, SectionHeader, EmptyState, SkeletonScreen } from '../components/ui';
 import { fmtDate, to12h } from '../utils/format';
 
 const TYPES = ['Missing Punch', 'Wrong Time', 'Forgot Check-in', 'Forgot Check-out', 'On Duty', 'Other'];
@@ -43,7 +43,7 @@ export default function RegularizationScreen() {
     finally { setSubmitting(false); }
   };
 
-  if (loading) return <Screen><Loader text="Loading requests" /></Screen>;
+  if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   return (
     <Screen edges={[]}>

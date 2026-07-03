@@ -10,7 +10,7 @@ const STATUS_STYLES = {
   Cancelled: 'bg-red-100 text-red-700',
 };
 const blank = { title: '', description: '', trainer: '', startDate: '', endDate: '', status: 'Planned', participants: [] };
-const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—');
+const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 export default function AdminTraining() {
   const [trainings, setTrainings] = useState([]);
@@ -79,13 +79,13 @@ export default function AdminTraining() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : trainings.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No training programs</td></tr>
             ) : trainings.map((t) => (
               <tr key={t._id}>
                 <td className="px-4 py-3 font-medium text-gray-900">{t.title}</td>
-                <td className="px-4 py-3 text-gray-600">{t.trainer || '—'}</td>
+                <td className="px-4 py-3 text-gray-600">{t.trainer || '-'}</td>
                 <td className="px-4 py-3 text-gray-600">{fmt(t.startDate)} → {fmt(t.endDate)}</td>
                 <td className="px-4 py-3">{(t.participants || []).length}</td>
                 <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[t.status]}`}>{t.status}</span></td>
