@@ -36,6 +36,10 @@ async function resolveBaseURL() {
 
 const baseURLPromise = resolveBaseURL();
 
+// The resolved API base (e.g. "http://localhost:5000/api"). Needed to build
+// absolute URLs for media elements (<video>, <img download>) that bypass axios.
+export const getBaseURL = () => baseURLPromise;
+
 const api = axios.create();
 
 api.interceptors.request.use(async (config) => {

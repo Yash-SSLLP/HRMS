@@ -39,6 +39,44 @@ const protect = asyncHandler(async (req, res, next) => {
   next();
 });
 
+// Like `protect`, but also accepts the token via a `?access_token=` query
+// parameter. Media elements (<video>, <img>, download links) can't set an
+// Authorization header, so streaming routes use this to authenticate the URL
+// the browser requests directly.
+const protectMedia = asyncHandler(async (req, res, next) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : req.query.access_token;
+  if (!token) {
+    res.status(401);
+    throw new Error('Not authorized, no token');
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    res.status(401);
+    throw new Error('Not authorized, token failed');
+  }
+
+  const user = await User.findById(decoded.id);
+  if (!user) {
+    res.status(401);
+    throw new Error('User no longer exists');
+  }
+  if (!user.isActive) {
+    res.status(403);
+    throw new Error('Account is deactivated');
+  }
+  if ((decoded.tokenVersion || 0) !== (user.tokenVersion || 0)) {
+    res.status(401);
+    throw new Error('Session expired. Please log in again.');
+  }
+
+  req.user = user;
+  next();
+});
+
 // CEO / MD are read-only executives: they may VIEW anything an admin can, but
 // cannot change anything.
 const EXEC_VIEWERS = ['CEO', 'MD'];
@@ -65,4 +103,4 @@ const restrictTo = (...roles) => (req, res, next) => {
   return next(new Error('You do not have permission to perform this action'));
 };
 
-module.exports = { protect, restrictTo, EXEC_VIEWERS };
+module.exports = { protect, protectMedia, restrictTo, EXEC_VIEWERS };
