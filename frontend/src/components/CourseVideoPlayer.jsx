@@ -13,14 +13,16 @@ import { useAuthStore } from '../store/authStore';
 // Props:
 //   courseId, module ({ _id, title, content, durationSec })
 //   preview  — admin preview mode: play only, no progress reporting
+//   bare     — full-bleed video for the course stage (hides the extra watched bar)
 //   onProgress(enrollment) — called with the updated enrollment after a save
-export default function CourseVideoPlayer({ courseId, module, preview = false, onProgress }) {
+//   onError() — called when the video fails to load (so the page can prompt a report)
+export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, onProgress, onError }) {
   const token = useAuthStore((s) => s.token);
   const videoRef = useRef(null);
   const [src, setSrc] = useState('');
   const [watchedSec, setWatchedSec] = useState(0);
   const [duration, setDuration] = useState(module?.durationSec || 0);
-  const [error, setError] = useState('');
+  const [failed, setFailed] = useState(false);
 
   // Highest position credited so far (seconds), and the last sample time so we
   // can detect real-time advancement vs. a forward seek.
@@ -40,7 +42,7 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, o
     lastTimeRef.current = 0;
     lastSentRef.current = 0;
     setWatchedSec(0);
-    setError('');
+    setFailed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId, module._id, token]);
 
@@ -86,10 +88,18 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, o
 
   return (
     <div>
-      {error && (
-        <div className="mb-2 text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+      {failed && (
+        preview ? (
+          <div className="mb-2 text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+            This video could not be loaded. Make sure the Drive file is shared as “Anyone with the link”.
+          </div>
+        ) : (
+          <div className={`text-sm text-gray-600 bg-gray-50 border border-gray-200 ${bare ? 'mx-4 sm:mx-6 mt-4' : 'mb-2'} px-3 py-3 rounded-lg`}>
+            This video isn’t playing right now. Please use <span className="font-medium">“Report an issue”</span> below and we’ll fix it.
+          </div>
+        )
       )}
-      <div className="bg-black rounded-lg overflow-hidden">
+      <div className={bare ? 'bg-black' : 'bg-black rounded-lg overflow-hidden'}>
         <video
           ref={videoRef}
           src={src}
@@ -97,18 +107,18 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, o
           controlsList="nodownload"
           onContextMenu={(e) => e.preventDefault()}
           playsInline
-          className="w-full max-h-[70vh] bg-black"
+          className={`w-full bg-black ${bare ? 'max-h-[65vh] aspect-video' : 'max-h-[70vh]'}`}
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={onTimeUpdate}
           onPause={() => report(true)}
           onEnded={() => report(true)}
-          onError={() => setError('This video could not be loaded. The Drive file must be shared as “Anyone with the link”.')}
+          onError={() => { setFailed(true); onError?.(); }}
         />
       </div>
       {!preview && (
-        <div className="mt-3">
+        <div className={bare ? 'mt-3 px-4 sm:px-6' : 'mt-3'}>
           <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-            <span>Watched</span>
+            <span>This video</span>
             <span>{pct}%</span>
           </div>
           <div className="h-2 bg-gray-100 rounded">

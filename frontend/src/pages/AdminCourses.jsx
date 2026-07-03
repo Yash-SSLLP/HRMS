@@ -33,10 +33,11 @@ export default function AdminCourses() {
   const [saving, setSaving] = useState(false);
   const [previewModIdx, setPreviewModIdx] = useState(null);
 
-  // Assign / roster / approvals
+  // Assign / roster / approvals / reports
   const [assignFor, setAssignFor] = useState(null); // course
   const [rosterFor, setRosterFor] = useState(null); // course
   const [showApprovals, setShowApprovals] = useState(false);
+  const [showReports, setShowReports] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -53,6 +54,7 @@ export default function AdminCourses() {
   useEffect(() => { load(); }, []);
 
   const pendingTotal = useMemo(() => courses.reduce((n, c) => n + (c.pendingCount || 0), 0), [courses]);
+  const reportsTotal = useMemo(() => courses.reduce((n, c) => n + (c.openReportsCount || 0), 0), [courses]);
 
   const openCreate = () => { setEditingId(null); setForm(blank()); setPreviewModIdx(null); setShowModal(true); };
   const openEdit = (c) => {
@@ -129,6 +131,13 @@ export default function AdminCourses() {
               <span className="ml-1 inline-flex items-center justify-center text-[11px] font-semibold bg-amber-500 text-white rounded-full px-1.5 py-0.5">{pendingTotal}</span>
             )}
           </button>
+          <button onClick={() => setShowReports(true)}
+            className="relative px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-sm">
+            Reports
+            {reportsTotal > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center text-[11px] font-semibold bg-red-500 text-white rounded-full px-1.5 py-0.5">{reportsTotal}</span>
+            )}
+          </button>
           <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Course</button>
         </div>
       </PageHeader>
@@ -163,6 +172,7 @@ export default function AdminCourses() {
                 <span className="bg-green-50 text-green-700 rounded-md px-2 py-0.5">✓ {c.completedCount} done</span>
                 {c.overdueCount > 0 && <span className="bg-red-50 text-red-700 rounded-md px-2 py-0.5">⏰ {c.overdueCount} overdue</span>}
                 {c.pendingCount > 0 && <span className="bg-amber-50 text-amber-700 rounded-md px-2 py-0.5">⏳ {c.pendingCount} pending</span>}
+                {c.openReportsCount > 0 && <span className="bg-red-50 text-red-700 rounded-md px-2 py-0.5">⚠ {c.openReportsCount} report{c.openReportsCount === 1 ? '' : 's'}</span>}
               </div>
 
               <div className="text-xs text-gray-400 mt-3">
@@ -284,6 +294,7 @@ export default function AdminCourses() {
       {assignFor && <AssignModal course={assignFor} onClose={() => setAssignFor(null)} onDone={() => { setAssignFor(null); load(); }} />}
       {rosterFor && <RosterModal course={rosterFor} onClose={() => setRosterFor(null)} />}
       {showApprovals && <ApprovalsModal onClose={() => setShowApprovals(false)} onChange={load} />}
+      {showReports && <ReportsModal onClose={() => setShowReports(false)} onChange={load} />}
     </div>
   );
 }
@@ -384,6 +395,12 @@ function RosterModal({ course, onClose }) {
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '—'}</div>
                 <div className="text-xs text-gray-400">Due {fmtDate(e.dueDate)} · {e.source}</div>
+                {e.feedback?.rating && (
+                  <div className="text-xs text-amber-600 mt-0.5" title={e.feedback.comment || ''}>
+                    {'★'.repeat(e.feedback.rating)}{'☆'.repeat(5 - e.feedback.rating)}
+                    {e.feedback.comment ? <span className="text-gray-400"> · “{e.feedback.comment}”</span> : null}
+                  </div>
+                )}
               </div>
               <div className="w-24">
                 <div className="h-1.5 bg-gray-100 rounded"><div className="h-1.5 accent-bg rounded" style={{ width: `${e.progress || 0}%` }} /></div>
@@ -437,6 +454,74 @@ function ApprovalsModal({ onClose, onChange }) {
               </div>
               <button disabled={busyId === e._id} onClick={() => act(e._id, 'approve')} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Approve</button>
               <button disabled={busyId === e._id} onClick={() => act(e._id, 'reject')} className="px-3 py-1.5 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reject</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex justify-end pt-4"><button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button></div>
+    </Modal>
+  );
+}
+
+// ===== Course issue reports =====
+function ReportsModal({ onClose, onChange }) {
+  const [rows, setRows] = useState(null);
+  const [status, setStatus] = useState('Open');
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = (s) => api.get('/courses/reports', { params: { status: s } })
+    .then(({ data }) => setRows(data.reports))
+    .catch((err) => setError(err.response?.data?.message || 'Failed to load'));
+  useEffect(() => { setRows(null); load(status); /* eslint-disable-next-line */ }, [status]);
+
+  const act = async (id, newStatus) => {
+    setBusyId(id); setError('');
+    try {
+      await api.patch(`/courses/reports/${id}/resolve`, { status: newStatus });
+      await load(status);
+      onChange?.();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Action failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Modal title="Course issue reports" onClose={onClose}>
+      <div className="flex gap-2 mb-3">
+        {['Open', 'Resolved'].map((s) => (
+          <button key={s} onClick={() => setStatus(s)}
+            className={`px-3 py-1.5 text-xs rounded-lg border ${status === s ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'}`}>{s}</button>
+        ))}
+      </div>
+      {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      {!rows ? <p className="text-sm text-gray-500">Loading…</p> : rows.length === 0 ? (
+        <p className="text-sm text-gray-500">No {status.toLowerCase()} reports.</p>
+      ) : (
+        <div className="max-h-96 overflow-y-auto divide-y">
+          {rows.map((r) => (
+            <div key={r._id} className="py-3">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-gray-900">
+                    <span className="font-medium">{r.category}</span>
+                    <span className="text-gray-400"> · {r.course?.title || 'Course'}{r.moduleTitle ? ` — ${r.moduleTitle}` : ''}</span>
+                  </div>
+                  {r.note && <div className="text-sm text-gray-600 mt-0.5">“{r.note}”</div>}
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {r.employee ? `${r.employee.firstName || ''} ${r.employee.lastName || ''}`.trim() || r.employee.email : '—'} · {fmtDate(r.createdAt)}
+                  </div>
+                </div>
+                {status === 'Open' ? (
+                  <button disabled={busyId === r._id} onClick={() => act(r._id, 'Resolved')}
+                    className="shrink-0 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Resolve</button>
+                ) : (
+                  <button disabled={busyId === r._id} onClick={() => act(r._id, 'Open')}
+                    className="shrink-0 px-3 py-1.5 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reopen</button>
+                )}
+              </div>
             </div>
           ))}
         </div>

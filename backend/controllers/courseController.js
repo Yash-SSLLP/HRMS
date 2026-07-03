@@ -1,6 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const Course = require('../models/Course');
-const { Enrollment } = require('../models/Course');
+const { Enrollment, CourseReport, REPORT_CATEGORIES } = require('../models/Course');
 const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
 const { notify, notifyMany } = require('../services/notify');
 const User = require('../models/User');
@@ -250,15 +250,111 @@ const completeTextModule = asyncHandler(async (req, res) => {
   res.json({ enrollment: withDueMeta(enrollment.toObject()) });
 });
 
+// POST /api/courses/:id/report  { module?, category, note }
+// Employee raises an issue about a lesson (video quality, audio, playback…).
+const reportIssue = asyncHandler(async (req, res) => {
+  const course = await Course.findById(req.params.id);
+  if (!course) {
+    res.status(404);
+    throw new Error('Course not found');
+  }
+  const enrollment = await getApprovedEnrollment(course._id, req.user._id, res);
+
+  let moduleTitle;
+  if (req.body.module) {
+    const m = course.modules.id(req.body.module);
+    if (m) moduleTitle = m.title;
+  }
+  const category = REPORT_CATEGORIES.includes(req.body.category) ? req.body.category : 'Other';
+
+  const report = await CourseReport.create({
+    course: course._id,
+    module: req.body.module || undefined,
+    moduleTitle,
+    employee: req.user._id,
+    category,
+    note: (req.body.note || '').slice(0, 2000),
+  });
+
+  const admins = await User.find({ role: { $in: COURSE_ADMIN_ROLES }, isActive: true }).select('_id').lean();
+  notifyMany(admins.map((a) => a._id), {
+    type: 'course',
+    title: 'Course issue reported',
+    body: `${req.user.fullName || 'An employee'} reported "${category}" on "${course.title}"${moduleTitle ? ` — ${moduleTitle}` : ''}.`,
+    link: '/admin/courses',
+  }).catch(() => {});
+
+  // Touch enrollment so we know the learner interacted (keeps updatedAt fresh).
+  void enrollment;
+  res.status(201).json({ report });
+});
+
+// POST /api/courses/:id/feedback  { rating, comment }
+const submitFeedback = asyncHandler(async (req, res) => {
+  const course = await Course.findById(req.params.id);
+  if (!course) {
+    res.status(404);
+    throw new Error('Course not found');
+  }
+  const enrollment = await getApprovedEnrollment(course._id, req.user._id, res);
+
+  const rating = Math.round(Number(req.body.rating));
+  if (!(rating >= 1 && rating <= 5)) {
+    res.status(400);
+    throw new Error('Rating must be between 1 and 5.');
+  }
+  enrollment.feedback = {
+    rating,
+    comment: (req.body.comment || '').slice(0, 2000),
+    submittedAt: new Date(),
+  };
+  await enrollment.save();
+
+  const admins = await User.find({ role: { $in: COURSE_ADMIN_ROLES }, isActive: true }).select('_id').lean();
+  notifyMany(admins.map((a) => a._id), {
+    type: 'course',
+    title: 'Course feedback received',
+    body: `${req.user.fullName || 'An employee'} rated "${course.title}" ${rating}/5.`,
+    link: '/admin/courses',
+  }).catch(() => {});
+
+  res.json({ enrollment: withDueMeta(enrollment.toObject()) });
+});
+
 // ===== Admin =====
+
+// GET /api/courses/reports?status=Open — course issues raised by employees
+const listReports = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (req.query.status && ['Open', 'Resolved'].includes(req.query.status)) filter.status = req.query.status;
+  const reports = await CourseReport.find(filter)
+    .populate('course', 'title')
+    .populate('employee', 'firstName lastName email')
+    .sort({ createdAt: -1 })
+    .lean();
+  res.json({ count: reports.length, reports });
+});
+
+// PATCH /api/courses/reports/:rid/resolve
+const resolveReport = asyncHandler(async (req, res) => {
+  const report = await CourseReport.findById(req.params.rid);
+  if (!report) {
+    res.status(404);
+    throw new Error('Report not found');
+  }
+  report.status = req.body.status === 'Open' ? 'Open' : 'Resolved';
+  await report.save();
+  res.json({ report });
+});
 
 // GET /api/courses/admin/all — all courses incl inactive, with enrollment counts
 const listAdmin = asyncHandler(async (req, res) => {
   const courses = await Course.find().sort({ createdAt: -1 }).lean();
   const withCounts = await Promise.all(
     courses.map(async (c) => {
-      const [enrollments] = await Promise.all([
+      const [enrollments, openReports] = await Promise.all([
         Enrollment.find({ course: c._id }).select('status approvalStatus dueDate').lean(),
+        CourseReport.countDocuments({ course: c._id, status: 'Open' }),
       ]);
       const approved = enrollments.filter((e) => e.approvalStatus === 'Approved');
       const overdue = approved.filter(
@@ -272,6 +368,7 @@ const listAdmin = asyncHandler(async (req, res) => {
         completedCount: approved.filter((e) => e.status === 'Completed').length,
         pendingCount: enrollments.filter((e) => e.approvalStatus === 'Pending').length,
         overdueCount: overdue,
+        openReportsCount: openReports,
       };
     })
   );
@@ -323,6 +420,7 @@ const deleteCourse = asyncHandler(async (req, res) => {
     throw new Error('Course not found');
   }
   await Enrollment.deleteMany({ course: course._id });
+  await CourseReport.deleteMany({ course: course._id });
   await course.deleteOne();
   res.json({ id: req.params.id, deleted: true });
 });
@@ -441,6 +539,8 @@ module.exports = {
   streamModuleVideo,
   updateModuleProgress,
   completeTextModule,
+  reportIssue,
+  submitFeedback,
   listAdmin,
   createCourse,
   updateCourse,
@@ -450,4 +550,6 @@ module.exports = {
   courseRoster,
   approveEnrollment,
   rejectEnrollment,
+  listReports,
+  resolveReport,
 };

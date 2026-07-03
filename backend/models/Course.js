@@ -77,6 +77,12 @@ const enrollmentSchema = new mongoose.Schema(
     moduleProgress: [moduleProgressSchema],
     progress: { type: Number, default: 0, min: 0, max: 100 },
     completedAt: { type: Date },
+    // Course feedback the employee leaves (typically on completion).
+    feedback: {
+      rating: { type: Number, min: 1, max: 5 },
+      comment: { type: String, trim: true },
+      submittedAt: { type: Date },
+    },
   },
   { timestamps: true }
 );
@@ -89,12 +95,32 @@ enrollmentSchema.plugin(require('./plugins/auditStatus'), {
   fields: ['status', 'approvalStatus'],
 });
 
+// Employee-raised issue about a course lesson (video quality, audio, playback…).
+const REPORT_CATEGORIES = ['Video quality', 'Audio / sound', 'Playback / buffering', 'Content error', 'Other'];
+const REPORT_STATUS = ['Open', 'Resolved'];
+const courseReportSchema = new mongoose.Schema(
+  {
+    course: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true, index: true },
+    module: { type: mongoose.Schema.Types.ObjectId }, // the lesson, if the report is about one
+    moduleTitle: { type: String },
+    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    category: { type: String, enum: REPORT_CATEGORIES, default: 'Other' },
+    note: { type: String, trim: true },
+    status: { type: String, enum: REPORT_STATUS, default: 'Open', index: true },
+  },
+  { timestamps: true }
+);
+courseReportSchema.plugin(require('./plugins/auditStatus'), { entity: 'CourseReport' });
+
 const Course = mongoose.model('Course', courseSchema);
 const Enrollment = mongoose.model('Enrollment', enrollmentSchema);
+const CourseReport = mongoose.model('CourseReport', courseReportSchema);
 
 module.exports = Course;
 module.exports.Enrollment = Enrollment;
+module.exports.CourseReport = CourseReport;
 module.exports.COURSE_CATEGORIES = COURSE_CATEGORIES;
 module.exports.MODULE_TYPES = MODULE_TYPES;
 module.exports.ENROLLMENT_STATUS = ENROLLMENT_STATUS;
 module.exports.APPROVAL_STATUS = APPROVAL_STATUS;
+module.exports.REPORT_CATEGORIES = REPORT_CATEGORIES;

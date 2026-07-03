@@ -88,6 +88,7 @@ const AdminTravel = lazy(() => import('./pages/AdminTravel.jsx'));
 const EmployeeTravel = lazy(() => import('./pages/EmployeeTravel.jsx'));
 const AdminCourses = lazy(() => import('./pages/AdminCourses.jsx'));
 const EmployeeLearning = lazy(() => import('./pages/EmployeeLearning.jsx'));
+const CoursePlayerPage = lazy(() => import('./pages/CoursePlayerPage.jsx'));
 const AdminReviewCycles = lazy(() => import('./pages/AdminReviewCycles.jsx'));
 const EmployeeReviews = lazy(() => import('./pages/EmployeeReviews.jsx'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
@@ -221,6 +222,7 @@ export default function App() {
         <Route path="goals" element={<EmployeeGoals />} />
         <Route path="reviews" element={<EmployeeReviews />} />
         <Route path="learning" element={<EmployeeLearning />} />
+        <Route path="learning/:courseId" element={<CoursePlayerPage />} />
         <Route path="recognition" element={<EmployeeRecognition />} />
         <Route path="announcements" element={<EmployeeAnnouncements />} />
         <Route path="surveys" element={<EmployeeSurveys />} />

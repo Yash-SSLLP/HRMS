@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
-import CourseVideoPlayer from '../components/CourseVideoPlayer';
 
 const STATUS_STYLES = {
   Enrolled: 'bg-gray-100 text-gray-700',
@@ -33,7 +33,6 @@ export default function EmployeeLearning() {
   const [catalog, setCatalog] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [openId, setOpenId] = useState(null); // enrollment._id being viewed
   const [busyEnroll, setBusyEnroll] = useState(null);
 
   const load = async () => {
@@ -72,13 +71,6 @@ export default function EmployeeLearning() {
     }
   };
 
-  // Merge a fresh enrollment (returned by progress/complete calls) into state.
-  const applyEnrollment = (updated) => {
-    setEnrollments((prev) => prev.map((e) => (e._id === updated._id ? { ...e, ...updated, course: e.course } : e)));
-  };
-
-  const openEnrollment = enrollments.find((e) => e._id === openId);
-
   return (
     <div>
       <PageHeader title="Learning" subtitle="Your courses & training" />
@@ -102,7 +94,9 @@ export default function EmployeeLearning() {
               <div className="mt-2"><DeadlineChip enrollment={e} /></div>
               <ProgressBar value={e.progress} />
               <div className="mt-4">
-                <button onClick={() => setOpenId(e._id)} className="w-full px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">Open course</button>
+                <Link to={`/employee/learning/${e.course._id}`} className="block text-center w-full px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
+                  {e.progress > 0 && e.status !== 'Completed' ? 'Continue' : e.status === 'Completed' ? 'Review' : 'Start course'}
+                </Link>
               </div>
             </div>
           ))}
@@ -163,106 +157,6 @@ export default function EmployeeLearning() {
           })}
         </div>
       )}
-
-      {openEnrollment && openEnrollment.course && (
-        <CoursePlayer
-          enrollment={openEnrollment}
-          onClose={() => setOpenId(null)}
-          onEnrollmentChange={applyEnrollment}
-        />
-      )}
-    </div>
-  );
-}
-
-// ===== Course player (module list + in-portal video / text) =====
-function CoursePlayer({ enrollment, onClose, onEnrollmentChange }) {
-  const course = enrollment.course;
-  const [active, setActive] = useState(() => (course.modules || [])[0] || null);
-  const [progress, setProgress] = useState(enrollment.progress || 0);
-  const [completedSet, setCompletedSet] = useState(
-    () => new Set((enrollment.moduleProgress || []).filter((m) => m.completed).map((m) => String(m.module)))
-  );
-  const [busyText, setBusyText] = useState(false);
-
-  const applyUpdated = (updated) => {
-    setProgress(updated.progress || 0);
-    setCompletedSet(new Set((updated.moduleProgress || []).filter((m) => m.completed).map((m) => String(m.module))));
-    onEnrollmentChange({ ...enrollment, ...updated });
-  };
-
-  const markText = async (module, completed) => {
-    setBusyText(true);
-    try {
-      const { data } = await api.post(`/courses/${course._id}/modules/${module._id}/complete`, { completed });
-      applyUpdated(data.enrollment);
-    } catch {
-      /* ignore */
-    } finally {
-      setBusyText(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center px-2 sm:px-4 z-50 overflow-y-auto py-4 sm:py-8">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl">
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b">
-          <div className="min-w-0">
-            <h2 className="card-title truncate">{course.title}</h2>
-            <div className="text-xs text-gray-400">{progress}% complete</div>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-[220px_1fr]">
-          {/* Module list */}
-          <div className="border-b md:border-b-0 md:border-r max-h-56 md:max-h-[70vh] overflow-y-auto p-2">
-            {(course.modules || []).length === 0 ? (
-              <p className="text-sm text-gray-500 p-3">This course has no modules.</p>
-            ) : course.modules.map((m, idx) => {
-              const done = completedSet.has(String(m._id));
-              const isActive = active && String(active._id) === String(m._id);
-              return (
-                <button key={m._id} onClick={() => setActive(m)}
-                  className={`w-full text-left rounded-lg px-3 py-2 mb-1 flex items-start gap-2 ${isActive ? 'bg-gray-100' : 'hover:bg-gray-50'}`}>
-                  <span className={`mt-0.5 ${done ? 'text-green-600' : 'text-gray-300'}`}>{done ? '✓' : (m.type === 'text' ? '📄' : '🎬')}</span>
-                  <span className="text-sm text-gray-800 min-w-0">
-                    <span className="block truncate">{m.title}</span>
-                    <span className="text-[11px] text-gray-400">Module {idx + 1}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Active module */}
-          <div className="p-4 sm:p-5 min-h-[240px]">
-            {!active ? (
-              <p className="text-sm text-gray-500">Select a module to begin.</p>
-            ) : active.type === 'text' ? (
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-2">{active.title}</h3>
-                <div className="text-sm text-gray-700 whitespace-pre-wrap mb-4">{active.content || 'No content.'}</div>
-                <button onClick={() => markText(active, !completedSet.has(String(active._id)))} disabled={busyText}
-                  className={`px-4 py-2 text-sm rounded-lg disabled:opacity-60 ${completedSet.has(String(active._id)) ? 'border hover:bg-gray-50' : 'bg-green-600 text-white hover:bg-green-700'}`}>
-                  {completedSet.has(String(active._id)) ? 'Mark as unread' : 'Mark as read'}
-                </button>
-              </div>
-            ) : (
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-2">{active.title}</h3>
-                <CourseVideoPlayer
-                  key={active._id}
-                  courseId={course._id}
-                  module={active}
-                  onProgress={applyUpdated}
-                />
-                {active.content && <p className="text-sm text-gray-600 mt-3 whitespace-pre-wrap">{active.content}</p>}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

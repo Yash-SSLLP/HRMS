@@ -6,6 +6,8 @@ const {
   streamModuleVideo,
   updateModuleProgress,
   completeTextModule,
+  reportIssue,
+  submitFeedback,
   listAdmin,
   createCourse,
   updateCourse,
@@ -15,6 +17,8 @@ const {
   courseRoster,
   approveEnrollment,
   rejectEnrollment,
+  listReports,
+  resolveReport,
 } = require('../controllers/courseController');
 const { protect, protectMedia, restrictTo } = require('../middleware/authMiddleware');
 
@@ -37,11 +41,15 @@ router.get('/me', myLearning);
 router.post('/:id/enroll', enroll);
 router.patch('/:id/modules/:mid/progress', updateModuleProgress);
 router.post('/:id/modules/:mid/complete', completeTextModule);
+router.post('/:id/report', reportIssue);
+router.post('/:id/feedback', submitFeedback);
 
 // Admin-only (HR / SuperAdmin / L&D later)
 router.use(restrictTo(...COURSE_ADMIN_ROLES));
 router.get('/admin/all', listAdmin);
 router.get('/enrollments/pending', listPending);
+router.get('/reports', listReports);
+router.patch('/reports/:rid/resolve', resolveReport);
 router.patch('/enrollments/:eid/approve', approveEnrollment);
 router.patch('/enrollments/:eid/reject', rejectEnrollment);
 router.post('/', createCourse);
