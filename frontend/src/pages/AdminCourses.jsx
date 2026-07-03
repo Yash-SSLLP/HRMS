@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import CourseVideoPlayer from '../components/CourseVideoPlayer';
@@ -52,6 +53,19 @@ export default function AdminCourses() {
     }
   };
   useEffect(() => { load(); }, []);
+
+  // Open the panel a notification deep-linked to (e.g. /admin/courses?panel=reports).
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const panel = searchParams.get('panel');
+    if (!panel) return;
+    if (panel === 'approvals') setShowApprovals(true);
+    else if (panel === 'reports') setShowReports(true);
+    // Clear the param so re-navigating/closing doesn't re-trigger it.
+    searchParams.delete('panel');
+    setSearchParams(searchParams, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pendingTotal = useMemo(() => courses.reduce((n, c) => n + (c.pendingCount || 0), 0), [courses]);
   const reportsTotal = useMemo(() => courses.reduce((n, c) => n + (c.openReportsCount || 0), 0), [courses]);

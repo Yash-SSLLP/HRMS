@@ -139,7 +139,7 @@ const enroll = asyncHandler(async (req, res) => {
     type: 'course',
     title: 'Course enrollment request',
     body: `${req.user.fullName || 'An employee'} requested to enroll in "${course.title}".`,
-    link: '/admin/courses',
+    link: '/admin/courses?panel=approvals',
   }).catch(() => {});
 
   res.status(201).json({ enrollment });
@@ -281,7 +281,7 @@ const reportIssue = asyncHandler(async (req, res) => {
     type: 'course',
     title: 'Course issue reported',
     body: `${req.user.fullName || 'An employee'} reported "${category}" on "${course.title}"${moduleTitle ? ` — ${moduleTitle}` : ''}.`,
-    link: '/admin/courses',
+    link: '/admin/courses?panel=reports',
   }).catch(() => {});
 
   // Touch enrollment so we know the learner interacted (keeps updatedAt fresh).
@@ -462,7 +462,7 @@ const assignCourse = asyncHandler(async (req, res) => {
     type: 'course',
     title: 'New course assigned',
     body: `You've been assigned "${course.title}"${dueDate ? ` — due ${dueDate.toLocaleDateString('en-IN')}` : ''}.`,
-    link: '/learning',
+    link: `/employee/learning/${course._id}`,
   }).catch(() => {});
 
   res.status(201).json({ assigned: results.length });
@@ -505,7 +505,7 @@ const approveEnrollment = asyncHandler(async (req, res) => {
     type: 'course',
     title: 'Enrollment approved',
     body: `Your enrollment in "${enrollment.course.title}" was approved.`,
-    link: '/learning',
+    link: `/employee/learning/${enrollment.course._id}`,
   }).catch(() => {});
 
   res.json({ enrollment });
@@ -526,7 +526,7 @@ const rejectEnrollment = asyncHandler(async (req, res) => {
     type: 'course',
     title: 'Enrollment declined',
     body: `Your request to enroll in "${enrollment.course.title}" was declined.`,
-    link: '/learning',
+    link: '/employee/learning',
   }).catch(() => {});
 
   res.json({ enrollment });

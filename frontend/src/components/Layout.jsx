@@ -166,8 +166,12 @@ function NotificationBell({ isAdmin }) {
   }, []);
 
   const resolveLink = (n) => {
+    if (!n.link) return null;
     if (n.link === 'calendar') return isAdmin ? '/admin/calendar' : '/employee/calendar';
-    return n.link || null;
+    // Legacy course links were stored as "/learning"; the actual route lives
+    // under the employee portal. Normalise so older notifications still land.
+    if (n.link === '/learning' || n.link.startsWith('/learning/')) return `/employee${n.link}`;
+    return n.link;
   };
 
   const openNotif = async (n) => {

@@ -30,6 +30,7 @@ import KnowledgeBaseScreen from '../screens/KnowledgeBaseScreen';
 import GoalsScreen from '../screens/GoalsScreen';
 import ReviewsScreen from '../screens/ReviewsScreen';
 import LearningScreen from '../screens/LearningScreen';
+import CoursePlayerScreen from '../screens/CoursePlayerScreen';
 import AssetsScreen from '../screens/AssetsScreen';
 import TravelScreen from '../screens/TravelScreen';
 import CompOffScreen from '../screens/CompOffScreen';
@@ -85,6 +86,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="Goals" component={GoalsScreen} options={{ title: 'My Goals' }} />
       <HomeStackNav.Screen name="Reviews" component={ReviewsScreen} options={{ title: 'Performance Reviews' }} />
       <HomeStackNav.Screen name="Learning" component={LearningScreen} options={{ title: 'Learning' }} />
+      <HomeStackNav.Screen name="CoursePlayer" component={CoursePlayerScreen} options={{ title: 'Course' }} />
       <HomeStackNav.Screen name="Assets" component={AssetsScreen} options={{ title: 'My Assets' }} />
       <HomeStackNav.Screen name="Travel" component={TravelScreen} options={{ title: 'Travel' }} />
       <HomeStackNav.Screen name="CompOff" component={CompOffScreen} options={{ title: 'Comp-off' }} />

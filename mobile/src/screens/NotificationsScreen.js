@@ -60,9 +60,10 @@ export default function NotificationsScreen() {
       setUnread((u) => Math.max(0, u - 1));
       api.patch(`/notifications/${n._id}/read`).then(refreshBadges).catch(() => {});
     }
-    // This screen is itself a tab, so navigate to sibling tabs directly.
-    const { tab } = routeForNotification(n);
-    if (tab && tab !== 'Alerts') nav.navigate(tab);
+    // This screen is itself a tab, so navigate to sibling tabs directly. When the
+    // notification targets a nested screen (e.g. a course), pass it through.
+    const { tab, screen, params } = routeForNotification(n);
+    if (tab && tab !== 'Alerts') nav.navigate(tab, screen ? { screen, params } : undefined);
   };
 
   const renderItem = ({ item }) => {

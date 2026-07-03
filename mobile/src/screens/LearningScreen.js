@@ -1,142 +1,154 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, ProgressBar, AppButton, Loader, EmptyState, refresher, Ionicons } from '../components/ui';
-import { fmtHours } from '../utils/format';
+import { Screen, Card, AppButton, Pill, ProgressBar, Loader, EmptyState, SectionHeader, refresher, Ionicons } from '../components/ui';
 
 const STATUS_TONE = { Enrolled: 'info', InProgress: 'warning', Completed: 'success' };
 
+// "Due in 3 days" / "Overdue by 2 days" / "Completed" from due metadata.
+function deadlineLabel(e) {
+  if (e.status === 'Completed') return { label: 'Completed', tone: 'success' };
+  if (!e.dueDate) return null;
+  if (e.overdue) return { label: `Overdue by ${Math.abs(e.daysToDue)}d`, tone: 'danger' };
+  if (e.daysToDue === 0) return { label: 'Due today', tone: 'warning' };
+  return { label: `Due in ${e.daysToDue}d`, tone: 'info' };
+}
+
 export default function LearningScreen() {
-  const [courses, setCourses] = useState([]);
+  const nav = useNavigation();
+  const [enrollments, setEnrollments] = useState([]);
+  const [catalog, setCatalog] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [active, setActive] = useState(null);
-  const [done, setDone] = useState([]); // completed module indices for the open course
-  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
-    const { data } = await api.get('/courses').catch(() => ({ data: {} }));
-    setCourses(data.courses || []);
+    const [me, cat] = await Promise.all([
+      api.get('/courses/me').catch(() => ({ data: {} })),
+      api.get('/courses').catch(() => ({ data: {} })),
+    ]);
+    setEnrollments(me.data.enrollments || []);
+    setCatalog(cat.data.courses || []);
     setLoading(false);
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  const enroll = async (course) => {
+  const requestEnroll = async (course) => {
+    setBusyId(course._id);
     try {
       await api.post(`/courses/${course._id}/enroll`);
       await load();
+      Alert.alert('Requested', 'Your enrollment request was sent for approval.');
     } catch (err) {
       Alert.alert('Could not enroll', errMsg(err));
-    }
-  };
-
-  const openCourse = async (course) => {
-    if (!course.enrollment) await enroll(course);
-    // Re-fetch the fresh enrollment for accurate completed modules.
-    const { data } = await api.get('/courses/me').catch(() => ({ data: {} }));
-    const mine = (data.enrollments || []).find((e) => String(e.course?._id) === String(course._id));
-    setDone(mine?.completedModules || []);
-    setActive(course);
-  };
-
-  const toggleModule = (idx) => {
-    setDone((prev) => (prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]));
-  };
-
-  const saveProgress = async () => {
-    setSaving(true);
-    try {
-      await api.patch(`/courses/${active._id}/progress`, { completedModules: done });
-      setActive(null);
-      await load();
-    } catch (err) {
-      Alert.alert('Could not save', errMsg(err));
     } finally {
-      setSaving(false);
+      setBusyId(null);
     }
   };
 
   if (loading) return <Screen><Loader text="Loading courses" /></Screen>;
 
-  const modules = active?.modules || [];
-  const modProgress = modules.length ? Math.round((done.length / modules.length) * 100) : 0;
+  const approved = enrollments.filter((e) => e.approvalStatus === 'Approved' && e.course);
+  const pending = enrollments.filter((e) => e.approvalStatus === 'Pending' && e.course);
+  const enrolledIds = new Set(enrollments.filter((e) => e.course).map((e) => String(e.course._id)));
+  const byCourse = {};
+  enrollments.forEach((e) => { if (e.course) byCourse[String(e.course._id)] = e; });
 
   return (
     <Screen edges={[]}>
-      <FlatList
-        data={courses}
-        keyExtractor={(c) => c._id}
-        contentContainerStyle={courses.length ? { padding: spacing(4) } : { flex: 1 }}
-        refreshControl={refresher(refreshing, onRefresh)}
-        renderItem={({ item }) => {
-          const e = item.enrollment;
-          return (
-            <Card style={{ marginBottom: spacing(3) }} onPress={() => openCourse(item)}>
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                <Text style={[font.h3, { flex: 1, marginRight: 8 }]}>{item.title}</Text>
-                {e ? <Pill label={e.status} tone={STATUS_TONE[e.status] || 'neutral'} /> : <Pill label={item.category} tone="primary" />}
-              </View>
-              {item.description ? <Text style={[font.label, { marginTop: 6 }]} numberOfLines={2}>{item.description}</Text> : null}
-              <View style={styles.metaRow}>
-                <View style={styles.metaItem}><Ionicons name="layers" size={13} color={colors.textFaint} /><Text style={font.small}> {item.modules?.length || 0} modules</Text></View>
-                {item.durationHours ? <View style={styles.metaItem}><Ionicons name="time" size={13} color={colors.textFaint} /><Text style={font.small}> {fmtHours(item.durationHours)}</Text></View> : null}
-              </View>
-              {e ? (
-                <View style={{ marginTop: 12 }}>
+      <ScrollView contentContainerStyle={{ padding: spacing(4), paddingBottom: 32 }} refreshControl={refresher(refreshing, onRefresh)}>
+        {/* My Courses */}
+        <SectionHeader title="My Courses" />
+        {approved.length === 0 ? (
+          <Text style={[font.label, { marginBottom: spacing(4) }]}>No active courses yet. Request one below, or wait to be assigned.</Text>
+        ) : (
+          approved.map((e) => {
+            const dl = deadlineLabel(e);
+            return (
+              <Card key={e._id} style={{ marginBottom: spacing(3) }} onPress={() => nav.navigate('CoursePlayer', { courseId: e.course._id })}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                  <Text style={[font.h3, { flex: 1, marginRight: 8 }]} numberOfLines={2}>{e.course.title}</Text>
+                  <Pill label={e.status} tone={STATUS_TONE[e.status] || 'neutral'} />
+                </View>
+                <View style={styles.metaRow}>
+                  <Text style={font.small}>{e.course.category}{e.source === 'Assigned' ? ' · Assigned' : ''}</Text>
+                  {dl ? <Pill label={dl.label} tone={dl.tone} /> : null}
+                </View>
+                <View style={{ marginTop: spacing(3) }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={font.small}>Progress</Text>
+                    <Text style={[font.small, { fontWeight: '800', color: colors.text }]}>{e.progress || 0}%</Text>
+                  </View>
                   <ProgressBar value={e.progress || 0} tint={e.progress >= 100 ? colors.success : colors.primary} />
                 </View>
-              ) : (
-                <AppButton title="Enroll" icon="add" variant="outline" style={{ marginTop: 12, height: 42 }} onPress={() => enroll(item)} />
-              )}
-            </Card>
-          );
-        }}
-        ListEmptyComponent={<EmptyState icon="school-outline" title="No courses" subtitle="Learning courses will appear here." />}
-      />
+                <AppButton
+                  title={e.progress > 0 && e.status !== 'Completed' ? 'Continue' : e.status === 'Completed' ? 'Review' : 'Start course'}
+                  icon="play"
+                  style={{ marginTop: spacing(3), height: 44 }}
+                  onPress={() => nav.navigate('CoursePlayer', { courseId: e.course._id })}
+                />
+              </Card>
+            );
+          })
+        )}
 
-      <Modal visible={!!active} animationType="slide" onRequestClose={() => setActive(null)}>
-        <Screen>
-          <View style={styles.modalHead}>
-            <Text style={[font.h2, { flex: 1, marginRight: 12 }]} numberOfLines={1}>{active?.title}</Text>
-            <TouchableOpacity onPress={() => setActive(null)}><Ionicons name="close" size={26} color={colors.text} /></TouchableOpacity>
-          </View>
-          <ScrollView contentContainerStyle={{ padding: spacing(4), paddingTop: 0 }}>
-            <View style={{ marginBottom: spacing(4) }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text style={font.label}>Progress</Text>
-                <Text style={[font.small, { fontWeight: '800', color: colors.text }]}>{modProgress}%</Text>
-              </View>
-              <ProgressBar value={modProgress} tint={modProgress >= 100 ? colors.success : colors.primary} />
-            </View>
-            {modules.length === 0 ? (
-              <Text style={font.label}>This course has no modules listed.</Text>
-            ) : (
-              modules.map((m, idx) => {
-                const checked = done.includes(idx);
-                return (
-                  <TouchableOpacity key={idx} style={styles.moduleRow} onPress={() => toggleModule(idx)}>
-                    <Ionicons name={checked ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={checked ? colors.success : colors.borderStrong} />
-                    <Text style={[font.body, { flex: 1, marginLeft: 12 }, checked && { color: colors.textMuted }]}>{m.title || `Module ${idx + 1}`}</Text>
-                  </TouchableOpacity>
-                );
-              })
-            )}
-            <AppButton title="Save progress" icon="save" onPress={saveProgress} loading={saving} style={{ marginTop: spacing(4) }} />
-          </ScrollView>
-        </Screen>
-      </Modal>
+        {/* Awaiting approval */}
+        {pending.length > 0 && (
+          <>
+            <SectionHeader title="Awaiting approval" />
+            {pending.map((e) => (
+              <Card key={e._id} style={{ marginBottom: spacing(3), borderColor: colors.warning + '55' }}>
+                <Text style={font.h3} numberOfLines={2}>{e.course.title}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                  <Ionicons name="hourglass-outline" size={16} color={colors.warning} />
+                  <Text style={[font.label, { color: colors.warning, marginLeft: 6, fontWeight: '700' }]}>Requested — awaiting approval</Text>
+                </View>
+              </Card>
+            ))}
+          </>
+        )}
+
+        {/* Catalog */}
+        <SectionHeader title="Course Catalog" />
+        {catalog.length === 0 ? (
+          <EmptyState icon="school-outline" title="No courses" subtitle="Courses will appear here." />
+        ) : (
+          catalog.map((c) => {
+            const enr = byCourse[String(c._id)] || c.enrollment;
+            const st = enr?.approvalStatus;
+            return (
+              <Card key={c._id} style={{ marginBottom: spacing(3) }}>
+                <Text style={font.h3} numberOfLines={2}>{c.title}</Text>
+                <Text style={[font.small, { marginTop: 2 }]}>
+                  {c.category}{c.durationHours ? ` · ${c.durationHours}h` : ''} · {c.moduleCount || 0} lesson{c.moduleCount === 1 ? '' : 's'}
+                </Text>
+                {c.description ? <Text style={[font.label, { marginTop: 6 }]} numberOfLines={3}>{c.description}</Text> : null}
+                {c.deadlineDays ? <Text style={[font.small, { marginTop: 6 }]}>Finish within {c.deadlineDays} days of enrollment</Text> : null}
+                <View style={{ marginTop: spacing(3) }}>
+                  {st === 'Approved' ? (
+                    <AppButton title="Open course" variant="outline" style={{ height: 44 }} onPress={() => nav.navigate('CoursePlayer', { courseId: c._id })} />
+                  ) : st === 'Pending' ? (
+                    <Text style={[font.label, { color: colors.warning, fontWeight: '700' }]}>Awaiting approval…</Text>
+                  ) : st === 'Rejected' ? (
+                    <Text style={[font.label, { color: colors.danger, fontWeight: '700' }]}>Request declined</Text>
+                  ) : (
+                    <AppButton title="Request to enroll" icon="add" loading={busyId === c._id} style={{ height: 44 }} onPress={() => requestEnroll(c)} />
+                  )}
+                </View>
+              </Card>
+            );
+          })
+        )}
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  metaRow: { flexDirection: 'row', gap: 14, marginTop: 10 },
-  metaItem: { flexDirection: 'row', alignItems: 'center' },
-  modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: spacing(4) },
-  moduleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(3), borderBottomWidth: 1, borderBottomColor: colors.border },
+  metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
 });

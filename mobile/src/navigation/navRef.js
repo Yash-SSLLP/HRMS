@@ -7,6 +7,13 @@ export const navRef = createNavigationContainerRef();
 // 'celebrations', …) used by the web portal.
 export function routeForNotification(data = {}) {
   const link = data.link || data.type;
+  // Course/learning links (web paths like /employee/learning/<id> or
+  // /admin/courses?panel=…). Deep-link straight to the course when an id is present.
+  if (data.type === 'course' || (typeof link === 'string' && (link.includes('/learning') || link.includes('/courses')))) {
+    const m = typeof link === 'string' && link.match(/\/learning\/([a-f0-9]{24})/i);
+    if (m) return { tab: 'Home', screen: 'CoursePlayer', params: { courseId: m[1] } };
+    return { tab: 'Home', screen: 'Learning' };
+  }
   switch (link) {
     case 'chat':
       return { tab: 'Chat' };
@@ -29,9 +36,9 @@ export function routeForNotification(data = {}) {
 
 export function navigateFromNotification(data) {
   if (!navRef.isReady()) return;
-  const { tab } = routeForNotification(data || {});
+  const { tab, screen, params } = routeForNotification(data || {});
   try {
-    navRef.navigate('Main', { screen: tab });
+    navRef.navigate('Main', { screen: tab, params: screen ? { screen, params } : undefined });
   } catch {
     /* navigation not mounted yet */
   }
