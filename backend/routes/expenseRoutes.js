@@ -2,7 +2,7 @@ const express = require('express');
 const {
   listMyExpenses, createExpense, listExpenses, reviewExpense, deleteExpense,
 } = require('../controllers/expenseController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(protect);
@@ -12,7 +12,7 @@ router.get('/me', listMyExpenses);
 router.post('/', createExpense);
 
 // HR/Admin
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('expenses.manage'));
 router.get('/', listExpenses);
 router.patch('/:id/status', reviewExpense);
 router.delete('/:id', deleteExpense);

@@ -10,7 +10,7 @@ const {
   categories,
   setStatus,
 } = require('../controllers/documentController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -49,7 +49,7 @@ router.get('/:id/download', download);
 router.delete('/:id', remove);
 
 // HR/Admin
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('documents.manage'));
 router.get('/', listForEmployee);
 router.post('/', upload.single('file'), uploadForEmployee);
 router.patch('/:id/status', setStatus);

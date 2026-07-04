@@ -6,13 +6,13 @@ const {
   tdsReport,
   form16Summary,
 } = require('../controllers/complianceController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
 // Statutory compliance reports are admin-only.
 router.use(protect);
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('compliance.view'));
 
 router.get('/pf', pfReport);
 router.get('/esi', esiReport);

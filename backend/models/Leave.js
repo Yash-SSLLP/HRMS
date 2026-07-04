@@ -12,6 +12,26 @@ const LEAVE_TYPES = ['EL', 'CL', 'SL', 'ML', 'PL', 'COMP', 'LOP'];
 
 const LEAVE_STATUS = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
 
+// One rung of the reporting-hierarchy approval ladder. A request climbs the
+// chain: the applicant's manager, then that manager's manager, … up to the first
+// CEO/MD, who gives final approval. HR is informed only (not a rung).
+const CHAIN_STEP_STATUS = ['Waiting', 'Pending', 'Approved', 'Rejected', 'Skipped'];
+const approvalStepSchema = new mongoose.Schema(
+  {
+    approver: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    approverName: String,
+    role: String,
+    order: { type: Number, default: 0 },
+    // Waiting = not yet their turn; Pending = awaiting this person's decision;
+    // Approved/Rejected = decided; Skipped = a lower rung rejected, or an HR
+    // override short-circuited the chain.
+    status: { type: String, enum: CHAIN_STEP_STATUS, default: 'Waiting' },
+    decidedAt: Date,
+    note: String,
+  },
+  { _id: true }
+);
+
 const leaveRequestSchema = new mongoose.Schema(
   {
     employee: {
@@ -30,9 +50,20 @@ const leaveRequestSchema = new mongoose.Schema(
     reason: { type: String, trim: true, maxlength: 1000 },
     status: { type: String, enum: LEAVE_STATUS, default: 'Pending' },
     appliedAt: { type: Date, default: Date.now },
+    // Whoever recorded the FINAL decision (last chain approver, or an HR override).
     approver: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     decisionAt: Date,
     decisionNote: String,
+    // Ordered reporting-hierarchy approval ladder built at apply time.
+    approvalChain: [approvalStepSchema],
+    // The user whose turn it is right now (null once fully decided). Indexed so
+    // an approver's inbox query (currentApprover === me) is cheap.
+    currentApprover: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
   },
   { timestamps: true }
 );

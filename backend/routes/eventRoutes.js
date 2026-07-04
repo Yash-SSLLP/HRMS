@@ -5,7 +5,7 @@ const {
   updateEvent,
   deleteEvent,
 } = require('../controllers/eventController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -15,8 +15,8 @@ router.use(protect);
 router.get('/', listEvents);
 
 // Only HR/SuperAdmin may create/manage events.
-router.post('/', restrictTo('SuperAdmin', 'HRManager'), createEvent);
-router.put('/:id', restrictTo('SuperAdmin', 'HRManager'), updateEvent);
-router.delete('/:id', restrictTo('SuperAdmin', 'HRManager'), deleteEvent);
+router.post('/', requirePermission('events.manage'), createEvent);
+router.put('/:id', requirePermission('events.manage'), updateEvent);
+router.delete('/:id', requirePermission('events.manage'), deleteEvent);
 
 module.exports = router;

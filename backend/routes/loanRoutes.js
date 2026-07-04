@@ -2,7 +2,7 @@ const express = require('express');
 const {
   listMine, requestLoan, listAll, createForEmployee, reviewLoan, recordRepayment,
 } = require('../controllers/loanController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(protect);
@@ -12,7 +12,7 @@ router.get('/me', listMine);
 router.post('/', requestLoan);
 
 // HR/Admin
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('loans.manage'));
 router.get('/', listAll);
 router.post('/admin', createForEmployee);
 router.patch('/:id/status', reviewLoan);

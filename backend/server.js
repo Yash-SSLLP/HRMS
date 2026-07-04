@@ -26,6 +26,7 @@ app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/employees', require('./routes/employeeRoutes'));
 app.use('/api/payroll', require('./routes/payrollRoutes'));
 app.use('/api/leave', require('./routes/leaveRoutes'));
+app.use('/api/approvals', require('./routes/approvalRoutes'));
 app.use('/api/manager', require('./routes/managerRoutes'));
 app.use('/api/attendance', require('./routes/attendanceRoutes'));
 app.use('/api/documents', require('./routes/documentRoutes'));

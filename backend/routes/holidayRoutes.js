@@ -5,7 +5,7 @@ const {
   updateHoliday,
   deleteHoliday,
 } = require('../controllers/holidayController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -15,8 +15,8 @@ router.use(protect);
 router.get('/', listHolidays);
 
 // Only HR/SuperAdmin may manage holidays.
-router.post('/', restrictTo('SuperAdmin', 'HRManager'), createHoliday);
-router.put('/:id', restrictTo('SuperAdmin', 'HRManager'), updateHoliday);
-router.delete('/:id', restrictTo('SuperAdmin', 'HRManager'), deleteHoliday);
+router.post('/', requirePermission('leave.manage'), createHoliday);
+router.put('/:id', requirePermission('leave.manage'), updateHoliday);
+router.delete('/:id', requirePermission('leave.manage'), deleteHoliday);
 
 module.exports = router;

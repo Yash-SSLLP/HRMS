@@ -12,7 +12,7 @@ const {
   requestDocuments, getDocumentRequest, submitDocuments,
   downloadCandidateDocument, confirmDocuments,
 } = require('../controllers/recruitmentController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, requirePermission, requireAnyPermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -64,36 +64,45 @@ router.get('/my-interviews', protect, myInterviews);
 router.patch('/my-interviews/:id/round', protect, setMyInterviewRound);
 router.get('/my-interviews/:id/resume', protect, downloadMyInterviewResume);
 
-// ----- HR / Admin only -----
-router.use(protect, restrictTo('SuperAdmin', 'HRManager'));
+// ----- HR / Admin only — split into granular, SuperAdmin-grantable capabilities:
+//   recruitment.jobs        → post/edit/delete jobs
+//   recruitment.candidates  → candidate records, resumes, offers, onboarding, appointment
+//   recruitment.interviews  → schedule / assign interview rounds
+// Reads (lists, resume/letter downloads) need ANY of the three. -----
+router.use(protect);
 
-router.route('/jobs').get(listJobs).post(createJob);
-router.route('/jobs/:id').put(updateJob).delete(deleteJob);
+const canView = requireAnyPermission('recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews');
+const canJobs = requirePermission('recruitment.jobs');
+const canCand = requirePermission('recruitment.candidates');
+const canIntv = requirePermission('recruitment.interviews');
 
-router.route('/candidates').get(listCandidates).post(createCandidate);
-router.get('/candidates/:id/resume', downloadResume);
-router.post('/candidates/:id/resume', resumeUpload.single('resume'), uploadResume);
-router.patch('/candidates/:id/round', setRound);
-router.post('/candidates/:id/round/meet', createRoundMeet);
-router.post('/candidates/:id/round/meet/email', sendRoundMeetEmail);
+router.route('/jobs').get(canView, listJobs).post(canJobs, createJob);
+router.route('/jobs/:id').put(canJobs, updateJob).delete(canJobs, deleteJob);
+
+router.route('/candidates').get(canView, listCandidates).post(canCand, createCandidate);
+router.get('/candidates/:id/resume', canView, downloadResume);
+router.post('/candidates/:id/resume', canCand, resumeUpload.single('resume'), uploadResume);
+router.patch('/candidates/:id/round', canIntv, setRound);
+router.post('/candidates/:id/round/meet', canIntv, createRoundMeet);
+router.post('/candidates/:id/round/meet/email', canIntv, sendRoundMeetEmail);
 
 // Pre-offer document collection (HR)
-router.post('/candidates/:id/documents/request', requestDocuments);
-router.post('/candidates/:id/documents/confirm', confirmDocuments);
-router.get('/candidates/:id/documents/:fileId', downloadCandidateDocument);
+router.post('/candidates/:id/documents/request', canCand, requestDocuments);
+router.post('/candidates/:id/documents/confirm', canCand, confirmDocuments);
+router.get('/candidates/:id/documents/:fileId', canView, downloadCandidateDocument);
 
 // Offer → Onboarding → Appointment lifecycle
-router.post('/candidates/:id/offer', generateOffer);
-router.get('/candidates/:id/offer/pdf', downloadOffer);
-router.post('/candidates/:id/offer/mark-sent', markOfferSent);
-router.post('/candidates/:id/letters/:kind/email', sendLetterEmail);
-router.post('/candidates/:id/appointment/mark-sent', markAppointmentSent);
-router.post('/candidates/:id/onboard', onboardCandidate);
-router.patch('/candidates/:id/onboarding', updateOnboarding);
-router.post('/candidates/:id/appointment', generateAppointment);
-router.get('/candidates/:id/appointment/pdf', downloadAppointment);
-router.post('/candidates/:id/convert-to-employee', convertToEmployee);
+router.post('/candidates/:id/offer', canCand, generateOffer);
+router.get('/candidates/:id/offer/pdf', canView, downloadOffer);
+router.post('/candidates/:id/offer/mark-sent', canCand, markOfferSent);
+router.post('/candidates/:id/letters/:kind/email', canCand, sendLetterEmail);
+router.post('/candidates/:id/appointment/mark-sent', canCand, markAppointmentSent);
+router.post('/candidates/:id/onboard', canCand, onboardCandidate);
+router.patch('/candidates/:id/onboarding', canCand, updateOnboarding);
+router.post('/candidates/:id/appointment', canCand, generateAppointment);
+router.get('/candidates/:id/appointment/pdf', canView, downloadAppointment);
+router.post('/candidates/:id/convert-to-employee', canCand, convertToEmployee);
 
-router.route('/candidates/:id').put(updateCandidate).delete(deleteCandidate);
+router.route('/candidates/:id').put(canCand, updateCandidate).delete(canCand, deleteCandidate);
 
 module.exports = router;

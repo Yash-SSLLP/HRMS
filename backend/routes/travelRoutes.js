@@ -9,7 +9,7 @@ const {
   uploadReceipt,
   getReceipt,
 } = require('../controllers/travelController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -34,7 +34,7 @@ router.post('/:id/receipt', receiptUpload.single('receipt'), uploadReceipt);
 router.get('/:id/receipt', getReceipt);
 
 // Admin routes
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('travel.manage'));
 
 router.get('/', listAll);
 router.patch('/:id/status', reviewRequest);

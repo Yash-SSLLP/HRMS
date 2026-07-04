@@ -21,6 +21,7 @@ const AdminEmployeeDetail = lazy(() => import('./pages/AdminEmployeeDetail.jsx')
 const AdminPayroll = lazy(() => import('./pages/AdminPayroll.jsx'));
 const AdminPayrollRun = lazy(() => import('./pages/AdminPayrollRun.jsx'));
 const AdminLeave = lazy(() => import('./pages/AdminLeave.jsx'));
+const AdminLeaveApprovals = lazy(() => import('./pages/AdminLeaveApprovals.jsx'));
 const AdminAttendance = lazy(() => import('./pages/AdminAttendance.jsx'));
 const AdminAttendanceReport = lazy(() => import('./pages/AdminAttendanceReport.jsx'));
 const AdminAttendanceMonth = lazy(() => import('./pages/AdminAttendanceMonth.jsx'));
@@ -173,6 +174,7 @@ export default function App() {
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
+        <Route path="leave-approvals" element={<AdminLeaveApprovals />} />
         <Route path="compoff" element={<AdminCompOff />} />
         <Route path="expenses" element={<AdminExpenses />} />
         <Route path="travel" element={<AdminTravel />} />

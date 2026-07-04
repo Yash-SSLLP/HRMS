@@ -103,4 +103,54 @@ const restrictTo = (...roles) => (req, res, next) => {
   return next(new Error('You do not have permission to perform this action'));
 };
 
-module.exports = { protect, protectMedia, restrictTo, EXEC_VIEWERS };
+// Does this user hold a given granular capability? SuperAdmin → always. HRManager
+// → yes if their `permissions` array includes it, OR if the array is absent
+// (undefined = ALL, so existing HRs keep full access until a SuperAdmin trims
+// them). LDManager → only the courses capability. Everyone else → no.
+function hasPermission(user, cap) {
+  if (!user) return false;
+  if (user.role === 'SuperAdmin') return true;
+  if (user.role === 'LDManager') return cap === 'courses.manage';
+  if (user.role === 'HRManager') {
+    const perms = user.permissions;
+    if (perms === undefined || perms === null) return true; // not configured → all
+    return Array.isArray(perms) && perms.includes(cap);
+  }
+  return false;
+}
+
+// Gate a route on a granular capability. Behaves like restrictTo for the base
+// roles (SuperAdmin all; CEO/MD read-only on safe methods) but, for HRManager,
+// additionally requires the capability. `caps` = one required key, or several of
+// which the user needs AT LEAST ONE (handy for shared read routes).
+function makePermissionGuard(caps) {
+  const list = Array.isArray(caps) ? caps : [caps];
+  return (req, res, next) => {
+    if (!req.user) {
+      res.status(403);
+      return next(new Error('You do not have permission to perform this action'));
+    }
+    // CEO/MD keep read-only access to admin-gated areas.
+    if (EXEC_VIEWERS.includes(req.user.role)) {
+      if (SAFE_METHODS.includes(req.method)) return next();
+      res.status(403);
+      return next(new Error('CEO/MD accounts have read-only access and cannot make changes.'));
+    }
+    if (list.some((cap) => hasPermission(req.user, cap))) return next();
+    res.status(403);
+    return next(new Error('You do not have permission for this action. Ask a SuperAdmin to grant access.'));
+  };
+}
+
+const requirePermission = (cap) => makePermissionGuard(cap);
+const requireAnyPermission = (...caps) => makePermissionGuard(caps);
+
+module.exports = {
+  protect,
+  protectMedia,
+  restrictTo,
+  EXEC_VIEWERS,
+  hasPermission,
+  requirePermission,
+  requireAnyPermission,
+};

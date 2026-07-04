@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
+const { PERMISSIONS, isValidPermission } = require('../config/permissions');
 
 // GET /api/admin/users?role=&active=&q=
 const listUsers = asyncHandler(async (req, res) => {
@@ -181,6 +182,39 @@ const deleteUser = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+// GET /api/admin/permissions/catalog — the capability catalog for the UI.
+const getPermissionCatalog = asyncHandler(async (req, res) => {
+  res.json({ permissions: PERMISSIONS });
+});
+
+// PATCH /api/admin/users/:id/permissions  (SuperAdmin only — enforced by route)
+// Body: { permissions: [key,...] }. Only meaningful for HRManager accounts.
+const updateUserPermissions = asyncHandler(async (req, res) => {
+  const { permissions } = req.body;
+  if (!Array.isArray(permissions)) {
+    res.status(400);
+    throw new Error('permissions must be an array of capability keys');
+  }
+  const invalid = permissions.filter((p) => !isValidPermission(p));
+  if (invalid.length) {
+    res.status(400);
+    throw new Error(`Unknown permission key(s): ${invalid.join(', ')}`);
+  }
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  if (user.role !== 'HRManager') {
+    res.status(400);
+    throw new Error('Permissions apply only to HR Manager accounts.');
+  }
+  // De-dupe; store the explicit set (empty array = no capabilities).
+  user.permissions = [...new Set(permissions)];
+  await user.save();
+  res.json({ user });
+});
+
 module.exports = {
   listUsers,
   getUser,
@@ -189,4 +223,6 @@ module.exports = {
   deactivateUser,
   activateUser,
   deleteUser,
+  getPermissionCatalog,
+  updateUserPermissions,
 };

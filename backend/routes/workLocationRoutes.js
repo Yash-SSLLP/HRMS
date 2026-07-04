@@ -8,7 +8,7 @@ const {
   assignEmployees,
   unassignEmployees,
 } = require('../controllers/workLocationController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(protect);
@@ -17,7 +17,7 @@ router.use(protect);
 router.get('/', listLocations);
 
 // HR / SuperAdmin manage locations and assignments.
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('org.manage'));
 router.get('/:id/employees', listAssigned);
 router.post('/', createLocation);
 router.put('/:id', updateLocation);

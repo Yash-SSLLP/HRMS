@@ -17,7 +17,7 @@ const {
   getSettings,
   updateSettings,
 } = require('../controllers/attendanceController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -41,7 +41,7 @@ router.get('/me', listMine);
 // before the HR/Admin-only gate below.
 router.get('/:id/photo/:which', getAttendancePhoto);
 
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('attendance.manage'));
 
 router.get('/org/heatmap', orgHeatmap);
 router.get('/month-summary', monthSummary);

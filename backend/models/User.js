@@ -52,6 +52,12 @@ const userSchema = new mongoose.Schema(
     photo: { type: String, default: null },
     // Cover/banner photo, served via /api/auth/users/:id/banner. Null when unset.
     banner: { type: String, default: null },
+    // Granular admin capabilities, set by a SuperAdmin (see config/permissions.js
+    // + middleware requirePermission). Consulted ONLY for HRManager accounts.
+    // Semantics: `undefined`/missing → ALL capabilities (so existing HRs keep full
+    // access with no migration); `[]` → none; `['a','b']` → exactly those.
+    // SuperAdmin always has everything; other roles are role-gated, not here.
+    permissions: { type: [String], default: undefined },
   },
   { timestamps: true }
 );

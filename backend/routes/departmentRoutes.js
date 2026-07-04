@@ -5,7 +5,7 @@ const {
   updateDepartment,
   deleteDepartment,
 } = require('../controllers/departmentController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -15,8 +15,8 @@ router.use(protect);
 router.get('/', listDepartments);
 
 // HR and SuperAdmin may create and rename departments; only SuperAdmin may delete.
-router.post('/', restrictTo('SuperAdmin', 'HRManager'), createDepartment);
-router.put('/:id', restrictTo('SuperAdmin', 'HRManager'), updateDepartment);
+router.post('/', requirePermission('org.manage'), createDepartment);
+router.put('/:id', requirePermission('org.manage'), updateDepartment);
 router.delete('/:id', restrictTo('SuperAdmin'), deleteDepartment);
 
 module.exports = router;

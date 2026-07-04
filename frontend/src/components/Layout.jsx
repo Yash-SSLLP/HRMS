@@ -8,8 +8,9 @@ import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
 import { FiPlus, FiMinus, FiSun, FiMoon, FiBell } from 'react-icons/fi';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
+import { hasPermission, hasAnyPermission } from '../config/permissions';
 
-const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', Employee: 'Employee' };
+const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
 
 const NOTIF_POLL_MS = 20000;
 
@@ -58,7 +59,12 @@ function NavLeaf({ item, onNavigate }) {
 function NavList({ items, user, onNavigate }) {
   const { pathname } = useLocation();
   const grouped = items.length > 0 && !!items[0].group;
-  const visible = (arr) => arr.filter((i) => !i.roles || i.roles.includes(user?.role));
+  const visible = (arr) => arr.filter((i) => {
+    if (i.roles && !i.roles.includes(user?.role)) return false;
+    if (i.perm && !hasPermission(user, i.perm)) return false;
+    if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
+    return true;
+  });
   const groupActive = (g) => (g.items || []).some((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
 
   // Multiple groups can be open at once. The active group auto-opens (without

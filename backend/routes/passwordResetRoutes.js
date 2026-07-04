@@ -5,7 +5,7 @@ const {
   resolvePasswordResetRequest,
   resetUserPassword,
 } = require('../controllers/passwordResetRequestController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -13,7 +13,7 @@ const router = express.Router();
 router.post('/', createPasswordResetRequest);
 
 // HR / Admin only below this line.
-router.use(protect, restrictTo('SuperAdmin', 'HRManager'));
+router.use(protect, requirePermission('users.manage'));
 router.get('/', listPasswordResetRequests);
 router.patch('/:id/resolve', resolvePasswordResetRequest);
 router.patch('/:id/reset', resetUserPassword);

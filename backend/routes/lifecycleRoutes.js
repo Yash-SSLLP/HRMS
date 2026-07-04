@@ -4,11 +4,11 @@ const {
   updateConfirmation,
   nextEmployeeCode,
 } = require('../controllers/lifecycleController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(protect);
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('lifecycle.manage'));
 
 router.get('/confirmations', listConfirmations);
 router.patch('/confirmations/:id', updateConfirmation);

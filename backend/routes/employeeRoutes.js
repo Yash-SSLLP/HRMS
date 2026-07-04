@@ -18,7 +18,7 @@ const {
   getPublicDocRequest,
   submitPublicDocs,
 } = require('../controllers/employeeController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -55,8 +55,13 @@ router.use(protect);
 router.get('/me', getMyProfile);
 router.patch('/me/birthday', updateMyBirthday);
 
-// HR/Admin only
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+// Employee directory list — readable by ANY admin-portal role (it's the people
+// picker used across many panels: course assign, payroll, reviews, onboarding,
+// exit, …). Managing employees still requires the employees.manage capability.
+router.get('/', restrictTo('SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager'), listEmployees);
+
+// HR/Admin management — requires the employees capability.
+router.use(requirePermission('employees.manage'));
 
 // Bulk Excel — keep these BEFORE /:id so route matching doesn't grab "export.xlsx" as an id
 router.get('/export.xlsx', exportEmployeesXlsx);
@@ -65,9 +70,7 @@ router.get('/documents-status', employeesDocumentStatus);
 router.get('/export-all.zip', exportAllEmployeesZip);
 router.post('/import', xlsxUpload.single('file'), importEmployeesXlsx);
 
-router.route('/')
-  .get(listEmployees)
-  .post(createEmployee);
+router.post('/', createEmployee);
 
 router.post('/:id/doc-link', createDocLink);
 router.get('/:id/export.zip', exportEmployeeZip);

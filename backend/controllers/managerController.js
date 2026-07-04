@@ -2,7 +2,7 @@ const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const { LeaveRequest } = require('../models/Leave');
-const { applyLeaveDecision } = require('./leaveController');
+const { advanceApproval } = require('./leaveController');
 
 // EmployeeProfile ids of the people who report directly to the current user.
 async function myReportProfiles(userId) {
@@ -59,26 +59,19 @@ const listTeamLeave = asyncHandler(async (req, res) => {
   res.json({ count: requests.length, requests });
 });
 
-// Load a leave request and confirm its employee reports to the current user.
-async function loadTeamRequest(reqId, managerUserId, res) {
-  const request = await LeaveRequest.findById(reqId);
+// PATCH /api/manager/leave-requests/:id/approve
+// Delegates to the hierarchy-aware advanceApproval, which enforces that this
+// manager is the CURRENT approver (their turn) before acting. Approving advances
+// the request up the chain toward the CEO/MD; it is not a final decision unless
+// this manager is the top rung. (Same logic as POST /api/approvals/leave.)
+const approveTeamLeave = asyncHandler(async (req, res) => {
+  const request = await LeaveRequest.findById(req.params.id);
   if (!request) {
     res.status(404);
     throw new Error('Leave request not found');
   }
-  const profile = await EmployeeProfile.findById(request.employee).select('reportingManager');
-  if (!profile || String(profile.reportingManager) !== String(managerUserId)) {
-    res.status(403);
-    throw new Error('You can only act on leave requests from your direct reports.');
-  }
-  return request;
-}
-
-// PATCH /api/manager/leave-requests/:id/approve
-const approveTeamLeave = asyncHandler(async (req, res) => {
-  const request = await loadTeamRequest(req.params.id, req.user._id, res);
   try {
-    await applyLeaveDecision(request, req.user._id, 'approve', req.body.note);
+    await advanceApproval(request, req.user._id, 'approve', req.body.note);
   } catch (err) {
     res.status(err.status || 400);
     throw err;
@@ -88,9 +81,13 @@ const approveTeamLeave = asyncHandler(async (req, res) => {
 
 // PATCH /api/manager/leave-requests/:id/reject
 const rejectTeamLeave = asyncHandler(async (req, res) => {
-  const request = await loadTeamRequest(req.params.id, req.user._id, res);
+  const request = await LeaveRequest.findById(req.params.id);
+  if (!request) {
+    res.status(404);
+    throw new Error('Leave request not found');
+  }
   try {
-    await applyLeaveDecision(request, req.user._id, 'reject', req.body.note);
+    await advanceApproval(request, req.user._id, 'reject', req.body.note);
   } catch (err) {
     res.status(err.status || 400);
     throw err;

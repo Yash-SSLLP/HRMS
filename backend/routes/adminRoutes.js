@@ -7,17 +7,29 @@ const {
   deactivateUser,
   activateUser,
   deleteUser,
+  getPermissionCatalog,
+  updateUserPermissions,
 } = require('../controllers/adminController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// All admin routes require auth + SuperAdmin/HRManager role
-router.use(protect, restrictTo('SuperAdmin', 'HRManager'));
+router.use(protect);
 
-router.route('/users')
-  .get(listUsers)
-  .post(createUser);
+// User directory list — readable by ANY admin-portal role (people picker for
+// interviewer assignment, etc.). Managing users requires users.manage below.
+router.get('/users', restrictTo('SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager'), listUsers);
+
+// Everything below requires the 'users.manage' capability (SuperAdmin always has it).
+router.use(requirePermission('users.manage'));
+
+// Granular-permission administration — SuperAdmin ONLY (they alone decide what
+// each HR Manager can do). Declared before '/users/:id' so 'permissions' isn't
+// captured as an :id.
+router.get('/permissions/catalog', getPermissionCatalog);
+router.patch('/users/:id/permissions', restrictTo('SuperAdmin'), updateUserPermissions);
+
+router.post('/users', createUser);
 
 router.route('/users/:id')
   .get(getUser)

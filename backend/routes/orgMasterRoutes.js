@@ -2,13 +2,17 @@ const express = require('express');
 const {
   listMasters, createMaster, updateMaster, deleteMaster,
 } = require('../controllers/orgMasterController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(protect);
-router.use(restrictTo('SuperAdmin', 'HRManager'));
 
-router.route('/').get(listMasters).post(createMaster);
+// Reference data (designations / grades / locations) — readable by any admin for
+// forms across modules (e.g. the employee form). Managing needs org.manage.
+router.get('/', restrictTo('SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager'), listMasters);
+
+router.use(requirePermission('org.manage'));
+router.post('/', createMaster);
 router.route('/:id').put(updateMaster).delete(deleteMaster);
 
 module.exports = router;

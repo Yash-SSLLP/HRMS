@@ -20,11 +20,7 @@ const {
   listReports,
   resolveReport,
 } = require('../controllers/courseController');
-const { protect, protectMedia, restrictTo } = require('../middleware/authMiddleware');
-
-// Roles allowed to administer courses. Keep in sync with COURSE_ADMIN_ROLES in
-// the controller. LDManager ("HR L&D") is an LMS-only admin.
-const COURSE_ADMIN_ROLES = ['SuperAdmin', 'HRManager', 'LDManager'];
+const { protect, protectMedia, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -44,8 +40,9 @@ router.post('/:id/modules/:mid/complete', completeTextModule);
 router.post('/:id/report', reportIssue);
 router.post('/:id/feedback', submitFeedback);
 
-// Admin-only (HR / SuperAdmin / L&D later)
-router.use(restrictTo(...COURSE_ADMIN_ROLES));
+// Admin-only. requirePermission('courses.manage') covers SuperAdmin (all),
+// LDManager (mapped to courses.manage), and any HRManager granted the capability.
+router.use(requirePermission('courses.manage'));
 router.get('/admin/all', listAdmin);
 router.get('/enrollments/pending', listPending);
 router.get('/reports', listReports);

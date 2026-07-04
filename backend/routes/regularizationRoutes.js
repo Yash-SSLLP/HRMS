@@ -6,7 +6,7 @@ const {
   reviewRequest,
   adminCreate,
 } = require('../controllers/regularizationController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -17,7 +17,7 @@ router.get('/me', listMine);
 router.post('/', createRequest);
 
 // Admin routes
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('attendance.manage'));
 router.get('/', listAll);
 router.post('/admin', adminCreate);
 router.patch('/:id/status', reviewRequest);

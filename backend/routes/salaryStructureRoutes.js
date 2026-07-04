@@ -6,13 +6,13 @@ const {
   deleteStructure,
   previewStructure,
 } = require('../controllers/salaryStructureController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
 // Admin-only module
 router.use(protect);
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('payroll.manage'));
 
 router.route('/').get(listStructures).post(createStructure);
 router.post('/:id/preview', previewStructure);

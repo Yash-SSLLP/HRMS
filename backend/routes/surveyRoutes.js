@@ -9,7 +9,7 @@ const {
   deleteSurvey,
   results,
 } = require('../controllers/surveyController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(protect);
@@ -20,7 +20,7 @@ router.post('/:id/respond', respond);
 
 // HR/Admin — register static '/admin/all' before the dynamic '/:id' GET so it
 // is not shadowed. restrictTo is applied per-route for the admin endpoints.
-const adminOnly = restrictTo('SuperAdmin', 'HRManager');
+const adminOnly = requirePermission('surveys.manage');
 router.get('/admin/all', adminOnly, listAllAdmin);
 router.post('/', adminOnly, createSurvey);
 router.get('/:id/results', adminOnly, results);

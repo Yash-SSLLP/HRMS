@@ -6,7 +6,7 @@ const {
   listAll,
   reviewDeclaration,
 } = require('../controllers/declarationController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -18,7 +18,7 @@ router.post('/me', saveMine);
 router.patch('/me/submit', submitMine);
 
 // Admin routes
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('declarations.manage'));
 router.get('/', listAll);
 router.patch('/:id/status', reviewDeclaration);
 

@@ -10,7 +10,7 @@ const {
   assignReview,
   cycleReviews,
 } = require('../controllers/reviewController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(protect);
@@ -21,7 +21,7 @@ router.get('/me/about', aboutMe);
 router.patch('/me/:id', submitReview);
 
 // HR/Admin
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('performance.manage'));
 router.route('/cycles').get(listCycles).post(createCycle);
 router.route('/cycles/:id').put(updateCycle).delete(deleteCycle);
 router.post('/cycles/:id/assign', assignReview);

@@ -36,6 +36,47 @@ export default function AdminDashboard() {
 
   const isSuperAdmin = me?.role === 'SuperAdmin';
 
+  // ----- Granular HR permissions (SuperAdmin only) -----
+  const [catalog, setCatalog] = useState([]);
+  const [permUser, setPermUser] = useState(null);
+  const [permSel, setPermSel] = useState(() => new Set());
+  const [permSaving, setPermSaving] = useState(false);
+  const allKeys = catalog.map((p) => p.key);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    api.get('/admin/permissions/catalog').then(({ data }) => setCatalog(data.permissions || [])).catch(() => {});
+  }, [isSuperAdmin]);
+
+  const openPerms = (u) => {
+    // A missing/undefined permissions array means ALL capabilities are granted.
+    setPermSel(u.permissions == null ? new Set(allKeys) : new Set(u.permissions));
+    setPermUser(u);
+  };
+  const togglePerm = (key) => setPermSel((s) => {
+    const n = new Set(s);
+    n.has(key) ? n.delete(key) : n.add(key);
+    return n;
+  });
+  const savePerms = async () => {
+    setPermSaving(true); setError('');
+    try {
+      await api.patch(`/admin/users/${permUser._id || permUser.id}/permissions`, { permissions: [...permSel] });
+      setPermUser(null);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save permissions');
+    } finally {
+      setPermSaving(false);
+    }
+  };
+
+  // Group the flat catalog for display.
+  const permGroups = catalog.reduce((acc, p) => {
+    (acc[p.group] = acc[p.group] || []).push(p);
+    return acc;
+  }, {});
+
   const load = async () => {
     setLoading(true);
     setError('');
@@ -190,6 +231,10 @@ export default function AdminDashboard() {
                   {canManage(me?.role, u.role) ? (
                     <>
                       <button onClick={() => openEdit(u)} className="text-blue-600 hover:underline">Edit</button>
+                      {/* SuperAdmin controls each HR Manager's granular admin access. */}
+                      {isSuperAdmin && u.role === 'HRManager' && (
+                        <button onClick={() => openPerms(u)} className="text-indigo-600 hover:underline">Permissions</button>
+                      )}
                       {/* Only SuperAdmin may change an account's active status (never their own). */}
                       {isSuperAdmin && String(u._id || u.id) !== myId && (
                         <button onClick={() => onToggleActive(u)} className="text-amber-600 hover:underline">
@@ -337,6 +382,50 @@ export default function AdminDashboard() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {permUser && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="card-title mb-1">Admin permissions</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              {permUser.firstName} {permUser.lastName} · choose which admin capabilities this HR Manager has.
+            </p>
+            <div className="flex gap-2 mb-4">
+              <button type="button" onClick={() => setPermSel(new Set(allKeys))}
+                className="text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50">Select all</button>
+              <button type="button" onClick={() => setPermSel(new Set())}
+                className="text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50">Clear all</button>
+              <span className="text-xs text-gray-400 self-center ml-auto">{permSel.size}/{allKeys.length} granted</span>
+            </div>
+
+            <div className="space-y-4">
+              {Object.entries(permGroups).map(([group, items]) => (
+                <div key={group}>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">{group}</div>
+                  <div className="grid sm:grid-cols-2 gap-1.5">
+                    {items.map((p) => (
+                      <label key={p.key} className="flex items-center gap-2 text-sm text-gray-700 py-1">
+                        <input type="checkbox" checked={permSel.has(p.key)} onChange={() => togglePerm(p.key)}
+                          className="rounded border-gray-300" />
+                        {p.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-5">
+              <button type="button" onClick={() => setPermUser(null)}
+                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+              <button type="button" onClick={savePerms} disabled={permSaving}
+                className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                {permSaving ? 'Saving…' : 'Save permissions'}
+              </button>
+            </div>
           </div>
         </div>
       )}

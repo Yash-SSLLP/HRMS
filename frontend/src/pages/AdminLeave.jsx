@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { ChainProgress } from '../components/LeaveApprovalsInbox';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -36,8 +37,12 @@ function RequestsTab() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
 
+  // HR override: leave normally climbs the reporting hierarchy on its own (see the
+  // "Leave Approvals" page). This force-decides a stuck request regardless of
+  // whose turn it is — a safety valve, so confirm before using it.
   const decide = async (id, action) => {
-    const note = window.prompt(`Optional note for ${action}:`, '');
+    if (!window.confirm(`Override the reporting hierarchy and force-${action} this request?`)) return;
+    const note = window.prompt(`Optional note for the override ${action}:`, '');
     if (note === null) return;
     try {
       await api.patch(`/leave/requests/${id}/${action}`, { note });
@@ -96,6 +101,9 @@ function RequestsTab() {
                 <td className="px-4 py-3 max-w-xs truncate" title={r.reason}>{r.reason || '-'}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
+                  {r.approvalChain?.length > 0 && (
+                    <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
+                  )}
                   {r.approver && (r.status === 'Approved' || r.status === 'Rejected') && (
                     <div className="text-[11px] text-gray-500 mt-1">
                       by {r.approver.firstName} {r.approver.lastName}
@@ -107,8 +115,9 @@ function RequestsTab() {
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   {r.status === 'Pending' && (
                     <>
-                      <button onClick={() => decide(r._id, 'approve')} className="text-green-700 hover:underline">Approve</button>
-                      <button onClick={() => decide(r._id, 'reject')} className="text-red-600 hover:underline">Reject</button>
+                      <div className="text-[11px] text-gray-400 mb-1">HR override</div>
+                      <button onClick={() => decide(r._id, 'approve')} className="text-green-700 hover:underline">Force approve</button>
+                      <button onClick={() => decide(r._id, 'reject')} className="text-red-600 hover:underline">Force reject</button>
                     </>
                   )}
                 </td>

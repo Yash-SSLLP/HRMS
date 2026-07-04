@@ -20,7 +20,7 @@ const {
   previewEmployeeRun,
   runEmployeePayroll,
 } = require('../controllers/payrollController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -36,7 +36,7 @@ router.get('/me/:id/pdf', downloadMyPayslipPdf);
 router.get('/me/:year/:month', getMyPayslip);
 
 // HR/Admin only
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('payroll.manage'));
 
 router.route('/')
   .get(listPayslips)

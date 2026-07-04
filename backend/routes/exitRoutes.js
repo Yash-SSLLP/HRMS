@@ -12,7 +12,7 @@ const {
   getFeedbackContext,
   submitFeedback,
 } = require('../controllers/exitController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -29,7 +29,7 @@ router.get('/me', getMyExit);
 router.post('/me', submitMyResignation);
 
 // HR/Admin
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('exit.manage'));
 
 router.route('/')
   .get(listExits)

@@ -6,7 +6,7 @@ const {
   listAll,
   reviewRequest,
 } = require('../controllers/compOffController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -18,7 +18,7 @@ router.post('/', createRequest);
 router.patch('/me/:id/avail', availMine);
 
 // Admin routes
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('leave.manage'));
 router.get('/', listAll);
 router.patch('/:id/status', reviewRequest);
 

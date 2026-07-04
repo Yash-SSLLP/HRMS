@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
+import LeaveApprovalsInbox from '../components/LeaveApprovalsInbox';
 
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
@@ -38,20 +39,14 @@ function Avatar({ userId, hasPhoto, name }) {
 
 export default function EmployeeTeam() {
   const [team, setTeam] = useState([]);
-  const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [busyId, setBusyId] = useState(null);
 
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const [t, r] = await Promise.all([
-        api.get('/manager/team'),
-        api.get('/manager/leave-requests'),
-      ]);
+      const t = await api.get('/manager/team');
       setTeam(t.data.team || []);
-      setRequests(r.data.requests || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load your team');
     } finally {
@@ -61,62 +56,19 @@ export default function EmployeeTeam() {
 
   useEffect(() => { load(); }, []);
 
-  const decide = async (id, action) => {
-    setBusyId(id); setError('');
-    try {
-      await api.patch(`/manager/leave-requests/${id}/${action}`);
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.message || `Could not ${action} the request`);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const pending = requests.filter((r) => r.status === 'Pending');
-  const history = requests.filter((r) => r.status !== 'Pending');
-
   return (
     <div>
       <PageHeader title="My Team" subtitle="Your direct reports · approve their leave and see today's attendance" />
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
-      {loading ? (
-        <div className="text-gray-500">Loading…</div>
-      ) : (
-        <>
-          {/* Pending leave approvals */}
-          <div className="bg-white shadow rounded-lg p-5 mb-4">
-            <h2 className="card-title mb-3">Leave to approve ({pending.length})</h2>
-            {pending.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">No leave awaiting your approval.</p>
-            ) : (
-              <ul className="divide-y divide-gray-100">
-                {pending.map((r) => (
-                  <li key={r._id} className="py-3 flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-gray-900">
-                        {r.employee?.user?.firstName} {r.employee?.user?.lastName}
-                        <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {r.leaveType} · {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d
-                        {r.reason ? ` · “${r.reason}”` : ''}
-                      </div>
-                    </div>
-                    <div className="flex gap-2 shrink-0">
-                      <button onClick={() => decide(r._id, 'approve')} disabled={busyId === r._id}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
-                      <button onClick={() => decide(r._id, 'reject')} disabled={busyId === r._id}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-red-600 hover:bg-red-50 disabled:opacity-50">Reject</button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+      {/* Hierarchy leave approvals (advances up the reporting chain) */}
+      <LeaveApprovalsInbox />
 
+      {loading ? (
+        <div className="text-gray-500 mt-4">Loading team…</div>
+      ) : (
+        <div className="mt-4">
           {/* Team — today's attendance */}
           <div className="bg-white shadow rounded-lg p-5 mb-4">
             <h2 className="card-title mb-3">Team today ({team.length})</h2>
@@ -163,25 +115,7 @@ export default function EmployeeTeam() {
               </div>
             )}
           </div>
-
-          {/* Recent decisions */}
-          {history.length > 0 && (
-            <div className="bg-white shadow rounded-lg p-5">
-              <h2 className="card-title mb-3">Recent leave decisions</h2>
-              <ul className="divide-y divide-gray-100">
-                {history.slice(0, 10).map((r) => (
-                  <li key={r._id} className="py-2 flex items-center justify-between gap-3">
-                    <div className="text-sm text-gray-700">
-                      {r.employee?.user?.firstName} {r.employee?.user?.lastName}
-                      <span className="text-xs text-gray-500"> · {r.leaveType} · {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d</span>
-                    </div>
-                    <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status] || ''}`}>{r.status}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </>
+        </div>
       )}
     </div>
   );

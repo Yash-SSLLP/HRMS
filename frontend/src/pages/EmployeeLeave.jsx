@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { ChainProgress } from '../components/LeaveApprovalsInbox';
 
 const LEAVE_TYPES = ['EL', 'CL', 'SL', 'ML', 'PL', 'COMP', 'LOP'];
 
@@ -192,6 +193,9 @@ export default function EmployeeLeave() {
                     <td className="px-4 py-3 text-right">{r.totalDays}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
+                      {r.approvalChain?.length > 0 && (
+                        <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
+                      )}
                       {r.approver && (r.status === 'Approved' || r.status === 'Rejected') && (
                         <div className="text-[11px] text-gray-500 mt-1">
                           by {r.approver.firstName} {r.approver.lastName}

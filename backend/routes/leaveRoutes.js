@@ -10,7 +10,7 @@ const {
   listBalances,
   upsertBalance,
 } = require('../controllers/leaveController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -23,7 +23,7 @@ router.post('/me/requests', applyForLeave);
 router.patch('/me/requests/:id/cancel', cancelMyRequest);
 
 // HR/Admin
-router.use(restrictTo('SuperAdmin', 'HRManager'));
+router.use(requirePermission('leave.manage'));
 
 router.get('/requests', listAllRequests);
 router.patch('/requests/:id/approve', approveRequest);
