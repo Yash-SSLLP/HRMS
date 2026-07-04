@@ -48,6 +48,7 @@ export default function DashboardScreen() {
 
   const [data, setData] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const [dismissed, setDismissed] = useState(() => new Set()); // locally-hidden announcements
 
   const load = useCallback(async () => {
     const isEmp = canEmployeeSelf(user?.role);
@@ -55,6 +56,7 @@ export default function DashboardScreen() {
       api.get('/celebrations/today').catch(() => null),
       api.get('/celebrations/upcoming?days=14').catch(() => null),
       api.get('/notifications').catch(() => null),
+      api.get('/announcements').catch(() => null),
     ];
     // Employee self-service data — skipped entirely for SuperAdmin (no profile).
     const emp = isEmp ? [
@@ -63,17 +65,25 @@ export default function DashboardScreen() {
       api.get('/payroll/me').catch(() => null),
       api.get('/employees/me').catch(() => null),
     ] : [];
-    const [today, upcoming, notif, bal, att, pay, me] = await Promise.all([...base, ...emp]);
+    const [today, upcoming, notif, ann, bal, att, pay, me] = await Promise.all([...base, ...emp]);
     setData({
       balances: bal?.data?.balance?.balances || null,
       todayAtt: att?.data?.today || null,
       celebToday: today?.data || { birthdays: [], anniversaries: [] },
       upcoming: upcoming?.data?.events || [],
       notifs: notif?.data?.notifications || [],
+      announcements: ann?.data?.announcements || [],
       payslips: pay?.data?.payslips || [],
       profile: me?.data?.profile || me?.data || null,
     });
   }, [user?.role]);
+
+  // Dismiss an announcement from the home banner (per-user, persisted server-side;
+  // also hidden locally so it disappears immediately even before a reload).
+  const dismissAnnouncement = (id) => {
+    setDismissed((prev) => new Set(prev).add(id));
+    api.post(`/announcements/${id}/dismiss`).catch(() => {});
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -97,6 +107,7 @@ export default function DashboardScreen() {
   const leaveTypes = LEAVE_TYPES.filter((lt) => data.balances?.[lt.key]);
   const latestPay = Array.isArray(data.payslips) && data.payslips.length ? data.payslips[0] : null;
   const quickActions = employeeSelf ? QUICK_ACTIONS : ADMIN_ACTIONS;
+  const announcements = (data.announcements || []).filter((a) => !a.dismissed && !dismissed.has(a._id));
 
   return (
     <Screen>
@@ -127,6 +138,23 @@ export default function DashboardScreen() {
             <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>
         )}
+
+        {/* Company announcements — every undismissed one; each can be closed. */}
+        {announcements.map((a) => (
+          <Card key={a._id} style={styles.annCard}>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                <Ionicons name="megaphone" size={15} color={colors.textMuted} style={{ marginRight: 6 }} />
+                <Text style={[font.h3, { flexShrink: 1 }]}>{a.title}</Text>
+                {a.pinned ? <View style={{ marginLeft: 6 }}><Pill label="Pinned" tone="warning" /></View> : null}
+              </View>
+              <Text style={font.small}>{a.body}</Text>
+            </View>
+            <TouchableOpacity onPress={() => dismissAnnouncement(a._id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </Card>
+        ))}
 
         {/* Attendance punch card — employees only (SuperAdmin has no attendance) */}
         {employeeSelf && (
@@ -308,6 +336,7 @@ function ProfileRow({ label, value }) {
 
 const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(4), marginTop: spacing(2) },
+  annCard: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing(3), borderLeftWidth: 4, borderLeftColor: colors.primary },
   leaveRowDivider: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing(3), paddingTop: spacing(3) },
   leaveHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   leaveBal: { fontSize: 16, fontWeight: '800' },

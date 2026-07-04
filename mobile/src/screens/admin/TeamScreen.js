@@ -18,12 +18,21 @@ export default function TeamScreen() {
   const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
-    const [t, l] = await Promise.all([
-      api.get('/manager/team').catch(() => ({ data: {} })),
-      api.get('/manager/leave-requests?status=Pending').catch(() => ({ data: {} })),
-    ]);
+    // Leave now climbs the reporting hierarchy. The unified /approvals/leave inbox
+    // returns exactly the requests awaiting ME right now (as a manager OR CEO/MD),
+    // and approving advances the chain to the next rung. Fall back to the older
+    // /manager endpoint if the backend hasn't been redeployed yet.
+    let leaveItems = [];
+    try {
+      const r = await api.get('/approvals/leave?scope=pending');
+      leaveItems = r.data?.requests || [];
+    } catch {
+      const r = await api.get('/manager/leave-requests?status=Pending').catch(() => ({ data: {} }));
+      leaveItems = r.data?.requests || [];
+    }
+    const t = await api.get('/manager/team').catch(() => ({ data: {} }));
     setTeam(t.data?.team || []);
-    setLeave(l.data?.requests || []);
+    setLeave(leaveItems);
     setLoading(false);
   }, []);
 
@@ -33,7 +42,13 @@ export default function TeamScreen() {
   const decide = async (item, action) => {
     setBusyId(item._id);
     try {
-      await api.patch(`/manager/leave-requests/${item._id}/${action}`, {});
+      // Prefer the hierarchy-chain endpoint; fall back to the manager endpoint.
+      try {
+        await api.patch(`/approvals/leave/${item._id}/${action}`, {});
+      } catch (e) {
+        if (e?.response?.status === 404) await api.patch(`/manager/leave-requests/${item._id}/${action}`, {});
+        else throw e;
+      }
       setLeave((prev) => prev.filter((x) => x._id !== item._id));
     } catch (err) {
       Alert.alert('Action failed', errMsg(err));
