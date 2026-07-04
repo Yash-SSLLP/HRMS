@@ -407,6 +407,14 @@ export default function Layout({ navItems = [], sectionTitle }) {
   }, [setUser]);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // The auth `user` is a User doc (no designation — that lives on the employee
+  // profile). Fetch it so the sidebar card can show the person's job title.
+  const [designation, setDesignation] = useState('');
+  useEffect(() => {
+    api.get('/employees/me')
+      .then(({ data }) => setDesignation(data?.profile?.designation || ''))
+      .catch(() => setDesignation(''));
+  }, [user?._id]);
 
   const handleLogout = () => {
     setConfirmLogout(false);
@@ -453,7 +461,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
           <UserAvatar user={user} />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-gray-800 truncate">{user?.firstName} {user?.lastName}</div>
-            <div className="text-[11px] text-gray-500 truncate">{ROLE_LABELS[user?.role] || user?.role}</div>
+            <div className="text-[11px] text-gray-500 truncate">{designation || ROLE_LABELS[user?.role] || user?.role}</div>
           </div>
         </div>
       </div>

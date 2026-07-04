@@ -49,23 +49,28 @@ function sortTree(nodes) {
 }
 
 // One circular tree node + its branch of reports.
-function TreeNode({ node, depth, editable, selectedId, onSelect }) {
+function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
   const hasReports = Array.isArray(node.reports) && node.reports.length > 0;
   const color = depth === 0 ? ROOT_COLOR : hasReports ? BRANCH_COLOR : LEAF_COLOR;
   const meta = [node.designation, node.department].filter(Boolean).join(' · ');
   const isCeo = node.role === 'CEO';
+  const isMe = myId && String(node.id) === String(myId);
+
+  // Highlight the viewer's own node: a green ring on the avatar (coexists with
+  // the selection outline) plus a "You" badge.
+  const dotShadow = isMe ? '0 0 0 3px #10b981, 0 0 0 6px rgba(16,185,129,0.25)' : 'none';
 
   return (
     <li>
       <div
-        className={`org-node ${editable ? 'is-editable' : ''}`}
+        className={`org-node ${editable ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
         onClick={() => editable && onSelect(node)}
-        title={editable ? 'Click to set who this person reports to' : node.name}
+        title={isMe ? 'This is you' : editable ? 'Click to set who this person reports to' : node.name}
       >
         <span
           className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}
           title={isCeo ? 'CEO' : undefined}
-          style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px', overflow: 'hidden' }}
+          style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px', overflow: 'hidden', boxShadow: dotShadow }}
         >
           {node.hasPhoto ? (
             <AuthImage
@@ -77,7 +82,14 @@ function TreeNode({ node, depth, editable, selectedId, onSelect }) {
             />
           ) : initials(node.name)}
         </span>
-        <span className="org-name">{node.name || 'Unnamed'}</span>
+        <span className="org-name">
+          {node.name || 'Unnamed'}
+          {isMe && (
+            <span style={{ marginLeft: 6, fontSize: '0.65rem', fontWeight: 700, color: '#047857', background: '#d1fae5', borderRadius: 9999, padding: '1px 6px', verticalAlign: 'middle' }}>
+              You
+            </span>
+          )}
+        </span>
         {meta && <span className="org-meta">{meta}</span>}
       </div>
 
@@ -90,6 +102,7 @@ function TreeNode({ node, depth, editable, selectedId, onSelect }) {
               depth={depth + 1}
               editable={editable}
               selectedId={selectedId}
+              myId={myId}
               onSelect={onSelect}
             />
           ))}
@@ -101,6 +114,7 @@ function TreeNode({ node, depth, editable, selectedId, onSelect }) {
 
 export default function AdminOrgChart() {
   const role = useAuthStore((s) => s.user?.role);
+  const myId = useAuthStore((s) => String(s.user?._id || s.user?.id || ''));
   const isSuperAdmin = role === 'SuperAdmin';
   const [roots, setRoots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -220,6 +234,7 @@ export default function AdminOrgChart() {
                         depth={1}
                         editable={isSuperAdmin}
                         selectedId={selected?.id}
+                        myId={myId}
                         onSelect={setSelected}
                       />
                     ))}

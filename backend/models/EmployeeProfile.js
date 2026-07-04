@@ -146,4 +146,14 @@ const employeeProfileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Keep the Org Masters designation list in sync: any designation set on an
+// employee (via the form, import, or recruitment conversion) is registered as an
+// OrgMaster so it appears under Admin → Org Masters. Best-effort, non-blocking.
+employeeProfileSchema.post('save', function syncDesignationMaster(doc) {
+  if (doc && doc.designation) {
+    // Lazy require avoids any load-order coupling between the two models.
+    require('../services/orgMasterSync').ensureDesignation(doc.designation).catch(() => {});
+  }
+});
+
 module.exports = mongoose.model('EmployeeProfile', employeeProfileSchema);
