@@ -5,9 +5,9 @@ const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
 const { notify, notifyMany } = require('../services/notify');
 const User = require('../models/User');
 
-// Roles allowed to manage courses / assign / approve. Add 'LDManager' here once
-// that role exists — this is the single place that gates course administration.
-const COURSE_ADMIN_ROLES = ['SuperAdmin', 'HRManager'];
+// Roles allowed to manage courses / assign / approve. LDManager ("HR L&D") is an
+// LMS-only admin — this is the single place that gates course administration.
+const COURSE_ADMIN_ROLES = ['SuperAdmin', 'HRManager', 'LDManager'];
 const isCourseAdmin = (user) => user && COURSE_ADMIN_ROLES.includes(user.role);
 
 // Add `daysToDue` / `overdue` to an enrollment-ish object for the client.

@@ -91,6 +91,12 @@ export const adminNav = [
   ] },
 ];
 
+// HR L&D (LDManager) is an LMS-only admin: they enter the admin portal but see
+// only the Courses page. A flat, single-item nav keeps the sidebar unambiguous.
+export const ldNav = [
+  { to: '/admin/courses', label: 'Courses (LMS)', end: true, icon: FiBook },
+];
+
 export const employeeNav = [
   { group: 'Overview', items: [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },

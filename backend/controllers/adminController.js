@@ -69,10 +69,11 @@ const createUser = asyncHandler(async (req, res) => {
     isActive: isActive !== undefined ? isActive : true,
   });
 
-  // HR managers are also employees — give them an employee profile so they show
-  // up in the employee list / org chart and can use attendance, leave, etc.
-  if (user.role === 'HRManager') {
-    try { await ensureEmployeeProfile(user); } catch (err) { console.error('HR profile auto-create failed:', err.message); }
+  // HR managers and L&D admins are also employees — give them an employee profile
+  // so they show up in the employee list / org chart and can use attendance,
+  // leave, etc.
+  if (['HRManager', 'LDManager'].includes(user.role)) {
+    try { await ensureEmployeeProfile(user); } catch (err) { console.error('Staff profile auto-create failed:', err.message); }
   }
 
   res.status(201).json({ user });
@@ -115,9 +116,9 @@ const updateUser = asyncHandler(async (req, res) => {
 
   await user.save();
 
-  // Promoted to HR → ensure they have an employee profile too.
-  if (user.role === 'HRManager') {
-    try { await ensureEmployeeProfile(user); } catch (err) { console.error('HR profile auto-create failed:', err.message); }
+  // Promoted to HR / L&D → ensure they have an employee profile too.
+  if (['HRManager', 'LDManager'].includes(user.role)) {
+    try { await ensureEmployeeProfile(user); } catch (err) { console.error('Staff profile auto-create failed:', err.message); }
   }
 
   res.json({ user });

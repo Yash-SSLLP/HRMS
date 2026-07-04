@@ -1,7 +1,7 @@
 import { lazy, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useThemeStore } from './store/themeStore';
-import { adminNav, employeeNav } from './config/nav';
+import { adminNav, employeeNav, ldNav } from './config/nav';
 // Public auth/entry pages stay eager (they render outside the app shell).
 import Login from './pages/Login.jsx';
 import ExitFeedback from './pages/ExitFeedback.jsx';
@@ -97,10 +97,19 @@ const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
 function RootRedirect() {
   const user = useAuthStore((s) => s.user);
   if (!user) return <Navigate to="/login" replace />;
-  // Employees and Managers live in the employee portal; everyone else (admins
-  // and the read-only CEO/MD executives) goes to the admin portal.
+  // Employees and Managers live in the employee portal; everyone else (admins,
+  // the read-only CEO/MD executives, and the LMS-only HR L&D admin) goes to the
+  // admin portal.
   const employeePortal = ['Employee', 'Manager'].includes(user.role);
   return <Navigate to={employeePortal ? '/employee' : '/admin'} replace />;
+}
+
+// Landing route for the admin portal. Most admins land on the dashboard, but the
+// HR L&D (LDManager) admin can't reach the dashboard API, so send them straight
+// to their only page — Courses.
+function AdminHome() {
+  const role = useAuthStore((s) => s.user?.role);
+  return <Navigate to={role === 'LDManager' ? 'courses' : 'dashboard'} replace />;
 }
 
 export default function App() {
@@ -136,12 +145,12 @@ export default function App() {
       <Route
         path="/admin"
         element={
-          <ProtectedRoute roles={['SuperAdmin', 'HRManager', 'CEO', 'MD']}>
-            <Layout navItems={adminNav} sectionTitle="Admin" />
+          <ProtectedRoute roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager']}>
+            <Layout navItems={role === 'LDManager' ? ldNav : adminNav} sectionTitle="Admin" />
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route index element={<AdminHome />} />
         <Route path="dashboard" element={<AdminOverview />} />
         <Route path="users" element={<AdminDashboard />} />
         <Route path="employees" element={<AdminEmployees />} />

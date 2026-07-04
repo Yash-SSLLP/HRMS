@@ -3,9 +3,11 @@ const bcrypt = require('bcryptjs');
 
 // SuperAdmin/HRManager = portal admins. CEO/MD = read-only executives (can view
 // the whole admin portal but not change anything). Manager = an employee who
-// also approves leave for and sees the data of their direct reports. Employee =
-// standard self-service user.
-const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'Employee'];
+// also approves leave for and sees the data of their direct reports. LDManager
+// (displayed as "HR L&D") = a Learning & Development admin whose only admin power
+// is the LMS/Courses module — no leave approval, no other HR-admin abilities.
+// Employee = standard self-service user.
+const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'Employee'];
 
 const userSchema = new mongoose.Schema(
   {

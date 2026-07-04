@@ -23,8 +23,8 @@ const {
 const { protect, protectMedia, restrictTo } = require('../middleware/authMiddleware');
 
 // Roles allowed to administer courses. Keep in sync with COURSE_ADMIN_ROLES in
-// the controller (add 'LDManager' in both places when that role exists).
-const COURSE_ADMIN_ROLES = ['SuperAdmin', 'HRManager'];
+// the controller. LDManager ("HR L&D") is an LMS-only admin.
+const COURSE_ADMIN_ROLES = ['SuperAdmin', 'HRManager', 'LDManager'];
 
 const router = express.Router();
 

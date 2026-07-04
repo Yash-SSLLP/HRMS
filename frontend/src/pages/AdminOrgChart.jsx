@@ -3,11 +3,12 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import { useAuthStore } from '../store/authStore';
+import { roleLabel } from '../config/roles';
 
 const ROOT_TITLE = 'Sequence Surfaces';
 
 // Roles SuperAdmin can assign from the org chart.
-const ASSIGNABLE_ROLES = ['Employee', 'Manager', 'CEO', 'MD', 'HRManager', 'SuperAdmin'];
+const ASSIGNABLE_ROLES = ['Employee', 'Manager', 'CEO', 'MD', 'HRManager', 'LDManager', 'SuperAdmin'];
 
 // Node colours, decision-tree style: black root, orange branches, blue leaves.
 const ROOT_COLOR = '#111827';
@@ -188,7 +189,7 @@ export default function AdminOrgChart() {
             onChange={(e) => onSetRole(selected, e.target.value)}
             className="border rounded-lg px-2 py-1"
           >
-            {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </select>
           <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-gray-800 px-2">Done</button>
         </div>

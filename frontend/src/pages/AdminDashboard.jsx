@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
-
-const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'Employee'];
+import { ROLES, roleLabel } from '../config/roles';
 
 const blankForm = {
   email: '',
@@ -173,7 +172,7 @@ export default function AdminDashboard() {
                 <td className="px-4 py-3">{u.firstName} {u.lastName}</td>
                 <td className="px-4 py-3">{u.email}</td>
                 <td className="px-4 py-3">
-                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{u.role}</span>
+                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{roleLabel(u.role)}</span>
                 </td>
                 <td className="px-4 py-3">
                   {/* Nobody may see their own active status — hide it on your own row. */}
@@ -303,7 +302,7 @@ export default function AdminDashboard() {
                     {/* Only show roles the viewer can actually create. Non-admins
                         (HR) can only create Employees — and never see other roles. */}
                     {(isSuperAdmin ? ROLES : ['Employee']).map((r) => (
-                      <option key={r} value={r}>{r}</option>
+                      <option key={r} value={r}>{roleLabel(r)}</option>
                     ))}
                   </select>
                   {!isSuperAdmin && (

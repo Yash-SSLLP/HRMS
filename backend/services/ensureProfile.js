@@ -16,10 +16,10 @@ async function ensureEmployeeProfile(user) {
   });
 }
 
-// One-time backfill: give any existing active HR manager an employee profile.
-// Runs on startup; idempotent.
+// One-time backfill: give any existing active HR manager / L&D admin an employee
+// profile. Runs on startup; idempotent.
 async function backfillHrProfiles() {
-  const hrs = await User.find({ role: 'HRManager', isActive: true });
+  const hrs = await User.find({ role: { $in: ['HRManager', 'LDManager'] }, isActive: true });
   let created = 0;
   for (const u of hrs) {
     const existing = await EmployeeProfile.findOne({ user: u._id });
