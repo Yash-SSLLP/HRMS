@@ -54,7 +54,10 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
   const color = depth === 0 ? ROOT_COLOR : hasReports ? BRANCH_COLOR : LEAF_COLOR;
   const meta = [node.designation, node.department].filter(Boolean).join(' · ');
   const isCeo = node.role === 'CEO';
+  const isExec = node.role === 'CEO' || node.role === 'MD';
   const isMe = myId && String(node.id) === String(myId);
+  // CEO/MD have no employee profile, so their node can't be reassigned a manager.
+  const canEdit = editable && !!node.profileId;
 
   // Highlight the viewer's own node: a green ring on the avatar (coexists with
   // the selection outline) plus a "You" badge.
@@ -63,9 +66,9 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
   return (
     <li>
       <div
-        className={`org-node ${editable ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
-        onClick={() => editable && onSelect(node)}
-        title={isMe ? 'This is you' : editable ? 'Click to set who this person reports to' : node.name}
+        className={`org-node ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
+        onClick={() => canEdit && onSelect(node)}
+        title={isMe ? 'This is you' : isExec ? `${node.name} (executive — top of the hierarchy)` : canEdit ? 'Click to set who this person reports to' : node.name}
       >
         <span
           className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}

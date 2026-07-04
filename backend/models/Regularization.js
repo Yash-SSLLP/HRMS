@@ -22,6 +22,14 @@ const regularizationSchema = new mongoose.Schema(
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: { type: Date },
     reviewNote: { type: String },
+    // Audit trail of what actually changed on the attendance record when this
+    // regularization was applied — the "from → to". Filled by applyToAttendance
+    // so SuperAdmin/CEO can see exactly what HR changed and when.
+    previousStatus: { type: String },
+    previousCheckIn: { type: Date },
+    previousCheckOut: { type: Date },
+    appliedCheckIn: { type: Date },
+    appliedCheckOut: { type: Date },
   },
   { timestamps: true }
 );

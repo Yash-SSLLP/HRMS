@@ -77,6 +77,11 @@ export default function AdminDashboard() {
     return acc;
   }, {});
 
+  // CEO/MD are executives, not managed as regular accounts here — hide them from
+  // the Users list. (They remain in the API so they can still be picked as an
+  // interviewer or as someone's reporting manager.)
+  const visibleUsers = users.filter((u) => !['CEO', 'MD'].includes(u.role));
+
   const load = async () => {
     setLoading(true);
     setError('');
@@ -206,9 +211,9 @@ export default function AdminDashboard() {
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : users.length === 0 ? (
+            ) : visibleUsers.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
-            ) : users.map((u) => (
+            ) : visibleUsers.map((u) => (
               <tr key={u._id || u.id}>
                 <td className="px-4 py-3">{u.firstName} {u.lastName}</td>
                 <td className="px-4 py-3">{u.email}</td>

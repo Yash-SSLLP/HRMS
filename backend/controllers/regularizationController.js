@@ -28,6 +28,11 @@ async function applyToAttendance(item, reviewer) {
 
   const day = startOfDayIST(item.date);
   let record = await Attendance.findOne({ employee: profile._id, date: day });
+  const isNew = !record;
+  // Snapshot the BEFORE state so the audit view can show "from → to".
+  const prevStatus = isNew ? 'No record' : record.status;
+  const prevIn = isNew ? null : record.checkIn;
+  const prevOut = isNew ? null : record.checkOut;
   if (!record) {
     record = new Attendance({ employee: profile._id, date: day, status: 'Present' });
   }
@@ -39,6 +44,14 @@ async function applyToAttendance(item, reviewer) {
   const note = `Regularized (${item.type}) by ${reviewer?.fullName || 'HR'}: ${item.reason}`;
   record.remarks = record.remarks ? `${record.remarks} · ${note}` : note;
   await record.save();
+
+  // Persist the before/after on the regularization for oversight (best-effort).
+  item.previousStatus = prevStatus;
+  item.previousCheckIn = prevIn || undefined;
+  item.previousCheckOut = prevOut || undefined;
+  item.appliedCheckIn = record.checkIn;
+  item.appliedCheckOut = record.checkOut;
+  try { await item.save(); } catch (err) { console.error('Regularization audit save failed:', err.message); }
   return record;
 }
 
@@ -77,6 +90,7 @@ const listAll = asyncHandler(async (req, res) => {
 
   const items = await Regularization.find(filter)
     .populate('employee', EMPLOYEE_FIELDS)
+    .populate('reviewedBy', 'firstName lastName role') // who did the regularization
     .sort({ createdAt: -1 });
   res.json({ count: items.length, items });
 });

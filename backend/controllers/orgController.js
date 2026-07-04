@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const User = require('../models/User');
 const { hiddenUserIds } = require('../utils/visibility');
 
 // GET /api/org/chart
@@ -29,6 +30,31 @@ const orgChart = asyncHandler(async (req, res) => {
       hasPhoto: Boolean(p.user.photo),
       role: p.user.role,
       managerId: p.reportingManager ? p.reportingManager.toString() : null,
+      reports: [],
+    });
+  }
+
+  // CEO/MD are executives, NOT employees, so they have no EmployeeProfile — but
+  // they still sit at the top of the reporting hierarchy (they approve leave and
+  // people report up to them). Add them as profile-less nodes so the chart shows
+  // them and they can be picked as a manager. profileId=null → the client treats
+  // the node as read-only (you don't reassign whom the CEO reports to).
+  const hiddenSet = new Set(hidden.map(String));
+  const execs = await User.find({ role: { $in: ['CEO', 'MD'] }, isActive: true })
+    .select('firstName lastName photo role')
+    .lean();
+  for (const u of execs) {
+    const id = u._id.toString();
+    if (nodes.has(id) || hiddenSet.has(id)) continue;
+    nodes.set(id, {
+      id,
+      profileId: null,
+      name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      designation: u.role === 'MD' ? 'Managing Director' : 'Chief Executive Officer',
+      department: '',
+      hasPhoto: Boolean(u.photo),
+      role: u.role,
+      managerId: null,
       reports: [],
     });
   }

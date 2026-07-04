@@ -5,6 +5,7 @@ import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import AnnouncementsBanner from '../components/AnnouncementsBanner';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
@@ -105,6 +106,10 @@ export default function EmployeeDashboard() {
         ]}
       />
       <p className="text-sm text-gray-500 -mt-2 mb-4">{today}</p>
+
+      {/* Company announcements — every undismissed one shows here; the employee
+          can close each (stays hidden via the per-user dismiss endpoint). */}
+      <AnnouncementsBanner />
 
       {/* Wishes received (birthday / anniversary) */}
       {wishes.length > 0 && (

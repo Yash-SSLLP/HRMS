@@ -7,6 +7,10 @@ import api from '../api/client';
 //     present — darker = more present — with a hover card showing the breakdown.
 
 const EMPTY = '#ebedf0';
+// Day-type tints used to fill otherwise-blank cells so weekends/holidays/comp-off
+// days are visible rather than looking like plain "no data" gaps.
+const WEEKEND = '#cdd6f4'; // Sunday — soft periwinkle
+const HOLIDAY = '#ffd8a8'; // holiday — soft amber
 const CATEGORIES = [
   { key: 'absent', label: 'Absent', color: '#ef4444' },
   { key: 'full', label: 'Full day', color: '#16a34a' },
@@ -40,6 +44,21 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
   const [total, setTotal] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [tip, setTip] = useState(null); // org hover card: { x, y, cell }
+  const [holidays, setHolidays] = useState(() => new Map()); // ymd -> holiday name
+
+  // Holidays (for marking those blocks) — fetched once. Keyed with the SAME
+  // local-timezone ymd() the grid uses, so a holiday lines up with its cell.
+  useEffect(() => {
+    api.get('/holidays')
+      .then(({ data }) => {
+        const m = new Map();
+        for (const h of data.holidays || []) {
+          if (h.date) m.set(ymd(new Date(h.date)), h.name || 'Holiday');
+        }
+        setHolidays(m);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -86,15 +105,33 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
 
   const cellColor = (cell) => {
     if (!cell || cell.future) return 'transparent';
-    if (org) return orgColor(cell.rec?.present || 0, maxPresent);
-    return (cell.rec && COLOR_BY_CAT[cell.rec.category]) || EMPTY;
+    const isHoliday = holidays.has(cell.key);
+    const isSunday = cell.date.getDay() === 0;
+    if (org) {
+      const present = cell.rec?.present || 0;
+      if (present > 0) return orgColor(present, maxPresent);       // people worked → green ramp
+      if ((cell.rec?.compoff || 0) > 0) return COLOR_BY_CAT.compoff; // comp-off taken
+      if (isHoliday) return HOLIDAY;
+      if (isSunday) return WEEKEND;
+      return EMPTY;
+    }
+    if (cell.rec && COLOR_BY_CAT[cell.rec.category]) return COLOR_BY_CAT[cell.rec.category];
+    if (isHoliday) return HOLIDAY;
+    if (isSunday) return WEEKEND;
+    return EMPTY;
   };
 
   // Personal mode: simple native tooltip.
   const fmtTip = (cell) => {
     const dStr = cell.date.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
     if (cell.future) return dStr;
-    return `${dStr} · ${cell.rec ? LABEL_BY_CAT[cell.rec.category] : 'No record'}`;
+    const holiday = holidays.get(cell.key);
+    let note;
+    if (cell.rec) note = LABEL_BY_CAT[cell.rec.category];
+    else if (holiday) note = `Holiday: ${holiday}`;
+    else if (cell.date.getDay() === 0) note = 'Sunday';
+    else note = 'No record';
+    return `${dStr} · ${note}`;
   };
 
   const dateLabel = (d) => d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
@@ -120,6 +157,22 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
             </span>
           ))
         )}
+        {/* Day-type markers (shown in both modes). Comp-off is already in the
+            personal legend via CATEGORIES, so only add it for the org view. */}
+        {org && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block rounded-sm" style={{ width: CELL, height: CELL, background: COLOR_BY_CAT.compoff }} />
+            Comp off
+          </span>
+        )}
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block rounded-sm" style={{ width: CELL, height: CELL, background: WEEKEND }} />
+          Sunday
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block rounded-sm" style={{ width: CELL, height: CELL, background: HOLIDAY }} />
+          Holiday
+        </span>
       </div>
 
       <div className="overflow-x-auto">
@@ -158,6 +211,9 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
           style={{ left: tip.x + 12, top: tip.y + 12, minWidth: 150 }}
         >
           <div className="font-semibold mb-1">{dateLabel(tip.cell.date)}</div>
+          {holidays.has(tip.cell.key) && (
+            <div className="text-amber-300 mb-0.5">Holiday · {holidays.get(tip.cell.key)}</div>
+          )}
           {tip.cell.rec ? (
             <div className="space-y-0.5">
               <div className="font-medium">
@@ -170,7 +226,9 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
               <div className="text-gray-300">Absent: {tip.cell.rec.absent}</div>
             </div>
           ) : (
-            <div className="text-gray-300">No attendance recorded</div>
+            <div className="text-gray-300">
+              {holidays.has(tip.cell.key) ? 'No one present' : tip.cell.date.getDay() === 0 ? 'Sunday' : 'No attendance recorded'}
+            </div>
           )}
         </div>
       )}

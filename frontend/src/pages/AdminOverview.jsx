@@ -44,13 +44,15 @@ export default function AdminOverview() {
       }
     })();
     // Per-day attendance for the two trend charts (best-effort; charts hide if empty).
-    api.get('/attendance/daily-stats', { params: { days: 14 } })
+    api.get('/attendance/daily-stats', { params: { days: 7 } })
       .then(({ data: d }) => setDaily(d.days || []))
       .catch(() => {});
   }, []);
 
-  const avgHoursBars = daily.map((d) => ({ label: d.label, value: d.avgHours }));
-  const presentBars = daily.map((d) => ({ label: d.label, value: d.presentCount }));
+  // Show only the last 7 days in the two trend charts.
+  const last7 = daily.slice(-7);
+  const avgHoursBars = last7.map((d) => ({ label: d.label, value: d.avgHours }));
+  const presentBars = last7.map((d) => ({ label: d.label, value: d.presentCount }));
 
   const c = data?.cards || {};
 

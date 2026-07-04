@@ -17,6 +17,9 @@ const announcementSchema = new mongoose.Schema(
     },
     pinned: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // Users who dismissed this from their overview banner. It still shows in the
+    // full Announcements feed — dismissing only hides it from the front page.
+    dismissedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   },
   { timestamps: true }
 );

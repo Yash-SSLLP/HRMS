@@ -5,10 +5,34 @@ const User = require('../models/User');
 
 // GET /api/announcements   (any authenticated user)
 const listAnnouncements = asyncHandler(async (req, res) => {
-  const announcements = await Announcement.find()
+  const docs = await Announcement.find()
     .populate('createdBy', 'firstName lastName')
-    .sort({ pinned: -1, createdAt: -1 });
+    .sort({ pinned: -1, createdAt: -1 })
+    .lean();
+  const me = String(req.user._id);
+  // Expose a per-user `dismissed` flag (used to hide it from the overview
+  // banner) without leaking the full dismiss list.
+  const announcements = docs.map(({ dismissedBy, ...a }) => ({
+    ...a,
+    dismissed: (dismissedBy || []).some((id) => String(id) === me),
+  }));
   res.json({ count: announcements.length, announcements });
+});
+
+// POST /api/announcements/:id/dismiss   (any authenticated user)
+// Hides the announcement from THIS user's overview banner. It remains in the
+// full Announcements feed for everyone.
+const dismissAnnouncement = asyncHandler(async (req, res) => {
+  const announcement = await Announcement.findByIdAndUpdate(
+    req.params.id,
+    { $addToSet: { dismissedBy: req.user._id } },
+    { new: true }
+  );
+  if (!announcement) {
+    res.status(404);
+    throw new Error('Announcement not found');
+  }
+  res.json({ id: req.params.id, dismissed: true });
 });
 
 // POST /api/announcements   (HR/SuperAdmin) — fans out a notification to every other active user
@@ -70,6 +94,7 @@ const deleteAnnouncement = asyncHandler(async (req, res) => {
 
 module.exports = {
   listAnnouncements,
+  dismissAnnouncement,
   createAnnouncement,
   updateAnnouncement,
   deleteAnnouncement,
