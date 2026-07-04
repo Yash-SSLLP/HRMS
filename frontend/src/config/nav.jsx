@@ -105,6 +105,7 @@ export const ldNav = [
 export const employeeNav = [
   { group: 'Overview', items: [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },
+    { to: '/employee/approvals', label: 'Approvals', icon: FiCheckSquare },
     { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
     { to: '/employee/interviews', label: 'My Interviews', icon: FiUserCheck },
     { to: '/employee/org-chart', label: 'Org Chart', icon: FiGitBranch },

@@ -1,6 +1,20 @@
 const asyncHandler = require('express-async-handler');
 const { LeaveRequest } = require('../models/Leave');
-const { advanceApproval } = require('./leaveController');
+const { advanceApproval, ensureApprovalChain } = require('./leaveController');
+
+// Rebuild the approval chain for any Pending request that has none yet (created
+// before the hierarchy feature, or by an older backend). Runs on inbox load so
+// stuck requests route to the right approver from the live org-chart hierarchy.
+async function healOrphanChains() {
+  const orphans = await LeaveRequest.find({
+    status: 'Pending',
+    $or: [{ currentApprover: null }, { currentApprover: { $exists: false } }],
+    $and: [{ $or: [{ approvalChain: { $exists: false } }, { approvalChain: { $size: 0 } }] }],
+  });
+  for (const r of orphans) {
+    try { await ensureApprovalChain(r); } catch (err) { console.error('heal chain failed:', err.message); }
+  }
+}
 
 // Populate an approver-facing view of a leave request.
 function populateLeave(query) {
@@ -19,6 +33,7 @@ function populateLeave(query) {
 // history  → every request I appear anywhere in the chain of, so a higher
 //            approver (e.g. a CEO) can see one a lower manager already rejected.
 const listMyLeaveApprovals = asyncHandler(async (req, res) => {
+  await healOrphanChains();
   const me = req.user._id;
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
   const filter =

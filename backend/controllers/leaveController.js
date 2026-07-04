@@ -144,6 +144,31 @@ async function notifyChainAbove(request, rejectedStep) {
   }
 }
 
+// Self-heal: a Pending request may have NO approval chain — it was created before
+// the hierarchy feature (or by an older running backend). Rebuild the chain live
+// from the applicant's current org-chart hierarchy (reportingManager), set the
+// first rung as the current approver, and notify them. Idempotent: does nothing
+// once a chain/currentApprover exists, or when there is genuinely no manager
+// (that request stays for the HR override). Returns true if it healed.
+async function ensureApprovalChain(request) {
+  if (!request || request.status !== 'Pending') return false;
+  if (request.currentApprover || (request.approvalChain && request.approvalChain.length)) return false;
+  const profile = await EmployeeProfile.findById(request.employee).select('user reportingManager');
+  if (!profile) return false;
+  const chain = await buildApprovalChain(profile);
+  if (!chain.length) return false; // no manager in the hierarchy → HR decides
+  chain[0].status = 'Pending';
+  request.approvalChain = chain;
+  request.currentApprover = chain[0].approver;
+  await request.save();
+  try {
+    await notifyApprover(chain[0].approver, request, await applicantNameOf(request));
+  } catch (err) {
+    console.error('ensureApprovalChain notify failed:', err.message);
+  }
+  return true;
+}
+
 // Email the employee's HR partner (falling back to a SuperAdmin) about a new
 // leave request. Reply-To is the applicant's address so the HR can reply to the
 // employee directly. Best-effort — never blocks the leave application.
@@ -575,4 +600,5 @@ module.exports = {
   applyLeaveDecision,
   advanceApproval,
   buildApprovalChain,
+  ensureApprovalChain,
 };

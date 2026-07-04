@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
-import LeaveApprovalsInbox from '../components/LeaveApprovalsInbox';
 
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
@@ -58,12 +57,9 @@ export default function EmployeeTeam() {
 
   return (
     <div>
-      <PageHeader title="My Team" subtitle="Your direct reports · approve their leave and see today's attendance" />
+      <PageHeader title="My Team" subtitle="Your direct reports · see today's attendance. Approve their leave under Approvals." />
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
-
-      {/* Hierarchy leave approvals (advances up the reporting chain) */}
-      <LeaveApprovalsInbox />
 
       {loading ? (
         <div className="text-gray-500 mt-4">Loading team…</div>
