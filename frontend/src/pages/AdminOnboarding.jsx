@@ -31,7 +31,7 @@ export default function AdminOnboarding() {
       const params = filterEmployee ? `?employee=${filterEmployee}` : '';
       const [tRes, uRes] = await Promise.all([
         api.get(`/onboarding${params}`),
-        api.get('/admin/users'),
+        api.get('/admin/users?excludeExecutives=true'),
       ]);
       setTasks(tRes.data.tasks);
       setUsers(uRes.data.users);

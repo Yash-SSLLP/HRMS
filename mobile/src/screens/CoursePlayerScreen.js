@@ -33,6 +33,19 @@ export default function CoursePlayerScreen() {
 
   const [reportOpen, setReportOpen] = useState(false);
 
+  // Video quality. `quality` is the viewer's choice ('auto' | 'source' | height);
+  // `effective` is what's actually loaded. Auto starts at the best transcoded
+  // rendition (not the full-size original) and steps down when playback keeps
+  // buffering — expo-av's isBuffering is the signal (no network permission needed).
+  const videoRef = useRef(null);
+  const [quality, setQuality] = useState('auto');
+  const [effective, setEffective] = useState('source');
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const pendingSeek = useRef(null); // { time, playing } to restore after a swap
+  const stalls = useRef([]);
+  const wasBuffering = useRef(false);
+  const lastSwitch = useRef(0);
+
   const load = useCallback(async () => {
     try {
       const { data } = await api.get('/courses/me');
@@ -67,11 +80,40 @@ export default function CoursePlayerScreen() {
     navigation.setOptions({ title: course?.title || 'Course' });
   }, [navigation, course?.title]);
 
-  // Reset watch tracking when the lesson changes.
+  // Reset watch tracking + quality when the lesson changes.
   useEffect(() => {
     credited.current = 0; lastPos.current = 0; lastSent.current = 0; durationRef.current = active?.durationSec || 0;
+    stalls.current = []; wasBuffering.current = false; pendingSeek.current = null;
     setWatchedPct(0); setVideoFailed(false);
+    const hd = ((active?.qualities) || []).map((q) => q.height).sort((a, b) => b - a);
+    setQuality('auto');
+    setEffective(hd.length ? hd[0] : 'source'); // Auto → best rendition, not the original
   }, [activeId]);
+
+  // Quality helpers (ladder = original 'source' + each rendition, high → low).
+  const heightsDesc = ((active?.qualities) || []).map((q) => q.height).sort((a, b) => b - a);
+  const ladder = ['source', ...heightsDesc];
+  const applyEffective = (eff) => {
+    if (eff === effective) return;
+    pendingSeek.current = { time: lastPos.current, playing: true };
+    lastSwitch.current = Date.now();
+    stalls.current = [];
+    setEffective(eff);
+  };
+  const stepDownAuto = () => {
+    const idx = ladder.indexOf(effective);
+    if (idx >= 0 && idx < ladder.length - 1) applyEffective(ladder[idx + 1]);
+  };
+  const chooseQuality = (choice) => {
+    setQualityOpen(false);
+    setQuality(choice);
+    if (choice === 'auto') applyEffective(heightsDesc.length ? heightsDesc[0] : 'source');
+    else applyEffective(choice);
+  };
+  const qualityValue = quality === 'auto' ? 'Auto' : quality === 'source' ? 'Source' : `${quality}p`;
+  const qualityLabel = quality === 'auto'
+    ? `Auto (${effective === 'source' ? 'Source' : `${effective}p`})`
+    : qualityValue;
 
   const applyUpdated = (updated) => {
     if (updated) setEnrollment((prev) => (prev ? { ...prev, ...updated, course: prev.course } : prev));
@@ -95,6 +137,29 @@ export default function CoursePlayerScreen() {
   const onStatus = (st) => {
     if (!st.isLoaded) { if (st.error) setVideoFailed(true); return; }
     if (st.durationMillis) durationRef.current = st.durationMillis / 1000;
+
+    // Restore playback position + state after a quality swap reloaded the source.
+    if (pendingSeek.current) {
+      const p = pendingSeek.current;
+      pendingSeek.current = null;
+      (async () => {
+        try {
+          await videoRef.current?.setPositionAsync(Math.floor(p.time * 1000));
+          if (p.playing) await videoRef.current?.playAsync();
+        } catch { /* ignore */ }
+      })();
+      lastPos.current = p.time; // don't credit the restore seek
+    }
+
+    // Auto ABR: two buffering events within 20s → drop one rung.
+    if (quality === 'auto' && st.isBuffering && !wasBuffering.current && Date.now() - lastSwitch.current > 1500) {
+      const now = Date.now();
+      stalls.current = stalls.current.filter((t) => now - t < 20000);
+      stalls.current.push(now);
+      if (stalls.current.length >= 2) stepDownAuto();
+    }
+    wasBuffering.current = !!st.isBuffering;
+
     const pos = st.positionMillis / 1000;
     const delta = pos - lastPos.current;
     if (st.isPlaying && delta > 0 && delta <= 2) {
@@ -170,8 +235,9 @@ export default function CoursePlayerScreen() {
             ) : (
               <Video
                 key={active._id}
+                ref={videoRef}
                 style={styles.video}
-                source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}` }}
+                source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}${effective === 'source' ? '' : `&quality=${effective}`}` }}
                 useNativeControls
                 resizeMode={ResizeMode.CONTAIN}
                 onPlaybackStatusUpdate={onStatus}
@@ -186,6 +252,13 @@ export default function CoursePlayerScreen() {
                 </Text>
               </View>
               <ProgressBar value={activeDone ? 100 : watchedPct} tint={activeDone || watchedPct >= 95 ? colors.success : colors.primary} />
+              {heightsDesc.length > 0 && (
+                <TouchableOpacity style={styles.qualityRow} onPress={() => setQualityOpen(true)}>
+                  <Ionicons name="settings-outline" size={15} color={colors.textMuted} />
+                  <Text style={styles.qualityText}>Quality: {qualityLabel}</Text>
+                  <Ionicons name="chevron-down" size={14} color={colors.textFaint} style={{ marginLeft: 4 }} />
+                </TouchableOpacity>
+              )}
               <Text style={font.small}>Lesson {activeIndex + 1} of {modules.length}</Text>
               <Text style={[font.h3, { marginTop: 2 }]}>{active.title}</Text>
               {active.content ? <Text style={[font.label, { marginTop: 6 }]}>{active.content}</Text> : null}
@@ -243,6 +316,17 @@ export default function CoursePlayerScreen() {
       </ScrollView>
 
       <ReportModal visible={reportOpen} onClose={() => setReportOpen(false)} courseId={courseId} module={active} />
+
+      <ModalSheet visible={qualityOpen} onClose={() => setQualityOpen(false)} title="Video quality">
+        <Text style={[font.label, { marginBottom: spacing(3) }]}>
+          Auto lowers the quality automatically when your connection is slow.
+        </Text>
+        <ChipSelect
+          options={['Auto', ...heightsDesc.map((h) => `${h}p`), 'Source']}
+          value={qualityValue}
+          onChange={(str) => chooseQuality(str === 'Auto' ? 'auto' : str === 'Source' ? 'source' : parseInt(str, 10))}
+        />
+      </ModalSheet>
     </Screen>
   );
 }
@@ -324,6 +408,8 @@ const styles = StyleSheet.create({
   headerBar: { flexDirection: 'row', alignItems: 'center', padding: spacing(4), backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   videoFail: { width: '100%', aspectRatio: 16 / 9, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center', padding: spacing(4) },
+  qualityRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing(2), marginBottom: spacing(1), alignSelf: 'flex-start' },
+  qualityText: { color: colors.textMuted, fontWeight: '600', fontSize: 12, marginLeft: 4 },
   reportRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: spacing(4), marginTop: spacing(3), paddingVertical: spacing(3), paddingHorizontal: spacing(3), backgroundColor: colors.warningSoft, borderRadius: radius.md },
   reportText: { color: colors.warning, fontWeight: '700', fontSize: 13, marginLeft: 6 },
   navRow: { flexDirection: 'row', paddingHorizontal: spacing(4), marginTop: spacing(3) },

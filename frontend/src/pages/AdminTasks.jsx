@@ -35,7 +35,7 @@ export default function AdminTasks() {
       const [tRes, pRes, uRes] = await Promise.all([
         api.get(`/tasks${statusFilter ? `?status=${statusFilter}` : ''}`),
         api.get('/projects'),
-        api.get('/admin/users?active=true'),
+        api.get('/admin/users?active=true&excludeExecutives=true'),
       ]);
       setTasks(tRes.data.tasks);
       setProjects(pRes.data.projects);

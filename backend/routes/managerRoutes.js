@@ -1,5 +1,5 @@
 const express = require('express');
-const { listTeam, listTeamLeave, approveTeamLeave, rejectTeamLeave } = require('../controllers/managerController');
+const { listTeam, teamPresence, listTeamLeave, approveTeamLeave, rejectTeamLeave } = require('../controllers/managerController');
 const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -10,6 +10,7 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/team', listTeam);
+router.get('/presence', teamPresence);
 router.get('/leave-requests', listTeamLeave);
 router.patch('/leave-requests/:id/approve', approveTeamLeave);
 router.patch('/leave-requests/:id/reject', rejectTeamLeave);

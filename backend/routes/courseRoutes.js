@@ -12,6 +12,7 @@ const {
   createCourse,
   updateCourse,
   deleteCourse,
+  retranscodeModule,
   assignCourse,
   listPending,
   courseRoster,
@@ -51,6 +52,7 @@ router.patch('/enrollments/:eid/approve', approveEnrollment);
 router.patch('/enrollments/:eid/reject', rejectEnrollment);
 router.post('/', createCourse);
 router.post('/:id/assign', assignCourse);
+router.post('/:id/modules/:mid/retranscode', retranscodeModule);
 router.get('/:id/enrollments', courseRoster);
 router.put('/:id', updateCourse);
 router.delete('/:id', deleteCourse);

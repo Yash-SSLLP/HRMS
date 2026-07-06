@@ -15,6 +15,10 @@ const settingSchema = new mongoose.Schema(
     },
     // Punches farther than this from the office are flagged for HR review.
     geofenceThresholdM: { type: Number, default: 200, min: 0 },
+    // When false (default), CEO/MD executive accounts are hidden from the
+    // "select an employee" pickers that opt in (?excludeExecutives=true). A
+    // SuperAdmin can flip this on to make them selectable everywhere.
+    includeExecutivesInLists: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

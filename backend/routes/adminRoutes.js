@@ -9,6 +9,8 @@ const {
   deleteUser,
   getPermissionCatalog,
   updateUserPermissions,
+  getOrgSettings,
+  updateOrgSettings,
 } = require('../controllers/adminController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -28,6 +30,12 @@ router.use(requirePermission('users.manage'));
 // captured as an :id.
 router.get('/permissions/catalog', getPermissionCatalog);
 router.patch('/users/:id/permissions', restrictTo('SuperAdmin'), updateUserPermissions);
+
+// Org-wide preferences — SuperAdmin ONLY (e.g. whether CEO/MD appear in
+// employee-selection pickers).
+router.route('/org-settings')
+  .get(restrictTo('SuperAdmin'), getOrgSettings)
+  .put(restrictTo('SuperAdmin'), updateOrgSettings);
 
 router.post('/users', createUser);
 

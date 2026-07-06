@@ -127,6 +127,32 @@ export default function AdminEmployees() {
 
   useEffect(() => { load(); }, []);
 
+  // SuperAdmin-only org preference: whether CEO/MD appear in employee-selection
+  // pickers across the app. Off by default.
+  const [execIncluded, setExecIncluded] = useState(false);
+  const [execBusy, setExecBusy] = useState(false);
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    api.get('/admin/org-settings')
+      .then(({ data }) => setExecIncluded(!!data.includeExecutivesInLists))
+      .catch(() => {});
+  }, [isSuperAdmin]);
+
+  const toggleExecIncluded = async () => {
+    const next = !execIncluded;
+    setExecBusy(true);
+    setExecIncluded(next); // optimistic
+    try {
+      const { data } = await api.put('/admin/org-settings', { includeExecutivesInLists: next });
+      setExecIncluded(!!data.includeExecutivesInLists);
+    } catch (err) {
+      setExecIncluded(!next); // revert on failure
+      setError(err.response?.data?.message || 'Failed to update setting');
+    } finally {
+      setExecBusy(false);
+    }
+  };
+
   const resetDocLink = () => { setDocToken(''); setDocCopied(false); setDocBusy(false); };
 
   const openCreate = async () => {
@@ -274,6 +300,33 @@ export default function AdminEmployees() {
           + Add Profile
         </button>
       </PageHeader>
+
+      {isSuperAdmin && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+          <div className="text-sm">
+            <div className="font-medium text-gray-800">Include CEO &amp; MD in employee selection lists</div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              When off, CEO and MD are hidden from the “select an employee” dropdowns (attendance, payroll, loans, onboarding, etc.).
+              They always remain in user management, the org chart, and manager selectors.
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={execIncluded}
+            disabled={execBusy}
+            onClick={toggleExecIncluded}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+              execIncluded ? 'bg-indigo-600' : 'bg-gray-300'
+            } ${execBusy ? 'opacity-60 cursor-wait' : ''}`}
+            title={execIncluded ? 'CEO & MD are shown in employee lists' : 'CEO & MD are hidden from employee lists'}
+          >
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+              execIncluded ? 'translate-x-5' : 'translate-x-1'
+            }`} />
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

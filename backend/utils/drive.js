@@ -88,4 +88,30 @@ async function streamDriveFile(fileId, req, res) {
   nodeStream.pipe(res);
 }
 
-module.exports = { parseDriveFileId, streamDriveFile };
+// Download a whole Drive file to a local path (used by the transcoder, which
+// needs the complete source before it can produce lower-quality renditions).
+// Throws a clear error if the file isn't publicly accessible.
+const fs = require('fs');
+async function downloadDriveFileTo(fileId, destPath) {
+  const upstream = await fetch(DOWNLOAD_URL(fileId), {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HRMS-LMS/1.0)' },
+    redirect: 'follow',
+  });
+  const contentType = upstream.headers.get('content-type') || '';
+  if (!upstream.ok) throw new Error(`Drive returned ${upstream.status} for this file.`);
+  if (contentType.includes('text/html')) {
+    throw new Error("This Google Drive file isn't accessible. Set sharing to \"Anyone with the link\" (Viewer).");
+  }
+  if (!upstream.body) throw new Error('Drive returned an empty response.');
+
+  await new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(destPath);
+    const nodeStream = Readable.fromWeb(upstream.body);
+    nodeStream.on('error', reject);
+    out.on('error', reject);
+    out.on('finish', resolve);
+    nodeStream.pipe(out);
+  });
+}
+
+module.exports = { parseDriveFileId, streamDriveFile, downloadDriveFileTo };

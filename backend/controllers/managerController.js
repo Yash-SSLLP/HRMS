@@ -3,6 +3,9 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const { LeaveRequest } = require('../models/Leave');
 const { advanceApproval } = require('./leaveController');
+const { startOfDayIST } = require('../utils/dateHelpers');
+
+const WORKDAY_START_HOUR = 10; // 10:00 AM IST grace cut-off for lateness (matches attendance board)
 
 // EmployeeProfile ids of the people who report directly to the current user.
 async function myReportProfiles(userId) {
@@ -43,6 +46,94 @@ const listTeam = asyncHandler(async (req, res) => {
     };
   });
   res.json({ count: team.length, team });
+});
+
+// GET /api/manager/presence — read-only "who's in / on leave / absent" today,
+// scoped to the caller's direct reports. Same shape as the admin presence board
+// so the UI is shared; the check-in selfie is surfaced the same way (identical
+// whether the punch came from web or mobile).
+const teamPresence = asyncHandler(async (req, res) => {
+  const reports = await myReportProfiles(req.user._id);
+  const byId = new Map(reports.map((p) => [String(p._id), p]));
+  const ids = reports.map((p) => p._id);
+
+  const today = startOfDayIST(new Date());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const startThreshold = new Date(today.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+
+  const [records, leaves] = await Promise.all([
+    Attendance.find({ employee: { $in: ids }, date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
+      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInWfh hoursWorked status')
+      .lean(),
+    LeaveRequest.find({ employee: { $in: ids }, status: 'Approved', startDate: { $lt: tomorrow }, endDate: { $gte: today } })
+      .select('employee leaveType isHalfDay halfDaySession startDate endDate reason')
+      .lean(),
+  ]);
+
+  const personCore = (p) => ({
+    profileId: String(p._id),
+    userId: p.user ? String(p.user._id) : null,
+    name: `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode,
+    employeeCode: p.employeeCode,
+    designation: p.designation || '',
+    department: p.department || 'Unassigned',
+    hasAvatar: Boolean(p.user?.photo),
+  });
+
+  const presentIds = new Set();
+  const present = records
+    .filter((r) => byId.has(String(r.employee)))
+    .map((r) => {
+      const p = byId.get(String(r.employee));
+      presentIds.add(String(r.employee));
+      const lateMs = new Date(r.checkIn) - startThreshold;
+      return {
+        ...personCore(p),
+        recordId: String(r._id),
+        status: r.status,
+        checkIn: r.checkIn,
+        checkOut: r.checkOut || null,
+        hoursWorked: r.hoursWorked || 0,
+        checkInWfh: !!r.checkInWfh,
+        lateMinutes: lateMs > 0 ? Math.round(lateMs / 60000) : 0,
+        hasCheckInPhoto: !!r.checkInPhoto,
+        hasCheckOutPhoto: !!r.checkOutPhoto,
+      };
+    })
+    .sort((a, b) => new Date(a.checkIn) - new Date(b.checkIn));
+
+  const leaveIds = new Set();
+  const onLeave = leaves
+    .filter((lv) => byId.has(String(lv.employee)) && !presentIds.has(String(lv.employee)))
+    .map((lv) => {
+      const p = byId.get(String(lv.employee));
+      leaveIds.add(String(lv.employee));
+      return {
+        ...personCore(p),
+        requestId: String(lv._id),
+        leaveType: lv.leaveType,
+        isHalfDay: !!lv.isHalfDay,
+        halfDaySession: lv.halfDaySession || null,
+        startDate: lv.startDate,
+        endDate: lv.endDate,
+        reason: lv.reason || '',
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const absent = reports
+    .filter((p) => !presentIds.has(String(p._id)) && !leaveIds.has(String(p._id)))
+    .map((p) => personCore(p))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  res.json({
+    date: today,
+    counts: { total: reports.length, present: present.length, onLeave: onLeave.length, absent: absent.length },
+    present,
+    onLeave,
+    absent,
+  });
 });
 
 // GET /api/manager/leave-requests?status= — leave requests from my reports.
@@ -95,4 +186,4 @@ const rejectTeamLeave = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
-module.exports = { listTeam, listTeamLeave, approveTeamLeave, rejectTeamLeave };
+module.exports = { listTeam, teamPresence, listTeamLeave, approveTeamLeave, rejectTeamLeave };

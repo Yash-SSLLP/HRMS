@@ -22,7 +22,7 @@ export default function AttendanceReportWidget({ compact = false, height }) {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get('/employees');
+        const { data } = await api.get('/employees?excludeExecutives=true');
         setEmployees(data.profiles || []);
         if (data.profiles?.length) setFilter((f) => (f.employee ? f : { ...f, employee: data.profiles[0]._id }));
         else setLoading(false);

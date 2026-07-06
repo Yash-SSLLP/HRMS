@@ -35,7 +35,7 @@ export default function AdminAttendanceMonth() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.get('/employees').then(({ data }) => {
+    api.get('/employees?excludeExecutives=true').then(({ data }) => {
       const profiles = (data.profiles || []).filter((p) => p.user);
       setEmployees(profiles);
       if (profiles.length && !employee) setEmployee(profiles[0]._id);

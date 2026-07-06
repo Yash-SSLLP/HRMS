@@ -44,7 +44,7 @@ export default function AdminAttendanceReport() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get('/employees');
+        const { data } = await api.get('/employees?excludeExecutives=true');
         setEmployees(data.profiles || []);
         if (!filter.employee && data.profiles?.length) {
           setFilter((f) => ({ ...f, employee: data.profiles[0]._id }));

@@ -32,7 +32,7 @@ export default function AdminDocuments() {
   const loadEmployees = async () => {
     try {
       const [empRes, catRes] = await Promise.all([
-        api.get('/employees'),
+        api.get('/employees?excludeExecutives=true'),
         api.get('/documents/categories'),
       ]);
       setEmployees(empRes.data.profiles);

@@ -32,7 +32,7 @@ export default function AdminLoans() {
     const q = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
     const [lRes, uRes] = await Promise.allSettled([
       api.get(`/loans${q}`),
-      api.get('/admin/users?active=true'),
+      api.get('/admin/users?active=true&excludeExecutives=true'),
     ]);
     if (lRes.status === 'fulfilled') setLoans(lRes.value.data.loans);
     else setError(lRes.reason?.response?.data?.message || 'Failed to load loans');

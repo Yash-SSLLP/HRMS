@@ -26,7 +26,7 @@ export default function AdminTraining() {
     setLoading(true);
     setError('');
     try {
-      const [tRes, uRes] = await Promise.all([api.get('/training'), api.get('/admin/users?active=true')]);
+      const [tRes, uRes] = await Promise.all([api.get('/training'), api.get('/admin/users?active=true&excludeExecutives=true')]);
       setTrainings(tRes.data.trainings);
       setUsers(uRes.data.users);
     } catch (err) {

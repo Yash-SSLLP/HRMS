@@ -109,7 +109,7 @@ export default function AdminAttendance() {
       if (filter.employee) params.set('employee', filter.employee);
       const [recRes, empRes] = await Promise.all([
         api.get(`/attendance?${params}`),
-        api.get('/employees'),
+        api.get('/employees?excludeExecutives=true'),
       ]);
       setRecords(recRes.data.records);
       setEmployees(empRes.data.profiles);

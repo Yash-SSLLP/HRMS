@@ -28,7 +28,7 @@ export default function AdminAssets() {
     setLoading(true);
     setError('');
     try {
-      const [aRes, uRes] = await Promise.all([api.get('/assets'), api.get('/admin/users?active=true')]);
+      const [aRes, uRes] = await Promise.all([api.get('/assets'), api.get('/admin/users?active=true&excludeExecutives=true')]);
       setAssets(aRes.data.assets);
       setUsers(uRes.data.users);
     } catch (err) {

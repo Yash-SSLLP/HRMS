@@ -57,7 +57,7 @@ export default function AdminRoster() {
       const [, , uRes] = await Promise.all([
         loadShifts(),
         loadRoster(),
-        api.get('/admin/users?active=true'),
+        api.get('/admin/users?active=true&excludeExecutives=true'),
       ]);
       setUsers(uRes.data.users);
     } catch (err) {

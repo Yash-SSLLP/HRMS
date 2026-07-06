@@ -3,6 +3,7 @@ const User = require('../models/User');
 const { ROLES } = require('../models/User');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { PERMISSIONS, isValidPermission } = require('../config/permissions');
+const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 
 // GET /api/admin/users?role=&active=&q=
 const listUsers = asyncHandler(async (req, res) => {
@@ -15,10 +16,20 @@ const listUsers = asyncHandler(async (req, res) => {
     const re = new RegExp(q, 'i');
     filter.$or = [{ firstName: re }, { lastName: re }, { email: re }];
   }
-  // Hide SuperAdmin accounts from non-SuperAdmin viewers.
-  if (req.user.role !== 'SuperAdmin') {
-    if (!role) filter.role = { $ne: 'SuperAdmin' };
-    else if (role === 'SuperAdmin') filter._id = { $in: [] };
+  // Roles to keep out of this result:
+  //  - SuperAdmin, hidden from every non-SuperAdmin viewer;
+  //  - CEO/MD, when a picker opts in (?excludeExecutives=true) and a SuperAdmin
+  //    has not turned on includeExecutivesInLists.
+  const excludedRoles = [];
+  if (req.user.role !== 'SuperAdmin') excludedRoles.push('SuperAdmin');
+  if (await shouldExcludeExecutives(req)) excludedRoles.push(...EXECUTIVE_ROLES);
+  if (excludedRoles.length) {
+    if (role) {
+      // An explicit ?role= filter is honoured unless that role is excluded.
+      if (excludedRoles.includes(role)) filter._id = { $in: [] };
+    } else {
+      filter.role = { $nin: excludedRoles };
+    }
   }
   const users = await User.find(filter).sort({ createdAt: -1 });
   res.json({ count: users.length, users });
@@ -216,6 +227,26 @@ const updateUserPermissions = asyncHandler(async (req, res) => {
   res.json({ user });
 });
 
+// GET /api/admin/org-settings  (SuperAdmin)
+// Org-wide preferences a SuperAdmin controls. Currently: whether CEO/MD show up
+// in employee-selection pickers.
+const getOrgSettings = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const s = await Setting.getSettings();
+  res.json({ includeExecutivesInLists: !!s.includeExecutivesInLists });
+});
+
+// PUT /api/admin/org-settings  (SuperAdmin)
+const updateOrgSettings = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const s = await Setting.getSettings();
+  if (req.body.includeExecutivesInLists !== undefined) {
+    s.includeExecutivesInLists = !!req.body.includeExecutivesInLists;
+  }
+  await s.save();
+  res.json({ includeExecutivesInLists: !!s.includeExecutivesInLists });
+});
+
 module.exports = {
   listUsers,
   getUser,
@@ -226,4 +257,6 @@ module.exports = {
   deleteUser,
   getPermissionCatalog,
   updateUserPermissions,
+  getOrgSettings,
+  updateOrgSettings,
 };

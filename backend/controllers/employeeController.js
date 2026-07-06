@@ -9,7 +9,7 @@ const storage = require('../services/storage');
 const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
-const { hiddenUserIds } = require('../utils/visibility');
+const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds } = require('../utils/visibility');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
@@ -103,9 +103,14 @@ const listEmployees = asyncHandler(async (req, res) => {
   const { q, department } = req.query;
   const filter = { ...scopeForHR(req) };
   if (department) filter.department = department;
-  // Hide SuperAdmin accounts from non-SuperAdmin viewers.
-  const hidden = await hiddenUserIds(req.user);
-  if (hidden.length) filter.user = { $nin: hidden };
+  // Hide SuperAdmin accounts from non-SuperAdmin viewers, and — for pickers that
+  // opt in via ?excludeExecutives=true — the CEO/MD accounts (unless a SuperAdmin
+  // has turned on includeExecutivesInLists).
+  const excludeUserIds = [...(await hiddenUserIds(req.user))];
+  if (await shouldExcludeExecutives(req)) {
+    excludeUserIds.push(...(await executiveUserIds()));
+  }
+  if (excludeUserIds.length) filter.user = { $nin: excludeUserIds };
   let query = EmployeeProfile.find(filter)
     .populate('user', 'firstName lastName email role isActive')
     .populate('hrPartner', 'firstName lastName email')

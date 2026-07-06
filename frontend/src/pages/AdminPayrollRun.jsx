@@ -57,7 +57,7 @@ export default function AdminPayrollRun() {
   const [setup, setSetup] = useState({ salaryStructure: '', annualCtc: '' });
 
   useEffect(() => {
-    api.get('/employees').then(({ data }) => {
+    api.get('/employees?excludeExecutives=true').then(({ data }) => {
       const profiles = (data.profiles || []).filter((p) => p.user);
       setEmployees(profiles);
       setEmployee((e) => e || profiles[0]?._id || '');

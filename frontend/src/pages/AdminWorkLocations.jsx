@@ -191,7 +191,7 @@ function AssignModal({ location, locations, onClose, onDone }) {
   locations.forEach((l) => { locNameById[String(l._id)] = l.name; });
 
   useEffect(() => {
-    api.get('/employees').then(({ data }) => {
+    api.get('/employees?excludeExecutives=true').then(({ data }) => {
       const rows = (data.profiles || []).filter((p) => p.user).map((p) => ({
         id: p._id, // profile id (workLocationRef lives on the profile)
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.email,

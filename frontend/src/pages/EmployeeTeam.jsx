@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
+import PresenceBoardView from '../components/PresenceBoardView';
 
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
@@ -38,14 +39,19 @@ function Avatar({ userId, hasPhoto, name }) {
 
 export default function EmployeeTeam() {
   const [team, setTeam] = useState([]);
+  const [board, setBoard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const t = await api.get('/manager/team');
+      const [t, b] = await Promise.all([
+        api.get('/manager/team'),
+        api.get('/manager/presence'),
+      ]);
       setTeam(t.data.team || []);
+      setBoard(b.data);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load your team');
     } finally {
@@ -57,7 +63,7 @@ export default function EmployeeTeam() {
 
   return (
     <div>
-      <PageHeader title="My Team" subtitle="Your direct reports · see today's attendance. Approve their leave under Approvals." />
+      <PageHeader title="My Team" subtitle="Your direct reports · who's in, on leave or absent today. Approve their leave under Approvals." />
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
@@ -65,6 +71,13 @@ export default function EmployeeTeam() {
         <div className="text-gray-500 mt-4">Loading team…</div>
       ) : (
         <div className="mt-4">
+          {/* Read-only presence board (present / on leave / absent, with selfies) */}
+          {board && (team.length > 0) && (
+            <div className="mb-5">
+              <PresenceBoardView board={board} />
+            </div>
+          )}
+
           {/* Team — today's attendance */}
           <div className="bg-white shadow rounded-lg p-5 mb-4">
             <h2 className="card-title mb-3">Team today ({team.length})</h2>

@@ -156,7 +156,7 @@ function BalancesTab() {
     setError('');
     try {
       const [empRes, balRes] = await Promise.all([
-        api.get('/employees'),
+        api.get('/employees?excludeExecutives=true'),
         api.get(`/leave/balances?year=${year}`),
       ]);
       setEmployees(empRes.data.profiles);

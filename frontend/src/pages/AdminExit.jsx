@@ -60,7 +60,7 @@ export default function AdminExit() {
       if (statusFilter) params.set('status', statusFilter);
       const [exitRes, empRes, usersRes] = await Promise.all([
         api.get(`/exits?${params}`),
-        api.get('/employees'),
+        api.get('/employees?excludeExecutives=true'),
         api.get('/admin/users'),
       ]);
       setExits(exitRes.data.exits);

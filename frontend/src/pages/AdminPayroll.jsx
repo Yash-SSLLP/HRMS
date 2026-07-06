@@ -54,7 +54,7 @@ export default function AdminPayroll() {
       if (filter.status) params.set('status', filter.status);
       const [slipsRes, empRes] = await Promise.all([
         api.get(`/payroll?${params}`),
-        api.get('/employees'),
+        api.get('/employees?excludeExecutives=true'),
       ]);
       setPayslips(slipsRes.data.payslips);
       setEmployees(empRes.data.profiles);

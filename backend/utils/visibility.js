@@ -16,4 +16,30 @@ async function hiddenUserIds(viewer) {
   return User.find({ role: 'SuperAdmin' }).distinct('_id');
 }
 
-module.exports = { hideSuperAdminFilter, hiddenUserIds };
+// Executive roles kept out of "select an employee" pickers by default. They are
+// still fully visible in user management, the org chart, and manager/approver
+// selectors — only the opt-in pickers hide them.
+const EXECUTIVE_ROLES = ['CEO', 'MD'];
+
+// True when a picker that opted into executive exclusion (?excludeExecutives=true)
+// should actually hide CEO/MD — i.e. the SuperAdmin toggle is off (the default).
+async function shouldExcludeExecutives(req) {
+  if (!req || req.query.excludeExecutives !== 'true') return false;
+  const Setting = require('../models/Setting');
+  const s = await Setting.getSettings();
+  return !s.includeExecutivesInLists;
+}
+
+// User _ids of the executive accounts (CEO/MD), for excluding from profile-based
+// listings populated by user (e.g. EmployeeProfile).
+async function executiveUserIds() {
+  return User.find({ role: { $in: EXECUTIVE_ROLES } }).distinct('_id');
+}
+
+module.exports = {
+  hideSuperAdminFilter,
+  hiddenUserIds,
+  EXECUTIVE_ROLES,
+  shouldExcludeExecutives,
+  executiveUserIds,
+};
