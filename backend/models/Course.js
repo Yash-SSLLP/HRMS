@@ -3,29 +3,6 @@ const { parseDriveFileId } = require('../utils/drive');
 
 const COURSE_CATEGORIES = ['Technical', 'Soft Skills', 'Compliance', 'Leadership', 'Onboarding', 'Other'];
 const MODULE_TYPES = ['video', 'text'];
-// Lifecycle of a video module's lower-quality renditions (see services/videoTranscode.js).
-const TRANSCODE_STATUS = ['none', 'pending', 'processing', 'ready', 'failed'];
-
-// One transcoded lower-quality copy of a video module, stored in our own storage
-// (never the raw Drive file). `storagePath` is server-side only and never leaks
-// to the client — the player references a rendition by its height via
-// GET /:id/modules/:mid/video?quality=<height>.
-const renditionSchema = new mongoose.Schema(
-  {
-    height: { type: Number, required: true }, // 360, 480, 720 …
-    label: { type: String, required: true }, // "360p"
-    // Object key / path in the rendition store (Cloud Storage). Never sent to
-    // the client — the player references a rendition by height via the stream API.
-    storagePath: { type: String, required: true },
-    // Which backend holds the file. Only 'gcs' (shared Cloud Storage) is served
-    // and advertised; the default 'local' marks legacy/pre-GCS renditions so they
-    // are hidden and rebuilt into GCS (never mis-served as a missing GCS object).
-    store: { type: String, enum: ['gcs', 'local'], default: 'local' },
-    sizeBytes: { type: Number, default: 0 },
-    bitrateKbps: { type: Number, default: 0 }, // approx, informs the Auto ladder
-  },
-  { _id: false }
-);
 const ENROLLMENT_STATUS = ['Enrolled', 'InProgress', 'Completed'];
 const APPROVAL_STATUS = ['Approved', 'Pending', 'Rejected'];
 const ENROLL_SOURCE = ['Assigned', 'Self'];
@@ -43,16 +20,6 @@ const moduleSchema = new mongoose.Schema({
   // Video length in seconds, learned from the player on first play. Used as the
   // denominator for accurate watch progress.
   durationSec: { type: Number, default: 0, min: 0 },
-  // Lower-quality copies generated from the Drive source so the player can offer
-  // a YouTube-style quality menu + adaptive "Auto". Empty until transcoding runs.
-  renditions: { type: [renditionSchema], default: [] },
-  transcodeStatus: { type: String, enum: TRANSCODE_STATUS, default: 'none' },
-  transcodeError: { type: String },
-  // Detected height of the Drive source, so we never offer a rendition >= source.
-  sourceHeight: { type: Number, default: 0 },
-  // The driveFileId the current renditions were built from — lets create/update
-  // detect a changed source and re-transcode.
-  transcodedFrom: { type: String },
 });
 
 // Keep driveFileId in sync with whatever link was provided. Tolerates a legacy

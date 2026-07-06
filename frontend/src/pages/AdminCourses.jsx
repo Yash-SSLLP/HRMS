@@ -86,11 +86,6 @@ export default function AdminCourses() {
         title: m.title || '',
         driveUrl: m.driveUrl || m.url || '',
         content: m.content || '',
-        // Read-only transcode state (for the quality-status indicator).
-        transcodeStatus: m.transcodeStatus || 'none',
-        transcodeError: m.transcodeError || '',
-        qualities: m.qualities || [],
-        sourceHeight: m.sourceHeight || 0,
       })),
     });
     setPreviewModIdx(null);
@@ -101,19 +96,6 @@ export default function AdminCourses() {
   const removeModule = (idx) => setForm((f) => ({ ...f, modules: f.modules.filter((_, i) => i !== idx) }));
   const updateModule = (idx, field, value) =>
     setForm((f) => ({ ...f, modules: f.modules.map((m, i) => (i === idx ? { ...m, [field]: value } : m)) }));
-
-  // (Re)generate a saved video module's lower-quality renditions.
-  const retranscode = async (idx) => {
-    const m = form.modules[idx];
-    if (!editingId || !m?._id) return;
-    try {
-      await api.post(`/courses/${editingId}/modules/${m._id}/retranscode`);
-      updateModule(idx, 'transcodeStatus', 'pending');
-      updateModule(idx, 'transcodeError', '');
-    } catch (err) {
-      alert(err.response?.data?.message || 'Could not start quality generation');
-    }
-  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -332,49 +314,6 @@ export default function AdminCourses() {
 }
 
 // ===== Assign to employees =====
-// Shows a video module's transcoding state so admins know when the lower-quality
-// options (that power the player's quality menu + Auto) are ready.
-function ModuleQualityStatus({ m, onRetry }) {
-  const status = m.transcodeStatus || 'none';
-  const labels = (m.qualities || []).map((q) => q.label).join(', ');
-  if (status === 'pending' || status === 'processing') {
-    return <div className="text-xs text-amber-600">⏳ Generating quality options (360p/480p/720p)… you can save and leave; this runs in the background.</div>;
-  }
-  if (status === 'ready' && m.renditionsMissing) {
-    return (
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-amber-600">⚠ Quality files aren’t on this server (rebuild to regenerate them here).</span>
-        <button type="button" onClick={onRetry} className="text-blue-600 hover:underline">Rebuild</button>
-      </div>
-    );
-  }
-  if (status === 'ready') {
-    return (
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-green-600">
-          {labels ? `✓ Quality options ready: ${labels} + Source` : '✓ Source quality only (video is already low-resolution)'}
-        </span>
-        <button type="button" onClick={onRetry} className="text-blue-600 hover:underline">Rebuild</button>
-      </div>
-    );
-  }
-  if (status === 'failed') {
-    return (
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-red-600" title={m.transcodeError || ''}>✗ Quality generation failed{m.transcodeError ? `: ${m.transcodeError}` : ''}</span>
-        <button type="button" onClick={onRetry} className="text-blue-600 hover:underline">Retry</button>
-      </div>
-    );
-  }
-  // status === 'none' — has a source but hasn't been processed yet.
-  return (
-    <div className="flex items-center justify-between text-xs">
-      <span className="text-gray-400">Quality options not generated yet.</span>
-      <button type="button" onClick={onRetry} className="text-blue-600 hover:underline">Generate now</button>
-    </div>
-  );
-}
-
 function AssignModal({ course, onClose, onDone }) {
   const [people, setPeople] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -384,7 +323,7 @@ function AssignModal({ course, onClose, onDone }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/employees?excludeExecutives=true').then(({ data }) => {
+    api.get('/employees').then(({ data }) => {
       setPeople((data.profiles || []).filter((p) => p.user).map((p) => ({
         id: p.user._id,
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.email,

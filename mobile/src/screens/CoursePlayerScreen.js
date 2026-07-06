@@ -33,18 +33,6 @@ export default function CoursePlayerScreen() {
 
   const [reportOpen, setReportOpen] = useState(false);
 
-  const videoRef = useRef(null);
-  // No-skip: furthest point the viewer may seek to (grows as they watch).
-  const maxAllowed = useRef(0);
-  const sessionComplete = useRef(false);
-  const [skipWarn, setSkipWarn] = useState(false);
-  const warnTimer = useRef(null);
-  const flashSkipWarn = () => {
-    setSkipWarn(true);
-    if (warnTimer.current) clearTimeout(warnTimer.current);
-    warnTimer.current = setTimeout(() => setSkipWarn(false), 2500);
-  };
-
   const load = useCallback(async () => {
     try {
       const { data } = await api.get('/courses/me');
@@ -74,10 +62,6 @@ export default function CoursePlayerScreen() {
   const activeIndex = modules.findIndex((m) => String(m._id) === String(activeId));
   const completedSet = new Set((enrollment?.moduleProgress || []).filter((m) => m.completed).map((m) => String(m.module)));
   const overall = enrollment?.progress || 0;
-  // No-skip: this lesson's saved progress + whether it's already been completed.
-  const activeProgress = (enrollment?.moduleProgress || []).find((m) => String(m.module) === String(activeId)) || null;
-  const moduleCompleted = completedSet.has(String(activeId));
-  const freeSeek = moduleCompleted || sessionComplete.current;
 
   useEffect(() => {
     navigation.setOptions({ title: course?.title || 'Course' });
@@ -86,14 +70,8 @@ export default function CoursePlayerScreen() {
   // Reset watch tracking when the lesson changes.
   useEffect(() => {
     credited.current = 0; lastPos.current = 0; lastSent.current = 0; durationRef.current = active?.durationSec || 0;
-    const mp = (enrollment?.moduleProgress || []).find((m) => String(m.module) === String(active?._id));
-    maxAllowed.current = mp?.watchedSec || 0;
-    sessionComplete.current = false;
     setWatchedPct(0); setVideoFailed(false);
   }, [activeId]);
-
-  // Clear the skip-warning timer on unmount.
-  useEffect(() => () => { if (warnTimer.current) clearTimeout(warnTimer.current); }, []);
 
   const applyUpdated = (updated) => {
     if (updated) setEnrollment((prev) => (prev ? { ...prev, ...updated, course: prev.course } : prev));
@@ -117,30 +95,15 @@ export default function CoursePlayerScreen() {
   const onStatus = (st) => {
     if (!st.isLoaded) { if (st.error) setVideoFailed(true); return; }
     if (st.durationMillis) durationRef.current = st.durationMillis / 1000;
-
     const pos = st.positionMillis / 1000;
     const delta = pos - lastPos.current;
-
-    // No-skip: a forward jump beyond the furthest watched point snaps back.
-    // (read completion live — sessionComplete is a ref that mutates mid-playback)
-    const canSeekFreely = moduleCompleted || sessionComplete.current;
-    if (!canSeekFreely && delta > 2 && pos > maxAllowed.current + 1) {
-      const target = Math.max(0, maxAllowed.current);
-      videoRef.current?.setPositionAsync(Math.floor(target * 1000)).catch(() => {});
-      lastPos.current = target;
-      flashSkipWarn();
-      return;
-    }
-
     if (st.isPlaying && delta > 0 && delta <= 2) {
       credited.current = Math.min(durationRef.current || Infinity, credited.current + delta);
       const d = durationRef.current;
       setWatchedPct(d > 0 ? Math.min(100, Math.round((credited.current / d) * 100)) : 0);
-      if (pos > maxAllowed.current) maxAllowed.current = pos; // grow the watermark
-      if (d > 0 && credited.current >= 0.95 * d) sessionComplete.current = true;
     }
     lastPos.current = pos;
-    if (st.didJustFinish) { credited.current = durationRef.current; sessionComplete.current = true; sendProgress(true); }
+    if (st.didJustFinish) { credited.current = durationRef.current; sendProgress(true); }
     else sendProgress(false);
   };
 
@@ -205,23 +168,15 @@ export default function CoursePlayerScreen() {
                 </Text>
               </View>
             ) : (
-              <View style={{ position: 'relative' }}>
-                <Video
-                  key={active._id}
-                  ref={videoRef}
-                  style={styles.video}
-                  source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}` }}
-                  useNativeControls
-                  resizeMode={ResizeMode.CONTAIN}
-                  onPlaybackStatusUpdate={onStatus}
-                  onError={() => setVideoFailed(true)}
-                />
-                {skipWarn && (
-                  <View style={styles.skipWarn} pointerEvents="none">
-                    <Text style={styles.skipWarnText}>⚠ You can't skip ahead — please watch the video first.</Text>
-                  </View>
-                )}
-              </View>
+              <Video
+                key={active._id}
+                style={styles.video}
+                source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}` }}
+                useNativeControls
+                resizeMode={ResizeMode.CONTAIN}
+                onPlaybackStatusUpdate={onStatus}
+                onError={() => setVideoFailed(true)}
+              />
             )}
             <View style={{ paddingHorizontal: spacing(4), paddingTop: spacing(3) }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -369,10 +324,6 @@ const styles = StyleSheet.create({
   headerBar: { flexDirection: 'row', alignItems: 'center', padding: spacing(4), backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   videoFail: { width: '100%', aspectRatio: 16 / 9, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center', padding: spacing(4) },
-  skipWarn: { position: 'absolute', left: 0, right: 0, bottom: 12, alignItems: 'center', paddingHorizontal: spacing(4) },
-  skipWarnText: { backgroundColor: 'rgba(0,0,0,0.8)', color: '#fff', fontSize: 12, fontWeight: '600', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, overflow: 'hidden', textAlign: 'center' },
-  qualityRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing(2), marginBottom: spacing(1), alignSelf: 'flex-start' },
-  qualityText: { color: colors.textMuted, fontWeight: '600', fontSize: 12, marginLeft: 4 },
   reportRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: spacing(4), marginTop: spacing(3), paddingVertical: spacing(3), paddingHorizontal: spacing(3), backgroundColor: colors.warningSoft, borderRadius: radius.md },
   reportText: { color: colors.warning, fontWeight: '700', fontSize: 13, marginLeft: 6 },
   navRow: { flexDirection: 'row', paddingHorizontal: spacing(4), marginTop: spacing(3) },

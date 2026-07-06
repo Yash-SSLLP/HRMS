@@ -8,18 +8,15 @@ import { useAuthStore } from '../store/authStore';
 // backend, so completion reflects actual watching (not a checkbox).
 //
 // Anti-skip: we only credit watched time when playback advances roughly in real
-// time (<= ~2s jump), and employees can't seek forward past the furthest point
-// they've actually watched (until the module has been completed once).
+// time (<= ~2s jump). Scrubbing to the end therefore doesn't fake completion.
 //
 // Props:
 //   courseId, module ({ _id, title, content, durationSec })
-//   preview  — admin preview mode: play only, no progress reporting, free seeking
+//   preview  — admin preview mode: play only, no progress reporting
 //   bare     — full-bleed video for the course stage (hides the extra watched bar)
-//   moduleCompleted — this module was completed before → allow free seeking
-//   initialWatchedSec — furthest seconds already watched (seed for the no-skip watermark)
 //   onProgress(enrollment) — called with the updated enrollment after a save
 //   onError() — called when the video fails to load (so the page can prompt a report)
-export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, moduleCompleted = false, initialWatchedSec = 0, onProgress, onError }) {
+export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, onProgress, onError }) {
   const token = useAuthStore((s) => s.token);
   const videoRef = useRef(null);
   const [src, setSrc] = useState('');
@@ -33,22 +30,6 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
   const lastTimeRef = useRef(0);
   const lastSentRef = useRef(0);
 
-  // No-skip: furthest point the viewer may seek to (grows as they watch).
-  const maxAllowedRef = useRef(initialWatchedSec || 0);
-  const [sessionComplete, setSessionComplete] = useState(false);
-  const freeSeek = preview || moduleCompleted || sessionComplete;
-  const freeSeekRef = useRef(freeSeek);
-  freeSeekRef.current = freeSeek;
-  const SEEK_TOLERANCE = 1.0;
-  const [skipWarn, setSkipWarn] = useState(false);
-  const warnTimerRef = useRef(null);
-  const flashSkipWarn = () => {
-    setSkipWarn(true);
-    if (warnTimerRef.current) clearTimeout(warnTimerRef.current);
-    warnTimerRef.current = setTimeout(() => setSkipWarn(false), 2500);
-  };
-  useEffect(() => () => { if (warnTimerRef.current) clearTimeout(warnTimerRef.current); }, []);
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -60,8 +41,6 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
     creditedRef.current = 0;
     lastTimeRef.current = 0;
     lastSentRef.current = 0;
-    maxAllowedRef.current = initialWatchedSec || 0;
-    setSessionComplete(false);
     setWatchedSec(0);
     setFailed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -90,27 +69,14 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
     const delta = t - lastTimeRef.current;
     // Credit only forward, real-time progress (ignore pauses and forward seeks).
     if (delta > 0 && delta <= 2) {
-      creditedRef.current = Math.min((duration || v.duration || Infinity), creditedRef.current + delta);
+      creditedRef.current = Math.min(
+        (duration || v.duration || Infinity),
+        creditedRef.current + delta
+      );
       setWatchedSec(creditedRef.current);
-      if (t > maxAllowedRef.current) maxAllowedRef.current = t; // grow the no-skip watermark
     }
     lastTimeRef.current = t;
-    const dur = duration || v.duration || 0;
-    if (!sessionComplete && dur > 0 && creditedRef.current >= 0.95 * dur) setSessionComplete(true);
     report(false);
-  };
-
-  // No-skip enforcement: snap a forward seek back to the watermark. Backward
-  // seeks (into already-seen video) are allowed.
-  const onSeeking = () => {
-    const v = videoRef.current;
-    if (!v || freeSeekRef.current) return;
-    if (v.currentTime > maxAllowedRef.current + SEEK_TOLERANCE) {
-      const target = Math.max(0, maxAllowedRef.current);
-      try { v.currentTime = target; } catch { /* ignore */ }
-      lastTimeRef.current = target;
-      flashSkipWarn();
-    }
   };
 
   const onLoadedMetadata = () => {
@@ -133,7 +99,7 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           </div>
         )
       )}
-      <div className={`relative ${bare ? 'bg-black' : 'bg-black rounded-lg overflow-hidden'}`}>
+      <div className={bare ? 'bg-black' : 'bg-black rounded-lg overflow-hidden'}>
         <video
           ref={videoRef}
           src={src}
@@ -144,18 +110,10 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           className={`w-full bg-black ${bare ? 'max-h-[65vh] aspect-video' : 'max-h-[70vh]'}`}
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={onTimeUpdate}
-          onSeeking={onSeeking}
           onPause={() => report(true)}
           onEnded={() => report(true)}
           onError={() => { setFailed(true); onError?.(); }}
         />
-        {skipWarn && (
-          <div className="absolute inset-x-0 bottom-14 flex justify-center pointer-events-none z-20 px-4">
-            <div className="bg-black/80 text-white text-xs sm:text-sm px-3 py-1.5 rounded-full backdrop-blur shadow-lg">
-              ⚠ You can’t skip ahead — please watch the video first.
-            </div>
-          </div>
-        )}
       </div>
       {!preview && (
         <div className={bare ? 'mt-3 px-4 sm:px-6' : 'mt-3'}>
@@ -170,9 +128,6 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
             />
           </div>
           {pct >= 95 && <div className="text-xs text-green-600 mt-1 font-medium">✓ Completed</div>}
-          {!freeSeek && pct < 95 && (
-            <div className="text-xs text-gray-400 mt-1">You can rewind anytime, but can’t skip ahead until you’ve watched it.</div>
-          )}
         </div>
       )}
     </div>

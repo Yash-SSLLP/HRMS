@@ -3,8 +3,6 @@ const Course = require('../models/Course');
 const { Enrollment, CourseReport, REPORT_CATEGORIES } = require('../models/Course');
 const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
 const { notify, notifyMany } = require('../services/notify');
-const videoTranscode = require('../services/videoTranscode');
-const renditionStore = require('../services/renditionStore');
 const User = require('../models/User');
 
 // Roles allowed to manage courses / assign / approve. LDManager ("HR L&D") is an
@@ -42,12 +40,8 @@ function recomputeProgress(enrollment, course) {
 
 // Normalize an incoming module list: coerce type, parse the Drive id from the
 // link, and reject a video module whose link has no resolvable file id.
-// `existing` (the course's current modules on edit) lets us carry over already
-// -built transcode renditions for a module whose Drive source hasn't changed, so
-// editing a course's title doesn't throw away and re-transcode every video.
-function normalizeModules(modules, existing = []) {
+function normalizeModules(modules) {
   if (!Array.isArray(modules)) return [];
-  const prevById = new Map((existing || []).map((m) => [String(m._id), m]));
   return modules.map((m, i) => {
     const type = m.type === 'text' ? 'text' : 'video';
     const out = { title: (m.title || '').trim(), type, content: m.content || '', durationSec: Number(m.durationSec) || 0 };
@@ -62,16 +56,6 @@ function normalizeModules(modules, existing = []) {
       }
       out.driveUrl = link;
       out.driveFileId = fileId;
-      // Preserve transcode state when the same module keeps the same source.
-      const prev = m._id && prevById.get(String(m._id));
-      if (prev && prev.driveFileId === fileId) {
-        out.renditions = prev.renditions;
-        out.transcodeStatus = prev.transcodeStatus;
-        out.transcodeError = prev.transcodeError;
-        out.sourceHeight = prev.sourceHeight;
-        out.transcodedFrom = prev.transcodedFrom;
-        if (!out.durationSec && prev.durationSec) out.durationSec = prev.durationSec;
-      }
     }
     if (!out.title) {
       const err = new Error(`Module ${i + 1}: title is required.`);
@@ -80,38 +64,6 @@ function normalizeModules(modules, existing = []) {
     }
     return out;
   });
-}
-
-// The quality options a module exposes to the player: each rendition stored in
-// shared Cloud Storage (durable, so we trust the DB — no per-request existence
-// check). Legacy 'local' renditions are hidden until rebuilt into GCS. The
-// original ("Source") is always available too. Never leaks storage paths.
-function moduleQualities(m) {
-  return (m.renditions || [])
-    .filter((r) => r.store === 'gcs')
-    .map((r) => ({ height: r.height, label: r.label }))
-    .sort((a, b) => a.height - b.height);
-}
-
-// Admin-editor view of a module: keeps the Drive link (admins edit it) and the
-// transcode progress, but replaces renditions with path-free summaries.
-function adminModule(m) {
-  return {
-    _id: m._id,
-    title: m.title,
-    type: m.type,
-    content: m.content,
-    durationSec: m.durationSec,
-    driveUrl: m.driveUrl,
-    driveFileId: m.driveFileId,
-    transcodeStatus: m.transcodeStatus || 'none',
-    transcodeError: m.transcodeError,
-    sourceHeight: m.sourceHeight || 0,
-    qualities: moduleQualities(m),
-    // 'ready' in the DB but the renditions aren't in shared storage yet (legacy
-    // local/random-path renditions from before GCS) → admin should rebuild.
-    renditionsMissing: (m.renditions || []).length > 0 && !videoTranscode.renditionsPresent(m),
-  };
 }
 
 // ===== Shared / Employee =====
@@ -149,9 +101,6 @@ function safeCourse(course) {
     type: m.type,
     content: m.content,
     durationSec: m.durationSec,
-    // Quality menu options (lower renditions); Source is always available too.
-    qualities: moduleQualities(m),
-    transcodeStatus: m.transcodeStatus || 'none',
   }));
   return { ...course, modules };
 }
@@ -220,8 +169,6 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
     throw new Error('You must be enrolled and approved to watch this video.');
   }
 
-  // Proxy the original Drive video (range-capable, seekable). Quality renditions
-  // are disabled — every viewer gets the source, which is the most reliable path.
   await streamDriveFile(module.driveFileId, req, res);
 });
 
@@ -415,7 +362,6 @@ const listAdmin = asyncHandler(async (req, res) => {
       ).length;
       return {
         ...c,
-        modules: (c.modules || []).map(adminModule),
         moduleCount: (c.modules || []).length,
         videoCount: (c.modules || []).filter((m) => m.type !== 'text').length,
         enrollmentCount: approved.length,
@@ -461,30 +407,9 @@ const updateCourse = asyncHandler(async (req, res) => {
   if (req.body.durationHours !== undefined) course.durationHours = Number(req.body.durationHours) || 0;
   if (req.body.deadlineDays !== undefined) course.deadlineDays = Number(req.body.deadlineDays) || 0;
   if (req.body.active !== undefined) course.active = !!req.body.active;
-  if (req.body.modules !== undefined) course.modules = normalizeModules(req.body.modules, course.modules);
+  if (req.body.modules !== undefined) course.modules = normalizeModules(req.body.modules);
   await course.save();
   res.json({ course });
-});
-
-// POST /api/courses/:id/modules/:mid/retranscode — (re)build a video module's
-// lower-quality renditions. Handy when a transcode failed or the admin wants to
-// regenerate them.
-const retranscodeModule = asyncHandler(async (req, res) => {
-  const course = await Course.findById(req.params.id);
-  if (!course) {
-    res.status(404);
-    throw new Error('Course not found');
-  }
-  const module = course.modules.id(req.params.mid);
-  if (!module || module.type !== 'video' || !module.driveFileId) {
-    res.status(404);
-    throw new Error('Video module not found');
-  }
-  // Force a rebuild even if transcodedFrom already matches.
-  module.transcodedFrom = undefined;
-  await course.save();
-  videoTranscode.enqueueModule(course._id, module._id).catch(() => {});
-  res.json({ ok: true, transcodeStatus: 'pending' });
 });
 
 // DELETE /api/courses/:id — also remove enrollments
@@ -493,12 +418,6 @@ const deleteCourse = asyncHandler(async (req, res) => {
   if (!course) {
     res.status(404);
     throw new Error('Course not found');
-  }
-  // Remove any transcoded rendition objects from shared storage (best-effort).
-  for (const m of course.modules || []) {
-    for (const r of m.renditions || []) {
-      if (r.storagePath && r.store === 'gcs') renditionStore.remove(r.storagePath).catch(() => {});
-    }
   }
   await Enrollment.deleteMany({ course: course._id });
   await CourseReport.deleteMany({ course: course._id });
@@ -626,7 +545,6 @@ module.exports = {
   createCourse,
   updateCourse,
   deleteCourse,
-  retranscodeModule,
   assignCourse,
   listPending,
   courseRoster,
