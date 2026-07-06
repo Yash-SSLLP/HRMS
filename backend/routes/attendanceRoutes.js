@@ -11,6 +11,7 @@ const {
   monthSummary,
   dailyStats,
   todayBoard,
+  presenceBoard,
   createRecord,
   updateRecord,
   deleteRecord,
@@ -47,6 +48,7 @@ router.get('/org/heatmap', orgHeatmap);
 router.get('/month-summary', monthSummary);
 router.get('/daily-stats', dailyStats);
 router.get('/today-board', todayBoard);
+router.get('/presence-board', presenceBoard);
 
 router.route('/settings')
   .get(getSettings)

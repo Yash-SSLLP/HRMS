@@ -591,6 +591,126 @@ const todayBoard = asyncHandler(async (req, res) => {
   });
 });
 
+// GET /api/attendance/presence-board?department=
+// A single "who's in / who's on leave / who's absent" snapshot for today, for
+// HR/Admin. Combines today's punches (with the check-in selfie, captured the
+// same way from web or mobile) with approved leave that covers today, then lists
+// everyone else (active, non-exited) as absent. One row per active employee.
+const presenceBoard = asyncHandler(async (req, res) => {
+  const today = startOfDay(new Date());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const startThreshold = new Date(today.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+
+  const { LeaveRequest } = require('../models/Leave');
+
+  const [profiles, records, leaves] = await Promise.all([
+    EmployeeProfile.find({})
+      .select('employeeCode designation department user dateOfExit')
+      .populate('user', 'firstName lastName photo isActive')
+      .lean(),
+    Attendance.find({ date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
+      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInWfh hoursWorked status')
+      .lean(),
+    LeaveRequest.find({ status: 'Approved', startDate: { $lt: tomorrow }, endDate: { $gte: today } })
+      .select('employee leaveType isHalfDay halfDaySession startDate endDate reason')
+      .lean(),
+  ]);
+
+  // Only active, not-yet-exited employees make up the headcount.
+  const activeProfiles = profiles.filter(
+    (p) => p.user && p.user.isActive !== false && (!p.dateOfExit || new Date(p.dateOfExit) > today)
+  );
+  const byId = new Map(activeProfiles.map((p) => [String(p._id), p]));
+
+  const personCore = (p) => ({
+    profileId: String(p._id),
+    userId: p.user ? String(p.user._id) : null,
+    name: `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode,
+    employeeCode: p.employeeCode,
+    designation: p.designation || '',
+    department: p.department || 'Unassigned',
+    hasAvatar: Boolean(p.user?.photo),
+  });
+
+  const presentIds = new Set();
+  const present = records
+    .filter((r) => byId.has(String(r.employee)))
+    .map((r) => {
+      const p = byId.get(String(r.employee));
+      presentIds.add(String(r.employee));
+      const lateMs = new Date(r.checkIn) - startThreshold;
+      return {
+        ...personCore(p),
+        recordId: String(r._id),
+        status: r.status,
+        checkIn: r.checkIn,
+        checkOut: r.checkOut || null,
+        hoursWorked: r.hoursWorked || 0,
+        checkInWfh: !!r.checkInWfh,
+        lateMinutes: lateMs > 0 ? Math.round(lateMs / 60000) : 0,
+        hasCheckInPhoto: !!r.checkInPhoto,
+        hasCheckOutPhoto: !!r.checkOutPhoto,
+      };
+    })
+    .sort((a, b) => new Date(a.checkIn) - new Date(b.checkIn));
+
+  // Someone can be on approved leave and still have punched in (e.g. half-day).
+  // The present list wins; leave-only people go in the leave list.
+  const leaveIds = new Set();
+  const onLeave = leaves
+    .filter((lv) => byId.has(String(lv.employee)) && !presentIds.has(String(lv.employee)))
+    .map((lv) => {
+      const p = byId.get(String(lv.employee));
+      leaveIds.add(String(lv.employee));
+      return {
+        ...personCore(p),
+        requestId: String(lv._id),
+        leaveType: lv.leaveType,
+        isHalfDay: !!lv.isHalfDay,
+        halfDaySession: lv.halfDaySession || null,
+        startDate: lv.startDate,
+        endDate: lv.endDate,
+        reason: lv.reason || '',
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Everyone left over: active, not present, not on leave.
+  const absent = activeProfiles
+    .filter((p) => !presentIds.has(String(p._id)) && !leaveIds.has(String(p._id)))
+    .map((p) => personCore(p))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  let present2 = present;
+  let leave2 = onLeave;
+  let absent2 = absent;
+  const dept = req.query.department;
+  if (dept && dept !== 'all') {
+    present2 = present.filter((r) => r.department === dept);
+    leave2 = onLeave.filter((r) => r.department === dept);
+    absent2 = absent.filter((r) => r.department === dept);
+  }
+
+  const departments = [...new Set(activeProfiles.map((p) => p.department).filter(Boolean))].sort();
+
+  res.json({
+    date: today,
+    counts: {
+      total: dept && dept !== 'all'
+        ? present2.length + leave2.length + absent2.length
+        : activeProfiles.length,
+      present: present2.length,
+      onLeave: leave2.length,
+      absent: absent2.length,
+    },
+    present: present2,
+    onLeave: leave2,
+    absent: absent2,
+    departments,
+  });
+});
+
 // POST /api/attendance  (manual admin entry)
 const createRecord = asyncHandler(async (req, res) => {
   const { employee, date, status, checkIn, checkOut, remarks } = req.body;
@@ -674,6 +794,7 @@ module.exports = {
   monthSummary,
   dailyStats,
   todayBoard,
+  presenceBoard,
   createRecord,
   updateRecord,
   deleteRecord,

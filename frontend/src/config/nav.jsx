@@ -41,6 +41,7 @@ export const adminNav = [
     { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage' },
   ] },
   { group: 'Attendance & Time', items: [
+    { to: '/admin/presence', label: "Who's In / On Leave", icon: FiUserCheck, perm: 'attendance.manage' },
     { to: '/admin/attendance', label: 'Attendance', icon: FiClock, perm: 'attendance.manage' },
     { to: '/admin/attendance-report', label: 'Attendance Report', icon: FiActivity, perm: 'attendance.manage' },
     { to: '/admin/attendance-month', label: 'Monthly View', icon: FiCalendar, perm: 'attendance.manage' },
