@@ -8,87 +8,38 @@ import { useAuthStore } from '../store/authStore';
 // backend, so completion reflects actual watching (not a checkbox).
 //
 // Anti-skip: we only credit watched time when playback advances roughly in real
-// time (<= ~2s jump). Scrubbing to the end therefore doesn't fake completion.
-//
-// Quality: the backend pre-transcodes lower-resolution renditions (module.qualities).
-// A YouTube-style gear lets the viewer pick a quality; "Auto" starts from the
-// network's estimated speed and steps down when playback keeps stalling (and back
-// up when it stays smooth). Switching quality preserves the exact playback
-// position and play/pause state, so watch-credit is unaffected.
-//
-// No-skip: employees cannot seek forward past the furthest point they have
-// actually watched (a high-watermark seeded from their saved progress and grown
-// during playback). Seeking backward into already-seen video is fine. Once the
-// module has been completed at least once, seeking is unrestricted. Admin preview
-// is always unrestricted.
+// time (<= ~2s jump), and employees can't seek forward past the furthest point
+// they've actually watched (until the module has been completed once).
 //
 // Props:
-//   courseId, module ({ _id, title, content, durationSec, qualities:[{height,label}], transcodeStatus })
+//   courseId, module ({ _id, title, content, durationSec })
 //   preview  — admin preview mode: play only, no progress reporting, free seeking
 //   bare     — full-bleed video for the course stage (hides the extra watched bar)
 //   moduleCompleted — this module was completed before → allow free seeking
 //   initialWatchedSec — furthest seconds already watched (seed for the no-skip watermark)
 //   onProgress(enrollment) — called with the updated enrollment after a save
 //   onError() — called when the video fails to load (so the page can prompt a report)
-
-// A quality height (number) or 'source' (the original Drive file).
-const labelFor = (eff) => (eff === 'source' ? 'Source' : `${eff}p`);
-
-// Estimate a starting quality from the Network Information API. Returns a height
-// number, or 'source' when the connection looks fast enough for the original.
-function pickAutoQuality(heightsDesc) {
-  if (!heightsDesc.length) return 'source';
-  const c = (typeof navigator !== 'undefined' && navigator.connection) || {};
-  const et = c.effectiveType;
-  const dl = c.downlink; // Mbps, approximate
-  const atMost = (cap) => heightsDesc.find((h) => h <= cap) ?? heightsDesc[heightsDesc.length - 1];
-  if (et === 'slow-2g' || et === '2g') return heightsDesc[heightsDesc.length - 1]; // lowest
-  if (et === '3g') return atMost(480);
-  if (typeof dl === 'number' && dl < 2) return atMost(480);
-  if (typeof dl === 'number' && dl < 5) return atMost(720);
-  return 'source'; // 4g / fast / unknown → original quality
-}
-
 export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, moduleCompleted = false, initialWatchedSec = 0, onProgress, onError }) {
   const token = useAuthStore((s) => s.token);
   const videoRef = useRef(null);
-  const [base, setBase] = useState('');
   const [src, setSrc] = useState('');
   const [watchedSec, setWatchedSec] = useState(0);
   const [duration, setDuration] = useState(module?.durationSec || 0);
   const [failed, setFailed] = useState(false);
-
-  // Quality state. `quality` is the user's choice: 'auto' | 'source' | <height>.
-  // `effective` is what's actually loaded ('source' | <height>) — in auto mode it
-  // is chosen for them and can change as the network changes.
-  const heightsDesc = (module?.qualities || []).map((q) => q.height).sort((a, b) => b - a);
-  const [quality, setQuality] = useState('auto');
-  const [effective, setEffective] = useState('source');
-  const [menuOpen, setMenuOpen] = useState(false);
 
   // Highest position credited so far (seconds), and the last sample time so we
   // can detect real-time advancement vs. a forward seek.
   const creditedRef = useRef(0);
   const lastTimeRef = useRef(0);
   const lastSentRef = useRef(0);
-  // Position/play-state to restore after a quality swap reloads the <video>.
-  const pendingSeekRef = useRef(null);
-  // ABR bookkeeping (auto mode): recent stall timestamps + last time we stepped.
-  const stallsRef = useRef([]);
-  const lastSwitchRef = useRef(0);
-  const smoothSinceRef = useRef(0);
-  const effectiveRef = useRef('source');
-  effectiveRef.current = effective;
 
-  // No-skip: furthest point the viewer may seek to (grows as they watch), and
-  // whether seeking is unrestricted (admin preview, or module already completed).
+  // No-skip: furthest point the viewer may seek to (grows as they watch).
   const maxAllowedRef = useRef(initialWatchedSec || 0);
   const [sessionComplete, setSessionComplete] = useState(false);
   const freeSeek = preview || moduleCompleted || sessionComplete;
   const freeSeekRef = useRef(freeSeek);
   freeSeekRef.current = freeSeek;
-  const SEEK_TOLERANCE = 1.0; // seconds of slack so tiny forward nudges aren't jarring
-  // Transient "can't skip ahead" toast shown when a forward seek is blocked.
+  const SEEK_TOLERANCE = 1.0;
   const [skipWarn, setSkipWarn] = useState(false);
   const warnTimerRef = useRef(null);
   const flashSkipWarn = () => {
@@ -98,88 +49,23 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
   };
   useEffect(() => () => { if (warnTimerRef.current) clearTimeout(warnTimerRef.current); }, []);
 
-  const buildSrc = (b, eff) => {
-    const q = eff === 'source' ? '' : `&quality=${eff}`;
-    return `${b}/courses/${courseId}/modules/${module._id}/video?access_token=${encodeURIComponent(token)}${q}`;
-  };
-
-  // Resolve the base URL once.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const b = await getBaseURL();
-      if (!cancelled) setBase(b);
+      const base = await getBaseURL();
+      if (cancelled) return;
+      setSrc(`${base}/courses/${courseId}/modules/${module._id}/video?access_token=${encodeURIComponent(token)}`);
     })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // (Re)initialise when the module, token or base changes: reset tracking, reset
-  // quality to Auto, and pick the starting rendition from the network.
-  useEffect(() => {
-    if (!base) return;
+    // Reset tracking when the module changes.
     creditedRef.current = 0;
     lastTimeRef.current = 0;
     lastSentRef.current = 0;
-    stallsRef.current = [];
-    pendingSeekRef.current = null;
     maxAllowedRef.current = initialWatchedSec || 0;
     setSessionComplete(false);
     setWatchedSec(0);
     setFailed(false);
-    setQuality('auto');
-    const initial = pickAutoQuality(heightsDesc);
-    setEffective(initial);
-    setSrc(buildSrc(base, initial));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId, module._id, token, base]);
-
-  // Switch to a new effective quality while preserving position + play state.
-  const applyEffective = (eff) => {
-    if (!base || eff === effectiveRef.current) return;
-    const v = videoRef.current;
-    if (v) pendingSeekRef.current = { time: v.currentTime, playing: !v.paused };
-    lastSwitchRef.current = Date.now();
-    stallsRef.current = [];
-    setEffective(eff);
-    setSrc(buildSrc(base, eff));
-  };
-
-  // User picks from the gear menu.
-  const chooseQuality = (choice) => {
-    setMenuOpen(false);
-    setQuality(choice);
-    if (choice === 'auto') applyEffective(pickAutoQuality(heightsDesc));
-    else applyEffective(choice);
-  };
-
-  // Auto ABR: after repeated stalls, drop one rung; the ladder is
-  // ['source', ...heightsDesc] (index up = lower quality).
-  const ladder = ['source', ...heightsDesc];
-  const stepDownAuto = () => {
-    if (quality !== 'auto') return;
-    const idx = ladder.indexOf(effectiveRef.current);
-    if (idx < 0 || idx >= ladder.length - 1) return; // already lowest
-    applyEffective(ladder[idx + 1]);
-  };
-  const stepUpAuto = () => {
-    if (quality !== 'auto') return;
-    const idx = ladder.indexOf(effectiveRef.current);
-    if (idx <= 0) return; // already highest (source)
-    const c = (typeof navigator !== 'undefined' && navigator.connection) || {};
-    if (typeof c.downlink === 'number' && c.downlink < 3) return; // still slow, don't
-    applyEffective(ladder[idx - 1]);
-  };
-
-  const onWaiting = () => {
-    if (quality !== 'auto') return;
-    const now = Date.now();
-    // Ignore the buffering that immediately follows a switch.
-    if (now - lastSwitchRef.current < 1500) return;
-    stallsRef.current = stallsRef.current.filter((t) => now - t < 20000);
-    stallsRef.current.push(now);
-    smoothSinceRef.current = 0;
-    if (stallsRef.current.length >= 2) stepDownAuto();
-  };
+  }, [courseId, module._id, token]);
 
   const report = async (force = false) => {
     if (preview) return;
@@ -204,34 +90,18 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
     const delta = t - lastTimeRef.current;
     // Credit only forward, real-time progress (ignore pauses and forward seeks).
     if (delta > 0 && delta <= 2) {
-      creditedRef.current = Math.min(
-        (duration || v.duration || Infinity),
-        creditedRef.current + delta
-      );
+      creditedRef.current = Math.min((duration || v.duration || Infinity), creditedRef.current + delta);
       setWatchedSec(creditedRef.current);
-      // Grow the no-skip watermark as they legitimately watch.
-      if (t > maxAllowedRef.current) maxAllowedRef.current = t;
+      if (t > maxAllowedRef.current) maxAllowedRef.current = t; // grow the no-skip watermark
     }
     lastTimeRef.current = t;
-
-    // Once ~95% is genuinely watched, the module counts as completed → free seek.
     const dur = duration || v.duration || 0;
     if (!sessionComplete && dur > 0 && creditedRef.current >= 0.95 * dur) setSessionComplete(true);
-
-    // Auto step-up: if playback has been smooth for a while, try a higher rung.
-    if (quality === 'auto' && !v.paused) {
-      const now = Date.now();
-      if (!smoothSinceRef.current) smoothSinceRef.current = now;
-      else if (now - smoothSinceRef.current > 40000) {
-        smoothSinceRef.current = now;
-        stepUpAuto();
-      }
-    }
     report(false);
   };
 
-  // No-skip enforcement: if the viewer seeks forward past what they've watched,
-  // snap them back to the watermark. Backward seeks (into seen video) are allowed.
+  // No-skip enforcement: snap a forward seek back to the watermark. Backward
+  // seeks (into already-seen video) are allowed.
   const onSeeking = () => {
     const v = videoRef.current;
     if (!v || freeSeekRef.current) return;
@@ -246,23 +116,9 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
   const onLoadedMetadata = () => {
     const v = videoRef.current;
     if (v && Number.isFinite(v.duration) && v.duration > 0) setDuration(v.duration);
-    // Restore position + play state after a quality swap.
-    const pend = pendingSeekRef.current;
-    if (pend && v) {
-      try { v.currentTime = pend.time; } catch { /* ignore */ }
-      lastTimeRef.current = pend.time; // don't credit the restore seek
-      if (pend.playing) v.play().catch(() => {});
-      pendingSeekRef.current = null;
-    }
   };
 
   const pct = duration > 0 ? Math.min(100, Math.round((watchedSec / duration) * 100)) : 0;
-
-  // The quality control is always shown. Before any lower renditions exist, the
-  // menu still offers Auto/Source (both the original) and notes that HD versions
-  // are being prepared.
-  const transcoding = module?.transcodeStatus === 'pending' || module?.transcodeStatus === 'processing';
-  const autoLabel = quality === 'auto' ? `Auto · ${labelFor(effective)}` : 'Auto';
 
   return (
     <div>
@@ -289,44 +145,10 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={onTimeUpdate}
           onSeeking={onSeeking}
-          onWaiting={onWaiting}
-          onStalled={onWaiting}
           onPause={() => report(true)}
           onEnded={() => report(true)}
           onError={() => { setFailed(true); onError?.(); }}
         />
-
-        {(
-          <div className="absolute top-2 right-2 z-10">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((o) => !o)}
-              className="flex items-center gap-1 rounded-md bg-black/60 hover:bg-black/75 text-white text-xs font-medium px-2 py-1 backdrop-blur"
-              title="Video quality"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span className="hidden sm:inline">{quality === 'auto' ? autoLabel : labelFor(quality)}</span>
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 mt-1 w-44 rounded-lg bg-black/85 backdrop-blur text-white text-sm py-1 shadow-lg">
-                <QualityItem active={quality === 'auto'} onClick={() => chooseQuality('auto')} label={autoLabel} />
-                {heightsDesc.map((h) => (
-                  <QualityItem key={h} active={quality === h} onClick={() => chooseQuality(h)} label={`${h}p`} />
-                ))}
-                <QualityItem active={quality === 'source'} onClick={() => chooseQuality('source')} label="Source (original)" />
-                {heightsDesc.length === 0 && (
-                  <div className="px-3 py-1.5 text-xs text-white/60 border-t border-white/10 mt-1">
-                    {transcoding ? '⏳ HD versions processing…' : 'Only original available'}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {skipWarn && (
           <div className="absolute inset-x-0 bottom-14 flex justify-center pointer-events-none z-20 px-4">
             <div className="bg-black/80 text-white text-xs sm:text-sm px-3 py-1.5 rounded-full backdrop-blur shadow-lg">
@@ -354,18 +176,5 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
         </div>
       )}
     </div>
-  );
-}
-
-function QualityItem({ active, onClick, label }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-white/10 ${active ? 'font-semibold' : ''}`}
-    >
-      <span className="w-3 inline-block">{active ? '✓' : ''}</span>
-      <span>{label}</span>
-    </button>
   );
 }

@@ -220,28 +220,8 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
     throw new Error('You must be enrolled and approved to watch this video.');
   }
 
-  // Self-heal: if this module's renditions are missing on this host (built on
-  // another host, or wiped by a redeploy) or the source changed, rebuild them in
-  // the background. Dedup in the queue prevents spamming. Playback below still
-  // works meanwhile via the original. A previously 'failed' module is NOT
-  // auto-retried here (that would re-run a heavy transcode on every play) — an
-  // admin re-runs it via the Rebuild button.
-  if (module.transcodeStatus !== 'failed' && videoTranscode.needsTranscode(module)) {
-    videoTranscode.enqueueModule(course._id, module._id).catch(() => {});
-  }
-
-  // A specific quality was requested: proxy the matching pre-transcoded rendition
-  // from shared Cloud Storage (range-capable for seeking). Falls through to the
-  // Drive original if the height isn't a real GCS rendition.
-  const q = parseInt(req.query.quality, 10);
-  if (Number.isFinite(q)) {
-    const rendition = (module.renditions || []).find((r) => r.height === q && r.store === 'gcs');
-    if (rendition && renditionStore.streamRange(rendition.storagePath, rendition.sizeBytes, req, res)) {
-      return;
-    }
-  }
-
-  // Default / "source" / "auto": the original Drive file.
+  // Proxy the original Drive video (range-capable, seekable). Quality renditions
+  // are disabled — every viewer gets the source, which is the most reliable path.
   await streamDriveFile(module.driveFileId, req, res);
 });
 
@@ -466,8 +446,6 @@ const createCourse = asyncHandler(async (req, res) => {
     modules,
     createdBy: req.user._id,
   });
-  // Kick off background transcoding for every video module (non-blocking).
-  videoTranscode.enqueueCourse(course).catch(() => {});
   res.status(201).json({ course });
 });
 
@@ -485,8 +463,6 @@ const updateCourse = asyncHandler(async (req, res) => {
   if (req.body.active !== undefined) course.active = !!req.body.active;
   if (req.body.modules !== undefined) course.modules = normalizeModules(req.body.modules, course.modules);
   await course.save();
-  // (Re)transcode any video module whose Drive source is new or changed.
-  videoTranscode.enqueueCourse(course).catch(() => {});
   res.json({ course });
 });
 

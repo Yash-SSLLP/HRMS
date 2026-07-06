@@ -298,9 +298,8 @@ export default function AdminCourses() {
                                   </button>
                                 )}
                               </div>
-                              {m._id && <ModuleQualityStatus m={m} onRetry={() => retranscode(idx)} />}
                               {canPreview && previewModIdx === idx && (
-                                <CourseVideoPlayer courseId={editingId} module={{ _id: m._id, title: m.title, qualities: m.qualities, transcodeStatus: m.transcodeStatus }} preview />
+                                <CourseVideoPlayer courseId={editingId} module={{ _id: m._id, title: m.title }} preview />
                               )}
                               <textarea rows={2} placeholder="Notes shown under the video (optional)" value={m.content} onChange={(e) => updateModule(idx, 'content', e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm" />
                             </>

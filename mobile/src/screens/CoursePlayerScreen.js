@@ -33,18 +33,7 @@ export default function CoursePlayerScreen() {
 
   const [reportOpen, setReportOpen] = useState(false);
 
-  // Video quality. `quality` is the viewer's choice ('auto' | 'source' | height);
-  // `effective` is what's actually loaded. Auto starts at the best transcoded
-  // rendition (not the full-size original) and steps down when playback keeps
-  // buffering — expo-av's isBuffering is the signal (no network permission needed).
   const videoRef = useRef(null);
-  const [quality, setQuality] = useState('auto');
-  const [effective, setEffective] = useState('source');
-  const [qualityOpen, setQualityOpen] = useState(false);
-  const pendingSeek = useRef(null); // { time, playing } to restore after a swap
-  const stalls = useRef([]);
-  const wasBuffering = useRef(false);
-  const lastSwitch = useRef(0);
   // No-skip: furthest point the viewer may seek to (grows as they watch).
   const maxAllowed = useRef(0);
   const sessionComplete = useRef(false);
@@ -94,47 +83,17 @@ export default function CoursePlayerScreen() {
     navigation.setOptions({ title: course?.title || 'Course' });
   }, [navigation, course?.title]);
 
-  // Reset watch tracking + quality when the lesson changes.
+  // Reset watch tracking when the lesson changes.
   useEffect(() => {
     credited.current = 0; lastPos.current = 0; lastSent.current = 0; durationRef.current = active?.durationSec || 0;
-    stalls.current = []; wasBuffering.current = false; pendingSeek.current = null;
     const mp = (enrollment?.moduleProgress || []).find((m) => String(m.module) === String(active?._id));
     maxAllowed.current = mp?.watchedSec || 0;
     sessionComplete.current = false;
     setWatchedPct(0); setVideoFailed(false);
-    const hd = ((active?.qualities) || []).map((q) => q.height).sort((a, b) => b - a);
-    setQuality('auto');
-    setEffective(hd.length ? hd[0] : 'source'); // Auto → best rendition, not the original
   }, [activeId]);
 
   // Clear the skip-warning timer on unmount.
   useEffect(() => () => { if (warnTimer.current) clearTimeout(warnTimer.current); }, []);
-
-  // Quality helpers (ladder = original 'source' + each rendition, high → low).
-  const heightsDesc = ((active?.qualities) || []).map((q) => q.height).sort((a, b) => b - a);
-  const ladder = ['source', ...heightsDesc];
-  const applyEffective = (eff) => {
-    if (eff === effective) return;
-    pendingSeek.current = { time: lastPos.current, playing: true };
-    lastSwitch.current = Date.now();
-    stalls.current = [];
-    setEffective(eff);
-  };
-  const stepDownAuto = () => {
-    const idx = ladder.indexOf(effective);
-    if (idx >= 0 && idx < ladder.length - 1) applyEffective(ladder[idx + 1]);
-  };
-  const chooseQuality = (choice) => {
-    setQualityOpen(false);
-    setQuality(choice);
-    if (choice === 'auto') applyEffective(heightsDesc.length ? heightsDesc[0] : 'source');
-    else applyEffective(choice);
-  };
-  const qualityValue = quality === 'auto' ? 'Auto' : quality === 'source' ? 'Source' : `${quality}p`;
-  const qualityLabel = quality === 'auto'
-    ? `Auto (${effective === 'source' ? 'Source' : `${effective}p`})`
-    : qualityValue;
-  const transcoding = active?.transcodeStatus === 'pending' || active?.transcodeStatus === 'processing';
 
   const applyUpdated = (updated) => {
     if (updated) setEnrollment((prev) => (prev ? { ...prev, ...updated, course: prev.course } : prev));
@@ -159,35 +118,13 @@ export default function CoursePlayerScreen() {
     if (!st.isLoaded) { if (st.error) setVideoFailed(true); return; }
     if (st.durationMillis) durationRef.current = st.durationMillis / 1000;
 
-    // Restore playback position + state after a quality swap reloaded the source.
-    if (pendingSeek.current) {
-      const p = pendingSeek.current;
-      pendingSeek.current = null;
-      (async () => {
-        try {
-          await videoRef.current?.setPositionAsync(Math.floor(p.time * 1000));
-          if (p.playing) await videoRef.current?.playAsync();
-        } catch { /* ignore */ }
-      })();
-      lastPos.current = p.time; // don't credit the restore seek
-    }
-
-    // Auto ABR: two buffering events within 20s → drop one rung.
-    if (quality === 'auto' && st.isBuffering && !wasBuffering.current && Date.now() - lastSwitch.current > 1500) {
-      const now = Date.now();
-      stalls.current = stalls.current.filter((t) => now - t < 20000);
-      stalls.current.push(now);
-      if (stalls.current.length >= 2) stepDownAuto();
-    }
-    wasBuffering.current = !!st.isBuffering;
-
     const pos = st.positionMillis / 1000;
     const delta = pos - lastPos.current;
 
     // No-skip: a forward jump beyond the furthest watched point snaps back.
     // (read completion live — sessionComplete is a ref that mutates mid-playback)
     const canSeekFreely = moduleCompleted || sessionComplete.current;
-    if (!canSeekFreely && !pendingSeek.current && delta > 2 && pos > maxAllowed.current + 1) {
+    if (!canSeekFreely && delta > 2 && pos > maxAllowed.current + 1) {
       const target = Math.max(0, maxAllowed.current);
       videoRef.current?.setPositionAsync(Math.floor(target * 1000)).catch(() => {});
       lastPos.current = target;
@@ -273,7 +210,7 @@ export default function CoursePlayerScreen() {
                   key={active._id}
                   ref={videoRef}
                   style={styles.video}
-                  source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}${effective === 'source' ? '' : `&quality=${effective}`}` }}
+                  source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}` }}
                   useNativeControls
                   resizeMode={ResizeMode.CONTAIN}
                   onPlaybackStatusUpdate={onStatus}
@@ -294,11 +231,6 @@ export default function CoursePlayerScreen() {
                 </Text>
               </View>
               <ProgressBar value={activeDone ? 100 : watchedPct} tint={activeDone || watchedPct >= 95 ? colors.success : colors.primary} />
-              <TouchableOpacity style={styles.qualityRow} onPress={() => setQualityOpen(true)}>
-                <Ionicons name="settings-outline" size={15} color={colors.textMuted} />
-                <Text style={styles.qualityText}>Quality: {qualityLabel}</Text>
-                <Ionicons name="chevron-down" size={14} color={colors.textFaint} style={{ marginLeft: 4 }} />
-              </TouchableOpacity>
               <Text style={font.small}>Lesson {activeIndex + 1} of {modules.length}</Text>
               <Text style={[font.h3, { marginTop: 2 }]}>{active.title}</Text>
               {active.content ? <Text style={[font.label, { marginTop: 6 }]}>{active.content}</Text> : null}
@@ -356,22 +288,6 @@ export default function CoursePlayerScreen() {
       </ScrollView>
 
       <ReportModal visible={reportOpen} onClose={() => setReportOpen(false)} courseId={courseId} module={active} />
-
-      <ModalSheet visible={qualityOpen} onClose={() => setQualityOpen(false)} title="Video quality">
-        <Text style={[font.label, { marginBottom: spacing(3) }]}>
-          Auto lowers the quality automatically when your connection is slow.
-        </Text>
-        <ChipSelect
-          options={['Auto', ...heightsDesc.map((h) => `${h}p`), 'Source']}
-          value={qualityValue}
-          onChange={(str) => chooseQuality(str === 'Auto' ? 'auto' : str === 'Source' ? 'source' : parseInt(str, 10))}
-        />
-        {heightsDesc.length === 0 && (
-          <Text style={[font.small, { marginTop: spacing(3) }]}>
-            {transcoding ? '⏳ HD versions are being prepared…' : 'Only the original quality is available for this video.'}
-          </Text>
-        )}
-      </ModalSheet>
     </Screen>
   );
 }
