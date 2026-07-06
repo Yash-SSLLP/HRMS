@@ -45,6 +45,16 @@ export default function CoursePlayerScreen() {
   const stalls = useRef([]);
   const wasBuffering = useRef(false);
   const lastSwitch = useRef(0);
+  // No-skip: furthest point the viewer may seek to (grows as they watch).
+  const maxAllowed = useRef(0);
+  const sessionComplete = useRef(false);
+  const [skipWarn, setSkipWarn] = useState(false);
+  const warnTimer = useRef(null);
+  const flashSkipWarn = () => {
+    setSkipWarn(true);
+    if (warnTimer.current) clearTimeout(warnTimer.current);
+    warnTimer.current = setTimeout(() => setSkipWarn(false), 2500);
+  };
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +85,10 @@ export default function CoursePlayerScreen() {
   const activeIndex = modules.findIndex((m) => String(m._id) === String(activeId));
   const completedSet = new Set((enrollment?.moduleProgress || []).filter((m) => m.completed).map((m) => String(m.module)));
   const overall = enrollment?.progress || 0;
+  // No-skip: this lesson's saved progress + whether it's already been completed.
+  const activeProgress = (enrollment?.moduleProgress || []).find((m) => String(m.module) === String(activeId)) || null;
+  const moduleCompleted = completedSet.has(String(activeId));
+  const freeSeek = moduleCompleted || sessionComplete.current;
 
   useEffect(() => {
     navigation.setOptions({ title: course?.title || 'Course' });
@@ -84,11 +98,17 @@ export default function CoursePlayerScreen() {
   useEffect(() => {
     credited.current = 0; lastPos.current = 0; lastSent.current = 0; durationRef.current = active?.durationSec || 0;
     stalls.current = []; wasBuffering.current = false; pendingSeek.current = null;
+    const mp = (enrollment?.moduleProgress || []).find((m) => String(m.module) === String(active?._id));
+    maxAllowed.current = mp?.watchedSec || 0;
+    sessionComplete.current = false;
     setWatchedPct(0); setVideoFailed(false);
     const hd = ((active?.qualities) || []).map((q) => q.height).sort((a, b) => b - a);
     setQuality('auto');
     setEffective(hd.length ? hd[0] : 'source'); // Auto → best rendition, not the original
   }, [activeId]);
+
+  // Clear the skip-warning timer on unmount.
+  useEffect(() => () => { if (warnTimer.current) clearTimeout(warnTimer.current); }, []);
 
   // Quality helpers (ladder = original 'source' + each rendition, high → low).
   const heightsDesc = ((active?.qualities) || []).map((q) => q.height).sort((a, b) => b - a);
@@ -114,6 +134,7 @@ export default function CoursePlayerScreen() {
   const qualityLabel = quality === 'auto'
     ? `Auto (${effective === 'source' ? 'Source' : `${effective}p`})`
     : qualityValue;
+  const transcoding = active?.transcodeStatus === 'pending' || active?.transcodeStatus === 'processing';
 
   const applyUpdated = (updated) => {
     if (updated) setEnrollment((prev) => (prev ? { ...prev, ...updated, course: prev.course } : prev));
@@ -162,13 +183,27 @@ export default function CoursePlayerScreen() {
 
     const pos = st.positionMillis / 1000;
     const delta = pos - lastPos.current;
+
+    // No-skip: a forward jump beyond the furthest watched point snaps back.
+    // (read completion live — sessionComplete is a ref that mutates mid-playback)
+    const canSeekFreely = moduleCompleted || sessionComplete.current;
+    if (!canSeekFreely && !pendingSeek.current && delta > 2 && pos > maxAllowed.current + 1) {
+      const target = Math.max(0, maxAllowed.current);
+      videoRef.current?.setPositionAsync(Math.floor(target * 1000)).catch(() => {});
+      lastPos.current = target;
+      flashSkipWarn();
+      return;
+    }
+
     if (st.isPlaying && delta > 0 && delta <= 2) {
       credited.current = Math.min(durationRef.current || Infinity, credited.current + delta);
       const d = durationRef.current;
       setWatchedPct(d > 0 ? Math.min(100, Math.round((credited.current / d) * 100)) : 0);
+      if (pos > maxAllowed.current) maxAllowed.current = pos; // grow the watermark
+      if (d > 0 && credited.current >= 0.95 * d) sessionComplete.current = true;
     }
     lastPos.current = pos;
-    if (st.didJustFinish) { credited.current = durationRef.current; sendProgress(true); }
+    if (st.didJustFinish) { credited.current = durationRef.current; sessionComplete.current = true; sendProgress(true); }
     else sendProgress(false);
   };
 
@@ -233,16 +268,23 @@ export default function CoursePlayerScreen() {
                 </Text>
               </View>
             ) : (
-              <Video
-                key={active._id}
-                ref={videoRef}
-                style={styles.video}
-                source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}${effective === 'source' ? '' : `&quality=${effective}`}` }}
-                useNativeControls
-                resizeMode={ResizeMode.CONTAIN}
-                onPlaybackStatusUpdate={onStatus}
-                onError={() => setVideoFailed(true)}
-              />
+              <View style={{ position: 'relative' }}>
+                <Video
+                  key={active._id}
+                  ref={videoRef}
+                  style={styles.video}
+                  source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}${effective === 'source' ? '' : `&quality=${effective}`}` }}
+                  useNativeControls
+                  resizeMode={ResizeMode.CONTAIN}
+                  onPlaybackStatusUpdate={onStatus}
+                  onError={() => setVideoFailed(true)}
+                />
+                {skipWarn && (
+                  <View style={styles.skipWarn} pointerEvents="none">
+                    <Text style={styles.skipWarnText}>⚠ You can't skip ahead — please watch the video first.</Text>
+                  </View>
+                )}
+              </View>
             )}
             <View style={{ paddingHorizontal: spacing(4), paddingTop: spacing(3) }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -252,13 +294,11 @@ export default function CoursePlayerScreen() {
                 </Text>
               </View>
               <ProgressBar value={activeDone ? 100 : watchedPct} tint={activeDone || watchedPct >= 95 ? colors.success : colors.primary} />
-              {heightsDesc.length > 0 && (
-                <TouchableOpacity style={styles.qualityRow} onPress={() => setQualityOpen(true)}>
-                  <Ionicons name="settings-outline" size={15} color={colors.textMuted} />
-                  <Text style={styles.qualityText}>Quality: {qualityLabel}</Text>
-                  <Ionicons name="chevron-down" size={14} color={colors.textFaint} style={{ marginLeft: 4 }} />
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity style={styles.qualityRow} onPress={() => setQualityOpen(true)}>
+                <Ionicons name="settings-outline" size={15} color={colors.textMuted} />
+                <Text style={styles.qualityText}>Quality: {qualityLabel}</Text>
+                <Ionicons name="chevron-down" size={14} color={colors.textFaint} style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
               <Text style={font.small}>Lesson {activeIndex + 1} of {modules.length}</Text>
               <Text style={[font.h3, { marginTop: 2 }]}>{active.title}</Text>
               {active.content ? <Text style={[font.label, { marginTop: 6 }]}>{active.content}</Text> : null}
@@ -326,6 +366,11 @@ export default function CoursePlayerScreen() {
           value={qualityValue}
           onChange={(str) => chooseQuality(str === 'Auto' ? 'auto' : str === 'Source' ? 'source' : parseInt(str, 10))}
         />
+        {heightsDesc.length === 0 && (
+          <Text style={[font.small, { marginTop: spacing(3) }]}>
+            {transcoding ? '⏳ HD versions are being prepared…' : 'Only the original quality is available for this video.'}
+          </Text>
+        )}
       </ModalSheet>
     </Screen>
   );
@@ -408,6 +453,8 @@ const styles = StyleSheet.create({
   headerBar: { flexDirection: 'row', alignItems: 'center', padding: spacing(4), backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   videoFail: { width: '100%', aspectRatio: 16 / 9, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center', padding: spacing(4) },
+  skipWarn: { position: 'absolute', left: 0, right: 0, bottom: 12, alignItems: 'center', paddingHorizontal: spacing(4) },
+  skipWarnText: { backgroundColor: 'rgba(0,0,0,0.8)', color: '#fff', fontSize: 12, fontWeight: '600', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, overflow: 'hidden', textAlign: 'center' },
   qualityRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing(2), marginBottom: spacing(1), alignSelf: 'flex-start' },
   qualityText: { color: colors.textMuted, fontWeight: '600', fontSize: 12, marginLeft: 4 },
   reportRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: spacing(4), marginTop: spacing(3), paddingVertical: spacing(3), paddingHorizontal: spacing(3), backgroundColor: colors.warningSoft, borderRadius: radius.md },

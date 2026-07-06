@@ -16,10 +16,18 @@ import { useAuthStore } from '../store/authStore';
 // up when it stays smooth). Switching quality preserves the exact playback
 // position and play/pause state, so watch-credit is unaffected.
 //
+// No-skip: employees cannot seek forward past the furthest point they have
+// actually watched (a high-watermark seeded from their saved progress and grown
+// during playback). Seeking backward into already-seen video is fine. Once the
+// module has been completed at least once, seeking is unrestricted. Admin preview
+// is always unrestricted.
+//
 // Props:
 //   courseId, module ({ _id, title, content, durationSec, qualities:[{height,label}], transcodeStatus })
-//   preview  — admin preview mode: play only, no progress reporting
+//   preview  — admin preview mode: play only, no progress reporting, free seeking
 //   bare     — full-bleed video for the course stage (hides the extra watched bar)
+//   moduleCompleted — this module was completed before → allow free seeking
+//   initialWatchedSec — furthest seconds already watched (seed for the no-skip watermark)
 //   onProgress(enrollment) — called with the updated enrollment after a save
 //   onError() — called when the video fails to load (so the page can prompt a report)
 
@@ -41,7 +49,7 @@ function pickAutoQuality(heightsDesc) {
   return 'source'; // 4g / fast / unknown → original quality
 }
 
-export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, onProgress, onError }) {
+export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, moduleCompleted = false, initialWatchedSec = 0, onProgress, onError }) {
   const token = useAuthStore((s) => s.token);
   const videoRef = useRef(null);
   const [base, setBase] = useState('');
@@ -72,6 +80,24 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
   const effectiveRef = useRef('source');
   effectiveRef.current = effective;
 
+  // No-skip: furthest point the viewer may seek to (grows as they watch), and
+  // whether seeking is unrestricted (admin preview, or module already completed).
+  const maxAllowedRef = useRef(initialWatchedSec || 0);
+  const [sessionComplete, setSessionComplete] = useState(false);
+  const freeSeek = preview || moduleCompleted || sessionComplete;
+  const freeSeekRef = useRef(freeSeek);
+  freeSeekRef.current = freeSeek;
+  const SEEK_TOLERANCE = 1.0; // seconds of slack so tiny forward nudges aren't jarring
+  // Transient "can't skip ahead" toast shown when a forward seek is blocked.
+  const [skipWarn, setSkipWarn] = useState(false);
+  const warnTimerRef = useRef(null);
+  const flashSkipWarn = () => {
+    setSkipWarn(true);
+    if (warnTimerRef.current) clearTimeout(warnTimerRef.current);
+    warnTimerRef.current = setTimeout(() => setSkipWarn(false), 2500);
+  };
+  useEffect(() => () => { if (warnTimerRef.current) clearTimeout(warnTimerRef.current); }, []);
+
   const buildSrc = (b, eff) => {
     const q = eff === 'source' ? '' : `&quality=${eff}`;
     return `${b}/courses/${courseId}/modules/${module._id}/video?access_token=${encodeURIComponent(token)}${q}`;
@@ -96,6 +122,8 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
     lastSentRef.current = 0;
     stallsRef.current = [];
     pendingSeekRef.current = null;
+    maxAllowedRef.current = initialWatchedSec || 0;
+    setSessionComplete(false);
     setWatchedSec(0);
     setFailed(false);
     setQuality('auto');
@@ -181,8 +209,14 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
         creditedRef.current + delta
       );
       setWatchedSec(creditedRef.current);
+      // Grow the no-skip watermark as they legitimately watch.
+      if (t > maxAllowedRef.current) maxAllowedRef.current = t;
     }
     lastTimeRef.current = t;
+
+    // Once ~95% is genuinely watched, the module counts as completed → free seek.
+    const dur = duration || v.duration || 0;
+    if (!sessionComplete && dur > 0 && creditedRef.current >= 0.95 * dur) setSessionComplete(true);
 
     // Auto step-up: if playback has been smooth for a while, try a higher rung.
     if (quality === 'auto' && !v.paused) {
@@ -194,6 +228,19 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
       }
     }
     report(false);
+  };
+
+  // No-skip enforcement: if the viewer seeks forward past what they've watched,
+  // snap them back to the watermark. Backward seeks (into seen video) are allowed.
+  const onSeeking = () => {
+    const v = videoRef.current;
+    if (!v || freeSeekRef.current) return;
+    if (v.currentTime > maxAllowedRef.current + SEEK_TOLERANCE) {
+      const target = Math.max(0, maxAllowedRef.current);
+      try { v.currentTime = target; } catch { /* ignore */ }
+      lastTimeRef.current = target;
+      flashSkipWarn();
+    }
   };
 
   const onLoadedMetadata = () => {
@@ -211,8 +258,10 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
 
   const pct = duration > 0 ? Math.min(100, Math.round((watchedSec / duration) * 100)) : 0;
 
-  // Menu options: Auto, each rendition (high→low), then Source (original).
-  const showGear = heightsDesc.length > 0;
+  // The quality control is always shown. Before any lower renditions exist, the
+  // menu still offers Auto/Source (both the original) and notes that HD versions
+  // are being prepared.
+  const transcoding = module?.transcodeStatus === 'pending' || module?.transcodeStatus === 'processing';
   const autoLabel = quality === 'auto' ? `Auto · ${labelFor(effective)}` : 'Auto';
 
   return (
@@ -239,6 +288,7 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           className={`w-full bg-black ${bare ? 'max-h-[65vh] aspect-video' : 'max-h-[70vh]'}`}
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={onTimeUpdate}
+          onSeeking={onSeeking}
           onWaiting={onWaiting}
           onStalled={onWaiting}
           onPause={() => report(true)}
@@ -246,7 +296,7 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           onError={() => { setFailed(true); onError?.(); }}
         />
 
-        {showGear && (
+        {(
           <div className="absolute top-2 right-2 z-10">
             <button
               type="button"
@@ -261,14 +311,27 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
               <span className="hidden sm:inline">{quality === 'auto' ? autoLabel : labelFor(quality)}</span>
             </button>
             {menuOpen && (
-              <div className="absolute right-0 mt-1 w-40 rounded-lg bg-black/85 backdrop-blur text-white text-sm py-1 shadow-lg">
+              <div className="absolute right-0 mt-1 w-44 rounded-lg bg-black/85 backdrop-blur text-white text-sm py-1 shadow-lg">
                 <QualityItem active={quality === 'auto'} onClick={() => chooseQuality('auto')} label={autoLabel} />
                 {heightsDesc.map((h) => (
                   <QualityItem key={h} active={quality === h} onClick={() => chooseQuality(h)} label={`${h}p`} />
                 ))}
                 <QualityItem active={quality === 'source'} onClick={() => chooseQuality('source')} label="Source (original)" />
+                {heightsDesc.length === 0 && (
+                  <div className="px-3 py-1.5 text-xs text-white/60 border-t border-white/10 mt-1">
+                    {transcoding ? '⏳ HD versions processing…' : 'Only original available'}
+                  </div>
+                )}
               </div>
             )}
+          </div>
+        )}
+
+        {skipWarn && (
+          <div className="absolute inset-x-0 bottom-14 flex justify-center pointer-events-none z-20 px-4">
+            <div className="bg-black/80 text-white text-xs sm:text-sm px-3 py-1.5 rounded-full backdrop-blur shadow-lg">
+              ⚠ You can’t skip ahead — please watch the video first.
+            </div>
           </div>
         )}
       </div>
@@ -285,6 +348,9 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
             />
           </div>
           {pct >= 95 && <div className="text-xs text-green-600 mt-1 font-medium">✓ Completed</div>}
+          {!freeSeek && pct < 95 && (
+            <div className="text-xs text-gray-400 mt-1">You can rewind anytime, but can’t skip ahead until you’ve watched it.</div>
+          )}
         </div>
       )}
     </div>
