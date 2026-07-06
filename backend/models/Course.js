@@ -14,7 +14,13 @@ const renditionSchema = new mongoose.Schema(
   {
     height: { type: Number, required: true }, // 360, 480, 720 …
     label: { type: String, required: true }, // "360p"
+    // Object key / path in the rendition store (Cloud Storage). Never sent to
+    // the client — the player references a rendition by height via the stream API.
     storagePath: { type: String, required: true },
+    // Which backend holds the file. Only 'gcs' (shared Cloud Storage) is served
+    // and advertised; the default 'local' marks legacy/pre-GCS renditions so they
+    // are hidden and rebuilt into GCS (never mis-served as a missing GCS object).
+    store: { type: String, enum: ['gcs', 'local'], default: 'local' },
     sizeBytes: { type: Number, default: 0 },
     bitrateKbps: { type: Number, default: 0 }, // approx, informs the Auto ladder
   },

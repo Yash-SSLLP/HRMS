@@ -41,23 +41,6 @@ function saveBuffer({ buffer, ownerType, ownerId, originalName }) {
   return { storagePath: relPath, sha256, sizeBytes: buffer.length };
 }
 
-/**
- * Copy an existing file (e.g. an ffmpeg transcode output in a temp dir) into the
- * storage tree. Returns { storagePath, sizeBytes }. Used for video renditions,
- * which are far too large to buffer in memory via saveBuffer.
- */
-function saveFromPath({ sourcePath, ownerType, ownerId, originalName }) {
-  const safeName = sanitizeFileName(originalName || path.basename(sourcePath));
-  const uniquePrefix = crypto.randomBytes(6).toString('hex');
-  const relDir = path.posix.join(ownerType, String(ownerId));
-  const relPath = path.posix.join(relDir, `${uniquePrefix}-${safeName}`);
-
-  ensureDir(path.join(ROOT, relDir));
-  const absPath = path.join(ROOT, relPath);
-  fs.copyFileSync(sourcePath, absPath);
-  return { storagePath: relPath, sizeBytes: fs.statSync(absPath).size };
-}
-
 function absoluteOf(relPath) {
   const abs = path.resolve(ROOT, relPath);
   if (!abs.startsWith(ROOT)) {
@@ -97,47 +80,6 @@ function streamTo(relPath, res) {
   return true;
 }
 
-// Stream a locally-stored file to an Express response with HTTP Range support so
-// a <video> element can seek. Returns false (without touching the response) when
-// the file is missing so the caller can 404. Mirrors the seek behaviour the
-// Drive proxy provides for the original-quality source.
-function streamRange(relPath, req, res, contentType = 'video/mp4') {
-  if (!exists(relPath)) return false;
-  const absPath = absoluteOf(relPath);
-  const total = fs.statSync(absPath).size;
-
-  res.setHeader('Content-Type', contentType);
-  res.setHeader('Accept-Ranges', 'bytes');
-  res.setHeader('Cache-Control', 'private, max-age=0, no-store');
-
-  const range = req.headers.range;
-  if (range) {
-    const m = /bytes=(\d*)-(\d*)/.exec(range) || [];
-    let start = m[1] ? parseInt(m[1], 10) : 0;
-    let end = m[2] ? parseInt(m[2], 10) : total - 1;
-    if (Number.isNaN(start)) start = 0;
-    if (Number.isNaN(end) || end >= total) end = total - 1;
-    if (start > end || start >= total) {
-      res.status(416).setHeader('Content-Range', `bytes */${total}`);
-      res.end();
-      return true;
-    }
-    res.status(206);
-    res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-    res.setHeader('Content-Length', end - start + 1);
-    const stream = fs.createReadStream(absPath, { start, end });
-    stream.on('error', () => res.destroy());
-    stream.pipe(res);
-  } else {
-    res.status(200);
-    res.setHeader('Content-Length', total);
-    const stream = fs.createReadStream(absPath);
-    stream.on('error', () => res.destroy());
-    stream.pipe(res);
-  }
-  return true;
-}
-
 function remove(relPath) {
   try {
     fs.unlinkSync(absoluteOf(relPath));
@@ -146,4 +88,4 @@ function remove(relPath) {
   }
 }
 
-module.exports = { saveBuffer, saveFromPath, readStream, remove, exists, streamTo, streamRange };
+module.exports = { saveBuffer, readStream, remove, exists, streamTo };

@@ -90,28 +90,82 @@ async function streamDriveFile(fileId, req, res) {
 
 // Download a whole Drive file to a local path (used by the transcoder, which
 // needs the complete source before it can produce lower-quality renditions).
-// Throws a clear error if the file isn't publicly accessible.
+//
+// Large files (>~100 MB) are the tricky case: an unbounded download
+// (no Range, or `Range: bytes=0-`) makes Drive return an HTML "can't scan this
+// file for viruses" interstitial instead of the bytes. BOUNDED ranges
+// (`bytes=start-end`) always stream the real content, so we pull the file down
+// in bounded chunks. Throws a clear error if the file isn't publicly accessible.
 const fs = require('fs');
-async function downloadDriveFileTo(fileId, destPath) {
-  const upstream = await fetch(DOWNLOAD_URL(fileId), {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HRMS-LMS/1.0)' },
-    redirect: 'follow',
-  });
-  const contentType = upstream.headers.get('content-type') || '';
-  if (!upstream.ok) throw new Error(`Drive returned ${upstream.status} for this file.`);
-  if (contentType.includes('text/html')) {
-    throw new Error("This Google Drive file isn't accessible. Set sharing to \"Anyone with the link\" (Viewer).");
-  }
-  if (!upstream.body) throw new Error('Drive returned an empty response.');
+const DOWNLOAD_CHUNK = 16 * 1024 * 1024; // 16 MB per ranged request
+const HTML_ERR = "This Google Drive file isn't accessible. Set sharing to \"Anyone with the link\" (Viewer).";
 
-  await new Promise((resolve, reject) => {
-    const out = fs.createWriteStream(destPath);
-    const nodeStream = Readable.fromWeb(upstream.body);
-    nodeStream.on('error', reject);
-    out.on('error', reject);
-    out.on('finish', resolve);
-    nodeStream.pipe(out);
-  });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function downloadDriveFileTo(fileId, destPath) {
+  const url = DOWNLOAD_URL(fileId);
+  const UA = 'Mozilla/5.0 (compatible; HRMS-LMS/1.0)';
+  // Fetch a range, retrying when Drive returns the HTML interstitial — which it
+  // does intermittently under throttling even for a public file — before giving
+  // up. Returns the (non-HTML) response, or the last HTML one after all tries.
+  const get = async (range, tries = 5) => {
+    let res;
+    for (let i = 0; i < tries; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      res = await fetch(url, { headers: { 'User-Agent': UA, ...(range ? { Range: range } : {}) }, redirect: 'follow' });
+      if (!(res.headers.get('content-type') || '').includes('text/html')) return res;
+      try { await res.body?.cancel?.(); } catch { /* ignore */ }
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(700 * (i + 1)); // back off, then retry
+    }
+    return res;
+  };
+
+  const out = fs.createWriteStream(destPath);
+  const pump = (webBody) =>
+    new Promise((resolve, reject) => {
+      const ns = Readable.fromWeb(webBody);
+      ns.on('error', reject);
+      ns.on('end', resolve);
+      ns.pipe(out, { end: false }); // keep the file open across chunks
+    });
+
+  try {
+    // Happy path: one whole-file GET (no Range) — Drive serves 200 video/mp4 and
+    // this is a single request, so it's the least likely to be throttled.
+    const whole = await get(null);
+    const wholeType = whole.headers.get('content-type') || '';
+    if (whole.ok && !wholeType.includes('text/html') && whole.body) {
+      await pump(whole.body);
+      return;
+    }
+    try { await whole.body?.cancel?.(); } catch { /* ignore */ }
+
+    // Fallback: pull the file in bounded ranges (each dodges the interstitial),
+    // using a bounded probe to learn the total size.
+    const probe = await get('bytes=0-0');
+    if ((probe.headers.get('content-type') || '').includes('text/html')) {
+      try { await probe.body?.cancel?.(); } catch { /* ignore */ }
+      throw new Error(HTML_ERR);
+    }
+    const cr = probe.headers.get('content-range'); // "bytes 0-0/199398373"
+    const total = cr && /\/(\d+)\s*$/.test(cr) ? parseInt(cr.match(/\/(\d+)\s*$/)[1], 10) : 0;
+    try { await probe.body?.cancel?.(); } catch { /* ignore */ }
+    if (!total) throw new Error(HTML_ERR);
+
+    for (let start = 0; start < total; start += DOWNLOAD_CHUNK) {
+      const end = Math.min(start + DOWNLOAD_CHUNK - 1, total - 1);
+      // eslint-disable-next-line no-await-in-loop
+      const res = await get(`bytes=${start}-${end}`);
+      if ((!res.ok && res.status !== 206) || (res.headers.get('content-type') || '').includes('text/html')) {
+        throw new Error(`Drive returned ${res.status} while downloading.`);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await pump(res.body);
+    }
+  } finally {
+    await new Promise((resolve) => out.end(resolve));
+  }
 }
 
 module.exports = { parseDriveFileId, streamDriveFile, downloadDriveFileTo };

@@ -341,6 +341,14 @@ function ModuleQualityStatus({ m, onRetry }) {
   if (status === 'pending' || status === 'processing') {
     return <div className="text-xs text-amber-600">⏳ Generating quality options (360p/480p/720p)… you can save and leave; this runs in the background.</div>;
   }
+  if (status === 'ready' && m.renditionsMissing) {
+    return (
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-amber-600">⚠ Quality files aren’t on this server (rebuild to regenerate them here).</span>
+        <button type="button" onClick={onRetry} className="text-blue-600 hover:underline">Rebuild</button>
+      </div>
+    );
+  }
   if (status === 'ready') {
     return (
       <div className="flex items-center justify-between text-xs">

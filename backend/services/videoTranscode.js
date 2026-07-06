@@ -20,7 +20,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const ffprobePath = require('ffprobe-static').path;
 const Course = require('../models/Course');
-const storage = require('./storage');
+const renditionStore = require('./renditionStore');
 const { downloadDriveFileTo } = require('../utils/drive');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -84,6 +84,13 @@ async function runModule(courseId, moduleId) {
   const mod = course && course.modules.id(moduleId);
   if (!mod || mod.type !== 'video' || !mod.driveFileId) return;
 
+  // No shared rendition storage configured → don't transcode; the player shows
+  // Source only. Leave status untouched so it isn't stuck as failed/pending.
+  if (!renditionStore.enabled()) {
+    await setStatus({ transcodeStatus: 'none' });
+    return;
+  }
+
   const fileId = mod.driveFileId;
   await setStatus({ transcodeStatus: 'processing', transcodeError: undefined });
 
@@ -99,24 +106,22 @@ async function runModule(courseId, moduleId) {
     const renditions = [];
     for (const h of heights) {
       const outPath = path.join(tmpDir, `${h}p.mp4`);
+      // eslint-disable-next-line no-await-in-loop
       await encodeOne(srcPath, outPath, h);
-      const { storagePath, sizeBytes } = storage.saveFromPath({
-        sourcePath: outPath,
-        ownerType: 'course-video',
-        ownerId: moduleId,
-        originalName: `${h}p.mp4`,
-      });
+      // Upload to shared Cloud Storage at a deterministic key so any host serves
+      // (and any host can regenerate) the same file.
+      // eslint-disable-next-line no-await-in-loop
+      const { objectPath, sizeBytes } = await renditionStore.upload(moduleId, h, outPath);
       renditions.push({
         height: h,
         label: `${h}p`,
-        storagePath,
+        storagePath: objectPath,
+        store: 'gcs',
         sizeBytes,
         bitrateKbps: durationSec ? Math.round((sizeBytes * 8) / 1000 / durationSec) : 0,
       });
     }
 
-    // Free the previous renditions' files (source changed / re-run).
-    const prev = mod.renditions || [];
     await setStatus({
       renditions,
       sourceHeight,
@@ -125,9 +130,6 @@ async function runModule(courseId, moduleId) {
       transcodeError: undefined,
       ...(durationSec && !mod.durationSec ? { durationSec } : {}),
     });
-    for (const r of prev) {
-      if (r.storagePath) storage.remove(r.storagePath);
-    }
   } catch (err) {
     await setStatus({ transcodeStatus: 'failed', transcodeError: String(err.message || err).slice(0, 500) });
   } finally {
@@ -173,12 +175,24 @@ async function enqueueModule(courseId, moduleId) {
   drain();
 }
 
+// True when every recorded rendition lives in shared Cloud Storage (durable, so
+// no per-request existence check is needed). Legacy 'local' renditions count as
+// NOT present so they get rebuilt into GCS. A module with no renditions (source
+// already low-res) counts as present.
+function renditionsPresent(mod) {
+  const rs = (mod && mod.renditions) || [];
+  return rs.every((r) => r.store === 'gcs');
+}
+
 // Decide whether a video module needs (re)transcoding: it has a Drive source and
-// either was never transcoded or the Drive file changed.
+// either was never transcoded, the Drive file changed, OR its renditions aren't
+// in shared storage yet (legacy local/random-path renditions from before GCS).
 function needsTranscode(mod) {
   if (!mod || mod.type !== 'video' || !mod.driveFileId) return false;
+  if (!renditionStore.enabled()) return false; // can't store renditions → nothing to do
   if (mod.transcodeStatus === 'processing' || mod.transcodeStatus === 'pending') return false;
-  return mod.transcodedFrom !== mod.driveFileId;
+  if (mod.transcodedFrom !== mod.driveFileId) return true;
+  return !renditionsPresent(mod);
 }
 
 // Scan a course and enqueue every video module that needs it.
@@ -192,4 +206,4 @@ async function enqueueCourse(course) {
   }
 }
 
-module.exports = { enqueueModule, enqueueCourse, needsTranscode, TARGET_HEIGHTS };
+module.exports = { enqueueModule, enqueueCourse, needsTranscode, renditionsPresent, TARGET_HEIGHTS };

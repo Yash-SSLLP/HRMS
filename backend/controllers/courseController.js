@@ -3,8 +3,8 @@ const Course = require('../models/Course');
 const { Enrollment, CourseReport, REPORT_CATEGORIES } = require('../models/Course');
 const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
 const { notify, notifyMany } = require('../services/notify');
-const storage = require('../services/storage');
 const videoTranscode = require('../services/videoTranscode');
+const renditionStore = require('../services/renditionStore');
 const User = require('../models/User');
 
 // Roles allowed to manage courses / assign / approve. LDManager ("HR L&D") is an
@@ -82,10 +82,13 @@ function normalizeModules(modules, existing = []) {
   });
 }
 
-// The quality options a module exposes to the player: each ready rendition plus
-// the always-available original ("Source"). Never leaks storage paths.
+// The quality options a module exposes to the player: each rendition stored in
+// shared Cloud Storage (durable, so we trust the DB — no per-request existence
+// check). Legacy 'local' renditions are hidden until rebuilt into GCS. The
+// original ("Source") is always available too. Never leaks storage paths.
 function moduleQualities(m) {
   return (m.renditions || [])
+    .filter((r) => r.store === 'gcs')
     .map((r) => ({ height: r.height, label: r.label }))
     .sort((a, b) => a.height - b.height);
 }
@@ -105,6 +108,9 @@ function adminModule(m) {
     transcodeError: m.transcodeError,
     sourceHeight: m.sourceHeight || 0,
     qualities: moduleQualities(m),
+    // 'ready' in the DB but the renditions aren't in shared storage yet (legacy
+    // local/random-path renditions from before GCS) → admin should rebuild.
+    renditionsMissing: (m.renditions || []).length > 0 && !videoTranscode.renditionsPresent(m),
   };
 }
 
@@ -214,13 +220,21 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
     throw new Error('You must be enrolled and approved to watch this video.');
   }
 
-  // A specific quality was requested: serve the matching pre-transcoded rendition
-  // from our own storage (range-capable for seeking). Falls through to the Drive
-  // original if the height isn't a real rendition or its file has gone missing.
+  // Self-heal: if this module's renditions are missing on this host (built on
+  // another host, or wiped by a redeploy) or the source changed, rebuild them in
+  // the background. Dedup in the queue prevents spamming. Playback below still
+  // works meanwhile via the original.
+  if (videoTranscode.needsTranscode(module)) {
+    videoTranscode.enqueueModule(course._id, module._id).catch(() => {});
+  }
+
+  // A specific quality was requested: proxy the matching pre-transcoded rendition
+  // from shared Cloud Storage (range-capable for seeking). Falls through to the
+  // Drive original if the height isn't a real GCS rendition.
   const q = parseInt(req.query.quality, 10);
   if (Number.isFinite(q)) {
-    const rendition = (module.renditions || []).find((r) => r.height === q);
-    if (rendition && rendition.storagePath && storage.streamRange(rendition.storagePath, req, res)) {
+    const rendition = (module.renditions || []).find((r) => r.height === q && r.store === 'gcs');
+    if (rendition && renditionStore.streamRange(rendition.storagePath, rendition.sizeBytes, req, res)) {
       return;
     }
   }
@@ -502,10 +516,10 @@ const deleteCourse = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Course not found');
   }
-  // Remove any transcoded rendition files so they don't orphan on disk.
+  // Remove any transcoded rendition objects from shared storage (best-effort).
   for (const m of course.modules || []) {
     for (const r of m.renditions || []) {
-      if (r.storagePath) storage.remove(r.storagePath);
+      if (r.storagePath && r.store === 'gcs') renditionStore.remove(r.storagePath).catch(() => {});
     }
   }
   await Enrollment.deleteMany({ course: course._id });

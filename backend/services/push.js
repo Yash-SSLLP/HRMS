@@ -5,71 +5,15 @@
  * getDevicePushTokenAsync) with POST /api/devices/register. Here we send
  * directly to FCM using the Firebase Admin SDK — no Expo push relay involved.
  *
- * Credentials: a Firebase service-account key, provided as either
- *   - FIREBASE_SERVICE_ACCOUNT_JSON  → the whole JSON as a string (best for Railway), or
- *   - FIREBASE_SERVICE_ACCOUNT_PATH  → a path to the JSON file, or
- *   - backend/config/firebase-service-account.json  (local dev fallback).
+ * Credentials come from the shared services/firebase.js app (FIREBASE_SERVICE_ACCOUNT_JSON
+ * / FIREBASE_SERVICE_ACCOUNT_PATH / backend/config/firebase-service-account.json).
  *
  * When no credentials are configured, push is a no-op (the rest of the app is
  * unaffected — in-app notifications still work). Dead/unregistered tokens are
  * pruned so we stop pushing to uninstalled apps.
  */
-const fs = require('fs');
-const path = require('path');
-const admin = require('firebase-admin');
 const DeviceToken = require('../models/DeviceToken');
-
-let messaging = null;
-let initTried = false;
-
-// Resolve the service-account credentials from env or a local file. Returns the
-// parsed object, or null when nothing is configured.
-function loadServiceAccount() {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    try {
-      return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-    } catch (err) {
-      console.error('FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON:', err.message);
-      return null;
-    }
-  }
-  const filePath =
-    process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
-    path.join(__dirname, '..', 'config', 'firebase-service-account.json');
-  if (fs.existsSync(filePath)) {
-    try {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch (err) {
-      console.error('Failed to read Firebase service account file:', err.message);
-    }
-  }
-  return null;
-}
-
-// Lazily initialise the Admin SDK on first push. Cached across calls.
-function getMessaging() {
-  if (initTried) return messaging;
-  initTried = true;
-  const creds = loadServiceAccount();
-  if (!creds) {
-    console.warn(
-      'Push disabled: no Firebase service account configured ' +
-        '(set FIREBASE_SERVICE_ACCOUNT_JSON or add backend/config/firebase-service-account.json).'
-    );
-    return null;
-  }
-  try {
-    const app = admin.apps.length
-      ? admin.app()
-      : admin.initializeApp({ credential: admin.credential.cert(creds) });
-    messaging = admin.messaging(app);
-    console.log('FCM push initialised for project:', creds.project_id);
-  } catch (err) {
-    console.error('Firebase Admin init failed:', err.message);
-    messaging = null;
-  }
-  return messaging;
-}
+const { getMessaging } = require('./firebase');
 
 // FCM allows up to 500 tokens per multicast.
 function chunk(arr, size = 500) {
