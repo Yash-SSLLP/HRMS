@@ -51,6 +51,13 @@ const DRIVE_API_KEY = process.env.GOOGLE_DRIVE_API_KEY || process.env.GOOGLE_API
 const API_MEDIA_URL = (id) =>
   `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true&key=${DRIVE_API_KEY}`;
 
+// Log once at startup so the deploy logs make it obvious which path is active.
+console.log(
+  DRIVE_API_KEY
+    ? `[drive] Google Drive API key detected (…${DRIVE_API_KEY.slice(-4)}) — streaming via the Drive API.`
+    : '[drive] No GOOGLE_DRIVE_API_KEY set — streaming via the (rate-limited) scrape fallback.'
+);
+
 // ---- Path 1: official Drive API (reliable) ---------------------------------
 async function streamViaApi(fileId, req, res) {
   const headers = {};
@@ -163,14 +170,11 @@ async function streamViaScrape(fileId, req, res) {
 // Proxy-stream a Drive file to an Express response. Prefers the reliable Drive
 // API when a key is configured, falling back to the scrape path otherwise.
 async function streamDriveFile(fileId, req, res) {
+  // With a key configured, use the reliable Drive API and surface its errors
+  // directly (no silent scrape fallback — that only masks a bad key / sharing).
   if (DRIVE_API_KEY) {
-    try {
-      await streamViaApi(fileId, req, res);
-      return;
-    } catch (err) {
-      if (res.headersSent) throw err; // can't switch paths mid-stream
-      console.error('Drive API stream failed, falling back to scrape:', err.message);
-    }
+    await streamViaApi(fileId, req, res);
+    return;
   }
   await streamViaScrape(fileId, req, res);
 }
