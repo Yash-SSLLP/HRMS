@@ -35,30 +35,50 @@ function parseDriveFileId(input) {
 const DOWNLOAD_URL = (id) =>
   `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download&confirm=t`;
 
-// Proxy-stream a Drive file to an Express response, forwarding Range headers so
-// the browser's <video> can seek. Resolves after headers/stream are wired up;
-// throws (before writing headers) if the file can't be fetched so the caller can
-// return a clean error.
-async function streamDriveFile(fileId, req, res) {
-  const range = req.headers.range;
-  const headers = {
-    // A normal browser UA avoids some Drive edge-cases.
-    'User-Agent': 'Mozilla/5.0 (compatible; HRMS-LMS/1.0)',
-  };
-  if (range) headers.Range = range;
+const STREAM_CHUNK = 8 * 1024 * 1024; // 8 MB served per request
+const UA = 'Mozilla/5.0 (compatible; HRMS-LMS/1.0)';
+const sizeCache = new Map(); // fileId -> total bytes (avoids re-probing per request)
 
-  const upstream = await fetch(DOWNLOAD_URL(fileId), { headers, redirect: 'follow' });
-
-  const contentType = upstream.headers.get('content-type') || '';
-  // A shared video streams back as video/*, application/octet-stream, etc. If we
-  // instead get HTML, the file isn't public (Drive returned a sign-in/consent or
-  // virus-scan interstitial) — surface a clear, actionable error.
-  if (!upstream.ok && upstream.status !== 206) {
-    const err = new Error(`Drive returned ${upstream.status} for this file.`);
-    err.status = 502;
-    throw err;
+// Fetch a BOUNDED byte range from Drive, retrying past the intermittent HTML
+// "can't scan this file for viruses" interstitial. Bounded ranges (bytes=a-b)
+// are served as real bytes; unbounded (bytes=a-) or no-range requests frequently
+// hit the interstitial, which is why callers must always pass a bounded range.
+// Returns the response, or null if it stayed HTML after all retries.
+async function driveFetchRange(fileId, start, end) {
+  for (let i = 0; i < 5; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await fetch(DOWNLOAD_URL(fileId), {
+      headers: { 'User-Agent': UA, Range: `bytes=${start}-${end}` },
+      redirect: 'follow',
+    });
+    if (!(r.headers.get('content-type') || '').includes('text/html')) return r;
+    try { await r.body?.cancel?.(); } catch { /* ignore */ }
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(500 * (i + 1));
   }
-  if (contentType.includes('text/html')) {
+  return null;
+}
+
+// Total size of the Drive file, from a tiny bounded probe. Cached per file.
+async function driveTotalSize(fileId) {
+  if (sizeCache.has(fileId)) return sizeCache.get(fileId);
+  const probe = await driveFetchRange(fileId, 0, 0);
+  if (!probe) return 0;
+  const cr = probe.headers.get('content-range'); // "bytes 0-0/199398373"
+  try { await probe.body?.cancel?.(); } catch { /* ignore */ }
+  const total = cr && /\/(\d+)\s*$/.test(cr) ? parseInt(cr.match(/\/(\d+)\s*$/)[1], 10) : 0;
+  if (total) sizeCache.set(fileId, total);
+  return total;
+}
+
+// Proxy-stream a Drive file to an Express response as seekable HTTP byte ranges.
+// Every upstream request to Drive uses a BOUNDED range capped to STREAM_CHUNK, so
+// it reliably returns video (never the interstitial). The browser's <video> drives
+// seeking/continuation by issuing further Range requests. Throws (before writing
+// headers) if the file can't be fetched so the caller can return a clean error.
+async function streamDriveFile(fileId, req, res) {
+  const total = await driveTotalSize(fileId);
+  if (!total) {
     const err = new Error(
       "This Google Drive file isn't accessible. Set its sharing to \"Anyone with the link\" (Viewer)."
     );
@@ -66,14 +86,43 @@ async function streamDriveFile(fileId, req, res) {
     throw err;
   }
 
-  // Relay the status and the headers a media element needs to seek.
-  res.status(upstream.status === 206 ? 206 : 200);
-  const passthrough = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
-  for (const h of passthrough) {
-    const v = upstream.headers.get(h);
-    if (v) res.setHeader(h, v);
+  // Parse the client's requested range (open-ended or absent → from 0 / to end).
+  let start = 0;
+  let end = total - 1;
+  const m = req.headers.range && /bytes=(\d*)-(\d*)/.exec(req.headers.range);
+  if (m) {
+    if (m[1]) start = parseInt(m[1], 10);
+    if (m[2]) end = parseInt(m[2], 10);
   }
-  if (!upstream.headers.get('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
+  if (Number.isNaN(start) || start < 0) start = 0;
+  if (Number.isNaN(end) || end >= total) end = total - 1;
+  if (start > end || start >= total) {
+    res.status(416).setHeader('Content-Range', `bytes */${total}`);
+    res.end();
+    return;
+  }
+  // Cap what we fetch/serve so the range sent to Drive is always small + bounded.
+  end = Math.min(end, start + STREAM_CHUNK - 1);
+
+  const upstream = await driveFetchRange(fileId, start, end);
+  if (!upstream) {
+    const err = new Error(
+      "This Google Drive file isn't accessible. Set its sharing to \"Anyone with the link\" (Viewer)."
+    );
+    err.status = 502;
+    throw err;
+  }
+  if (!upstream.ok && upstream.status !== 206 && upstream.status !== 200) {
+    const err = new Error(`Drive returned ${upstream.status} for this file.`);
+    err.status = 502;
+    throw err;
+  }
+
+  res.status(206);
+  res.setHeader('Content-Type', upstream.headers.get('content-type') || 'video/mp4');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+  res.setHeader('Content-Length', end - start + 1);
   res.setHeader('Cache-Control', 'private, max-age=0, no-store');
 
   if (!upstream.body) {

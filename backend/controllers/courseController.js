@@ -223,8 +223,10 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
   // Self-heal: if this module's renditions are missing on this host (built on
   // another host, or wiped by a redeploy) or the source changed, rebuild them in
   // the background. Dedup in the queue prevents spamming. Playback below still
-  // works meanwhile via the original.
-  if (videoTranscode.needsTranscode(module)) {
+  // works meanwhile via the original. A previously 'failed' module is NOT
+  // auto-retried here (that would re-run a heavy transcode on every play) — an
+  // admin re-runs it via the Rebuild button.
+  if (module.transcodeStatus !== 'failed' && videoTranscode.needsTranscode(module)) {
     videoTranscode.enqueueModule(course._id, module._id).catch(() => {});
   }
 
