@@ -149,6 +149,7 @@ const postPublicComment = asyncHandler(async (req, res) => {
   const admins = await User.find({ role: { $in: COURSE_ADMIN_ROLES }, isActive: true }).select('_id').lean();
   notifyMany(admins.map((a) => a._id), {
     type: 'course',
+    audience: 'admin',
     title: 'New course comment to review',
     body: `${viewer.name} commented on "${course.title}"${moduleTitle ? ` — ${moduleTitle}` : ''}.`,
     link: `/admin/courses?panel=comments`,

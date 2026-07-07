@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { minutesToHHMM } from '../utils/time';
 
 function initials(name = '') {
   const p = name.trim().split(/\s+/);
@@ -36,7 +37,7 @@ function Row({ r, expanded, onToggle }) {
             {r.name}
             {r.lateMinutes > 0 && (
               <span className="inline-flex items-center gap-1 bg-red-500 text-white text-[11px] font-medium rounded-md px-1.5 py-0.5 shrink-0">
-                ⏱ {r.lateMinutes} Min
+                ⏱ {minutesToHHMM(r.lateMinutes)}
               </span>
             )}
           </div>

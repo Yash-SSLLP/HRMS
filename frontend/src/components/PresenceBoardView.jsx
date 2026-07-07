@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import AuthImage from './AuthImage';
+import { minutesToHHMM } from '../utils/time';
 
 // Shared, read-only presentation of a presence board (present / on-leave /
 // absent for "today"), used by both the admin org-wide page and the manager
@@ -81,7 +82,7 @@ function PresentGrid({ people, onOpen }) {
               <span className="text-green-600 font-medium">In {fmtTime(p.checkIn)}</span>
               {p.checkOut && <span>· Out {fmtTime(p.checkOut)}</span>}
               {p.checkInWfh && <span className="px-1.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-medium">WFH</span>}
-              {p.lateMinutes > 0 && <span className="px-1.5 rounded bg-amber-100 text-amber-800 text-[10px] font-medium">Late {p.lateMinutes}m</span>}
+              {p.lateMinutes > 0 && <span className="px-1.5 rounded bg-amber-100 text-amber-800 text-[10px] font-medium">Late {minutesToHHMM(p.lateMinutes)}</span>}
               {p.status === 'HalfDay' && <span className="px-1.5 rounded bg-amber-100 text-amber-800 text-[10px] font-medium">Half day</span>}
             </div>
           </div>

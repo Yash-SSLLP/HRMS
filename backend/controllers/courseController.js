@@ -178,6 +178,7 @@ const enroll = asyncHandler(async (req, res) => {
   const admins = await User.find({ role: { $in: COURSE_ADMIN_ROLES }, isActive: true }).select('_id').lean();
   notifyMany(admins.map((a) => a._id), {
     type: 'course',
+    audience: 'admin',
     title: 'Course enrollment request',
     body: `${req.user.fullName || 'An employee'} requested to enroll in "${course.title}".`,
     link: '/admin/courses?panel=approvals',
@@ -330,6 +331,7 @@ const reportIssue = asyncHandler(async (req, res) => {
   const admins = await User.find({ role: { $in: COURSE_ADMIN_ROLES }, isActive: true }).select('_id').lean();
   notifyMany(admins.map((a) => a._id), {
     type: 'course',
+    audience: 'admin',
     title: 'Course issue reported',
     body: `${req.user.fullName || 'An employee'} reported "${category}" on "${course.title}"${moduleTitle ? ` — ${moduleTitle}` : ''}.`,
     link: '/admin/courses?panel=reports',
@@ -364,6 +366,7 @@ const submitFeedback = asyncHandler(async (req, res) => {
   const admins = await User.find({ role: { $in: COURSE_ADMIN_ROLES }, isActive: true }).select('_id').lean();
   notifyMany(admins.map((a) => a._id), {
     type: 'course',
+    audience: 'admin',
     title: 'Course feedback received',
     body: `${req.user.fullName || 'An employee'} rated "${course.title}" ${rating}/5.`,
     link: '/admin/courses',
@@ -542,6 +545,7 @@ const assignCourse = asyncHandler(async (req, res) => {
 
   notifyMany(employeeIds, {
     type: 'course',
+    audience: 'employee',
     title: 'New course assigned',
     body: `You've been assigned "${course.title}"${dueDate ? ` — due ${dueDate.toLocaleDateString('en-IN')}` : ''}.`,
     link: `/employee/learning/${course._id}`,
@@ -585,6 +589,7 @@ const approveEnrollment = asyncHandler(async (req, res) => {
   notify({
     recipient: enrollment.employee,
     type: 'course',
+    audience: 'employee',
     title: 'Enrollment approved',
     body: `Your enrollment in "${enrollment.course.title}" was approved.`,
     link: `/employee/learning/${enrollment.course._id}`,
@@ -606,6 +611,7 @@ const rejectEnrollment = asyncHandler(async (req, res) => {
   notify({
     recipient: enrollment.employee,
     type: 'course',
+    audience: 'employee',
     title: 'Enrollment declined',
     body: `Your request to enroll in "${enrollment.course.title}" was declined.`,
     link: '/employee/learning',

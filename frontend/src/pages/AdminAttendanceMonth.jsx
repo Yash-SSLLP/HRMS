@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { minutesToHHMM } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -192,8 +193,8 @@ export default function AdminAttendanceMonth() {
                     <div className="text-[10px] text-gray-400">{d.toLocaleString([], { month: 'short' })}</div>
                   </div>
                   <div className="flex-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                    <span className={r.lateMinutes > 0 ? 'text-red-600 font-medium' : 'text-gray-700'} title={r.lateMinutes > 0 ? `Late by ${r.lateMinutes} min` : 'On time'}>
-                      → {fmtTime(r.checkIn)}{r.lateMinutes > 0 && <span className="text-[10px] ml-1">+{r.lateMinutes}m</span>}
+                    <span className={r.lateMinutes > 0 ? 'text-red-600 font-medium' : 'text-gray-700'} title={r.lateMinutes > 0 ? `Late by ${minutesToHHMM(r.lateMinutes)}` : 'On time'}>
+                      → {fmtTime(r.checkIn)}{r.lateMinutes > 0 && <span className="text-[10px] ml-1">+{minutesToHHMM(r.lateMinutes)}</span>}
                     </span>
                     {r.noPunchOut ? (
                       <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">No punch-out</span>

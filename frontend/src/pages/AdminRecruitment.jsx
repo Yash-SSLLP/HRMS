@@ -5,6 +5,7 @@ import { downloadFile } from '../api/download';
 import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
+import DepartmentSelect from '../components/DepartmentSelect';
 import MailComposeModal from '../components/MailComposeModal';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
@@ -600,7 +601,7 @@ export default function AdminRecruitment() {
             <form onSubmit={saveJob} className="space-y-3">
               <input required placeholder="Title *" value={jobForm.title} onChange={(e) => setJobForm({ ...jobForm, title: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input placeholder="Department" value={jobForm.department} onChange={(e) => setJobForm({ ...jobForm, department: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                <DepartmentSelect value={jobForm.department} onChange={(v) => setJobForm({ ...jobForm, department: v })} className="block w-full border rounded-lg px-3 py-2" />
                 <input placeholder="Location" value={jobForm.location} onChange={(e) => setJobForm({ ...jobForm, location: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <select value={jobForm.employmentType} onChange={(e) => setJobForm({ ...jobForm, employmentType: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   {['FullTime', 'PartTime', 'Contract', 'Intern'].map((t) => <option key={t}>{t}</option>)}
@@ -737,7 +738,7 @@ export default function AdminRecruitment() {
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Department</label>
-                <input value={offerForm.department} onChange={(e) => setOfferForm({ ...offerForm, department: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                <DepartmentSelect value={offerForm.department} onChange={(v) => setOfferForm({ ...offerForm, department: v })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">In-hand salary (₹ / month)</label>

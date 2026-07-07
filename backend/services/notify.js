@@ -16,10 +16,10 @@ const { pushToUsers } = require('./push');
  * @param {{recipient:string, type?:string, title:string, body?:string, link?:string, data?:object}} input
  * @returns {Promise<Notification>}
  */
-async function notify({ recipient, type = 'general', title, body, link, data }) {
+async function notify({ recipient, type = 'general', audience = 'all', title, body, link, data }) {
   if (!recipient || !title) throw new Error('notify requires recipient and title');
 
-  const doc = await Notification.create({ recipient, type, title, body, link });
+  const doc = await Notification.create({ recipient, type, audience, title, body, link });
 
   // Fire push without blocking the caller.
   pushToUsers(recipient, {
@@ -37,12 +37,12 @@ async function notify({ recipient, type = 'general', title, body, link, data }) 
  * @param {string[]} recipients
  * @param {{type?:string, title:string, body?:string, link?:string, data?:object}} input
  */
-async function notifyMany(recipients, { type = 'general', title, body, link, data } = {}) {
+async function notifyMany(recipients, { type = 'general', audience = 'all', title, body, link, data } = {}) {
   const ids = [...new Set((recipients || []).map(String))].filter(Boolean);
   if (!ids.length || !title) return { created: 0 };
 
   await Notification.insertMany(
-    ids.map((recipient) => ({ recipient, type, title, body, link }))
+    ids.map((recipient) => ({ recipient, type, audience, title, body, link }))
   );
 
   pushToUsers(ids, {

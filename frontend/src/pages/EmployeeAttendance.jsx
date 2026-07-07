@@ -18,8 +18,11 @@ const STATUS_COLORS = {
 
 // GPS accuracy tuning for the punch location watch.
 const GPS_GOOD_ENOUGH_M = 25;   // stop refining once a fix is at least this accurate
-const GPS_MAX_WAIT_MS = 15000;  // how long to keep refining before accepting the best fix
-const GPS_POOR_M = 100;         // fixes coarser than this are flagged as unreliable
+const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting the best fix
+// Only flag fixes coarser than this as imprecise. Aligned with the default
+// geofence tolerance (200 m) so a usable fix (e.g. ±114 m on a laptop/indoors,
+// which never blocks a punch) isn't nagged — only genuinely poor fixes are.
+const GPS_POOR_M = 200;
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
 const fmtTime = (d) =>
@@ -385,7 +388,7 @@ export default function EmployeeAttendance() {
                     </div>
                     {poor && !locating && (
                       <div className="mt-1 flex items-center justify-between gap-2">
-                        <span>This fix looks imprecise. Move near a window or outdoors for a better one.</span>
+                        <span>For a more precise location, move near a window or outdoors.</span>
                         <button type="button" onClick={() => captureLocation()}
                           className="shrink-0 font-medium text-amber-800 underline hover:no-underline">Retry</button>
                       </div>

@@ -72,8 +72,13 @@ function resolveGeofence(profile, settings) {
 // metres (or null when no location was captured) so callers can note it.
 function evaluateGeofence(loc, wfh, center, radiusM) {
   const distanceM = loc ? haversineMeters(center, loc) : null;
+  // Allow the GPS error margin as tolerance so an imprecise fix (common indoors /
+  // on laptops) doesn't wrongly flag an in-range punch as "outside". Cap the
+  // tolerance at the radius so a wildly inaccurate fix can't mask a genuinely
+  // far-away punch.
+  const tolerance = loc && loc.accuracy != null ? Math.min(loc.accuracy, radiusM || 0) : 0;
   const outside = Boolean(
-    !wfh && radiusM && distanceM != null && distanceM > radiusM
+    !wfh && radiusM && distanceM != null && distanceM - tolerance > radiusM
   );
   return { distanceM, outside };
 }

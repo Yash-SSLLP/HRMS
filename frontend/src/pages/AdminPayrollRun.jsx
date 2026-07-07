@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { minutesToHHMM } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -204,7 +205,7 @@ export default function AdminPayrollRun() {
                     {r?.checkIn && (
                       <div className={`text-[10px] leading-tight ${r.lateMinutes > 0 ? 'text-red-600' : 'text-green-600'}`}
                         title={`${fmtTime(r.checkIn)}${r.checkOut ? ` – ${fmtTime(r.checkOut)}` : ''}`}>
-                        {r.lateMinutes > 0 ? `Late +${r.lateMinutes}m` : 'On time'}
+                        {r.lateMinutes > 0 ? `Late +${minutesToHHMM(r.lateMinutes)}` : 'On time'}
                         {r.noPunchOut ? <span className="text-red-600"> · no out</span> : ''}
                       </div>
                     )}

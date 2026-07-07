@@ -57,6 +57,7 @@ async function notifyApprover(approverUserId, request, applicantName) {
     await notify({
       recipient: approverUserId,
       type: 'leave',
+      audience: 'admin',
       title: 'Leave needs your approval',
       body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) — it's awaiting your approval.`,
       link: 'leave',
@@ -91,6 +92,7 @@ async function notifyEmployeeDecision(request, note) {
     await notify({
       recipient: prof.user,
       type: 'leave',
+      audience: 'employee',
       title: approved ? 'Leave approved' : 'Leave rejected',
       body: `Your ${request.leaveType} leave (${days}) has been ${approved ? 'approved' : 'rejected'}.${note ? ` Note: ${note}` : ''}`,
       link: 'leave',
@@ -115,6 +117,7 @@ async function notifyHrInformational(request, verb) {
     const name = `${prof?.user?.firstName || ''} ${prof?.user?.lastName || ''}`.trim() || 'An employee';
     await notifyMany([...ids], {
       type: 'leave',
+      audience: 'admin',
       title: `Leave ${verb}`,
       body: `${name}'s ${request.leaveType} leave (${request.totalDays}d) was ${verb} via the reporting hierarchy.`,
       link: 'leave',
@@ -135,6 +138,7 @@ async function notifyChainAbove(request, rejectedStep) {
     const name = await applicantNameOf(request);
     await notifyMany(ids, {
       type: 'leave',
+      audience: 'admin',
       title: 'Leave rejected below you',
       body: `${name}'s ${request.leaveType} leave was rejected by ${rejectedStep.approverName || 'a manager'} before it reached you.`,
       link: 'leave',
@@ -330,6 +334,7 @@ const applyForLeave = asyncHandler(async (req, res) => {
         await notify({
           recipient: sa._id,
           type: 'leave',
+          audience: 'admin',
           title: 'Leave needs a decision',
           body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) but has no reporting manager — please review.`,
           link: 'leave',

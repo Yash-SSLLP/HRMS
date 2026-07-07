@@ -139,16 +139,19 @@ function NavList({ items, user, onNavigate }) {
   });
 }
 
-function NotificationBell({ isAdmin }) {
+function NotificationBell({ isAdmin, portal }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
   const navigate = useNavigate();
   const wrapRef = useRef(null);
 
+  // Only show notifications for the portal being viewed, so a dual-role user
+  // (e.g. an HRManager who is also an employee) doesn't see their admin
+  // notifications in My Portal or vice versa.
   const load = async () => {
     try {
-      const { data } = await api.get('/notifications');
+      const { data } = await api.get('/notifications', { params: { audience: portal } });
       setItems(data.notifications);
       setUnread(data.unreadCount);
     } catch {
@@ -160,7 +163,8 @@ function NotificationBell({ isAdmin }) {
     load();
     const t = setInterval(load, NOTIF_POLL_MS);
     return () => clearInterval(t);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portal]);
 
   // Close dropdown on outside click.
   useEffect(() => {
@@ -197,7 +201,7 @@ function NotificationBell({ isAdmin }) {
 
   const markAll = async () => {
     try {
-      await api.patch('/notifications/read-all');
+      await api.patch('/notifications/read-all', null, { params: { audience: portal } });
       setUnread(0);
       setItems((prev) => prev.map((x) => ({ ...x, readAt: x.readAt || new Date().toISOString() })));
     } catch {
@@ -531,7 +535,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
             >
               {mode === 'dark' ? <FiSun size={19} strokeWidth={2} /> : <FiMoon size={18} strokeWidth={2} />}
             </button>
-            <NotificationBell isAdmin={isAdmin} />
+            <NotificationBell isAdmin={isAdmin} portal={portal} />
             <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
             <ProfileMenu user={user} onLogout={() => setConfirmLogout(true)} />
           </div>

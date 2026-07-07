@@ -132,6 +132,7 @@ const reviewRequest = asyncHandler(async (req, res) => {
   notify({
     recipient: item.employee,
     type: 'regularization',
+    audience: 'employee',
     title: `Attendance regularization ${status.toLowerCase()}`,
     body: `Your request for ${new Date(item.date).toLocaleDateString('en-IN', { dateStyle: 'medium' })} was ${status.toLowerCase()}${reviewNote ? ` — ${reviewNote}` : ''}.`,
     link: 'regularizations',
@@ -169,6 +170,7 @@ const adminCreate = asyncHandler(async (req, res) => {
   notify({
     recipient: employee,
     type: 'regularization',
+    audience: 'employee',
     title: 'Your attendance was regularized',
     body: `HR updated your attendance for ${new Date(date).toLocaleDateString('en-IN', { dateStyle: 'medium' })}: ${reason}`,
     link: 'attendance',
