@@ -9,6 +9,7 @@ const {
   reportIssue,
   submitFeedback,
   listAdmin,
+  createUploadSignature,
   createCourse,
   updateCourse,
   deleteCourse,
@@ -44,6 +45,7 @@ router.post('/:id/feedback', submitFeedback);
 // LDManager (mapped to courses.manage), and any HRManager granted the capability.
 router.use(requirePermission('courses.manage'));
 router.get('/admin/all', listAdmin);
+router.post('/upload-signature', createUploadSignature);
 router.get('/enrollments/pending', listPending);
 router.get('/reports', listReports);
 router.patch('/reports/:rid/resolve', resolveReport);

@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const Course = require('../models/Course');
 const { Enrollment, CourseReport, REPORT_CATEGORIES } = require('../models/Course');
 const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
+const cloudinary = require('../services/cloudinary');
 const { notify, notifyMany } = require('../services/notify');
 const User = require('../models/User');
 
@@ -38,8 +39,8 @@ function recomputeProgress(enrollment, course) {
   }
 }
 
-// Normalize an incoming module list: coerce type, parse the Drive id from the
-// link, and reject a video module whose link has no resolvable file id.
+// Normalize an incoming module list: coerce type, and validate the video source
+// (a Drive link with a resolvable file id, or an uploaded R2 object key).
 function normalizeModules(modules) {
   if (!Array.isArray(modules)) return [];
   return modules.map((m, i) => {
@@ -47,15 +48,31 @@ function normalizeModules(modules) {
     const out = { title: (m.title || '').trim(), type, content: m.content || '', durationSec: Number(m.durationSec) || 0 };
     if (m._id) out._id = m._id; // keep stable ids on edit
     if (type === 'video') {
-      const link = (m.driveUrl || m.url || '').trim();
-      const fileId = parseDriveFileId(link);
-      if (!fileId) {
-        const err = new Error(`Module ${i + 1} ("${out.title || 'Untitled'}"): enter a valid Google Drive video link.`);
-        err.status = 400;
-        throw err;
+      const videoSource = m.videoSource === 'cloudinary' ? 'cloudinary' : 'drive';
+      out.videoSource = videoSource;
+      if (videoSource === 'cloudinary') {
+        const publicId = (m.cloudinaryPublicId || '').trim();
+        if (!publicId) {
+          const err = new Error(`Module ${i + 1} ("${out.title || 'Untitled'}"): upload a video file.`);
+          err.status = 400;
+          throw err;
+        }
+        out.cloudinaryPublicId = publicId;
+        if (m.cloudinaryVersion) out.cloudinaryVersion = Number(m.cloudinaryVersion) || undefined;
+        if (m.cloudinaryFormat) out.cloudinaryFormat = String(m.cloudinaryFormat).trim();
+        out.cloudinaryResourceType = (m.cloudinaryResourceType || 'video').trim() || 'video';
+        if (m.videoSizeBytes) out.videoSizeBytes = Number(m.videoSizeBytes) || 0;
+      } else {
+        const link = (m.driveUrl || m.url || '').trim();
+        const fileId = parseDriveFileId(link);
+        if (!fileId) {
+          const err = new Error(`Module ${i + 1} ("${out.title || 'Untitled'}"): enter a valid Google Drive video link.`);
+          err.status = 400;
+          throw err;
+        }
+        out.driveUrl = link;
+        out.driveFileId = fileId;
       }
-      out.driveUrl = link;
-      out.driveFileId = fileId;
     }
     if (!out.title) {
       const err = new Error(`Module ${i + 1}: title is required.`);
@@ -65,6 +82,25 @@ function normalizeModules(modules) {
     return out;
   });
 }
+
+// Collect the Cloudinary public ids used by a course's video modules.
+function cloudinaryIdsOf(course) {
+  return (course.modules || [])
+    .filter((m) => m.videoSource === 'cloudinary' && m.cloudinaryPublicId)
+    .map((m) => m.cloudinaryPublicId);
+}
+
+// POST /api/courses/upload-signature
+// Admin-only: mint a short-lived signature so the browser uploads the video
+// straight to Cloudinary (the backend never buffers the file). Returns the
+// cloud name, api key, timestamp, folder, type and signature.
+const createUploadSignature = asyncHandler(async (req, res) => {
+  if (!cloudinary.enabled()) {
+    res.status(503);
+    throw new Error('Video uploads are not configured. Set the CLOUDINARY_* environment variables on the server.');
+  }
+  res.json(cloudinary.signUpload());
+});
 
 // ===== Shared / Employee =====
 
@@ -99,6 +135,8 @@ function safeCourse(course) {
     _id: m._id,
     title: m.title,
     type: m.type,
+    // Source (drive/r2) is safe to expose; the actual key/link is not.
+    videoSource: m.type === 'video' ? (m.videoSource || 'drive') : undefined,
     content: m.content,
     durationSec: m.durationSec,
   }));
@@ -153,7 +191,9 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
     throw new Error('Course not found');
   }
   const module = course.modules.id(req.params.mid);
-  if (!module || module.type !== 'video' || !module.driveFileId) {
+  const isCloudinary = module && module.type === 'video' && module.videoSource === 'cloudinary' && module.cloudinaryPublicId;
+  const isDrive = module && module.type === 'video' && module.videoSource !== 'cloudinary' && module.driveFileId;
+  if (!module || module.type !== 'video' || (!isCloudinary && !isDrive)) {
     res.status(404);
     throw new Error('Video not found');
   }
@@ -167,6 +207,14 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
   if (!allowed) {
     res.status(403);
     throw new Error('You must be enrolled and approved to watch this video.');
+  }
+
+  if (isCloudinary) {
+    // Hand the <video> a signed Cloudinary delivery URL — playback bandwidth,
+    // transcoding and Range/seek handling are served by Cloudinary, not this
+    // host. The browser preserves the Range header across the 302.
+    const url = cloudinary.deliveryUrl(module);
+    return res.redirect(302, url);
   }
 
   await streamDriveFile(module.driveFileId, req, res);
@@ -407,8 +455,17 @@ const updateCourse = asyncHandler(async (req, res) => {
   if (req.body.durationHours !== undefined) course.durationHours = Number(req.body.durationHours) || 0;
   if (req.body.deadlineDays !== undefined) course.deadlineDays = Number(req.body.deadlineDays) || 0;
   if (req.body.active !== undefined) course.active = !!req.body.active;
-  if (req.body.modules !== undefined) course.modules = normalizeModules(req.body.modules);
+  let orphanedIds = [];
+  if (req.body.modules !== undefined) {
+    const before = new Set(cloudinaryIdsOf(course));
+    course.modules = normalizeModules(req.body.modules);
+    const after = new Set(cloudinaryIdsOf(course));
+    // Any Cloudinary video removed or replaced during this edit is now orphaned.
+    orphanedIds = [...before].filter((id) => !after.has(id));
+  }
   await course.save();
+  // Delete orphaned assets after the save succeeds (best-effort).
+  orphanedIds.forEach((id) => cloudinary.destroy(id));
   res.json({ course });
 });
 
@@ -419,9 +476,11 @@ const deleteCourse = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Course not found');
   }
+  const ids = cloudinaryIdsOf(course);
   await Enrollment.deleteMany({ course: course._id });
   await CourseReport.deleteMany({ course: course._id });
   await course.deleteOne();
+  ids.forEach((id) => cloudinary.destroy(id)); // free the Cloudinary assets (best-effort)
   res.json({ id: req.params.id, deleted: true });
 });
 
@@ -542,6 +601,7 @@ module.exports = {
   reportIssue,
   submitFeedback,
   listAdmin,
+  createUploadSignature,
   createCourse,
   updateCourse,
   deleteCourse,

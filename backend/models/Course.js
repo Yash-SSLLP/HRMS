@@ -9,12 +9,22 @@ const ENROLL_SOURCE = ['Assigned', 'Self'];
 
 // A single unit of a course. `_id` is kept (mongoose default) so an enrollment's
 // per-module progress can be keyed by a stable id even when modules are reordered.
+const VIDEO_SOURCES = ['drive', 'cloudinary'];
 const moduleSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   type: { type: String, enum: MODULE_TYPES, default: 'video' },
-  // Google Drive share link + the file id parsed from it (video modules).
+  // Where a video module's file lives. Legacy modules have no value → 'drive'.
+  videoSource: { type: String, enum: VIDEO_SOURCES, default: 'drive' },
+  // Google Drive share link + the file id parsed from it (videoSource 'drive').
   driveUrl: { type: String, trim: true },
   driveFileId: { type: String, trim: true },
+  // Cloudinary asset (videoSource 'cloudinary'). Stored as an `authenticated`
+  // asset — never leaked to employees; reached only via a signed delivery URL.
+  cloudinaryPublicId: { type: String, trim: true },
+  cloudinaryVersion: { type: Number },
+  cloudinaryFormat: { type: String, trim: true },
+  cloudinaryResourceType: { type: String, trim: true, default: 'video' },
+  videoSizeBytes: { type: Number, min: 0 },
   // Free text for a text module, or notes shown under a video.
   content: { type: String },
   // Video length in seconds, learned from the player on first play. Used as the
@@ -121,6 +131,7 @@ module.exports.Enrollment = Enrollment;
 module.exports.CourseReport = CourseReport;
 module.exports.COURSE_CATEGORIES = COURSE_CATEGORIES;
 module.exports.MODULE_TYPES = MODULE_TYPES;
+module.exports.VIDEO_SOURCES = VIDEO_SOURCES;
 module.exports.ENROLLMENT_STATUS = ENROLLMENT_STATUS;
 module.exports.APPROVAL_STATUS = APPROVAL_STATUS;
 module.exports.REPORT_CATEGORIES = REPORT_CATEGORIES;

@@ -18,9 +18,47 @@ const parseDriveId = (input) => {
   );
 };
 
-const blankModule = () => ({ type: 'video', title: '', driveUrl: '', content: '' });
+const blankModule = () => ({ type: 'video', videoSource: 'cloudinary', title: '', driveUrl: '', cloudinaryPublicId: '', content: '' });
 const blank = () => ({ title: '', description: '', category: 'Other', durationHours: 0, deadlineDays: 0, active: true, modules: [] });
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+
+// Direct browser → Cloudinary signed upload. Uses a raw XHR (not the api axios
+// instance, which would attach our JWT + baseURL). Resolves with the parsed
+// Cloudinary response ({ public_id, version, format, bytes, ... }).
+function uploadToCloudinary(sig, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('api_key', sig.apiKey);
+    fd.append('timestamp', sig.timestamp);
+    fd.append('signature', sig.signature);
+    fd.append('folder', sig.folder);
+    fd.append('type', sig.type);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', sig.uploadUrl);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { reject(new Error('Unexpected upload response')); }
+      } else {
+        let msg = `Upload failed (${xhr.status})`;
+        try { msg = JSON.parse(xhr.responseText)?.error?.message || msg; } catch { /* keep default */ }
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Upload failed — network error'));
+    xhr.send(fd);
+  });
+}
+
+const fmtBytes = (n) => {
+  if (!n) return '';
+  const mb = n / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+};
 
 export default function AdminCourses() {
   const [courses, setCourses] = useState([]);
@@ -84,7 +122,12 @@ export default function AdminCourses() {
         _id: m._id,
         type: m.type || 'video',
         title: m.title || '',
+        videoSource: m.videoSource || (m.cloudinaryPublicId ? 'cloudinary' : 'drive'),
         driveUrl: m.driveUrl || m.url || '',
+        cloudinaryPublicId: m.cloudinaryPublicId || '',
+        cloudinaryVersion: m.cloudinaryVersion || undefined,
+        cloudinaryFormat: m.cloudinaryFormat || '',
+        videoSizeBytes: m.videoSizeBytes || 0,
         content: m.content || '',
       })),
     });
@@ -96,13 +139,45 @@ export default function AdminCourses() {
   const removeModule = (idx) => setForm((f) => ({ ...f, modules: f.modules.filter((_, i) => i !== idx) }));
   const updateModule = (idx, field, value) =>
     setForm((f) => ({ ...f, modules: f.modules.map((m, i) => (i === idx ? { ...m, [field]: value } : m)) }));
+  const patchModule = (idx, patch) =>
+    setForm((f) => ({ ...f, modules: f.modules.map((m, i) => (i === idx ? { ...m, ...patch } : m)) }));
+
+  // Upload a picked video file straight to Cloudinary, tracking progress on the
+  // module, then store the resulting asset ids on it.
+  const onPickVideo = async (idx, file) => {
+    if (!file) return;
+    if (!/^video\//i.test(file.type || '')) {
+      patchModule(idx, { _uploadError: 'Please choose a video file.' });
+      return;
+    }
+    patchModule(idx, { _uploadPct: 0, _uploadError: '' });
+    try {
+      const { data: sig } = await api.post('/courses/upload-signature');
+      const result = await uploadToCloudinary(sig, file, (pct) => patchModule(idx, { _uploadPct: pct }));
+      patchModule(idx, {
+        cloudinaryPublicId: result.public_id,
+        cloudinaryVersion: result.version,
+        cloudinaryFormat: result.format,
+        videoSizeBytes: result.bytes || file.size,
+        _uploadName: file.name,
+        _uploadPct: null,
+      });
+    } catch (err) {
+      patchModule(idx, { _uploadPct: null, _uploadError: err.response?.data?.message || err.message || 'Upload failed' });
+    }
+  };
 
   const save = async (e) => {
     e.preventDefault();
-    // Client-side guard: every video module needs a resolvable Drive link.
-    const badVideo = form.modules.findIndex((m) => m.type === 'video' && !parseDriveId(m.driveUrl));
+    // Client-side guard: every video module needs a source — an uploaded
+    // Cloudinary asset, or a resolvable Drive link.
+    const badVideo = form.modules.findIndex((m) => {
+      if (m.type !== 'video') return false;
+      return m.videoSource === 'cloudinary' ? !m.cloudinaryPublicId : !parseDriveId(m.driveUrl);
+    });
     if (badVideo >= 0) {
-      setError(`Module ${badVideo + 1}: enter a valid Google Drive video link.`);
+      const m = form.modules[badVideo];
+      setError(`Module ${badVideo + 1}: ${m.videoSource === 'cloudinary' ? 'upload a video file.' : 'enter a valid Google Drive video link.'}`);
       return;
     }
     setSaving(true);
@@ -249,8 +324,11 @@ export default function AdminCourses() {
                 ) : (
                   <div className="space-y-3">
                     {form.modules.map((m, idx) => {
-                      const fileId = m.type === 'video' ? parseDriveId(m.driveUrl) : null;
-                      const canPreview = editingId && m._id && fileId;
+                      const isCloud = m.videoSource === 'cloudinary';
+                      const fileId = m.type === 'video' && !isCloud ? parseDriveId(m.driveUrl) : null;
+                      const hasVideo = m.type === 'video' && (isCloud ? !!m.cloudinaryPublicId : !!fileId);
+                      const canPreview = editingId && m._id && hasVideo;
+                      const uploading = m._uploadPct !== null && m._uploadPct !== undefined;
                       return (
                         <div key={idx} className="border rounded-lg p-3 space-y-2 bg-gray-50/50">
                           <div className="flex items-center justify-between gap-2">
@@ -267,19 +345,63 @@ export default function AdminCourses() {
                           <input required placeholder={`Module ${idx + 1} title *`} value={m.title} onChange={(e) => updateModule(idx, 'title', e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm" />
                           {m.type === 'video' ? (
                             <>
-                              <input placeholder="Google Drive video link" value={m.driveUrl} onChange={(e) => updateModule(idx, 'driveUrl', e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm" />
-                              <div className="flex items-center justify-between text-xs">
-                                {m.driveUrl ? (
-                                  fileId
-                                    ? <span className="text-green-600">✓ Valid Drive link</span>
-                                    : <span className="text-red-600">✗ Not a recognizable Drive link</span>
-                                ) : <span className="text-gray-400">Paste a “Anyone with the link” Drive video URL</span>}
-                                {canPreview && (
+                              {/* Source: upload to Cloudinary, or paste a Drive link */}
+                              <div className="inline-flex rounded-lg border bg-white overflow-hidden text-xs">
+                                {[['cloudinary', '⬆ Upload'], ['drive', '🔗 Drive link']].map(([src, label]) => (
+                                  <button key={src} type="button" onClick={() => updateModule(idx, 'videoSource', src)}
+                                    className={`px-3 py-1.5 ${m.videoSource === src ? 'bg-gray-900 text-white' : 'text-gray-600'}`}>
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {isCloud ? (
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <label className="px-3 py-2 text-sm border rounded-lg cursor-pointer hover:bg-gray-50">
+                                      {m.cloudinaryPublicId ? 'Replace video…' : 'Choose video file…'}
+                                      <input type="file" accept="video/*" className="hidden" disabled={uploading}
+                                        onChange={(e) => { onPickVideo(idx, e.target.files?.[0]); e.target.value = ''; }} />
+                                    </label>
+                                    {m.cloudinaryPublicId && !uploading && (
+                                      <span className="text-green-600 text-xs">
+                                        ✓ Uploaded{m._uploadName ? ` — ${m._uploadName}` : ''}{m.videoSizeBytes ? ` (${fmtBytes(m.videoSizeBytes)})` : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {uploading && (
+                                    <div>
+                                      <div className="h-2 bg-gray-100 rounded overflow-hidden">
+                                        <div className="h-2 accent-bg rounded transition-all" style={{ width: `${m._uploadPct}%` }} />
+                                      </div>
+                                      <div className="text-[11px] text-gray-500 mt-0.5">Uploading… {m._uploadPct}%</div>
+                                    </div>
+                                  )}
+                                  {m._uploadError && <div className="text-xs text-red-600">✗ {m._uploadError}</div>}
+                                  {!m.cloudinaryPublicId && !uploading && !m._uploadError && (
+                                    <div className="text-xs text-gray-400">MP4/MOV/WebM. Uploads straight to Cloudinary (private).</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <>
+                                  <input placeholder="Google Drive video link" value={m.driveUrl} onChange={(e) => updateModule(idx, 'driveUrl', e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                                  <div className="text-xs">
+                                    {m.driveUrl ? (
+                                      fileId
+                                        ? <span className="text-green-600">✓ Valid Drive link</span>
+                                        : <span className="text-red-600">✗ Not a recognizable Drive link</span>
+                                    ) : <span className="text-gray-400">Paste a “Anyone with the link” Drive video URL</span>}
+                                  </div>
+                                </>
+                              )}
+
+                              {canPreview && (
+                                <div className="text-xs text-right">
                                   <button type="button" onClick={() => setPreviewModIdx(previewModIdx === idx ? null : idx)} className="text-blue-600 hover:underline">
                                     {previewModIdx === idx ? 'Hide preview' : 'Preview'}
                                   </button>
-                                )}
-                              </div>
+                                </div>
+                              )}
                               {canPreview && previewModIdx === idx && (
                                 <CourseVideoPlayer courseId={editingId} module={{ _id: m._id, title: m.title }} preview />
                               )}
