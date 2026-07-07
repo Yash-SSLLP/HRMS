@@ -20,6 +20,12 @@ const {
   rejectEnrollment,
   listReports,
   resolveReport,
+  setCoursePublic,
+  listCourseLeads,
+  listAllComments,
+  moderateComment,
+  deleteComment,
+  listVideoFeedback,
 } = require('../controllers/courseController');
 const { protect, protectMedia, requirePermission } = require('../middleware/authMiddleware');
 
@@ -54,6 +60,13 @@ router.patch('/enrollments/:eid/reject', rejectEnrollment);
 router.post('/', createCourse);
 router.post('/:id/assign', assignCourse);
 router.get('/:id/enrollments', courseRoster);
+// Public sharing + moderation
+router.get('/comments', listAllComments);
+router.patch('/comments/:cid', moderateComment);
+router.delete('/comments/:cid', deleteComment);
+router.post('/:id/public', setCoursePublic);
+router.get('/:id/leads', listCourseLeads);
+router.get('/:id/video-feedback', listVideoFeedback);
 router.put('/:id', updateCourse);
 router.delete('/:id', deleteCourse);
 

@@ -30,6 +30,13 @@ export default function CoursePlayerScreen() {
   const durationRef = useRef(0);
   const [watchedPct, setWatchedPct] = useState(0);
   const [videoFailed, setVideoFailed] = useState(false);
+  // No-skip: furthest position the learner may seek to, and whether the lock is
+  // lifted this session (≥95% watched). videoRef lets us snap a skip back.
+  const videoRef = useRef(null);
+  const maxAllowed = useRef(0);
+  const sessionFree = useRef(false);
+  const [locked, setLocked] = useState(false);
+  const lockTimer = useRef(null);
 
   const [reportOpen, setReportOpen] = useState(false);
 
@@ -67,10 +74,15 @@ export default function CoursePlayerScreen() {
     navigation.setOptions({ title: course?.title || 'Course' });
   }, [navigation, course?.title]);
 
-  // Reset watch tracking when the lesson changes.
+  // Reset watch tracking when the lesson changes. Seed the no-skip watermark
+  // from saved progress so the learner can seek back to where they left off.
   useEffect(() => {
     credited.current = 0; lastPos.current = 0; lastSent.current = 0; durationRef.current = active?.durationSec || 0;
-    setWatchedPct(0); setVideoFailed(false);
+    const saved = (enrollment?.moduleProgress || []).find((m) => String(m.module) === String(activeId));
+    maxAllowed.current = Math.max(0, Number(saved?.watchedSec) || 0);
+    sessionFree.current = false;
+    setWatchedPct(0); setVideoFailed(false); setLocked(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
   const applyUpdated = (updated) => {
@@ -97,10 +109,26 @@ export default function CoursePlayerScreen() {
     if (st.durationMillis) durationRef.current = st.durationMillis / 1000;
     const pos = st.positionMillis / 1000;
     const delta = pos - lastPos.current;
+
+    // No-skip: a forward jump past the furthest-watched point snaps back to it.
+    // Free for an already-completed module or once ≥95% is watched this session.
+    const free = activeDone || sessionFree.current;
+    if (!free && pos > maxAllowed.current + 1.5) {
+      lastPos.current = maxAllowed.current;
+      if (videoRef.current) videoRef.current.setPositionAsync(Math.round(maxAllowed.current * 1000)).catch(() => {});
+      setLocked(true);
+      clearTimeout(lockTimer.current);
+      lockTimer.current = setTimeout(() => setLocked(false), 2600);
+      return;
+    }
+
     if (st.isPlaying && delta > 0 && delta <= 2) {
       credited.current = Math.min(durationRef.current || Infinity, credited.current + delta);
+      if (pos > maxAllowed.current) maxAllowed.current = pos; // learner legitimately reached here
       const d = durationRef.current;
-      setWatchedPct(d > 0 ? Math.min(100, Math.round((credited.current / d) * 100)) : 0);
+      const pct = d > 0 ? Math.min(100, Math.round((credited.current / d) * 100)) : 0;
+      setWatchedPct(pct);
+      if (d > 0 && credited.current >= 0.95 * d) sessionFree.current = true;
     }
     lastPos.current = pos;
     if (st.didJustFinish) { credited.current = durationRef.current; sendProgress(true); }
@@ -168,15 +196,23 @@ export default function CoursePlayerScreen() {
                 </Text>
               </View>
             ) : (
-              <Video
-                key={active._id}
-                style={styles.video}
-                source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}` }}
-                useNativeControls
-                resizeMode={ResizeMode.CONTAIN}
-                onPlaybackStatusUpdate={onStatus}
-                onError={() => setVideoFailed(true)}
-              />
+              <View>
+                <Video
+                  key={active._id}
+                  ref={videoRef}
+                  style={styles.video}
+                  source={{ uri: `${API_BASE}/courses/${courseId}/modules/${active._id}/video?access_token=${encodeURIComponent(token)}` }}
+                  useNativeControls
+                  resizeMode={ResizeMode.CONTAIN}
+                  onPlaybackStatusUpdate={onStatus}
+                  onError={() => setVideoFailed(true)}
+                />
+                {locked && (
+                  <View style={styles.skipLock} pointerEvents="none">
+                    <Text style={styles.skipLockText}>🔒 You can't skip ahead — finish watching first</Text>
+                  </View>
+                )}
+              </View>
             )}
             <View style={{ paddingHorizontal: spacing(4), paddingTop: spacing(3) }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -324,6 +360,8 @@ const styles = StyleSheet.create({
   headerBar: { flexDirection: 'row', alignItems: 'center', padding: spacing(4), backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   videoFail: { width: '100%', aspectRatio: 16 / 9, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center', padding: spacing(4) },
+  skipLock: { position: 'absolute', top: 10, left: 0, right: 0, alignItems: 'center' },
+  skipLockText: { backgroundColor: 'rgba(0,0,0,0.8)', color: '#fff', fontSize: 12, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, overflow: 'hidden' },
   reportRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: spacing(4), marginTop: spacing(3), paddingVertical: spacing(3), paddingHorizontal: spacing(3), backgroundColor: colors.warningSoft, borderRadius: radius.md },
   reportText: { color: colors.warning, fontWeight: '700', fontSize: 13, marginLeft: 6 },
   navRow: { flexDirection: 'row', paddingHorizontal: spacing(4), marginTop: spacing(3) },

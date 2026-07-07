@@ -67,6 +67,7 @@ app.use('/api/compliance', require('./routes/complianceRoutes'));
 app.use('/api/surveys', require('./routes/surveyRoutes'));
 app.use('/api/travel', require('./routes/travelRoutes'));
 app.use('/api/courses', require('./routes/courseRoutes'));
+app.use('/api/public/courses', require('./routes/publicCourseRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/audit', require('./routes/auditRoutes'));

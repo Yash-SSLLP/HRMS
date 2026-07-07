@@ -9,6 +9,7 @@ import ApplyForm from './pages/ApplyForm.jsx';
 import DocumentSubmitForm from './pages/DocumentSubmitForm.jsx';
 import EmployeeDocSubmit from './pages/EmployeeDocSubmit.jsx';
 import LetterDownload from './pages/LetterDownload.jsx';
+import PublicCoursePage from './pages/PublicCoursePage.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Layout from './components/Layout.jsx';
 import { useAuthStore } from './store/authStore';
@@ -144,6 +145,9 @@ export default function App() {
 
       {/* Public — candidate offer/appointment letter download (tokenised link) */}
       <Route path="/letter/:token" element={<LetterDownload />} />
+
+      {/* Public — no-login course viewer (shareable link) */}
+      <Route path="/learn/:token" element={<PublicCoursePage />} />
 
       <Route
         path="/admin"

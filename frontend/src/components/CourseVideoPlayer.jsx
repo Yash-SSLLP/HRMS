@@ -10,25 +10,39 @@ import { useAuthStore } from '../store/authStore';
 // Anti-skip: we only credit watched time when playback advances roughly in real
 // time (<= ~2s jump). Scrubbing to the end therefore doesn't fake completion.
 //
+// No-skip lock: a learner can only seek BACK to parts they've already watched —
+// any forward jump past their furthest-watched point snaps back to it. Seeking
+// is unrestricted for admin preview, for a module already completed, or once
+// they've watched ≥95% of this video in the current session.
+//
 // Props:
 //   courseId, module ({ _id, title, content, durationSec })
-//   preview  — admin preview mode: play only, no progress reporting
+//   preview  — admin preview mode: play only, no progress reporting, free seek
 //   bare     — full-bleed video for the course stage (hides the extra watched bar)
+//   initialWatchedSec — saved watched seconds (seeds the no-skip watermark so a
+//                       returning learner can seek up to where they left off)
+//   moduleCompleted — the learner already finished this module → free seek
 //   onProgress(enrollment) — called with the updated enrollment after a save
 //   onError() — called when the video fails to load (so the page can prompt a report)
-export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, onProgress, onError }) {
+export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, initialWatchedSec = 0, moduleCompleted = false, onProgress, onError }) {
   const token = useAuthStore((s) => s.token);
   const videoRef = useRef(null);
   const [src, setSrc] = useState('');
   const [watchedSec, setWatchedSec] = useState(0);
   const [duration, setDuration] = useState(module?.durationSec || 0);
   const [failed, setFailed] = useState(false);
+  const [locked, setLocked] = useState(false); // brief "can't skip ahead" hint
 
   // Highest position credited so far (seconds), and the last sample time so we
   // can detect real-time advancement vs. a forward seek.
   const creditedRef = useRef(0);
   const lastTimeRef = useRef(0);
   const lastSentRef = useRef(0);
+  // Furthest position the learner is allowed to seek to (grows during real-time
+  // playback). Whether the no-skip lock is lifted for this session.
+  const maxAllowedRef = useRef(0);
+  const sessionFreeRef = useRef(false);
+  const lockTimerRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,14 +51,22 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
       if (cancelled) return;
       setSrc(`${base}/courses/${courseId}/modules/${module._id}/video?access_token=${encodeURIComponent(token)}`);
     })();
-    // Reset tracking when the module changes.
+    // Reset tracking when the module changes. Seed the no-skip watermark from
+    // the learner's saved progress so they can seek back to where they left off.
     creditedRef.current = 0;
     lastTimeRef.current = 0;
     lastSentRef.current = 0;
+    maxAllowedRef.current = Math.max(0, Number(initialWatchedSec) || 0);
+    sessionFreeRef.current = false;
     setWatchedSec(0);
+    setLocked(false);
     setFailed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId, module._id, token]);
+
+  // True when the learner may seek anywhere (admin preview, already-done module,
+  // or ≥95% watched this session).
+  const canSeekFreely = () => preview || moduleCompleted || sessionFreeRef.current;
 
   const report = async (force = false) => {
     if (preview) return;
@@ -74,9 +96,29 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
         creditedRef.current + delta
       );
       setWatchedSec(creditedRef.current);
+      // The learner has legitimately reached `t` — let them seek back here later.
+      if (t > maxAllowedRef.current) maxAllowedRef.current = t;
+      // Once ~95% is watched this session, drop the no-skip lock (they've seen it).
+      const dur = duration || v.duration || 0;
+      if (dur > 0 && creditedRef.current >= 0.95 * dur) sessionFreeRef.current = true;
     }
     lastTimeRef.current = t;
     report(false);
+  };
+
+  // No-skip: block a forward seek past the furthest-watched point by snapping
+  // back to it. Backward seeks (into already-seen content) are always allowed.
+  const onSeeking = () => {
+    const v = videoRef.current;
+    if (!v || canSeekFreely()) return;
+    const limit = maxAllowedRef.current + 1; // 1s tolerance for normal playback
+    if (v.currentTime > limit) {
+      v.currentTime = maxAllowedRef.current;
+      lastTimeRef.current = maxAllowedRef.current;
+      setLocked(true);
+      clearTimeout(lockTimerRef.current);
+      lockTimerRef.current = setTimeout(() => setLocked(false), 2600);
+    }
   };
 
   const onLoadedMetadata = () => {
@@ -99,7 +141,7 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           </div>
         )
       )}
-      <div className={bare ? 'bg-black' : 'bg-black rounded-lg overflow-hidden'}>
+      <div className={`relative ${bare ? 'bg-black' : 'bg-black rounded-lg overflow-hidden'}`}>
         <video
           ref={videoRef}
           src={src}
@@ -110,10 +152,16 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           className={`w-full bg-black ${bare ? 'max-h-[65vh] aspect-video' : 'max-h-[70vh]'}`}
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={onTimeUpdate}
+          onSeeking={onSeeking}
           onPause={() => report(true)}
           onEnded={() => report(true)}
           onError={() => { setFailed(true); onError?.(); }}
         />
+        {locked && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
+            🔒 You can’t skip ahead — finish watching first
+          </div>
+        )}
       </div>
       {!preview && (
         <div className={bare ? 'mt-3 px-4 sm:px-6' : 'mt-3'}>

@@ -19,7 +19,7 @@ const parseDriveId = (input) => {
 };
 
 const blankModule = () => ({ type: 'video', videoSource: 'cloudinary', title: '', driveUrl: '', cloudinaryPublicId: '', content: '' });
-const blank = () => ({ title: '', description: '', category: 'Other', durationHours: 0, deadlineDays: 0, active: true, modules: [] });
+const blank = () => ({ title: '', description: '', category: 'Other', courseType: 'internal', durationHours: 0, deadlineDays: 0, active: true, modules: [] });
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
 
 // Direct browser → Cloudinary signed upload. Uses a raw XHR (not the api axios
@@ -72,11 +72,13 @@ export default function AdminCourses() {
   const [saving, setSaving] = useState(false);
   const [previewModIdx, setPreviewModIdx] = useState(null);
 
-  // Assign / roster / approvals / reports
+  // Assign / roster / approvals / reports / public sharing
   const [assignFor, setAssignFor] = useState(null); // course
   const [rosterFor, setRosterFor] = useState(null); // course
   const [showApprovals, setShowApprovals] = useState(false);
   const [showReports, setShowReports] = useState(false);
+  const [shareFor, setShareFor] = useState(null); // course (share/leads/feedback hub)
+  const [showComments, setShowComments] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -99,6 +101,7 @@ export default function AdminCourses() {
     if (!panel) return;
     if (panel === 'approvals') setShowApprovals(true);
     else if (panel === 'reports') setShowReports(true);
+    else if (panel === 'comments') setShowComments(true);
     // Clear the param so re-navigating/closing doesn't re-trigger it.
     searchParams.delete('panel');
     setSearchParams(searchParams, { replace: true });
@@ -107,6 +110,7 @@ export default function AdminCourses() {
 
   const pendingTotal = useMemo(() => courses.reduce((n, c) => n + (c.pendingCount || 0), 0), [courses]);
   const reportsTotal = useMemo(() => courses.reduce((n, c) => n + (c.openReportsCount || 0), 0), [courses]);
+  const commentsTotal = useMemo(() => courses.reduce((n, c) => n + (c.pendingCommentsCount || 0), 0), [courses]);
 
   const openCreate = () => { setEditingId(null); setForm(blank()); setPreviewModIdx(null); setShowModal(true); };
   const openEdit = (c) => {
@@ -115,6 +119,7 @@ export default function AdminCourses() {
       title: c.title,
       description: c.description || '',
       category: c.category,
+      courseType: c.courseType || (c.isPublic ? 'external' : 'internal'),
       durationHours: c.durationHours || 0,
       deadlineDays: c.deadlineDays || 0,
       active: c.active,
@@ -227,6 +232,13 @@ export default function AdminCourses() {
               <span className="ml-1 inline-flex items-center justify-center text-[11px] font-semibold bg-red-500 text-white rounded-full px-1.5 py-0.5">{reportsTotal}</span>
             )}
           </button>
+          <button onClick={() => setShowComments(true)}
+            className="relative px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-sm">
+            Comments
+            {commentsTotal > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center text-[11px] font-semibold bg-indigo-500 text-white rounded-full px-1.5 py-0.5">{commentsTotal}</span>
+            )}
+          </button>
           <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Course</button>
         </div>
       </PageHeader>
@@ -253,6 +265,11 @@ export default function AdminCourses() {
               {c.description && <p className="text-sm text-gray-600 mt-2 line-clamp-2">{c.description}</p>}
 
               <div className="flex flex-wrap gap-1.5 mt-3 text-[11px]">
+                {(c.courseType === 'external' || c.isPublic) ? (
+                  <span className="bg-emerald-50 text-emerald-700 rounded-md px-2 py-0.5">🌐 External</span>
+                ) : (
+                  <span className="bg-slate-100 text-slate-600 rounded-md px-2 py-0.5">🏢 Internal</span>
+                )}
                 <span className="bg-gray-100 text-gray-700 rounded-md px-2 py-0.5">🎬 {c.videoCount} video{c.videoCount === 1 ? '' : 's'}</span>
                 {c.moduleCount - c.videoCount > 0 && (
                   <span className="bg-gray-100 text-gray-700 rounded-md px-2 py-0.5">📄 {c.moduleCount - c.videoCount} text</span>
@@ -272,6 +289,9 @@ export default function AdminCourses() {
                 <button onClick={() => openEdit(c)} className="text-blue-600 hover:underline">Edit</button>
                 <button onClick={() => setAssignFor(c)} className="text-indigo-600 hover:underline">Assign</button>
                 <button onClick={() => setRosterFor(c)} className="text-gray-600 hover:underline">Roster</button>
+                {(c.courseType === 'external' || c.isPublic) && (
+                  <button onClick={() => setShareFor(c)} className="text-emerald-600 hover:underline">Public link</button>
+                )}
                 <button onClick={() => remove(c)} className="text-red-600 hover:underline ml-auto">Delete</button>
               </div>
             </div>
@@ -288,6 +308,24 @@ export default function AdminCourses() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Title *</label>
                 <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Course type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['internal', '🏢 Internal', 'Only your employees — shows in their catalog, assignable.'],
+                    ['external', '🌐 External', 'Public no-login link — anyone can watch after a short form.'],
+                  ].map(([val, label, hint]) => (
+                    <button type="button" key={val} onClick={() => setForm({ ...form, courseType: val })}
+                      className={`text-left border rounded-lg px-3 py-2 ${form.courseType === val ? 'border-gray-900 ring-1 ring-gray-900 bg-gray-50' : 'hover:bg-gray-50'}`}>
+                      <div className="text-sm font-medium text-gray-800">{label}</div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">{hint}</div>
+                    </button>
+                  ))}
+                </div>
+                {editingId && form.courseType === 'external' && (
+                  <div className="text-[11px] text-gray-400 mt-1">Save, then use “Public link” on the card to copy the shareable URL.</div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
@@ -431,6 +469,8 @@ export default function AdminCourses() {
       {rosterFor && <RosterModal course={rosterFor} onClose={() => setRosterFor(null)} />}
       {showApprovals && <ApprovalsModal onClose={() => setShowApprovals(false)} onChange={load} />}
       {showReports && <ReportsModal onClose={() => setShowReports(false)} onChange={load} />}
+      {shareFor && <ShareModal course={shareFor} onClose={() => setShareFor(null)} onChange={load} />}
+      {showComments && <CommentsModal onClose={() => setShowComments(false)} onChange={load} />}
     </div>
   );
 }
@@ -657,6 +697,162 @@ function ReportsModal({ onClose, onChange }) {
                   <button disabled={busyId === r._id} onClick={() => act(r._id, 'Open')}
                     className="shrink-0 px-3 py-1.5 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reopen</button>
                 )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex justify-end pt-4"><button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button></div>
+    </Modal>
+  );
+}
+
+// ===== Public sharing hub: toggle public, copy link, leads, feedback =====
+function ShareModal({ course, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState('leads');
+  const [leads, setLeads] = useState(null);
+  const [feedback, setFeedback] = useState(null);
+
+  const publicUrl = course.publicToken ? `${window.location.origin}/learn/${course.publicToken}` : '';
+
+  const copy = () => { navigator.clipboard?.writeText(publicUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+
+  useEffect(() => {
+    if (tab === 'leads' && leads === null) {
+      api.get(`/courses/${course._id}/leads`).then(({ data }) => setLeads(data.leads)).catch(() => setLeads([]));
+    }
+    if (tab === 'feedback' && feedback === null) {
+      api.get(`/courses/${course._id}/video-feedback`).then(({ data }) => setFeedback(data.feedback)).catch(() => setFeedback([]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const exportLeads = () => {
+    const rows = [['Name', 'Phone', 'Location', 'Email', 'Date']].concat(
+      (leads || []).map((l) => [l.name, l.phone, l.location, l.email || '', new Date(l.createdAt).toLocaleString('en-IN')])
+    );
+    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a'); a.href = url; a.download = `${course.title}-leads.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="card-title">Public link · “{course.title}”</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+        </div>
+
+        <div className="text-xs text-gray-500 mb-2">Anyone with this link can watch after a short form (name, phone, location) — no login.</div>
+        <div className="flex gap-2 mb-4">
+          <input readOnly value={publicUrl} className="flex-1 border rounded-lg px-3 py-2 text-sm bg-gray-50" onFocus={(e) => e.target.select()} />
+          <button onClick={copy} className="px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">{copied ? 'Copied ✓' : 'Copy'}</button>
+          <a href={publicUrl} target="_blank" rel="noreferrer" className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Open</a>
+        </div>
+
+        <div className="flex gap-2 border-b mb-3">
+          {[['leads', 'Leads'], ['feedback', 'Feedback']].map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`px-3 py-2 text-sm -mb-px border-b-2 ${tab === k ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{label}</button>
+          ))}
+        </div>
+
+        {tab === 'leads' && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-500">{leads ? `${leads.length} lead${leads.length === 1 ? '' : 's'}` : 'Loading…'}</span>
+              {leads && leads.length > 0 && <button onClick={exportLeads} className="text-xs text-blue-600 hover:underline">Export CSV</button>}
+            </div>
+            <div className="max-h-80 overflow-y-auto border rounded-lg divide-y">
+              {!leads ? <div className="p-3 text-sm text-gray-400">Loading…</div> : leads.length === 0 ? (
+                <div className="p-3 text-sm text-gray-500">No one has started this course yet.</div>
+              ) : leads.map((l) => (
+                <div key={l._id} className="px-3 py-2">
+                  <div className="text-sm text-gray-900">{l.name} <span className="text-gray-400">· {l.phone}</span></div>
+                  <div className="text-xs text-gray-500">{l.location}{l.email ? ` · ${l.email}` : ''} · {fmtDate(l.createdAt)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === 'feedback' && (
+          <div className="max-h-80 overflow-y-auto border rounded-lg divide-y">
+            {!feedback ? <div className="p-3 text-sm text-gray-400">Loading…</div> : feedback.length === 0 ? (
+              <div className="p-3 text-sm text-gray-500">No video feedback yet.</div>
+            ) : feedback.map((f) => (
+              <div key={f._id} className="px-3 py-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-900">{f.viewer?.name || 'Someone'}</span>
+                  {f.rating ? <span className="text-amber-500 text-sm">{'★'.repeat(f.rating)}{'☆'.repeat(5 - f.rating)}</span> : null}
+                </div>
+                <div className="text-xs text-gray-400">{f.moduleTitle || 'Video'} · {fmtDate(f.createdAt)}</div>
+                {(f.answers || []).length > 0 && (
+                  <div className="text-xs text-gray-600 mt-1">{f.answers.map((a) => `${a.label}: ${a.answer}`).join(' · ')}</div>
+                )}
+                {f.comment && <div className="text-sm text-gray-700 mt-1">“{f.comment}”</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ===== Global comment moderation =====
+function CommentsModal({ onClose, onChange }) {
+  const [rows, setRows] = useState(null);
+  const [status, setStatus] = useState('Pending');
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = (s) => api.get('/courses/comments', { params: { status: s } })
+    .then(({ data }) => setRows(data.comments))
+    .catch((err) => setError(err.response?.data?.message || 'Failed to load'));
+  useEffect(() => { setRows(null); load(status); /* eslint-disable-next-line */ }, [status]);
+
+  const act = async (id, action) => {
+    setBusyId(id); setError('');
+    try {
+      if (action === 'delete') await api.delete(`/courses/comments/${id}`);
+      else await api.patch(`/courses/comments/${id}`, { status: action });
+      await load(status);
+      onChange?.();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Action failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Modal title="Course comments" onClose={onClose}>
+      <div className="flex gap-2 mb-3">
+        {['Pending', 'Approved', 'Rejected'].map((s) => (
+          <button key={s} onClick={() => setStatus(s)}
+            className={`px-3 py-1.5 text-xs rounded-lg border ${status === s ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'}`}>{s}</button>
+        ))}
+      </div>
+      {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      {!rows ? <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div> : rows.length === 0 ? (
+        <p className="text-sm text-gray-500">No {status.toLowerCase()} comments.</p>
+      ) : (
+        <div className="max-h-96 overflow-y-auto divide-y">
+          {rows.map((c) => (
+            <div key={c._id} className="py-3">
+              <div className="text-sm text-gray-900"><span className="font-medium">{c.name}</span>
+                <span className="text-gray-400"> · {c.course?.title || 'Course'}{c.moduleTitle ? ` · ${c.moduleTitle}` : ''}</span>
+              </div>
+              <div className="text-sm text-gray-700 mt-0.5">“{c.text}”</div>
+              <div className="text-xs text-gray-400 mt-0.5">{fmtDate(c.createdAt)}</div>
+              <div className="flex gap-2 mt-2">
+                {status !== 'Approved' && <button disabled={busyId === c._id} onClick={() => act(c._id, 'Approved')} className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Approve</button>}
+                {status !== 'Rejected' && <button disabled={busyId === c._id} onClick={() => act(c._id, 'Rejected')} className="px-3 py-1 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reject</button>}
+                <button disabled={busyId === c._id} onClick={() => act(c._id, 'delete')} className="px-3 py-1 text-xs text-red-600 hover:underline disabled:opacity-60 ml-auto">Delete</button>
               </div>
             </div>
           ))}

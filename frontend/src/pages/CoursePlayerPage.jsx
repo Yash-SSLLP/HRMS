@@ -52,6 +52,8 @@ export default function CoursePlayerPage() {
   const modules = course?.modules || [];
   const active = modules.find((m) => String(m._id) === String(activeId)) || null;
   const activeIndex = modules.findIndex((m) => String(m._id) === String(activeId));
+  // Saved progress for the active lesson — seeds the player's no-skip watermark.
+  const activeProgress = (enrollment?.moduleProgress || []).find((m) => String(m.module) === String(active?._id));
 
   // Merge a fresh enrollment (from a progress/complete call) into local state.
   const applyUpdated = (updated) => {
@@ -132,7 +134,16 @@ export default function CoursePlayerPage() {
             </div>
           ) : (
             <div>
-              <CourseVideoPlayer key={active._id} courseId={courseId} module={active} onProgress={applyUpdated} onError={() => setVideoFailed(true)} bare />
+              <CourseVideoPlayer
+                key={active._id}
+                courseId={courseId}
+                module={active}
+                initialWatchedSec={activeProgress?.watchedSec || 0}
+                moduleCompleted={completedSet.has(String(active._id))}
+                onProgress={applyUpdated}
+                onError={() => setVideoFailed(true)}
+                bare
+              />
               <div className="p-4 sm:p-6 max-w-3xl">
                 <div className="text-xs text-gray-400 mb-1">Lesson {activeIndex + 1} of {modules.length}</div>
                 <h2 className="text-xl font-semibold text-gray-900">{active.title}</h2>

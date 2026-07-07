@@ -1,6 +1,7 @@
+const crypto = require('crypto');
 const asyncHandler = require('express-async-handler');
 const Course = require('../models/Course');
-const { Enrollment, CourseReport, REPORT_CATEGORIES } = require('../models/Course');
+const { Enrollment, CourseReport, REPORT_CATEGORIES, CourseViewer, CourseComment, VideoFeedback } = require('../models/Course');
 const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
 const cloudinary = require('../services/cloudinary');
 const { notify, notifyMany } = require('../services/notify');
@@ -104,9 +105,11 @@ const createUploadSignature = asyncHandler(async (req, res) => {
 
 // ===== Shared / Employee =====
 
-// GET /api/courses  — active courses for everyone, with caller's enrollment if any
+// GET /api/courses  — active INTERNAL courses for employees, with caller's
+// enrollment if any. External (public) courses are not shown in the employee
+// catalog; they're reached only via their /learn/:token link.
 const listCourses = asyncHandler(async (req, res) => {
-  const courses = await Course.find({ active: true }).sort({ createdAt: -1 }).lean();
+  const courses = await Course.find({ active: true, courseType: { $ne: 'external' } }).sort({ createdAt: -1 }).lean();
   const enrollments = await Enrollment.find({ employee: req.user._id }).lean();
   const byCourse = {};
   enrollments.forEach((e) => { byCourse[String(e.course)] = e; });
@@ -156,7 +159,7 @@ const myLearning = asyncHandler(async (req, res) => {
 // POST /api/courses/:id/enroll — employee self-enroll (needs approval)
 const enroll = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
-  if (!course || !course.active) {
+  if (!course || !course.active || course.courseType === 'external') {
     res.status(404);
     throw new Error('Course not found');
   }
@@ -400,9 +403,10 @@ const listAdmin = asyncHandler(async (req, res) => {
   const courses = await Course.find().sort({ createdAt: -1 }).lean();
   const withCounts = await Promise.all(
     courses.map(async (c) => {
-      const [enrollments, openReports] = await Promise.all([
+      const [enrollments, openReports, pendingComments] = await Promise.all([
         Enrollment.find({ course: c._id }).select('status approvalStatus dueDate').lean(),
         CourseReport.countDocuments({ course: c._id, status: 'Open' }),
+        CourseComment.countDocuments({ course: c._id, status: 'Pending' }),
       ]);
       const approved = enrollments.filter((e) => e.approvalStatus === 'Approved');
       const overdue = approved.filter(
@@ -417,11 +421,24 @@ const listAdmin = asyncHandler(async (req, res) => {
         pendingCount: enrollments.filter((e) => e.approvalStatus === 'Pending').length,
         overdueCount: overdue,
         openReportsCount: openReports,
+        pendingCommentsCount: pendingComments,
       };
     })
   );
   res.json({ count: withCounts.length, courses: withCounts });
 });
+
+// An external course is public: ensure it has a token and isPublic; an internal
+// course is never public. Keeps courseType the single source of truth.
+function applyCourseType(course, courseType) {
+  course.courseType = courseType === 'external' ? 'external' : 'internal';
+  if (course.courseType === 'external') {
+    course.isPublic = true;
+    if (!course.publicToken) course.publicToken = crypto.randomBytes(16).toString('hex');
+  } else {
+    course.isPublic = false;
+  }
+}
 
 // POST /api/courses
 const createCourse = asyncHandler(async (req, res) => {
@@ -430,7 +447,7 @@ const createCourse = asyncHandler(async (req, res) => {
     throw new Error('title is required');
   }
   const modules = normalizeModules(req.body.modules);
-  const course = await Course.create({
+  const course = new Course({
     title: req.body.title,
     description: req.body.description,
     category: req.body.category,
@@ -440,6 +457,8 @@ const createCourse = asyncHandler(async (req, res) => {
     modules,
     createdBy: req.user._id,
   });
+  applyCourseType(course, req.body.courseType);
+  await course.save();
   res.status(201).json({ course });
 });
 
@@ -455,6 +474,7 @@ const updateCourse = asyncHandler(async (req, res) => {
   if (req.body.durationHours !== undefined) course.durationHours = Number(req.body.durationHours) || 0;
   if (req.body.deadlineDays !== undefined) course.deadlineDays = Number(req.body.deadlineDays) || 0;
   if (req.body.active !== undefined) course.active = !!req.body.active;
+  if (req.body.courseType !== undefined) applyCourseType(course, req.body.courseType);
   let orphanedIds = [];
   if (req.body.modules !== undefined) {
     const before = new Set(cloudinaryIdsOf(course));
@@ -479,6 +499,9 @@ const deleteCourse = asyncHandler(async (req, res) => {
   const ids = cloudinaryIdsOf(course);
   await Enrollment.deleteMany({ course: course._id });
   await CourseReport.deleteMany({ course: course._id });
+  await CourseViewer.deleteMany({ course: course._id });
+  await CourseComment.deleteMany({ course: course._id });
+  await VideoFeedback.deleteMany({ course: course._id });
   await course.deleteOne();
   ids.forEach((id) => cloudinary.destroy(id)); // free the Cloudinary assets (best-effort)
   res.json({ id: req.params.id, deleted: true });
@@ -591,9 +614,83 @@ const rejectEnrollment = asyncHandler(async (req, res) => {
   res.json({ enrollment });
 });
 
+// ===== Public sharing + moderation (admin) =====
+
+// POST /api/courses/:id/public  { enabled } — turn public sharing on/off.
+// Mints a stable publicToken on first enable (kept across toggles).
+const setCoursePublic = asyncHandler(async (req, res) => {
+  const course = await Course.findById(req.params.id);
+  if (!course) {
+    res.status(404);
+    throw new Error('Course not found');
+  }
+  const enabled = req.body.enabled !== false;
+  course.isPublic = enabled;
+  if (enabled && !course.publicToken) course.publicToken = crypto.randomBytes(16).toString('hex');
+  await course.save();
+  res.json({ isPublic: course.isPublic, publicToken: course.publicToken });
+});
+
+// GET /api/courses/:id/leads — public viewers who filled the lead form
+const listCourseLeads = asyncHandler(async (req, res) => {
+  const leads = await CourseViewer.find({ course: req.params.id }).sort({ createdAt: -1 }).limit(2000).lean();
+  res.json({ count: leads.length, leads });
+});
+
+// GET /api/courses/comments?status= — comments across all courses for moderation
+const listAllComments = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (['Pending', 'Approved', 'Rejected'].includes(req.query.status)) filter.status = req.query.status;
+  const comments = await CourseComment.find(filter)
+    .populate('course', 'title')
+    .sort({ createdAt: -1 })
+    .limit(1000)
+    .lean();
+  res.json({ count: comments.length, comments });
+});
+
+// PATCH /api/courses/comments/:cid  { status } — approve / reject / re-pending
+const moderateComment = asyncHandler(async (req, res) => {
+  const comment = await CourseComment.findById(req.params.cid);
+  if (!comment) {
+    res.status(404);
+    throw new Error('Comment not found');
+  }
+  comment.status = ['Pending', 'Approved', 'Rejected'].includes(req.body.status) ? req.body.status : 'Approved';
+  await comment.save();
+  res.json({ comment });
+});
+
+// DELETE /api/courses/comments/:cid
+const deleteComment = asyncHandler(async (req, res) => {
+  const comment = await CourseComment.findById(req.params.cid);
+  if (!comment) {
+    res.status(404);
+    throw new Error('Comment not found');
+  }
+  await comment.deleteOne();
+  res.json({ id: req.params.cid, deleted: true });
+});
+
+// GET /api/courses/:id/video-feedback — public per-video feedback for a course
+const listVideoFeedback = asyncHandler(async (req, res) => {
+  const feedback = await VideoFeedback.find({ course: req.params.id })
+    .populate('viewer', 'name phone location email')
+    .sort({ createdAt: -1 })
+    .limit(2000)
+    .lean();
+  res.json({ count: feedback.length, feedback });
+});
+
 module.exports = {
   listCourses,
   myLearning,
+  setCoursePublic,
+  listCourseLeads,
+  listAllComments,
+  moderateComment,
+  deleteComment,
+  listVideoFeedback,
   enroll,
   streamModuleVideo,
   updateModuleProgress,
