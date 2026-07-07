@@ -46,7 +46,7 @@ function PayslipDetail({ slip, onClose }) {
           <div><span className="text-gray-500">LOP:</span> {slip.lopDays}</div>
         </div>
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div>
             <h3 className="text-sm font-semibold mb-2">Earnings</h3>
             <table className="w-full text-sm">

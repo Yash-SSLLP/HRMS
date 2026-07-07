@@ -128,7 +128,7 @@ export default function AdminProjects() {
                 <textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Status</label>
                   <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}

@@ -240,7 +240,7 @@ function NotificationBell({ isAdmin, portal }) {
                 key={n._id}
                 onClick={() => openNotif(n)}
                 className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${
-                  n.readAt ? '' : 'bg-blue-50/60'
+                  n.readAt ? '' : 'bg-blue-50'
                 }`}
               >
                 <div className="text-sm text-gray-900">{n.title}</div>

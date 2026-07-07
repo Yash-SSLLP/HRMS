@@ -149,7 +149,7 @@ export default function AdminEvents() {
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Date *</label>
                   <input type="date" required value={form.date}

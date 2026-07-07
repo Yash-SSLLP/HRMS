@@ -298,7 +298,7 @@ export default function AdminExit() {
                     : <p className="text-xs text-gray-500 mt-1">No permanent HR partner set · defaulting to you.</p>;
                 })()}
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Type</label>
                   <select value={newForm.type}
@@ -314,7 +314,7 @@ export default function AdminExit() {
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Notice period (days)</label>
                   <input type="number" min={0} value={newForm.noticePeriodDays}
@@ -378,7 +378,7 @@ export default function AdminExit() {
               <div className="mb-3 text-sm bg-blue-50 border border-blue-200 text-blue-800 px-3 py-2 rounded-lg">{actionMsg}</div>
             )}
 
-            <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
                 <label className="block text-xs text-gray-500">Type</label>
                 <select disabled={isFinal} value={detail.type}
@@ -434,7 +434,7 @@ export default function AdminExit() {
             {/* Clearance checklist */}
             <div className="mb-4 bg-gray-50 rounded-lg p-3">
               <h3 className="text-sm font-semibold mb-2">Clearance checklist</h3>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {Object.entries(CLEARANCE_LABELS).map(([k, label]) => (
                   <label key={k} className="flex items-center gap-2 text-sm">
                     <input type="checkbox" disabled={isFinal}
@@ -450,7 +450,7 @@ export default function AdminExit() {
             {detail.feedback?.submittedAt && (
               <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3">
                 <h3 className="text-sm font-semibold mb-2 text-green-900">Exit Feedback (submitted {fmtDateTime(detail.feedback.submittedAt)})</h3>
-                <dl className="grid grid-cols-2 gap-2 text-sm">
+                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                   <div><dt className="text-xs text-gray-500">Primary reason</dt><dd>{detail.feedback.primaryReason || '-'}</dd></div>
                   <div><dt className="text-xs text-gray-500">Would recommend</dt><dd>{detail.feedback.recommendScore ?? '-'} / 5</dd></div>
                   <div className="col-span-2"><dt className="text-xs text-gray-500">Liked most</dt><dd>{detail.feedback.likedMost || '-'}</dd></div>

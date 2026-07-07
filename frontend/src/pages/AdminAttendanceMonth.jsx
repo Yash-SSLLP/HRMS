@@ -235,7 +235,7 @@ export default function AdminAttendanceMonth() {
                   {STATUS.map((x) => <option key={x}>{x}</option>)}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Check-in</label>
                   <input type="time" value={form.checkIn} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
@@ -267,7 +267,7 @@ export default function AdminAttendanceMonth() {
               {fullName(data.employee.user)} · applied to the day's record immediately (recorded as HR-approved).
             </p>
             <form onSubmit={saveReg} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Date *</label>
                   <input type="date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
@@ -279,7 +279,7 @@ export default function AdminAttendanceMonth() {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Check-in</label>
                   <input type="time" value={form.checkIn} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />

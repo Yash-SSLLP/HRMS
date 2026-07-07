@@ -139,7 +139,7 @@ export default function EmployeeRegularizations() {
                   {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Requested check-in</label>
                   <input type="time" value={form.requestedCheckIn}

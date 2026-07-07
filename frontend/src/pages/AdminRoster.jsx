@@ -212,7 +212,7 @@ export default function AdminRoster() {
             <form onSubmit={saveShift} className="space-y-3">
               <input required placeholder="Name *" value={shiftForm.name} onChange={(e) => setShiftForm({ ...shiftForm, name: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <input placeholder="Code" value={shiftForm.code} onChange={(e) => setShiftForm({ ...shiftForm, code: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 font-mono" />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <label className="text-sm text-gray-600">Start
                   <input type="time" value={shiftForm.startTime} onChange={(e) => setShiftForm({ ...shiftForm, startTime: e.target.value })} className="block w-full border rounded-lg px-3 py-2 mt-1" />
                 </label>

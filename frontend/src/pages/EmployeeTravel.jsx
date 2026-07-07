@@ -186,7 +186,7 @@ export default function EmployeeTravel() {
                   onChange={(e) => setForm({ ...form, purpose: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Origin *</label>
                   <input required value={form.origin}
@@ -200,7 +200,7 @@ export default function EmployeeTravel() {
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">From date *</label>
                   <input required type="date" value={form.fromDate}
@@ -222,7 +222,7 @@ export default function EmployeeTravel() {
                   {TRAVEL_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Estimated cost (INR)</label>
                   <input type="number" min="0" value={form.estimatedCost}

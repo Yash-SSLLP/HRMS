@@ -75,7 +75,7 @@ export default function EmployeeExit() {
             </span>
           </div>
 
-          <dl className="grid grid-cols-2 gap-4 text-sm">
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div>
               <dt className="text-xs text-gray-500">Type</dt>
               <dd>{exit.type}</dd>
@@ -131,7 +131,7 @@ export default function EmployeeExit() {
             HR will review your submission, confirm a last working day, and walk you through clearance.
           </p>
           <form onSubmit={onSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm text-gray-700">Last Working Day *</label>
                 <input type="date" required value={form.lastWorkingDay}

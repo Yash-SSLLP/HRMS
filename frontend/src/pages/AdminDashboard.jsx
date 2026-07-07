@@ -267,7 +267,7 @@ export default function AdminDashboard() {
               {editingId ? 'Edit User' : 'Add User'}
             </h2>
             <form onSubmit={onSave} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">First name</label>
                   <input required value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })}
@@ -344,7 +344,7 @@ export default function AdminDashboard() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Role</label>
                   <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}

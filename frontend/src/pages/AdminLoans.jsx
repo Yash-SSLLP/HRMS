@@ -145,7 +145,7 @@ export default function AdminLoans() {
                 {TYPES.map((t) => <option key={t}>{t}</option>)}
               </select>
               <input required type="number" min="1" placeholder="Principal Amount (₹) *" value={form.principal} onChange={(e) => setForm({ ...form, principal: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input type="number" min="0" placeholder="Monthly EMI (₹)" value={form.emi} onChange={(e) => setForm({ ...form, emi: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <input type="number" min="0" placeholder="Tenure (months)" value={form.tenureMonths} onChange={(e) => setForm({ ...form, tenureMonths: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               </div>

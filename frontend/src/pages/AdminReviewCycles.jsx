@@ -207,7 +207,7 @@ export default function AdminReviewCycles() {
             <form onSubmit={saveCycle} className="space-y-3">
               <input required placeholder="Name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <textarea rows={2} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Period start</label>
                   <input type="date" value={form.periodStart} onChange={(e) => setForm({ ...form, periodStart: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />

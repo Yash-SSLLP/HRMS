@@ -1,6 +1,6 @@
 const express = require('express');
 const {
-  listAssets, createAsset, updateAsset, deleteAsset, assignAsset, listMyAssets,
+  listAssets, createAsset, updateAsset, deleteAsset, assignAsset, listAssignments, listMyAssets,
 } = require('../controllers/assetController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -12,6 +12,7 @@ router.get('/me', listMyAssets);
 
 // HR/Admin
 router.use(requirePermission('assets.manage'));
+router.get('/assignments', listAssignments);
 router.route('/').get(listAssets).post(createAsset);
 router.patch('/:id/assign', assignAsset);
 router.route('/:id').put(updateAsset).delete(deleteAsset);

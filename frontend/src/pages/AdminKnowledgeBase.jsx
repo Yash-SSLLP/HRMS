@@ -128,7 +128,7 @@ export default function AdminKnowledgeBase() {
             <h2 className="card-title mb-4">{editingId ? 'Edit Article' : 'New Article'}</h2>
             <form onSubmit={save} className="space-y-3">
               <input required placeholder="Title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
                 </select>

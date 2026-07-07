@@ -154,7 +154,7 @@ export default function AdminAnnouncements() {
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
-              <div className="grid grid-cols-2 gap-3 items-end">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                 <div>
                   <label className="block text-sm text-gray-700">Category</label>
                   <select value={form.category}

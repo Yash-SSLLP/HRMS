@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 // A styled, in-app replacement for window.prompt — a small modal with a labeled
 // input, Add/Cancel, inline error and busy state. onSubmit(value) may throw
@@ -26,6 +27,10 @@ export default function PromptDialog({
 
   const submit = async (e) => {
     e.preventDefault();
+    // This dialog is often opened from inside another <form> (e.g. the Edit
+    // Employee form). Stop the submit from bubbling to that outer form, which
+    // would otherwise save/close it instead of adding here.
+    e.stopPropagation();
     const v = value.trim();
     if (!v) { setError('Please enter a value.'); return; }
     setBusy(true); setError('');
@@ -38,7 +43,7 @@ export default function PromptDialog({
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]" onMouseDown={() => !busy && onClose()}>
       <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-6" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
@@ -63,6 +68,7 @@ export default function PromptDialog({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

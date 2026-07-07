@@ -259,7 +259,7 @@ export default function AdminHiringOnboarding() {
                 <label className="block text-xs text-gray-600 mb-1">Joining date</label>
                 <input type="date" value={apptForm.joiningDate} onChange={(e) => setApptForm({ ...apptForm, joiningDate: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Probation (months)</label>
                   <input type="number" min="0" value={apptForm.probationMonths} onChange={(e) => setApptForm({ ...apptForm, probationMonths: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />

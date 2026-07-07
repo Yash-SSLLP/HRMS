@@ -117,7 +117,7 @@ export default function EmployeeExpenses() {
                   {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Amount (INR) *</label>
                   <input required type="number" min="0" step="0.01" value={form.amount}

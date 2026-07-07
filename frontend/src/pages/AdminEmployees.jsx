@@ -261,6 +261,47 @@ export default function AdminEmployees() {
     (u) => !profiles.some((p) => (p.user?._id || p.user) === u._id)
   );
 
+  // Shared cell renderers so the desktop table and the mobile card list stay
+  // in sync.
+  const docBadge = (p) => {
+    const s = docStatus[String(p._id)];
+    if (!s) return <span className="text-xs text-gray-400">-</span>;
+    if (s.complete) {
+      return (
+        <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-green-100 text-green-800"
+          title={s.verified ? 'Marked all-submitted by HR' : 'All required documents uploaded'}>
+          Complete{s.verified ? ' ✓' : ''}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-red-100 text-red-800" title={`Missing: ${s.missing.join(', ')}`}>
+        Incomplete ({s.missing.length})
+      </span>
+    );
+  };
+  const statusBadge = (p) =>
+    String(p.user?._id || '') === myId ? (
+      <span className="text-xs text-gray-400">-</span>
+    ) : (
+      <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${p.user?.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
+        {p.user?.isActive ? 'Active' : 'Inactive'}
+      </span>
+    );
+  const rowActions = (p) => (
+    <>
+      <button onClick={() => downloadFile(`/employees/${p._id}/export.zip`, `${p.employeeCode || 'employee'}.zip`)}
+        className="text-gray-700 hover:underline" title="Download all documents + details as a ZIP">ZIP</button>
+      {isSuperAdmin && String(p.user?._id || '') !== myId && (
+        <button onClick={() => toggleActive(p)} className="text-amber-600 hover:underline">
+          {p.user?.isActive ? 'Deactivate' : 'Activate'}
+        </button>
+      )}
+      <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
+      <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>
+    </>
+  );
+
   return (
     <div>
       <PageHeader title="Employee Profiles" subtitle={`${profiles.length} profile(s)`}>
@@ -302,7 +343,7 @@ export default function AdminEmployees() {
       </PageHeader>
 
       {isSuperAdmin && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
           <div className="text-sm">
             <div className="font-medium text-gray-800">Include CEO &amp; MD in employee selection lists</div>
             <div className="text-xs text-gray-500 mt-0.5">
@@ -332,7 +373,8 @@ export default function AdminEmployees() {
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
-      <div className="bg-white shadow rounded-lg overflow-hidden">
+      {/* Desktop: table */}
+      <div className="hidden lg:block bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
@@ -356,57 +398,43 @@ export default function AdminEmployees() {
                 <td className="px-4 py-3">{p.user?.firstName} {p.user?.lastName}<div className="text-xs text-gray-500">{p.user?.email}</div></td>
                 <td className="px-4 py-3">{p.designation || '-'}<div className="text-xs text-gray-500">{p.department || ''}</div></td>
                 <td className="px-4 py-3 font-mono text-xs">{p.pan || '-'}</td>
-                <td className="px-4 py-3">
-                  {(() => {
-                    const s = docStatus[String(p._id)];
-                    if (!s) return <span className="text-xs text-gray-400">-</span>;
-                    if (s.complete) {
-                      return (
-                        <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-green-100 text-green-800"
-                          title={s.verified ? 'Marked all-submitted by HR' : 'All required documents uploaded'}>
-                          Complete{s.verified ? ' ✓' : ''}
-                        </span>
-                      );
-                    }
-                    return (
-                      <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-red-100 text-red-800"
-                        title={`Missing: ${s.missing.join(', ')}`}>
-                        Incomplete ({s.missing.length})
-                      </span>
-                    );
-                  })()}
-                </td>
-                <td className="px-4 py-3">
-                  {/* Nobody may see their own active status — hide it on your own row. */}
-                  {String(p.user?._id || '') === myId ? (
-                    <span className="text-xs text-gray-400">-</span>
-                  ) : (
-                    <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${p.user?.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
-                      {p.user?.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right space-x-2">
-                  <button
-                    onClick={() => downloadFile(`/employees/${p._id}/export.zip`, `${p.employeeCode || 'employee'}.zip`)}
-                    className="text-gray-700 hover:underline"
-                    title="Download all documents + details as a ZIP"
-                  >
-                    ZIP
-                  </button>
-                  {/* Only SuperAdmin may change an account's active status (never their own). */}
-                  {isSuperAdmin && String(p.user?._id || '') !== myId && (
-                    <button onClick={() => toggleActive(p)} className="text-amber-600 hover:underline">
-                      {p.user?.isActive ? 'Deactivate' : 'Activate'}
-                    </button>
-                  )}
-                  <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
-                  <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>
-                </td>
+                <td className="px-4 py-3">{docBadge(p)}</td>
+                <td className="px-4 py-3">{statusBadge(p)}</td>
+                <td className="px-4 py-3 text-right space-x-2">{rowActions(p)}</td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Phone + tablet: card list (a wide 7-column table only scrolls sideways here) */}
+      <div className="lg:hidden space-y-3">
+        {loading ? (
+          <div className="bg-white shadow rounded-xl p-4 space-y-2"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
+        ) : profiles.length === 0 ? (
+          <div className="bg-white shadow rounded-xl p-6 text-center text-gray-500">No profiles yet</div>
+        ) : profiles.map((p) => (
+          <div key={p._id} className="bg-white shadow rounded-xl p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-semibold text-gray-900 truncate">{p.user?.firstName} {p.user?.lastName}</div>
+                <div className="text-xs text-gray-500 truncate">{p.user?.email}</div>
+              </div>
+              <span className="shrink-0 font-mono text-[11px] text-gray-500 mt-0.5">{p.employeeCode}</span>
+            </div>
+            <div className="mt-2 text-sm text-gray-700">
+              {p.designation || '-'}{p.department ? <span className="text-gray-400"> · {p.department}</span> : null}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {docBadge(p)}
+              {statusBadge(p)}
+              {p.pan ? <span className="font-mono text-[11px] text-gray-500">PAN {p.pan}</span> : null}
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-2 text-sm">
+              {rowActions(p)}
+            </div>
+          </div>
+        ))}
       </div>
 
       {showModal && (

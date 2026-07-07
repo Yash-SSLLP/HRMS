@@ -121,7 +121,7 @@ export default function EmployeeLeave() {
               Half day
             </label>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm text-gray-700">From</label>
                 <input type="date" required value={form.startDate}

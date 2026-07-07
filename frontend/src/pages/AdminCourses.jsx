@@ -311,7 +311,7 @@ export default function AdminCourses() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Course type</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {[
                     ['internal', '🏢 Internal', 'Only your employees — shows in their catalog, assignable.'],
                     ['external', '🌐 External', 'Public no-login link — anyone can watch after a short form.'],
