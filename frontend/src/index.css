@@ -668,6 +668,10 @@ html.dark .login-submit:disabled {
 /* Never let stray wide content force the whole page to scroll sideways. */
 html, body { max-width: 100%; overflow-x: hidden; }
 
+/* Long unbroken strings (e.g. a pasted URL, or "hihihi…" with no spaces) in
+   pre-wrapped text must wrap rather than force horizontal overflow. */
+.whitespace-pre-wrap { overflow-wrap: anywhere; }
+
 /* Data tables sit in `…rounded-lg overflow-hidden` cards that clip overflow.
    On any screen, let the card scroll horizontally so wide tables stay reachable
    instead of being cut off (the !important overrides the card's overflow-hidden;

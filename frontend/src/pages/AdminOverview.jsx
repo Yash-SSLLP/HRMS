@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
+import ComplaintsBanner from '../components/ComplaintsBanner';
 import PieChart from '../components/PieChart';
 import BarChart from '../components/BarChart';
 import ClockInOutCard from '../components/ClockInOutCard';
@@ -83,6 +84,9 @@ export default function AdminOverview() {
       <p className="text-sm text-gray-500 -mt-2 mb-4">
         {today} · {data?.scope === 'mine' ? 'Your assigned employees' : 'Organisation-wide'}
       </p>
+
+      {/* High-priority: open complaints for the CEO / HR / SuperAdmin group. */}
+      <ComplaintsBanner />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

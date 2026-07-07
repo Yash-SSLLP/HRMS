@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import PromptDialog from '../components/PromptDialog';
 
 const CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Phone', 'SIM', 'Furniture', 'Vehicle', 'Other'];
 const STATUS = ['Available', 'Assigned', 'InRepair', 'Retired'];
@@ -27,6 +28,7 @@ export default function AdminAssets() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
+  const [addingName, setAddingName] = useState(false);
 
   // Assign / return
   const [assignFor, setAssignFor] = useState(null); // asset preset, or {} to pick an asset
@@ -121,6 +123,12 @@ export default function AdminAssets() {
   };
 
   const assignableAssets = assets.filter((a) => a.status !== 'Retired');
+  // Distinct asset names already in use — populate the Name dropdown so repeated
+  // models stay consistent; a new name can be added inline.
+  const assetNames = useMemo(
+    () => [...new Set(assets.map((a) => a.name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [assets]
+  );
 
   return (
     <div>
@@ -234,7 +242,17 @@ export default function AdminAssets() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
             <h2 className="card-title mb-4">{editingId ? 'Edit Asset' : 'New Asset'}</h2>
             <form onSubmit={save} className="space-y-3">
-              <input required placeholder="Name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              <select
+                required
+                value={form.name || ''}
+                onChange={(e) => { if (e.target.value === '__new__') setAddingName(true); else setForm({ ...form, name: e.target.value }); }}
+                className="block w-full border rounded-lg px-3 py-2"
+              >
+                <option value="">Select asset name *</option>
+                {assetNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                {form.name && !assetNames.includes(form.name) && <option value={form.name}>{form.name}</option>}
+                <option value="__new__">＋ Add new name…</option>
+              </select>
               <input required placeholder="Asset Tag *" value={form.assetTag} onChange={(e) => setForm({ ...form, assetTag: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 font-mono" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="block w-full border rounded-lg px-3 py-2">{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>
@@ -250,6 +268,17 @@ export default function AdminAssets() {
             </form>
           </div>
         </div>
+      )}
+
+      {addingName && (
+        <PromptDialog
+          title="Add asset name"
+          label="Asset name"
+          placeholder="e.g. MacBook Pro 14"
+          submitLabel="Use name"
+          onSubmit={async (v) => { setForm((f) => ({ ...f, name: v })); }}
+          onClose={() => setAddingName(false)}
+        />
       )}
 
       {/* ===== Assign to employee (with date) ===== */}

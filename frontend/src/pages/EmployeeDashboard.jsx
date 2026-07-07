@@ -6,6 +6,7 @@ import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import AnnouncementsBanner from '../components/AnnouncementsBanner';
+import SurveysBanner from '../components/SurveysBanner';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
@@ -110,6 +111,10 @@ export default function EmployeeDashboard() {
       {/* Company announcements — every undismissed one shows here; the employee
           can close each (stays hidden via the per-user dismiss endpoint). */}
       <AnnouncementsBanner />
+
+      {/* Surveys & Polls awaiting the employee's response — surfaced up top so
+          they're not missed. Each disappears once answered. */}
+      <SurveysBanner />
 
       {/* Wishes received (birthday / anniversary) */}
       {wishes.length > 0 && (

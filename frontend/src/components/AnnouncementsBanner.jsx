@@ -21,6 +21,7 @@ const when = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', mo
 export default function AnnouncementsBanner() {
   const [items, setItems] = useState([]);
   const [busyId, setBusyId] = useState(null);
+  const [openItem, setOpenItem] = useState(null); // announcement shown in full in a modal
 
   useEffect(() => {
     api.get('/announcements')
@@ -70,7 +71,10 @@ export default function AnnouncementsBanner() {
               {a.pinned && <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">Pinned</span>}
               <span className={`text-[10px] font-medium rounded-full px-2 py-0.5 ${s.chip}`}>{a.category || 'General'}</span>
             </div>
-            <p className="text-sm text-gray-700 whitespace-pre-wrap">{a.body}</p>
+            <p className={`text-sm text-gray-700 whitespace-pre-wrap break-words ${(a.body || '').length > 220 ? 'line-clamp-3' : ''}`}>{a.body}</p>
+            {(a.body || '').length > 220 && (
+              <button type="button" onClick={() => setOpenItem(a)} className="text-xs text-blue-600 hover:underline mt-1">Read more</button>
+            )}
             <div className="text-[11px] text-gray-400 mt-1.5">
               {a.createdBy ? `${a.createdBy.firstName} ${a.createdBy.lastName} · ` : ''}{when(a.createdAt)}
             </div>
@@ -80,6 +84,31 @@ export default function AnnouncementsBanner() {
       <div className="text-right">
         <Link to="/employee/announcements" className="text-xs text-blue-600 hover:underline">All announcements →</Link>
       </div>
+
+      {openItem && (() => {
+        const s = CAT_STYLE[openItem.category] || CAT_STYLE.General;
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8" onMouseDown={() => setOpenItem(null)}>
+            <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <h2 className="card-title break-words">{openItem.title}</h2>
+                <button type="button" onClick={() => setOpenItem(null)} className="shrink-0 text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                {openItem.pinned && <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">Pinned</span>}
+                <span className={`text-[10px] font-medium rounded-full px-2 py-0.5 ${s.chip}`}>{openItem.category || 'General'}</span>
+                <span className="text-[11px] text-gray-400">
+                  {openItem.createdBy ? `${openItem.createdBy.firstName} ${openItem.createdBy.lastName} · ` : ''}{when(openItem.createdAt)}
+                </span>
+              </div>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto">{openItem.body}</p>
+              <div className="flex justify-end pt-4">
+                <button type="button" onClick={() => setOpenItem(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -64,7 +64,7 @@ export default function EmployeeComplaints() {
     <div>
       <PageHeader
         title="My Complaints"
-        subtitle="Complaints about a colleague go to your HR Manager. Complaints about your HR Manager are escalated directly to senior management."
+        subtitle="Your complaint is shared confidentially with the CEO, HR and Super Admin — never with the person it's about."
       >
         <button onClick={() => setShowModal(true)}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">

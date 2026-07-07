@@ -3,8 +3,13 @@ const Complaint = require('../models/Complaint');
 const { COMPLAINT_STATUSES } = require('../models/Complaint');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
+const { notifyMany } = require('../services/notify');
 
 const USER_FIELDS = 'firstName lastName email role';
+
+// A complaint is confidential to the leadership group — the CEO, HR Managers and
+// SuperAdmins — EXCEPT the person it's raised against (they never see it).
+const COMPLAINT_VIEWER_ROLES = ['SuperAdmin', 'HRManager', 'CEO'];
 
 async function findSuperAdmin() {
   return User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 });
@@ -60,6 +65,21 @@ const createComplaint = asyncHandler(async (req, res) => {
     assignedTo,
   });
 
+  // Alert the leadership group — CEO, HR and SuperAdmin — but NEVER the person
+  // the complaint is about (nor the complainant). Kept deliberately vague (no
+  // names/subject) so nothing sensitive leaks into a push/lock-screen preview.
+  const viewers = await User.find({ role: { $in: COMPLAINT_VIEWER_ROLES }, isActive: true }).select('_id').lean();
+  const recipients = viewers
+    .map((u) => String(u._id))
+    .filter((id) => id !== String(againstUserId) && id !== String(meId));
+  notifyMany(recipients, {
+    type: 'complaint',
+    audience: 'admin',
+    title: '⚠ New complaint to review',
+    body: 'A confidential complaint has been raised. Open the Complaints inbox to review it.',
+    link: '/admin/complaints',
+  }).catch(() => {});
+
   res.status(201).json({ complaint });
 });
 
@@ -72,17 +92,14 @@ const myComplaints = asyncHandler(async (req, res) => {
   res.json({ count: complaints.length, complaints });
 });
 
-// GET /api/complaints/assigned  — handler inbox (HR/SuperAdmin)
-// SuperAdmin may pass ?all=true to see every complaint.
+// GET /api/complaints/assigned  — leadership inbox (CEO / HR / SuperAdmin)
+// Everyone in the group sees every complaint EXCEPT ones raised against them.
 const assignedComplaints = asyncHandler(async (req, res) => {
-  if (!['HRManager', 'SuperAdmin'].includes(req.user.role)) {
+  if (!COMPLAINT_VIEWER_ROLES.includes(req.user.role)) {
     res.status(403);
-    throw new Error('Only HR Managers and SuperAdmins have a complaints inbox');
+    throw new Error('Only the CEO, HR and SuperAdmins can view complaints');
   }
-  const filter =
-    req.user.role === 'SuperAdmin' && req.query.all === 'true'
-      ? {}
-      : { assignedTo: req.user._id };
+  const filter = { against: { $ne: req.user._id } };
 
   const complaints = await Complaint.find(filter)
     .populate('complainant', USER_FIELDS)
@@ -100,10 +117,13 @@ const updateComplaint = asyncHandler(async (req, res) => {
     throw new Error('Complaint not found');
   }
 
+  // HR and SuperAdmin can action any complaint (except one against themselves);
+  // the CEO has read-only visibility, so they can view but not update.
+  const canManage = ['SuperAdmin', 'HRManager'].includes(req.user.role) && !complaint.against.equals(req.user._id);
   const isAssignee = complaint.assignedTo && complaint.assignedTo.equals(req.user._id);
-  if (!isAssignee && req.user.role !== 'SuperAdmin') {
+  if (!canManage && !isAssignee) {
     res.status(403);
-    throw new Error('Only the assigned handler or a SuperAdmin can update this complaint');
+    throw new Error('You are not allowed to update this complaint');
   }
 
   const { status, resolutionNote } = req.body;
