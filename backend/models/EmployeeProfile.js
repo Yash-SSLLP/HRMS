@@ -154,6 +154,11 @@ employeeProfileSchema.post('save', function syncDesignationMaster(doc) {
     // Lazy require avoids any load-order coupling between the two models.
     require('../services/orgMasterSync').ensureDesignation(doc.designation).catch(() => {});
   }
+  // Likewise register the department into the managed Departments list, so it
+  // shows under Admin → Departments no matter how it was set.
+  if (doc && doc.department) {
+    require('../services/orgMasterSync').ensureDepartment(doc.department).catch(() => {});
+  }
 });
 
 module.exports = mongoose.model('EmployeeProfile', employeeProfileSchema);

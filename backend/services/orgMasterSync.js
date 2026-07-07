@@ -21,4 +21,22 @@ async function ensureMaster(kind, name) {
 
 const ensureDesignation = (name) => ensureMaster('Designation', name);
 
-module.exports = { ensureMaster, ensureDesignation };
+// Register a department name into the managed Department list if missing, so any
+// department set on an employee (via the form, import, or recruitment conversion)
+// shows up under Admin → Departments. Idempotent (unique index on name).
+async function ensureDepartment(name) {
+  const clean = (name || '').trim();
+  if (!clean) return;
+  try {
+    const Department = require('../models/Department');
+    await Department.updateOne(
+      { name: clean },
+      { $setOnInsert: { name: clean, isActive: true } },
+      { upsert: true }
+    );
+  } catch (err) {
+    if (err.code !== 11000) console.error('ensureDepartment failed:', err.message);
+  }
+}
+
+module.exports = { ensureMaster, ensureDesignation, ensureDepartment };
