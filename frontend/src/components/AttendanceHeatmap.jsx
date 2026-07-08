@@ -121,20 +121,9 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
     return EMPTY;
   };
 
-  // Personal mode: simple native tooltip.
-  const fmtTip = (cell) => {
-    const dStr = cell.date.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-    if (cell.future) return dStr;
-    const holiday = holidays.get(cell.key);
-    let note;
-    if (cell.rec) note = LABEL_BY_CAT[cell.rec.category];
-    else if (holiday) note = `Holiday: ${holiday}`;
-    else if (cell.date.getDay() === 0) note = 'Sunday';
-    else note = 'No record';
-    return `${dStr} · ${note}`;
-  };
-
   const dateLabel = (d) => d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  // Time-of-day displays are 12-hour AM/PM across the portal.
+  const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '—');
 
   return (
     <div>
@@ -184,11 +173,10 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
                 {mo.cols.map((wcol, ci) => (
                   <div key={ci} className="flex flex-col" style={{ gap: GAP }}>
                     {wcol.map((cell, di) => {
-                      const interactive = org && cell && !cell.future;
+                      const interactive = cell && !cell.future;
                       return (
                         <div
                           key={di}
-                          title={cell && !org ? fmtTip(cell) : undefined}
                           onMouseEnter={interactive ? (e) => setTip({ x: e.clientX, y: e.clientY, cell }) : undefined}
                           onMouseMove={interactive ? (e) => setTip((t) => (t ? { ...t, x: e.clientX, y: e.clientY } : t)) : undefined}
                           onMouseLeave={interactive ? () => setTip(null) : undefined}
@@ -205,29 +193,62 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
         </div>
       </div>
 
-      {org && tip && (
+      {tip && (
         <div
           className="fixed z-50 pointer-events-none bg-gray-900 text-white text-xs rounded-lg shadow-lg px-3 py-2"
-          style={{ left: tip.x + 12, top: tip.y + 12, minWidth: 150 }}
+          style={{ left: tip.x + 12, top: tip.y + 12, minWidth: 160 }}
         >
           <div className="font-semibold mb-1">{dateLabel(tip.cell.date)}</div>
           {holidays.has(tip.cell.key) && (
             <div className="text-amber-300 mb-0.5">Holiday · {holidays.get(tip.cell.key)}</div>
           )}
-          {tip.cell.rec ? (
-            <div className="space-y-0.5">
-              <div className="font-medium">
-                {tip.cell.rec.present} present{total ? ` / ${total}` : ''}
+          {org ? (
+            tip.cell.rec ? (
+              <div className="space-y-0.5">
+                <div className="font-medium">
+                  {tip.cell.rec.present} present{total ? ` / ${total}` : ''}
+                </div>
+                <div className="text-gray-300">Full day: {tip.cell.rec.full}</div>
+                <div className="text-gray-300">Half day: {tip.cell.rec.half}</div>
+                <div className="text-gray-300">Leave: {tip.cell.rec.leave}</div>
+                <div className="text-gray-300">Comp off: {tip.cell.rec.compoff}</div>
+                <div className="text-gray-300">Absent: {tip.cell.rec.absent}</div>
               </div>
-              <div className="text-gray-300">Full day: {tip.cell.rec.full}</div>
-              <div className="text-gray-300">Half day: {tip.cell.rec.half}</div>
-              <div className="text-gray-300">Leave: {tip.cell.rec.leave}</div>
-              <div className="text-gray-300">Comp off: {tip.cell.rec.compoff}</div>
-              <div className="text-gray-300">Absent: {tip.cell.rec.absent}</div>
+            ) : (
+              <div className="text-gray-300">
+                {holidays.has(tip.cell.key) ? 'No one present' : tip.cell.date.getDay() === 0 ? 'Sunday' : 'No attendance recorded'}
+              </div>
+            )
+          ) : tip.cell.rec ? (
+            <div className="space-y-0.5">
+              <div className="font-medium flex items-center gap-1.5">
+                <span className="inline-block rounded-sm" style={{ width: 9, height: 9, background: COLOR_BY_CAT[tip.cell.rec.category] }} />
+                {LABEL_BY_CAT[tip.cell.rec.category]}
+                {tip.cell.rec.leaveType ? ` · ${tip.cell.rec.leaveType}` : ''}
+                {tip.cell.rec.halfDaySession && tip.cell.rec.halfDaySession !== true
+                  ? ` (${tip.cell.rec.halfDaySession === 'FirstHalf' ? '1st half' : '2nd half'})`
+                  : ''}
+              </div>
+              {(tip.cell.rec.checkIn || tip.cell.rec.checkOut) && (
+                <>
+                  <div className="text-gray-300">Login: {fmtTime(tip.cell.rec.checkIn)}</div>
+                  <div className="text-gray-300">Logout: {fmtTime(tip.cell.rec.checkOut)}</div>
+                </>
+              )}
+              {tip.cell.rec.noPunchOut && <div className="text-amber-300">Missing punch-out</div>}
+              {tip.cell.rec.hoursWorked ? (
+                <div className="text-gray-300">Hours: {tip.cell.rec.hoursWorked}</div>
+              ) : null}
+              {tip.cell.rec.wfh && <div className="text-sky-300">Work from home</div>}
+              {tip.cell.rec.remarks && <div className="text-gray-400 italic">{tip.cell.rec.remarks}</div>}
             </div>
           ) : (
             <div className="text-gray-300">
-              {holidays.has(tip.cell.key) ? 'No one present' : tip.cell.date.getDay() === 0 ? 'Sunday' : 'No attendance recorded'}
+              {holidays.has(tip.cell.key)
+                ? 'Holiday'
+                : tip.cell.date.getDay() === 0
+                  ? 'Weekly off (Sunday)'
+                  : 'No record'}
             </div>
           )}
         </div>

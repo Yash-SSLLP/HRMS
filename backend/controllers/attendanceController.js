@@ -218,24 +218,31 @@ const myHeatmap = asyncHandler(async (req, res) => {
 
   const [records, leaves, comps] = await Promise.all([
     Attendance.find({ employee: profile._id, date: { $gte: start, $lte: end } })
-      .select('date status').lean(),
+      .select('date status checkIn checkOut hoursWorked noPunchOut checkInWfh checkOutWfh remarks').lean(),
     LeaveRequest.find({ employee: profile._id, status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start } })
-      .select('startDate endDate isHalfDay').lean(),
+      .select('startDate endDate isHalfDay halfDaySession leaveType').lean(),
     CompOff.find({ employee: req.user._id, status: 'Availed', availedOn: { $gte: start, $lte: end } })
       .select('availedOn').lean(),
   ]);
 
   const att = {};
-  for (const r of records) att[ymdLocal(r.date)] = r.status;
+  for (const r of records) att[ymdLocal(r.date)] = r;
 
   const compoffSet = new Set(comps.filter((c) => c.availedOn).map((c) => ymdLocal(c.availedOn)));
 
-  const leaveSet = new Set();
+  // Track the leave type covering each day so the hover card can show it.
+  const leaveByDay = {};
   for (const lv of leaves) {
     const d = startOfDay(new Date(lv.startDate));
     const last = startOfDay(new Date(lv.endDate));
     while (d <= last) {
-      if (d >= start && d <= end) leaveSet.add(ymdLocal(d));
+      if (d >= start && d <= end) {
+        leaveByDay[ymdLocal(d)] = {
+          type: lv.leaveType,
+          half: !!lv.isHalfDay,
+          session: lv.halfDaySession || null,
+        };
+      }
       d.setDate(d.getDate() + 1);
     }
   }
@@ -245,14 +252,32 @@ const myHeatmap = asyncHandler(async (req, res) => {
   const cur = new Date(start);
   while (cur <= end) {
     const key = ymdLocal(cur);
-    const status = att[key];
+    const rec = att[key];
+    const status = rec?.status;
+    const leave = leaveByDay[key];
     let category = null;
     if (status === 'Present') category = 'full';
     else if (status === 'HalfDay') category = 'half';
     else if (compoffSet.has(key)) category = 'compoff';
-    else if (leaveSet.has(key) || status === 'OnLeave') category = 'leave';
+    else if (leave || status === 'OnLeave') category = 'leave';
     else if (status === 'Absent') category = 'absent';
-    if (category) days.push({ date: key, category });
+    if (category) {
+      const day = { date: key, category };
+      // Punch details for worked days (also surfaced for half-days).
+      if (rec) {
+        if (rec.checkIn) day.checkIn = rec.checkIn;
+        if (rec.checkOut) day.checkOut = rec.checkOut;
+        if (rec.hoursWorked) day.hoursWorked = rec.hoursWorked;
+        if (rec.noPunchOut) day.noPunchOut = true;
+        if (rec.checkInWfh || rec.checkOutWfh) day.wfh = true;
+        if (rec.remarks) day.remarks = rec.remarks;
+      }
+      if (category === 'leave' && leave) {
+        day.leaveType = leave.type;
+        if (leave.half) day.halfDaySession = leave.session || true;
+      }
+      days.push(day);
+    }
     cur.setDate(cur.getDate() + 1);
   }
 
