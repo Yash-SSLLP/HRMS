@@ -19,6 +19,20 @@ const DEFAULT_NEW_USER_PASSWORD = process.env.DEFAULT_NEW_USER_PASSWORD || 'Welc
 // Public website origin, for candidate-facing letter-download links in emails.
 const APP_BASE_URL = () => (process.env.APP_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '');
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Parse an HR-typed Cc string (comma / semicolon / whitespace separated) into a
+// clean, de-duplicated list of valid addresses, excluding any already on `exclude`.
+function parseCcList(raw, exclude = []) {
+  const skip = new Set(exclude.filter(Boolean).map((e) => e.toLowerCase()));
+  return [...new Set(
+    String(raw || '')
+      .split(/[\s,;]+/)
+      .map((e) => e.trim())
+      .filter((e) => e && EMAIL_RE.test(e))
+      .map((e) => e.toLowerCase())
+  )].filter((e) => !skip.has(e));
+}
+
 // ===== Jobs =====
 const listJobs = asyncHandler(async (req, res) => {
   const filter = {};
@@ -675,11 +689,15 @@ const sendRoundMeetEmail = asyncHandler(async (req, res) => {
   const subject = String(req.body.subject || '').trim() || defaults.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
   const attachment = resumeAttachment(candidate);
+
+  // Optional extra Cc recipients typed by HR, excluding anyone already on To.
+  const cc = parseCcList(req.body.cc, to);
+
   await enqueueMail(
-    { to, subject, text: body, replyTo: req.user?.email, attachments: attachment ? [attachment] : [] },
+    { to, cc: cc.length ? cc : undefined, subject, text: body, replyTo: req.user?.email, attachments: attachment ? [attachment] : [] },
     { type: 'recruitment', id: candidate._id }
   );
-  res.json({ mailed: to });
+  res.json({ mailed: to, cc });
 });
 
 // GET /api/recruitment/candidates/:id/resume — serve the resume (HR auth).
@@ -821,9 +839,11 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
 
   const subject = String(req.body.subject || '').trim() || defaults.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
+  const cc = parseCcList(req.body.cc, [candidate.email]);
   await enqueueMail(
     {
       to: candidate.email,
+      cc: cc.length ? cc : undefined,
       subject,
       text: body,
       // Send from the acting HR's mailbox so the candidate replies to them.
@@ -835,7 +855,7 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
   );
   letter.emailedAt = new Date();
   await candidate.save();
-  res.json({ mailed: [candidate.email] });
+  res.json({ mailed: [candidate.email], cc });
 });
 
 // Stream a stored letter PDF inline.

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
-import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 import DesignationSelect from '../components/DesignationSelect';
@@ -48,29 +47,31 @@ export default function AdminNewJoinees() {
 
   // Open the editable composer with a public download link inserted; HR can
   // tweak the subject/body before sending from their own mailbox.
-  const sendLetter = (c, kind) => {
+  const sendLetter = async (c, kind) => {
     if (!c.email) { setError('This candidate has no email address on file.'); return; }
-    const letter = kind === 'offer' ? c.offer : c.appointment;
-    if (!letter?.token) { setError('Please regenerate the letter to get a shareable download link.'); return; }
     setError(''); setInfo('');
     const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
-    const link = `${window.location.origin}/letter/${letter.token}`;
-    setMail({
-      to: c.email,
-      title: `Send ${label}`,
-      link,
-      defaultSubject: `${label} · ${COMPANY_NAME}`,
-      defaultBody:
-        `Dear ${c.name},\n\n` +
-        `Please find your ${label} from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
-        `${link}\n\n` +
-        `Warm regards,`,
-      onSent: async () => {
-        await api.post(`/recruitment/candidates/${c._id}/${kind}/mark-sent`);
-        setInfo(`Compose window opened for ${c.email} with the ${label.toLowerCase()} link.`);
-        await load();
-      },
-    });
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/letters/${kind}/email`, { preview: true });
+      setMail({
+        to: data.to,
+        showCc: true,
+        title: `Send ${label}`,
+        link: data.link,
+        sendLabel: `Send ${label.toLowerCase()}`,
+        note: `Review and edit the message below · it's emailed from the company mailbox with the ${label.toLowerCase()} PDF attached.`,
+        defaultSubject: data.subject,
+        defaultBody: data.body,
+        attachedNames: data.attachments || [],
+        onSend: async ({ subject, body, cc }) => {
+          const { data: r } = await api.post(`/recruitment/candidates/${c._id}/letters/${kind}/email`, { subject, body, cc });
+          setInfo(`${label} emailed to ${(r.mailed || [c.email]).join(', ')}.`);
+          await load();
+        },
+      });
+    } catch (err) {
+      setError(err.response?.data?.message || `Could not prepare the ${label.toLowerCase()} email`);
+    }
   };
 
   const openConvert = async (c) => {

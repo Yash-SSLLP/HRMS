@@ -6,6 +6,7 @@ const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
 const { monthRangeIST } = require('../utils/dateHelpers');
 const { renderPayslip } = require('../services/payslipPdf');
+const { enqueueMail } = require('../services/email');
 // (exportPayroll below builds the month CSV by hand — no spreadsheet lib needed)
 
 async function getMyProfileOrFail(userId, res) {
@@ -576,6 +577,72 @@ const markPayslipSent = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+// POST /api/payroll/:id/email  { subject?, body?, preview? }  (HR/Admin)
+// Preview or send the payslip email from the company mailbox with the payslip
+// PDF attached — HR sees and can edit the exact subject + body first. Mirrors
+// the offer/appointment letter flow so every portal email is review-then-send.
+const emailPayslip = asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findById(req.params.id).populate({
+    path: 'employee',
+    populate: { path: 'user', select: 'firstName lastName email' },
+  });
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip not found');
+  }
+  if (!['Approved', 'Paid'].includes(payslip.status)) {
+    res.status(400);
+    throw new Error('Only Approved or Paid payslips can be emailed');
+  }
+  const email = payslip.employee?.user?.email;
+  if (!email) {
+    res.status(400);
+    throw new Error('This employee has no email on file.');
+  }
+
+  // Ensure a public (no-login) link exists so it can be included in the body.
+  if (!payslip.publicToken) {
+    payslip.publicToken = crypto.randomBytes(24).toString('hex');
+    await payslip.save();
+  }
+  const link = `${req.protocol}://${req.get('host')}/api/payroll/public/${payslip.publicToken}`;
+  const period = `${MONTH_NAMES[payslip.payPeriodMonth]} ${payslip.payPeriodYear}`;
+  const name = `${payslip.employee?.user?.firstName || ''} ${payslip.employee?.user?.lastName || ''}`.trim();
+  const monthLabel = `${payslip.payPeriodYear}-${String(payslip.payPeriodMonth).padStart(2, '0')}`;
+  const empCode = payslip.employee?.employeeCode || 'employee';
+  const fileName = `payslip-${empCode}-${monthLabel}.pdf`;
+
+  const defaults = {
+    subject: `Payslip · ${period}`,
+    body:
+      `Dear ${name || 'Employee'},\n\n` +
+      `Please find attached your payslip for ${period}. You can also view and download it anytime from the link below:\n\n` +
+      `${link}\n\n` +
+      `Regards,\n${req.user?.fullName || 'HR Team'}`,
+  };
+  if (req.body.preview) {
+    return res.json({ to: email, subject: defaults.subject, body: defaults.body, attachments: [fileName], link });
+  }
+
+  const subject = String(req.body.subject || '').trim() || defaults.subject;
+  const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
+  const ytd = await computeYtd(payslip);
+  const buffer = await renderPayslip(payslip, ytd);
+  await enqueueMail(
+    {
+      to: email,
+      subject,
+      text: body,
+      replyTo: req.user?.email,
+      attachments: [{ filename: fileName, content: buffer.toString('base64'), contentType: 'application/pdf' }],
+    },
+    { type: 'payroll', id: payslip._id }
+  );
+  payslip.emailedAt = new Date();
+  await payslip.save();
+  res.json({ mailed: [email] });
+});
+
 // GET /api/payroll/public/:token  — public; opens a payslip PDF from the
 // shareable link with no login required.
 const downloadPublicPayslip = asyncHandler(async (req, res) => {
@@ -634,5 +701,6 @@ module.exports = {
   downloadMyPayslipPdf,
   sharePayslip,
   markPayslipSent,
+  emailPayslip,
   downloadPublicPayslip,
 };

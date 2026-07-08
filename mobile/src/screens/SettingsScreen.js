@@ -1,14 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Switch } from 'react-native';
 import Constants from 'expo-constants';
 import * as LocalAuthentication from 'expo-local-authentication';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import RNRestart from 'react-native-restart';
 
 import { API_BASE } from '../api/client';
 import { useAuth } from '../store/auth';
 import { useSecurity } from '../store/security';
 import { registerForPush, unregisterPush } from '../services/push';
-import { colors, radius, spacing, font } from '../theme';
+import { colors, radius, spacing, font, THEME_KEY } from '../theme';
 import { Screen, Card, Ionicons } from '../components/ui';
+
+const THEME_OPTIONS = [
+  { key: 'system', label: 'System default', icon: 'phone-portrait', hint: 'Match your device setting' },
+  { key: 'light', label: 'Light', icon: 'sunny', hint: null },
+  { key: 'dark', label: 'Dark', icon: 'moon', hint: null },
+];
 
 function Row({ icon, label, value, onPress, danger, last, tint }) {
   const Comp = onPress ? TouchableOpacity : View;
@@ -30,6 +38,31 @@ export default function SettingsScreen() {
   const lockEnabled = useSecurity((s) => s.enabled);
   const setLockEnabled = useSecurity((s) => s.setEnabled);
   const [working, setWorking] = useState(false);
+  const [themeMode, setThemeMode] = useState('system');
+
+  useEffect(() => {
+    AsyncStorage.getItem(THEME_KEY).then((v) => setThemeMode(v || 'system')).catch(() => {});
+  }, []);
+
+  // Persist the chosen appearance and reload the JS bundle so index.js re-runs
+  // and rebuilds every screen's styles with the new palette.
+  const chooseTheme = (key) => {
+    if (key === themeMode) return;
+    const label = THEME_OPTIONS.find((o) => o.key === key)?.label || key;
+    Alert.alert('Switch appearance', `Apply the ${label.toLowerCase()} theme? The app will restart to apply it.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Restart',
+        onPress: async () => {
+          try { await AsyncStorage.setItem(THEME_KEY, key); } catch { /* ignore */ }
+          setThemeMode(key);
+          try { RNRestart.Restart(); } catch {
+            Alert.alert('Almost there', 'Please close and reopen the app to apply the new theme.');
+          }
+        },
+      },
+    ]);
+  };
 
   const toggleLock = async (val) => {
     if (val) {
@@ -81,6 +114,34 @@ export default function SettingsScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: spacing(4), paddingBottom: 32 }}>
+        <Text style={styles.group}>APPEARANCE</Text>
+        <Card style={styles.card}>
+          {THEME_OPTIONS.map((o, i) => {
+            const active = themeMode === o.key;
+            return (
+              <TouchableOpacity
+                key={o.key}
+                activeOpacity={0.7}
+                onPress={() => chooseTheme(o.key)}
+                style={[styles.row, i < THEME_OPTIONS.length - 1 && styles.rowBorder]}
+              >
+                <View style={[styles.rowIcon, { backgroundColor: (active ? colors.primary : colors.textMuted) + '1a' }]}>
+                  <Ionicons name={o.icon} size={18} color={active ? colors.primary : colors.textMuted} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>{o.label}</Text>
+                  {o.hint ? <Text style={styles.rowHint}>{o.hint}</Text> : null}
+                </View>
+                <Ionicons
+                  name={active ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={20}
+                  color={active ? colors.primary : colors.borderStrong}
+                />
+              </TouchableOpacity>
+            );
+          })}
+        </Card>
+
         <Text style={styles.group}>NOTIFICATIONS</Text>
         <Card style={styles.card}>
           <Row icon="notifications" label={working ? 'Enabling…' : 'Enable push notifications'} onPress={working ? undefined : reEnablePush} />

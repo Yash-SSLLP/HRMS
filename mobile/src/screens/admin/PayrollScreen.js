@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -100,37 +100,30 @@ export default function PayrollScreen() {
     }
   };
 
-  // Email a payslip: mint the public (no-login) download link, show the
-  // editable preview, then hand the edited mail to the phone's email app.
+  // Email a payslip from the company mailbox with the payslip PDF attached:
+  // fetch the server-rendered editable preview, then send it server-side.
   const emailPayslip = async (p) => {
     const email = p.employee?.user?.email;
     if (!email) { Alert.alert('No email', 'No email on file for this employee.'); return; }
     setBusyId(p._id);
     try {
-      const { data } = await api.post(`/payroll/${p._id}/share`);
-      const link = `${API_BASE}/payroll/public/${data.token}`;
-      const period = `${MONTHS_FULL[p.payPeriodMonth]} ${p.payPeriodYear}`;
-      const name = fullName(p.employee?.user);
+      const { data } = await api.post(`/payroll/${p._id}/email`, { preview: true });
       setMailSheet({
         title: 'Send payslip',
-        note: 'Review and edit the message · it opens in your email app to send.',
-        to: email,
-        subject: `Payslip · ${period}`,
-        body:
-          `Dear ${name || 'Employee'},\n\n` +
-          `Your payslip for ${period} is ready. You can view and download it from the link below:\n\n` +
-          `${link}\n\n` +
-          `Regards,\nHR`,
-        link,
-        sendLabel: 'Open in email app',
+        note: "Review and edit the message · it's emailed from the company mailbox with the payslip PDF attached.",
+        to: data.to,
+        subject: data.subject,
+        body: data.body,
+        attachments: data.attachments || [],
+        link: data.link,
+        sendLabel: 'Send payslip',
         onSend: async ({ subject, body }) => {
-          await Linking.openURL(`mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
-          await api.post(`/payroll/${p._id}/mark-sent`);
+          await api.post(`/payroll/${p._id}/email`, { subject, body });
           await load(year, month, status);
         },
       });
     } catch (err) {
-      Alert.alert('Could not prepare the payslip link', errMsg(err));
+      Alert.alert('Could not prepare the payslip email', errMsg(err));
     } finally {
       setBusyId(null);
     }

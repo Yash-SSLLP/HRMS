@@ -2,7 +2,6 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
-import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
@@ -165,16 +164,18 @@ export default function AdminRecruitment() {
   const openInviteModal = (candId, idx, mailData, meetingLink) => {
     setMail({
       to: (mailData.to || []).join(', '),
+      showCc: true,
       title: 'Interview invite email',
       link: meetingLink,
       sendLabel: 'Send invite',
-      note: "Review and edit the invite below · it's emailed from the company mailbox to the candidate and interviewer, with the candidate's résumé attached.",
+      note: "Review and edit the invite below · it's emailed from the company mailbox to the candidate and interviewer, with the candidate's résumé attached. Add more emails in Cc to keep others in the loop.",
       defaultSubject: mailData.subject,
       defaultBody: mailData.body,
       attachedNames: mailData.attachments || [],
-      onSend: async ({ subject, body }) => {
-        const { data } = await api.post(`/recruitment/candidates/${candId}/round/meet/email`, { index: idx, subject, body });
-        toast.success(`Invite emailed to ${(data.mailed || []).join(', ')}`);
+      onSend: async ({ subject, body, cc }) => {
+        const { data } = await api.post(`/recruitment/candidates/${candId}/round/meet/email`, { index: idx, subject, body, cc });
+        const mailed = (data.mailed || []).join(', ');
+        toast.success(data.cc?.length ? `Invite emailed to ${mailed} (cc: ${data.cc.join(', ')})` : `Invite emailed to ${mailed}`);
       },
     });
   };
@@ -232,27 +233,31 @@ export default function AdminRecruitment() {
       signatoryTitle: d.signatoryTitle || '',
     });
   };
-  // Editable compose modal for the offer letter (public download link in the
-  // body); marks the offer as sent once the compose window is opened.
-  const composeOfferMail = (c) => {
-    if (!c.email || !c.offer?.token) return;
-    const link = `${window.location.origin}/letter/${c.offer.token}`;
-    setMail({
-      to: c.email,
-      title: 'Send Offer Letter',
-      link,
-      defaultSubject: `Offer Letter · ${COMPANY_NAME}`,
-      defaultBody:
-        `Dear ${c.name},\n\n` +
-        `Please find your Offer Letter from ${COMPANY_NAME}. You can view and download it from the link below:\n\n` +
-        `${link}\n\n` +
-        `Kindly review the document and revert with your acceptance.\n\n` +
-        `Warm regards,`,
-      onSent: async () => {
-        await api.post(`/recruitment/candidates/${c._id}/offer/mark-sent`);
-        await load();
-      },
-    });
+  // Editable compose modal for the offer letter. Fetches the server-rendered
+  // preview, then sends from the company mailbox with the offer PDF attached.
+  const composeOfferMail = async (c) => {
+    if (!c.email) return;
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/letters/offer/email`, { preview: true });
+      setMail({
+        to: data.to,
+        showCc: true,
+        title: 'Send Offer Letter',
+        link: data.link,
+        sendLabel: 'Send offer',
+        note: "Review and edit the message below · it's emailed from the company mailbox with the offer letter PDF attached.",
+        defaultSubject: data.subject,
+        defaultBody: data.body,
+        attachedNames: data.attachments || [],
+        onSend: async ({ subject, body, cc }) => {
+          const { data: r } = await api.post(`/recruitment/candidates/${c._id}/letters/offer/email`, { subject, body, cc });
+          toast.success(`Offer letter emailed to ${(r.mailed || [c.email]).join(', ')}`);
+          await load();
+        },
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not prepare the offer email');
+    }
   };
   const saveOffer = async (e) => {
     e.preventDefault(); setSaving(true); setError('');

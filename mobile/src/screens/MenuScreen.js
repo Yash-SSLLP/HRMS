@@ -82,7 +82,7 @@ export default function MenuScreen() {
   // Employee self-service groups — hidden for SuperAdmin (admin-only account).
   const groups = canEmployeeSelf(role) ? [...GROUPS] : [];
   if (showsAdminEntry(role)) {
-    const adminItems = [{ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: '#111827' }];
+    const adminItems = [{ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: colors.text }];
     if (hasTeam(role)) adminItems.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb' });
     if (canViewAdmin(role)) {
       adminItems.push(

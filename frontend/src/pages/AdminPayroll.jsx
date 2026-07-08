@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
-import { apiPublicUrl } from '../api/compose';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 
@@ -127,33 +126,29 @@ export default function AdminPayroll() {
     }
   };
 
-  // Email a payslip: generate a public (no-login) download link, then open the
-  // editable composer with that link inserted so HR can tweak before sending.
+  // Email a payslip: fetch the server-rendered editable preview, then send it
+  // from the company mailbox with the payslip PDF attached (no Gmail hop).
   const emailPayslip = async (p) => {
     const email = p.employee?.user?.email;
     if (!email) { alert('No email on file for this employee.'); return; }
-    const period = `${MONTHS[p.payPeriodMonth - 1]} ${p.payPeriodYear}`;
-    const name = `${p.employee?.user?.firstName || ''} ${p.employee?.user?.lastName || ''}`.trim();
     try {
-      const { data } = await api.post(`/payroll/${p._id}/share`);
-      const link = apiPublicUrl(`/payroll/public/${data.token}`);
+      const { data } = await api.post(`/payroll/${p._id}/email`, { preview: true });
       setMail({
-        to: email,
+        to: data.to,
         title: 'Send payslip',
-        link,
-        defaultSubject: `Payslip · ${period}`,
-        defaultBody:
-          `Dear ${name || 'Employee'},\n\n` +
-          `Your payslip for ${period} is ready. You can view and download it from the link below:\n\n` +
-          `${link}\n\n` +
-          `Regards,\nHR`,
-        onSent: async () => {
-          await api.post(`/payroll/${p._id}/mark-sent`);
+        link: data.link,
+        sendLabel: 'Send payslip',
+        note: "Review and edit the message below · it's emailed from the company mailbox with the payslip PDF attached.",
+        defaultSubject: data.subject,
+        defaultBody: data.body,
+        attachedNames: data.attachments || [],
+        onSend: async ({ subject, body }) => {
+          await api.post(`/payroll/${p._id}/email`, { subject, body });
           await load();
         },
       });
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not prepare the payslip link');
+      alert(err.response?.data?.message || 'Could not prepare the payslip email');
     }
   };
 

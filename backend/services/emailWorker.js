@@ -40,6 +40,7 @@ async function processOne() {
   try {
     const info = await sendMail({
       to: row.to,
+      cc: row.cc,
       subject: row.subject,
       text: row.text,
       html: row.html,

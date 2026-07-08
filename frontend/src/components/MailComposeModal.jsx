@@ -11,6 +11,8 @@ import { composeMail } from '../api/compose';
  * Props:
  *   open, onClose
  *   to                 recipient email(s) (shown read-only)
+ *   showCc             when true, shows an editable CC field (comma-separated)
+ *   defaultCc          prefilled CC value
  *   defaultSubject     prefilled, editable
  *   defaultBody        prefilled, editable (include the public link here)
  *   attachments        [{ url, filename }] optional — downloaded on send
@@ -27,6 +29,8 @@ export default function MailComposeModal({
   open,
   onClose,
   to,
+  showCc = false,
+  defaultCc = '',
   defaultSubject = '',
   defaultBody = '',
   attachments = [],
@@ -40,6 +44,7 @@ export default function MailComposeModal({
 }) {
   const [subject, setSubject] = useState(defaultSubject);
   const [body, setBody] = useState(defaultBody);
+  const [cc, setCc] = useState(defaultCc);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -49,10 +54,11 @@ export default function MailComposeModal({
     if (open) {
       setSubject(defaultSubject);
       setBody(defaultBody);
+      setCc(defaultCc);
       setError('');
       setCopied(false);
     }
-  }, [open, defaultSubject, defaultBody]);
+  }, [open, defaultSubject, defaultBody, defaultCc]);
 
   if (!open) return null;
 
@@ -61,8 +67,9 @@ export default function MailComposeModal({
     setSending(true);
     setError('');
     try {
-      if (onSend) await onSend({ subject, body });
-      else await composeMail({ to, subject, body, attachments });
+      const ccClean = showCc ? cc.trim() : '';
+      if (onSend) await onSend({ subject, body, cc: ccClean });
+      else await composeMail({ to, cc: ccClean || undefined, subject, body, attachments });
       if (onSent) await onSent();
       onClose();
     } catch (err) {
@@ -91,6 +98,18 @@ export default function MailComposeModal({
         </p>
 
         <div className="space-y-3">
+          {showCc && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cc</label>
+              <input
+                type="text"
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+                placeholder="Add more emails, comma-separated"
+                className="block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
+              />
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Subject</label>
             <input

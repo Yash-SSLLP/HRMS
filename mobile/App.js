@@ -5,8 +5,9 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import * as SystemUI from 'expo-system-ui';
 
-import { colors } from './src/theme';
+import { colors, isDark } from './src/theme';
 import { useAuth } from './src/store/auth';
 import { useBadges } from './src/store/badges';
 import { useSecurity } from './src/store/security';
@@ -17,7 +18,7 @@ import { navRef, navigateFromNotification } from './src/navigation/navRef';
 import { registerForPush, clearBadge } from './src/services/push';
 
 const navTheme = {
-  dark: false,
+  dark: isDark,
   colors: {
     primary: colors.primary,
     background: colors.bg,
@@ -39,6 +40,9 @@ export default function App() {
   useEffect(() => {
     hydrate();
     sec.hydrate();
+    // Paint the root window in the theme background so there's no white flash
+    // behind sheets / during navigation transitions in dark mode.
+    SystemUI.setBackgroundColorAsync(colors.bg).catch(() => {});
   }, [hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-lock whenever the app leaves the foreground (if app lock is enabled).
@@ -97,7 +101,7 @@ export default function App() {
     // native-stack (react-native-screens) renders blank on Android without it.
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <StatusBar style={locked ? 'light' : 'dark'} />
+        <StatusBar style={isDark || locked ? 'light' : 'dark'} />
         <ErrorBoundary>
           <NavigationContainer ref={navRef} theme={navTheme}>
             <RootNavigator />

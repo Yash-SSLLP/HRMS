@@ -51,6 +51,7 @@ async function sendMail(opts) {
   if (!t) {
     console.log('\n=== EMAIL (SMTP not configured — logging instead) ===');
     console.log('To       :', Array.isArray(opts.to) ? opts.to.join(', ') : opts.to);
+    if (opts.cc) console.log('Cc       :', Array.isArray(opts.cc) ? opts.cc.join(', ') : opts.cc);
     console.log('From     :', from);
     console.log('Reply-To :', opts.replyTo || '(none)');
     console.log('Subject  :', opts.subject);
@@ -65,6 +66,7 @@ async function sendMail(opts) {
   const info = await t.sendMail({
     from,
     to: opts.to,
+    cc: opts.cc || undefined,
     subject: opts.subject,
     text: opts.text,
     html: opts.html,
@@ -84,6 +86,7 @@ async function sendMail(opts) {
 async function enqueueMail(opts, related = {}) {
   const row = await EmailOutbox.create({
     to: Array.isArray(opts.to) ? opts.to.join(',') : opts.to,
+    cc: Array.isArray(opts.cc) ? opts.cc.join(',') : opts.cc,
     subject: opts.subject,
     text: opts.text,
     html: opts.html,

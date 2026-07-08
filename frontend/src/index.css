@@ -26,14 +26,17 @@ html[data-role="HRManager"]  { --accent: #0d9488; --accent-700: #0f766e; } /* te
 html[data-role="Employee"]   { --accent: #2563eb; --accent-700: #1d4ed8; } /* blue   */
 
 html.dark {
-  --bg: #0b1220;
-  --surface: #131c2b;
-  --surface-2: #1c2738;
-  --surface-3: #273244;
-  --border: #2a3650;
+  /* Neutral graphite palette — a warmer, near-neutral charcoal that replaces the
+     old blue-navy tint. Shared by every role (only --accent varies per role). */
+  --bg: #0e0f13;
+  --surface: #17181d;
+  --surface-2: #1f2127;
+  --surface-3: #292c34;
+  --border: #363a44;
 }
 /* Brighten accents a touch in dark mode for contrast */
-html.dark[data-role="SuperAdmin"] { --accent: #a78bfa; --accent-700: #8b5cf6; }
+/* No violet/purple in dark theme — SuperAdmin uses an amber/gold accent instead. */
+html.dark[data-role="SuperAdmin"] { --accent: #fbbf24; --accent-700: #f59e0b; }
 html.dark[data-role="HRManager"]  { --accent: #2dd4bf; --accent-700: #14b8a6; }
 html.dark[data-role="Employee"]   { --accent: #60a5fa; --accent-700: #3b82f6; }
 
@@ -559,8 +562,10 @@ html.dark .bg-orange-50,  html.dark .bg-orange-100  { background-color: color-mi
 html.dark .bg-blue-50,    html.dark .bg-blue-100    { background-color: color-mix(in srgb, #3b82f6 15%, var(--surface)) !important; }
 html.dark .bg-sky-50,     html.dark .bg-sky-100     { background-color: color-mix(in srgb, #0ea5e9 15%, var(--surface)) !important; }
 html.dark .bg-indigo-50,  html.dark .bg-indigo-100  { background-color: color-mix(in srgb, #6366f1 15%, var(--surface)) !important; }
-html.dark .bg-violet-50,  html.dark .bg-violet-100  { background-color: color-mix(in srgb, #8b5cf6 15%, var(--surface)) !important; }
-html.dark .bg-purple-50,  html.dark .bg-purple-100  { background-color: color-mix(in srgb, #a855f7 15%, var(--surface)) !important; }
+/* Violet/purple are banned in dark theme → remap to rose so category badges
+   (OnLeave, Event, Offer, Holiday, birthday…) show a non-purple hue. */
+html.dark .bg-violet-50,  html.dark .bg-violet-100  { background-color: color-mix(in srgb, #f43f5e 15%, var(--surface)) !important; }
+html.dark .bg-purple-50,  html.dark .bg-purple-100  { background-color: color-mix(in srgb, #f43f5e 15%, var(--surface)) !important; }
 html.dark .bg-cyan-50,    html.dark .bg-cyan-100    { background-color: color-mix(in srgb, #06b6d4 15%, var(--surface)) !important; }
 
 /* Bright, legible coloured text on dark surfaces. (blue-600 is intentionally
@@ -576,8 +581,8 @@ html.dark .text-orange-500, html.dark .text-orange-600, html.dark .text-orange-7
 html.dark .text-blue-700, html.dark .text-blue-800 { color: #60a5fa !important; }
 html.dark .text-sky-600, html.dark .text-sky-700, html.dark .text-sky-800 { color: #38bdf8 !important; }
 html.dark .text-indigo-600, html.dark .text-indigo-700, html.dark .text-indigo-800 { color: #818cf8 !important; }
-html.dark .text-violet-600, html.dark .text-violet-700, html.dark .text-violet-800 { color: #a78bfa !important; }
-html.dark .text-purple-600, html.dark .text-purple-700, html.dark .text-purple-800 { color: #c084fc !important; }
+html.dark .text-violet-600, html.dark .text-violet-700, html.dark .text-violet-800 { color: #fb7185 !important; }
+html.dark .text-purple-600, html.dark .text-purple-700, html.dark .text-purple-800 { color: #fb7185 !important; }
 html.dark .text-cyan-600, html.dark .text-cyan-700, html.dark .text-cyan-800 { color: #22d3ee !important; }
 
 /* Coloured badge/banner borders → a soft tint of the hue. */
@@ -590,7 +595,15 @@ html.dark .border-amber-200,  html.dark .border-amber-300  { border-color: color
 html.dark .border-orange-200, html.dark .border-orange-300 { border-color: color-mix(in srgb, #f97316 34%, transparent) !important; }
 html.dark .border-blue-200,   html.dark .border-blue-300   { border-color: color-mix(in srgb, #3b82f6 34%, transparent) !important; }
 html.dark .border-indigo-200, html.dark .border-indigo-300 { border-color: color-mix(in srgb, #6366f1 34%, transparent) !important; }
-html.dark .border-purple-200, html.dark .border-purple-300 { border-color: color-mix(in srgb, #a855f7 34%, transparent) !important; }
+html.dark .border-violet-200, html.dark .border-violet-300 { border-color: color-mix(in srgb, #f43f5e 34%, transparent) !important; }
+html.dark .border-purple-200, html.dark .border-purple-300 { border-color: color-mix(in srgb, #f43f5e 34%, transparent) !important; }
+
+/* Solid violet/purple fills, mid-tone text & borders used in components
+   (e.g. the Maternity progress bar, survey icon) → rose. No purple in dark. */
+html.dark .bg-violet-400, html.dark .bg-violet-500, html.dark .bg-violet-600,
+html.dark .bg-purple-400, html.dark .bg-purple-500, html.dark .bg-purple-600 { background-color: #f43f5e !important; }
+html.dark .text-violet-400, html.dark .text-violet-500, html.dark .text-purple-400, html.dark .text-purple-500 { color: #fb7185 !important; }
+html.dark .border-violet-400, html.dark .border-violet-500, html.dark .border-purple-400, html.dark .border-purple-500 { border-color: color-mix(in srgb, #f43f5e 45%, transparent) !important; }
 
 /* Nicer scrollbars in dark mode */
 html.dark * {

@@ -1,14 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import api from '../api/client';
-import { colors, font } from '../theme';
+import { colors, font, isDark } from '../theme';
 
 // GitHub-style attendance heatmap of the trailing 12 months, split into month
 // blocks. Mirrors the website's AttendanceHeatmap.
 //   • Personal mode (default): each day coloured by the caller's classification.
 //   • Org mode (org=true, admins): each day shaded by how many were present.
 
-const EMPTY = '#ebedf0';
+const EMPTY = isDark ? '#2a2e37' : '#ebedf0';
 const CATEGORIES = [
   { key: 'full', label: 'Full', color: '#16a34a' },
   { key: 'half', label: 'Half', color: '#f59e0b' },
@@ -34,6 +34,8 @@ const CELL = 11, GAP = 3;
 export default function AttendanceHeatmap({ org = false, days = 365 }) {
   const [byDate, setByDate] = useState({});
   const [maxPresent, setMaxPresent] = useState(0);
+  const scrollRef = useRef(null);
+  const didScroll = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -79,7 +81,19 @@ export default function AttendanceHeatmap({ org = false, days = 365 }) {
 
   return (
     <View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        // Open on the current (latest) month — the rightmost block — instead of
+        // the oldest. Auto-scroll to the end once, on first layout.
+        onContentSizeChange={() => {
+          if (!didScroll.current) {
+            didScroll.current = true;
+            scrollRef.current?.scrollToEnd({ animated: false });
+          }
+        }}
+      >
         <View style={styles.grid}>
           {months.map((mo) => (
             <View key={`${mo.label}-${mo.year}`}>

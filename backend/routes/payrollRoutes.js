@@ -13,6 +13,7 @@ const {
   downloadMyPayslipPdf,
   sharePayslip,
   markPayslipSent,
+  emailPayslip,
   downloadPublicPayslip,
   exportPayroll,
   previewPayrollRun,
@@ -56,5 +57,6 @@ router.patch('/:id/approve', approvePayslip);
 router.patch('/:id/pay', markPayslipPaid);
 router.post('/:id/share', sharePayslip);
 router.post('/:id/mark-sent', markPayslipSent);
+router.post('/:id/email', emailPayslip);
 
 module.exports = router;
