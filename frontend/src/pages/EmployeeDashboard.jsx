@@ -8,6 +8,7 @@ import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import AnnouncementsBanner from '../components/AnnouncementsBanner';
 import SurveysBanner from '../components/SurveysBanner';
 import InterviewsBanner from '../components/InterviewsBanner';
+import ManagerTeamStatus from '../components/ManagerTeamStatus';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
@@ -119,6 +120,10 @@ export default function EmployeeDashboard() {
 
       {/* Upcoming interviews the employee is assigned to conduct. */}
       <InterviewsBanner />
+
+      {/* Managers: today's status of everyone reporting to them (self-hides when
+          the viewer has no reports). */}
+      {(user?.role === 'Manager' || user?.role === 'HRManager') && <ManagerTeamStatus />}
 
       {/* Wishes received (birthday / anniversary) */}
       {wishes.length > 0 && (
