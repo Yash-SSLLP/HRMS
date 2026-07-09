@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { FiVideo, FiFileText, FiX } from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 
@@ -30,7 +31,8 @@ export default function Calendar() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [hover, setHover] = useState(null); // { e, x, y } for the detail tooltip
+  const [selected, setSelected] = useState(null); // event opened in the detail modal
+  const [resumeBusy, setResumeBusy] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -75,7 +77,7 @@ export default function Calendar() {
   const isToday = (d) =>
     d === today.getDate() && month === today.getMonth() + 1 && year === today.getFullYear();
 
-  // Detail rows shown in the hover card, per event type.
+  // Detail rows shown in the event modal, per event type.
   const detailRows = (e) => {
     const m = e.meta || {};
     const rows = [];
@@ -92,7 +94,6 @@ export default function Calendar() {
       if (m.round) rows.push(['Round', m.round]);
       if (m.jobTitle) rows.push(['Role', m.jobTitle]);
       if (m.status) rows.push(['Status', m.status]);
-      if (m.meetingLink) rows.push(['Meeting', m.meetingLink]);
     } else {
       const role = [m.designation, m.department].filter(Boolean).join(' · ');
       if (role) rows.push(['Role', role]);
@@ -102,7 +103,22 @@ export default function Calendar() {
     return rows;
   };
 
-  const showHover = (e, ev) => setHover({ e, x: ev.clientX, y: ev.clientY });
+  // Open the candidate's resume in a new tab. The endpoint is token-protected,
+  // so fetch it as a blob (auth header attached) and open an object URL.
+  const openResume = async (candidateId) => {
+    if (!candidateId) return;
+    setResumeBusy(true);
+    try {
+      const res = await api.get(`/recruitment/my-interviews/${candidateId}/resume`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      setError('Could not open the resume.');
+    } finally {
+      setResumeBusy(false);
+    }
+  };
 
   return (
     <div>
@@ -143,13 +159,14 @@ export default function Calendar() {
                   </div>
                   <div className="space-y-1">
                     {(eventsByDay[d] || []).map((e, i) => (
-                      <div key={i}
-                        onMouseEnter={(ev) => showHover(e, ev)}
-                        onMouseMove={(ev) => showHover(e, ev)}
-                        onMouseLeave={() => setHover(null)}
-                        className={`text-[10px] px-1 py-0.5 rounded truncate cursor-default ${TYPE_STYLES[e.type]}`}>
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setSelected(e)}
+                        title="View details"
+                        className={`block w-full text-left text-[10px] px-1 py-0.5 rounded truncate cursor-pointer hover:brightness-95 ${TYPE_STYLES[e.type]}`}>
                         {e.label}
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </>
@@ -160,31 +177,72 @@ export default function Calendar() {
       </div>
       {loading && <p className="text-sm text-gray-500 mt-3">Loading…</p>}
 
-      {hover && (
-        <div
-          className="fixed z-[60] pointer-events-none"
-          style={{
-            left: Math.min(hover.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 274),
-            top: Math.min(hover.y + 14, (typeof window !== 'undefined' ? window.innerHeight : 800) - 140),
-            maxWidth: 260,
-          }}
-        >
-          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`inline-block w-2.5 h-2.5 rounded shrink-0 ${TYPE_STYLES[hover.e.type]}`} />
-              <span className="text-sm font-semibold text-gray-900 break-words">{hover.e.label}</span>
-            </div>
-            <div className="text-[11px] text-gray-500 mb-1.5">
-              {TYPE_LABELS[hover.e.type]} · {new Date(year, month - 1, hover.e.day).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-            </div>
-            {detailRows(hover.e).map(([k, v]) => (
-              <div key={k} className="text-xs text-gray-700 break-words">
-                <span className="text-gray-400">{k}: </span>{v}
+      {selected && (() => {
+        const e = selected;
+        const m = e.meta || {};
+        const isInterview = e.type === 'interview';
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]"
+            onMouseDown={() => setSelected(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden"
+              onMouseDown={(ev) => ev.stopPropagation()}>
+              {/* Header */}
+              <div className="px-5 pt-5 pb-4 border-b border-gray-100">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className={`inline-block text-[10px] font-medium rounded-full px-2 py-0.5 ${TYPE_STYLES[e.type]}`}>
+                        {TYPE_LABELS[e.type]}
+                      </span>
+                    </div>
+                    <h2 className="text-lg font-semibold text-gray-900 break-words leading-snug">{e.label}</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {new Date(year, month - 1, e.day).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => setSelected(null)}
+                    className="shrink-0 text-gray-400 hover:text-gray-700 rounded-lg p-1 -mr-1 hover:bg-gray-100">
+                    <FiX size={18} />
+                  </button>
+                </div>
               </div>
-            ))}
+
+              {/* Details */}
+              <div className="px-5 py-4 space-y-2">
+                {detailRows(e).map(([k, v]) => (
+                  <div key={k} className="flex gap-3 text-sm">
+                    <span className="w-24 shrink-0 text-gray-400">{k}</span>
+                    <span className="text-gray-800 break-words">{v}</span>
+                  </div>
+                ))}
+                {detailRows(e).length === 0 && (
+                  <p className="text-sm text-gray-400">No further details.</p>
+                )}
+              </div>
+
+              {/* Interview actions */}
+              {isInterview && (m.hasResume || m.meetingLink) && (
+                <div className="px-5 pb-5 pt-1 flex items-center gap-2">
+                  {m.hasResume && (
+                    <button type="button" onClick={() => openResume(m.candidateId)} disabled={resumeBusy}
+                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+                      <FiFileText size={15} />
+                      {resumeBusy ? 'Opening…' : 'Resume'}
+                    </button>
+                  )}
+                  {m.meetingLink && (
+                    <a href={m.meetingLink} target="_blank" rel="noreferrer"
+                      className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 text-white text-sm font-medium shadow-sm hover:bg-gray-800 transition-colors">
+                      <FiVideo size={15} />
+                      Join meeting
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

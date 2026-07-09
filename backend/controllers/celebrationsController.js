@@ -199,7 +199,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000; // IST is a fixed UTC+5:30
   const interviewCands = await Candidate.find({ 'rounds.interviewer': req.user._id })
     .populate('job', 'title')
-    .select('name job rounds');
+    .select('name job rounds resumeName resumePath');
   for (const c of interviewCands) {
     for (const r of c.rounds || []) {
       if (!r.scheduledAt || String(r.interviewer) !== String(req.user._id)) continue;
@@ -214,11 +214,13 @@ const monthCalendar = asyncHandler(async (req, res) => {
           time: new Date(r.scheduledAt).toLocaleTimeString('en-IN', {
             hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
           }),
+          candidateId: String(c._id),
           candidateName: c.name,
           round: r.label,
           status: r.status,
           durationMinutes: r.meetDurationMinutes || null,
           jobTitle: c.job?.title || '',
+          hasResume: !!(c.resumeName || c.resumePath),
           meetingLink: r.meetingLink || '',
         },
       });
