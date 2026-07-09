@@ -9,7 +9,12 @@ const QUESTION_TYPES = [
 ];
 
 const blankQuestion = () => ({ text: '', type: 'single', options: [''] });
-const blankForm = () => ({ title: '', description: '', anonymous: false, active: true, questions: [blankQuestion()] });
+const blankForm = () => ({ title: '', description: '', anonymous: false, active: true, startDate: '', endDate: '', questions: [blankQuestion()] });
+
+// ISO date/datetime → the YYYY-MM-DD value an <input type="date"> expects.
+function toDateInput(d) {
+  return d ? new Date(d).toISOString().slice(0, 10) : '';
+}
 
 export default function AdminSurveys() {
   const [surveys, setSurveys] = useState([]);
@@ -55,6 +60,8 @@ export default function AdminSurveys() {
       description: s.description || '',
       anonymous: !!s.anonymous,
       active: s.active !== false,
+      startDate: toDateInput(s.startDate),
+      endDate: toDateInput(s.endDate),
       questions: (s.questions || []).length
         ? s.questions.map((q) => ({ text: q.text || '', type: q.type || 'single', options: (q.options || []).length ? [...q.options] : [''] }))
         : [blankQuestion()],
@@ -91,6 +98,9 @@ export default function AdminSurveys() {
         description: form.description,
         anonymous: form.anonymous,
         active: form.active,
+        // Cleared dates go as null (not '') so the backend clears them.
+        startDate: form.startDate || null,
+        endDate: form.endDate || null,
         questions: form.questions.map((q) => ({
           text: q.text,
           type: q.type,
@@ -169,6 +179,15 @@ export default function AdminSurveys() {
                   <span className={`text-xs px-2 py-0.5 rounded-lg ${s.active ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
                     {s.active ? 'Active' : 'Closed'}
                   </span>
+                  {(s.startDate || s.endDate) && (
+                    <div className="mt-1 text-[11px] text-gray-400">
+                      {s.startDate ? `From ${toDateInput(s.startDate)}` : 'Now'}
+                      {s.endDate ? ` → ${toDateInput(s.endDate)}` : ''}
+                      {s.endDate && new Date(s.endDate) < new Date() && (
+                        <span className="ml-1 text-red-500">expired</span>
+                      )}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
                   <button onClick={() => openResults(s)} className="text-emerald-700 hover:underline">Results</button>
@@ -206,6 +225,23 @@ export default function AdminSurveys() {
                   <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
                   Active
                 </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Open from</label>
+                  <input type="date" value={form.startDate}
+                    onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="mt-1 text-xs text-gray-400">Blank = open immediately</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Close after</label>
+                  <input type="date" value={form.endDate} min={form.startDate || undefined}
+                    onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="mt-1 text-xs text-gray-400">Blank = never expires</p>
+                </div>
               </div>
 
               <div className="space-y-3">

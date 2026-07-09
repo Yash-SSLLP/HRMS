@@ -18,6 +18,11 @@ const surveySchema = new mongoose.Schema(
     questions: [questionSchema],
     anonymous: { type: Boolean, default: false },
     active: { type: Boolean, default: true, index: true },
+    // Optional display window. Blank startDate = open immediately; blank endDate
+    // = never expires. A survey shows to employees only if `active` AND today is
+    // inside this window (both must pass).
+    startDate: { type: Date },
+    endDate: { type: Date, index: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

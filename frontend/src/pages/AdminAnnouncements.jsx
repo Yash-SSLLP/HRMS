@@ -13,11 +13,16 @@ const CATEGORY_STYLES = {
   Urgent: 'bg-red-100 text-red-700',
 };
 
-const blank = { title: '', body: '', category: 'General', pinned: false };
+const blank = { title: '', body: '', category: 'General', pinned: false, startDate: '', endDate: '' };
 
 function fmtDate(d) {
   if (!d) return '';
   return new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// ISO date/datetime → the YYYY-MM-DD value an <input type="date"> expects.
+function toDateInput(d) {
+  return d ? new Date(d).toISOString().slice(0, 10) : '';
 }
 
 function authorName(a) {
@@ -64,6 +69,8 @@ export default function AdminAnnouncements() {
       body: a.body,
       category: a.category || 'General',
       pinned: !!a.pinned,
+      startDate: toDateInput(a.startDate),
+      endDate: toDateInput(a.endDate),
     });
     setShowModal(true);
   };
@@ -72,12 +79,15 @@ export default function AdminAnnouncements() {
     e.preventDefault();
     setSaving(true);
     setError('');
+    // Send cleared dates as null (not '') so the backend clears them instead of
+    // failing to cast an empty string to a Date.
+    const payload = { ...form, startDate: form.startDate || null, endDate: form.endDate || null };
     try {
       if (editingId) {
-        await api.put(`/announcements/${editingId}`, form);
+        await api.put(`/announcements/${editingId}`, payload);
         setInfo('');
       } else {
-        const { data } = await api.post('/announcements', form);
+        const { data } = await api.post('/announcements', payload);
         setInfo(`Announcement posted · ${data.notified} employee(s) notified.`);
       }
       setShowModal(false);
@@ -137,7 +147,18 @@ export default function AdminAnnouncements() {
               </div>
               <h3 className="mt-2 font-bold text-gray-900">{a.title}</h3>
               <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{a.body}</p>
-              <p className="mt-3 text-xs text-gray-500">By {authorName(a)} · {fmtDate(a.createdAt)}</p>
+              <p className="mt-3 text-xs text-gray-500">
+                By {authorName(a)} · {fmtDate(a.createdAt)}
+                {(a.startDate || a.endDate) && (
+                  <span className="ml-2 text-gray-400">
+                    · Visible {a.startDate ? `from ${fmtDate(a.startDate)}` : 'now'}
+                    {a.endDate ? ` until ${fmtDate(a.endDate)}` : ''}
+                    {a.endDate && new Date(a.endDate) < new Date() && (
+                      <span className="ml-1 text-red-500">(expired)</span>
+                    )}
+                  </span>
+                )}
+              </p>
             </div>
           ))}
         </div>
@@ -168,6 +189,22 @@ export default function AdminAnnouncements() {
                     onChange={(e) => setForm({ ...form, pinned: e.target.checked })} />
                   Pin to top
                 </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Show from</label>
+                  <input type="date" value={form.startDate}
+                    onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="mt-1 text-xs text-gray-400">Blank = show immediately</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Hide after</label>
+                  <input type="date" value={form.endDate} min={form.startDate || undefined}
+                    onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="mt-1 text-xs text-gray-400">Blank = never expires</p>
+                </div>
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Body *</label>

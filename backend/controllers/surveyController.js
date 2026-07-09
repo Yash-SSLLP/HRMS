@@ -2,11 +2,23 @@ const asyncHandler = require('express-async-handler');
 const Survey = require('../models/Survey');
 const { SurveyResponse } = require('../models/Survey');
 
+// A Mongo predicate matching docs whose optional [startDate, endDate] window
+// contains `now`. Absent/null bounds are treated as open-ended.
+const activeWindowQuery = (now) => ({
+  $and: [
+    { $or: [{ startDate: { $exists: false } }, { startDate: null }, { startDate: { $lte: now } }] },
+    { $or: [{ endDate: { $exists: false } }, { endDate: null }, { endDate: { $gte: now } }] },
+  ],
+});
+
 // ===== Shared / Employee =====
 
-// GET /  — active surveys, with `answered` flag for the current user
+// GET /  — surveys open to the current user: active AND inside their display
+// window, with an `answered` flag.
 const listActive = asyncHandler(async (req, res) => {
-  const surveys = await Survey.find({ active: true }).sort({ createdAt: -1 }).lean();
+  const surveys = await Survey.find({ active: true, ...activeWindowQuery(new Date()) })
+    .sort({ createdAt: -1 })
+    .lean();
   const responded = await SurveyResponse.find({
     survey: { $in: surveys.map((s) => s._id) },
     respondent: req.user._id,
@@ -33,6 +45,17 @@ const respond = asyncHandler(async (req, res) => {
   if (!survey) {
     res.status(404);
     throw new Error('Survey not found');
+  }
+  // Reject late submissions from a stale open tab once the survey is closed or
+  // its display window has passed.
+  const now = new Date();
+  const closed =
+    survey.active === false ||
+    (survey.startDate && survey.startDate > now) ||
+    (survey.endDate && survey.endDate < now);
+  if (closed) {
+    res.status(400);
+    throw new Error('This survey has closed');
   }
   const already = await SurveyResponse.findOne({ survey: survey._id, respondent: req.user._id });
   if (already) {

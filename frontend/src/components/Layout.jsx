@@ -243,8 +243,8 @@ function NotificationBell({ isAdmin, portal }) {
                   n.readAt ? '' : 'bg-blue-50'
                 }`}
               >
-                <div className="text-sm text-gray-900">{n.title}</div>
-                {n.body && <div className="text-xs text-gray-600 mt-0.5">{n.body}</div>}
+                <div className="text-sm text-gray-900 break-words">{n.title}</div>
+                {n.body && <div className="text-xs text-gray-600 mt-0.5 break-words line-clamp-3">{n.body}</div>}
                 <div className="text-[10px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString([], { hour12: true })}</div>
               </button>
             ))}

@@ -16,6 +16,11 @@ const announcementSchema = new mongoose.Schema(
       index: true,
     },
     pinned: { type: Boolean, default: false },
+    // Optional display window. Blank startDate = visible immediately; blank
+    // endDate = never expires. Employees only see announcements inside this
+    // window; admins always see every announcement.
+    startDate: { type: Date },
+    endDate: { type: Date, index: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     // Users who dismissed this from their overview banner. It still shows in the
     // full Announcements feed — dismissing only hides it from the front page.

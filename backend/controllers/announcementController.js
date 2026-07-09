@@ -2,10 +2,26 @@ const asyncHandler = require('express-async-handler');
 const Announcement = require('../models/Announcement');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const { hasPermission } = require('../middleware/authMiddleware');
+
+// A Mongo predicate matching docs whose optional [startDate, endDate] window
+// contains `now`. Absent/null bounds are treated as open-ended.
+const activeWindowQuery = (now) => ({
+  $and: [
+    { $or: [{ startDate: { $exists: false } }, { startDate: null }, { startDate: { $lte: now } }] },
+    { $or: [{ endDate: { $exists: false } }, { endDate: null }, { endDate: { $gte: now } }] },
+  ],
+});
 
 // GET /api/announcements   (any authenticated user)
+// Admins (announcements.manage) see every announcement, including scheduled and
+// expired ones, so they can manage them. Everyone else only sees announcements
+// whose display window currently contains "now".
 const listAnnouncements = asyncHandler(async (req, res) => {
-  const docs = await Announcement.find()
+  const filter = hasPermission(req.user, 'announcements.manage')
+    ? {}
+    : activeWindowQuery(new Date());
+  const docs = await Announcement.find(filter)
     .populate('createdBy', 'firstName lastName')
     .sort({ pinned: -1, createdAt: -1 })
     .lean();
@@ -37,7 +53,7 @@ const dismissAnnouncement = asyncHandler(async (req, res) => {
 
 // POST /api/announcements   (HR/SuperAdmin) — fans out a notification to every other active user
 const createAnnouncement = asyncHandler(async (req, res) => {
-  const { title, body, category, pinned } = req.body;
+  const { title, body, category, pinned, startDate, endDate } = req.body;
   if (!title || !body) {
     res.status(400);
     throw new Error('title and body are required');
@@ -48,18 +64,20 @@ const createAnnouncement = asyncHandler(async (req, res) => {
     body,
     category,
     pinned,
+    startDate: startDate || undefined,
+    endDate: endDate || undefined,
     createdBy: req.user._id,
   });
 
-  // Notify all active users except the creator.
+  // Notify all active users except the creator. Only the title goes in the
+  // notification — the full body is read on the Announcements page.
   const recipients = await User.find({ isActive: true, _id: { $ne: req.user._id } }).select('_id');
   if (recipients.length) {
-    const preview = announcement.body.slice(0, 120);
     const notifications = recipients.map((u) => ({
       recipient: u._id,
       type: 'announcement',
       title: `📢 ${announcement.title}`,
-      body: preview,
+      body: 'Tap to read the full announcement.',
       link: 'announcements',
     }));
     await Notification.insertMany(notifications);
