@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -116,12 +118,12 @@ export default function AdminSalaryStructures() {
   };
 
   const remove = async (s) => {
-    if (!window.confirm(`Delete salary structure "${s.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete salary structure "${s.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/salary-structures/${s._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

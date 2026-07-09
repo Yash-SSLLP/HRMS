@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 
@@ -196,11 +198,11 @@ export default function AdminEmployees() {
       const token = docToken || (await api.post(`/employees/${editingId}/doc-link`)).data.token;
       if (!docToken) setDocToken(token);
       const link = `${window.location.origin}/employee-docs/${token}`;
-      try { await navigator.clipboard.writeText(link); } catch { window.prompt('Copy this link:', link); }
+      try { await navigator.clipboard.writeText(link); } catch { await promptDialog({ title: 'Copy link', message: 'Copy this link:', initialValue: link, confirmText: 'Done' }); }
       setDocCopied(true);
       setTimeout(() => setDocCopied(false), 1600);
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not create the submission link');
+      toast.error(err.response?.data?.message || 'Could not create the submission link');
     } finally {
       setDocBusy(false);
     }
@@ -228,12 +230,12 @@ export default function AdminEmployees() {
   };
 
   const onDelete = async (p) => {
-    if (!window.confirm(`Delete profile for ${p.user?.email}?`)) return;
+    if (!(await confirmDialog({ message: `Delete profile for ${p.user?.email}?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/employees/${p._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 
@@ -244,16 +246,16 @@ export default function AdminEmployees() {
     if (!uid) return;
     const active = p.user?.isActive;
     const name = p.user?.firstName || 'this employee';
-    if (!window.confirm(
-      active
+    if (!(await confirmDialog({
+      message: active
         ? `Deactivate ${name}'s account? They will no longer be able to log in.`
-        : `Reactivate ${name}'s account? They will be able to log in again.`
-    )) return;
+        : `Reactivate ${name}'s account? They will be able to log in again.`,
+    }))) return;
     try {
       await api.patch(`/admin/users/${uid}/${active ? 'deactivate' : 'activate'}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not update status');
+      toast.error(err.response?.data?.message || 'Could not update status');
     }
   };
 

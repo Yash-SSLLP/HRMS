@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { promptDialog } from '../components/dialogs';
 
 const DOC_STATUS_STYLES = {
   Submitted: 'bg-amber-100 text-amber-800',
@@ -87,26 +89,26 @@ export default function AdminEmployeeDetail() {
       const { data } = await api.post(`/employees/${id}/doc-link`);
       setToken(data.token);
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not generate link');
+      toast.error(err.response?.data?.message || 'Could not generate link');
     } finally {
       setDocBusy(false);
     }
   };
 
   const copyLink = async () => {
-    try { await navigator.clipboard.writeText(docLink); } catch { window.prompt('Copy this link:', docLink); }
+    try { await navigator.clipboard.writeText(docLink); } catch { await promptDialog({ title: 'Copy link', message: 'Copy this link:', initialValue: docLink, confirmText: 'Done' }); }
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 1600);
   };
 
   const setDocStatus = async (docId, status) => {
     let note;
-    if (status === 'Rejected') note = window.prompt('Reason for rejecting (optional):') || '';
+    if (status === 'Rejected') note = (await promptDialog({ message: 'Reason for rejecting (optional):' })) || '';
     try {
       await api.patch(`/documents/${docId}/status`, { status, note });
       await loadDocs();
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not update status');
+      toast.error(err.response?.data?.message || 'Could not update status');
     }
   };
 

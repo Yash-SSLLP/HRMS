@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { promptDialog } from '../components/dialogs';
 
 const STATUS = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
 
@@ -37,13 +39,13 @@ export default function AdminExpenses() {
   const review = async (x, status) => {
     let reviewNote;
     if (status === 'Rejected') {
-      reviewNote = window.prompt('Reason for rejection (optional):') || '';
+      reviewNote = (await promptDialog({ message: 'Reason for rejection (optional):' })) || '';
     }
     try {
       await api.patch(`/expenses/${x._id}/status`, { status, reviewNote });
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Update failed');
+      toast.error(err.response?.data?.message || 'Update failed');
     }
   };
 

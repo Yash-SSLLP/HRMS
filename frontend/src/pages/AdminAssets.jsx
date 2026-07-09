@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import PromptDialog from '../components/PromptDialog';
+import { confirmDialog } from '../components/dialogs';
 
 const CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Phone', 'SIM', 'Furniture', 'Vehicle', 'Other'];
 const STATUS = ['Available', 'Assigned', 'InRepair', 'Retired'];
@@ -85,9 +87,9 @@ export default function AdminAssets() {
     finally { setSaving(false); }
   };
   const remove = async (a) => {
-    if (!window.confirm(`Delete asset "${a.name}"? This also removes its assignment history.`)) return;
+    if (!(await confirmDialog({ message: `Delete asset "${a.name}"? This also removes its assignment history.`, tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/assets/${a._id}`); await load(); if (tab === 'assignments') loadAssignments(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   // ---- Assign / return ----
@@ -101,13 +103,13 @@ export default function AdminAssets() {
   const doAssign = async (e) => {
     e.preventDefault();
     const assetId = assignFor?._id || assignAssetId;
-    if (!assetId) { alert('Please pick an asset.'); return; }
-    if (!assignUser) { alert('Please pick an employee to assign to.'); return; }
+    if (!assetId) { toast.error('Please pick an asset.'); return; }
+    if (!assignUser) { toast.error('Please pick an employee to assign to.'); return; }
     setBusy(true);
     try {
       await api.patch(`/assets/${assetId}/assign`, { userId: assignUser, date: assignDate, note: assignNote });
       setAssignFor(null); await load(); if (tab === 'assignments') loadAssignments();
-    } catch (err) { alert(err.response?.data?.message || 'Assign failed'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Assign failed'); }
     finally { setBusy(false); }
   };
   const openReturn = (assignment) => { setReturnFor(assignment); setReturnDate(today()); };
@@ -118,7 +120,7 @@ export default function AdminAssets() {
     try {
       await api.patch(`/assets/${assetId}/assign`, { userId: null, date: returnDate });
       setReturnFor(null); await load(); if (tab === 'assignments') loadAssignments();
-    } catch (err) { alert(err.response?.data?.message || 'Return failed'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Return failed'); }
     finally { setBusy(false); }
   };
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { promptDialog } from '../components/dialogs';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected', 'Availed'];
 
@@ -38,7 +39,7 @@ export default function AdminCompOff() {
     setError('');
     let reviewNote = '';
     if (status === 'Rejected') {
-      reviewNote = window.prompt('Reason for rejection (optional):') || '';
+      reviewNote = (await promptDialog({ message: 'Reason for rejection (optional):' })) || '';
     }
     try {
       await api.patch(`/compoff/${id}/status`, { status, reviewNote });

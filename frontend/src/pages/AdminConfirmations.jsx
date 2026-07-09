@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { promptDialog } from '../components/dialogs';
 
 const STATUS_FILTERS = ['All', 'Probation', 'Extended', 'Confirmed'];
 const STATUS_STYLES = {
@@ -48,7 +50,7 @@ export default function AdminConfirmations() {
   const act = async (row, action) => {
     let note;
     if (action === 'confirm') {
-      note = window.prompt('Optional confirmation note:', row.confirmationNote || '');
+      note = await promptDialog({ message: 'Optional confirmation note:', initialValue: row.confirmationNote || '' });
       if (note === null) return; // cancelled
     }
     try {
@@ -57,7 +59,7 @@ export default function AdminConfirmations() {
       await api.patch(`/lifecycle/confirmations/${row._id}`, body);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Action failed');
+      toast.error(err.response?.data?.message || 'Action failed');
     }
   };
 

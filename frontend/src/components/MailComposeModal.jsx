@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { composeMail } from '../api/compose';
+import { confirmDialog } from './dialogs';
 
 /**
  * Editable email composer. Prefills an editable subject + body (with any public
@@ -63,7 +64,7 @@ export default function MailComposeModal({
   if (!open) return null;
 
   const submit = async () => {
-    if (!subject.trim() && !window.confirm('Send with an empty subject?')) return;
+    if (!subject.trim() && !(await confirmDialog({ message: 'Send with an empty subject?' }))) return;
     setSending(true);
     setError('');
     try {

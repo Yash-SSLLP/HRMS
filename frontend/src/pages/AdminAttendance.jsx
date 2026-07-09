@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -205,12 +207,12 @@ export default function AdminAttendance() {
   };
 
   const onDelete = async (r) => {
-    if (!window.confirm('Delete this attendance record?')) return;
+    if (!(await confirmDialog({ message: 'Delete this attendance record?', tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/attendance/${r._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

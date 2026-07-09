@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { promptDialog } from './dialogs';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
@@ -67,7 +68,7 @@ export default function LeaveApprovalsInbox() {
   useEffect(() => { load(); }, []);
 
   const decide = async (id, action) => {
-    const note = window.prompt(`Optional note for ${action}:`, '');
+    const note = await promptDialog({ message: `Optional note for ${action}:` });
     if (note === null) return; // cancelled the prompt
     setBusyId(id); setError('');
     try {

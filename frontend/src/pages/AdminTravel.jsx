@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { fetchImageObjectUrl } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { promptDialog } from '../components/dialogs';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected', 'Completed'];
 
@@ -50,7 +51,7 @@ export default function AdminTravel() {
   const review = async (t, status) => {
     let reviewNote;
     if (status === 'Rejected') {
-      reviewNote = window.prompt('Reason for rejection (optional):') || '';
+      reviewNote = (await promptDialog({ message: 'Reason for rejection (optional):' })) || '';
     }
     setBusyId(t._id);
     setError('');
@@ -66,7 +67,7 @@ export default function AdminTravel() {
 
   const reviewReimb = async (t, status) => {
     let note;
-    if (status === 'Rejected') note = window.prompt('Reason for rejecting the reimbursement (optional):') || '';
+    if (status === 'Rejected') note = (await promptDialog({ message: 'Reason for rejecting the reimbursement (optional):' })) || '';
     setBusyId(t._id);
     setError('');
     try {

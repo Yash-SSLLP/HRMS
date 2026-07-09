@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const blank = { name: '', isActive: true };
 
@@ -87,12 +89,12 @@ export default function AdminDepartments() {
   };
 
   const remove = async (d) => {
-    if (!window.confirm(`Delete department "${d.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete department "${d.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/departments/${d._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

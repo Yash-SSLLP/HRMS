@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const QUESTION_TYPES = [
   { value: 'single', label: 'Single choice' },
@@ -119,12 +121,12 @@ export default function AdminSurveys() {
   };
 
   const remove = async (s) => {
-    if (!window.confirm(`Delete survey "${s.title}"? Its responses will also be deleted.`)) return;
+    if (!(await confirmDialog({ message: 'Its responses will also be deleted.', title: `Delete survey "${s.title}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/surveys/${s._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

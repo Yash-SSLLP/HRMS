@@ -64,7 +64,18 @@ export default function EmployeeInterviews() {
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {loading ? (
-        <div className="text-gray-500">Loading…</div>
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-white shadow rounded-lg p-4 space-y-3">
+              <div className="skeleton h-4 w-1/3 rounded" />
+              <div className="skeleton h-3 w-1/2 rounded" />
+              <div className="flex gap-2">
+                <div className="skeleton h-8 w-24 rounded-lg" />
+                <div className="skeleton h-8 w-24 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : interviews.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
           No interviews assigned to you yet. When HR assigns you to a candidate's round, it shows up here.

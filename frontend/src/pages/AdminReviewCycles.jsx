@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const CYCLE_STATUS = ['Draft', 'Active', 'Closed'];
 const STATUS_STYLES = {
@@ -109,12 +111,12 @@ export default function AdminReviewCycles() {
   };
 
   const removeCycle = async (c) => {
-    if (!window.confirm(`Delete cycle "${c.name}" and all its reviews?`)) return;
+    if (!(await confirmDialog({ message: `Delete cycle "${c.name}" and all its reviews?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/reviews/cycles/${c._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

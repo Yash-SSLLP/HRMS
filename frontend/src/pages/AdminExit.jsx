@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -103,7 +105,7 @@ export default function AdminExit() {
       setShowCreate(false);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not create exit request');
+      toast.error(err.response?.data?.message || 'Could not create exit request');
     } finally {
       setCreating(false);
     }
@@ -133,7 +135,7 @@ export default function AdminExit() {
       setActionMsg('Saved.');
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Save failed');
+      toast.error(err.response?.data?.message || 'Save failed');
     } finally {
       setSavingDetail(false);
     }
@@ -158,9 +160,17 @@ export default function AdminExit() {
   };
 
   const complete = async () => {
-    if (!window.confirm(
-      `Mark exit complete?\n\nThis will:\n• Set Date of Exit on the employee profile\n• Deactivate the user's login\n• Prepare the feedback email for you to review, edit and send`
-    )) return;
+    const ok = await confirmDialog({
+      title: 'Mark exit complete?',
+      message: 'This will:',
+      details: [
+        'Set Date of Exit on the employee profile',
+        "Deactivate the user's login",
+        'Prepare the feedback email for you to review, edit and send',
+      ],
+      confirmText: 'Mark complete',
+    });
+    if (!ok) return;
     try {
       const { data } = await api.patch(`/exits/${detail._id}/complete`);
       setDetail(data.exit);
@@ -172,7 +182,7 @@ export default function AdminExit() {
       await load();
       if (data.mail) openExitMail(data.exit._id, { ...data.mail, feedbackUrl: data.feedbackUrl });
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not complete exit');
+      toast.error(err.response?.data?.message || 'Could not complete exit');
     }
   };
 
@@ -181,12 +191,17 @@ export default function AdminExit() {
       const { data } = await api.post(`/exits/${detail._id}/resend-email`, { preview: true });
       openExitMail(detail._id, data);
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not load the email');
+      toast.error(err.response?.data?.message || 'Could not load the email');
     }
   };
 
   const cancelExit = async () => {
-    const reason = window.prompt('Reason for cancelling this exit (optional):', '');
+    const reason = await promptDialog({
+      title: 'Cancel this exit',
+      message: 'Reason for cancelling this exit (optional):',
+      confirmText: 'Cancel exit',
+      cancelText: 'Keep',
+    });
     if (reason === null) return;
     try {
       const { data } = await api.patch(`/exits/${detail._id}/cancel`, { reason });
@@ -194,7 +209,7 @@ export default function AdminExit() {
       setActionMsg('Exit cancelled.');
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Cancel failed');
+      toast.error(err.response?.data?.message || 'Cancel failed');
     }
   };
 

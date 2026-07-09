@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
+import { promptDialog } from '../components/dialogs';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected'];
 
@@ -54,7 +55,7 @@ export default function AdminRegularizations() {
     setError('');
     let reviewNote = '';
     if (status === 'Rejected') {
-      reviewNote = window.prompt('Reason for rejection (optional):') || '';
+      reviewNote = (await promptDialog({ message: 'Reason for rejection (optional):' })) || '';
     }
     try {
       await api.patch(`/regularizations/${r._id}/status`, { status, reviewNote });

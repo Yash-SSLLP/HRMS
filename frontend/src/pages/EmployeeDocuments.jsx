@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -91,12 +93,12 @@ export default function EmployeeDocuments() {
   const onDownload = (d) => downloadFile(`/documents/${d._id}/download`, d.fileName);
 
   const onDelete = async (d) => {
-    if (!window.confirm(`Delete "${d.fileName}"? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ message: 'This cannot be undone.', title: `Delete "${d.fileName}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/documents/${d._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

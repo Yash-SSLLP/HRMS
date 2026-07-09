@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
@@ -94,9 +96,9 @@ export default function AdminRoster() {
     finally { setSavingShift(false); }
   };
   const removeShift = async (s) => {
-    if (!window.confirm(`Delete shift "${s.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete shift "${s.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/shifts/${s._id}`); await loadShifts(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   // ---- Roster ----
@@ -110,9 +112,9 @@ export default function AdminRoster() {
     finally { setSavingAssign(false); }
   };
   const removeEntry = async (en) => {
-    if (!window.confirm('Delete this roster entry?')) return;
+    if (!(await confirmDialog({ message: 'Delete this roster entry?', tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/shifts/roster/${en._id}`); await loadRoster(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   return (

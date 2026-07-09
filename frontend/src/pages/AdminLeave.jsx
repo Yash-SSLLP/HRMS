@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -41,14 +43,14 @@ function RequestsTab() {
   // "Leave Approvals" page). This force-decides a stuck request regardless of
   // whose turn it is — a safety valve, so confirm before using it.
   const decide = async (id, action) => {
-    if (!window.confirm(`Override the reporting hierarchy and force-${action} this request?`)) return;
-    const note = window.prompt(`Optional note for the override ${action}:`, '');
+    if (!(await confirmDialog({ message: `Override the reporting hierarchy and force-${action} this request?`, tone: 'danger', confirmText: `Force ${action}` }))) return;
+    const note = await promptDialog({ message: `Optional note for the override ${action}:`, initialValue: '' });
     if (note === null) return;
     try {
       await api.patch(`/leave/requests/${id}/${action}`, { note });
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Action failed');
+      toast.error(err.response?.data?.message || 'Action failed');
     }
   };
 

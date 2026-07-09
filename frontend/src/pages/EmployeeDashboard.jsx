@@ -173,7 +173,15 @@ export default function EmployeeDashboard() {
           {errors.leave ? (
             <p className="text-sm text-gray-400 italic">{errors.leave}</p>
           ) : !balance ? (
-            <p className="text-sm text-gray-400 italic">Loading…</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="rounded-lg border border-gray-100 p-4 space-y-2">
+                  <div className="skeleton h-8 w-12 rounded" />
+                  <div className="skeleton h-3 w-24 rounded" />
+                  <div className="skeleton h-3 w-16 rounded" />
+                </div>
+              ))}
+            </div>
           ) : (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -233,8 +241,14 @@ export default function EmployeeDashboard() {
                 View profile →
               </Link>
             </>
+          ) : errors.profile ? (
+            <p className="text-sm text-gray-400 italic">{errors.profile}</p>
           ) : (
-            <p className="text-sm text-gray-400 italic">{errors.profile || 'Loading…'}</p>
+            <div className="space-y-2">
+              <div className="skeleton h-4 w-24 rounded" />
+              <div className="skeleton h-4 w-32 rounded" />
+              <div className="skeleton h-4 w-20 rounded" />
+            </div>
           )}
         </div>
 

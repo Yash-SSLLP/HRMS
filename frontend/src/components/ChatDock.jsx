@@ -3,6 +3,7 @@ import api from '../api/client';
 import AuthImage from './AuthImage';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
+import { confirmDialog } from './dialogs';
 
 const POLL_MS = 4000;
 
@@ -232,7 +233,7 @@ export default function ChatDock() {
 
   const clearChat = async () => {
     if (!active) return;
-    if (!window.confirm('Clear this chat from your view? It cannot be undone for you.')) return;
+    if (!(await confirmDialog({ message: 'Clear this chat from your view? It cannot be undone for you.' }))) return;
     const url = active.kind === 'group' ? `/chat/groups/${active.id}/messages` : `/chat/conversations/${active.id}`;
     try { await api.delete(url); setMessages([]); setActive(null); loadLists(); }
     catch (err) { setError(err.response?.data?.message || 'Could not clear chat'); }
@@ -320,7 +321,7 @@ export default function ChatDock() {
   // the group-info panel.
   const leaveGroup = async (groupId = info?.groupId) => {
     if (!groupId) return;
-    if (!window.confirm('Delete this group from your chats? You will leave the group and it will be removed for you.')) return;
+    if (!(await confirmDialog({ message: 'Delete this group from your chats? You will leave the group and it will be removed for you.', tone: 'danger', confirmText: 'Delete' }))) return;
     setError('');
     try {
       await api.post(`/chat/groups/${groupId}/leave`);

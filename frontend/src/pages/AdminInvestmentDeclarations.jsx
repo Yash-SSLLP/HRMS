@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { promptDialog } from '../components/dialogs';
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -73,7 +74,7 @@ export default function AdminInvestmentDeclarations() {
   const review = async (d, status) => {
     let reviewNote = '';
     if (status === 'Rejected') {
-      const note = window.prompt('Reason for rejection (optional):', '');
+      const note = await promptDialog({ message: 'Reason for rejection (optional):', initialValue: '' });
       if (note === null) return; // cancelled
       reviewNote = note;
     }

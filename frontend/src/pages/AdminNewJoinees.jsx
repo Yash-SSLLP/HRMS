@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
@@ -40,10 +41,10 @@ export default function AdminNewJoinees() {
 
   const downloadOffer = (c) =>
     downloadFile(`/recruitment/candidates/${c._id}/offer/pdf`, c.offer?.letterName || 'offer-letter.pdf')
-      .catch((err) => alert(err.response?.data?.message || 'Download failed'));
+      .catch((err) => toast.error(err.response?.data?.message || 'Download failed'));
   const downloadAppointment = (c) =>
     downloadFile(`/recruitment/candidates/${c._id}/appointment/pdf`, c.appointment?.letterName || 'appointment-letter.pdf')
-      .catch((err) => alert(err.response?.data?.message || 'Download failed'));
+      .catch((err) => toast.error(err.response?.data?.message || 'Download failed'));
 
   // Open the editable composer with a public download link inserted; HR can
   // tweak the subject/body before sending from their own mailbox.

@@ -6,6 +6,7 @@ import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import MailComposeModal from '../components/MailComposeModal';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -107,7 +108,7 @@ export default function AdminRecruitment() {
     finally { setSaving(false); }
   };
   const removeJob = async (j) => {
-    if (!window.confirm(`Delete job "${j.title}" and its candidates?`)) return;
+    if (!(await confirmDialog({ message: `Delete job "${j.title}" and its candidates?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/recruitment/jobs/${j._id}`); await load(); }
     catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
@@ -116,7 +117,7 @@ export default function AdminRecruitment() {
   const copyShare = async (j) => {
     const link = shareLink(j);
     try { await navigator.clipboard.writeText(link); }
-    catch { window.prompt('Copy this application link:', link); }
+    catch { await promptDialog({ title: 'Copy link', message: 'Copy this application link:', initialValue: link, confirmText: 'Done' }); }
     setCopiedId(j._id);
     setTimeout(() => setCopiedId((c) => (c === j._id ? null : c)), 1600);
   };
@@ -139,7 +140,7 @@ export default function AdminRecruitment() {
     finally { setSaving(false); }
   };
   const removeCand = async (c) => {
-    if (!window.confirm(`Delete candidate "${c.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete candidate "${c.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/recruitment/candidates/${c._id}`); await load(); }
     catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
@@ -148,9 +149,57 @@ export default function AdminRecruitment() {
     try { await api.put(`/recruitment/candidates/${c._id}`, { stage }); await load(); }
     catch (err) { toast.error(err.response?.data?.message || 'Update failed'); }
   };
+
+  // ----- Shortlist / reject a job's applicants from a modal -----
+  const [jobCandJob, setJobCandJob] = useState(null);   // the job whose candidates are shown
+  const [jobCands, setJobCands] = useState([]);
+  const [jobCandsLoading, setJobCandsLoading] = useState(false);
+
+  const fetchJobCands = async (jobId) => {
+    setJobCandsLoading(true);
+    try {
+      const { data } = await api.get(`/recruitment/candidates?job=${jobId}`);
+      setJobCands(data.candidates || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load candidates');
+    } finally {
+      setJobCandsLoading(false);
+    }
+  };
+
+  const openJobCandidates = (job) => {
+    setJobCandJob(job);
+    setJobCands([]);
+    fetchJobCands(job._id);
+  };
+
+  // Shortlist or reject from the modal, then refresh both the modal list and the
+  // job table (candidate counts / the filtered list below).
+  const decideJobCand = async (c, stage) => {
+    try {
+      await api.put(`/recruitment/candidates/${c._id}`, { stage });
+      await Promise.all([fetchJobCands(jobCandJob._id), load()]);
+      toast.success(stage === 'Shortlisted' ? `${c.name} shortlisted` : `${c.name} rejected`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Update failed');
+    }
+  };
   const setRound = async (c, index, patch) => {
-    try { await api.patch(`/recruitment/candidates/${c._id}/round`, { index, ...patch }); await load(); }
-    catch (err) { toast.error(err.response?.data?.message || 'Round update failed'); }
+    try {
+      const { data } = await api.patch(`/recruitment/candidates/${c._id}/round`, { index, ...patch });
+      const updated = data.candidate;
+      // Update the candidate in place instead of re-fetching the whole list — a
+      // full reload re-sorts by updatedAt and makes the row jump, which is jarring
+      // while editing. Keep the already-populated `job` (the response returns it
+      // as a bare id).
+      if (updated) {
+        const merge = (list) => list.map((x) => (x._id === c._id ? { ...x, ...updated, job: x.job } : x));
+        setCandidates(merge);
+        setJobCands((prev) => (prev.length ? merge(prev) : prev));
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Round update failed');
+    }
   };
 
   // An ISO/Date → value for a <input type="datetime-local"> (in local time).
@@ -188,8 +237,8 @@ export default function AdminRecruitment() {
     const local = meetTimes[key];
     const scheduledAt = local ? new Date(local).toISOString() : (c.rounds?.[idx]?.scheduledAt || undefined);
     const durationMinutes = Number(meetDurations[key]) || c.rounds?.[idx]?.meetDurationMinutes || 45;
-    if (!c.email && !window.confirm("This candidate has no email on file, so they won't get the invite. Create the meeting anyway?")) return;
-    if (!c.rounds?.[idx]?.interviewer && !window.confirm('No interviewer is assigned to this round, so they won\'t be invited. Continue?')) return;
+    if (!c.email && !(await confirmDialog({ message: "This candidate has no email on file, so they won't get the invite. Create the meeting anyway?", confirmText: 'Create anyway' }))) return;
+    if (!c.rounds?.[idx]?.interviewer && !(await confirmDialog({ message: "No interviewer is assigned to this round, so they won't be invited. Continue?", confirmText: 'Continue' }))) return;
     setMeetBusy(key);
     try {
       const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet`, { index: idx, scheduledAt, durationMinutes, sendEmail: false });
@@ -293,7 +342,7 @@ export default function AdminRecruitment() {
   };
   const copyDocLink = async (c) => {
     const link = docLink(c);
-    try { await navigator.clipboard.writeText(link); } catch { window.prompt('Copy this link:', link); }
+    try { await navigator.clipboard.writeText(link); } catch { await promptDialog({ title: 'Copy link', message: 'Copy this link:', initialValue: link, confirmText: 'Done' }); }
     setDocLinkCopied(true);
     setTimeout(() => setDocLinkCopied(false), 1600);
   };
@@ -351,6 +400,11 @@ export default function AdminRecruitment() {
     return `${cleared}/${(c.rounds || []).length} cleared`;
   };
 
+  // The Candidates table shows only candidates who have been shortlisted (and
+  // are therefore in the interview process). Applicants awaiting a decision
+  // ('Applied') and rejected ones are handled in the per-job applicants modal.
+  const shortlistedCandidates = candidates.filter((c) => c.stage !== 'Applied' && c.stage !== 'Rejected');
+
   return (
     <div>
       <PageHeader title="Recruitment" subtitle="Post jobs, share the application form, screen candidates & run interviews" />
@@ -381,7 +435,9 @@ export default function AdminRecruitment() {
                 <td className="px-4 py-3 font-medium text-gray-900">{j.title}</td>
                 <td className="px-4 py-3 text-gray-600">{j.department || '-'}{j.location ? ` · ${j.location}` : ''}</td>
                 <td className="px-4 py-3">
-                  <button onClick={() => setSelectedJob(selectedJob === j._id ? '' : j._id)} className="text-blue-600 hover:underline">{j.candidateCount} →</button>
+                  <button onClick={() => openJobCandidates(j)}
+                    title="Review applicants — shortlist or reject"
+                    className="inline-flex items-center gap-1 text-blue-600 hover:underline">{j.candidateCount} →</button>
                 </td>
                 <td className="px-4 py-3 text-gray-600">{j.status}</td>
                 <td className="px-4 py-3">
@@ -427,9 +483,9 @@ export default function AdminRecruitment() {
             <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
-            {candidates.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No candidates yet. Share an application link to start receiving applications.</td></tr>
-            ) : candidates.map((c) => (
+            {shortlistedCandidates.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No shortlisted candidates yet. Open a job's candidate list and shortlist applicants to start the interview process.</td></tr>
+            ) : shortlistedCandidates.map((c) => (
               <Fragment key={c._id}>
                 <tr>
                   <td className="px-4 py-3">
@@ -811,6 +867,81 @@ export default function AdminRecruitment() {
                 <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Saving…' : (offerCand.offer?.generatedAt ? 'Update Offer Letter' : 'Generate & Save')}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Applicants review modal — shortlist or reject a job's candidates. Only
+          shortlisted candidates proceed to the interview process. */}
+      {jobCandJob && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8"
+          onMouseDown={() => setJobCandJob(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden"
+            onMouseDown={(e) => e.stopPropagation()}>
+            <div className="px-5 pt-5 pb-4 border-b border-gray-100 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold text-gray-900 truncate">Applicants · {jobCandJob.title}</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Shortlist to move a candidate into the interview process, or reject.</p>
+              </div>
+              <button type="button" onClick={() => setJobCandJob(null)}
+                className="shrink-0 text-gray-400 hover:text-gray-700 rounded-lg p-1 -mr-1 hover:bg-gray-100 text-xl leading-none">×</button>
+            </div>
+
+            <div className="max-h-[60vh] overflow-y-auto px-5 py-4 space-y-2">
+              {jobCandsLoading ? (
+                Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="border border-gray-100 rounded-lg p-3 space-y-2">
+                    <div className="skeleton h-4 w-1/3 rounded" />
+                    <div className="skeleton h-3 w-1/2 rounded" />
+                  </div>
+                ))
+              ) : (() => {
+                // Only candidates still awaiting a decision belong here — once
+                // shortlisted they've moved into the interview process, so drop
+                // them (and everything downstream) from this queue.
+                const pending = jobCands.filter((c) => c.stage === 'Applied' || c.stage === 'Rejected');
+                if (pending.length === 0) {
+                  return <p className="text-sm text-gray-500 text-center py-6">No applicants awaiting a decision.</p>;
+                }
+                return pending.map((c) => (
+                  <div key={c._id} className="border border-gray-100 rounded-lg p-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 truncate">{c.name}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-lg ${STAGE_STYLES[c.stage] || ''}`}>{c.stage}</span>
+                      </div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {[c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details'}
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      {c.hasResume && (
+                        <button onClick={() => viewResume(c)}
+                          title="Open the candidate's resume in a new tab"
+                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">Resume</button>
+                      )}
+                      {c.stage === 'Applied' ? (
+                        <>
+                          <button onClick={() => decideJobCand(c, 'Shortlisted')}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700">Shortlist</button>
+                          <button onClick={() => decideJobCand(c, 'Rejected')}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50">Reject</button>
+                        </>
+                      ) : (
+                        <button onClick={() => decideJobCand(c, 'Shortlisted')}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Shortlist instead</button>
+                      )}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+              <p className="text-xs text-gray-400">Only shortlisted candidates move forward to the interview process.</p>
+              <button type="button" onClick={() => setJobCandJob(null)}
+                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+            </div>
           </div>
         </div>
       )}

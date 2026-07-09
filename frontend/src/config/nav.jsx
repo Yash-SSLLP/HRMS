@@ -82,7 +82,7 @@ export const adminNav = [
     { to: '/admin/announcements', label: 'Announcements', icon: FiVolume2, perm: 'announcements.manage' },
     { to: '/admin/surveys', label: 'Surveys', icon: FiPieChart, perm: 'surveys.manage' },
     { to: '/admin/events', label: 'Events', icon: FiFlag, perm: 'events.manage' },
-    { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar },
+    { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
     { to: '/admin/recognition', label: 'Recognition', icon: FiAward },
     { to: '/admin/knowledge-base', label: 'Knowledge Base', icon: FiHelpCircle, perm: 'kb.manage' },
   ] },
@@ -142,7 +142,7 @@ export const employeeNav = [
     { to: '/employee/recognition', label: 'Recognition', icon: FiAward },
     { to: '/employee/announcements', label: 'Announcements', icon: FiVolume2 },
     { to: '/employee/surveys', label: 'Surveys', icon: FiPieChart },
-    { to: '/employee/calendar', label: 'Calendar', icon: FiCalendar },
+    { to: '/employee/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
     { to: '/employee/knowledge-base', label: 'Help / KB', icon: FiHelpCircle },
   ] },
   { group: 'Employee Self-Service / Requests', items: [

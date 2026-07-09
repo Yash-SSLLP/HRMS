@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const KINDS = [
   { value: 'Designation', label: 'Designations' },
@@ -72,12 +74,12 @@ export default function AdminOrgMasters() {
   };
 
   const remove = async (m) => {
-    if (!window.confirm(`Delete ${kind.toLowerCase()} "${m.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete ${kind.toLowerCase()} "${m.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/org-masters/${m._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

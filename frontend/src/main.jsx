@@ -4,12 +4,14 @@ import { BrowserRouter } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import App from './App.jsx';
+import { DialogHost } from './components/dialogs.jsx';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <App />
+      <DialogHost />
       <ToastContainer
         position="top-right"
         autoClose={4000}

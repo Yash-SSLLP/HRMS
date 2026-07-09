@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const blank = { title: '', date: '', time: '', location: '', description: '' };
 
@@ -72,12 +74,12 @@ export default function AdminEvents() {
   };
 
   const remove = async (ev) => {
-    if (!window.confirm(`Delete "${ev.title}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete "${ev.title}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/events/${ev._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

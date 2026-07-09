@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const TYPES = ['Public', 'Restricted', 'Company'];
 const blank = { name: '', date: '', type: 'Public', description: '' };
@@ -68,12 +70,12 @@ export default function AdminHolidays() {
   };
 
   const remove = async (h) => {
-    if (!window.confirm(`Delete "${h.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete "${h.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/holidays/${h._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

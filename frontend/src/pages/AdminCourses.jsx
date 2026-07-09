@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import CourseVideoPlayer from '../components/CourseVideoPlayer';
+import { confirmDialog } from '../components/dialogs';
 
 const CATEGORIES = ['Technical', 'Soft Skills', 'Compliance', 'Leadership', 'Onboarding', 'Other'];
 
@@ -205,12 +207,12 @@ export default function AdminCourses() {
   };
 
   const remove = async (c) => {
-    if (!window.confirm(`Delete course "${c.title}"? This also removes all enrollments.`)) return;
+    if (!(await confirmDialog({ message: `Delete course "${c.title}"? This also removes all enrollments.`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/courses/${c._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

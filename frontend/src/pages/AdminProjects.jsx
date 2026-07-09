@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const STATUS = ['Planning', 'Active', 'OnHold', 'Completed', 'Cancelled'];
 const STATUS_STYLES = {
@@ -66,9 +68,9 @@ export default function AdminProjects() {
   };
 
   const remove = async (p) => {
-    if (!window.confirm(`Delete project "${p.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete project "${p.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/projects/${p._id}`); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   return (

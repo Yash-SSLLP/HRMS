@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const CATEGORIES = [
   'HR Policies',
@@ -76,9 +78,9 @@ export default function AdminKnowledgeBase() {
   };
 
   const remove = async (a) => {
-    if (!window.confirm(`Delete article "${a.title}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete article "${a.title}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/kb/${a._id}`); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   return (

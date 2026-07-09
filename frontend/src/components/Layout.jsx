@@ -6,7 +6,7 @@ import api from '../api/client';
 import ChatDock from './ChatDock';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus, FiSun, FiMoon, FiBell } from 'react-icons/fi';
+import { FiPlus, FiMinus, FiSun, FiMoon, FiBell, FiCalendar, FiClock } from 'react-icons/fi';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 import { hasPermission, hasAnyPermission } from '../config/permissions';
 
@@ -444,6 +444,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // so the same admin user gets a visibly different look in each. Applied to
   // <html> as data-portal; index.css maps it to the accent + surface palette.
   const portal = sectionTitle === 'Admin' ? 'admin' : 'employee';
+  // Quick top-bar shortcut targets — the current portal's Calendar & Attendance.
+  const calendarPath = portal === 'admin' ? '/admin/calendar' : '/employee/calendar';
+  const attendancePath = portal === 'admin' ? '/admin/attendance' : '/employee/attendance';
   useEffect(() => {
     document.documentElement.setAttribute('data-portal', portal);
   }, [portal]);
@@ -505,6 +508,14 @@ export default function Layout({ navItems = [], sectionTitle }) {
           <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn lg:hidden" aria-label="Open menu">
             <span className="text-xl leading-none">☰</span>
           </button>
+
+          {/* Quick shortcuts — available to everyone, in both portals. */}
+          <Link to={calendarPath} title="Calendar" aria-label="Calendar" className="topbar-icon-btn shrink-0">
+            <FiCalendar size={18} strokeWidth={2} />
+          </Link>
+          <Link to={attendancePath} title="Attendance" aria-label="Attendance" className="topbar-icon-btn shrink-0">
+            <FiClock size={18} strokeWidth={2} />
+          </Link>
 
           {isAdmin && <GlobalSearch />}
 

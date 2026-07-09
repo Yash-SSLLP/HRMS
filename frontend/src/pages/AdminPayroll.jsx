@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
+import { confirmDialog } from '../components/dialogs';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -115,14 +117,14 @@ export default function AdminPayroll() {
   const doAction = async (id, action) => {
     try {
       if (action === 'delete') {
-        if (!window.confirm('Delete this draft payslip?')) return;
+        if (!(await confirmDialog({ message: 'Delete this draft payslip?', tone: 'danger', confirmText: 'Delete' }))) return;
         await api.delete(`/payroll/${id}`);
       } else {
         await api.patch(`/payroll/${id}/${action}`);
       }
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Action failed');
+      toast.error(err.response?.data?.message || 'Action failed');
     }
   };
 
@@ -130,7 +132,7 @@ export default function AdminPayroll() {
   // from the company mailbox with the payslip PDF attached (no Gmail hop).
   const emailPayslip = async (p) => {
     const email = p.employee?.user?.email;
-    if (!email) { alert('No email on file for this employee.'); return; }
+    if (!email) { toast.error('No email on file for this employee.'); return; }
     try {
       const { data } = await api.post(`/payroll/${p._id}/email`, { preview: true });
       setMail({
@@ -148,7 +150,7 @@ export default function AdminPayroll() {
         },
       });
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not prepare the payslip email');
+      toast.error(err.response?.data?.message || 'Could not prepare the payslip email');
     }
   };
 
@@ -164,7 +166,7 @@ export default function AdminPayroll() {
             const m = Number(filter.month) || new Date().getMonth() + 1;
             const q = `year=${filter.year}&month=${m}${filter.status ? `&status=${filter.status}` : ''}`;
             downloadFile(`/payroll/export?${q}`, `payroll-${filter.year}-${String(m).padStart(2, '0')}.csv`)
-              .catch((err) => alert(err.response?.data?.message || 'Export failed'));
+              .catch((err) => toast.error(err.response?.data?.message || 'Export failed'));
           }}
           title={filter.month ? 'Download this month\'s payroll as an Excel-compatible sheet' : 'No month selected · exports the current month'}
           className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm mr-2">

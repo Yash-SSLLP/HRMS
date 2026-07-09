@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const STATUS = ['Draft', 'Active', 'Completed', 'Cancelled'];
 const STATUS_STYLES = {
@@ -50,9 +52,9 @@ export default function AdminPerformance() {
     finally { setSaving(false); }
   };
   const remove = async (g) => {
-    if (!window.confirm(`Delete goal "${g.title}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete goal "${g.title}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try { await api.delete(`/performance/goals/${g._id}`); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Delete failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
   return (

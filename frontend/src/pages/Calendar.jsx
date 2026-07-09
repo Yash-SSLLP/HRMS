@@ -158,16 +158,23 @@ export default function Calendar() {
                     {d}
                   </div>
                   <div className="space-y-1">
-                    {(eventsByDay[d] || []).map((e, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => setSelected(e)}
-                        title="View details"
-                        className={`block w-full text-left text-[10px] px-1 py-0.5 rounded truncate cursor-pointer hover:brightness-95 ${TYPE_STYLES[e.type]}`}>
-                        {e.label}
-                      </button>
-                    ))}
+                    {loading
+                      ? (idx % 4 === 1 || idx % 7 === 3) && (
+                          <>
+                            <div className="skeleton h-4 rounded" />
+                            {idx % 7 === 3 && <div className="skeleton h-4 rounded w-2/3" />}
+                          </>
+                        )
+                      : (eventsByDay[d] || []).map((e, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => setSelected(e)}
+                            title="View details"
+                            className={`block w-full text-left text-[10px] px-1 py-0.5 rounded truncate cursor-pointer hover:brightness-95 ${TYPE_STYLES[e.type]}`}>
+                            {e.label}
+                          </button>
+                        ))}
                   </div>
                 </>
               )}
@@ -175,7 +182,6 @@ export default function Calendar() {
           ))}
         </div>
       </div>
-      {loading && <p className="text-sm text-gray-500 mt-3">Loading…</p>}
 
       {selected && (() => {
         const e = selected;

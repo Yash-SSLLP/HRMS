@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
+import { confirmDialog } from '../components/dialogs';
 
 const LEAVE_TYPES = ['EL', 'CL', 'SL', 'ML', 'PL', 'COMP', 'LOP'];
 
@@ -66,12 +68,12 @@ export default function EmployeeLeave() {
   };
 
   const cancel = async (id) => {
-    if (!window.confirm('Cancel this leave request?')) return;
+    if (!(await confirmDialog({ message: 'Cancel this leave request?' }))) return;
     try {
       await api.patch(`/leave/me/requests/${id}/cancel`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Cancel failed');
+      toast.error(err.response?.data?.message || 'Cancel failed');
     }
   };
 

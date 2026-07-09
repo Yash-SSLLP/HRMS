@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -103,22 +105,22 @@ export default function AdminDocuments() {
 
   const setDocStatus = async (d, status) => {
     let note;
-    if (status === 'Rejected') note = window.prompt('Reason for rejecting (optional):') || '';
+    if (status === 'Rejected') note = (await promptDialog({ message: 'Reason for rejecting (optional):' })) || '';
     try {
       await api.patch(`/documents/${d._id}/status`, { status, note });
       await loadDocs();
     } catch (err) {
-      alert(err.response?.data?.message || 'Could not update status');
+      toast.error(err.response?.data?.message || 'Could not update status');
     }
   };
 
   const onDelete = async (d) => {
-    if (!window.confirm(`Delete "${d.fileName}"? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ message: `Delete "${d.fileName}"? This cannot be undone.`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/documents/${d._id}`);
       await loadDocs();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

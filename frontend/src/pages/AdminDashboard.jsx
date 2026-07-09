@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import { ROLES, roleLabel } from '../config/roles';
+import { confirmDialog } from '../components/dialogs';
 
 const blankForm = {
   email: '',
@@ -165,18 +167,18 @@ export default function AdminDashboard() {
       await api.patch(`/admin/users/${id}/${u.isActive ? 'deactivate' : 'activate'}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Action failed');
+      toast.error(err.response?.data?.message || 'Action failed');
     }
   };
 
   const onDelete = async (u) => {
     const id = u._id || u.id;
-    if (!window.confirm(`Permanently delete ${u.email}? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ message: `Permanently delete ${u.email}? This cannot be undone.`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/admin/users/${id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { promptDialog } from '../components/dialogs';
 
 const TYPES = ['Salary Advance', 'Personal Loan', 'Emergency', 'Other'];
 const STATUS = ['Pending', 'Approved', 'Active', 'Closed', 'Rejected'];
@@ -60,21 +62,21 @@ export default function AdminLoans() {
   const setStatus = async (l, status) => {
     const body = { status };
     if (status === 'Rejected') {
-      const note = window.prompt('Reason for rejection (optional):', '');
+      const note = await promptDialog({ message: 'Reason for rejection (optional):', initialValue: '' });
       if (note === null) return;
       body.reviewNote = note;
     }
     try { await api.patch(`/loans/${l._id}/status`, body); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Update failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Update failed'); }
   };
 
   const repay = async (l) => {
-    const raw = window.prompt(`Record repayment for ${l.employee?.firstName || 'employee'} (balance ${inr.format(l.balance || 0)}):`, '');
+    const raw = await promptDialog({ message: `Record repayment for ${l.employee?.firstName || 'employee'} (balance ${inr.format(l.balance || 0)}):`, initialValue: '' });
     if (raw === null) return;
     const amount = Number(raw);
-    if (!(amount > 0)) { alert('Enter a valid amount'); return; }
+    if (!(amount > 0)) { toast.error('Enter a valid amount'); return; }
     try { await api.patch(`/loans/${l._id}/repay`, { amount }); await load(); }
-    catch (err) { alert(err.response?.data?.message || 'Repayment failed'); }
+    catch (err) { toast.error(err.response?.data?.message || 'Repayment failed'); }
   };
 
   return (

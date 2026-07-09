@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 
 const blank = () => ({ name: '', lat: '', lng: '', radiusM: 200, active: true });
 const mapLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
@@ -67,12 +69,12 @@ export default function AdminWorkLocations() {
   };
 
   const remove = async (l) => {
-    if (!window.confirm(`Delete work location "${l.name}"?`)) return;
+    if (!(await confirmDialog({ message: `Delete work location "${l.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/work-locations/${l._id}`);
       await load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      toast.error(err.response?.data?.message || 'Delete failed');
     }
   };
 
