@@ -193,6 +193,38 @@ const monthCalendar = asyncHandler(async (req, res) => {
     }
   }
 
+  // --- Interviews the viewer is assigned to take (their own calendar) ---
+  // Interviews reference the interviewer as a User; the viewer is req.user.
+  const Candidate = require('../models/Candidate');
+  const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000; // IST is a fixed UTC+5:30
+  const interviewCands = await Candidate.find({ 'rounds.interviewer': req.user._id })
+    .populate('job', 'title')
+    .select('name job rounds');
+  for (const c of interviewCands) {
+    for (const r of c.rounds || []) {
+      if (!r.scheduledAt || String(r.interviewer) !== String(req.user._id)) continue;
+      // Place the interview on its IST calendar day (scheduledAt is stored UTC).
+      const ist = new Date(new Date(r.scheduledAt).getTime() + IST_OFFSET_MS);
+      if (ist.getUTCFullYear() !== year || ist.getUTCMonth() + 1 !== month) continue;
+      events.push({
+        day: ist.getUTCDate(),
+        type: 'interview',
+        label: `${c.name} · ${r.label}`,
+        meta: {
+          time: new Date(r.scheduledAt).toLocaleTimeString('en-IN', {
+            hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
+          }),
+          candidateName: c.name,
+          round: r.label,
+          status: r.status,
+          durationMinutes: r.meetDurationMinutes || null,
+          jobTitle: c.job?.title || '',
+          meetingLink: r.meetingLink || '',
+        },
+      });
+    }
+  }
+
   events.sort((a, b) => a.day - b.day);
   res.json({ year, month, count: events.length, events });
 });

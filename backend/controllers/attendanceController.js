@@ -4,6 +4,7 @@ const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Setting = require('../models/Setting');
 const storage = require('../services/storage');
+const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
 // All attendance "day" logic is anchored to the IST calendar day so it is
 // independent of the server's timezone (the deployed backend runs in UTC).
@@ -26,12 +27,25 @@ async function getMyProfileOrFail(userId, res) {
 
 // ===== Employee =====
 
-// Persist the uploaded selfie and return its storage-relative path.
-function savePunchPhoto(req, profileId) {
+// Persist the uploaded selfie. Prefers Cloudinary (durable across redeploys)
+// and falls back to local disk when Cloudinary is unconfigured or the upload
+// fails. Returns { cloud, path } — exactly one is set.
+async function savePunchPhoto(req, profileId) {
   if (!req.file) {
     const err = new Error('A photo is required to punch. Please allow the camera and capture your photo.');
     err.status = 400;
     throw err;
+  }
+  if (cloudinary.enabled()) {
+    try {
+      const cloud = await cloudinary.uploadImageBuffer(req.file.buffer, {
+        folder: `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/attendance/${profileId}`,
+      });
+      return { cloud };
+    } catch (err) {
+      // Fall through to local disk so a Cloudinary hiccup never blocks a punch.
+      console.error('[attendance] Cloudinary selfie upload failed, using local disk:', err.message);
+    }
   }
   const { storagePath } = storage.saveBuffer({
     buffer: req.file.buffer,
@@ -39,7 +53,7 @@ function savePunchPhoto(req, profileId) {
     ownerId: profileId,
     originalName: req.file.originalname || 'punch.jpg',
   });
-  return storagePath;
+  return { path: storagePath };
 }
 
 // Parse the GPS location sent with a punch, if present and valid.
@@ -102,12 +116,13 @@ const checkIn = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Already checked in today');
   }
-  const photoPath = savePunchPhoto(req, profile._id);
+  const photo = await savePunchPhoto(req, profile._id);
   if (!record) {
     record = new Attendance({ employee: profile._id, date: today });
   }
   record.checkIn = new Date();
-  record.checkInPhoto = photoPath;
+  record.checkInPhoto = photo.path;
+  record.checkInPhotoCloud = photo.cloud;
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkInLocation = loc;
   record.checkInWfh = req.body.wfh === 'true';
@@ -139,9 +154,10 @@ const checkOut = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Already checked out today');
   }
-  const photoPath = savePunchPhoto(req, profile._id);
+  const photo = await savePunchPhoto(req, profile._id);
   record.checkOut = new Date();
-  record.checkOutPhoto = photoPath;
+  record.checkOutPhoto = photo.path;
+  record.checkOutPhotoCloud = photo.cloud;
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkOutLocation = loc;
   record.checkOutWfh = req.body.wfh === 'true';
@@ -183,6 +199,27 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
   if (!allowed) {
     res.status(403);
     throw new Error('Not authorized to view this photo');
+  }
+
+  // Prefer the durable Cloudinary copy when present. Proxy the bytes through our
+  // server (rather than redirecting) so the response stays same-origin for the
+  // token-authenticated blob fetch the frontend uses.
+  const cloud = which === 'checkin' ? record.checkInPhotoCloud : record.checkOutPhotoCloud;
+  if (cloud && cloud.publicId) {
+    try {
+      const url = cloudinary.imageDeliveryUrl(cloud);
+      const upstream = await fetch(url);
+      if (!upstream.ok) {
+        res.status(404);
+        throw new Error('Photo not available');
+      }
+      res.setHeader('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.send(Buffer.from(await upstream.arrayBuffer()));
+    } catch (err) {
+      // Fall through to any local copy below before giving up.
+      console.error('[attendance] Cloudinary selfie fetch failed:', err.message);
+    }
   }
 
   const relPath = which === 'checkin' ? record.checkInPhoto : record.checkOutPhoto;
@@ -640,7 +677,7 @@ const presenceBoard = asyncHandler(async (req, res) => {
       .populate('user', 'firstName lastName photo isActive')
       .lean(),
     Attendance.find({ date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
-      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInWfh hoursWorked status')
+      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInPhotoCloud checkOutPhotoCloud checkInWfh hoursWorked status')
       .lean(),
     LeaveRequest.find({ status: 'Approved', startDate: { $lt: tomorrow }, endDate: { $gte: today } })
       .select('employee leaveType isHalfDay halfDaySession startDate endDate reason')
@@ -679,8 +716,8 @@ const presenceBoard = asyncHandler(async (req, res) => {
         hoursWorked: r.hoursWorked || 0,
         checkInWfh: !!r.checkInWfh,
         lateMinutes: lateMs > 0 ? Math.round(lateMs / 60000) : 0,
-        hasCheckInPhoto: !!r.checkInPhoto,
-        hasCheckOutPhoto: !!r.checkOutPhoto,
+        hasCheckInPhoto: !!(r.checkInPhoto || r.checkInPhotoCloud?.publicId),
+        hasCheckOutPhoto: !!(r.checkOutPhoto || r.checkOutPhotoCloud?.publicId),
       };
     })
     .sort((a, b) => new Date(a.checkIn) - new Date(b.checkIn));

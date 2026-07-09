@@ -12,6 +12,17 @@ const locationSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Reference to a punch selfie stored in Cloudinary (durable, unlike the local
+// disk which is ephemeral on most hosts). Enough to rebuild a signed delivery URL.
+const cloudPhotoSchema = new mongoose.Schema(
+  {
+    publicId: String,
+    version: Number,
+    format: String,
+  },
+  { _id: false }
+);
+
 const attendanceSchema = new mongoose.Schema(
   {
     employee: {
@@ -25,9 +36,14 @@ const attendanceSchema = new mongoose.Schema(
     status: { type: String, enum: STATUS, default: 'Present' },
     checkIn: Date,
     checkOut: Date,
-    // Storage-relative paths to the selfie captured at each punch (see services/storage.js)
+    // Storage-relative paths to the selfie captured at each punch on local disk
+    // (legacy / fallback — see services/storage.js).
     checkInPhoto: String,
     checkOutPhoto: String,
+    // Preferred durable storage: the same selfies in Cloudinary. When present,
+    // these win over the local-disk paths above.
+    checkInPhotoCloud: cloudPhotoSchema,
+    checkOutPhotoCloud: cloudPhotoSchema,
     // GPS location captured alongside each punch photo
     checkInLocation: locationSchema,
     checkOutLocation: locationSchema,
@@ -72,10 +88,12 @@ attendanceSchema.pre('save', function computeHours(next) {
 // itself is served through the authenticated GET /api/attendance/:id/photo/:which route.
 attendanceSchema.set('toJSON', {
   transform: (_doc, ret) => {
-    ret.hasCheckInPhoto = !!ret.checkInPhoto;
-    ret.hasCheckOutPhoto = !!ret.checkOutPhoto;
+    ret.hasCheckInPhoto = !!(ret.checkInPhoto || ret.checkInPhotoCloud?.publicId);
+    ret.hasCheckOutPhoto = !!(ret.checkOutPhoto || ret.checkOutPhotoCloud?.publicId);
     delete ret.checkInPhoto;
     delete ret.checkOutPhoto;
+    delete ret.checkInPhotoCloud;
+    delete ret.checkOutPhotoCloud;
     delete ret.__v;
     return ret;
   },

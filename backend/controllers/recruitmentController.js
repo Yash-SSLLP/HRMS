@@ -8,6 +8,7 @@ const User = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
 const storage = require('../services/storage');
+const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
 const { renderOfferLetter, renderAppointmentLetter } = require('../services/letterPdf');
 const { enqueueMail } = require('../services/email');
@@ -217,7 +218,7 @@ const deleteCandidate = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
-// PATCH /api/recruitment/candidates/:id/round  { index, status, feedback, scheduledAt }
+// PATCH /api/recruitment/candidates/:id/round  { index, status, feedback, scheduledAt, meetingLink, interviewer, meetDurationMinutes }
 const setRound = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
   if (!candidate) {
@@ -248,6 +249,12 @@ const setRound = asyncHandler(async (req, res) => {
   if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
   if (req.body.scheduledAt !== undefined) round.scheduledAt = req.body.scheduledAt || undefined;
   if (req.body.meetingLink !== undefined) round.meetingLink = req.body.meetingLink || undefined;
+  // Interview duration (minutes), clamped to a sane range. Used for the Google
+  // Meet / calendar invite when a meeting is created for this round.
+  if (req.body.meetDurationMinutes !== undefined) {
+    const d = Number(req.body.meetDurationMinutes);
+    round.meetDurationMinutes = Number.isFinite(d) ? Math.min(Math.max(d, 15), 240) : undefined;
+  }
 
   // Assign / clear the employee taking this interview round.
   if (req.body.interviewer !== undefined) {
@@ -340,6 +347,7 @@ function interviewItem(c, r, idx) {
     status: r.status,
     feedback: r.feedback || '',
     scheduledAt: r.scheduledAt,
+    durationMinutes: r.meetDurationMinutes || null,
     meetingLink: r.meetingLink || '',
     decidedAt: r.decidedAt,
   };
@@ -1186,7 +1194,7 @@ const convertToEmployee = asyncHandler(async (req, res) => {
 // Standard document types suggested to the candidate on the submission page.
 const DOC_TYPES = [
   'Photo', 'PAN Card', 'Aadhaar / ID Proof', 'Educational Certificates',
-  'Experience / Relieving Letter', 'Latest Payslip', 'Bank Details', 'Other',
+  'Experience Letter', 'Relieving Letter', 'Latest Payslip', 'Bank Details', 'Other',
 ];
 
 // POST /api/recruitment/candidates/:id/documents/request — (re)generate the link.
@@ -1247,21 +1255,33 @@ const submitDocuments = asyncHandler(async (req, res) => {
     ? req.body.labels
     : (req.body.labels != null ? [req.body.labels] : []);
 
-  const saved = files.map((file, i) => {
+  const cloudFolder = `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/candidate-docs/${candidate._id}`;
+  const saved = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
     const { storagePath, sizeBytes } = storage.saveBuffer({
       buffer: file.buffer,
       ownerType: 'candidate-docs',
       ownerId: candidate._id,
       originalName: file.originalname || 'document',
     });
-    return {
+    const entry = {
       label: String(labels[i] || 'Document').slice(0, 80),
       name: file.originalname || 'document',
       storagePath,
       sizeBytes,
       uploadedAt: new Date(),
     };
-  });
+    // Best-effort durable backup to Cloudinary (never blocks the submission).
+    if (cloudinary.enabled()) {
+      try {
+        entry.cloud = await cloudinary.uploadFileBuffer(file.buffer, { folder: cloudFolder });
+      } catch (err) {
+        console.error('[recruitment] Cloudinary doc backup failed:', err.message);
+      }
+    }
+    saved.push(entry);
+  }
 
   candidate.documents.files.push(...saved);
   candidate.documents.submittedAt = new Date();
@@ -1291,7 +1311,17 @@ const downloadCandidateDocument = asyncHandler(async (req, res) => {
               : 'application/octet-stream';
   res.setHeader('Content-Type', type);
   res.setHeader('Content-Disposition', `inline; filename="${file.name || 'document' + ext}"`);
-  if (!storage.streamTo(file.storagePath, res)) return res.status(404).json({ message: 'File not found' });
+  // Primary local disk, with a fallback to the durable Cloudinary backup.
+  if (storage.exists(file.storagePath) && storage.streamTo(file.storagePath, res)) return;
+  if (file.cloud && file.cloud.publicId && cloudinary.enabled()) {
+    try {
+      const upstream = await fetch(cloudinary.fileDeliveryUrl(file.cloud));
+      if (upstream.ok) return res.send(Buffer.from(await upstream.arrayBuffer()));
+    } catch (err) {
+      console.error('[recruitment] Cloudinary doc fetch failed:', err.message);
+    }
+  }
+  return res.status(404).json({ message: 'File not found' });
 });
 
 // POST /api/recruitment/candidates/:id/documents/confirm — HR confirms the submission.

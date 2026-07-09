@@ -348,7 +348,7 @@ function GlobalSearch() {
   );
 }
 
-function ProfileMenu({ user, onLogout }) {
+function ProfileMenu({ user, employeeCode, onLogout }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -371,7 +371,9 @@ function ProfileMenu({ user, onLogout }) {
         <UserAvatar user={user} />
         <span className="hidden sm:flex flex-col items-start leading-tight">
           <span className="text-sm font-medium text-gray-800">{user?.firstName} {user?.lastName}</span>
-          <span className="text-[11px] text-gray-500">{ROLE_LABELS[user?.role] || user?.role}</span>
+          <span className="text-[11px] text-gray-500">
+            {employeeCode ? `${employeeCode} · ${ROLE_LABELS[user?.role] || user?.role}` : (ROLE_LABELS[user?.role] || user?.role)}
+          </span>
         </span>
         <span className="text-gray-400 text-xs hidden sm:inline">▾</span>
       </button>
@@ -382,6 +384,7 @@ function ProfileMenu({ user, onLogout }) {
             <UserAvatar user={user} />
             <div className="min-w-0">
               <div className="text-sm font-medium text-gray-900 truncate">{user?.firstName} {user?.lastName}</div>
+              {employeeCode && <div className="text-xs text-gray-500 truncate">{employeeCode}</div>}
               <div className="text-xs text-gray-500 truncate">{user?.email}</div>
             </div>
           </div>
@@ -414,10 +417,14 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // The auth `user` is a User doc (no designation — that lives on the employee
   // profile). Fetch it so the sidebar card can show the person's job title.
   const [designation, setDesignation] = useState('');
+  const [employeeCode, setEmployeeCode] = useState('');
   useEffect(() => {
     api.get('/employees/me')
-      .then(({ data }) => setDesignation(data?.profile?.designation || ''))
-      .catch(() => setDesignation(''));
+      .then(({ data }) => {
+        setDesignation(data?.profile?.designation || '');
+        setEmployeeCode(data?.profile?.employeeCode || '');
+      })
+      .catch(() => { setDesignation(''); setEmployeeCode(''); });
   }, [user?._id]);
 
   const handleLogout = () => {
@@ -465,7 +472,8 @@ export default function Layout({ navItems = [], sectionTitle }) {
           <UserAvatar user={user} />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-gray-800 truncate">{user?.firstName} {user?.lastName}</div>
-            <div className="text-[11px] text-gray-500 truncate">{designation || ROLE_LABELS[user?.role] || user?.role}</div>
+            {employeeCode && <div className="text-[11px] text-gray-500 truncate">{employeeCode}</div>}
+            <div className="text-[11px] text-gray-400 truncate">{designation || ROLE_LABELS[user?.role] || user?.role}</div>
           </div>
         </div>
       </div>
@@ -537,7 +545,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
             </button>
             <NotificationBell isAdmin={isAdmin} portal={portal} />
             <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
-            <ProfileMenu user={user} onLogout={() => setConfirmLogout(true)} />
+            <ProfileMenu user={user} employeeCode={employeeCode} onLogout={() => setConfirmLogout(true)} />
           </div>
         </header>
 

@@ -13,12 +13,14 @@ const TYPE_STYLES = {
   event: 'bg-emerald-100 text-emerald-800',
   birthday: 'bg-purple-100 text-purple-800',
   anniversary: 'bg-blue-100 text-blue-800',
+  interview: 'bg-amber-100 text-amber-800',
 };
 const TYPE_LABELS = {
   holiday: 'Holiday',
   event: 'Event',
   birthday: 'Birthday',
   anniversary: 'Work anniversary',
+  interview: 'Interview',
 };
 
 export default function Calendar() {
@@ -84,6 +86,13 @@ export default function Calendar() {
       if (m.time) rows.push(['Time', m.time]);
       if (m.location) rows.push(['Location', m.location]);
       if (m.description) rows.push(['Details', m.description]);
+    } else if (e.type === 'interview') {
+      if (m.time) rows.push(['Time', m.time]);
+      if (m.durationMinutes) rows.push(['Duration', m.durationMinutes < 60 ? `${m.durationMinutes} min` : `${m.durationMinutes / 60} hr`]);
+      if (m.round) rows.push(['Round', m.round]);
+      if (m.jobTitle) rows.push(['Role', m.jobTitle]);
+      if (m.status) rows.push(['Status', m.status]);
+      if (m.meetingLink) rows.push(['Meeting', m.meetingLink]);
     } else {
       const role = [m.designation, m.department].filter(Boolean).join(' · ');
       if (role) rows.push(['Role', role]);

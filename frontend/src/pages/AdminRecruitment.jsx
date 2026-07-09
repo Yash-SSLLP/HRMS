@@ -52,6 +52,7 @@ export default function AdminRecruitment() {
   const [copiedId, setCopiedId] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const [meetTimes, setMeetTimes] = useState({}); // per-round chosen datetime (keyed `${candId}:${idx}`)
+  const [meetDurations, setMeetDurations] = useState({}); // per-round chosen duration in minutes
   const [meetBusy, setMeetBusy] = useState(''); // key of the round whose Meet link is being created
   const [mail, setMail] = useState(null); // editable compose modal payload
 
@@ -186,11 +187,12 @@ export default function AdminRecruitment() {
     const key = `${c._id}:${idx}`;
     const local = meetTimes[key];
     const scheduledAt = local ? new Date(local).toISOString() : (c.rounds?.[idx]?.scheduledAt || undefined);
+    const durationMinutes = Number(meetDurations[key]) || c.rounds?.[idx]?.meetDurationMinutes || 45;
     if (!c.email && !window.confirm("This candidate has no email on file, so they won't get the invite. Create the meeting anyway?")) return;
     if (!c.rounds?.[idx]?.interviewer && !window.confirm('No interviewer is assigned to this round, so they won\'t be invited. Continue?')) return;
     setMeetBusy(key);
     try {
-      const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet`, { index: idx, scheduledAt, sendEmail: false });
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/round/meet`, { index: idx, scheduledAt, durationMinutes, sendEmail: false });
       await load();
       toast.success('Google Meet created');
       if (data.mail?.to?.length) openInviteModal(c._id, idx, data.mail, data.meetingLink);
@@ -551,6 +553,22 @@ export default function AdminRecruitment() {
                                 title="Interview date & time (used for the calendar invite)"
                                 className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
                               />
+                              <select
+                                value={meetDurations[`${c._id}:${idx}`] ?? (r.meetDurationMinutes || 45)}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  setMeetDurations((m) => ({ ...m, [`${c._id}:${idx}`]: v }));
+                                  setRound(c, idx, { meetDurationMinutes: v });
+                                }}
+                                title="Interview duration (used for the Google Meet / calendar invite)"
+                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
+                              >
+                                {[15, 30, 45, 60, 90, 120].map((min) => (
+                                  <option key={min} value={min}>
+                                    {min < 60 ? `${min} min` : min === 60 ? '1 hour' : `${min / 60} hours`}
+                                  </option>
+                                ))}
+                              </select>
                               <div className="flex gap-1">
                                 <input
                                   defaultValue={r.meetingLink || ''}

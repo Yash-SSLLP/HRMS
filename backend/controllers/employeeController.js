@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const Document = require('../models/Document');
 const { REQUIRED_DOCUMENT_CATEGORIES, SELF_UPLOAD_CATEGORIES, PII_CATEGORIES } = require('../models/Document');
 const storage = require('../services/storage');
+const cloudinary = require('../services/cloudinary');
 const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
@@ -513,7 +514,7 @@ const submitPublicDocs = asyncHandler(async (req, res) => {
       ownerId: profile._id,
       originalName: file.originalname || 'document',
     });
-    await Document.create({
+    const doc = await Document.create({
       employee: profile._id,
       category,
       fileName: file.originalname || 'document',
@@ -524,6 +525,17 @@ const submitPublicDocs = asyncHandler(async (req, res) => {
       isPii: PII_CATEGORIES.includes(category),
       status: 'Submitted',
     });
+    // Best-effort durable backup to Cloudinary (never blocks the submission).
+    if (cloudinary.enabled()) {
+      try {
+        doc.cloud = await cloudinary.uploadFileBuffer(file.buffer, {
+          folder: `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/documents/${profile._id}`,
+        });
+        await doc.save();
+      } catch (err) {
+        console.error('[employees] Cloudinary doc backup failed:', err.message);
+      }
+    }
     saved += 1;
   }
   res.status(201).json({ ok: true, count: saved });

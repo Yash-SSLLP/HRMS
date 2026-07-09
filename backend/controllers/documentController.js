@@ -10,6 +10,22 @@ const {
 } = require('../models/Document');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
+const cloudinary = require('../services/cloudinary');
+
+// Best-effort durable backup of an uploaded document to Cloudinary. Never throws
+// — a failed backup must not block the upload; the local disk copy is primary.
+async function backupToCloud(buffer, ownerId, doc) {
+  if (!cloudinary.enabled()) return;
+  try {
+    const cloud = await cloudinary.uploadFileBuffer(buffer, {
+      folder: `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/documents/${ownerId}`,
+    });
+    doc.cloud = cloud;
+    await doc.save();
+  } catch (err) {
+    console.error('[documents] Cloudinary backup failed:', err.message);
+  }
+}
 
 async function getMyProfileOrFail(userId, res) {
   const profile = await EmployeeProfile.findOne({ user: userId });
@@ -65,6 +81,7 @@ const uploadMine = asyncHandler(async (req, res) => {
     uploadedBy: req.user._id,
     note,
   });
+  await backupToCloud(req.file.buffer, profile._id, doc);
   res.status(201).json({ document: doc });
 });
 
@@ -124,6 +141,7 @@ const uploadForEmployee = asyncHandler(async (req, res) => {
     uploadedBy: req.user._id,
     note,
   });
+  await backupToCloud(req.file.buffer, profile._id, doc);
   res.status(201).json({ document: doc });
 });
 
@@ -149,9 +167,22 @@ const download = asyncHandler(async (req, res) => {
   const safeName = path.basename(doc.fileName).replace(/"/g, '');
   res.setHeader('Content-Type', doc.mime || 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
-  res.setHeader('Content-Length', doc.sizeBytes);
 
-  if (!storage.streamTo(doc.storagePath, res)) return res.status(404).json({ message: 'File not found' });
+  // Primary: local disk. If the file is missing (e.g. ephemeral disk wiped on a
+  // redeploy), fall back to the durable Cloudinary backup.
+  if (storage.exists(doc.storagePath)) {
+    res.setHeader('Content-Length', doc.sizeBytes);
+    if (storage.streamTo(doc.storagePath, res)) return;
+  }
+  if (doc.cloud && doc.cloud.publicId && cloudinary.enabled()) {
+    try {
+      const upstream = await fetch(cloudinary.fileDeliveryUrl(doc.cloud));
+      if (upstream.ok) return res.send(Buffer.from(await upstream.arrayBuffer()));
+    } catch (err) {
+      console.error('[documents] Cloudinary backup fetch failed:', err.message);
+    }
+  }
+  return res.status(404).json({ message: 'File not found' });
 });
 
 // DELETE /api/documents/:id

@@ -17,6 +17,9 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
+// Show enum keys ("ExperienceLetter") with spaces ("Experience Letter").
+const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
+
 export default function EmployeeDocuments() {
   const [docs, setDocs] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -56,21 +59,25 @@ export default function EmployeeDocuments() {
 
   const onUpload = async (e) => {
     e.preventDefault();
-    const file = fileRef.current?.files?.[0];
-    if (!file) {
+    const list = Array.from(fileRef.current?.files || []);
+    if (!list.length) {
       setError('Please choose a file first');
       return;
     }
     setUploading(true);
     setError('');
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('category', category);
-      if (note) formData.append('note', note);
-      await api.post('/documents/me', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // The endpoint takes one file per request; upload each selected file so a
+      // category like Experience Letter can hold several at once.
+      for (const file of list) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('category', category);
+        if (note) formData.append('note', note);
+        await api.post('/documents/me', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      }
       fileRef.current.value = '';
       setNote('');
       await load();
@@ -126,11 +133,11 @@ export default function EmployeeDocuments() {
                 <button key={c} type="button"
                   onClick={() => { setCategory(c); fileRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
                   className="text-xs px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-900 hover:bg-amber-100">
-                  {c} <span className="text-amber-500 font-medium">＋ upload</span>
+                  {humanize(c)} <span className="text-amber-500 font-medium">＋ upload</span>
                 </button>
               ))}
               {missingHr.map((c) => (
-                <span key={c} className="text-xs px-2.5 py-1 rounded-lg bg-white border border-gray-200 text-gray-500">{c} · HR</span>
+                <span key={c} className="text-xs px-2.5 py-1 rounded-lg bg-white border border-gray-200 text-gray-500">{humanize(c)} · HR</span>
               ))}
             </div>
           </div>
@@ -145,12 +152,12 @@ export default function EmployeeDocuments() {
               <label className="block text-sm text-gray-700">Category</label>
               <select value={category} onChange={(e) => setCategory(e.target.value)}
                 className="mt-1 block w-full border rounded-lg px-3 py-2">
-                {categories.map((c) => <option key={c}>{c}</option>)}
+                {categories.map((c) => <option key={c} value={c}>{humanize(c)}</option>)}
               </select>
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm text-gray-700">File (PDF / JPG / PNG / DOCX, max 5 MB)</label>
-              <input ref={fileRef} type="file" required
+              <label className="block text-sm text-gray-700">File (PDF / JPG / PNG / DOCX, max 5 MB) — you can select several</label>
+              <input ref={fileRef} type="file" required multiple
                 accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx"
                 className="mt-1 block w-full text-sm" />
             </div>
@@ -195,7 +202,7 @@ export default function EmployeeDocuments() {
               return (
                 <tr key={d._id}>
                   <td className="px-4 py-3">
-                    <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{d.category}</span>
+                    <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{humanize(d.category)}</span>
                     {d.isPii && (
                       <span className="ml-1 inline-block px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded-lg">PII</span>
                     )}

@@ -158,9 +158,10 @@ export default function AdminOrgMasters() {
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Code</label>
-                <input value={form.code}
+                <input value={form.code} placeholder="Auto-generated from name if left blank"
                   onChange={(e) => setForm({ ...form, code: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                <p className="mt-1 text-xs text-gray-400">Leave blank to generate a code automatically from the name.</p>
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Description</label>

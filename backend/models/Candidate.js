@@ -51,6 +51,13 @@ const candidateDocSchema = new mongoose.Schema(
     label: { type: String, trim: true },
     name: { type: String },
     storagePath: { type: String },
+    // Durable Cloudinary backup of the same file (fallback if the disk copy is lost).
+    cloud: {
+      publicId: String,
+      version: Number,
+      format: String,
+      resourceType: String,
+    },
     sizeBytes: { type: Number },
     uploadedAt: { type: Date, default: Date.now },
   },
@@ -194,7 +201,7 @@ candidateSchema.set('toJSON', {
     if (ret.appointment) { ret.appointment.hasLetter = !!ret.appointment.letterPath; delete ret.appointment.letterPath; }
     // Never leak document filesystem paths; keep id/label/name/size for HR review.
     if (ret.documents && Array.isArray(ret.documents.files)) {
-      ret.documents.files.forEach((f) => { delete f.storagePath; });
+      ret.documents.files.forEach((f) => { delete f.storagePath; delete f.cloud; });
     }
     delete ret.__v;
     return ret;

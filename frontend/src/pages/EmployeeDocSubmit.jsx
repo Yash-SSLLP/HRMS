@@ -22,13 +22,19 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
+// Category keys come from the backend enum (e.g. "ExperienceLetter"); show them
+// with spaces ("Experience Letter"). The raw key is still what we submit.
+const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
+// Categories a person may legitimately have several of (past employers, degrees).
+const MULTI_CATEGORIES = new Set(['ExperienceLetter', 'RelievingLetter', 'EducationCertificate']);
+
 // Public page (no login) where an employee submits documents from the link HR shares.
 export default function EmployeeDocSubmit() {
   const { token } = useParams();
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [files, setFiles] = useState({});   // category -> File
+  const [files, setFiles] = useState({});   // category -> File[]
   const [others, setOthers] = useState([]); // File[]
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -46,12 +52,12 @@ export default function EmployeeDocSubmit() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [token]);
 
-  const setFile = (type) => (e) => setFiles((f) => ({ ...f, [type]: e.target.files?.[0] || null }));
+  const setFile = (type) => (e) => setFiles((f) => ({ ...f, [type]: Array.from(e.target.files || []) }));
 
   const submit = async (e) => {
     e.preventDefault();
     setError('');
-    const picked = Object.entries(files).filter(([, f]) => f);
+    const picked = Object.entries(files).filter(([, list]) => (list || []).length);
     if (picked.length === 0 && others.length === 0) {
       setError('Please attach at least one document.');
       return;
@@ -59,7 +65,7 @@ export default function EmployeeDocSubmit() {
     setSubmitting(true);
     try {
       const fd = new FormData();
-      picked.forEach(([type, f]) => { fd.append('files', f); fd.append('labels', type); });
+      picked.forEach(([type, list]) => list.forEach((f) => { fd.append('files', f); fd.append('labels', type); }));
       others.forEach((f) => { fd.append('files', f); fd.append('labels', 'Other'); });
       await api.post(`/employees/public-docs/${token}`, fd);
       setDone(true);
@@ -109,7 +115,7 @@ export default function EmployeeDocSubmit() {
           <ul className="space-y-1.5">
             {info.files.map((f, i) => (
               <li key={i} className="flex items-center justify-between gap-2 text-sm">
-                <span className="truncate"><span className="text-gray-500">{f.category}:</span> {f.fileName}</span>
+                <span className="truncate"><span className="text-gray-500">{humanize(f.category)}:</span> {f.fileName}</span>
                 <span className={`text-xs px-2 py-0.5 rounded-lg shrink-0 ${STATUS_STYLES[f.status] || 'bg-gray-100 text-gray-700'}`}>{f.status}</span>
               </li>
             ))}
@@ -118,12 +124,20 @@ export default function EmployeeDocSubmit() {
       )}
 
       <form onSubmit={submit} className="space-y-3">
-        {(info.docTypes || []).filter((t) => t !== 'Other').map((type) => (
-          <div key={type}>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{type}</label>
-            <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={setFile(type)} className={fileInput} />
-          </div>
-        ))}
+        {(info.docTypes || []).filter((t) => t !== 'Other').map((type) => {
+          const multi = MULTI_CATEGORIES.has(type);
+          const count = (files[type] || []).length;
+          return (
+            <div key={type}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {humanize(type)}
+                {multi && <span className="text-gray-400 font-normal"> (you can add more than one)</span>}
+              </label>
+              <input type="file" multiple={multi} accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={setFile(type)} className={fileInput} />
+              {multi && count > 1 && <p className="mt-1 text-xs text-gray-500">{count} files selected</p>}
+            </div>
+          );
+        })}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Other documents <span className="text-gray-400 font-normal">(optional, multiple)</span></label>

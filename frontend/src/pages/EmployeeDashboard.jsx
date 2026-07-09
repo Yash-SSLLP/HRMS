@@ -7,6 +7,7 @@ import WelcomeBanner from '../components/WelcomeBanner';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import AnnouncementsBanner from '../components/AnnouncementsBanner';
 import SurveysBanner from '../components/SurveysBanner';
+import InterviewsBanner from '../components/InterviewsBanner';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
@@ -115,6 +116,9 @@ export default function EmployeeDashboard() {
       {/* Surveys & Polls awaiting the employee's response — surfaced up top so
           they're not missed. Each disappears once answered. */}
       <SurveysBanner />
+
+      {/* Upcoming interviews the employee is assigned to conduct. */}
+      <InterviewsBanner />
 
       {/* Wishes received (birthday / anniversary) */}
       {wishes.length > 0 && (

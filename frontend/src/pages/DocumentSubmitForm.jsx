@@ -16,12 +16,15 @@ function Shell({ children }) {
   );
 }
 
+// Document types a candidate may legitimately provide several of.
+const MULTI_TYPES = new Set(['Experience Letter', 'Relieving Letter', 'Educational Certificates']);
+
 export default function DocumentSubmitForm() {
   const { token } = useParams();
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [files, setFiles] = useState({});   // docType -> File
+  const [files, setFiles] = useState({});   // docType -> File[]
   const [others, setOthers] = useState([]); // File[]
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -40,12 +43,12 @@ export default function DocumentSubmitForm() {
     })();
   }, [token]);
 
-  const setFile = (type) => (e) => setFiles((f) => ({ ...f, [type]: e.target.files?.[0] || null }));
+  const setFile = (type) => (e) => setFiles((f) => ({ ...f, [type]: Array.from(e.target.files || []) }));
 
   const submit = async (e) => {
     e.preventDefault();
     setError('');
-    const picked = Object.entries(files).filter(([, f]) => f);
+    const picked = Object.entries(files).filter(([, list]) => (list || []).length);
     if (picked.length === 0 && others.length === 0) {
       setError('Please attach at least one document.');
       return;
@@ -53,7 +56,7 @@ export default function DocumentSubmitForm() {
     setSubmitting(true);
     try {
       const fd = new FormData();
-      picked.forEach(([type, f]) => { fd.append('files', f); fd.append('labels', type); });
+      picked.forEach(([type, list]) => list.forEach((f) => { fd.append('files', f); fd.append('labels', type); }));
       others.forEach((f) => { fd.append('files', f); fd.append('labels', 'Other'); });
       await api.post(`/recruitment/documents/${token}`, fd);
       setDone(true);
@@ -97,12 +100,20 @@ export default function DocumentSubmitForm() {
       </div>
 
       <form onSubmit={submit} className="space-y-3">
-        {(info.docTypes || []).filter((t) => t !== 'Other').map((type) => (
-          <div key={type}>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{type}</label>
-            <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={setFile(type)} className={fileInput} />
-          </div>
-        ))}
+        {(info.docTypes || []).filter((t) => t !== 'Other').map((type) => {
+          const multi = MULTI_TYPES.has(type);
+          const count = (files[type] || []).length;
+          return (
+            <div key={type}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {type}
+                {multi && <span className="text-gray-400 font-normal"> (you can add more than one)</span>}
+              </label>
+              <input type="file" multiple={multi} accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={setFile(type)} className={fileInput} />
+              {multi && count > 1 && <p className="mt-1 text-xs text-gray-500">{count} files selected</p>}
+            </div>
+          );
+        })}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Other documents <span className="text-gray-400 font-normal">(optional, multiple)</span></label>

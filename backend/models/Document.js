@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 
-// Categories an employee may upload themselves
+// Categories an employee may upload themselves. ExperienceLetter and
+// RelievingLetter are from previous employers, so employees/candidates provide
+// them — and they may have several (one per past employer).
 const SELF_UPLOAD_CATEGORIES = [
   'PAN',
   'Aadhaar',
@@ -8,6 +10,7 @@ const SELF_UPLOAD_CATEGORIES = [
   'AddressProof',
   'EducationCertificate',
   'ExperienceLetter',
+  'RelievingLetter',
   'Other',
 ];
 
@@ -16,7 +19,6 @@ const HR_ONLY_CATEGORIES = [
   'OfferLetter',
   'AppointmentLetter',
   'AppraisalLetter',
-  'RelievingLetter',
   'NDA',
   'Contract',
 ];
@@ -52,6 +54,14 @@ const documentSchema = new mongoose.Schema(
     },
     fileName: { type: String, required: true, trim: true },
     storagePath: { type: String, required: true }, // relative to UPLOAD_DIR
+    // Durable Cloudinary backup of the same file. If the local disk copy is ever
+    // lost, download falls back to this. Enough to rebuild a signed URL.
+    cloud: {
+      publicId: String,
+      version: Number,
+      format: String,
+      resourceType: String,
+    },
     mime: { type: String, required: true },
     sizeBytes: { type: Number, required: true, min: 0 },
     sha256: { type: String, required: true, length: 64 },
@@ -72,6 +82,7 @@ const documentSchema = new mongoose.Schema(
 documentSchema.set('toJSON', {
   transform: (_doc, ret) => {
     delete ret.storagePath; // never leak filesystem path to API consumers
+    delete ret.cloud;       // internal backup ref — not for API consumers
     delete ret.__v;
     return ret;
   },

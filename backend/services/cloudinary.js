@@ -73,6 +73,82 @@ function deliveryUrl(module) {
   });
 }
 
+/**
+ * Server-side upload of an image buffer (e.g. an attendance punch selfie) as an
+ * `authenticated` (private) asset. Returns the reference needed to build a
+ * signed delivery URL later. Used for small images the backend already holds in
+ * memory, unlike the large videos which upload straight from the browser.
+ */
+function uploadImageBuffer(buffer, { folder } = {}) {
+  ensure();
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: folder || FOLDER, type: 'authenticated', resource_type: 'image' },
+      (err, result) => {
+        if (err) return reject(err);
+        resolve({ publicId: result.public_id, version: result.version, format: result.format });
+      }
+    );
+    stream.end(buffer);
+  });
+}
+
+/** Signed, private delivery URL for a stored image. */
+function imageDeliveryUrl({ publicId, version, format } = {}) {
+  ensure();
+  return cloudinary.url(publicId, {
+    resource_type: 'image',
+    type: 'authenticated',
+    version: version || undefined,
+    format: format || undefined,
+    sign_url: true,
+    secure: true,
+  });
+}
+
+/**
+ * Server-side upload of ANY file buffer (PDF, Word, image, …) as an
+ * `authenticated` (private) asset. Used to back up employee/candidate documents
+ * so they survive an ephemeral disk or a lost DB. Stored as `raw` so the bytes
+ * are kept verbatim — Cloudinary never parses/validates/transforms them (a
+ * malformed or unusual file must still back up), which is exactly what a byte-
+ * for-byte backup needs.
+ */
+function uploadFileBuffer(buffer, { folder } = {}) {
+  ensure();
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: folder || FOLDER, type: 'authenticated', resource_type: 'raw' },
+      (err, result) => {
+        if (err) return reject(err);
+        resolve({
+          publicId: result.public_id,
+          version: result.version,
+          format: result.format,
+          resourceType: result.resource_type || 'raw',
+        });
+      }
+    );
+    stream.end(buffer);
+  });
+}
+
+/** Signed, private delivery URL for a stored file (image or raw). */
+function fileDeliveryUrl({ publicId, version, format, resourceType } = {}) {
+  ensure();
+  const rt = resourceType || 'raw';
+  return cloudinary.url(publicId, {
+    resource_type: rt,
+    type: 'authenticated',
+    version: version || undefined,
+    // Raw assets carry their extension in the public_id already; only images
+    // need an explicit format appended.
+    format: rt === 'image' ? (format || undefined) : undefined,
+    sign_url: true,
+    secure: true,
+  });
+}
+
 /** Best-effort delete of a stored asset (ignores missing / errors). */
 async function destroy(publicId, resourceType = 'video') {
   if (!enabled() || !publicId) return;
@@ -88,4 +164,4 @@ async function destroy(publicId, resourceType = 'video') {
   }
 }
 
-module.exports = { enabled, signUpload, deliveryUrl, destroy };
+module.exports = { enabled, signUpload, deliveryUrl, uploadImageBuffer, imageDeliveryUrl, uploadFileBuffer, fileDeliveryUrl, destroy };

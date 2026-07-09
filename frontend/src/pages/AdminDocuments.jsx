@@ -16,6 +16,9 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
+// Show enum keys ("RelievingLetter") with spaces ("Relieving Letter").
+const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
+
 export default function AdminDocuments() {
   const [employees, setEmployees] = useState([]);
   const [selectedEmployee, setSelectedEmployee] = useState('');
@@ -66,22 +69,26 @@ export default function AdminDocuments() {
       setError('Pick an employee first');
       return;
     }
-    const file = fileRef.current?.files?.[0];
-    if (!file) {
+    const list = Array.from(fileRef.current?.files || []);
+    if (!list.length) {
       setError('Please choose a file first');
       return;
     }
     setUploading(true);
     setError('');
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('employee', selectedEmployee);
-      formData.append('category', category);
-      if (note) formData.append('note', note);
-      await api.post('/documents', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // One file per request; upload each so a category like Experience Letter
+      // can hold several at once.
+      for (const file of list) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('employee', selectedEmployee);
+        formData.append('category', category);
+        if (note) formData.append('note', note);
+        await api.post('/documents', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      }
       fileRef.current.value = '';
       setNote('');
       await loadDocs();
@@ -148,12 +155,12 @@ export default function AdminDocuments() {
                 <label className="block text-sm text-gray-700">Category</label>
                 <select value={category} onChange={(e) => setCategory(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
-                  {allCategories.map((c) => <option key={c}>{c}</option>)}
+                  {allCategories.map((c) => <option key={c} value={c}>{humanize(c)}</option>)}
                 </select>
               </div>
               <div className="md:col-span-2">
-                <label className="block text-sm text-gray-700">File</label>
-                <input ref={fileRef} type="file" required
+                <label className="block text-sm text-gray-700">File — you can select several</label>
+                <input ref={fileRef} type="file" required multiple
                   accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx"
                   className="mt-1 block w-full text-sm" />
               </div>
@@ -202,7 +209,7 @@ export default function AdminDocuments() {
                   </td>
                 )}
                 <td className="px-4 py-3">
-                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{d.category}</span>
+                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{humanize(d.category)}</span>
                   {d.isPii && (
                     <span className="ml-1 inline-block px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded-lg">PII</span>
                   )}
