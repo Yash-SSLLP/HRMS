@@ -308,6 +308,13 @@ const myHeatmap = asyncHandler(async (req, res) => {
         if (rec.noPunchOut) day.noPunchOut = true;
         if (rec.checkInWfh || rec.checkOutWfh) day.wfh = true;
         if (rec.remarks) day.remarks = rec.remarks;
+        // Flag a late arrival on an otherwise full day (checked in after the
+        // WORKDAY_START_HOUR grace cut-off). Kept as a flag on category 'full'
+        // so clients unaware of "late" still render it as a normal full day.
+        if (category === 'full' && rec.checkIn) {
+          const lateCutoff = new Date(new Date(rec.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+          if (new Date(rec.checkIn) > lateCutoff) day.late = true;
+        }
       }
       if (category === 'leave' && leave) {
         day.leaveType = leave.type;

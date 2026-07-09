@@ -14,12 +14,15 @@ const HOLIDAY = '#ffd8a8'; // holiday — soft amber
 const CATEGORIES = [
   { key: 'absent', label: 'Absent', color: '#ef4444' },
   { key: 'full', label: 'Full day', color: '#16a34a' },
+  { key: 'late', label: 'Late', color: '#ec4899' },
   { key: 'half', label: 'Half day', color: '#f59e0b' },
   { key: 'leave', label: 'Leave', color: '#8b5cf6' },
   { key: 'compoff', label: 'Comp off', color: '#0ea5e9' },
 ];
 const COLOR_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.color]));
 const LABEL_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]));
+// A late arrival is a full day flagged `late` — surface it as its own colour.
+const effCat = (rec) => (rec && rec.category === 'full' && rec.late ? 'late' : rec?.category);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // GitHub-style green ramp for the org "present count" intensity.
@@ -115,7 +118,7 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
       if (isSunday) return WEEKEND;
       return EMPTY;
     }
-    if (cell.rec && COLOR_BY_CAT[cell.rec.category]) return COLOR_BY_CAT[cell.rec.category];
+    if (cell.rec && COLOR_BY_CAT[effCat(cell.rec)]) return COLOR_BY_CAT[effCat(cell.rec)];
     if (isHoliday) return HOLIDAY;
     if (isSunday) return WEEKEND;
     return EMPTY;
@@ -222,8 +225,8 @@ export default function AttendanceHeatmap({ days = 365, org = false }) {
           ) : tip.cell.rec ? (
             <div className="space-y-0.5">
               <div className="font-medium flex items-center gap-1.5">
-                <span className="inline-block rounded-sm" style={{ width: 9, height: 9, background: COLOR_BY_CAT[tip.cell.rec.category] }} />
-                {LABEL_BY_CAT[tip.cell.rec.category]}
+                <span className="inline-block rounded-sm" style={{ width: 9, height: 9, background: COLOR_BY_CAT[effCat(tip.cell.rec)] }} />
+                {LABEL_BY_CAT[effCat(tip.cell.rec)]}
                 {tip.cell.rec.leaveType ? ` · ${tip.cell.rec.leaveType}` : ''}
                 {tip.cell.rec.halfDaySession && tip.cell.rec.halfDaySession !== true
                   ? ` (${tip.cell.rec.halfDaySession === 'FirstHalf' ? '1st half' : '2nd half'})`

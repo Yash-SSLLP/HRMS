@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
@@ -50,12 +51,9 @@ export default function LoginScreen() {
       <StatusBar style="light" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-          {/* Brand header */}
+          {/* Brand header — the gold Sequence Surfaces logo on black */}
           <View style={styles.header}>
-            <View style={styles.logo}>
-              <Ionicons name="people" size={34} color="#fff" />
-            </View>
-            <Text style={styles.brand}>SSLLP HRMS</Text>
+            <Image source={require('../../assets/logo.png')} style={styles.logo} resizeMode="contain" />
             <Text style={styles.tagline}>Your workplace, in your pocket</Text>
           </View>
 
@@ -111,19 +109,10 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.primary },
-  header: { alignItems: 'center', paddingTop: 64, paddingBottom: 36 },
-  logo: {
-    width: 76,
-    height: 76,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  brand: { fontSize: 26, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
-  tagline: { fontSize: 14, color: 'rgba(255,255,255,0.85)', marginTop: 6 },
+  root: { flex: 1, backgroundColor: '#0c0c0e' },
+  header: { alignItems: 'center', paddingTop: 76, paddingBottom: 40 },
+  logo: { width: 240, height: 78, marginBottom: 14 },
+  tagline: { fontSize: 14, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
   card: {
     backgroundColor: colors.surface,
     marginHorizontal: spacing(5),
@@ -143,5 +132,5 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   errorText: { color: colors.danger, marginLeft: 8, flex: 1, fontSize: 13, fontWeight: '600' },
-  footer: { textAlign: 'center', color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 28, marginBottom: 12 },
+  footer: { textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 28, marginBottom: 12 },
 });

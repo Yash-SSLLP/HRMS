@@ -123,7 +123,6 @@ function NavList({ items, user, onNavigate }) {
         >
           <span className="truncate flex-1 text-left min-w-0">{g.group}</span>
           <span className="nav-group-toggle">
-            {hasHighlight && <span className="nav-group-dot" aria-hidden="true" />}
             {isOpen
               ? <FiMinus className="nav-group-pm" aria-hidden="true" />
               : <FiPlus className="nav-group-pm" aria-hidden="true" />}
@@ -509,12 +508,17 @@ export default function Layout({ navItems = [], sectionTitle }) {
             <span className="text-xl leading-none">☰</span>
           </button>
 
-          {/* Quick shortcuts — available to everyone, in both portals. */}
-          <Link to={calendarPath} title="Calendar" aria-label="Calendar" className="topbar-icon-btn shrink-0">
-            <FiCalendar size={18} strokeWidth={2} />
+          {/* Quick shortcuts — available to everyone, in both portals. Icon shows
+              on all sizes; the label appears from sm up so each is unmistakable. */}
+          <Link to={calendarPath} title="Calendar" aria-label="Calendar"
+            className="inline-flex items-center gap-1.5 shrink-0 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900">
+            <FiCalendar size={16} strokeWidth={2} />
+            <span className="hidden sm:inline">Calendar</span>
           </Link>
-          <Link to={attendancePath} title="Attendance" aria-label="Attendance" className="topbar-icon-btn shrink-0">
-            <FiClock size={18} strokeWidth={2} />
+          <Link to={attendancePath} title="Attendance" aria-label="Attendance"
+            className="inline-flex items-center gap-1.5 shrink-0 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900">
+            <FiClock size={16} strokeWidth={2} />
+            <span className="hidden sm:inline">Attendance</span>
           </Link>
 
           {isAdmin && <GlobalSearch />}

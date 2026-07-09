@@ -395,7 +395,8 @@ export function Stars({ value = 0, onChange, size = 22 }) {
 }
 
 const buttonVariants = {
-  primary: { bg: colors.primary, fg: '#fff', border: colors.primary },
+  // Gold brand button reads best with near-black text (logo gold + black).
+  primary: { bg: colors.primary, fg: '#1a1a1a', border: colors.primary },
   dark: { bg: colors.text, fg: '#fff', border: colors.text },
   success: { bg: colors.success, fg: '#fff', border: colors.success },
   danger: { bg: colors.danger, fg: '#fff', border: colors.danger },

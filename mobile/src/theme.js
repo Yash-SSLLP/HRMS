@@ -19,9 +19,10 @@ import { Platform, Appearance } from 'react-native';
 export const THEME_KEY = 'themeMode'; // 'system' | 'light' | 'dark'
 
 const lightColors = {
-  primary: '#4f46e5',
-  primaryDark: '#4338ca',
-  primarySoft: '#eef2ff',
+  // Brand gold (matches the Sequence Surfaces logo), paired with near-black text.
+  primary: '#C7A24C',
+  primaryDark: '#A9863A',
+  primarySoft: '#F7F0DA',
 
   bg: '#f5f6fa',
   surface: '#ffffff',
@@ -50,9 +51,10 @@ const lightColors = {
 // Neutral-graphite dark palette (mirrors the web dark theme). Blue accent — no
 // violet/purple anywhere. "Soft" tints become dark, low-chroma backgrounds.
 const darkColors = {
-  primary: '#60a5fa',
-  primaryDark: '#3b82f6',
-  primarySoft: '#1c2740',
+  // Brand gold on a near-black surface — the logo's gold-and-black combination.
+  primary: '#D6B25A',
+  primaryDark: '#B8973C',
+  primarySoft: '#2B2411',
 
   bg: '#0e0f13',
   surface: '#17181d',
@@ -78,21 +80,22 @@ const darkColors = {
   black: '#000000',
 };
 
+// Unified brand gold accent across all roles, matching the logo.
 const lightRoleAccent = {
-  SuperAdmin: '#4f46e5',
-  HRManager: '#0d9488',
-  CEO: '#b45309',
-  MD: '#9333ea',
-  Manager: '#2563eb',
-  Employee: '#4f46e5',
+  SuperAdmin: '#C7A24C',
+  HRManager: '#C7A24C',
+  CEO: '#A9863A',
+  MD: '#A9863A',
+  Manager: '#C7A24C',
+  Employee: '#C7A24C',
 };
 const darkRoleAccent = {
-  SuperAdmin: '#fbbf24',
-  HRManager: '#2dd4bf',
-  CEO: '#fb923c',
-  MD: '#fb7185',
-  Manager: '#60a5fa',
-  Employee: '#60a5fa',
+  SuperAdmin: '#D6B25A',
+  HRManager: '#D6B25A',
+  CEO: '#B8973C',
+  MD: '#B8973C',
+  Manager: '#D6B25A',
+  Employee: '#D6B25A',
 };
 
 // Theme-independent tokens.

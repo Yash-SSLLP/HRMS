@@ -378,22 +378,6 @@ input:focus, textarea:focus, select:focus {
   background-color: var(--accent);
   filter: saturate(1.1);
 }
-.nav-link-highlight::after {
-  content: "";
-  margin-left: auto;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  background-color: var(--accent);
-  animation: navPulse 1.6s ease-in-out infinite;
-}
-@keyframes navPulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); opacity: 1; }
-  70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); opacity: .6; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .nav-link-highlight::after { animation: none; }
-}
 html.dark .nav-link-highlight {
   color: #fff;
   background-color: color-mix(in srgb, var(--accent) 26%, transparent);
@@ -442,13 +426,8 @@ html.dark .nav-link-highlight {
 .nav-section-link.is-active { color: var(--accent); }
 .nav-section-link.nav-link-danger { color: #dc2626; background: transparent; }
 
-/* Accent indicator on a collapsed group that contains a highlighted item. */
+/* Accent tint on a collapsed group that contains a highlighted item. */
 .nav-group-header-highlight { color: var(--accent); }
-.nav-group-dot {
-  width: 0.5rem; height: 0.5rem; border-radius: 9999px;
-  background-color: var(--accent); flex-shrink: 0;
-  animation: navPulse 1.6s ease-in-out infinite;
-}
 /* SVG nav icons inherit currentColor — keep them legible on the solid accent
    chip used by the active / highlighted states. */
 .nav-link-active .nav-icon, .nav-link-highlight .nav-icon { color: #fff; }

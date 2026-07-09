@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#4f46e5"
+      "backgroundColor": "#0c0c0e"
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
@@ -22,14 +22,14 @@
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#4f46e5"
+        "backgroundColor": "#0c0c0e"
       },
       "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE", "POST_NOTIFICATIONS", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
       "useNextNotificationsApi": true
     },
     "notification": {
       "icon": "./assets/notification-icon.png",
-      "color": "#4f46e5",
+      "color": "#C7A24C",
       "androidMode": "default",
       "androidCollapsedTitle": "SSLLP HRMS"
     },
@@ -38,7 +38,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#4f46e5"
+          "color": "#C7A24C"
         }
       ],
       [
