@@ -1,24 +1,35 @@
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
+const Setting = require('../models/Setting');
 const { LeaveRequest } = require('../models/Leave');
 const { advanceApproval } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
+const { haversineMeters } = require('../utils/geo');
 
 const WORKDAY_START_HOUR = 10; // 10:00 AM IST grace cut-off for lateness (matches attendance board)
 
 // EmployeeProfile ids of the people who report directly to the current user.
 async function myReportProfiles(userId) {
   return EmployeeProfile.find({ reportingManager: userId })
-    .select('employeeCode designation department user')
+    .select('employeeCode designation department user workLocationRef')
     .populate('user', 'firstName lastName email photo')
+    .populate('workLocationRef', 'name lat lng radiusM')
     .lean();
 }
 
-function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+// The geofence a punch is measured against: the employee's assigned work
+// location if set, else the global office. (Mirrors attendanceController.)
+function resolveGeofence(profile, settings) {
+  const wl = profile && profile.workLocationRef;
+  if (wl && wl.lat != null && wl.lng != null) {
+    return {
+      center: { lat: wl.lat, lng: wl.lng },
+      radiusM: wl.radiusM != null ? wl.radiusM : settings.geofenceThresholdM,
+      label: wl.name || 'work location',
+    };
+  }
+  return { center: settings.office, radiusM: settings.geofenceThresholdM, label: settings.office?.label || 'office' };
 }
 
 // GET /api/manager/team — my direct reports with today's attendance snapshot.
@@ -26,14 +37,38 @@ const listTeam = asyncHandler(async (req, res) => {
   const reports = await myReportProfiles(req.user._id);
   const ids = reports.map((p) => p._id);
 
-  const today = startOfToday();
+  // Anchor the "today" window to the IST calendar day — punches store their date
+  // at IST midnight, so a server-local (UTC) window would miss them.
+  const today = startOfDayIST(new Date());
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
-  const todays = await Attendance.find({ employee: { $in: ids }, date: { $gte: today, $lt: tomorrow } }).lean();
+  const [todays, settings] = await Promise.all([
+    Attendance.find({ employee: { $in: ids }, date: { $gte: today, $lt: tomorrow } })
+      .select('employee status checkIn checkOut hoursWorked checkInLocation checkOutLocation checkInWfh checkOutWfh')
+      .lean(),
+    Setting.getSettings(),
+  ]);
   const byEmp = new Map(todays.map((a) => [String(a.employee), a]));
 
   const team = reports.map((p) => {
     const a = byEmp.get(String(p._id));
+    let todayInfo = null;
+    if (a) {
+      const geo = resolveGeofence(p, settings);
+      todayInfo = {
+        status: a.status,
+        checkIn: a.checkIn,
+        checkOut: a.checkOut,
+        hoursWorked: a.hoursWorked,
+        checkInWfh: !!a.checkInWfh,
+        checkOutWfh: !!a.checkOutWfh,
+        // Distance of each punch from the employee's geofence centre (metres).
+        checkInDistanceM: haversineMeters(geo.center, a.checkInLocation),
+        checkOutDistanceM: haversineMeters(geo.center, a.checkOutLocation),
+        geofenceRadiusM: geo.radiusM,
+        locationName: geo.label,
+      };
+    }
     return {
       profileId: p._id,
       userId: p.user?._id,
@@ -42,7 +77,7 @@ const listTeam = asyncHandler(async (req, res) => {
       employeeCode: p.employeeCode,
       designation: p.designation || '',
       department: p.department || '',
-      today: a ? { status: a.status, checkIn: a.checkIn, checkOut: a.checkOut, hoursWorked: a.hoursWorked } : null,
+      today: todayInfo,
     };
   });
   res.json({ count: team.length, team });

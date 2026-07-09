@@ -7,6 +7,15 @@ import PresenceBoardView from '../components/PresenceBoardView';
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
+// Small line under a punch time: WFH tag, or distance from the geofence
+// (red when beyond the allowed radius).
+function PunchMeta({ wfh, distanceM, radiusM }) {
+  if (wfh) return <div className="text-[11px] text-violet-600">WFH</div>;
+  if (distanceM == null) return null;
+  const outside = radiusM != null && distanceM > radiusM;
+  return <div className={`text-[11px] ${outside ? 'text-red-500' : 'text-gray-400'}`}>{distanceM} m</div>;
+}
+
 const STATUS_COLORS = {
   Present: 'bg-green-100 text-green-800',
   Absent: 'bg-red-100 text-red-800',
@@ -114,8 +123,18 @@ export default function EmployeeTeam() {
                             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[m.today.status] || 'bg-gray-100 text-gray-700'}`}>{m.today.status}</span>
                           ) : <span className="text-xs text-gray-400">Not in</span>}
                         </td>
-                        <td className="py-2 pr-4 font-mono">{fmtTime(m.today?.checkIn)}</td>
-                        <td className="py-2 pr-4 font-mono">{fmtTime(m.today?.checkOut)}</td>
+                        <td className="py-2 pr-4">
+                          <div className="font-mono">{fmtTime(m.today?.checkIn)}</div>
+                          {m.today?.checkIn && (
+                            <PunchMeta wfh={m.today.checkInWfh} distanceM={m.today.checkInDistanceM} radiusM={m.today.geofenceRadiusM} />
+                          )}
+                        </td>
+                        <td className="py-2 pr-4">
+                          <div className="font-mono">{fmtTime(m.today?.checkOut)}</div>
+                          {m.today?.checkOut && (
+                            <PunchMeta wfh={m.today.checkOutWfh} distanceM={m.today.checkOutDistanceM} radiusM={m.today.geofenceRadiusM} />
+                          )}
+                        </td>
                         <td className="py-2 pr-4 font-mono text-right">{m.today?.hoursWorked || '-'}</td>
                       </tr>
                     ))}
