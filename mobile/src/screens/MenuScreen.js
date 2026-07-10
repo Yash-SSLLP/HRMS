@@ -90,7 +90,12 @@ export default function MenuScreen() {
         { key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' }
       );
     }
-    if (canApprove(role)) adminItems.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' });
+    if (canApprove(role)) {
+      adminItems.push(
+        { key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' },
+        { key: 'RnrAdmin', label: 'Rewards & Recognition', icon: 'trophy', tint: '#f59e0b' }
+      );
+    }
     groups.push({ title: 'Admin & Manager', items: adminItems });
   }
 

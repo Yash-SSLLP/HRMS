@@ -50,6 +50,7 @@ export default function AdminHubScreen() {
   tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canApprove(role) });
   tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: canApprove(role) });
   tiles.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a', show: viewAdmin });
+  tiles.push({ key: 'RnrAdmin', label: 'Recognition', icon: 'trophy', tint: '#f59e0b', show: canApprove(role) });
   const visibleTiles = tiles.filter((t) => t.show);
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
