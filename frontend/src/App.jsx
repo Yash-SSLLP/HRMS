@@ -250,5 +250,3 @@ export default function App() {
     </Routes>
   );
 }
-
-// This is Yash Kumar Roy, a AI Engineer and a tech enthusiast. I have a strong passion for building web applications and exploring new technologies.
