@@ -4,7 +4,7 @@ const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
-const { monthRangeIST } = require('../utils/dateHelpers');
+const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { renderPayslip } = require('../services/payslipPdf');
 const { enqueueMail } = require('../services/email');
 // (exportPayroll below builds the month CSV by hand — no spreadsheet lib needed)
@@ -42,6 +42,23 @@ const getMyPayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   res.json({ payslip });
+});
+
+// GET /api/payroll/me/attendance-summary?year=&month=  (employee)
+// Self-service view of this month's lateness + paid-leave usage against policy,
+// and the resulting expected late-penalty / leave-incentive — so an employee can
+// see how many days they were late and what deduction to expect.
+const myAttendanceSummary = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ user: req.user._id }).populate('salaryStructure');
+  if (!profile) {
+    res.status(404);
+    throw new Error('No employee profile linked to this account');
+  }
+  const [cy, cm] = ymdIST(new Date()).split('-').map(Number);
+  const year = Number(req.query.year) || cy;
+  const month = Number(req.query.month) || cm;
+  const computed = await computeEmployeeRun(profile, year, month);
+  res.json({ year, month, needsSetup: computed.needsSetup, policy: computed.policy });
 });
 
 // --- HR/Admin endpoints ---
@@ -92,9 +109,9 @@ const exportPayroll = asyncHandler(async (req, res) => {
   const header = [
     'Employee Code', 'Name', 'Email', 'Designation', 'Department',
     'Month', 'Year', 'Working Days', 'Paid Days', 'LOP Days',
-    'Basic', 'HRA', 'Special Allowance', 'Conveyance', 'Medical', 'LTA', 'Bonus', 'Overtime', 'Other Earnings',
+    'Basic', 'HRA', 'Special Allowance', 'Conveyance', 'Medical', 'LTA', 'Bonus', 'Overtime', 'Leave Incentive', 'Other Earnings',
     'Gross Salary',
-    'EPF', 'ESIC', 'Professional Tax', 'TDS', 'Loan Recovery', 'Other Deductions',
+    'EPF', 'ESIC', 'Professional Tax', 'TDS', 'Loan Recovery', 'Late Penalty', 'Other Deductions',
     'Total Deductions', 'Net Pay',
     'Employer EPF', 'Employer EPS', 'Employer ESIC', 'Gratuity',
     'Status', 'Payment Date', 'Payment Reference',
@@ -108,9 +125,9 @@ const exportPayroll = asyncHandler(async (req, res) => {
       p.employee?.employeeCode, `${u.firstName || ''} ${u.lastName || ''}`.trim(), u.email,
       p.employee?.designation, p.employee?.department,
       MONTH_NAMES[p.payPeriodMonth], p.payPeriodYear, p.workingDays, p.paidDays, p.lopDays,
-      e.basic, e.hra, e.specialAllowance, e.conveyanceAllowance, e.medicalAllowance, e.lta, e.bonus, e.overtime, e.otherEarnings,
+      e.basic, e.hra, e.specialAllowance, e.conveyanceAllowance, e.medicalAllowance, e.lta, e.bonus, e.overtime, e.leaveIncentive, e.otherEarnings,
       p.grossSalary,
-      d.epf, d.esic, d.professionalTax, d.tds, d.loanRecovery, d.otherDeductions,
+      d.epf, d.esic, d.professionalTax, d.tds, d.loanRecovery, d.latePenalty, d.otherDeductions,
       p.totalDeductions, p.netPay,
       c.epf, c.eps, c.esic, c.gratuity,
       p.status,
@@ -245,6 +262,14 @@ const runPayroll = asyncHandler(async (req, res) => {
 // annual CTC, prorated by paid days derived from their actual punch-in/out
 // attendance for the month, with active loan/advance EMIs as deductions.
 
+// Attendance policy constants (mirror attendanceController's WORKDAY_START_HOUR).
+const WORKDAY_START_HOUR = 10;   // check-in after 10:00 AM IST counts as late
+const PAID_LEAVE_QUOTA = 2;      // paid leave days granted each month
+const LATE_ALLOWANCE = 5;        // free late arrivals each month
+const LATE_THRESHOLD_BASIC = 25000; // monthly Basic cut-off for the penalty rate
+const LATE_RATE_LOW = 200;       // ₹/day when monthly Basic < threshold
+const LATE_RATE_HIGH = 400;      // ₹/day when monthly Basic >= threshold
+
 async function computeEmployeeRun(profile, year, month) {
   const { start, end } = monthRangeIST(year, month);
   const records = await Attendance.find({ employee: profile._id, date: { $gte: start, $lt: end } });
@@ -252,8 +277,25 @@ async function computeEmployeeRun(profile, year, month) {
   const count = (s) => records.filter((r) => r.status === s).length;
   const halfDay = count('HalfDay');
   const absent = count('Absent');
-  // Paid days: everything except Absent (full LOP) and half of each HalfDay.
-  const paidDays = +(daysInMonth - absent - 0.5 * halfDay).toFixed(1);
+  const onLeaveDays = count('OnLeave');
+
+  // ----- Monthly paid-leave quota (2 days) -----
+  // Leave days beyond the quota become LOP; unused quota converts to extra pay
+  // (leave incentive) at one day's salary each. Settled monthly, never carried.
+  const excessLeave = Math.max(0, onLeaveDays - PAID_LEAVE_QUOTA);
+  const unusedLeave = Math.max(0, PAID_LEAVE_QUOTA - onLeaveDays);
+
+  // ----- Late arrivals (check-in after WORKDAY_START_HOUR) on worked days -----
+  const lateDays = records.filter((r) => {
+    if (!r.checkIn || !['Present', 'HalfDay'].includes(r.status)) return false;
+    const cutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+    return new Date(r.checkIn) > cutoff;
+  }).length;
+  const excessLate = Math.max(0, lateDays - LATE_ALLOWANCE);
+
+  // Paid days: everything except Absent (full LOP), half of each HalfDay, and
+  // leave days beyond the monthly paid-leave quota.
+  const paidDays = +(daysInMonth - absent - 0.5 * halfDay - excessLeave).toFixed(1);
   const lopDays = +(daysInMonth - paidDays).toFixed(1);
 
   // Active loan/advance recovery for this employee (Loan.employee is the User).
@@ -264,10 +306,17 @@ async function computeEmployeeRun(profile, year, month) {
   const st = profile.salaryStructure; // populated
   const ctc = profile.annualCtc || 0;
   let earnings = null;
+  let monthlyBasic = 0;   // full (unprorated) Basic — drives the late-penalty rate
+  let perDayPay = 0;      // full monthly gross ÷ days in month — one day's pay
   if (st && ctc > 0) {
     const c = st.components || {};
     const factor = daysInMonth ? paidDays / daysInMonth : 1;
     const comp = (pct) => Math.round((((pct || 0) / 100) * ctc / 12) * factor);
+    const compFull = (pct) => ((pct || 0) / 100) * ctc / 12;
+    monthlyBasic = compFull(c.basicPct);
+    const fullGross = [c.basicPct, c.hraPct, c.specialAllowancePct, c.conveyancePct, c.medicalPct, c.ltaPct]
+      .reduce((a, pct) => a + compFull(pct), 0);
+    perDayPay = daysInMonth ? fullGross / daysInMonth : 0;
     earnings = {
       basic: comp(c.basicPct),
       hra: comp(c.hraPct),
@@ -275,9 +324,16 @@ async function computeEmployeeRun(profile, year, month) {
       conveyanceAllowance: comp(c.conveyancePct),
       medicalAllowance: comp(c.medicalPct),
       lta: comp(c.ltaPct),
+      // Unused paid-leave quota paid out at one day's salary each.
+      leaveIncentive: Math.round(unusedLeave * perDayPay),
     };
   }
+  const leaveIncentive = earnings ? earnings.leaveIncentive : 0;
   const gross = earnings ? Object.values(earnings).reduce((a, v) => a + v, 0) : 0;
+
+  // Late-arrival penalty for days beyond the monthly allowance.
+  const lateRate = monthlyBasic < LATE_THRESHOLD_BASIC ? LATE_RATE_LOW : LATE_RATE_HIGH;
+  const latePenalty = earnings ? excessLate * lateRate : 0;
 
   // Working-hours roll-up. A "worked day" is any day with real punch hours.
   // Sundays and holidays are excluded from the average — unless the employee
@@ -298,11 +354,26 @@ async function computeEmployeeRun(profile, year, month) {
       absent, weeklyOff: count('WeeklyOff'), holiday: count('Holiday'),
     },
     hours: { daysPresent, totalHours, avgHours, compOff },
+    // Attendance-policy roll-up: monthly paid-leave quota + late allowance.
+    policy: {
+      paidLeaveQuota: PAID_LEAVE_QUOTA,
+      leaveTaken: onLeaveDays,
+      excessLeave,          // leave days beyond the quota → added to LOP
+      unusedLeave,          // quota not used → paid out as leaveIncentive
+      leaveIncentive,
+      lateAllowance: LATE_ALLOWANCE,
+      lateDays,
+      excessLate,           // late days beyond the allowance → penalised
+      lateRate,
+      latePenalty,
+      monthlyBasic: Math.round(monthlyBasic),
+    },
     paidDays, lopDays,
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
     loanRecovery,
+    latePenalty,
     earnings, gross,
-    estimatedNet: gross - loanRecovery,
+    estimatedNet: gross - loanRecovery - latePenalty,
     needsSetup: !earnings,
   };
 }
@@ -352,14 +423,22 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error(`The ${MONTH_NAMES[month]} payslip is already ${payslip.status} — it can't be regenerated.`);
   }
+  const p = computed.policy;
   const fields = {
     workingDays: computed.daysInMonth,
     paidDays: computed.paidDays,
     lopDays: computed.lopDays,
     earnings: computed.earnings,
-    deductions: { ...(payslip?.deductions?.toObject?.() || {}), loanRecovery: computed.loanRecovery },
+    deductions: {
+      ...(payslip?.deductions?.toObject?.() || {}),
+      loanRecovery: computed.loanRecovery,
+      latePenalty: computed.latePenalty,
+    },
     status: 'Draft',
-    remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${profile.annualCtc.toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`,
+    remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${profile.annualCtc.toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
+      + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
+      + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
+      + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : ''),
   };
   if (payslip) {
     Object.assign(payslip, fields);
@@ -685,6 +764,7 @@ const deletePayslip = asyncHandler(async (req, res) => {
 module.exports = {
   listMyPayslips,
   getMyPayslip,
+  myAttendanceSummary,
   listPayslips,
   exportPayroll,
   previewPayrollRun,

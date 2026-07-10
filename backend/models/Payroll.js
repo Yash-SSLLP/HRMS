@@ -11,6 +11,9 @@ const earningsSchema = new mongoose.Schema(
     lta: { type: Number, default: 0, min: 0 },           // Leave Travel Allowance
     bonus: { type: Number, default: 0, min: 0 },
     overtime: { type: Number, default: 0, min: 0 },
+    // Unused portion of the monthly paid-leave quota (max 2 days), converted to
+    // extra pay at one day's salary each. Settled every month — never carried forward.
+    leaveIncentive: { type: Number, default: 0, min: 0 },
     otherEarnings: { type: Number, default: 0, min: 0 },
   },
   { _id: false }
@@ -24,6 +27,9 @@ const deductionsSchema = new mongoose.Schema(
     professionalTax: { type: Number, default: 0, min: 0 },      // State-specific (e.g. Maharashtra: 200/mo)
     tds: { type: Number, default: 0, min: 0 },                  // Income tax deducted at source
     loanRecovery: { type: Number, default: 0, min: 0 },
+    // Penalty for late arrivals beyond the 5/month allowance. ₹200/day when the
+    // employee's monthly Basic < ₹25,000, else ₹400/day.
+    latePenalty: { type: Number, default: 0, min: 0 },
     otherDeductions: { type: Number, default: 0, min: 0 },
   },
   { _id: false }
@@ -101,6 +107,7 @@ payrollSchema.pre('save', function computeTotals(next) {
     (e.lta || 0) +
     (e.bonus || 0) +
     (e.overtime || 0) +
+    (e.leaveIncentive || 0) +
     (e.otherEarnings || 0);
 
   this.totalDeductions =
@@ -109,6 +116,7 @@ payrollSchema.pre('save', function computeTotals(next) {
     (d.professionalTax || 0) +
     (d.tds || 0) +
     (d.loanRecovery || 0) +
+    (d.latePenalty || 0) +
     (d.otherDeductions || 0);
 
   this.netPay = this.grossSalary - this.totalDeductions;

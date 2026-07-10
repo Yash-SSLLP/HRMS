@@ -16,12 +16,14 @@ const COMPONENT_LABELS = {
   lta: 'Leave Travel Allowance',
   bonus: 'Bonus',
   overtime: 'Overtime Pay',
+  leaveIncentive: 'Leave Incentive',
   otherEarnings: 'Other Earnings',
   epf: 'Provident Fund (EPF)',
   esic: 'ESIC',
   professionalTax: 'Professional Tax',
   tds: 'TDS (Income Tax)',
   loanRecovery: 'Loan Recovery',
+  latePenalty: 'Late Arrival Penalty',
   otherDeductions: 'Other Deductions',
 };
 

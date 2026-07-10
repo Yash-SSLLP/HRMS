@@ -2,9 +2,11 @@ const asyncHandler = require('express-async-handler');
 const { LeaveRequest, LeaveBalance, LEAVE_TYPES } = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
+const Attendance = require('../models/Attendance');
+const Holiday = require('../models/Holiday');
 const { enqueueMail } = require('../services/email');
 const { notify, notifyMany } = require('../services/notify');
-const { daysInclusive, currentYear } = require('../utils/dateHelpers');
+const { daysInclusive, currentYear, startOfDayIST, ymdIST } = require('../utils/dateHelpers');
 
 // Leave types that draw down from a tracked balance bucket
 const BALANCED_TYPES = ['EL', 'CL', 'SL', 'ML'];
@@ -364,12 +366,14 @@ const cancelMyRequest = asyncHandler(async (req, res) => {
     throw new Error(`Request is already ${request.status}`);
   }
 
-  // If it was already approved, restore the balance (deducted only at final approval).
+  // If it was already approved, restore the balance (deducted only at final
+  // approval) and remove the auto-stamped leave days from the calendar.
   if (request.status === 'Approved') {
     const year = new Date(request.startDate).getFullYear();
     const balance = await getOrCreateBalance(profile._id, year);
     adjustBalance(balance, request.leaveType, -request.totalDays);
     await balance.save();
+    await unstampLeaveAttendance(request);
   }
 
   // Stop the approval ladder: no one's turn any more, pending/waiting rungs void.
@@ -421,6 +425,76 @@ async function consumeBalanceOrThrow(request) {
   }
   adjustBalance(balance, request.leaveType, request.totalDays);
   await balance.save();
+}
+
+// ===== Auto-stamp approved leave onto the attendance calendar =====
+// When a leave is finally approved, mark each covered working day so it shows on
+// the attendance calendar and feeds the payroll leave-quota rule (2 paid/month).
+// Sundays and holidays are skipped, and a day the employee actually worked
+// (has a check-in) is never overwritten. LOP leave is stamped Absent (unpaid);
+// every other type is stamped OnLeave (counts toward the paid quota).
+const LEAVE_AUTO_REMARK = 'Auto-stamped from approved leave';
+
+// The list of IST-midnight instants covered by a request's [startDate, endDate].
+function eachLeaveDay(request) {
+  const days = [];
+  let cur = startOfDayIST(request.startDate);
+  const last = startOfDayIST(request.endDate).getTime();
+  let guard = 0;
+  while (cur.getTime() <= last && guard < 400) {
+    guard += 1;
+    days.push(cur);
+    cur = startOfDayIST(new Date(cur.getTime() + 24 * 60 * 60 * 1000)); // +1 day (IST has no DST)
+  }
+  return days;
+}
+
+async function stampLeaveAttendance(request) {
+  try {
+    const days = eachLeaveDay(request);
+    if (!days.length) return;
+    const holidays = await Holiday.find({ date: { $gte: days[0], $lte: days[days.length - 1] } })
+      .select('date').lean().catch(() => []);
+    const holidayKeys = new Set((holidays || []).map((h) => ymdIST(h.date)));
+    const stampStatus = request.leaveType === 'LOP' ? 'Absent' : 'OnLeave';
+    const remark = `${LEAVE_AUTO_REMARK} (${request.leaveType})`;
+    for (const day of days) {
+      const key = ymdIST(day);
+      const [Y, M, D] = key.split('-').map(Number);
+      if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) continue; // Sunday
+      if (holidayKeys.has(key)) continue;                              // holiday
+      const existing = await Attendance.findOne({ employee: request.employee, date: day });
+      if (existing) {
+        if (existing.checkIn) continue;              // actually worked — respect reality
+        if (existing.status === stampStatus) continue;
+        existing.status = stampStatus;
+        existing.remarks = remark;
+        await existing.save();
+      } else {
+        await Attendance.create({ employee: request.employee, date: day, status: stampStatus, remarks: remark });
+      }
+    }
+  } catch (err) {
+    console.error('stampLeaveAttendance failed:', err.message);
+  }
+}
+
+// Reverse of stampLeaveAttendance: drop the auto-stamped days when an approved
+// leave is cancelled. Only removes our own marks on un-worked days.
+async function unstampLeaveAttendance(request) {
+  try {
+    for (const day of eachLeaveDay(request)) {
+      await Attendance.deleteOne({
+        employee: request.employee,
+        date: day,
+        checkIn: null,
+        status: { $in: ['OnLeave', 'Absent'] },
+        remarks: new RegExp(`^${LEAVE_AUTO_REMARK}`),
+      });
+    }
+  } catch (err) {
+    console.error('unstampLeaveAttendance failed:', err.message);
+  }
 }
 
 // Hierarchy step decision — the normal path. The acting user MUST be the current
@@ -482,6 +556,7 @@ async function advanceApproval(request, userId, action, note) {
   request.decisionAt = now;
   request.decisionNote = note;
   await request.save();
+  await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
   await notifyHrInformational(request, 'fully approved');
   return request;
@@ -520,6 +595,7 @@ async function applyLeaveDecision(request, userId, action, note) {
   request.decisionAt = new Date();
   request.decisionNote = note;
   await request.save();
+  if (action === 'approve') await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
   if (action === 'approve') await notifyHrInformational(request, 'approved (HR override)');
   return request;

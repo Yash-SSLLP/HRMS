@@ -24,6 +24,7 @@ const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting th
 // which never blocks a punch) isn't nagged — only genuinely poor fixes are.
 const GPS_POOR_M = 200;
 
+const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
 const fmtTime = (d) =>
   d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
@@ -57,6 +58,7 @@ export default function EmployeeAttendance() {
   const [filter, setFilter] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [records, setRecords] = useState([]);
   const [today, setToday] = useState(null);
+  const [policy, setPolicy] = useState(null); // { year, month, needsSetup, policy }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -252,9 +254,13 @@ export default function EmployeeAttendance() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.get(`/attendance/me?year=${filter.year}&month=${filter.month}`);
-      setRecords(data.records);
-      setToday(data.today);
+      const [attRes, polRes] = await Promise.all([
+        api.get(`/attendance/me?year=${filter.year}&month=${filter.month}`),
+        api.get(`/payroll/me/attendance-summary?year=${filter.year}&month=${filter.month}`).catch(() => null),
+      ]);
+      setRecords(attRes.data.records);
+      setToday(attRes.data.today);
+      setPolicy(polRes?.data || null);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -286,6 +292,29 @@ export default function EmployeeAttendance() {
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
+
+      {policy?.policy && (() => {
+        const p = policy.policy;
+        return (
+          <div className="bg-white shadow rounded-lg p-5 mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-sm font-semibold text-gray-700">Lateness &amp; leave</h2>
+              <span className="text-xs text-gray-400">{MONTHS[(policy.month || 1) - 1]} {policy.year}</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <Metric label="Late arrivals" value={`${p.lateDays} / ${p.lateAllowance}`} tone={p.excessLate > 0 ? 'red' : 'green'} sub={p.excessLate > 0 ? `${p.excessLate} over the limit` : 'within limit'} />
+              <Metric label="Expected late deduction" value={inr(p.latePenalty)} tone={p.latePenalty > 0 ? 'red' : 'gray'} sub={p.excessLate > 0 ? `${p.excessLate} × ${inr(p.lateRate)}/day` : '—'} />
+              <Metric label="Paid leave used" value={`${p.leaveTaken} / ${p.paidLeaveQuota}`} tone={p.excessLeave > 0 ? 'red' : 'gray'} sub={p.excessLeave > 0 ? `${p.excessLeave} day(s) LOP` : 'of monthly quota'} />
+              <Metric label="Leave incentive" value={inr(p.leaveIncentive)} tone={p.leaveIncentive > 0 ? 'green' : 'gray'} sub={p.unusedLeave > 0 ? `${p.unusedLeave} unused day(s)` : '—'} />
+            </div>
+            <p className="text-[11px] text-gray-400 mt-3">
+              First {p.lateAllowance} late arrivals each month are free; beyond that, every late day is deducted at {inr(p.lateRate)}/day.
+              {' '}{p.paidLeaveQuota} paid leaves each month — unused days are added to your pay, extra days are unpaid (LOP).
+              {policy.needsSetup ? ' Amounts finalise once your salary is set up by HR.' : ''}
+            </p>
+          </div>
+        );
+      })()}
 
       <div className="bg-white shadow rounded-lg p-5 mb-6">
         <div className="flex items-center gap-2 mb-3">
@@ -500,6 +529,17 @@ export default function EmployeeAttendance() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, sub, tone = 'gray' }) {
+  const valueTone = tone === 'red' ? 'text-red-600' : tone === 'green' ? 'text-green-700' : 'text-gray-900';
+  return (
+    <div className="bg-gray-50 rounded-lg px-3 py-2">
+      <div className="text-[11px] text-gray-500">{label}</div>
+      <div className={`font-semibold text-lg leading-tight ${valueTone}`}>{value}</div>
+      {sub ? <div className="text-[11px] text-gray-400 mt-0.5">{sub}</div> : null}
     </div>
   );
 }

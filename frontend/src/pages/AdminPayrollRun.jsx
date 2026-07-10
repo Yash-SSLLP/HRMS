@@ -246,9 +246,23 @@ export default function AdminPayrollRun() {
                   <Stat label="LOP days" value={c.lopDays} warn={c.lopDays > 0} />
                   <Stat label="Present" value={c.counts.present} />
                   <Stat label="Half days" value={c.counts.halfDay} />
-                  <Stat label="Leave" value={c.counts.onLeave} />
+                  <Stat label={`Leave (of ${c.policy?.paidLeaveQuota ?? 2})`} value={c.counts.onLeave} warn={c.policy?.excessLeave > 0} />
                   <Stat label="Absent" value={c.counts.absent} warn={c.counts.absent > 0} />
                 </div>
+                {c.policy && (
+                  <>
+                    <h4 className="font-semibold text-gray-700 mt-4 mb-2 text-sm">Attendance policy · {MONTHS[att.month - 1]}</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+                      <Stat label={`Late arrivals (of ${c.policy.lateAllowance})`} value={c.policy.lateDays} warn={c.policy.excessLate > 0} />
+                      <Stat label="Excess late" value={c.policy.excessLate} warn={c.policy.excessLate > 0} />
+                      <Stat label="Excess leave" value={c.policy.excessLeave} warn={c.policy.excessLeave > 0} />
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-2">
+                      {c.policy.paidLeaveQuota} paid leaves/month — unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
+                      {' '}First {c.policy.lateAllowance} lates free; each extra costs {inr(c.policy.lateRate)}/day (monthly Basic {c.policy.monthlyBasic < 25000 ? '<' : '≥'} ₹25,000).
+                    </p>
+                  </>
+                )}
                 {c.hours && (
                   <>
                     <h4 className="font-semibold text-gray-700 mt-4 mb-2 text-sm">Working hours · {MONTHS[att.month - 1]}</h4>
@@ -279,10 +293,20 @@ export default function AdminPayrollRun() {
                     }).map(([k, v]) => (
                       <div key={k} className="flex justify-between text-gray-600"><span>{k}</span><span>{inr(v)}</span></div>
                     ))}
+                    {c.earnings.leaveIncentive > 0 && (
+                      <div className="flex justify-between text-green-700">
+                        <span>Leave incentive ({c.policy.unusedLeave} unused)</span><span>+ {inr(c.earnings.leaveIncentive)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between font-semibold text-gray-900 border-t pt-1"><span>Gross (prorated)</span><span>{inr(c.gross)}</span></div>
                     <div className="flex justify-between text-red-600">
                       <span>Loan / advance EMI{c.loans.length ? ` (${c.loans.length})` : ''}</span><span>− {inr(c.loanRecovery)}</span>
                     </div>
+                    {c.latePenalty > 0 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>Late penalty ({c.policy.excessLate} × {inr(c.policy.lateRate)})</span><span>− {inr(c.latePenalty)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between font-bold text-green-700 border-t pt-1"><span>Estimated net</span><span>{inr(c.estimatedNet)}</span></div>
                   </div>
                 )}

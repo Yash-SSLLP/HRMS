@@ -25,8 +25,8 @@ const blankSlip = () => ({
   workingDays: 30,
   paidDays: 30,
   lopDays: 0,
-  earnings: { basic: 0, hra: 0, specialAllowance: 0, conveyanceAllowance: 0, medicalAllowance: 0, lta: 0, bonus: 0, overtime: 0, otherEarnings: 0 },
-  deductions: { epf: 0, esic: 0, professionalTax: 0, tds: 0, loanRecovery: 0, otherDeductions: 0 },
+  earnings: { basic: 0, hra: 0, specialAllowance: 0, conveyanceAllowance: 0, medicalAllowance: 0, lta: 0, bonus: 0, overtime: 0, leaveIncentive: 0, otherEarnings: 0 },
+  deductions: { epf: 0, esic: 0, professionalTax: 0, tds: 0, loanRecovery: 0, latePenalty: 0, otherDeductions: 0 },
 });
 
 const inr = (n) =>

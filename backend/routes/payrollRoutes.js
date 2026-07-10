@@ -2,6 +2,7 @@ const express = require('express');
 const {
   listMyPayslips,
   getMyPayslip,
+  myAttendanceSummary,
   listPayslips,
   getPayslip,
   createPayslip,
@@ -33,6 +34,7 @@ router.use(protect);
 
 // Employee self-service
 router.get('/me', listMyPayslips);
+router.get('/me/attendance-summary', myAttendanceSummary);
 router.get('/me/:id/pdf', downloadMyPayslipPdf);
 router.get('/me/:year/:month', getMyPayslip);
 
