@@ -53,6 +53,7 @@ app.use('/api/expenses', require('./routes/expenseRoutes'));
 app.use('/api/onboarding', require('./routes/onboardingRoutes'));
 app.use('/api/announcements', require('./routes/announcementRoutes'));
 app.use('/api/rnr', require('./routes/rnrRoutes'));
+app.use('/api/guides', require('./routes/guideRoutes'));
 app.use('/api/org-masters', require('./routes/orgMasterRoutes'));
 app.use('/api/org', require('./routes/orgRoutes'));
 app.use('/api/lifecycle', require('./routes/lifecycleRoutes'));
