@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api, { mediaUrl } from '../api/client';
+import { readCacheSync, hydrate, writeCache } from '../api/cache';
 import { useAuth } from '../store/auth';
 import { colors, radius, spacing, shadow, font, roleAccent, notifStyle } from '../theme';
 import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, refresher, Ionicons } from '../components/ui';
@@ -47,9 +48,17 @@ export default function DashboardScreen() {
   const user = useAuth((s) => s.user);
   const accent = roleAccent[user?.role] || colors.primary;
 
-  const [data, setData] = useState({});
+  // Seed from the cached snapshot for an instant paint, then refresh.
+  const [data, setData] = useState(() => readCacheSync('dashboard') || {});
   const [refreshing, setRefreshing] = useState(false);
   const [dismissed, setDismissed] = useState(() => new Set()); // locally-hidden announcements
+
+  // Cold-start hydrate from AsyncStorage if memory was empty.
+  useEffect(() => {
+    let active = true;
+    hydrate('dashboard').then((v) => { if (active && v) setData((prev) => (Object.keys(prev).length ? prev : v)); });
+    return () => { active = false; };
+  }, []);
 
   const load = useCallback(async () => {
     const isEmp = canEmployeeSelf(user?.role);
@@ -67,7 +76,7 @@ export default function DashboardScreen() {
       api.get('/employees/me').catch(() => null),
     ] : [];
     const [today, upcoming, notif, ann, bal, att, pay, me] = await Promise.all([...base, ...emp]);
-    setData({
+    const next = {
       balances: bal?.data?.balance?.balances || null,
       todayAtt: att?.data?.today || null,
       celebToday: today?.data || { birthdays: [], anniversaries: [] },
@@ -76,7 +85,9 @@ export default function DashboardScreen() {
       announcements: ann?.data?.announcements || [],
       payslips: pay?.data?.payslips || [],
       profile: me?.data?.profile || me?.data || null,
-    });
+    };
+    setData(next);
+    writeCache('dashboard', next);
   }, [user?.role]);
 
   // Dismiss an announcement from the home banner (per-user, persisted server-side;

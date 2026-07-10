@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api from '../../api/client';
+import { readCacheSync, hydrate, writeCache } from '../../api/cache';
 import { useAuth } from '../../store/auth';
 import { canViewAdmin, canApprove, isExec, hasTeam } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
@@ -15,10 +16,18 @@ export default function AdminHubScreen() {
   const role = useAuth((s) => s.user?.role);
   const viewAdmin = canViewAdmin(role);
 
-  const [data, setData] = useState(null);
-  const [daily, setDaily] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from cache for an instant paint, then refresh (stale-while-revalidate).
+  const [data, setData] = useState(() => readCacheSync('adminHub'));
+  const [daily, setDaily] = useState(() => readCacheSync('adminHubDaily') || []);
+  const [loading, setLoading] = useState(() => !readCacheSync('adminHub'));
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    hydrate('adminHub').then((v) => { if (active && v) { setData((prev) => prev || v); setLoading(false); } });
+    hydrate('adminHubDaily').then((v) => { if (active && v) setDaily((prev) => (prev.length ? prev : v)); });
+    return () => { active = false; };
+  }, []);
 
   const load = useCallback(async () => {
     if (!viewAdmin) { setLoading(false); return; }
@@ -26,8 +35,9 @@ export default function AdminHubScreen() {
       api.get('/dashboard/admin').catch(() => ({ data: null })),
       api.get('/attendance/daily-stats', { params: { days: 14 } }).catch(() => ({ data: { days: [] } })),
     ]);
-    setData(res?.data || null);
-    setDaily(ds?.data?.days || []);
+    if (res?.data) { setData(res.data); writeCache('adminHub', res.data); }
+    const days = ds?.data?.days || [];
+    setDaily(days); writeCache('adminHubDaily', days);
     setLoading(false);
   }, [viewAdmin]);
 

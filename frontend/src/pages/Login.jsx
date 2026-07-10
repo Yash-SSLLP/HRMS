@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
@@ -162,6 +162,8 @@ export default function Login() {
 
         <p className="text-center text-xs text-gray-400 mt-6">
           © {new Date().getFullYear()} {COMPANY_NAME}. All rights reserved.
+          {' · '}
+          <Link to="/privacy" className="hover:text-gray-600 hover:underline">Privacy Policy</Link>
         </p>
       </div>
 

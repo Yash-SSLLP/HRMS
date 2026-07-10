@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Switch } from 'react-native';
 import Constants from 'expo-constants';
+import { useNavigation } from '@react-navigation/native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNRestart from 'react-native-restart';
@@ -82,6 +83,7 @@ export default function SettingsScreen() {
     }
   };
 
+  const nav = useNavigation();
   const version = Constants.expoConfig?.version || '1.0.0';
   const host = API_BASE.replace(/^https?:\/\//, '').replace(/\/api$/, '');
 
@@ -186,6 +188,7 @@ export default function SettingsScreen() {
         <Card style={styles.card}>
           <Row icon="phone-portrait" label="App version" value={`v${version}`} />
           <Row icon="server" label="Server" value={host} />
+          <Row icon="shield-outline" label="Privacy Policy" onPress={() => nav.navigate('Privacy')} tint={colors.textMuted} />
           <Row icon="help-buoy" label="Help & support" onPress={() => Linking.openURL('mailto:hr@sequencesurface.com?subject=HRMS%20App%20Support')} tint="#0ea5e9" last />
         </Card>
 

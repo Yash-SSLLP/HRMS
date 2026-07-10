@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { readCache, writeCache } from '../api/cache';
 import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
@@ -31,22 +32,23 @@ function StatCard({ icon, tint, iconColor, value, label, to }) {
 
 export default function AdminOverview() {
   const user = useAuthStore((s) => s.user);
-  const [data, setData] = useState(null);
-  const [daily, setDaily] = useState([]);
+  // Seed from cache for an instant paint, then refresh (stale-while-revalidate).
+  const [data, setData] = useState(() => readCache('admin:dashboard'));
+  const [daily, setDaily] = useState(() => readCache('admin:daily') || []);
   const [error, setError] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get('/dashboard/admin');
-        setData(res.data);
+        setData(res.data); writeCache('admin:dashboard', res.data);
       } catch (err) {
         setError(err.response?.data?.message || 'Failed to load dashboard');
       }
     })();
     // Per-day attendance for the two trend charts (best-effort; charts hide if empty).
     api.get('/attendance/daily-stats', { params: { days: 7 } })
-      .then(({ data: d }) => setDaily(d.days || []))
+      .then(({ data: d }) => { setDaily(d.days || []); writeCache('admin:daily', d.days || []); })
       .catch(() => {});
   }, []);
 

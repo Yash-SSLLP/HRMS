@@ -44,6 +44,7 @@ import DeclarationScreen from '../screens/DeclarationScreen';
 import ResignationScreen from '../screens/ResignationScreen';
 import MyInterviewsScreen from '../screens/MyInterviewsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import PrivacyScreen from '../screens/PrivacyScreen';
 import AdminHubScreen from '../screens/admin/AdminHubScreen';
 import ApprovalsScreen from '../screens/admin/ApprovalsScreen';
 import TeamScreen from '../screens/admin/TeamScreen';
@@ -123,6 +124,7 @@ function ProfileStack() {
     <ProfileStackNav.Navigator screenOptions={stackOpts}>
       <ProfileStackNav.Screen name="ProfileHome" component={ProfileScreen} options={{ headerShown: false }} />
       <ProfileStackNav.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <ProfileStackNav.Screen name="Privacy" component={PrivacyScreen} options={{ title: 'Privacy Policy' }} />
     </ProfileStackNav.Navigator>
   );
 }

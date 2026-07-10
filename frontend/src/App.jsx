@@ -71,6 +71,7 @@ const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
 const EmployeeAnnouncements = lazy(() => import('./pages/EmployeeAnnouncements.jsx'));
 const AdminRnr = lazy(() => import('./pages/AdminRnr.jsx'));
 const HowToUse = lazy(() => import('./pages/HowToUse.jsx'));
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy.jsx'));
 const AdminOrgMasters = lazy(() => import('./pages/AdminOrgMasters.jsx'));
 const AdminOrgChart = lazy(() => import('./pages/AdminOrgChart.jsx'));
 const AdminConfirmations = lazy(() => import('./pages/AdminConfirmations.jsx'));
@@ -129,6 +130,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
 
       {/* Public — ex-employees access via tokenised link in email */}
       <Route path="/exit-feedback/:token" element={<ExitFeedback />} />

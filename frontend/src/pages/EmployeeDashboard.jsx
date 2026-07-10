@@ -5,6 +5,7 @@ import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import { readCache, writeCache } from '../api/cache';
 import AnnouncementsBanner from '../components/AnnouncementsBanner';
 import RnrBanner from '../components/RnrBanner';
 import SurveysBanner from '../components/SurveysBanner';
@@ -49,40 +50,44 @@ function StatCard({ icon, tint, value, label, sub, to }) {
 
 export default function EmployeeDashboard() {
   const user = useAuthStore((s) => s.user);
-  const [profile, setProfile] = useState(null);
-  const [latestPayslip, setLatestPayslip] = useState(null);
-  const [balance, setBalance] = useState(null);
-  const [pendingLeaves, setPendingLeaves] = useState(0);
-  const [wishes, setWishes] = useState([]);
+  // Seed from the last cached snapshot so the dashboard paints instantly, then
+  // refresh in the background (stale-while-revalidate).
+  const [profile, setProfile] = useState(() => readCache('emp:profile'));
+  const [latestPayslip, setLatestPayslip] = useState(() => readCache('emp:payslip'));
+  const [balance, setBalance] = useState(() => readCache('emp:balance'));
+  const [pendingLeaves, setPendingLeaves] = useState(() => readCache('emp:pendingLeaves') ?? 0);
+  const [wishes, setWishes] = useState(() => readCache('emp:wishes') || []);
   const [errors, setErrors] = useState({});
 
   useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get('/employees/me');
-        setProfile(data.profile);
+        setProfile(data.profile); writeCache('emp:profile', data.profile);
       } catch (err) {
         setErrors((e) => ({ ...e, profile: err.response?.data?.message }));
       }
       try {
         const { data } = await api.get('/payroll/me');
-        setLatestPayslip(data.payslips?.[0] || null);
+        const p = data.payslips?.[0] || null;
+        setLatestPayslip(p); writeCache('emp:payslip', p);
       } catch (err) {
         setErrors((e) => ({ ...e, payroll: err.response?.data?.message }));
       }
       try {
         const { data } = await api.get('/leave/me/balance');
-        setBalance(data.balance);
+        setBalance(data.balance); writeCache('emp:balance', data.balance);
       } catch (err) {
         setErrors((e) => ({ ...e, leave: err.response?.data?.message }));
       }
       try {
         const { data } = await api.get('/leave/me/requests');
-        setPendingLeaves((data.requests || []).filter((r) => r.status === 'Pending').length);
+        const n = (data.requests || []).filter((r) => r.status === 'Pending').length;
+        setPendingLeaves(n); writeCache('emp:pendingLeaves', n);
       } catch (_) { /* ignore */ }
       try {
         const { data } = await api.get('/celebrations/wishes/received');
-        setWishes(data.wishes || []);
+        setWishes(data.wishes || []); writeCache('emp:wishes', data.wishes || []);
       } catch (_) { /* ignore */ }
     })();
   }, []);
