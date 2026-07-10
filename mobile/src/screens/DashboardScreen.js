@@ -9,6 +9,7 @@ import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, refresher, Ioni
 import { greeting, fmtTime, fmtDate, timeAgo, rupees } from '../utils/format';
 import { showsAdminEntry, isExec, canEmployeeSelf } from '../utils/roles';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import RnrBanner from '../components/RnrBanner';
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const LEAVE_TYPES = [
@@ -155,6 +156,10 @@ export default function DashboardScreen() {
             </TouchableOpacity>
           </Card>
         ))}
+
+        {/* Monthly Rewards & Recognition winners — shows for 2 working days after
+            HR announces; closeable per-user. */}
+        <RnrBanner />
 
         {/* Attendance punch card — employees only (SuperAdmin has no attendance) */}
         {employeeSelf && (

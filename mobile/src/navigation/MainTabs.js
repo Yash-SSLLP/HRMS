@@ -25,15 +25,12 @@ import AnnouncementsScreen from '../screens/AnnouncementsScreen';
 import TasksScreen from '../screens/TasksScreen';
 import ExpensesScreen from '../screens/ExpensesScreen';
 import DocumentsScreen from '../screens/DocumentsScreen';
-import RecognitionScreen from '../screens/RecognitionScreen';
-import KnowledgeBaseScreen from '../screens/KnowledgeBaseScreen';
 import GoalsScreen from '../screens/GoalsScreen';
 import ReviewsScreen from '../screens/ReviewsScreen';
 import LearningScreen from '../screens/LearningScreen';
 import CoursePlayerScreen from '../screens/CoursePlayerScreen';
 import AssetsScreen from '../screens/AssetsScreen';
 import TravelScreen from '../screens/TravelScreen';
-import CompOffScreen from '../screens/CompOffScreen';
 import SurveysScreen from '../screens/SurveysScreen';
 import LoansScreen from '../screens/LoansScreen';
 import RegularizationScreen from '../screens/RegularizationScreen';
@@ -82,15 +79,12 @@ function HomeStack() {
       <HomeStackNav.Screen name="Tasks" component={TasksScreen} options={{ title: 'My Tasks' }} />
       <HomeStackNav.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Expenses' }} />
       <HomeStackNav.Screen name="Documents" component={DocumentsScreen} options={{ title: 'Documents' }} />
-      <HomeStackNav.Screen name="Recognition" component={RecognitionScreen} options={{ title: 'Recognition' }} />
-      <HomeStackNav.Screen name="KnowledgeBase" component={KnowledgeBaseScreen} options={{ title: 'Knowledge Base' }} />
       <HomeStackNav.Screen name="Goals" component={GoalsScreen} options={{ title: 'My Goals' }} />
       <HomeStackNav.Screen name="Reviews" component={ReviewsScreen} options={{ title: 'Performance Reviews' }} />
       <HomeStackNav.Screen name="Learning" component={LearningScreen} options={{ title: 'Learning' }} />
       <HomeStackNav.Screen name="CoursePlayer" component={CoursePlayerScreen} options={{ title: 'Course' }} />
       <HomeStackNav.Screen name="Assets" component={AssetsScreen} options={{ title: 'My Assets' }} />
       <HomeStackNav.Screen name="Travel" component={TravelScreen} options={{ title: 'Travel' }} />
-      <HomeStackNav.Screen name="CompOff" component={CompOffScreen} options={{ title: 'Comp-off' }} />
       <HomeStackNav.Screen name="Surveys" component={SurveysScreen} options={{ title: 'Surveys' }} />
       <HomeStackNav.Screen name="Loans" component={LoansScreen} options={{ title: 'Loans & Advances' }} />
       <HomeStackNav.Screen name="Regularization" component={RegularizationScreen} options={{ title: 'Regularization' }} />

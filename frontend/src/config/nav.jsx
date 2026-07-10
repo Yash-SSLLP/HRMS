@@ -10,7 +10,7 @@ import {
   FiDollarSign, FiSliders, FiCreditCard, FiClipboard, FiCheckCircle,
   FiShoppingBag, FiMap, FiPercent, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
   FiFolder, FiList, FiPackage, FiFile,
-  FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
+  FiVolume2, FiPieChart, FiFlag, FiAward,
   FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget,
 } from 'react-icons/fi';
 
@@ -51,7 +51,6 @@ export const adminNav = [
   { group: 'Leave & Holidays', items: [
     { to: '/admin/leave', label: 'Leave', icon: FiUmbrella, perm: 'leave.manage' },
     { to: '/admin/leave-approvals', label: 'Leave Approvals', icon: FiCheckSquare },
-    { to: '/admin/compoff', label: 'Comp-off', icon: FiRepeat, perm: 'leave.manage' },
     { to: '/admin/holidays', label: 'Holidays', icon: FiSun, perm: 'leave.manage' },
   ] },
   { group: 'Payroll & Compensation', items: [
@@ -83,8 +82,7 @@ export const adminNav = [
     { to: '/admin/surveys', label: 'Surveys', icon: FiPieChart, perm: 'surveys.manage' },
     { to: '/admin/events', label: 'Events', icon: FiFlag, perm: 'events.manage' },
     { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
-    { to: '/admin/recognition', label: 'Recognition', icon: FiAward },
-    { to: '/admin/knowledge-base', label: 'Knowledge Base', icon: FiHelpCircle, perm: 'kb.manage' },
+    { to: '/admin/rnr', label: 'Rewards & Recognition', icon: FiAward, perm: 'announcements.manage' },
   ] },
   { group: 'Employee Self-Service / Requests', items: [
     { to: '/admin/account', label: 'My Account', icon: FiKey },
@@ -119,7 +117,6 @@ export const employeeNav = [
   ] },
   { group: 'Leave & Holidays', items: [
     { to: '/employee/leave', label: 'Leave', icon: FiUmbrella },
-    { to: '/employee/compoff', label: 'Comp-off', icon: FiRepeat },
   ] },
   { group: 'Payroll & Expenses', items: [
     { to: '/employee/payslips', label: 'Payslips', icon: FiDollarSign },
@@ -139,11 +136,9 @@ export const employeeNav = [
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
   ] },
   { group: 'Engagement & Communication', items: [
-    { to: '/employee/recognition', label: 'Recognition', icon: FiAward },
     { to: '/employee/announcements', label: 'Announcements', icon: FiVolume2 },
     { to: '/employee/surveys', label: 'Surveys', icon: FiPieChart },
     { to: '/employee/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
-    { to: '/employee/knowledge-base', label: 'Help / KB', icon: FiHelpCircle },
   ] },
   { group: 'Employee Self-Service / Requests', items: [
     { to: '/employee/profile', label: 'Profile', icon: FiUser },

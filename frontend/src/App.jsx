@@ -69,9 +69,7 @@ const AdminChatExport = lazy(() => import('./pages/AdminChatExport.jsx'));
 const EmployeeOnboarding = lazy(() => import('./pages/EmployeeOnboarding.jsx'));
 const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
 const EmployeeAnnouncements = lazy(() => import('./pages/EmployeeAnnouncements.jsx'));
-const AdminKnowledgeBase = lazy(() => import('./pages/AdminKnowledgeBase.jsx'));
-const EmployeeKnowledgeBase = lazy(() => import('./pages/EmployeeKnowledgeBase.jsx'));
-const EmployeeRecognition = lazy(() => import('./pages/EmployeeRecognition.jsx'));
+const AdminRnr = lazy(() => import('./pages/AdminRnr.jsx'));
 const AdminOrgMasters = lazy(() => import('./pages/AdminOrgMasters.jsx'));
 const AdminOrgChart = lazy(() => import('./pages/AdminOrgChart.jsx'));
 const AdminConfirmations = lazy(() => import('./pages/AdminConfirmations.jsx'));
@@ -79,8 +77,6 @@ const AdminRoster = lazy(() => import('./pages/AdminRoster.jsx'));
 const EmployeeShifts = lazy(() => import('./pages/EmployeeShifts.jsx'));
 const AdminRegularizations = lazy(() => import('./pages/AdminRegularizations.jsx'));
 const EmployeeRegularizations = lazy(() => import('./pages/EmployeeRegularizations.jsx'));
-const AdminCompOff = lazy(() => import('./pages/AdminCompOff.jsx'));
-const EmployeeCompOff = lazy(() => import('./pages/EmployeeCompOff.jsx'));
 const AdminSalaryStructures = lazy(() => import('./pages/AdminSalaryStructures.jsx'));
 const AdminLoans = lazy(() => import('./pages/AdminLoans.jsx'));
 const EmployeeLoans = lazy(() => import('./pages/EmployeeLoans.jsx'));
@@ -182,7 +178,6 @@ export default function App() {
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
         <Route path="leave-approvals" element={<AdminLeaveApprovals />} />
-        <Route path="compoff" element={<AdminCompOff />} />
         <Route path="expenses" element={<AdminExpenses />} />
         <Route path="travel" element={<AdminTravel />} />
         <Route path="documents" element={<AdminDocuments />} />
@@ -197,7 +192,7 @@ export default function App() {
         <Route path="training" element={<AdminTraining />} />
         <Route path="courses" element={<AdminCourses />} />
         <Route path="analytics" element={<AdminAnalytics />} />
-        <Route path="recognition" element={<EmployeeRecognition />} />
+        <Route path="rnr" element={<AdminRnr />} />
         <Route path="announcements" element={<AdminAnnouncements />} />
         <Route path="surveys" element={<AdminSurveys />} />
         <Route path="complaints" element={<AdminComplaints />} />
@@ -206,7 +201,6 @@ export default function App() {
         <Route path="audit-log" element={<AdminAuditLog />} />
         <Route path="chat-export" element={<AdminChatExport />} />
         <Route path="account" element={<EmployeeAccount />} />
-        <Route path="knowledge-base" element={<AdminKnowledgeBase />} />
         <Route path="holidays" element={<AdminHolidays />} />
         <Route path="events" element={<AdminEvents />} />
         <Route path="calendar" element={<Calendar />} />
@@ -234,7 +228,6 @@ export default function App() {
         <Route path="loans" element={<EmployeeLoans />} />
         <Route path="declaration" element={<EmployeeInvestmentDeclaration />} />
         <Route path="leave" element={<EmployeeLeave />} />
-        <Route path="compoff" element={<EmployeeCompOff />} />
         <Route path="expenses" element={<EmployeeExpenses />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
@@ -244,12 +237,10 @@ export default function App() {
         <Route path="reviews" element={<EmployeeReviews />} />
         <Route path="learning" element={<EmployeeLearning />} />
         <Route path="learning/:courseId" element={<CoursePlayerPage />} />
-        <Route path="recognition" element={<EmployeeRecognition />} />
         <Route path="announcements" element={<EmployeeAnnouncements />} />
         <Route path="surveys" element={<EmployeeSurveys />} />
         <Route path="calendar" element={<Calendar />} />
         <Route path="complaints" element={<EmployeeComplaints />} />
-        <Route path="knowledge-base" element={<EmployeeKnowledgeBase />} />
         <Route path="exit" element={<EmployeeExit />} />
         <Route path="profile" element={<EmployeeProfile />} />
         <Route path="account" element={<EmployeeAccount />} />

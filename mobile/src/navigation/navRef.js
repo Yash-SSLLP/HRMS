@@ -26,7 +26,9 @@ export function routeForNotification(data = {}) {
     case 'anniversary':
       return { tab: 'Calendar' };
     case 'recognition':
-      return { tab: 'Home', screen: 'Recognition' };
+      // Monthly Rewards & Recognition — the winners show as a banner on the
+      // dashboard (the old peer-recognition screen was removed).
+      return { tab: 'Home' };
     case 'leave':
       return { tab: 'Home' };
     default:

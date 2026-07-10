@@ -21,7 +21,6 @@ const GROUPS = [
       { key: 'Leave', label: 'Leave', icon: 'airplane', tint: '#0ea5e9' },
       { key: 'Attendance', label: 'Attendance', icon: 'finger-print', tint: '#16a34a' },
       { key: 'Regularization', label: 'Regularize', icon: 'construct', tint: '#ea580c' },
-      { key: 'CompOff', label: 'Comp-off', icon: 'time', tint: '#0891b2' },
       { key: 'Roster', label: 'My Roster', icon: 'calendar-number', tint: '#7c3aed' },
     ],
   },
@@ -58,8 +57,6 @@ const GROUPS = [
     title: 'Workplace',
     items: [
       { key: 'Announcements', label: 'Announcements', icon: 'megaphone', tint: '#4f46e5' },
-      { key: 'Recognition', label: 'Recognition', icon: 'trophy', tint: '#f59e0b' },
-      { key: 'KnowledgeBase', label: 'Knowledge Base', icon: 'book', tint: '#0d9488' },
       { key: 'Surveys', label: 'Surveys', icon: 'clipboard', tint: '#db2777' },
       { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
       { key: 'Assets', label: 'My Assets', icon: 'cube', tint: '#64748b' },

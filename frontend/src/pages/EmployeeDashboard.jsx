@@ -6,6 +6,7 @@ import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import AnnouncementsBanner from '../components/AnnouncementsBanner';
+import RnrBanner from '../components/RnrBanner';
 import SurveysBanner from '../components/SurveysBanner';
 import InterviewsBanner from '../components/InterviewsBanner';
 import ManagerTeamStatus from '../components/ManagerTeamStatus';
@@ -113,6 +114,10 @@ export default function EmployeeDashboard() {
       {/* Company announcements — every undismissed one shows here; the employee
           can close each (stays hidden via the per-user dismiss endpoint). */}
       <AnnouncementsBanner />
+
+      {/* Monthly Rewards & Recognition winners — shows for 2 working days after
+          HR announces; closeable per-user. */}
+      <RnrBanner />
 
       {/* Surveys & Polls awaiting the employee's response — surfaced up top so
           they're not missed. Each disappears once answered. */}
