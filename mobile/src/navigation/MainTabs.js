@@ -21,6 +21,8 @@ import LeaveScreen from '../screens/LeaveScreen';
 import AttendanceScreen from '../screens/AttendanceScreen';
 import PayslipsScreen from '../screens/PayslipsScreen';
 import MenuScreen from '../screens/MenuScreen';
+import SearchScreen from '../screens/SearchScreen';
+import HowToUseScreen from '../screens/HowToUseScreen';
 import AnnouncementsScreen from '../screens/AnnouncementsScreen';
 import TasksScreen from '../screens/TasksScreen';
 import ExpensesScreen from '../screens/ExpensesScreen';
@@ -76,6 +78,8 @@ function HomeStack() {
       <HomeStackNav.Screen name="Attendance" component={AttendanceScreen} options={{ title: 'Attendance' }} />
       <HomeStackNav.Screen name="Payslips" component={PayslipsScreen} options={{ title: 'Payslips' }} />
       <HomeStackNav.Screen name="Menu" component={MenuScreen} options={{ title: 'All modules' }} />
+      <HomeStackNav.Screen name="Search" component={SearchScreen} options={{ title: 'Search' }} />
+      <HomeStackNav.Screen name="HowToUse" component={HowToUseScreen} options={{ title: 'How to Use' }} />
       <HomeStackNav.Screen name="Announcements" component={AnnouncementsScreen} options={{ title: 'Announcements' }} />
       <HomeStackNav.Screen name="Tasks" component={TasksScreen} options={{ title: 'My Tasks' }} />
       <HomeStackNav.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Expenses' }} />

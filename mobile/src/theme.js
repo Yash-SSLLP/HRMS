@@ -32,6 +32,10 @@ const lightColors = {
   textMuted: '#6b7280',
   textFaint: '#9ca3af',
 
+  // A dark "ink" panel that ALWAYS carries white text (admin banner, hero cards).
+  // Stays dark in both themes so white text never lands on a light surface.
+  panelInk: '#111827',
+
   border: '#e5e7eb',
   borderStrong: '#d1d5db',
 
@@ -63,6 +67,10 @@ const darkColors = {
   text: '#f1f5f9',
   textMuted: '#9aa7bd',
   textFaint: '#6b7280',
+
+  // Elevated graphite panel (contrasts with the near-black page bg) that keeps
+  // white text readable in dark mode — see lightColors.panelInk.
+  panelInk: '#232a38',
 
   border: '#2a2e37',
   borderStrong: '#3a3f4b',

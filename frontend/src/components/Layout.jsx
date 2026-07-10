@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
@@ -256,34 +256,56 @@ function NotificationBell({ isAdmin, portal }) {
 
 // Admin global employee search — debounced lookup against /employees?q= with a
 // results dropdown that navigates to the employee's detail page.
-function GlobalSearch() {
+// Global search in the top bar. Everyone can jump to any page/section they have
+// access to (type "attendance" → go straight there). HR/Admins additionally get
+// live employee results (name / code / email) that open the employee record.
+function GlobalSearch({ navItems = [], user, isAdmin }) {
   const [q, setQ] = useState('');
-  const [results, setResults] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const wrapRef = useRef(null);
   const navigate = useNavigate();
 
+  // Flatten the current portal's nav into the pages this user is allowed to see.
+  const pages = useMemo(() => {
+    const canSee = (i) => {
+      if (i.roles && !i.roles.includes(user?.role)) return false;
+      if (i.perm && !hasPermission(user, i.perm)) return false;
+      if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
+      return true;
+    };
+    const out = [];
+    (navItems || []).forEach((g) => {
+      const items = g.items || (g.to ? [g] : []);
+      items.forEach((i) => {
+        if (i.to && canSee(i)) out.push({ to: i.to, label: i.label, icon: i.icon, group: g.group || '' });
+      });
+    });
+    return out;
+  }, [navItems, user]);
+
+  const term = q.trim().toLowerCase();
+  const pageMatches = term
+    ? pages.filter((p) => p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)).slice(0, 6)
+    : [];
+
+  // Employee lookup (HR/Admin only), debounced.
   useEffect(() => {
-    const term = q.trim();
-    if (!term) {
-      setResults([]);
-      setLoading(false);
-      return undefined;
-    }
+    if (!isAdmin || !term) { setEmployees([]); setLoading(false); return undefined; }
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        const { data } = await api.get('/employees', { params: { q: term } });
-        setResults((data.profiles || []).slice(0, 8));
+        const { data } = await api.get('/employees', { params: { q: q.trim() } });
+        setEmployees((data.profiles || []).slice(0, 6));
       } catch {
-        setResults([]);
+        setEmployees([]);
       } finally {
         setLoading(false);
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, isAdmin]);
 
   useEffect(() => {
     const onClick = (e) => {
@@ -293,15 +315,14 @@ function GlobalSearch() {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  const go = (p) => {
-    setOpen(false);
-    setQ('');
-    setResults([]);
-    navigate(`/admin/employees/${p._id}`);
-  };
+  const reset = () => { setOpen(false); setQ(''); setEmployees([]); };
+  const goPage = (to) => { reset(); navigate(to); };
+  const goEmp = (p) => { reset(); navigate(`/admin/employees/${p._id}`); };
 
   const init = (p) =>
     ((p.user?.firstName?.[0] || '') + (p.user?.lastName?.[0] || '')).toUpperCase() || 'E';
+
+  const nothing = term && !loading && pageMatches.length === 0 && employees.length === 0;
 
   return (
     <div className="hidden md:flex items-center flex-1 max-w-md relative" ref={wrapRef}>
@@ -312,34 +333,69 @@ function GlobalSearch() {
           value={q}
           onChange={(e) => { setQ(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          placeholder="Search employees by name, code, email…"
+          placeholder={isAdmin ? 'Search pages or employees…' : 'Search pages…'}
           className="w-full pl-9 pr-3 py-2 text-sm bg-gray-100 border border-transparent rounded-lg focus:bg-white focus:border-gray-300 focus:outline-none"
         />
       </div>
-      {open && q.trim() && (
-        <div className="absolute top-full left-0 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
-          {loading ? (
-            <div className="px-4 py-3 text-sm text-gray-500">Searching…</div>
-          ) : results.length === 0 ? (
-            <div className="px-4 py-3 text-sm text-gray-500">No employees found</div>
-          ) : (
-            results.map((p) => (
-              <button
-                key={p._id}
-                onClick={() => go(p)}
-                className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-gray-50 border-b border-gray-50 last:border-0"
-              >
-                <span className="avatar-circle accent-bg text-white">{init(p)}</span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-gray-900 truncate">
-                    {`${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode}
-                  </span>
-                  <span className="block text-xs text-gray-500 truncate">
-                    {p.employeeCode} · {p.designation || '-'} · {p.department || '-'}
-                  </span>
-                </span>
-              </button>
-            ))
+      {open && term && (
+        <div className="absolute top-full left-0 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden max-h-[70vh] overflow-y-auto">
+          {/* Pages / sections */}
+          {pageMatches.length > 0 && (
+            <>
+              <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Pages</div>
+              {pageMatches.map((p) => {
+                const Icon = p.icon;
+                return (
+                  <button
+                    key={p.to}
+                    onClick={() => goPage(p.to)}
+                    className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-gray-50 border-b border-gray-50 last:border-0"
+                  >
+                    <span className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center text-gray-500 shrink-0">
+                      {Icon ? <Icon size={15} /> : '›'}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-gray-900 truncate">{p.label}</span>
+                      {p.group ? <span className="block text-xs text-gray-400 truncate">{p.group}</span> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </>
+          )}
+
+          {/* Employees (HR/Admin only) */}
+          {isAdmin && (
+            <>
+              <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Employees</div>
+              {loading ? (
+                <div className="px-4 py-3 text-sm text-gray-500">Searching…</div>
+              ) : employees.length === 0 ? (
+                <div className="px-4 py-3 text-sm text-gray-500">No employees found</div>
+              ) : (
+                employees.map((p) => (
+                  <button
+                    key={p._id}
+                    onClick={() => goEmp(p)}
+                    className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-gray-50 border-b border-gray-50 last:border-0"
+                  >
+                    <span className="avatar-circle accent-bg text-white">{init(p)}</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-gray-900 truncate">
+                        {`${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode}
+                      </span>
+                      <span className="block text-xs text-gray-500 truncate">
+                        {p.employeeCode} · {p.designation || '-'} · {p.department || '-'}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              )}
+            </>
+          )}
+
+          {nothing && !isAdmin && (
+            <div className="px-4 py-3 text-sm text-gray-500">No pages found</div>
           )}
         </div>
       )}
@@ -521,7 +577,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
             <span className="hidden sm:inline">Attendance</span>
           </Link>
 
-          {isAdmin && <GlobalSearch />}
+          <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
 
           {isExecViewer && (
             <span className="hidden sm:inline-flex items-center gap-1 ml-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200"

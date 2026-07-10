@@ -10,7 +10,7 @@ import {
   FiDollarSign, FiSliders, FiCreditCard, FiClipboard, FiCheckCircle,
   FiShoppingBag, FiMap, FiPercent, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
   FiFolder, FiList, FiPackage, FiFile,
-  FiVolume2, FiPieChart, FiFlag, FiAward,
+  FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
   FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget,
 } from 'react-icons/fi';
 
@@ -21,6 +21,7 @@ import {
 export const adminNav = [
   { group: 'Overview, Reports & Admin Tools', items: [
     { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome },
+    { to: '/admin/how-to-use', label: 'How to Use', icon: FiHelpCircle },
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },
     { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, perm: 'audit.view' },
     { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'] },
@@ -104,6 +105,7 @@ export const ldNav = [
 export const employeeNav = [
   { group: 'Overview', items: [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },
+    { to: '/employee/how-to-use', label: 'How to Use', icon: FiHelpCircle },
     { to: '/employee/approvals', label: 'Approvals', icon: FiCheckSquare },
     { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
     { to: '/employee/interviews', label: 'My Interviews', icon: FiUserCheck },

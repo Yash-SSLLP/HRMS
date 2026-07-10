@@ -57,6 +57,7 @@ const GROUPS = [
     title: 'Workplace',
     items: [
       { key: 'Announcements', label: 'Announcements', icon: 'megaphone', tint: '#4f46e5' },
+      { key: 'HowToUse', label: 'How to Use', icon: 'help-circle', tint: '#0d9488' },
       { key: 'Surveys', label: 'Surveys', icon: 'clipboard', tint: '#db2777' },
       { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
       { key: 'Assets', label: 'My Assets', icon: 'cube', tint: '#64748b' },

@@ -125,6 +125,9 @@ export default function DashboardScreen() {
               <Pill label={user?.role} tone="primary" />
             </View>
           </View>
+          <TouchableOpacity onPress={() => nav.navigate('Search')} style={styles.headerIconBtn} activeOpacity={0.7} accessibilityLabel="Search">
+            <Ionicons name="search" size={20} color={colors.text} />
+          </TouchableOpacity>
           <Avatar name={`${user?.firstName} ${user?.lastName}`} uri={avatarUri} size={52} color={accent} />
         </View>
 
@@ -341,6 +344,7 @@ function ProfileRow({ label, value }) {
 
 const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(4), marginTop: spacing(2) },
+  headerIconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border, marginRight: spacing(2) },
   annCard: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing(3), borderLeftWidth: 4, borderLeftColor: colors.primary },
   leaveRowDivider: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing(3), paddingTop: spacing(3) },
   leaveHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
@@ -350,7 +354,7 @@ const styles = StyleSheet.create({
   profileRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
   greeting: { ...font.label, fontSize: 14 },
   name: { fontSize: 24, fontWeight: '800', color: colors.text, marginTop: 2 },
-  adminCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.text, borderRadius: radius.lg, padding: spacing(4), marginBottom: spacing(4) },
+  adminCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.panelInk, borderRadius: radius.lg, padding: spacing(4), marginBottom: spacing(4) },
   adminIcon: { width: 42, height: 42, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
   adminTitle: { color: '#fff', fontSize: 16, fontWeight: '800' },
   adminSub: { color: 'rgba(255,255,255,0.7)', fontSize: 12.5, marginTop: 2 },

@@ -229,7 +229,7 @@ function SplitBar({ label, value, total, tint }) {
 }
 
 const styles = StyleSheet.create({
-  banner: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.text, borderRadius: radius.lg, padding: spacing(4), marginBottom: spacing(4) },
+  banner: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.panelInk, borderRadius: radius.lg, padding: spacing(4), marginBottom: spacing(4) },
   bannerIcon: { width: 44, height: 44, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
   bannerTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
   bannerSub: { color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 2 },

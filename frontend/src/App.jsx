@@ -70,6 +70,7 @@ const EmployeeOnboarding = lazy(() => import('./pages/EmployeeOnboarding.jsx'));
 const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
 const EmployeeAnnouncements = lazy(() => import('./pages/EmployeeAnnouncements.jsx'));
 const AdminRnr = lazy(() => import('./pages/AdminRnr.jsx'));
+const HowToUse = lazy(() => import('./pages/HowToUse.jsx'));
 const AdminOrgMasters = lazy(() => import('./pages/AdminOrgMasters.jsx'));
 const AdminOrgChart = lazy(() => import('./pages/AdminOrgChart.jsx'));
 const AdminConfirmations = lazy(() => import('./pages/AdminConfirmations.jsx'));
@@ -193,6 +194,7 @@ export default function App() {
         <Route path="courses" element={<AdminCourses />} />
         <Route path="analytics" element={<AdminAnalytics />} />
         <Route path="rnr" element={<AdminRnr />} />
+        <Route path="how-to-use" element={<HowToUse />} />
         <Route path="announcements" element={<AdminAnnouncements />} />
         <Route path="surveys" element={<AdminSurveys />} />
         <Route path="complaints" element={<AdminComplaints />} />
@@ -237,6 +239,7 @@ export default function App() {
         <Route path="reviews" element={<EmployeeReviews />} />
         <Route path="learning" element={<EmployeeLearning />} />
         <Route path="learning/:courseId" element={<CoursePlayerPage />} />
+        <Route path="how-to-use" element={<HowToUse />} />
         <Route path="announcements" element={<EmployeeAnnouncements />} />
         <Route path="surveys" element={<EmployeeSurveys />} />
         <Route path="calendar" element={<Calendar />} />
