@@ -158,7 +158,7 @@ export default function AdminAttendanceReport() {
         ) : !filter.employee ? (
           <div className="text-gray-500 py-10 text-center">Select an employee to view their daily report.</div>
         ) : (
-          <AttendanceDayChart days={days} />
+          <AttendanceDayChart days={days} height={330} />
         )}
       </div>
     </div>

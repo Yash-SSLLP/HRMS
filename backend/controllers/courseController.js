@@ -333,7 +333,7 @@ const reportIssue = asyncHandler(async (req, res) => {
     type: 'course',
     audience: 'admin',
     title: 'Course issue reported',
-    body: `${req.user.fullName || 'An employee'} reported "${category}" on "${course.title}"${moduleTitle ? ` — ${moduleTitle}` : ''}.`,
+    body: `${req.user.fullName || 'An employee'} reported "${category}" on "${course.title}"${moduleTitle ? ` - ${moduleTitle}` : ''}.`,
     link: '/admin/courses?panel=reports',
   }).catch(() => {});
 
@@ -547,7 +547,7 @@ const assignCourse = asyncHandler(async (req, res) => {
     type: 'course',
     audience: 'employee',
     title: 'New course assigned',
-    body: `You've been assigned "${course.title}"${dueDate ? ` — due ${dueDate.toLocaleDateString('en-IN')}` : ''}.`,
+    body: `You've been assigned "${course.title}"${dueDate ? ` - due ${dueDate.toLocaleDateString('en-IN')}` : ''}.`,
     link: `/employee/learning/${course._id}`,
   }).catch(() => {});
 

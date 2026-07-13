@@ -6,6 +6,7 @@ const {
   getAttendancePhoto,
   myHeatmap,
   orgHeatmap,
+  orgDayDetails,
   listMine,
   listAll,
   monthSummary,
@@ -45,6 +46,7 @@ router.get('/:id/photo/:which', getAttendancePhoto);
 router.use(requirePermission('attendance.manage'));
 
 router.get('/org/heatmap', orgHeatmap);
+router.get('/org/day', orgDayDetails);
 router.get('/month-summary', monthSummary);
 router.get('/daily-stats', dailyStats);
 router.get('/today-board', todayBoard);

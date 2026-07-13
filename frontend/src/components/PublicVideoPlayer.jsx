@@ -67,7 +67,7 @@ export default function PublicVideoPlayer({ src, durationSec = 0, onEnded, onErr
       />
       {locked && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
-          🔒 You can’t skip ahead — finish watching first
+          🔒 You can’t skip ahead - finish watching first
         </div>
       )}
     </div>

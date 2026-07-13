@@ -29,23 +29,23 @@ const FIELD_CATALOG = {
   esicNumber: { label: 'ESIC Number', model: 'Profile', path: 'esicNumber' },
 
   // --- Bank (EmployeeProfile) ---
-  'bankDetails.accountHolderName': { label: 'Bank — Account Holder', model: 'Profile', path: 'bankDetails.accountHolderName' },
-  'bankDetails.bankName': { label: 'Bank — Name', model: 'Profile', path: 'bankDetails.bankName' },
-  'bankDetails.branch': { label: 'Bank — Branch', model: 'Profile', path: 'bankDetails.branch' },
-  'bankDetails.accountNumber': { label: 'Bank — Account Number', model: 'Profile', path: 'bankDetails.accountNumber' },
-  'bankDetails.ifsc': { label: 'Bank — IFSC', model: 'Profile', path: 'bankDetails.ifsc' },
+  'bankDetails.accountHolderName': { label: 'Bank - Account Holder', model: 'Profile', path: 'bankDetails.accountHolderName' },
+  'bankDetails.bankName': { label: 'Bank - Name', model: 'Profile', path: 'bankDetails.bankName' },
+  'bankDetails.branch': { label: 'Bank - Branch', model: 'Profile', path: 'bankDetails.branch' },
+  'bankDetails.accountNumber': { label: 'Bank - Account Number', model: 'Profile', path: 'bankDetails.accountNumber' },
+  'bankDetails.ifsc': { label: 'Bank - IFSC', model: 'Profile', path: 'bankDetails.ifsc' },
 
   // --- Current address (EmployeeProfile) ---
-  'address.current.line1': { label: 'Address — Line 1', model: 'Profile', path: 'address.current.line1' },
-  'address.current.line2': { label: 'Address — Line 2', model: 'Profile', path: 'address.current.line2' },
-  'address.current.city': { label: 'Address — City', model: 'Profile', path: 'address.current.city' },
-  'address.current.state': { label: 'Address — State', model: 'Profile', path: 'address.current.state' },
-  'address.current.pincode': { label: 'Address — PIN Code', model: 'Profile', path: 'address.current.pincode' },
+  'address.current.line1': { label: 'Address - Line 1', model: 'Profile', path: 'address.current.line1' },
+  'address.current.line2': { label: 'Address - Line 2', model: 'Profile', path: 'address.current.line2' },
+  'address.current.city': { label: 'Address - City', model: 'Profile', path: 'address.current.city' },
+  'address.current.state': { label: 'Address - State', model: 'Profile', path: 'address.current.state' },
+  'address.current.pincode': { label: 'Address - PIN Code', model: 'Profile', path: 'address.current.pincode' },
 
   // --- Emergency contact (EmployeeProfile) ---
-  'emergencyContact.name': { label: 'Emergency Contact — Name', model: 'Profile', path: 'emergencyContact.name' },
-  'emergencyContact.relation': { label: 'Emergency Contact — Relation', model: 'Profile', path: 'emergencyContact.relation' },
-  'emergencyContact.phone': { label: 'Emergency Contact — Phone', model: 'Profile', path: 'emergencyContact.phone' },
+  'emergencyContact.name': { label: 'Emergency Contact - Name', model: 'Profile', path: 'emergencyContact.name' },
+  'emergencyContact.relation': { label: 'Emergency Contact - Relation', model: 'Profile', path: 'emergencyContact.relation' },
+  'emergencyContact.phone': { label: 'Emergency Contact - Phone', model: 'Profile', path: 'emergencyContact.phone' },
 };
 
 const changeRequestSchema = new mongoose.Schema(

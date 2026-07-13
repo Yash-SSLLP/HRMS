@@ -32,7 +32,7 @@ function buildExitEmail(ctx) {
 `Dear ${empFirst},
 
 Your last working day with ${org} was ${lwd}. On behalf of the entire team,
-thank you for your time and contributions — we wish you the very best in your
+thank you for your time and contributions - we wish you the very best in your
 future endeavours.
 
 As part of our offboarding process, we'd be grateful if you could spare a
@@ -43,18 +43,18 @@ Please open the exit-feedback form here:
 ${ctx.feedbackUrl}
 
 If you have any questions or need help, feel free to reply directly to this
-email — it will reach me.
+email - it will reach me.
 
 Warm regards,
 ${hrName}
-HR — ${org}`;
+HR - ${org}`;
 
   const html =
 `<!doctype html>
 <html><body style="font-family:Helvetica,Arial,sans-serif;color:#1f2937;line-height:1.55;max-width:560px;margin:0 auto;padding:24px;">
   <p>Dear ${empFirst},</p>
   <p>Your last working day with <strong>${org}</strong> was <strong>${lwd}</strong>.
-  On behalf of the entire team, thank you for your time and contributions — we wish you
+  On behalf of the entire team, thank you for your time and contributions - we wish you
   the very best in your future endeavours.</p>
   <p>As part of our offboarding process, we'd be grateful if you could spare a few
   minutes to share your feedback. Your honest input helps us become a better workplace
@@ -70,11 +70,11 @@ HR — ${org}`;
     Or paste this link into your browser:<br>
     <code style="background:#f4f4f5;padding:2px 6px;border-radius:3px;">${ctx.feedbackUrl}</code>
   </p>
-  <p>If you have any questions or need help, feel free to reply directly to this email — it will reach me.</p>
+  <p>If you have any questions or need help, feel free to reply directly to this email - it will reach me.</p>
   <p style="margin-top:32px;">
     Warm regards,<br>
     <strong>${hrName}</strong><br>
-    HR — ${org}
+    HR - ${org}
   </p>
 </body></html>`;
 

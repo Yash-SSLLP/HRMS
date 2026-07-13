@@ -144,7 +144,7 @@ export default function RnrScreen() {
         <View style={{ alignItems: 'center' }}>
           <Text style={styles.monthTitle}>{MONTHS_FULL[month]} {year}</Text>
           {announced
-            ? <Text style={font.small}>Announced · banner until {award?.bannerExpiresAt ? new Date(award.bannerExpiresAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}</Text>
+            ? <Text style={font.small}>Announced · banner until {award?.bannerExpiresAt ? new Date(award.bannerExpiresAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-'}</Text>
             : <Text style={font.small}>{selectedCount} selected · hidden from employees</Text>}
         </View>
         <TouchableOpacity onPress={() => shift(1)} style={styles.nav}><Ionicons name="chevron-forward" size={22} color={colors.primary} /></TouchableOpacity>
@@ -157,7 +157,7 @@ export default function RnrScreen() {
           {announced && (
             <Card style={[styles.notice, { marginBottom: spacing(3) }]}>
               <Ionicons name="lock-closed" size={16} color={AMBER} />
-              <Text style={[font.small, { flex: 1, marginLeft: 8 }]}>Announced and visible to all employees — this month can no longer be edited.</Text>
+              <Text style={[font.small, { flex: 1, marginLeft: 8 }]}>Announced and visible to all employees - this month can no longer be edited.</Text>
             </Card>
           )}
 
@@ -220,7 +220,7 @@ export default function RnrScreen() {
               <Avatar name={p.name} uri={personUri(p)} size={40} color={AMBER} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={font.body}>{p.name}</Text>
-                <Text style={font.small}>{p.designation || '—'}{p.department ? ` · ${p.department}` : ''}</Text>
+                <Text style={font.small}>{p.designation || '-'}{p.department ? ` · ${p.department}` : ''}</Text>
               </View>
             </TouchableOpacity>
           ))
@@ -240,7 +240,7 @@ function SlotRow({ person, placeholder, onPress, disabled }) {
             <Avatar name={person.name} uri={personUri(person)} size={40} color={AMBER} />
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={font.body}>{person.name}</Text>
-              <Text style={font.small}>{person.designation || '—'}{person.department ? ` · ${person.department}` : ''}</Text>
+              <Text style={font.small}>{person.designation || '-'}{person.department ? ` · ${person.department}` : ''}</Text>
             </View>
           </>
         ) : (

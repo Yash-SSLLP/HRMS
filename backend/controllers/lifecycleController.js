@@ -32,7 +32,7 @@ const listConfirmations = asyncHandler(async (req, res) => {
     return {
       _id: p._id,
       employeeCode: p.employeeCode,
-      name: name || u.email || '—',
+      name: name || u.email || '-',
       designation: p.designation,
       department: p.department,
       dateOfJoining: p.dateOfJoining,

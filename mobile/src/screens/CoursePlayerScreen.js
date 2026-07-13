@@ -209,7 +209,7 @@ export default function CoursePlayerScreen() {
                 />
                 {locked && (
                   <View style={styles.skipLock} pointerEvents="none">
-                    <Text style={styles.skipLockText}>🔒 You can't skip ahead — finish watching first</Text>
+                    <Text style={styles.skipLockText}>🔒 You can't skip ahead - finish watching first</Text>
                   </View>
                 )}
               </View>

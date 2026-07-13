@@ -134,7 +134,7 @@ const reviewRequest = asyncHandler(async (req, res) => {
     type: 'regularization',
     audience: 'employee',
     title: `Attendance regularization ${status.toLowerCase()}`,
-    body: `Your request for ${new Date(item.date).toLocaleDateString('en-IN', { dateStyle: 'medium' })} was ${status.toLowerCase()}${reviewNote ? ` — ${reviewNote}` : ''}.`,
+    body: `Your request for ${new Date(item.date).toLocaleDateString('en-IN', { dateStyle: 'medium' })} was ${status.toLowerCase()}${reviewNote ? ` - ${reviewNote}` : ''}.`,
     link: 'regularizations',
   }).catch(() => {});
 

@@ -161,7 +161,7 @@ export default function AdminDocuments() {
                 </select>
               </div>
               <div className="md:col-span-2">
-                <label className="block text-sm text-gray-700">File — you can select several</label>
+                <label className="block text-sm text-gray-700">File - you can select several</label>
                 <input ref={fileRef} type="file" required multiple
                   accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx"
                   className="mt-1 block w-full text-sm" />

@@ -258,7 +258,7 @@ export default function AdminPayrollRun() {
                       <Stat label="Excess leave" value={c.policy.excessLeave} warn={c.policy.excessLeave > 0} />
                     </div>
                     <p className="text-[11px] text-gray-400 mt-2">
-                      {c.policy.paidLeaveQuota} paid leaves/month — unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
+                      {c.policy.paidLeaveQuota} paid leaves/month - unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
                       {' '}First {c.policy.lateAllowance} lates free; each extra costs {inr(c.policy.lateRate)}/day (monthly Basic {c.policy.monthlyBasic < 25000 ? '<' : '≥'} ₹25,000).
                     </p>
                   </>

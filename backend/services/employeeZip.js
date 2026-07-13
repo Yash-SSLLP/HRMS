@@ -10,9 +10,9 @@ function safe(name) {
 }
 
 function fmtDate(d) {
-  if (!d) return '—';
+  if (!d) return '-';
   const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return '—';
+  if (Number.isNaN(dt.getTime())) return '-';
   return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
@@ -25,13 +25,13 @@ function buildDetailsText(profile) {
   const perm = profile.address?.permanent || {};
   const ec = profile.emergencyContact || {};
 
-  const line = (k, v) => `${k.padEnd(22)}: ${v ?? '—'}`;
+  const line = (k, v) => `${k.padEnd(22)}: ${v ?? '-'}`;
   const addr = (a) =>
-    [a.line1, a.line2, a.city, a.state, a.pincode, a.country].filter(Boolean).join(', ') || '—';
+    [a.line1, a.line2, a.city, a.state, a.pincode, a.country].filter(Boolean).join(', ') || '-';
 
   return [
     '==================================================',
-    `  EMPLOYEE DETAILS — ${`${u.firstName || ''} ${u.lastName || ''}`.trim()}`,
+    `  EMPLOYEE DETAILS - ${`${u.firstName || ''} ${u.lastName || ''}`.trim()}`,
     '==================================================',
     '',
     '[ Identity ]',
@@ -48,8 +48,8 @@ function buildDetailsText(profile) {
     line('Employment Type', profile.employmentType),
     line('Work Location', profile.workLocation),
     line('Date of Joining', fmtDate(profile.dateOfJoining)),
-    line('Date of Exit', profile.dateOfExit ? fmtDate(profile.dateOfExit) : '—'),
-    line('HR Partner', hr.firstName ? `${hr.firstName} ${hr.lastName} (${hr.email || ''})` : '—'),
+    line('Date of Exit', profile.dateOfExit ? fmtDate(profile.dateOfExit) : '-'),
+    line('HR Partner', hr.firstName ? `${hr.firstName} ${hr.lastName} (${hr.email || ''})` : '-'),
     line('Documents Verified', profile.documentsVerified ? 'Yes' : 'No'),
     '',
     '[ Personal ]',

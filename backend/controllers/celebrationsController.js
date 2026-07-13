@@ -297,14 +297,14 @@ const sendWish = asyncHandler(async (req, res) => {
   await enqueueMail({
     to: profile.user.email,
     subject: `${emoji} ${occasion} wishes from ${fromName}`,
-    text: `Hi ${toFirst},\n\n${wishLine}\n\n— ${fromName}`,
+    text: `Hi ${toFirst},\n\n${wishLine}\n\n- ${fromName}`,
     html: `
       <div style="font-family:Inter,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
         <div style="font-size:40px;text-align:center;">${emoji}</div>
         <h2 style="text-align:center;color:#111827;margin:8px 0 16px;">${occasion} Wishes!</h2>
         <p style="color:#374151;font-size:15px;line-height:1.6;">Hi ${toFirst},</p>
         <p style="color:#374151;font-size:15px;line-height:1.6;">${wishLine}</p>
-        <p style="color:#6b7280;font-size:14px;margin-top:20px;">— ${fromName}</p>
+        <p style="color:#6b7280;font-size:14px;margin-top:20px;">- ${fromName}</p>
       </div>`,
   });
 

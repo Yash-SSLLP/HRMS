@@ -95,7 +95,7 @@ export default function WorkLocationsScreen() {
                   <Text style={[font.small, { color: colors.primary, marginTop: 4 }]}>📍 {Number(l.lat).toFixed(5)}, {Number(l.lng).toFixed(5)}</Text>
                 </TouchableOpacity>
               ) : (
-                <Text style={[font.small, { color: colors.warning, marginTop: 4 }]}>No coordinates — punches here won't be geofenced</Text>
+                <Text style={[font.small, { color: colors.warning, marginTop: 4 }]}>No coordinates - punches here won't be geofenced</Text>
               )}
 
               <View style={styles.rowActions}>

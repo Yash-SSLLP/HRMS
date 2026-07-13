@@ -11,6 +11,7 @@ import BarChart from '../components/BarChart';
 import ClockInOutCard from '../components/ClockInOutCard';
 import AttendanceReportWidget from '../components/AttendanceReportWidget';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import { hasPermission } from '../config/permissions';
 import {
   FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiGrid, FiFileText,
 } from 'react-icons/fi';
@@ -106,11 +107,13 @@ export default function AdminOverview() {
         <StatCard icon={<FiFileText />} tint="bg-orange-100" iconColor="text-orange-600" value={c.documentsIncomplete ?? '-'} label="Docs incomplete" to="/admin/employees" />
       </div>
 
-      {/* Attendance heatmap. SuperAdmin sees an org-wide "present count" heatmap;
-          everyone else sees their own present days. */}
+      {/* Attendance heatmap. Anyone who can manage attendance (SuperAdmin / HR /
+          execs) sees an org-wide aggregate — each day shaded by how many were
+          present, with hover counts (present / late / on leave) and a click-through
+          to the employee names. Everyone else sees their own present days. */}
       <div className="bg-white shadow rounded-lg p-5 mb-4">
-        <h2 className="card-title mb-3">{user?.role === 'SuperAdmin' ? 'Team Attendance' : 'My Attendance'}</h2>
-        <AttendanceHeatmap org={user?.role === 'SuperAdmin'} />
+        <h2 className="card-title mb-3">{hasPermission(user, 'attendance.manage') ? 'Attendance Overview' : 'My Attendance'}</h2>
+        <AttendanceHeatmap org={hasPermission(user, 'attendance.manage')} />
       </div>
 
       {/* Per-day attendance trends */}

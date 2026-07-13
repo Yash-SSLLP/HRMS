@@ -333,36 +333,56 @@ const myHeatmap = asyncHandler(async (req, res) => {
 // were full-day / half-day / on leave / comp-off / absent. Intensity = number
 // present (full + half). One category per employee per day, same precedence as
 // the personal heatmap: worked > comp-off > leave > absent.
-const orgHeatmap = asyncHandler(async (req, res) => {
-  const span = Math.min(Number(req.query.days) || 365, 400);
+// Shared aggregation for the org/team heatmap. `empIds` scopes it to a set of
+// EmployeeProfile ids (a manager's direct reports); pass null for the whole org.
+// One category per (employee, day); intensity = present (full + half). `late` is
+// a sub-count of full days where the check-in was after the WORKDAY_START_HOUR
+// grace cut-off (present people who arrived late).
+const computeHeatmapWindow = async ({ empIds, span }) => {
+  const { LeaveRequest } = require('../models/Leave');
+  const CompOff = require('../models/CompOff');
+
   const end = startOfDay(new Date());
   const start = startOfDay(new Date());
   start.setDate(start.getDate() - (span - 1));
 
-  const { LeaveRequest } = require('../models/Leave');
-  const CompOff = require('../models/CompOff');
-
-  const [profiles, records, leaves, comps] = await Promise.all([
-    EmployeeProfile.find({}).select('_id user').lean(),
-    Attendance.find({ date: { $gte: start, $lte: end } }).select('employee date status').lean(),
-    LeaveRequest.find({ status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start } })
-      .select('employee startDate endDate').lean(),
-    CompOff.find({ status: 'Availed', availedOn: { $gte: start, $lte: end } })
-      .select('employee availedOn').lean(),
-  ]);
-
-  const totalEmployees = profiles.length;
+  const profiles = await EmployeeProfile.find(empIds ? { _id: { $in: empIds } } : {})
+    .select('_id user').lean();
+  const idSet = new Set(profiles.map((p) => String(p._id)));
+  const userIds = profiles.map((p) => p.user).filter(Boolean);
   // CompOff.employee is a User id; map it to the EmployeeProfile id used elsewhere.
   const userToEmp = {};
   for (const p of profiles) userToEmp[String(p.user)] = String(p._id);
 
-  // One category per (employee, day).
+  const attFilter = { date: { $gte: start, $lte: end } };
+  const leaveFilter = { status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start } };
+  const compFilter = { status: 'Availed', availedOn: { $gte: start, $lte: end } };
+  if (empIds) {
+    attFilter.employee = { $in: empIds };
+    leaveFilter.employee = { $in: empIds };
+    compFilter.employee = { $in: userIds };
+  }
+
+  const [records, leaves, comps] = await Promise.all([
+    Attendance.find(attFilter).select('employee date status checkIn').lean(),
+    LeaveRequest.find(leaveFilter).select('employee startDate endDate').lean(),
+    CompOff.find(compFilter).select('employee availedOn').lean(),
+  ]);
+
+  // One category per (employee, day); `lateSet` marks the late full days.
   const cls = new Map(); // `${empId}|${ymd}` -> category
+  const lateSet = new Set();
 
   for (const r of records) {
+    if (empIds && !idSet.has(String(r.employee))) continue;
     const key = `${String(r.employee)}|${ymdLocal(r.date)}`;
-    if (r.status === 'Present') cls.set(key, 'full');
-    else if (r.status === 'HalfDay') cls.set(key, 'half');
+    if (r.status === 'Present') {
+      cls.set(key, 'full');
+      if (r.checkIn) {
+        const cutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+        if (new Date(r.checkIn) > cutoff) lateSet.add(key);
+      }
+    } else if (r.status === 'HalfDay') cls.set(key, 'half');
     else if (r.status === 'OnLeave') cls.set(key, 'leave');
     else if (r.status === 'Absent') cls.set(key, 'absent');
   }
@@ -395,8 +415,9 @@ const orgHeatmap = asyncHandler(async (req, res) => {
   const byDay = {};
   for (const [key, cat] of cls) {
     const ymd = key.split('|')[1];
-    const b = byDay[ymd] || (byDay[ymd] = { date: ymd, full: 0, half: 0, leave: 0, compoff: 0, absent: 0 });
+    const b = byDay[ymd] || (byDay[ymd] = { date: ymd, full: 0, half: 0, leave: 0, compoff: 0, absent: 0, late: 0 });
     b[cat] += 1;
+    if (cat === 'full' && lateSet.has(key)) b.late += 1;
   }
 
   let maxPresent = 0;
@@ -406,7 +427,129 @@ const orgHeatmap = asyncHandler(async (req, res) => {
     return { ...b, present };
   });
 
-  res.json({ from: ymdLocal(start), to: ymdLocal(end), totalEmployees, maxPresent, days });
+  return { from: ymdLocal(start), to: ymdLocal(end), totalEmployees: profiles.length, maxPresent, days };
+};
+
+// Shared per-day breakdown WITH employee names, for the heatmap click-through
+// modal. Same classification/precedence as the heatmap. `empIds` scopes to a
+// manager's reports; null = whole org.
+const computeDayDetails = async ({ empIds, dateStr }) => {
+  const { LeaveRequest } = require('../models/Leave');
+  const CompOff = require('../models/CompOff');
+
+  const day = new Date(`${dateStr}T00:00:00+05:30`); // IST midnight of that day
+  const next = new Date(day);
+  next.setDate(day.getDate() + 1);
+  const cutoff = new Date(day.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+
+  const profiles = await EmployeeProfile.find(empIds ? { _id: { $in: empIds } } : {})
+    .select('_id user employeeCode designation department')
+    .populate('user', 'firstName lastName')
+    .lean();
+  const byId = new Map(profiles.map((p) => [String(p._id), p]));
+  const userIds = profiles.map((p) => p.user?._id || p.user).filter(Boolean);
+  const userToEmp = {};
+  for (const p of profiles) userToEmp[String(p.user?._id || p.user)] = String(p._id);
+
+  const attFilter = { date: { $gte: day, $lt: next } };
+  const leaveFilter = { status: 'Approved', startDate: { $lte: day }, endDate: { $gte: day } };
+  const compFilter = { status: 'Availed', availedOn: { $gte: day, $lt: next }, employee: { $in: userIds } };
+  if (empIds) {
+    attFilter.employee = { $in: empIds };
+    leaveFilter.employee = { $in: empIds };
+  }
+
+  const [records, leaves, comps] = await Promise.all([
+    Attendance.find(attFilter).select('employee status checkIn checkOut date').lean(),
+    LeaveRequest.find(leaveFilter).select('employee leaveType isHalfDay halfDaySession').lean(),
+    CompOff.find(compFilter).select('employee availedOn').lean(),
+  ]);
+
+  const cat = new Map();  // empId -> category
+  const info = new Map(); // empId -> extra fields
+
+  for (const r of records) {
+    const id = String(r.employee);
+    if (!byId.has(id)) continue;
+    if (r.status === 'Present') {
+      const late = r.checkIn ? new Date(r.checkIn) > cutoff : false;
+      cat.set(id, 'full');
+      info.set(id, { checkIn: r.checkIn || null, checkOut: r.checkOut || null, late });
+    } else if (r.status === 'HalfDay') { cat.set(id, 'half'); info.set(id, { checkIn: r.checkIn || null }); }
+    else if (r.status === 'OnLeave') cat.set(id, 'leave');
+    else if (r.status === 'Absent') cat.set(id, 'absent');
+  }
+  for (const lv of leaves) {
+    const id = String(lv.employee);
+    if (!byId.has(id)) continue;
+    const cur = cat.get(id);
+    if (!cur || cur === 'absent') {
+      cat.set(id, 'leave');
+      info.set(id, { leaveType: lv.leaveType, half: !!lv.isHalfDay, session: lv.halfDaySession || null });
+    }
+  }
+  for (const c of comps) {
+    const id = userToEmp[String(c.employee)];
+    if (!id || !byId.has(id)) continue;
+    const cur = cat.get(id);
+    if (cur !== 'full' && cur !== 'half') cat.set(id, 'compoff');
+  }
+
+  const nameOf = (p) => `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode || 'Unknown';
+  const person = (id, extra = {}) => {
+    const p = byId.get(id);
+    return {
+      name: nameOf(p),
+      employeeCode: p.employeeCode || '',
+      designation: p.designation || '',
+      department: p.department || '',
+      ...extra,
+    };
+  };
+
+  const present = [], late = [], half = [], leave = [], compoff = [], absent = [];
+  for (const [id, c] of cat) {
+    const x = info.get(id) || {};
+    if (c === 'full') {
+      present.push(person(id, { checkIn: x.checkIn, checkOut: x.checkOut, late: !!x.late }));
+      if (x.late) late.push(person(id, { checkIn: x.checkIn }));
+    } else if (c === 'half') half.push(person(id, { checkIn: x.checkIn }));
+    else if (c === 'leave') leave.push(person(id, { leaveType: x.leaveType || '', half: !!x.half, session: x.session || null }));
+    else if (c === 'compoff') compoff.push(person(id));
+    else if (c === 'absent') absent.push(person(id));
+  }
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  [present, late, half, leave, compoff, absent].forEach((l) => l.sort(byName));
+
+  return {
+    date: dateStr,
+    counts: {
+      total: profiles.length,
+      present: present.length,
+      late: late.length,
+      half: half.length,
+      leave: leave.length,
+      compoff: compoff.length,
+      absent: absent.length,
+    },
+    present, late, half, leave, compoff, absent,
+  };
+};
+
+const orgHeatmap = asyncHandler(async (req, res) => {
+  const span = Math.min(Number(req.query.days) || 365, 400);
+  res.json(await computeHeatmapWindow({ empIds: null, span }));
+});
+
+// GET /api/attendance/org/day?date=YYYY-MM-DD  (HR/Admin) — who was late / on
+// leave / present / absent on a given day, by name (heatmap click-through).
+const orgDayDetails = asyncHandler(async (req, res) => {
+  const dateStr = String(req.query.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    res.status(400);
+    throw new Error('A valid date (YYYY-MM-DD) is required.');
+  }
+  res.json(await computeDayDetails({ empIds: null, dateStr }));
 });
 
 // GET /api/attendance/me?year=&month=
@@ -863,6 +1006,9 @@ module.exports = {
   getAttendancePhoto,
   myHeatmap,
   orgHeatmap,
+  orgDayDetails,
+  computeHeatmapWindow,
+  computeDayDetails,
   listMine,
   listAll,
   monthSummary,

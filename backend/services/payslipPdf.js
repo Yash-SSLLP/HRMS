@@ -34,7 +34,7 @@ const formatINR = (n) =>
   new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 
 const formatDate = (d) => {
-  if (!d) return '—';
+  if (!d) return '-';
   const dt = new Date(d);
   return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
 };
@@ -135,7 +135,7 @@ function renderPayslip(payslip, ytd = { earnings: {}, deductions: {} }) {
     // Left: employee details
     let ly = y + 28;
     doc.font(F.bold).fontSize(11).fillColor(TXT)
-      .text(`${user.firstName || ''} ${user.lastName || ''}`.trim() || '—', x0, ly, { width: leftW });
+      .text(`${user.firstName || ''} ${user.lastName || ''}`.trim() || '-', x0, ly, { width: leftW });
     ly += 18;
     doc.font(F.regular).fontSize(9).fillColor(MUTED);
     const addrLines = [
@@ -153,13 +153,13 @@ function renderPayslip(payslip, ytd = { earnings: {}, deductions: {} }) {
     const cell = (cx, cy, cw, ch, bg, text, color, bold) => {
       doc.rect(cx, cy, cw - 2, ch).fill(bg);
       doc.font(bold ? F.bold : F.regular).fontSize(8).fillColor(color)
-        .text(String(text ?? '—'), cx + 5, cy + ch / 2 - 4, { width: cw - 10, align: bold ? 'left' : 'left', lineBreak: false });
+        .text(String(text ?? '-'), cx + 5, cy + ch / 2 - 4, { width: cw - 10, align: bold ? 'left' : 'left', lineBreak: false });
     };
     const rowH = 18;
     const headers1 = ['PAY DATE', 'PAY TYPE', 'PERIOD'];
     const values1 = [formatDate(payslip.paymentDate), 'Monthly', monthLabel];
     const headers2 = ['PAYROLL #', 'PAN', 'UAN'];
-    const values2 = [emp.employeeCode || '—', emp.pan || '—', emp.uan || '—'];
+    const values2 = [emp.employeeCode || '-', emp.pan || '-', emp.uan || '-'];
 
     let gy = y;
     headers1.forEach((h, i) => cell(gridX + i * colW, gy, colW, rowH, BLUE, h, WHITE, true));
@@ -267,7 +267,7 @@ function renderPayslip(payslip, ytd = { earnings: {}, deductions: {} }) {
     y += 26 + 8;
 
     doc.font(F.regular).fontSize(8).fillColor(MUTED)
-      .text(`Paid Days: ${payslip.paidDays ?? '—'}    |    LOP Days: ${payslip.lopDays ?? 0}`,
+      .text(`Paid Days: ${payslip.paidDays ?? '-'}    |    LOP Days: ${payslip.lopDays ?? 0}`,
         x0, y, { width: W, align: 'right' });
     y += 30;
 

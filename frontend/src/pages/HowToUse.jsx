@@ -150,7 +150,7 @@ export default function HowToUse() {
 
   return (
     <div>
-      <PageHeader title="How to Use the App" subtitle="A complete walkthrough of the HRMS — every screen and how to use it." />
+      <PageHeader title="How to Use the App" subtitle="A complete walkthrough of the HRMS - every screen and how to use it." />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {isAdminPortal && (

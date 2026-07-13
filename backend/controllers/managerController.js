@@ -6,6 +6,13 @@ const { LeaveRequest } = require('../models/Leave');
 const { advanceApproval } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { haversineMeters } = require('../utils/geo');
+const { computeHeatmapWindow, computeDayDetails } = require('./attendanceController');
+
+// EmployeeProfile ids of the caller's direct reports (for team-scoped queries).
+async function myReportIds(userId) {
+  const rows = await EmployeeProfile.find({ reportingManager: userId }).select('_id').lean();
+  return rows.map((p) => p._id);
+}
 
 const WORKDAY_START_HOUR = 10; // 10:00 AM IST grace cut-off for lateness (matches attendance board)
 
@@ -221,4 +228,32 @@ const rejectTeamLeave = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
-module.exports = { listTeam, teamPresence, listTeamLeave, approveTeamLeave, rejectTeamLeave };
+// GET /api/manager/attendance/heatmap?days= — team-scoped attendance heatmap
+// (same shape as the org heatmap, limited to the caller's direct reports).
+const teamHeatmap = asyncHandler(async (req, res) => {
+  const span = Math.min(Number(req.query.days) || 365, 400);
+  const empIds = await myReportIds(req.user._id);
+  res.json(await computeHeatmapWindow({ empIds, span }));
+});
+
+// GET /api/manager/attendance/day?date=YYYY-MM-DD — per-day breakdown with names
+// for the heatmap click-through, limited to the caller's direct reports.
+const teamDayDetails = asyncHandler(async (req, res) => {
+  const dateStr = String(req.query.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    res.status(400);
+    throw new Error('A valid date (YYYY-MM-DD) is required.');
+  }
+  const empIds = await myReportIds(req.user._id);
+  res.json(await computeDayDetails({ empIds, dateStr }));
+});
+
+module.exports = {
+  listTeam,
+  teamPresence,
+  listTeamLeave,
+  approveTeamLeave,
+  rejectTeamLeave,
+  teamHeatmap,
+  teamDayDetails,
+};

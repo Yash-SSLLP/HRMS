@@ -17,7 +17,7 @@ export default function PrivacyPolicy() {
           </section>
           <section>
             <h2 className="font-semibold text-gray-900 mb-1">How we use it</h2>
-            <p>Only to run internal HR operations — attendance, leave, payroll, statutory compliance, performance, and communication. We do not sell your data or use it for advertising.</p>
+            <p>Only to run internal HR operations - attendance, leave, payroll, statutory compliance, performance, and communication. We do not sell your data or use it for advertising.</p>
           </section>
           <section>
             <h2 className="font-semibold text-gray-900 mb-1">Who can see it</h2>

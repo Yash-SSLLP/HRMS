@@ -436,7 +436,7 @@ export default function AdminRecruitment() {
                 <td className="px-4 py-3 text-gray-600">{j.department || '-'}{j.location ? ` · ${j.location}` : ''}</td>
                 <td className="px-4 py-3">
                   <button onClick={() => openJobCandidates(j)}
-                    title="Review applicants — shortlist or reject"
+                    title="Review applicants - shortlist or reject"
                     className="inline-flex items-center gap-1 text-blue-600 hover:underline">{j.candidateCount} →</button>
                 </td>
                 <td className="px-4 py-3 text-gray-600">{j.status}</td>

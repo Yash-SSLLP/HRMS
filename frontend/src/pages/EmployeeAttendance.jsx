@@ -47,7 +47,7 @@ const PunchLocation = ({ loc, className = '' }) =>
       target="_blank"
       rel="noreferrer"
       title={loc.accuracy != null ? `Accuracy ±${Math.round(loc.accuracy)} m` : 'View on map'}
-      className={`inline-flex items-center gap-0.5 text-xs text-blue-600 hover:underline font-normal ${className}`}
+      className={`inline-flex items-center gap-0.5 text-xs text-blue-600 plain-link font-normal ${className}`}
     >
       📍 {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
     </a>
@@ -303,13 +303,13 @@ export default function EmployeeAttendance() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <Metric label="Late arrivals" value={`${p.lateDays} / ${p.lateAllowance}`} tone={p.excessLate > 0 ? 'red' : 'green'} sub={p.excessLate > 0 ? `${p.excessLate} over the limit` : 'within limit'} />
-              <Metric label="Expected late deduction" value={inr(p.latePenalty)} tone={p.latePenalty > 0 ? 'red' : 'gray'} sub={p.excessLate > 0 ? `${p.excessLate} × ${inr(p.lateRate)}/day` : '—'} />
+              <Metric label="Expected late deduction" value={inr(p.latePenalty)} tone={p.latePenalty > 0 ? 'red' : 'gray'} sub={p.excessLate > 0 ? `${p.excessLate} × ${inr(p.lateRate)}/day` : '-'} />
               <Metric label="Paid leave used" value={`${p.leaveTaken} / ${p.paidLeaveQuota}`} tone={p.excessLeave > 0 ? 'red' : 'gray'} sub={p.excessLeave > 0 ? `${p.excessLeave} day(s) LOP` : 'of monthly quota'} />
-              <Metric label="Leave incentive" value={inr(p.leaveIncentive)} tone={p.leaveIncentive > 0 ? 'green' : 'gray'} sub={p.unusedLeave > 0 ? `${p.unusedLeave} unused day(s)` : '—'} />
+              <Metric label="Leave incentive" value={inr(p.leaveIncentive)} tone={p.leaveIncentive > 0 ? 'green' : 'gray'} sub={p.unusedLeave > 0 ? `${p.unusedLeave} unused day(s)` : '-'} />
             </div>
             <p className="text-[11px] text-gray-400 mt-3">
               First {p.lateAllowance} late arrivals each month are free; beyond that, every late day is deducted at {inr(p.lateRate)}/day.
-              {' '}{p.paidLeaveQuota} paid leaves each month — unused days are added to your pay, extra days are unpaid (LOP).
+              {' '}{p.paidLeaveQuota} paid leaves each month - unused days are added to your pay, extra days are unpaid (LOP).
               {policy.needsSetup ? ' Amounts finalise once your salary is set up by HR.' : ''}
             </p>
           </div>

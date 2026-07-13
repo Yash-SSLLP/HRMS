@@ -51,7 +51,7 @@ function uploadToCloudinary(sig, file, onProgress) {
         reject(new Error(msg));
       }
     };
-    xhr.onerror = () => reject(new Error('Upload failed — network error'));
+    xhr.onerror = () => reject(new Error('Upload failed - network error'));
     xhr.send(fd);
   });
 }
@@ -315,8 +315,8 @@ export default function AdminCourses() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Course type</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {[
-                    ['internal', '🏢 Internal', 'Only your employees — shows in their catalog, assignable.'],
-                    ['external', '🌐 External', 'Public no-login link — anyone can watch after a short form.'],
+                    ['internal', '🏢 Internal', 'Only your employees - shows in their catalog, assignable.'],
+                    ['external', '🌐 External', 'Public no-login link - anyone can watch after a short form.'],
                   ].map(([val, label, hint]) => (
                     <button type="button" key={val} onClick={() => setForm({ ...form, courseType: val })}
                       className={`text-left border rounded-lg px-3 py-2 ${form.courseType === val ? 'border-gray-900 ring-1 ring-gray-900 bg-gray-50' : 'hover:bg-gray-50'}`}>
@@ -405,7 +405,7 @@ export default function AdminCourses() {
                                     </label>
                                     {m.cloudinaryPublicId && !uploading && (
                                       <span className="text-green-600 text-xs">
-                                        ✓ Uploaded{m._uploadName ? ` — ${m._uploadName}` : ''}{m.videoSizeBytes ? ` (${fmtBytes(m.videoSizeBytes)})` : ''}
+                                        ✓ Uploaded{m._uploadName ? ` - ${m._uploadName}` : ''}{m.videoSizeBytes ? ` (${fmtBytes(m.videoSizeBytes)})` : ''}
                                       </span>
                                     )}
                                   </div>
@@ -748,7 +748,7 @@ function ShareModal({ course, onClose }) {
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
         </div>
 
-        <div className="text-xs text-gray-500 mb-2">Anyone with this link can watch after a short form (name, phone, location) — no login.</div>
+        <div className="text-xs text-gray-500 mb-2">Anyone with this link can watch after a short form (name, phone, location) - no login.</div>
         <div className="flex gap-2 mb-4">
           <input readOnly value={publicUrl} className="flex-1 border rounded-lg px-3 py-2 text-sm bg-gray-50" onFocus={(e) => e.target.select()} />
           <button onClick={copy} className="px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">{copied ? 'Copied ✓' : 'Copy'}</button>

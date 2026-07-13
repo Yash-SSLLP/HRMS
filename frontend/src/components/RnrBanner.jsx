@@ -96,7 +96,7 @@ export default function RnrBanner() {
                 </div>
                 <div className="font-semibold text-gray-900 truncate">{eom.name}</div>
                 <div className="text-xs text-gray-500 truncate">
-                  {eom.designation || '—'}{eom.department ? ` · ${eom.department}` : ''}
+                  {eom.designation || '-'}{eom.department ? ` · ${eom.department}` : ''}
                 </div>
                 {eom.citation && <div className="text-xs text-gray-600 mt-1 line-clamp-2">{eom.citation}</div>}
               </div>
@@ -116,7 +116,7 @@ export default function RnrBanner() {
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-gray-900 truncate">{w.name}</div>
                       <div className="text-xs text-gray-500 truncate">
-                        {w.department || '—'}{w.designation ? ` · ${w.designation}` : ''}
+                        {w.department || '-'}{w.designation ? ` · ${w.designation}` : ''}
                       </div>
                     </div>
                   </div>

@@ -102,7 +102,7 @@ export default function AdminRnr() {
     try {
       const a = await save();
       await api.post(`/rnr/${a._id}/announce`);
-      toast.success('Announced — employees notified 🎉');
+      toast.success('Announced - employees notified 🎉');
       await load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Announce failed');
@@ -113,7 +113,7 @@ export default function AdminRnr() {
 
   return (
     <div>
-      <PageHeader title="Rewards & Recognition" subtitle="Pick the monthly Employee of the Month and one Key Achiever per department — kept secret until you announce." />
+      <PageHeader title="Rewards & Recognition" subtitle="Pick the monthly Employee of the Month and one Key Achiever per department - kept secret until you announce." />
 
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
@@ -148,7 +148,7 @@ export default function AdminRnr() {
               onChange={(e) => setEom(e.target.value)}
               className="border rounded-lg px-3 py-2 text-sm bg-white w-full max-w-md disabled:bg-gray-50"
             >
-              <option value="">— Select employee —</option>
+              <option value="">- Select employee -</option>
               {people.map((p) => (
                 <option key={String(p.user)} value={String(p.user)}>
                   {p.name}{p.department ? ` · ${p.department}` : ''}{p.designation ? ` · ${p.designation}` : ''}
@@ -175,7 +175,7 @@ export default function AdminRnr() {
                       onChange={(e) => setKeyByDept((m) => ({ ...m, [dept]: e.target.value }))}
                       className="border rounded-lg px-3 py-2 text-sm bg-white w-full disabled:bg-gray-50"
                     >
-                      <option value="">— Select —</option>
+                      <option value="">- Select -</option>
                       {peopleByDept(dept).map((p) => (
                         <option key={String(p.user)} value={String(p.user)}>
                           {p.name}{p.designation ? ` · ${p.designation}` : ''}
@@ -191,7 +191,7 @@ export default function AdminRnr() {
           {/* Actions */}
           {announced ? (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-              This month has been announced and is now visible to all employees — it can no longer be edited.
+              This month has been announced and is now visible to all employees - it can no longer be edited.
             </div>
           ) : (
             <div className="flex flex-wrap justify-end gap-2">

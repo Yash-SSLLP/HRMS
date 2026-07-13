@@ -3,6 +3,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import PresenceBoardView from '../components/PresenceBoardView';
+import AttendanceHeatmap from '../components/AttendanceHeatmap';
 
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
@@ -143,6 +144,15 @@ export default function EmployeeTeam() {
               </div>
             )}
           </div>
+
+          {/* Team attendance heatmap — aggregate of the manager's direct reports.
+              Hover a day for present / late / on-leave counts; click for names. */}
+          {team.length > 0 && (
+            <div className="bg-white shadow rounded-lg p-5 mb-4">
+              <h2 className="card-title mb-3">Team Attendance</h2>
+              <AttendanceHeatmap org scope="team" />
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -483,7 +483,7 @@ function buildMeetInviteMail(candidate, round, idx) {
       })
     : null;
   const roleLine = candidate.job?.title ? ` for the ${candidate.job.title} role` : '';
-  const subject = `Interview scheduled: ${candidate.name}${candidate.job?.title ? ` — ${candidate.job.title}` : ''} (${roundLabel})`;
+  const subject = `Interview scheduled: ${candidate.name}${candidate.job?.title ? ` - ${candidate.job.title}` : ''} (${roundLabel})`;
   const body = [
     `Hello,`,
     ``,
@@ -499,7 +499,7 @@ function buildMeetInviteMail(candidate, round, idx) {
     `The candidate's résumé is attached for reference.`,
     ``,
     `Regards,`,
-    `${COMPANY.name || 'HR'} — Talent Acquisition`,
+    `${COMPANY.name || 'HR'} - Talent Acquisition`,
   ].filter((l) => l !== null).join('\n');
   return { subject, body };
 }
@@ -579,7 +579,7 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   if (req.user?.email) attendees.push(req.user.email);
 
   const roundLabel = round.label || `Round ${idx + 1}`;
-  const jobTitle = candidate.job?.title ? ` — ${candidate.job.title}` : '';
+  const jobTitle = candidate.job?.title ? ` - ${candidate.job.title}` : '';
 
   let result;
   try {
@@ -675,7 +675,7 @@ const sendRoundMeetEmail = asyncHandler(async (req, res) => {
   const round = candidate.rounds[idx];
   if (!round.meetingLink) {
     res.status(400);
-    throw new Error('This round has no meeting link yet — create or paste one first.');
+    throw new Error('This round has no meeting link yet - create or paste one first.');
   }
 
   const to = await meetInviteRecipients(candidate, round);
@@ -786,7 +786,7 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
   return enqueueMail(
     {
       to: candidate.email,
-      subject: `${label} — ${COMPANY.name}`,
+      subject: `${label} - ${COMPANY.name}`,
       text,
       html,
       // Send from the acting HR's mailbox so the candidate replies to them.
@@ -827,7 +827,7 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
   const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
   const link = letter.token ? `${APP_BASE_URL()}/letter/${letter.token}` : '';
   const defaults = {
-    subject: `${label} — ${COMPANY.name}`,
+    subject: `${label} - ${COMPANY.name}`,
     body:
       `Dear ${candidate.name},\n\n` +
       `Please find attached your ${label} from ${COMPANY.name}.` +

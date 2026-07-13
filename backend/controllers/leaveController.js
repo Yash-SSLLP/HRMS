@@ -61,7 +61,7 @@ async function notifyApprover(approverUserId, request, applicantName) {
       type: 'leave',
       audience: 'admin',
       title: 'Leave needs your approval',
-      body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) — it's awaiting your approval.`,
+      body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) - it's awaiting your approval.`,
       link: 'leave',
     });
     const appr = await User.findById(approverUserId).select('email');
@@ -69,7 +69,7 @@ async function notifyApprover(approverUserId, request, applicantName) {
       await enqueueMail(
         {
           to: [appr.email],
-          subject: `Leave approval needed — ${applicantName} (${request.leaveType}, ${request.totalDays}d)`,
+          subject: `Leave approval needed - ${applicantName} (${request.leaveType}, ${request.totalDays}d)`,
           text: [
             `${applicantName} has a ${request.leaveType} leave request (${request.totalDays} day(s)) awaiting your approval.`,
             '',
@@ -214,7 +214,7 @@ async function emailLeaveToHr(profile, request, applicant) {
           `Type       : ${request.leaveType}`,
           `Dates      : ${range}`,
           `Total days : ${request.totalDays}`,
-          `Reason     : ${request.reason || '—'}`,
+          `Reason     : ${request.reason || '-'}`,
           '',
           'Review and approve/reject it in the HRMS portal under Leave.',
           `Reply to this email to reach ${name} directly.`,
@@ -338,7 +338,7 @@ const applyForLeave = asyncHandler(async (req, res) => {
           type: 'leave',
           audience: 'admin',
           title: 'Leave needs a decision',
-          body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) but has no reporting manager — please review.`,
+          body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) but has no reporting manager - please review.`,
           link: 'leave',
         });
       }
@@ -503,7 +503,7 @@ async function unstampLeaveAttendance(request) {
 // Mutates + saves the request; throws Error with `.status` on a bad transition.
 async function advanceApproval(request, userId, action, note) {
   if (request.status !== 'Pending') {
-    const err = new Error(`Cannot ${action} — this request is ${request.status}.`);
+    const err = new Error(`Cannot ${action} - this request is ${request.status}.`);
     err.status = 400;
     throw err;
   }

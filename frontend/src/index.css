@@ -151,6 +151,11 @@ html.dark a[class~="hover:underline"]:hover {
     inset 0 1px 0 color-mix(in srgb, #fff 14%, transparent);
 }
 
+/* Opt-out for links that are data readouts (e.g. GPS coordinates that link to a
+   map), not action buttons. These use `plain-link` instead of `hover:underline`
+   so they stay flush text links and skip the outlined-button chrome above. */
+a.plain-link:hover { text-decoration: underline; }
+
 /* ---------------------------------------------------------------------------
    SmartHR-style component polish
    Applied broadly via the shared utility vocabulary so every page inherits the

@@ -128,7 +128,7 @@ export default function EmployeeDocuments() {
           <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
             <div className="text-sm font-semibold text-amber-900">Documents to submit ({missing.length})</div>
             <p className="text-xs text-amber-800 mt-0.5">
-              Please upload the required documents below{missingHr.length ? ' — items marked “HR” are added for you by HR' : ''}.
+              Please upload the required documents below{missingHr.length ? ' - items marked “HR” are added for you by HR' : ''}.
             </p>
             <div className="flex flex-wrap gap-2 mt-2.5">
               {missingSelf.map((c) => (
@@ -158,7 +158,7 @@ export default function EmployeeDocuments() {
               </select>
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm text-gray-700">File (PDF / JPG / PNG / DOCX, max 5 MB) — you can select several</label>
+              <label className="block text-sm text-gray-700">File (PDF / JPG / PNG / DOCX, max 5 MB) - you can select several</label>
               <input ref={fileRef} type="file" required multiple
                 accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx"
                 className="mt-1 block w-full text-sm" />

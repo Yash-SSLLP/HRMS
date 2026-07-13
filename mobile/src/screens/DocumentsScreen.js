@@ -87,7 +87,7 @@ export default function DocumentsScreen() {
           <View style={styles.missingBox}>
             <Text style={styles.missingTitle}>Documents to submit ({missing.length})</Text>
             <Text style={styles.missingSub}>
-              Tap one to upload{missingHr.length ? ' — items marked “HR” are added for you by HR' : ''}.
+              Tap one to upload{missingHr.length ? ' - items marked “HR” are added for you by HR' : ''}.
             </Text>
             <View style={styles.chips}>
               {missingSelf.map((c) => (

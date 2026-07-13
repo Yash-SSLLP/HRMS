@@ -46,7 +46,7 @@ const createHoliday = asyncHandler(async (req, res) => {
   await notifyMany(recipients.map((u) => u._id), {
     type: 'holiday',
     title: `New holiday: ${holiday.name}`,
-    body: `${fmtDate(holiday.date)} — ${holiday.type} holiday`,
+    body: `${fmtDate(holiday.date)} - ${holiday.type} holiday`,
     link: 'calendar',
   });
 

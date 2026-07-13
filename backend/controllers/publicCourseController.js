@@ -151,7 +151,7 @@ const postPublicComment = asyncHandler(async (req, res) => {
     type: 'course',
     audience: 'admin',
     title: 'New course comment to review',
-    body: `${viewer.name} commented on "${course.title}"${moduleTitle ? ` — ${moduleTitle}` : ''}.`,
+    body: `${viewer.name} commented on "${course.title}"${moduleTitle ? ` - ${moduleTitle}` : ''}.`,
     link: `/admin/courses?panel=comments`,
   }).catch(() => {});
 

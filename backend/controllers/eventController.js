@@ -43,7 +43,7 @@ const createEvent = asyncHandler(async (req, res) => {
   await notifyMany(recipients.map((u) => u._id), {
     type: 'event',
     title: `New event: ${event.title}`,
-    body: `${fmtDate(event.date)}${detail ? ` — ${detail}` : ''}`,
+    body: `${fmtDate(event.date)}${detail ? ` - ${detail}` : ''}`,
     link: 'calendar',
   });
 

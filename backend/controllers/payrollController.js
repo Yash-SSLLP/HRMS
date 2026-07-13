@@ -241,7 +241,7 @@ const runPayroll = asyncHandler(async (req, res) => {
       status: 'Draft',
       remarks: seed
         ? `Payroll run: copied from ${MONTH_NAMES[seed.payPeriodMonth]} ${seed.payPeriodYear}`
-        : 'Payroll run: no earlier payslip — set the salary components',
+        : 'Payroll run: no earlier payslip - set the salary components',
     });
     created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
     if (!seed) blank.push(r.row.name);
@@ -421,7 +421,7 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
   let payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
   if (payslip && ['Approved', 'Paid'].includes(payslip.status)) {
     res.status(400);
-    throw new Error(`The ${MONTH_NAMES[month]} payslip is already ${payslip.status} — it can't be regenerated.`);
+    throw new Error(`The ${MONTH_NAMES[month]} payslip is already ${payslip.status} - it can't be regenerated.`);
   }
   const p = computed.policy;
   const fields = {

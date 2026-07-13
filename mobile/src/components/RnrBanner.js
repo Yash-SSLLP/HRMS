@@ -63,7 +63,7 @@ export default function RnrBanner() {
             <Text style={styles.eomKicker}>★ EMPLOYEE OF THE MONTH</Text>
             <Text style={styles.eomName}>{eom.name}</Text>
             <Text style={font.small}>
-              {eom.designation || '—'}{eom.department ? ` · ${eom.department}` : ''}
+              {eom.designation || '-'}{eom.department ? ` · ${eom.department}` : ''}
             </Text>
             {eom.citation ? <Text style={[font.small, { marginTop: 2 }]} numberOfLines={2}>{eom.citation}</Text> : null}
           </View>
@@ -79,7 +79,7 @@ export default function RnrBanner() {
               <View style={{ flex: 1, marginLeft: 10 }}>
                 <Text style={font.body}>{w.name}</Text>
                 <Text style={font.small}>
-                  {w.department || '—'}{w.designation ? ` · ${w.designation}` : ''}
+                  {w.department || '-'}{w.designation ? ` · ${w.designation}` : ''}
                 </Text>
               </View>
             </View>

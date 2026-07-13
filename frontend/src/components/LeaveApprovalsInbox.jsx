@@ -21,7 +21,7 @@ const REQ_COLORS = {
 // Renders the reporting-hierarchy approval ladder as a row of chips so you can
 // see who has approved, whose turn it is, and where a rejection happened.
 function ChainProgress({ chain = [] }) {
-  if (!chain.length) return <span className="text-xs text-gray-400 italic">No hierarchy — HR decides</span>;
+  if (!chain.length) return <span className="text-xs text-gray-400 italic">No hierarchy - HR decides</span>;
   return (
     <div className="flex flex-wrap items-center gap-1">
       {chain.map((s, i) => (

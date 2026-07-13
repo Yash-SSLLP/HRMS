@@ -235,8 +235,8 @@ function renderAppointmentLetter(data = {}) {
     // ---------- Annexure A: CTC breakup (new page) ----------
     doc.addPage({ size: 'A4', margin: 0 });
     let ay = drawLetterhead(doc, F);
-    para(doc, F, 'Annexure A — Compensation Structure (CTC Breakup)', { bold: true, align: 'center', y: ay, gap: 1 });
-    para(doc, F, `Employee: ${data.candidateName || '—'}    |    Designation: ${data.designation || '—'}`, { color: MUTED, size: 9.5, gap: 1 });
+    para(doc, F, 'Annexure A - Compensation Structure (CTC Breakup)', { bold: true, align: 'center', y: ay, gap: 1 });
+    para(doc, F, `Employee: ${data.candidateName || '-'}    |    Designation: ${data.designation || '-'}`, { color: MUTED, size: 9.5, gap: 1 });
 
     const rows = [
       ['Basic Pay', data.basic],

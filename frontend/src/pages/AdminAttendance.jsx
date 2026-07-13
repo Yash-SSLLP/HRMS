@@ -47,19 +47,29 @@ const isRecordFlagged = (r, fallback) =>
 // Punches beyond the employee's work-location geofence get an explicit "Outside"
 // flag for HR/admin review. WFH punches are never flagged.
 function DistanceTag({ label, loc, distanceM, thresholdM, wfh, locationName }) {
-  if (!loc || distanceM == null) {
-    return <div className="text-xs text-gray-300">{label}: -</div>;
-  }
-  const far = isOutsideOffice(distanceM, thresholdM, wfh);
+  const has = loc && distanceM != null;
+  const far = has && isOutsideOffice(distanceM, thresholdM, wfh);
   const place = locationName || 'work area';
+  // Soft tinted chip; colour reflects the punch state (in-range / WFH / outside).
+  const tone = wfh
+    ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+    : far
+      ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+      : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100';
   return (
-    <div className="text-xs whitespace-nowrap flex items-center gap-1">
-      <span className="text-gray-400">{label}:</span>
-      <a href={mapLink(loc)} target="_blank" rel="noreferrer"
-        className={`font-medium hover:underline ${wfh ? 'text-indigo-600' : far ? 'text-amber-700' : 'text-green-600'}`}
-        title={`${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`}>
-        {fmtDist(distanceM)}
-      </a>
+    <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+      {/* Fixed-width label so the In/Out chips line up in a column. */}
+      <span className="w-8 shrink-0 text-gray-400">{label}:</span>
+      {has ? (
+        <a href={mapLink(loc)} target="_blank" rel="noreferrer"
+          title={`${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`}
+          style={{ minWidth: '3.5rem' }}
+          className={`plain-link inline-flex items-center justify-center rounded-md border px-2 py-0.5 font-medium ${tone}`}>
+          {fmtDist(distanceM)}
+        </a>
+      ) : (
+        <span style={{ minWidth: '3.5rem' }} className="inline-flex items-center justify-center px-2 py-0.5 text-gray-300">-</span>
+      )}
       {wfh && <span className="px-1 rounded bg-indigo-100 text-indigo-700 text-[10px] font-medium">WFH</span>}
       {far && (
         <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold"
@@ -319,10 +329,12 @@ export default function AdminAttendance() {
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  <DistanceTag label="In" loc={r.checkInLocation} distanceM={r.checkInDistanceM}
-                    thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkInWfh} locationName={r.locationName} />
-                  <DistanceTag label="Out" loc={r.checkOutLocation} distanceM={r.checkOutDistanceM}
-                    thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkOutWfh} locationName={r.locationName} />
+                  <div className="flex flex-col gap-1">
+                    <DistanceTag label="In" loc={r.checkInLocation} distanceM={r.checkInDistanceM}
+                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkInWfh} locationName={r.locationName} />
+                    <DistanceTag label="Out" loc={r.checkOutLocation} distanceM={r.checkOutDistanceM}
+                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkOutWfh} locationName={r.locationName} />
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '-'}</td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">

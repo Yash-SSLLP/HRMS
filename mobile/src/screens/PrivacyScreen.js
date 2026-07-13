@@ -30,7 +30,7 @@ export default function PrivacyScreen() {
           Your employment details, attendance (including check-in/out time, selfie and location captured at each punch), leave and payroll records, uploaded documents, and requests you raise in the app.
         </Section>
         <Section title="How we use it">
-          Only to run internal HR operations — attendance, leave, payroll, statutory compliance, performance and communication. We do not sell your data or use it for advertising.
+          Only to run internal HR operations - attendance, leave, payroll, statutory compliance, performance and communication. We do not sell your data or use it for advertising.
         </Section>
         <Section title="Who can see it">
           Access is limited to you and authorized HR/administrators on a need-to-know basis. Sensitive identifiers (e.g. Aadhaar, bank details) are masked and restricted to HR.

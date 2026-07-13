@@ -114,7 +114,7 @@ export default function AdminWorkLocations() {
                     📍 {Number(l.lat).toFixed(5)}, {Number(l.lng).toFixed(5)}
                   </a>
                 ) : (
-                  <span className="text-amber-600 text-xs">No coordinates set — punches here won't be geofenced</span>
+                  <span className="text-amber-600 text-xs">No coordinates set - punches here won't be geofenced</span>
                 )}
               </div>
 

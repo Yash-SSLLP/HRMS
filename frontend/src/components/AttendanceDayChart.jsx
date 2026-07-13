@@ -1,3 +1,5 @@
+import { useCallback, useRef, useState } from 'react';
+
 // Combo chart for the daily attendance report.
 //   • Two lines over a "time of day" Y axis: login (check-in) and logout (check-out).
 //   • A bar at each day spanning from login → logout — its length is the total
@@ -35,6 +37,21 @@ const BAR_LABEL = '#4338ca';
 const halo = { paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3, strokeLinejoin: 'round' };
 
 export default function AttendanceDayChart({ days = [], height, compact = false }) {
+  // Measure the wrapper so the chart can fill the full card width. Keeping the
+  // viewBox width equal to the rendered width means scale stays 1:1, so labels
+  // never balloon. Falls back to a sane default before the first measurement.
+  const [wrapW, setWrapW] = useState(0);
+  const roRef = useRef(null);
+  const measureRef = useCallback((el) => {
+    if (roRef.current) { roRef.current.disconnect(); roRef.current = null; }
+    if (el && typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(([e]) => setWrapW(Math.round(e.contentRect.width)));
+      ro.observe(el);
+      roRef.current = ro;
+      setWrapW(Math.round(el.getBoundingClientRect().width));
+    }
+  }, []);
+
   const times = days.flatMap((d) => [d.login, d.logout]).filter((v) => v != null);
   if (!times.length) {
     return <p className="text-sm text-gray-400 italic">No login/logout data for this period.</p>;
@@ -43,7 +60,7 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
   const showLabels = !compact;
   const n = days.length;
   const band = compact ? 30 : 52;
-  const padL = compact ? 42 : 52;
+  const padL = compact ? 42 : 70;
   const padR = compact ? 12 : 18;
   const padT = compact ? 14 : 24;
   const padB = compact ? 26 : 40;
@@ -51,7 +68,10 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
   // In compact mode keep a wide-ish viewBox so a few data points still spread
   // across the card; the SVG is given an explicit pixel height (below) so it
   // never balloons to match the width's aspect ratio.
-  const W = Math.max(padL + padR + n * band, compact ? 600 : 360);
+  // Non-compact: fill the measured card width (spreading the days across it);
+  // fall back to 720 until measured, and grow past the card (→ scroll) only when
+  // there are too many days to fit at the minimum per-day spacing.
+  const W = Math.max(padL + padR + n * band, compact ? 600 : (wrapW || 720));
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
 
@@ -95,12 +115,12 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: BAR_FILL, opacity: 0.35 }} /> Present</span>
       </div>
 
-      <div className={compact ? '' : 'overflow-x-auto'}>
+      <div ref={measureRef} className={compact ? '' : 'overflow-x-auto'}>
         <svg
           viewBox={`0 0 ${W} ${H}`}
           width="100%"
-          height={compact ? H : undefined}
-          preserveAspectRatio={compact ? 'xMidYMid meet' : undefined}
+          height={H}
+          preserveAspectRatio="xMidYMid meet"
           style={compact ? { display: 'block', maxWidth: '100%' } : { minWidth: W, maxWidth: '100%' }}
           role="img" aria-label="Daily login and logout times with present-time bars">
           {/* gridlines + Y axis (time of day) */}
@@ -111,7 +131,7 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
             </g>
           ))}
           {!compact && (
-            <text x={14} y={padT + plotH / 2} transform={`rotate(-90 14 ${padT + plotH / 2})`} textAnchor="middle" className="fill-gray-500" style={{ fontSize: 11, fontWeight: 600 }}>
+            <text x={12} y={padT + plotH / 2} transform={`rotate(-90 12 ${padT + plotH / 2})`} textAnchor="middle" className="fill-gray-500" style={{ fontSize: 11, fontWeight: 600 }}>
               Time of day
             </text>
           )}

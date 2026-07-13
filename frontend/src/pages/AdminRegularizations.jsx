@@ -104,10 +104,10 @@ export default function AdminRegularizations() {
             ) : items.length === 0 ? (
               <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No regularization requests</td></tr>
             ) : items.map((r) => {
-              const toIn = fmt12(r.appliedCheckIn) || fmt12(r.requestedCheckIn) || '—';
-              const toOut = fmt12(r.appliedCheckOut) || fmt12(r.requestedCheckOut) || '—';
-              const fromIn = fmt12(r.previousCheckIn) || '—';
-              const fromOut = fmt12(r.previousCheckOut) || '—';
+              const toIn = fmt12(r.appliedCheckIn) || fmt12(r.requestedCheckIn) || '-';
+              const toOut = fmt12(r.appliedCheckOut) || fmt12(r.requestedCheckOut) || '-';
+              const fromIn = fmt12(r.previousCheckIn) || '-';
+              const fromOut = fmt12(r.previousCheckOut) || '-';
               return (
               <tr key={r._id}>
                 <td className="px-4 py-3">
@@ -141,7 +141,7 @@ export default function AdminRegularizations() {
                         {r.reviewedBy.role}{r.reviewedAt ? ` · ${new Date(r.reviewedAt).toLocaleDateString()}` : ''}
                       </div>
                     </>
-                  ) : <span className="text-gray-400">—</span>}
+                  ) : <span className="text-gray-400">-</span>}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[r.status]}`}>

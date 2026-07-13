@@ -68,7 +68,7 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
       <div
         className={`org-node ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
         onClick={() => canEdit && onSelect(node)}
-        title={isMe ? 'This is you' : isExec ? `${node.name} (executive — top of the hierarchy)` : canEdit ? 'Click to set who this person reports to' : node.name}
+        title={isMe ? 'This is you' : isExec ? `${node.name} (executive - top of the hierarchy)` : canEdit ? 'Click to set who this person reports to' : node.name}
       >
         <span
           className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}
