@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
-import api, { errMsg } from '../../api/client';
+import api, { API_BASE, errMsg } from '../../api/client';
+import { useAuth } from '../../store/auth';
 import { colors, radius, spacing, font } from '../../theme';
 import {
   Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher,
@@ -26,6 +29,7 @@ const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 // distance and no-punch-out flags — plus Edit and Regularize actions.
 export default function AttendanceMonthScreen() {
   const now = new Date();
+  const token = useAuth((s) => s.token);
   const [employees, setEmployees] = useState([]);
   const [employee, setEmployee] = useState('');
   const [year, setYear] = useState(now.getFullYear());
@@ -34,6 +38,7 @@ export default function AttendanceMonthScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState('');
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editRec, setEditRec] = useState(null);
@@ -61,6 +66,40 @@ export default function AttendanceMonthScreen() {
   }, [employee, year, month]);
   useEffect(() => { load(); }, [load]);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  // Export attendance as an Excel-compatible CSV, then hand it to the OS share
+  // sheet (save / send anywhere). Three shapes off one endpoint:
+  //   kind='month' → selected employee, selected month
+  //   kind='bulk'  → every employee, selected month
+  //   kind=3 / 4   → selected employee, trailing N months
+  const exportCsv = async (kind) => {
+    if (kind !== 'bulk' && !employee) { Alert.alert('Pick an employee first'); return; }
+    setExporting(String(kind));
+    try {
+      const params = new URLSearchParams({ year: String(year), month: String(month) });
+      let name;
+      if (kind === 'bulk') {
+        name = `attendance-all-${year}-${String(month).padStart(2, '0')}.csv`;
+      } else if (kind === 'month') {
+        params.set('employee', employee);
+        name = `attendance-${year}-${String(month).padStart(2, '0')}.csv`;
+      } else {
+        params.set('employee', employee);
+        params.set('months', String(kind));
+        name = `attendance-last-${kind}-months.csv`;
+      }
+      const fileUri = `${FileSystem.cacheDirectory}${name}`;
+      const res = await FileSystem.downloadAsync(`${API_BASE}/attendance/export?${params}`, fileUri, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status !== 200) throw new Error('Export not available');
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri, { mimeType: 'text/csv' });
+    } catch (err) {
+      Alert.alert('Export failed', err.message || 'Please try again');
+    } finally {
+      setExporting('');
+    }
+  };
 
   const shift = (dir) => {
     let m = month + dir, y = year;
@@ -136,6 +175,16 @@ export default function AttendanceMonthScreen() {
         <Text style={styles.monthTitle}>{MONTHS_FULL[month]} {year}</Text>
         <TouchableOpacity onPress={() => shift(1)} style={styles.nav}><Ionicons name="chevron-forward" size={20} color={colors.primary} /></TouchableOpacity>
       </View>
+
+      {/* Export attendance (Excel-compatible CSV) */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.exportRow}>
+        <View style={styles.exportLabel}><Ionicons name="download-outline" size={14} color={colors.textMuted} /><Text style={styles.exportLabelText}>Export</Text></View>
+        <ExportChip label="This month" busy={exporting === 'month'} disabled={!!exporting || !employee} onPress={() => exportCsv('month')} />
+        <ExportChip label="Last 3 mo" busy={exporting === '3'} disabled={!!exporting || !employee} onPress={() => exportCsv(3)} />
+        <ExportChip label="Last 4 mo" busy={exporting === '4'} disabled={!!exporting || !employee} onPress={() => exportCsv(4)} />
+        <ExportChip label="All (month)" primary busy={exporting === 'bulk'} disabled={!!exporting} onPress={() => exportCsv('bulk')} />
+      </ScrollView>
 
       <ScrollView contentContainerStyle={{ padding: spacing(4), paddingBottom: 40 }} refreshControl={refresher(refreshing, onRefresh)}>
         {s && (
@@ -266,6 +315,19 @@ function Legend({ color, label }) {
   );
 }
 
+function ExportChip({ label, onPress, busy, disabled, primary }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.7}
+      style={[styles.exportChip, primary && styles.exportChipPrimary, disabled && { opacity: 0.5 }]}>
+      <Ionicons name="download-outline" size={13} color={primary ? '#fff' : colors.primary} />
+      <Text style={[styles.exportChipText, primary && { color: '#fff' }]}>{busy ? 'Exporting…' : label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   pickerBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -275,6 +337,12 @@ const styles = StyleSheet.create({
   },
   pickerText: { ...font.body, flex: 1, fontWeight: '600' },
   monthBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(5), paddingVertical: spacing(2) },
+  exportRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: spacing(4), paddingBottom: spacing(2) },
+  exportLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 2 },
+  exportLabelText: { ...font.small, color: colors.textMuted, fontWeight: '600' },
+  exportChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: colors.primarySoft, borderRadius: radius.pill, paddingHorizontal: 12, height: 34, borderWidth: 1, borderColor: colors.primary + '22' },
+  exportChipPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
+  exportChipText: { color: colors.primary, fontWeight: '700', fontSize: 12.5 },
   nav: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   monthTitle: { fontSize: 16, fontWeight: '800', color: colors.text },
   bar: { flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', marginTop: spacing(3), backgroundColor: colors.border },

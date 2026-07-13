@@ -10,6 +10,8 @@ const {
   listMine,
   listAll,
   monthSummary,
+  exportAttendance,
+  punchMap,
   dailyStats,
   todayBoard,
   presenceBoard,
@@ -48,6 +50,8 @@ router.use(requirePermission('attendance.manage'));
 router.get('/org/heatmap', orgHeatmap);
 router.get('/org/day', orgDayDetails);
 router.get('/month-summary', monthSummary);
+router.get('/export', exportAttendance);
+router.get('/punch-map', punchMap);
 router.get('/daily-stats', dailyStats);
 router.get('/today-board', todayBoard);
 router.get('/presence-board', presenceBoard);

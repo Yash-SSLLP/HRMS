@@ -55,6 +55,7 @@ export default function AdminHubScreen() {
   tiles.push({ key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a', show: viewAdmin });
   tiles.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb', show: hasTeam(role) });
   tiles.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9', show: viewAdmin });
+  tiles.push({ key: 'PunchMap', label: 'Punch Map', icon: 'map', tint: '#0891b2', show: viewAdmin });
   tiles.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea', show: viewAdmin });
   tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canApprove(role) });
   tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canApprove(role) });

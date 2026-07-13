@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { minutesToHHMM } from '../utils/time';
 
@@ -34,6 +35,7 @@ export default function AdminAttendanceMonth() {
   const [regOpen, setRegOpen] = useState(false); // regularize modal
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState('');
 
   useEffect(() => {
     api.get('/employees?excludeExecutives=true').then(({ data }) => {
@@ -57,6 +59,31 @@ export default function AdminAttendanceMonth() {
   };
   // Load once when the employee list arrives; after that, filters apply on OK.
   useEffect(() => { if (employee && !data) load(employee); /* eslint-disable-next-line */ }, [employee]);
+
+  // Export attendance as an Excel-compatible CSV. Three shapes off one endpoint:
+  //   kind='month'  → the selected employee, the selected month
+  //   kind='bulk'   → every employee, the selected month
+  //   kind=3 / 4    → the selected employee, the trailing N months
+  const exportCsv = async (kind) => {
+    if (kind !== 'bulk' && !employee) { toast.error('Pick an employee first'); return; }
+    setExporting(String(kind));
+    try {
+      const params = new URLSearchParams({ year, month });
+      if (kind === 'bulk') {
+        // all employees, this month
+      } else if (kind === 'month') {
+        params.set('employee', employee);
+      } else {
+        params.set('employee', employee);
+        params.set('months', kind); // 3 or 4
+      }
+      await downloadFile(`/attendance/export?${params}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Export failed');
+    } finally {
+      setExporting('');
+    }
+  };
 
   const s = data?.summary;
   const barTotal = s ? Math.max(s.workingDays, s.onTime + s.late + s.leave, 1) : 1;
@@ -145,6 +172,32 @@ export default function AdminAttendanceMonth() {
         <button onClick={() => load()} disabled={loading || !employee}
           className="px-5 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
           {loading ? 'Loading…' : 'OK'}
+        </button>
+      </div>
+
+      {/* Export (Excel-compatible CSV) */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <span className="text-xs font-medium text-gray-500 mr-1">Export:</span>
+        <button onClick={() => exportCsv('month')} disabled={!!exporting || !employee}
+          title="This employee · selected month"
+          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+          ⬇ {exporting === 'month' ? 'Exporting…' : 'This month'}
+        </button>
+        <button onClick={() => exportCsv(3)} disabled={!!exporting || !employee}
+          title="This employee · last 3 months"
+          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+          ⬇ {exporting === '3' ? 'Exporting…' : 'Last 3 months'}
+        </button>
+        <button onClick={() => exportCsv(4)} disabled={!!exporting || !employee}
+          title="This employee · last 4 months"
+          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+          ⬇ {exporting === '4' ? 'Exporting…' : 'Last 4 months'}
+        </button>
+        <span className="mx-1 h-5 w-px bg-gray-200" />
+        <button onClick={() => exportCsv('bulk')} disabled={!!exporting}
+          title="All employees · selected month"
+          className="px-3 py-1.5 text-sm border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 disabled:opacity-60">
+          ⬇ {exporting === 'bulk' ? 'Exporting…' : 'All employees (this month)'}
         </button>
       </div>
 

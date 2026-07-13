@@ -46,6 +46,7 @@ export const adminNav = [
     { to: '/admin/attendance', label: 'Attendance', icon: FiClock, perm: 'attendance.manage' },
     { to: '/admin/attendance-report', label: 'Attendance Report', icon: FiActivity, perm: 'attendance.manage' },
     { to: '/admin/attendance-month', label: 'Monthly View', icon: FiCalendar, perm: 'attendance.manage' },
+    { to: '/admin/punch-map', label: 'Punch Map', icon: FiMap, perm: 'attendance.manage' },
     { to: '/admin/roster', label: 'Shifts & Roster', icon: FiCalendar, perm: 'attendance.manage' },
     { to: '/admin/regularizations', label: 'Regularization', icon: FiTool, perm: 'attendance.manage' },
   ] },

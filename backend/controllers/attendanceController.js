@@ -708,6 +708,229 @@ const monthSummary = asyncHandler(async (req, res) => {
   });
 });
 
+// GET /api/attendance/punch-map?year=&month=&day=   (HR/Admin)
+// Every GPS-tagged punch (check-in & check-out) plotted as map points, so HR can
+// see exactly WHERE people punched. `day` (1-31) narrows to a single IST day;
+// omit it for the whole month. Each punch with a captured location becomes one
+// point carrying the employee, in/out kind, exact time, distance from their work
+// area and whether it fell outside the geofence. Also returns the office + the
+// distinct work-location geofences referenced, so the map can draw their circles.
+const punchMap = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const day = Number(req.query.day) || 0; // 0 ⇒ whole month
+
+  let start;
+  let end;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (day >= 1 && day <= 31) {
+    start = new Date(`${year}-${pad(month)}-${pad(day)}T00:00:00+05:30`);
+    end = new Date(start);
+    end.setDate(end.getDate() + 1);
+  } else {
+    ({ start, end } = monthRange(year, month));
+  }
+
+  const [records, settings] = await Promise.all([
+    Attendance.find({
+      date: { $gte: start, $lt: end },
+      // Only records that captured at least one GPS fix are useful on a map.
+      $or: [{ 'checkInLocation.lat': { $ne: null } }, { 'checkOutLocation.lat': { $ne: null } }],
+    }).populate({
+      path: 'employee',
+      select: 'employeeCode designation department user workLocationRef',
+      populate: [
+        { path: 'user', select: 'firstName lastName' },
+        { path: 'workLocationRef', select: 'name lat lng radiusM' },
+      ],
+    }),
+    Setting.getSettings(),
+  ]);
+
+  const points = [];
+  const geofences = new Map(); // label → { label, lat, lng, radiusM }
+
+  for (const r of records) {
+    const p = r.employee;
+    if (!p || !p.user) continue;
+    const geo = resolveGeofence(p, settings);
+    if (geo.center && geo.center.lat != null) {
+      const key = `${geo.label}|${geo.center.lat}|${geo.center.lng}`;
+      if (!geofences.has(key)) {
+        geofences.set(key, { label: geo.label, lat: geo.center.lat, lng: geo.center.lng, radiusM: geo.radiusM });
+      }
+    }
+    const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.employeeCode;
+    const base = {
+      recordId: String(r._id),
+      employeeId: String(p._id),
+      employeeCode: p.employeeCode || '',
+      name,
+      designation: p.designation || '',
+      department: p.department || '',
+      date: ymdLocal(r.date),
+      geofenceRadiusM: geo.radiusM,
+      locationName: geo.label,
+    };
+
+    const addPoint = (kind, loc, time, wfh) => {
+      if (!loc || loc.lat == null || loc.lng == null) return;
+      const distanceM = haversineMeters(geo.center, loc);
+      const outside = Boolean(geo.radiusM && !wfh && distanceM != null && distanceM > geo.radiusM);
+      points.push({
+        ...base,
+        id: `${base.recordId}-${kind}`,
+        kind, // 'in' | 'out'
+        time: time || null,
+        lat: loc.lat,
+        lng: loc.lng,
+        accuracy: loc.accuracy != null ? loc.accuracy : null,
+        wfh: !!wfh,
+        outside,
+        distanceM,
+      });
+    };
+
+    addPoint('in', r.checkInLocation, r.checkIn, r.checkInWfh);
+    addPoint('out', r.checkOutLocation, r.checkOut, r.checkOutWfh);
+  }
+
+  res.json({
+    year,
+    month,
+    day: day || null,
+    count: points.length,
+    points,
+    office: settings.office,
+    geofenceThresholdM: settings.geofenceThresholdM,
+    geofences: [...geofences.values()],
+  });
+});
+
+// GET /api/attendance/export?employee=&year=&month=&months=   (HR/Admin)
+// Excel-compatible CSV of attendance — one row per attendance day. A single
+// endpoint serves all three shapes HR asked for:
+//   • employee set, months=1 (default)  → one employee, one month
+//   • employee unset                    → every employee, that month (bulk)
+//   • employee set, months=N (2-12)     → one employee, the trailing N months
+// The window is the N calendar months ENDING at the selected year/month.
+const exportAttendance = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const months = Math.min(Math.max(Number(req.query.months) || 1, 1), 12);
+
+  // Trailing N-month window ending at the selected month (inclusive).
+  let sy = year;
+  let sm = month - (months - 1);
+  while (sm < 1) { sm += 12; sy -= 1; }
+  const { start } = monthRange(sy, sm);
+  const { end } = monthRange(year, month);
+
+  const filter = { date: { $gte: start, $lt: end } };
+  let employeeProfile = null;
+  if (req.query.employee) {
+    employeeProfile = await EmployeeProfile.findById(req.query.employee)
+      .select('employeeCode user')
+      .populate('user', 'firstName lastName');
+    if (!employeeProfile) {
+      res.status(404);
+      throw new Error('Employee not found');
+    }
+    filter.employee = req.query.employee;
+  }
+
+  const [records, settings] = await Promise.all([
+    Attendance.find(filter).populate({
+      path: 'employee',
+      select: 'employeeCode user workLocationRef',
+      populate: [
+        { path: 'user', select: 'firstName lastName email' },
+        { path: 'workLocationRef', select: 'name lat lng radiusM' },
+      ],
+    }),
+    Setting.getSettings(),
+  ]);
+
+  // Group per employee (by code), then chronological — reads well for bulk exports.
+  const ordered = records
+    .filter((r) => r.employee)
+    .sort((a, b) => {
+      const ca = a.employee.employeeCode || '';
+      const cb = b.employee.employeeCode || '';
+      if (ca !== cb) return ca.localeCompare(cb);
+      return new Date(a.date) - new Date(b.date);
+    });
+
+  const todayStart = startOfDay(new Date());
+  const fmtT = (d) =>
+    d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '';
+  const esc = (v) => {
+    const s = v === undefined || v === null ? '' : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const header = [
+    'Employee Code', 'Name', 'Email', 'Date', 'Weekday', 'Status',
+    'Check In', 'Check Out', 'Hours Worked', 'Late (min)',
+    'No Punch Out', 'WFH', 'Distant Punch', 'Remarks',
+  ];
+
+  const rows = ordered.map((r) => {
+    const p = r.employee;
+    const u = p.user || {};
+    const geo = resolveGeofence(p, settings);
+    const inDist = haversineMeters(geo.center, r.checkInLocation);
+    const outDist = haversineMeters(geo.center, r.checkOutLocation);
+    const distant = Boolean(
+      geo.radiusM &&
+        ((inDist != null && inDist > geo.radiusM && !r.checkInWfh) ||
+          (outDist != null && outDist > geo.radiusM && !r.checkOutWfh))
+    );
+    // Late = checked in after the standard start (r.date is IST midnight).
+    const lateCutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+    const lateMs = r.checkIn ? new Date(r.checkIn) - lateCutoff : 0;
+    const lateMin = lateMs > 0 ? Math.round(lateMs / 60000) : 0;
+    const noPunchOut = r.noPunchOut || Boolean(r.checkIn && !r.checkOut && startOfDay(r.date) < todayStart);
+    const weekday = new Date(r.date).toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'Asia/Kolkata' });
+    return [
+      p.employeeCode || '',
+      `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      u.email || '',
+      ymdLocal(r.date),
+      weekday,
+      r.status || '',
+      fmtT(r.checkIn),
+      fmtT(r.checkOut),
+      r.hoursWorked || 0,
+      lateMin,
+      noPunchOut ? 'Yes' : '',
+      r.checkInWfh || r.checkOutWfh ? 'Yes' : '',
+      distant ? 'Yes' : '',
+      r.remarks || '',
+    ].map(esc).join(',');
+  });
+
+  const csv = [header.map(esc).join(','), ...rows].join('\r\n');
+
+  const pad = (n) => String(n).padStart(2, '0');
+  let fname;
+  if (employeeProfile) {
+    const code = (employeeProfile.employeeCode || 'employee').replace(/[^A-Za-z0-9_-]/g, '');
+    fname = months > 1
+      ? `attendance-${code}-${sy}${pad(sm)}-to-${year}${pad(month)}.csv`
+      : `attendance-${code}-${year}-${pad(month)}.csv`;
+  } else {
+    fname = `attendance-all-${year}-${pad(month)}.csv`;
+  }
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  // BOM so Excel detects UTF-8 (₹, accented names, etc.).
+  res.send('﻿' + csv);
+});
+
 // GET /api/attendance/daily-stats?days=14  (admin)
 // Per-day org attendance for the dashboard bar charts: number of present
 // employees and their average hours worked, over the trailing N IST days.
@@ -1012,6 +1235,8 @@ module.exports = {
   listMine,
   listAll,
   monthSummary,
+  exportAttendance,
+  punchMap,
   dailyStats,
   todayBoard,
   presenceBoard,

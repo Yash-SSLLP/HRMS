@@ -20,6 +20,9 @@
     "android": {
       "package": "com.ssllp.hrms",
       "googleServicesFile": "./google-services.json",
+      "config": {
+        "googleMaps": { "apiKey": "AIzaSyACNwDcUY-3BhcqiE61heY3yKe_YN4e8n8" }
+      },
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0c0c0e"

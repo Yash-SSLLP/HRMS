@@ -58,6 +58,7 @@ import RnrScreen from '../screens/admin/RnrScreen';
 import RecruitmentScreen from '../screens/admin/RecruitmentScreen';
 import CandidateDetailScreen from '../screens/admin/CandidateDetailScreen';
 import AttendanceMonthScreen from '../screens/admin/AttendanceMonthScreen';
+import PunchMapScreen from '../screens/admin/PunchMapScreen';
 
 const Tab = createBottomTabNavigator();
 const HomeStackNav = createStackNavigator();
@@ -115,6 +116,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="Recruitment" component={RecruitmentScreen} options={{ title: 'Recruitment' }} />
       <HomeStackNav.Screen name="CandidateDetail" component={CandidateDetailScreen} options={({ route }) => ({ title: route.params?.name || 'Candidate' })} />
       <HomeStackNav.Screen name="AttendanceMonth" component={AttendanceMonthScreen} options={{ title: 'Monthly Attendance' }} />
+      <HomeStackNav.Screen name="PunchMap" component={PunchMapScreen} options={{ title: 'Punch Location Map' }} />
     </HomeStackNav.Navigator>
   );
 }

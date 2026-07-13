@@ -26,6 +26,7 @@ const AdminLeaveApprovals = lazy(() => import('./pages/AdminLeaveApprovals.jsx')
 const AdminAttendance = lazy(() => import('./pages/AdminAttendance.jsx'));
 const AdminAttendanceReport = lazy(() => import('./pages/AdminAttendanceReport.jsx'));
 const AdminAttendanceMonth = lazy(() => import('./pages/AdminAttendanceMonth.jsx'));
+const AdminPunchMap = lazy(() => import('./pages/AdminPunchMap.jsx'));
 const AdminPresence = lazy(() => import('./pages/AdminPresence.jsx'));
 const EmployeeTeam = lazy(() => import('./pages/EmployeeTeam.jsx'));
 const EmployeeApprovals = lazy(() => import('./pages/EmployeeApprovals.jsx'));
@@ -171,6 +172,7 @@ export default function App() {
         <Route path="presence" element={<AdminPresence />} />
         <Route path="attendance-report" element={<AdminAttendanceReport />} />
         <Route path="attendance-month" element={<AdminAttendanceMonth />} />
+        <Route path="punch-map" element={<AdminPunchMap />} />
         <Route path="roster" element={<AdminRoster />} />
         <Route path="regularizations" element={<AdminRegularizations />} />
         <Route path="payroll" element={<AdminPayroll />} />
