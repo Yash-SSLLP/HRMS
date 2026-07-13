@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import api from '../api/client';
 import { colors, font, isDark } from '../theme';
+import { ModalSheet } from './ui';
+import { fmtDate, fmtTime } from '../utils/format';
 
 // GitHub-style attendance heatmap of the trailing 12 months, split into month
 // blocks. Mirrors the website's AttendanceHeatmap.
@@ -29,19 +31,31 @@ const orgColor = (p, max) => {
   return ORG_RAMP[3];
 };
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const CELL = 11, GAP = 3;
+// Slightly larger cells than the web (12px) so day taps are comfortable on
+// touch — the grid scrolls horizontally, so extra width is free.
+const CELL = 15, GAP = 3;
 
-export default function AttendanceHeatmap({ org = false, days = 365 }) {
+// org=true renders the aggregate view. scope selects whose employees it covers:
+// 'org' = everyone (HR/Admin), 'team' = the caller's direct reports (Manager).
+// In the aggregate view, tapping a day opens a sheet listing who was late / on
+// leave / present etc., by name.
+export default function AttendanceHeatmap({ org = false, days = 365, scope = 'org' }) {
   const [byDate, setByDate] = useState({});
   const [maxPresent, setMaxPresent] = useState(0);
+  const [dayModal, setDayModal] = useState(null); // tapped aggregate cell: { date }
+  const [dayData, setDayData] = useState(null);
+  const [dayLoading, setDayLoading] = useState(false);
   const scrollRef = useRef(null);
   const didScroll = useRef(false);
+
+  const heatmapBase = scope === 'team' ? '/manager/attendance' : '/attendance/org';
+  const dayEndpoint = scope === 'team' ? '/manager/attendance/day' : '/attendance/org/day';
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const url = org ? `/attendance/org/heatmap?days=${days}` : `/attendance/me/heatmap?days=${days}`;
+        const url = org ? `${heatmapBase}/heatmap?days=${days}` : `/attendance/me/heatmap?days=${days}`;
         const { data } = await api.get(url);
         const map = {};
         for (const d of data.days || []) map[d.date] = d;
@@ -49,7 +63,18 @@ export default function AttendanceHeatmap({ org = false, days = 365 }) {
       } catch { /* leave empty */ }
     })();
     return () => { active = false; };
-  }, [org, days]);
+  }, [org, days, heatmapBase]);
+
+  const openDay = async (dateKey) => {
+    setDayModal({ date: dateKey });
+    setDayData(null);
+    setDayLoading(true);
+    try {
+      const { data } = await api.get(`${dayEndpoint}?date=${dateKey}`);
+      setDayData(data);
+    } catch { setDayData(null); }
+    finally { setDayLoading(false); }
+  };
 
   const months = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -101,9 +126,16 @@ export default function AttendanceHeatmap({ org = false, days = 365 }) {
               <View style={{ flexDirection: 'row', gap: GAP }}>
                 {mo.cols.map((wcol, ci) => (
                   <View key={ci} style={{ gap: GAP }}>
-                    {wcol.map((cell, di) => (
-                      <View key={di} style={{ width: CELL, height: CELL, borderRadius: 2, backgroundColor: cellColor(cell) }} />
-                    ))}
+                    {wcol.map((cell, di) => {
+                      const cellStyle = { width: CELL, height: CELL, borderRadius: 2, backgroundColor: cellColor(cell) };
+                      // Aggregate days with records are tappable → per-day names sheet.
+                      const tappable = org && cell && !cell.future && cell.rec;
+                      return tappable ? (
+                        <TouchableOpacity key={di} activeOpacity={0.6} hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }} onPress={() => openDay(cell.key)} style={cellStyle} />
+                      ) : (
+                        <View key={di} style={cellStyle} />
+                      );
+                    })}
                   </View>
                 ))}
               </View>
@@ -130,7 +162,69 @@ export default function AttendanceHeatmap({ org = false, days = 365 }) {
           ))
         )}
       </View>
+
+      <DayDetailsSheet
+        visible={!!dayModal}
+        date={dayModal?.date}
+        data={dayData}
+        loading={dayLoading}
+        onClose={() => setDayModal(null)}
+      />
     </View>
+  );
+}
+
+// One category group (Late / On leave / etc.) with the employees behind it.
+function DaySection({ title, color, people, sub }) {
+  if (!people || !people.length) return null;
+  return (
+    <View style={{ marginBottom: 14 }}>
+      <View style={styles.sectionHead}>
+        <View style={[styles.dot, { backgroundColor: color }]} />
+        <Text style={font.h3}>{title}</Text>
+        <Text style={font.small}> ({people.length})</Text>
+      </View>
+      {people.map((p, i) => (
+        <View key={i} style={styles.personRow}>
+          <Text style={[font.body, { flex: 1 }]} numberOfLines={1}>
+            {p.name}
+            {p.designation ? <Text style={font.small}>{`  ${p.designation}`}</Text> : null}
+          </Text>
+          {sub && sub(p) ? <Text style={font.small}>{sub(p)}</Text> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Tap-through breakdown for one aggregate day: who was late / on leave / present.
+function DayDetailsSheet({ visible, date, data, loading, onClose }) {
+  const title = date
+    ? fmtDate(new Date(`${date}T00:00:00+05:30`), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    : '';
+  const empty = data && ['present', 'late', 'half', 'leave', 'compoff', 'absent'].every((k) => (data[k] || []).length === 0);
+  return (
+    <ModalSheet visible={visible} onClose={onClose} title={title}>
+      {loading ? (
+        <View style={{ paddingVertical: 24, alignItems: 'center' }}><ActivityIndicator color={colors.primary} /></View>
+      ) : !data ? (
+        <Text style={[font.small, { paddingVertical: 12 }]}>Couldn't load day details.</Text>
+      ) : empty ? (
+        <Text style={[font.small, { paddingVertical: 12 }]}>No attendance recorded for this day.</Text>
+      ) : (
+        <>
+          <Text style={[font.label, { marginBottom: 12 }]}>
+            {data.counts.present} present · {data.counts.late} late · {data.counts.leave} on leave · {data.counts.absent} absent
+          </Text>
+          <DaySection title="Late" color="#ec4899" people={data.late} sub={(p) => fmtTime(p.checkIn) || null} />
+          <DaySection title="On leave" color="#8b5cf6" people={data.leave} sub={(p) => p.leaveType || null} />
+          <DaySection title="Half day" color="#f59e0b" people={data.half} sub={(p) => fmtTime(p.checkIn) || null} />
+          <DaySection title="Comp off" color="#0ea5e9" people={data.compoff} />
+          <DaySection title="Absent" color="#ef4444" people={data.absent} />
+          <DaySection title="Present (full day)" color="#16a34a" people={data.present} sub={(p) => (p.late ? 'late' : fmtTime(p.checkIn) || null)} />
+        </>
+      )}
+    </ModalSheet>
   );
 }
 
@@ -141,4 +235,10 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   swatch: { width: 10, height: 10, borderRadius: 2 },
   legendText: { ...font.small },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  dot: { width: 9, height: 9, borderRadius: 2 },
+  personRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+    paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+  },
 });

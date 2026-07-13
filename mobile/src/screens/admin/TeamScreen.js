@@ -6,6 +6,7 @@ import api, { errMsg, mediaUrl } from '../../api/client';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, Avatar, Pill, Loader, refresher, SectionHeader, EmptyState, Ionicons, SkeletonScreen } from '../../components/ui';
 import { fmtDate, fmtTime } from '../../utils/format';
+import AttendanceHeatmap from '../../components/AttendanceHeatmap';
 
 const ATT_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info' };
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
@@ -119,6 +120,17 @@ export default function TeamScreen() {
             {m.today?.status ? <Pill label={m.today.status} tone={ATT_TONE[m.today.status] || 'neutral'} /> : <Pill label="No punch" tone="neutral" />}
           </Card>
         ))}
+
+        {/* Team attendance heatmap — aggregate of my direct reports. Tap a day
+            for present / late / on-leave counts and the names behind them. */}
+        {team.length > 0 && (
+          <>
+            <SectionHeader title="Team attendance" />
+            <Card style={{ marginTop: spacing(1) }}>
+              <AttendanceHeatmap org scope="team" />
+            </Card>
+          </>
+        )}
       </ScrollView>
     </Screen>
   );
