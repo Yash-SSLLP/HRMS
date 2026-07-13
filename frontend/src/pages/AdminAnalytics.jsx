@@ -45,6 +45,7 @@ export default function AdminAnalytics() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null); // { title, monthLabel, color, employees }
 
   useEffect(() => {
     (async () => {
@@ -99,9 +100,19 @@ export default function AdminAnalytics() {
   const typePie = (d.headcountByEmploymentType || []).map((x, i) => ({ label: x.type, value: x.count, color: PIE_COLORS[i % PIE_COLORS.length] }));
   const genderPie = (d.genderDiversity || []).map((x, i) => ({ label: x.gender, value: x.count, color: PIE_COLORS[i % PIE_COLORS.length] }));
 
-  // Line: [{ label, value }]
-  const exitsLine = (d.exitsByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count }));
-  const hiresLine = (d.hiresByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count }));
+  // Line: [{ label, value, employees, monthKey }] — the employee list rides
+  // along on each point so clicking a dot can list who joined / left that month.
+  const exitsLine = (d.exitsByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count, employees: x.employees || [], monthKey: x.month }));
+  const hiresLine = (d.hiresByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count, employees: x.employees || [], monthKey: x.month }));
+
+  // "2026-06" -> "June 2026"
+  const fullMonth = (key) => {
+    const [y, m] = key.split('-').map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  };
+  const openPoint = (series, point) => {
+    setModal({ title: series.name, color: series.color, monthLabel: fullMonth(point.monthKey), employees: point.employees || [] });
+  };
 
   return (
     <div>
@@ -139,11 +150,13 @@ export default function AdminAnalytics() {
         {/* New Employees vs Exits — combined line chart (full width) */}
         <div className="lg:col-span-2">
           <ChartCard title="New Employees vs Exits · last 12 months" empty={hiresLine.length === 0 && exitsLine.length === 0}>
+            <p className="text-xs text-gray-400 -mt-2 mb-1 text-center">Click a dot to see which employees joined or left that month.</p>
             <LineChart
               series={[
                 { name: 'New Employees', color: '#16a34a', data: hiresLine },
                 { name: 'Exits', color: '#ef4444', data: exitsLine },
               ]}
+              onPointClick={openPoint}
             />
           </ChartCard>
         </div>
@@ -153,6 +166,45 @@ export default function AdminAnalytics() {
           <BarChart data={confirmBars} />
         </ChartCard>
       </div>
+
+      {/* Click-through: who joined / left in the clicked month */}
+      {modal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50" onClick={() => setModal(null)}>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 p-5 border-b border-gray-100">
+              <div>
+                <h2 className="card-title flex items-center gap-2">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: modal.color }} />
+                  {modal.title}
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">{modal.monthLabel} · {modal.employees.length} {modal.employees.length === 1 ? 'person' : 'people'}</p>
+              </div>
+              <button onClick={() => setModal(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+            </div>
+            <div className="overflow-y-auto p-2">
+              {modal.employees.length === 0 ? (
+                <p className="text-sm text-gray-400 italic text-center py-6">No employees for this month.</p>
+              ) : modal.employees.map((emp, i) => (
+                <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white shrink-0" style={{ background: modal.color }}>
+                    {(emp.name || '?').charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-gray-900 truncate">{emp.name}</div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {[emp.designation, emp.department].filter(Boolean).join(' · ') || emp.employeeCode}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {emp.employeeCode && <div className="text-[10px] font-mono text-gray-400">{emp.employeeCode}</div>}
+                    {emp.date && <div className="text-[11px] text-gray-500">{new Date(emp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

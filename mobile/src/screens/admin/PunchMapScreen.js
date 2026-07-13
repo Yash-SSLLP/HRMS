@@ -178,7 +178,14 @@ export default function PunchMapScreen() {
               tracksViewChanges={tracks}
               anchor={{ x: 0.5, y: 0.5 }}
             >
-              <View style={[styles.dot, { backgroundColor: pointColor(p) }]} />
+              {/* Coloured halo + white-cased pin with a direction glyph, so dots
+                  read clearly against the map (bolder halo for out-of-area). */}
+              <View style={styles.markerWrap}>
+                <View style={[styles.halo, { backgroundColor: pointColor(p) + (p.outside ? '55' : '33'), width: p.outside ? 40 : 32, height: p.outside ? 40 : 32, borderRadius: p.outside ? 20 : 16 }]} />
+                <View style={[styles.pin, { backgroundColor: pointColor(p) }]}>
+                  <Text style={styles.pinGlyph}>{p.kind === 'in' ? '▼' : '▲'}</Text>
+                </View>
+              </View>
               <Callout tooltip>
                 <View style={styles.callout}>
                   <Text style={styles.calloutName}>{p.name}</Text>
@@ -254,7 +261,10 @@ const styles = StyleSheet.create({
   kindChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   kindChipText: { fontSize: 12.5, fontWeight: '700', color: colors.text },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: spacing(4), paddingBottom: spacing(2) },
-  dot: { width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: '#fff' },
+  markerWrap: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  halo: { position: 'absolute' },
+  pin: { width: 26, height: 26, borderRadius: 13, borderWidth: 3, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 3, shadowOffset: { width: 0, height: 2 } },
+  pinGlyph: { color: '#fff', fontSize: 12, fontWeight: '900', lineHeight: 14 },
   callout: { backgroundColor: '#fff', borderRadius: 10, padding: 10, minWidth: 170, borderWidth: 1, borderColor: '#e5e7eb' },
   calloutName: { fontSize: 13, fontWeight: '800', color: '#111827' },
   calloutSub: { fontSize: 11, color: '#6b7280', marginTop: 1 },

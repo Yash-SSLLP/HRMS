@@ -20,9 +20,20 @@ const overview = asyncHandler(async (req, res) => {
 
   const profiles = await EmployeeProfile.find({})
     .select(
-      'gender dateOfJoining dateOfExit department employmentType confirmationStatus'
+      'gender dateOfJoining dateOfExit department employmentType confirmationStatus employeeCode designation user'
     )
+    .populate('user', 'firstName lastName')
     .lean();
+
+  // Compact employee descriptor for the click-through lists on the
+  // "New Employees vs Exits" chart (who joined / left in a given month).
+  const personOf = (p, date) => ({
+    name: `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode || '—',
+    employeeCode: p.employeeCode || '',
+    designation: p.designation || '',
+    department: p.department || '',
+    date,
+  });
 
   // --- Active set (no exit date) ---
   const active = profiles.filter((p) => !p.dateOfExit);
@@ -89,8 +100,8 @@ const overview = asyncHandler(async (req, res) => {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     monthKeys.push(key);
-    exitsByMonthMap[key] = 0;
-    hiresByMonthMap[key] = 0;
+    exitsByMonthMap[key] = [];
+    hiresByMonthMap[key] = [];
   }
 
   let exitsLast12mo = 0;
@@ -100,12 +111,13 @@ const overview = asyncHandler(async (req, res) => {
     if (exit >= twelveMonthsAgo && exit <= now) {
       exitsLast12mo += 1;
       const key = `${exit.getFullYear()}-${String(exit.getMonth() + 1).padStart(2, '0')}`;
-      if (key in exitsByMonthMap) exitsByMonthMap[key] += 1;
+      if (key in exitsByMonthMap) exitsByMonthMap[key].push(personOf(p, p.dateOfExit));
     }
   }
   const exitsByMonth = monthKeys.map((month) => ({
     month,
-    count: exitsByMonthMap[month],
+    count: exitsByMonthMap[month].length,
+    employees: exitsByMonthMap[month].sort((a, b) => new Date(a.date) - new Date(b.date)),
   }));
 
   // --- Attrition rate (%) ---
@@ -125,10 +137,14 @@ const overview = asyncHandler(async (req, res) => {
     if (join >= twelveMonthsAgo && join <= now) {
       newHiresLast12mo += 1;
       const key = `${join.getFullYear()}-${String(join.getMonth() + 1).padStart(2, '0')}`;
-      if (key in hiresByMonthMap) hiresByMonthMap[key] += 1;
+      if (key in hiresByMonthMap) hiresByMonthMap[key].push(personOf(p, p.dateOfJoining));
     }
   }
-  const hiresByMonth = monthKeys.map((month) => ({ month, count: hiresByMonthMap[month] }));
+  const hiresByMonth = monthKeys.map((month) => ({
+    month,
+    count: hiresByMonthMap[month].length,
+    employees: hiresByMonthMap[month].sort((a, b) => new Date(a.date) - new Date(b.date)),
+  }));
 
   res.json({
     totalActive,

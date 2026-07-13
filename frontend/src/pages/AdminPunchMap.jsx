@@ -147,16 +147,31 @@ export default function AdminPunchMap() {
     for (const p of filtered) {
       if (p.lat == null || p.lng == null) continue;
       const color = pointColor(p);
-      const m = L.circleMarker([p.lat, p.lng], {
-        radius: 7,
-        color: '#fff',
-        weight: 1.5,
+      // Soft coloured glow behind the dot so it stands out from the map — bigger
+      // and stronger for out-of-area punches (what HR is scanning for).
+      const halo = L.circleMarker([p.lat, p.lng], {
+        radius: p.outside ? 18 : 13,
+        stroke: false,
         fillColor: color,
-        fillOpacity: 0.9,
+        fillOpacity: p.outside ? 0.32 : 0.22,
+        interactive: false,
       });
-      m.bindTooltip(tooltipHtml(p), { direction: 'top', offset: [0, -4], sticky: false });
-      m.on('mouseover', function () { this.setRadius(10); this.setStyle({ weight: 2.5 }); this.bringToFront(); });
-      m.on('mouseout', function () { this.setRadius(7); this.setStyle({ weight: 1.5 }); });
+      // A pin-style icon: a bold ring + direction glyph reads far clearer than a
+      // flat dot. Casing (dark outer + white inner ring) makes it pop on any tile.
+      const glyph = p.kind === 'in' ? '▾' : '▴';
+      const icon = L.divIcon({
+        className: p.outside ? 'punch-dot out' : 'punch-dot',
+        html:
+          `<div style="width:26px;height:26px;border-radius:50%;background:${color};` +
+          `border:3px solid #fff;box-shadow:0 0 0 1.5px ${color},0 2px 5px rgba(0,0,0,.45);` +
+          `display:flex;align-items:center;justify-content:center;` +
+          `color:#fff;font-size:14px;line-height:1;font-weight:900">${glyph}</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      });
+      const m = L.marker([p.lat, p.lng], { icon, riseOnHover: true, zIndexOffset: p.outside ? 1000 : 0 });
+      m.bindTooltip(tooltipHtml(p), { direction: 'top', offset: [0, -14], sticky: false });
+      halo.addTo(layer);
       m.addTo(layer);
       pointMarkers.current.set(p.id, m);
       latlngs.push([p.lat, p.lng]);
@@ -188,6 +203,15 @@ export default function AdminPunchMap() {
 
   return (
     <div>
+      {/* Marker styling: kill Leaflet's default div-icon white box; pulse out-of-area dots. */}
+      <style>{`
+        .punch-dot { background: transparent; border: 0; }
+        .punch-dot.out > div { animation: punchPulse 1.6s ease-in-out infinite; }
+        @keyframes punchPulse {
+          0%, 100% { box-shadow: 0 0 0 1.5px #dc2626, 0 2px 5px rgba(0,0,0,.45); }
+          50% { box-shadow: 0 0 0 6px rgba(220,38,38,.35), 0 2px 5px rgba(0,0,0,.45); }
+        }
+      `}</style>
       <PageHeader title="Punch Location Map" subtitle="Where every check-in / check-out happened · pick a day, search a name, hover a dot for its exact time" />
 
       {/* Filters */}

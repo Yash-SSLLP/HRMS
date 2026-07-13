@@ -1,7 +1,10 @@
 // Lightweight dependency-free SVG line chart. Supports one or many series.
 //   <LineChart data={[{label,value}]} />                      // single (accent)
 //   <LineChart series={[{ name, color, data:[{label,value}] }]} />  // multi
-export default function LineChart({ data, series, height = 230 }) {
+// Pass onPointClick(series, point, index) to make the dots interactive — the
+// point object is whatever you put in `data`, so attach extra fields (e.g. an
+// employee list) and read them back in the handler.
+export default function LineChart({ data, series, height = 230, onPointClick }) {
   const allSeries = series && series.length
     ? series
     : data
@@ -64,10 +67,16 @@ export default function LineChart({ data, series, height = 230 }) {
               <g key={si}>
                 {!multi && <polygon points={area} fill={s.color} fillOpacity="0.12" />}
                 <polyline points={line} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-                {s.data.map((d, i) => (
-                  <g key={i}>
-                    <circle className="line-pt" cx={x(i)} cy={y(d.value || 0)} r="3.5" fill={s.color} stroke="#fff" strokeWidth="1.5">
-                      <title>{`${s.name ? s.name + ' · ' : ''}${d.label}: ${d.value}`}</title>
+                {s.data.map((d, i) => {
+                  const clickable = onPointClick && (d.value || 0) > 0;
+                  return (
+                  <g key={i}
+                    onClick={clickable ? () => onPointClick(s, d, i) : undefined}
+                    style={clickable ? { cursor: 'pointer' } : undefined}>
+                    {/* Generous invisible hit area so the small dot is easy to tap. */}
+                    {clickable && <circle cx={x(i)} cy={y(d.value || 0)} r="14" fill="transparent" />}
+                    <circle className="line-pt" cx={x(i)} cy={y(d.value || 0)} r={clickable ? 4.5 : 3.5} fill={s.color} stroke="#fff" strokeWidth="1.5">
+                      <title>{`${s.name ? s.name + ' · ' : ''}${d.label}: ${d.value}${clickable ? ' — click for details' : ''}`}</title>
                     </circle>
                     {(d.value || 0) > 0 && (
                       <text
@@ -78,7 +87,8 @@ export default function LineChart({ data, series, height = 230 }) {
                       </text>
                     )}
                   </g>
-                ))}
+                  );
+                })}
               </g>
             );
           })}
