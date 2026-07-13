@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const Notification = require('../models/Notification');
+const EmployeeProfile = require('../models/EmployeeProfile');
 
 // Scope notifications to the portal a dual-role user is currently viewing.
 // 'admin' → admin + all; 'employee' → employee + all; anything else → no scoping.
@@ -9,10 +10,23 @@ function audienceScope(audience) {
   return { $or: [{ audience: { $in: [audience, 'all'] } }, { audience: { $exists: false } }] };
 }
 
+// A new joiner should never see notifications that predate their joining date.
+// HR usually creates the account ahead of the actual start date, and broadcast
+// notifications (events, holidays, announcements, celebrations…) accumulate on
+// it during that gap — so on day one the joiner would otherwise be greeted by a
+// pile of alerts from before they joined. Returns a `{ createdAt: { $gte } }`
+// filter fragment, or {} when there's no cutoff to apply (no profile / no
+// joining date — e.g. admin-only accounts), which preserves existing behaviour.
+async function joinCutoff(userId) {
+  const profile = await EmployeeProfile.findOne({ user: userId }).select('dateOfJoining').lean();
+  if (!profile || !profile.dateOfJoining) return {};
+  return { createdAt: { $gte: profile.dateOfJoining } };
+}
+
 // GET /api/notifications?audience=admin|employee  — recent notifications + unread count
 const listNotifications = asyncHandler(async (req, res) => {
   const meId = req.user._id;
-  const filter = { recipient: meId, ...audienceScope(req.query.audience) };
+  const filter = { recipient: meId, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)) };
   const [notifications, unreadCount] = await Promise.all([
     Notification.find(filter).sort({ createdAt: -1 }).limit(50).lean(),
     Notification.countDocuments({ ...filter, readAt: null }),
@@ -25,7 +39,7 @@ const listNotifications = asyncHandler(async (req, res) => {
 // other's unread).
 const markAllRead = asyncHandler(async (req, res) => {
   await Notification.updateMany(
-    { recipient: req.user._id, readAt: null, ...audienceScope(req.query.audience) },
+    { recipient: req.user._id, readAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)) },
     { $set: { readAt: new Date() } }
   );
   res.json({ ok: true });
