@@ -24,21 +24,21 @@ const SEED = {
   try {
     await connectDB();
 
-    // 1) Account Manager user
-    let am = await User.findOne({ email: SEED.email });
+    // 1) Account Manager user. Always end in a KNOWN, working state: correct role,
+    // active, and the SEED password (reset every run) so login is guaranteed.
+    let am = await User.findOne({ email: SEED.email }).select('+password');
     if (am) {
-      if (am.role !== 'AccountsManager') {
-        am.role = 'AccountsManager';
-        await am.save();
-        console.log(`1) Updated ${SEED.email} -> role AccountsManager`);
-      } else {
-        console.log(`1) Account Manager already exists: ${SEED.email} (no change)`);
-      }
+      am.role = 'AccountsManager';
+      am.isActive = true;
+      am.password = SEED.password;      // pre-save hook re-hashes
+      am.tokenVersion = (am.tokenVersion || 0) + 1; // invalidate any stale sessions
+      await am.save();
+      console.log(`1) Reset Account Manager: ${am.email} (password: ${SEED.password})`);
     } else {
       am = await User.create(SEED);
       console.log(`1) Created Account Manager: ${am.email} (password: ${SEED.password})`);
-      console.log('   WARNING: sample password — change it before any real use.');
     }
+    console.log('   WARNING: sample password — change it after logging in.');
     try { await ensureEmployeeProfile(am); } catch (err) { console.error('   (profile create skipped:', err.message, ')'); }
 
     // 2) Grant cashbook.manage to restricted HRManagers
