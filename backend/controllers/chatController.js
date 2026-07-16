@@ -4,6 +4,7 @@ const Connection = require('../models/Connection');
 const Message = require('../models/Message');
 const ChatGroup = require('../models/ChatGroup');
 const User = require('../models/User');
+const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
 const { hideSuperAdminFilter } = require('../utils/visibility');
 const { notify, notifyMany } = require('../services/notify');
@@ -14,7 +15,7 @@ function preview(text) {
   return clean.length > 120 ? `${clean.slice(0, 117)}…` : clean;
 }
 
-const USER_FIELDS = 'firstName lastName email role photo';
+const USER_FIELDS = 'firstName lastName email role photo isActive';
 
 function publicUser(u) {
   if (!u) return null;
@@ -26,12 +27,31 @@ function publicUser(u) {
     email: u.email,
     role: u.role,
     hasPhoto: Boolean(u.photo),
+    // A deactivated login = the person has left the organization. The chat UI
+    // shows a "Resigned" badge and blocks messaging them.
+    resigned: u.isActive === false,
   };
 }
 
 // Resolve the "other" participant id of a connection relative to the caller.
 function otherParty(conn, meId) {
   return conn.requester.equals(meId) ? conn.recipient : conn.requester;
+}
+
+// Given a list of user ids, return the set (as strings) of those who have LEFT
+// the organization — either their login is deactivated OR their employee profile
+// has a date of exit that has already passed. Used to block chatting with them.
+async function departedUserIdSet(userIds) {
+  const ids = [...new Set((userIds || []).map(String))].filter(Boolean);
+  if (!ids.length) return new Set();
+  const departed = new Set();
+  const [inactive, profiles] = await Promise.all([
+    User.find({ _id: { $in: ids }, isActive: false }).select('_id').lean(),
+    EmployeeProfile.find({ user: { $in: ids }, dateOfExit: { $ne: null, $lte: new Date() } }).select('user').lean(),
+  ]);
+  inactive.forEach((u) => departed.add(String(u._id)));
+  profiles.forEach((p) => departed.add(String(p.user)));
+  return departed;
 }
 
 // WhatsApp-style delivery status for a message (from the sender's viewpoint).
@@ -48,9 +68,14 @@ function messageStatus(m) {
 // connection status to each. Reused by the complaints target picker.
 const directory = asyncHandler(async (req, res) => {
   const meId = req.user._id;
-  const users = await User.find({ isActive: true, _id: { $ne: meId }, ...hideSuperAdminFilter(req.user) })
+  const activeUsers = await User.find({ isActive: true, _id: { $ne: meId }, ...hideSuperAdminFilter(req.user) })
     .select(USER_FIELDS)
     .sort({ firstName: 1, lastName: 1 });
+
+  // Exclude anyone who has left the org (a past dateOfExit) even if their login
+  // hasn't been deactivated yet — you can't start a chat with someone who's gone.
+  const departed = await departedUserIdSet(activeUsers.map((u) => u._id));
+  const users = activeUsers.filter((u) => !departed.has(String(u._id)));
 
   const conns = await Connection.find({
     $or: [{ requester: meId }, { recipient: meId }],
@@ -91,6 +116,11 @@ const sendRequest = asyncHandler(async (req, res) => {
   if (!recipient) {
     res.status(404);
     throw new Error('User not found');
+  }
+  const departed = await departedUserIdSet([recipientId]);
+  if (departed.has(String(recipientId))) {
+    res.status(403);
+    throw new Error('This person has left the organization');
   }
 
   // A SuperAdmin may message anyone without waiting for approval — their
@@ -187,6 +217,11 @@ const listConnections = asyncHandler(async (req, res) => {
     { $set: { deliveredAt: new Date() } }
   );
 
+  // Flag the other parties who have left the organization so the client shows a
+  // "Resigned" badge and blocks messaging (covers dateOfExit-only departures too).
+  const otherIds = conns.map((c) => (c.requester._id.equals(meId) ? c.recipient._id : c.requester._id));
+  const departed = await departedUserIdSet(otherIds);
+
   const out = await Promise.all(
     conns.map(async (c) => {
       const other = c.requester._id.equals(meId) ? c.recipient : c.requester;
@@ -197,9 +232,11 @@ const listConnections = asyncHandler(async (req, res) => {
         readAt: null,
         deletedFor: { $ne: meId },
       });
+      const person = publicUser(other);
+      person.resigned = person.resigned || departed.has(String(other._id));
       return {
         connectionId: c._id,
-        person: publicUser(other),
+        person,
         lastMessage: lastMessage
           ? { body: lastMessage.body, createdAt: lastMessage.createdAt, mine: lastMessage.sender.equals(meId) }
           : null,
@@ -244,11 +281,28 @@ const getMessages = asyncHandler(async (req, res) => {
     { $set: { readAt: now } }
   );
 
-  const messages = await Message.find({ connection: req.params.connectionId, deletedFor: { $ne: meId } })
-    .sort({ createdAt: 1 })
-    .lean();
+  // Incremental sync: when the client passes ?after=<ISO>, return only messages
+  // newer than that cursor so polls stay tiny instead of re-sending the whole
+  // thread. First load (no cursor) returns everything.
+  const after = req.query.after ? new Date(req.query.after) : null;
+  const incremental = !!(after && !Number.isNaN(after.getTime()));
+  const filter = { connection: req.params.connectionId, deletedFor: { $ne: meId } };
+  if (incremental) filter.createdAt = { $gt: after };
+
+  const messages = await Message.find(filter).sort({ createdAt: 1 }).lean();
+
+  // "Read up to" markers so the sender's ticks upgrade to delivered/seen without
+  // re-fetching their own old messages: the latest of MY messages the other party
+  // has delivered/read. The client marks all its messages up to these as such.
+  const lastSeen = await Message.findOne({ connection: req.params.connectionId, sender: meId, readAt: { $ne: null } })
+    .sort({ readAt: -1 }).select('createdAt').lean();
+  const lastDelivered = await Message.findOne({ connection: req.params.connectionId, sender: meId, deliveredAt: { $ne: null } })
+    .sort({ deliveredAt: -1 }).select('createdAt').lean();
 
   res.json({
+    incremental,
+    seenUpTo: lastSeen?.createdAt || null,
+    deliveredUpTo: lastDelivered?.createdAt || null,
     messages: messages.map((m) => ({
       _id: m._id,
       body: m.body,
@@ -269,10 +323,18 @@ const sendMessage = asyncHandler(async (req, res) => {
   }
   const conn = await loadParticipantConnection(connectionId, meId);
 
+  // Block messaging someone who has left the organization (deactivated login OR
+  // an employee profile whose date of exit has passed).
+  const recipientId = otherParty(conn, meId);
+  const departed = await departedUserIdSet([recipientId]);
+  if (departed.has(String(recipientId))) {
+    res.status(403);
+    throw new Error('This person has left the organization and can no longer be messaged');
+  }
+
   const message = await Message.create({ connection: connectionId, sender: meId, body: body.trim() });
 
   // Notify the other party (in-app + push). Best-effort — never block the send.
-  const recipientId = otherParty(conn, meId);
   const fromName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'New message';
   notify({
     recipient: recipientId,
@@ -467,7 +529,13 @@ const getGroupMessages = asyncHandler(async (req, res) => {
   mem.lastReadAt = new Date();
   await group.save();
 
-  const messages = await Message.find({ group: group._id, deletedFor: { $ne: meId } })
+  // Incremental sync: ?after=<ISO> returns only newer messages (tiny polls).
+  const after = req.query.after ? new Date(req.query.after) : null;
+  const incremental = !!(after && !Number.isNaN(after.getTime()));
+  const filter = { group: group._id, deletedFor: { $ne: meId } };
+  if (incremental) filter.createdAt = { $gt: after };
+
+  const messages = await Message.find(filter)
     .sort({ createdAt: 1 })
     .populate('sender', 'firstName lastName')
     .lean();
@@ -477,6 +545,7 @@ const getGroupMessages = asyncHandler(async (req, res) => {
     hasPhoto: Boolean(group.photo),
     myRole: mem.role,
     memberCount: group.members.filter((m) => m.status === 'accepted').length,
+    incremental,
     messages: messages.map((m) => ({
       _id: m._id,
       body: m.body,

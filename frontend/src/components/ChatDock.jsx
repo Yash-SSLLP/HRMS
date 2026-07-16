@@ -5,7 +5,53 @@ import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { confirmDialog } from './dialogs';
 
-const POLL_MS = 4000;
+const POLL_MS = 4000;        // conversation-list poll
+const MSG_POLL_MS = 2500;    // active-thread poll (cheap now — incremental)
+
+// ---- tiny localStorage cache so the dock paints instantly on open, then
+// revalidates over the network (keyed per user so accounts don't leak) ----
+const CACHE_PREFIX = 'hrms:chat:';
+const cacheKey = (me, name) => `${CACHE_PREFIX}${me?._id || me?.id || 'anon'}:${name}`;
+function readCache(key) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } }
+function writeCache(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* quota — ignore */ } }
+
+// A shared, no-login video room both parties can join by tapping the link.
+function makeCallLink(kind, id) {
+  const rnd = Math.random().toString(36).slice(2, 8);
+  return `https://meet.jit.si/SSLLP-HRMS-${kind}-${id}-${rnd}`;
+}
+
+// Turn URLs in a message body into tappable links; call links get a Join affordance.
+const URL_RE = /(https?:\/\/[^\s]+)/g;
+function renderBody(text) {
+  return String(text || '').split(URL_RE).map((part, i) => {
+    if (i % 2 === 0) return <span key={i}>{part}</span>;
+    const isCall = /meet\.jit\.si|meet\.google\.com/.test(part);
+    return (
+      <a key={i} href={part} target="_blank" rel="noopener noreferrer"
+        style={{ color: isCall ? '#008069' : '#2563eb', textDecoration: 'underline', fontWeight: isCall ? 700 : 400, wordBreak: 'break-all' }}>
+        {isCall ? '📹 Join video call' : part}
+      </a>
+    );
+  });
+}
+
+// Upgrade my own messages' ticks from "read up to" markers, so the sender sees
+// delivered/seen without re-downloading their old messages each poll.
+function applyReceipts(msgs, seenUpTo, deliveredUpTo) {
+  if (!seenUpTo && !deliveredUpTo) return msgs;
+  const seenT = seenUpTo ? new Date(seenUpTo).getTime() : 0;
+  const delT = deliveredUpTo ? new Date(deliveredUpTo).getTime() : 0;
+  let changed = false;
+  const out = msgs.map((m) => {
+    if (!m.mine || m.status === 'seen') return m;
+    const t = new Date(m.createdAt).getTime();
+    if (seenT && t <= seenT) { changed = true; return { ...m, status: 'seen' }; }
+    if (delT && t <= delT && m.status === 'sent') { changed = true; return { ...m, status: 'delivered' }; }
+    return m;
+  });
+  return changed ? out : msgs;
+}
 
 // WhatsApp-inspired colour palettes (light & dark).
 const WA_LIGHT = {
@@ -110,6 +156,10 @@ export default function ChatDock() {
   const activeRef = useRef(null);
   const bottomRef = useRef(null);
   const photoInputRef = useRef(null);
+  const cursorRef = useRef(null);       // last message createdAt for incremental polls
+  const messagesRef = useRef([]);       // mirror of `messages` for append/dedupe
+
+  const msgsCacheKey = (conv) => cacheKey(me, `msg:${conv.kind}:${conv.id}`);
 
   const unreadTotal =
     connections.reduce((s, c) => s + (c.unread || 0), 0) +
@@ -133,6 +183,8 @@ export default function ChatDock() {
       setRequests(reqRes.data);
       setGroups(grpRes.data.groups);
       setGroupInvites(grpRes.data.invites);
+      writeCache(cacheKey(me, 'connections'), connRes.data.connections);
+      writeCache(cacheKey(me, 'groups'), grpRes.data.groups);
     } catch { /* stay quiet */ }
   };
 
@@ -141,32 +193,65 @@ export default function ChatDock() {
     catch (err) { setError(err.response?.data?.message || 'Failed to load directory'); }
   };
 
-  const loadMessages = async (conv) => {
+  // Fetch a thread. The first open does a FULL load (so the whole history is
+  // available); every poll after passes ?after=<cursor> and only appends the
+  // handful of new messages — tiny payload, no full-history re-download.
+  const loadMessages = async (conv, { incremental = false } = {}) => {
     if (!conv) return;
     try {
-      const url = conv.kind === 'group' ? `/chat/groups/${conv.id}/messages` : `/chat/messages/${conv.id}`;
+      const base = conv.kind === 'group' ? `/chat/groups/${conv.id}/messages` : `/chat/messages/${conv.id}`;
+      const url = incremental && cursorRef.current
+        ? `${base}?after=${encodeURIComponent(cursorRef.current)}`
+        : base;
       const { data } = await api.get(url);
-      if (activeRef.current && activeRef.current.kind === conv.kind && activeRef.current.id === conv.id) {
-        setMessages(data.messages);
+      if (!(activeRef.current && activeRef.current.kind === conv.kind && activeRef.current.id === conv.id)) return;
+
+      const prev = messagesRef.current;
+      let next;
+      if (data.incremental) {
+        if (!data.messages.length) next = prev;
+        else {
+          const seen = new Set(prev.map((m) => m._id));
+          const add = data.messages.filter((m) => !seen.has(m._id));
+          next = add.length ? [...prev, ...add] : prev;
+        }
+      } else {
+        next = data.messages;
       }
+      next = applyReceipts(next, data.seenUpTo, data.deliveredUpTo);
+      const last = next[next.length - 1];
+      if (last) cursorRef.current = last.createdAt;
+      writeCache(msgsCacheKey(conv), next.slice(-50));
+      if (next !== prev) setMessages(next);
     } catch (err) { setError(err.response?.data?.message || 'Failed to load messages'); }
   };
 
   useEffect(() => {
+    const cc = readCache(cacheKey(me, 'connections')); if (cc) setConnections(cc);
+    const gg = readCache(cacheKey(me, 'groups')); if (gg) setGroups(gg);
     loadLists();
     const t = setInterval(loadLists, POLL_MS);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     activeRef.current = active;
+    cursorRef.current = null;
     if (!active) { setMessages([]); return undefined; }
-    loadMessages(active);
-    const t = setInterval(() => loadMessages(active), POLL_MS);
+    // Paint cached tail instantly, then do a full load to fill in older history.
+    const cached = readCache(msgsCacheKey(active));
+    setMessages(cached || []);
+    loadMessages(active, { incremental: false });
+    const t = setInterval(() => loadMessages(active, { incremental: true }), MSG_POLL_MS);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => {
+    messagesRef.current = messages;
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const openConversation = (conv) => {
     setActive(conv);
@@ -208,20 +293,43 @@ export default function ChatDock() {
     } catch (err) { setError(err.response?.data?.message || 'Could not create group'); }
   };
 
+  // Append a just-sent message locally and keep the incremental cursor in step.
+  const appendSent = (msg) => {
+    const next = [...messagesRef.current, msg];
+    cursorRef.current = msg.createdAt;
+    setMessages(next);
+    if (active) writeCache(msgsCacheKey(active), next.slice(-50));
+  };
+
   const send = async (e) => {
     e.preventDefault();
-    if (!draft.trim() || !active) return;
+    if (!draft.trim() || !active || active.resigned) return;
     setSending(true); setError('');
     try {
       const body = draft;
       const { data } = active.kind === 'group'
         ? await api.post(`/chat/groups/${active.id}/messages`, { body })
         : await api.post('/chat/messages', { connectionId: active.id, body });
-      setMessages((prev) => [...prev, data.message]);
+      appendSent(data.message);
       setDraft('');
       loadLists();
     } catch (err) { setError(err.response?.data?.message || 'Could not send message'); }
     finally { setSending(false); }
+  };
+
+  // Start a video call: post a joinable room link into the chat and open it.
+  const startCall = async () => {
+    if (!active || active.resigned) return;
+    const link = makeCallLink(active.kind, active.id);
+    const body = `📹 Video call — tap to join: ${link}`;
+    try {
+      const { data } = active.kind === 'group'
+        ? await api.post(`/chat/groups/${active.id}/messages`, { body })
+        : await api.post('/chat/messages', { connectionId: active.id, body });
+      appendSent(data.message);
+      loadLists();
+      window.open(link, '_blank', 'noopener,noreferrer');
+    } catch (err) { setError(err.response?.data?.message || 'Could not start the call'); }
   };
 
   const deleteMessage = async (id) => {
@@ -378,12 +486,23 @@ export default function ChatDock() {
               title={active.kind === 'group' ? 'Group info' : undefined}>
               <Avatar name={active.name} size={36} group={active.kind === 'group'} photoUrl={active.photoUrl} />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold truncate" style={{ color: wa.headerText }}>{active.name}</div>
+                <div className="text-sm font-semibold truncate flex items-center gap-1.5" style={{ color: wa.headerText }}>
+                  {active.name}
+                  {active.resigned && (
+                    <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0"
+                      style={{ background: 'rgba(255,255,255,.22)', color: wa.headerText }}>Resigned</span>
+                  )}
+                </div>
                 <div className="text-[11px] truncate" style={{ color: mode === 'dark' ? '#8696a0' : 'rgba(255,255,255,.8)' }}>
-                  {active.sub}{active.kind === 'group' ? ' · tap for info' : ''}
+                  {active.resigned ? 'Left the organization' : active.sub}{active.kind === 'group' ? ' · tap for info' : ''}
                 </div>
               </div>
             </button>
+            {!active.resigned && (
+              <button onClick={startCall} title="Start video call" className="px-1.5" style={{ color: wa.headerText }} aria-label="Start video call">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" /></svg>
+              </button>
+            )}
             <button onClick={clearChat} title="Clear chat" className="px-1.5" style={{ color: wa.headerText }} aria-label="Clear chat">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 7h12v2H6V7zm1 3h10l-1 11H8L7 10zm3-6h4l1 1h3v2H3V5h3l1-1z" /></svg>
             </button>
@@ -412,7 +531,7 @@ export default function ChatDock() {
                   {!m.mine && active.kind === 'group' && (
                     <div className="text-[11px] font-semibold mb-0.5" style={{ color: '#53bdeb' }}>{m.senderName}</div>
                   )}
-                  <span className="break-words whitespace-pre-wrap">{m.body}</span>
+                  <span className="break-words whitespace-pre-wrap">{renderBody(m.body)}</span>
                   <span className="text-[10px] ml-2 align-bottom inline-flex items-center" style={{ color: wa.sub }}>
                     {fmtTime(m.createdAt)}
                     {m.mine && active.kind === 'direct' && <MsgTicks status={m.status} mode={mode} />}
@@ -432,17 +551,23 @@ export default function ChatDock() {
             <div ref={bottomRef} />
           </div>
 
-          {/* Composer */}
-          <form onSubmit={send} className="flex items-center gap-2 p-2" style={{ background: wa.composerBg }}>
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type a message"
-              className="flex-1 rounded-full px-4 py-2 text-sm outline-none"
-              style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
-            <button type="submit" disabled={sending || !draft.trim()}
-              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 disabled:opacity-50"
-              style={{ background: '#008069', color: '#fff' }} aria-label="Send">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
-            </button>
-          </form>
+          {/* Composer — blocked when the other person has left the organization */}
+          {active.resigned ? (
+            <div className="p-3 text-center text-xs" style={{ background: wa.composerBg, color: wa.sub }}>
+              This person has resigned and left the organization. You can no longer send them messages.
+            </div>
+          ) : (
+            <form onSubmit={send} className="flex items-center gap-2 p-2" style={{ background: wa.composerBg }}>
+              <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type a message"
+                className="flex-1 rounded-full px-4 py-2 text-sm outline-none"
+                style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
+              <button type="submit" disabled={sending || !draft.trim()}
+                className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 disabled:opacity-50"
+                style={{ background: '#008069', color: '#fff' }} aria-label="Send">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+              </button>
+            </form>
+          )}
         </div>
       )}
 
@@ -550,7 +675,7 @@ export default function ChatDock() {
                       const isActive = active?.kind === 'direct' && active.id === c.connectionId;
                       return (
                         <button key={`c-${c.connectionId}`}
-                          onClick={() => openConversation({ kind: 'direct', id: c.connectionId, name: c.person.fullName, sub: c.person.role, photoUrl: userPhotoUrl(c.person._id, c.person.hasPhoto, bust) })}
+                          onClick={() => openConversation({ kind: 'direct', id: c.connectionId, name: c.person.fullName, sub: c.person.role, resigned: c.person.resigned, photoUrl: userPhotoUrl(c.person._id, c.person.hasPhoto, bust) })}
                           className="w-full text-left px-3 py-2.5 flex items-center gap-3 transition-colors"
                           style={{ borderBottom: `1px solid ${wa.border}`, background: isActive ? wa.listHover : 'transparent' }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = wa.listHover; }}
@@ -558,12 +683,18 @@ export default function ChatDock() {
                           <Avatar name={c.person.fullName} size={42} photoUrl={userPhotoUrl(c.person._id, c.person.hasPhoto, bust)} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-sm truncate font-medium" style={{ color: wa.text }}>{c.person.fullName}</span>
+                              <span className="text-sm truncate font-medium flex items-center gap-1.5" style={{ color: wa.text }}>
+                                {c.person.fullName}
+                                {c.person.resigned && (
+                                  <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0"
+                                    style={{ background: mode === 'dark' ? '#3a2a2a' : '#fde8e8', color: '#c0392b' }}>Resigned</span>
+                                )}
+                              </span>
                               {c.lastMessage && <span className="text-[10px] shrink-0" style={{ color: c.unread > 0 ? wa.badge : wa.sub }}>{fmtTime(c.lastMessage.createdAt)}</span>}
                             </div>
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[12px] truncate" style={{ color: wa.sub }}>
-                                {c.lastMessage ? `${c.lastMessage.mine ? 'You: ' : ''}${c.lastMessage.body}` : c.person.role}
+                                {c.person.resigned ? 'Left the organization' : (c.lastMessage ? `${c.lastMessage.mine ? 'You: ' : ''}${c.lastMessage.body}` : c.person.role)}
                               </span>
                               {c.unread > 0 && <span className="text-[10px] rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center font-bold shrink-0" style={{ background: wa.badge, color: '#0b141a' }}>{c.unread}</span>}
                             </div>
