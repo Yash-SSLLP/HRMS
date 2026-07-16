@@ -9,6 +9,7 @@ export function hasPermission(user, cap) {
   if (user.role === 'SuperAdmin') return true;
   if (user.role === 'CEO' || user.role === 'MD') return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
+  if (user.role === 'AccountsManager') return cap === 'cashbook.manage';
   if (user.role === 'HRManager') {
     const p = user.permissions;
     if (p == null) return true; // undefined/null → all

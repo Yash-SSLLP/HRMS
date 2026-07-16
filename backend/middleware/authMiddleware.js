@@ -111,6 +111,7 @@ function hasPermission(user, cap) {
   if (!user) return false;
   if (user.role === 'SuperAdmin') return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
+  if (user.role === 'AccountsManager') return cap === 'cashbook.manage';
   if (user.role === 'HRManager') {
     const perms = user.permissions;
     if (perms === undefined || perms === null) return true; // not configured → all

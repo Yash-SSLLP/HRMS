@@ -1,7 +1,7 @@
 import { lazy, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useThemeStore } from './store/themeStore';
-import { adminNav, employeeNav, ldNav } from './config/nav';
+import { adminNav, employeeNav, ldNav, accountsNav } from './config/nav';
 // Public auth/entry pages stay eager (they render outside the app shell).
 import Login from './pages/Login.jsx';
 import ExitFeedback from './pages/ExitFeedback.jsx';
@@ -96,6 +96,8 @@ const CoursePlayerPage = lazy(() => import('./pages/CoursePlayerPage.jsx'));
 const AdminReviewCycles = lazy(() => import('./pages/AdminReviewCycles.jsx'));
 const EmployeeReviews = lazy(() => import('./pages/EmployeeReviews.jsx'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
+const AdminCashbook = lazy(() => import('./pages/AdminCashbook.jsx'));
+const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
 
 function RootRedirect() {
   const user = useAuthStore((s) => s.user);
@@ -112,7 +114,9 @@ function RootRedirect() {
 // to their only page — Courses.
 function AdminHome() {
   const role = useAuthStore((s) => s.user?.role);
-  return <Navigate to={role === 'LDManager' ? 'courses' : 'dashboard'} replace />;
+  if (role === 'LDManager') return <Navigate to="courses" replace />;
+  if (role === 'AccountsManager') return <Navigate to="cashbook" replace />;
+  return <Navigate to="dashboard" replace />;
 }
 
 export default function App() {
@@ -152,8 +156,8 @@ export default function App() {
       <Route
         path="/admin"
         element={
-          <ProtectedRoute roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager']}>
-            <Layout navItems={role === 'LDManager' ? ldNav : adminNav} sectionTitle="Admin" />
+          <ProtectedRoute roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager']}>
+            <Layout navItems={role === 'LDManager' ? ldNav : role === 'AccountsManager' ? accountsNav : adminNav} sectionTitle="Admin" />
           </ProtectedRoute>
         }
       >
@@ -179,6 +183,7 @@ export default function App() {
         <Route path="payroll-run" element={<AdminPayrollRun />} />
         <Route path="salary-structures" element={<AdminSalaryStructures />} />
         <Route path="loans" element={<AdminLoans />} />
+        <Route path="cashbook" element={<AdminCashbook />} />
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
@@ -235,6 +240,7 @@ export default function App() {
         <Route path="declaration" element={<EmployeeInvestmentDeclaration />} />
         <Route path="leave" element={<EmployeeLeave />} />
         <Route path="expenses" element={<EmployeeExpenses />} />
+        <Route path="cashbook" element={<EmployeeCashbook />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />

@@ -84,7 +84,7 @@ const createUser = asyncHandler(async (req, res) => {
   // HR and L&D admins are also employees — give them an employee profile. CEO/MD
   // are NOT employees (no profile, no documents, not in the Employees/Users
   // lists); they appear in the Org Chart as approvers via a separate path.
-  if (['HRManager', 'LDManager'].includes(user.role)) {
+  if (['HRManager', 'LDManager', 'AccountsManager'].includes(user.role)) {
     try { await ensureEmployeeProfile(user); } catch (err) { console.error('Staff profile auto-create failed:', err.message); }
   }
 
@@ -130,7 +130,7 @@ const updateUser = asyncHandler(async (req, res) => {
 
   // Promoted to HR / L&D → ensure they have an employee profile. CEO/MD are not
   // employees, so they never get one.
-  if (['HRManager', 'LDManager'].includes(user.role)) {
+  if (['HRManager', 'LDManager', 'AccountsManager'].includes(user.role)) {
     try { await ensureEmployeeProfile(user); } catch (err) { console.error('Staff profile auto-create failed:', err.message); }
   }
 

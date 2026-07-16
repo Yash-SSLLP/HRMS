@@ -67,6 +67,9 @@ export const adminNav = [
     { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage' },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
+  { group: 'Cashbook', items: [
+    { to: '/admin/cashbook', label: 'Cashbook', icon: FiBook, perm: 'cashbook.manage' },
+  ] },
   { group: 'Performance & Learning', items: [
     { to: '/admin/performance', label: 'Performance', icon: FiTrendingUp, perm: 'performance.manage' },
     { to: '/admin/review-cycles', label: 'Appraisals', icon: FiEdit, perm: 'performance.manage' },
@@ -103,6 +106,12 @@ export const ldNav = [
   { to: '/admin/courses', label: 'Courses (LMS)', end: true, icon: FiBook },
 ];
 
+// Account Manager (AccountsManager) is a cashbook-only admin: they enter the
+// admin portal but see only the Cashbook page. Same flat-nav pattern as ldNav.
+export const accountsNav = [
+  { to: '/admin/cashbook', label: 'Cashbook', end: true, icon: FiBook },
+];
+
 export const employeeNav = [
   { group: 'Overview', items: [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },
@@ -126,6 +135,7 @@ export const employeeNav = [
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
     { to: '/employee/expenses', label: 'Expenses', icon: FiShoppingBag },
+    { to: '/employee/cashbook', label: 'Cash Vouchers', icon: FiBook },
     { to: '/employee/travel', label: 'Travel', icon: FiMap },
   ] },
   { group: 'Performance & Learning', items: [

@@ -26,6 +26,7 @@ import HowToUseScreen from '../screens/HowToUseScreen';
 import AnnouncementsScreen from '../screens/AnnouncementsScreen';
 import TasksScreen from '../screens/TasksScreen';
 import ExpensesScreen from '../screens/ExpensesScreen';
+import CashbookScreen from '../screens/CashbookScreen';
 import DocumentsScreen from '../screens/DocumentsScreen';
 import GoalsScreen from '../screens/GoalsScreen';
 import ReviewsScreen from '../screens/ReviewsScreen';
@@ -85,6 +86,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="Announcements" component={AnnouncementsScreen} options={{ title: 'Announcements' }} />
       <HomeStackNav.Screen name="Tasks" component={TasksScreen} options={{ title: 'My Tasks' }} />
       <HomeStackNav.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Expenses' }} />
+      <HomeStackNav.Screen name="Cashbook" component={CashbookScreen} options={{ title: 'Cash Vouchers' }} />
       <HomeStackNav.Screen name="Documents" component={DocumentsScreen} options={{ title: 'Documents' }} />
       <HomeStackNav.Screen name="Goals" component={GoalsScreen} options={{ title: 'My Goals' }} />
       <HomeStackNav.Screen name="Reviews" component={ReviewsScreen} options={{ title: 'Performance Reviews' }} />

@@ -62,6 +62,7 @@ app.use('/api/shifts', require('./routes/shiftRoutes'));
 app.use('/api/regularizations', require('./routes/regularizationRoutes'));
 app.use('/api/salary-structures', require('./routes/salaryStructureRoutes'));
 app.use('/api/loans', require('./routes/loanRoutes'));
+app.use('/api/cashbook', require('./routes/cashbookRoutes'));
 app.use('/api/declarations', require('./routes/declarationRoutes'));
 app.use('/api/compliance', require('./routes/complianceRoutes'));
 app.use('/api/surveys', require('./routes/surveyRoutes'));

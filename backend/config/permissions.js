@@ -32,6 +32,7 @@ const PERMISSIONS = [
   { key: 'declarations.manage', label: 'Tax declarations', group: 'Payroll & Finance' },
   { key: 'loans.manage', label: 'Loans & advances', group: 'Payroll & Finance' },
   { key: 'expenses.manage', label: 'Expenses', group: 'Payroll & Finance' },
+  { key: 'cashbook.manage', label: 'Cashbook', group: 'Payroll & Finance' },
   { key: 'travel.manage', label: 'Travel requests', group: 'Payroll & Finance' },
   { key: 'compliance.view', label: 'Compliance reports', group: 'Payroll & Finance' },
 

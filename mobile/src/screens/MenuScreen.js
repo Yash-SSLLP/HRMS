@@ -29,6 +29,7 @@ const GROUPS = [
     items: [
       { key: 'Payslips', label: 'Payslips', icon: 'cash', tint: '#9333ea' },
       { key: 'Expenses', label: 'Expenses', icon: 'bag-handle', tint: '#ef4444' },
+      { key: 'Cashbook', label: 'Cash Vouchers', icon: 'book', tint: '#0891b2' },
       { key: 'Travel', label: 'Travel', icon: 'map', tint: '#0ea5e9' },
       { key: 'Loans', label: 'Loans', icon: 'wallet', tint: '#16a34a' },
     ],

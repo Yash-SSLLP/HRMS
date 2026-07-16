@@ -20,7 +20,7 @@ async function ensureEmployeeProfile(user) {
 // profile. CEO/MD are intentionally excluded (they are not employees). Runs on
 // startup; idempotent.
 async function backfillHrProfiles() {
-  const hrs = await User.find({ role: { $in: ['HRManager', 'LDManager'] }, isActive: true });
+  const hrs = await User.find({ role: { $in: ['HRManager', 'LDManager', 'AccountsManager'] }, isActive: true });
   let created = 0;
   for (const u of hrs) {
     const existing = await EmployeeProfile.findOne({ user: u._id });
