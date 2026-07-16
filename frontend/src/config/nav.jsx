@@ -32,6 +32,7 @@ export const adminNav = [
     { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap, perm: 'org.manage' },
     { to: '/admin/org-chart', label: 'Org Chart', icon: FiGitBranch },
     { to: '/admin/users', label: 'Users', icon: FiUsers, perm: 'users.manage' },
+    { to: '/admin/permissions', label: 'Permissions', icon: FiShield, roles: ['SuperAdmin'] },
     { to: '/admin/employees', label: 'Employees', icon: FiBriefcase, perm: 'employees.manage' },
   ] },
   { group: 'Recruitment & Onboarding', items: [
@@ -136,6 +137,7 @@ export const employeeNav = [
     { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
     { to: '/employee/expenses', label: 'Expenses', icon: FiShoppingBag },
     { to: '/employee/cashbook', label: 'Cash Vouchers', icon: FiBook },
+    { to: '/employee/cashbook-manage', label: 'Cashbook', icon: FiBook, perm: 'cashbook.manage' },
     { to: '/employee/travel', label: 'Travel', icon: FiMap },
   ] },
   { group: 'Performance & Learning', items: [

@@ -9,6 +9,7 @@ const {
   deleteUser,
   getPermissionCatalog,
   updateUserPermissions,
+  setCashbookAccess,
   getOrgSettings,
   updateOrgSettings,
 } = require('../controllers/adminController');
@@ -30,6 +31,8 @@ router.use(requirePermission('users.manage'));
 // captured as an :id.
 router.get('/permissions/catalog', getPermissionCatalog);
 router.patch('/users/:id/permissions', restrictTo('SuperAdmin'), updateUserPermissions);
+// Standalone Cashbook access grant for any user/employee — SuperAdmin only.
+router.patch('/users/:id/cashbook-access', restrictTo('SuperAdmin'), setCashbookAccess);
 
 // Org-wide preferences — SuperAdmin ONLY (e.g. whether CEO/MD appear in
 // employee-selection pickers).

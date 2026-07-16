@@ -227,6 +227,20 @@ const updateUserPermissions = asyncHandler(async (req, res) => {
   res.json({ user });
 });
 
+// PATCH /api/admin/users/:id/cashbook-access  { enabled }  (SuperAdmin)
+// Grant or revoke Cashbook access for ANY user/employee — a standalone flag that
+// works regardless of role, so no separate finance login is needed.
+const setCashbookAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.cashbookAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, cashbookAccess: user.cashbookAccess });
+});
+
 // GET /api/admin/org-settings  (SuperAdmin)
 // Org-wide preferences a SuperAdmin controls. Currently: whether CEO/MD show up
 // in employee-selection pickers.
@@ -257,6 +271,7 @@ module.exports = {
   deleteUser,
   getPermissionCatalog,
   updateUserPermissions,
+  setCashbookAccess,
   getOrgSettings,
   updateOrgSettings,
 };

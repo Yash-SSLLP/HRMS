@@ -98,6 +98,7 @@ const EmployeeReviews = lazy(() => import('./pages/EmployeeReviews.jsx'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
 const AdminCashbook = lazy(() => import('./pages/AdminCashbook.jsx'));
 const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
+const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
 
 function RootRedirect() {
   const user = useAuthStore((s) => s.user);
@@ -164,6 +165,7 @@ export default function App() {
         <Route index element={<AdminHome />} />
         <Route path="dashboard" element={<AdminOverview />} />
         <Route path="users" element={<AdminDashboard />} />
+        <Route path="permissions" element={<AdminPermissions />} />
         <Route path="employees" element={<AdminEmployees />} />
         <Route path="employees/:id" element={<AdminEmployeeDetail />} />
         <Route path="departments" element={<AdminDepartments />} />
@@ -241,6 +243,7 @@ export default function App() {
         <Route path="leave" element={<EmployeeLeave />} />
         <Route path="expenses" element={<EmployeeExpenses />} />
         <Route path="cashbook" element={<EmployeeCashbook />} />
+        <Route path="cashbook-manage" element={<AdminCashbook />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />

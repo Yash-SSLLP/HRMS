@@ -8,6 +8,8 @@ export function hasPermission(user, cap) {
   if (!user) return false;
   if (user.role === 'SuperAdmin') return true;
   if (user.role === 'CEO' || user.role === 'MD') return true;
+  // Cashbook access is a standalone grant an admin can give to any user/employee.
+  if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
   if (user.role === 'AccountsManager') return cap === 'cashbook.manage';
   if (user.role === 'HRManager') {

@@ -59,6 +59,10 @@ const userSchema = new mongoose.Schema(
     // access with no migration); `[]` → none; `['a','b']` → exactly those.
     // SuperAdmin always has everything; other roles are role-gated, not here.
     permissions: { type: [String], default: undefined },
+    // Cashbook access is a standalone grant, separate from the HRManager-only
+    // `permissions` array: an admin can switch it on for ANY user or employee and
+    // they get the Cashbook module in their own portal — no separate finance login.
+    cashbookAccess: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
