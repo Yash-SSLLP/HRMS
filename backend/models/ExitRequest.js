@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { approvalStepSchema } = require('./Leave');
 
 const EXIT_TYPES = ['Resignation', 'Termination', 'Retirement'];
 const EXIT_STATUSES = ['Pending', 'InClearance', 'Completed', 'Cancelled'];
@@ -54,7 +55,30 @@ const exitRequestSchema = new mongoose.Schema(
     // by this person and uses their email as Reply-To.
     handledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
+    // ---- Reporting-hierarchy approval ladder (shared with Leave) ----
+    // A self-submitted Resignation climbs the applicant's reporting-manager
+    // chain. While the chain is being worked, status stays 'Pending'; once the
+    // top rung approves, the exit moves to 'InClearance' (accepted, serving
+    // notice, login still active). A rejection moves it to 'Cancelled'.
+    approvalChain: [approvalStepSchema],
+    // Whose turn it is right now (null once fully decided). Indexed for the
+    // approver-inbox query (currentApprover === me).
+    currentApprover: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    // Whoever recorded the FINAL chain decision (last approver, or a rejecter).
+    approver: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    decisionAt: Date,
+    decisionNote: String,
+
     clearance: { type: clearanceSchema, default: () => ({}) },
+
+    // IST 'YYYY-MM-DD' of the last "notice ended, finish clearance" nudge the
+    // exit worker sent HR, so it nudges at most once per day.
+    clearanceNudgeYmd: String,
 
     // Feedback flow
     feedbackToken: { type: String, index: true },

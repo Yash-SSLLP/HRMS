@@ -116,4 +116,6 @@ leaveRequestSchema.plugin(require("./plugins/auditStatus"));
 const LeaveRequest = mongoose.model('LeaveRequest', leaveRequestSchema);
 const LeaveBalance = mongoose.model('LeaveBalance', leaveBalanceSchema);
 
-module.exports = { LeaveRequest, LeaveBalance, LEAVE_TYPES, LEAVE_STATUS };
+// The reporting-hierarchy rung shape is reused by other models that climb the
+// same approval ladder (e.g. ExitRequest). Exported so they share one definition.
+module.exports = { LeaveRequest, LeaveBalance, LEAVE_TYPES, LEAVE_STATUS, approvalStepSchema, CHAIN_STEP_STATUS };

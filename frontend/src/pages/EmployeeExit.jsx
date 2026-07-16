@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { ChainProgress } from '../components/LeaveApprovalsInbox';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -9,18 +10,44 @@ const STATUS_COLORS = {
   Cancelled: 'bg-gray-200 text-gray-700',
 };
 
+// The employee sees a friendlier label than the raw workflow status.
+const STATUS_LABELS = {
+  Pending: 'Awaiting approval',
+  InClearance: 'Accepted · Serving notice',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+};
+
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+
+// ---- Notice period ↔ last working day sync (anchored to today, calendar days) ----
+const pad = (n) => String(n).padStart(2, '0');
+const toYmd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const today0 = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+const daysFromToday = (ymd) => (ymd ? Math.round((new Date(`${ymd}T00:00:00`) - today0()) / 86400000) : 0);
+const ymdFromDays = (n) => { const d = today0(); d.setDate(d.getDate() + (Number(n) || 0)); return toYmd(d); };
 
 export default function EmployeeExit() {
   const [exit, setExit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [form, setForm] = useState({
-    lastWorkingDay: '',
+  const [form, setForm] = useState(() => ({
+    lastWorkingDay: ymdFromDays(30),
     noticePeriodDays: 30,
     reason: '',
-  });
+  }));
   const [submitting, setSubmitting] = useState(false);
+
+  // Editing the date recomputes the notice days and vice-versa, so the two can
+  // never disagree (the date is the source of truth, matching the backend).
+  const onDateChange = (v) => {
+    const d = daysFromToday(v);
+    setForm((f) => ({ ...f, lastWorkingDay: v, noticePeriodDays: d > 0 ? d : 0 }));
+  };
+  const onDaysChange = (v) => {
+    const n = Math.max(0, Number(v) || 0);
+    setForm((f) => ({ ...f, noticePeriodDays: n, lastWorkingDay: ymdFromDays(n) }));
+  };
 
   const load = async () => {
     setLoading(true);
@@ -71,7 +98,7 @@ export default function EmployeeExit() {
               <p className="text-xs text-gray-500">Submitted {fmtDate(exit.resignationDate)}</p>
             </div>
             <span className={`inline-block px-2 py-1 text-xs rounded-lg ${STATUS_COLORS[exit.status]}`}>
-              {exit.status}
+              {STATUS_LABELS[exit.status] || exit.status}
             </span>
           </div>
 
@@ -102,6 +129,26 @@ export default function EmployeeExit() {
             </div>
           </dl>
 
+          {(exit.status === 'Pending' || exit.status === 'InClearance') && exit.approvalChain?.length > 0 && (
+            <div>
+              <dt className="text-xs text-gray-500 mb-1">Approval progress</dt>
+              <ChainProgress chain={exit.approvalChain} />
+            </div>
+          )}
+
+          {exit.status === 'Pending' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+              Your resignation is climbing your reporting hierarchy for approval. You'll be notified once it's accepted.
+            </div>
+          )}
+
+          {exit.status === 'InClearance' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+              <strong>Your resignation has been accepted.</strong>
+              <p className="text-xs mt-1">You're serving your notice period until {fmtDate(exit.lastWorkingDay)}. HR will complete your exit clearance before your last day.</p>
+            </div>
+          )}
+
           {exit.status === 'Completed' && (
             <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
               <strong>Your exit has been processed.</strong>
@@ -128,21 +175,22 @@ export default function EmployeeExit() {
         <div className="bg-white shadow rounded-lg p-6">
           <h2 className="card-title mb-3">Submit your resignation</h2>
           <p className="text-sm text-gray-500 mb-4">
-            HR will review your submission, confirm a last working day, and walk you through clearance.
+            Your resignation goes to your reporting manager for approval. Once accepted, you'll serve your notice period while HR completes clearance.
           </p>
           <form onSubmit={onSubmit} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm text-gray-700">Last Working Day *</label>
-                <input type="date" required value={form.lastWorkingDay}
-                  onChange={(e) => setForm({ ...form, lastWorkingDay: e.target.value })}
+                <input type="date" required min={toYmd(today0())} value={form.lastWorkingDay}
+                  onChange={(e) => onDateChange(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Notice period (days)</label>
                 <input type="number" min={0} value={form.noticePeriodDays}
-                  onChange={(e) => setForm({ ...form, noticePeriodDays: Number(e.target.value) || 0 })}
+                  onChange={(e) => onDaysChange(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                <p className="text-xs text-gray-400 mt-1">Kept in sync with your last working day.</p>
               </div>
             </div>
             <div>

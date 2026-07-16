@@ -5,6 +5,18 @@ import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import { ChainProgress } from '../components/LeaveApprovalsInbox';
+
+// ---- Notice period ↔ last working day sync (calendar days) ----
+// The notice period is always the calendar-day gap from an anchor date (the
+// resignation/submission date) to the last working day, mirroring the backend so
+// the two fields can never disagree.
+const pad = (n) => String(n).padStart(2, '0');
+const toYmd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const startOfDay = (d) => { const x = new Date(d); return new Date(x.getFullYear(), x.getMonth(), x.getDate()); };
+const today0 = () => startOfDay(new Date());
+const diffDays = (fromDate, ymd) => (ymd ? Math.round((new Date(`${ymd}T00:00:00`) - startOfDay(fromDate)) / 86400000) : 0);
+const addDays = (fromDate, n) => { const d = startOfDay(fromDate); d.setDate(d.getDate() + (Number(n) || 0)); return toYmd(d); };
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -30,7 +42,7 @@ const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: '2-di
 const blankNew = {
   employee: '',
   type: 'Resignation',
-  lastWorkingDay: '',
+  lastWorkingDay: addDays(today0(), 30),
   noticePeriodDays: 30,
   reason: '',
   handledBy: '',
@@ -325,7 +337,11 @@ export default function AdminExit() {
                 <div>
                   <label className="block text-sm text-gray-700">Last Working Day *</label>
                   <input type="date" required value={newForm.lastWorkingDay}
-                    onChange={(e) => setNewForm({ ...newForm, lastWorkingDay: e.target.value })}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const d = diffDays(today0(), v);
+                      setNewForm({ ...newForm, lastWorkingDay: v, noticePeriodDays: d > 0 ? d : 0 });
+                    }}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
               </div>
@@ -333,8 +349,12 @@ export default function AdminExit() {
                 <div>
                   <label className="block text-sm text-gray-700">Notice period (days)</label>
                   <input type="number" min={0} value={newForm.noticePeriodDays}
-                    onChange={(e) => setNewForm({ ...newForm, noticePeriodDays: Number(e.target.value) || 0 })}
+                    onChange={(e) => {
+                      const n = Math.max(0, Number(e.target.value) || 0);
+                      setNewForm({ ...newForm, noticePeriodDays: n, lastWorkingDay: addDays(today0(), n) });
+                    }}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="text-xs text-gray-400 mt-1">Synced with the last working day.</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Handled By (HR)</label>
@@ -414,14 +434,24 @@ export default function AdminExit() {
                 <label className="block text-xs text-gray-500">Last Working Day</label>
                 <input type="date" disabled={isFinal}
                   value={detail.lastWorkingDay ? String(detail.lastWorkingDay).slice(0, 10) : ''}
-                  onChange={(e) => setDetail({ ...detail, lastWorkingDay: e.target.value })}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const anchor = detail.resignationDate ? new Date(detail.resignationDate) : today0();
+                    const d = diffDays(anchor, v);
+                    setDetail({ ...detail, lastWorkingDay: v, noticePeriodDays: d > 0 ? d : 0 });
+                  }}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
               </div>
               <div>
                 <label className="block text-xs text-gray-500">Notice period (days)</label>
                 <input type="number" disabled={isFinal} value={detail.noticePeriodDays || 0}
-                  onChange={(e) => setDetail({ ...detail, noticePeriodDays: Number(e.target.value) || 0 })}
+                  onChange={(e) => {
+                    const n = Math.max(0, Number(e.target.value) || 0);
+                    const anchor = detail.resignationDate ? new Date(detail.resignationDate) : today0();
+                    setDetail({ ...detail, noticePeriodDays: n, lastWorkingDay: addDays(anchor, n) });
+                  }}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
+                <p className="text-xs text-gray-400 mt-1">Synced with the last working day (from the resignation date).</p>
               </div>
               <div className="col-span-2">
                 <label className="block text-xs text-gray-500">Handled By (HR)</label>
@@ -445,6 +475,17 @@ export default function AdminExit() {
                   className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
               </div>
             </div>
+
+            {/* Approval progress (reporting hierarchy) */}
+            {detail.approvalChain?.length > 0 && (
+              <div className="mb-4 bg-gray-50 rounded-lg p-3">
+                <h3 className="text-sm font-semibold mb-2">Approval progress</h3>
+                <ChainProgress chain={detail.approvalChain} />
+                {detail.status === 'Pending' && (
+                  <p className="text-xs text-gray-500 mt-2">Awaiting the reporting hierarchy. It enters clearance once fully approved.</p>
+                )}
+              </div>
+            )}
 
             {/* Clearance checklist */}
             <div className="mb-4 bg-gray-50 rounded-lg p-3">

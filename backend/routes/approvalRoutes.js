@@ -3,6 +3,9 @@ const {
   listMyLeaveApprovals,
   approveLeave,
   rejectLeave,
+  listMyExitApprovals,
+  approveExit,
+  rejectExit,
 } = require('../controllers/approvalController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -18,5 +21,9 @@ router.use(protect);
 router.get('/leave', listMyLeaveApprovals);
 router.patch('/leave/:id/approve', approveLeave);
 router.patch('/leave/:id/reject', rejectLeave);
+
+router.get('/exits', listMyExitApprovals);
+router.patch('/exits/:id/approve', approveExit);
+router.patch('/exits/:id/reject', rejectExit);
 
 module.exports = router;
