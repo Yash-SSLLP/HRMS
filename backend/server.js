@@ -12,7 +12,14 @@ const { requestContext } = require('./middleware/requestContext');
 
 const app = express();
 
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
+// exposedHeaders lets the browser read Content-Disposition on cross-origin
+// downloads (attendance/payroll exports, payslips) so the file keeps its
+// server-provided name instead of a generic "download".
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  credentials: true,
+  exposedHeaders: ['Content-Disposition'],
+}));
 app.use(express.json());
 // Carry the request (and, once authenticated, req.user) through async calls so
 // the audit plugin can attribute status changes to the acting user.

@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const path = require('path');
+const ExcelJS = require('exceljs');
 const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Setting = require('../models/Setting');
@@ -812,18 +813,31 @@ const punchMap = asyncHandler(async (req, res) => {
   });
 });
 
-// Build the Excel-compatible CSV body (header + rows, no BOM) for a set of
-// attendance records. Shared by the admin export and the manager (team) export
-// so both produce identical columns. Records are grouped per employee (by code)
-// then chronological, which reads well for bulk/day exports.
-function buildAttendanceCsv(records, settings) {
+// Column layout for the attendance export (order = worksheet column order).
+const ATT_EXPORT_COLUMNS = [
+  { header: 'Employee Code', width: 14 },
+  { header: 'Name', width: 22 },
+  { header: 'Email', width: 26 },
+  { header: 'Date', width: 12 },
+  { header: 'Weekday', width: 10 },
+  { header: 'Status', width: 12 },
+  { header: 'Check In', width: 12 },
+  { header: 'Check Out', width: 12 },
+  { header: 'Hours Worked', width: 13 },
+  { header: 'Late (min)', width: 10 },
+  { header: 'No Punch Out', width: 13 },
+  { header: 'WFH', width: 7 },
+  { header: 'Distant Punch', width: 13 },
+  { header: 'Remarks', width: 34 },
+];
+
+// Turn attendance records into the ordered value rows for the export — one array
+// of cell values per record, in ATT_EXPORT_COLUMNS order. Records are grouped per
+// employee (by code) then chronological, which reads well for bulk/day exports.
+function attendanceExportRows(records, settings) {
   const todayStart = startOfDay(new Date());
   const fmtT = (d) =>
     d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '';
-  const esc = (v) => {
-    const s = v === undefined || v === null ? '' : String(v);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
 
   const ordered = records
     .filter((r) => r.employee)
@@ -834,13 +848,7 @@ function buildAttendanceCsv(records, settings) {
       return new Date(a.date) - new Date(b.date);
     });
 
-  const header = [
-    'Employee Code', 'Name', 'Email', 'Date', 'Weekday', 'Status',
-    'Check In', 'Check Out', 'Hours Worked', 'Late (min)',
-    'No Punch Out', 'WFH', 'Distant Punch', 'Remarks',
-  ];
-
-  const rows = ordered.map((r) => {
+  return ordered.map((r) => {
     const p = r.employee;
     const u = p.user || {};
     const geo = resolveGeofence(p, settings);
@@ -866,16 +874,37 @@ function buildAttendanceCsv(records, settings) {
       r.status || '',
       fmtT(r.checkIn),
       fmtT(r.checkOut),
-      r.hoursWorked || 0,
-      lateMin,
+      r.hoursWorked || 0, // real number cell
+      lateMin,            // real number cell
       noPunchOut ? 'Yes' : '',
       r.checkInWfh || r.checkOutWfh ? 'Yes' : '',
       distant ? 'Yes' : '',
       r.remarks || '',
-    ].map(esc).join(',');
+    ];
+  });
+}
+
+// Build a real .xlsx workbook of attendance — one row per attendance day. Shared
+// by the admin export and the manager (team) export so both produce identical
+// columns. Follows the same ExcelJS pattern as services/employeeExcel.js.
+function buildAttendanceWorkbook(records, settings) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Sequence - HRMS';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Attendance');
+  ws.columns = ATT_EXPORT_COLUMNS.map((c) => ({ header: c.header, width: c.width }));
+
+  // Header row styling (mirrors the employee export).
+  ws.getRow(1).font = { bold: true };
+  ws.getRow(1).alignment = { vertical: 'middle' };
+  ws.getRow(1).height = 20;
+  ws.getRow(1).eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFD4D4D8' } } };
   });
 
-  return [header.map(esc).join(','), ...rows].join('\r\n');
+  for (const row of attendanceExportRows(records, settings)) ws.addRow(row);
+  return wb;
 }
 
 // Shared attendance-export runner (Excel-compatible CSV, one row per attendance
@@ -949,9 +978,9 @@ const runAttendanceExport = async (req, res, opts = {}) => {
     Setting.getSettings(),
   ]);
 
-  const csv = buildAttendanceCsv(records, settings);
+  const wb = buildAttendanceWorkbook(records, settings);
 
-  // Build a self-describing filename: attendance_<employee>_<month>_<day>.csv
+  // Build a self-describing filename: attendance_<employee>_<month>_<day>.xlsx
   // where employee = the person's name (or 'all'/'team' for bulk), month = the
   // month name + year (or a range for a trailing-N-months export), and day = the
   // day number for a single-day export, else 'all'. Every segment is sanitized so
@@ -968,12 +997,12 @@ const runAttendanceExport = async (req, res, opts = {}) => {
   }
   const monthSeg = months > 1 ? `${monLabel(sy, sm)}-to-${monLabel(year, month)}` : monLabel(year, month);
   const daySeg = dayMode ? pad(day) : 'all';
-  const fname = `attendance_${empSeg}_${monthSeg}_${daySeg}.csv`;
+  const fname = `attendance_${empSeg}_${monthSeg}_${daySeg}.xlsx`;
 
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
-  // BOM so Excel detects UTF-8 (₹, accented names, etc.).
-  res.send('﻿' + csv);
+  await wb.xlsx.write(res);
+  res.end();
 };
 
 // GET /api/attendance/export?employee=&year=&month=&day=&months=   (HR/Admin)
