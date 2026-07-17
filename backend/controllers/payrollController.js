@@ -331,9 +331,12 @@ async function computeEmployeeRun(profile, year, month) {
   const leaveIncentive = earnings ? earnings.leaveIncentive : 0;
   const gross = earnings ? Object.values(earnings).reduce((a, v) => a + v, 0) : 0;
 
-  // Late-arrival penalty for days beyond the monthly allowance.
+  // Late-arrival penalty for days beyond the monthly allowance. This is a flat
+  // per-day amount, so it applies (and is shown to the employee) even before the
+  // salary is set up — unlike the leave incentive, which needs a per-day pay to
+  // value. When Basic isn't known yet, monthlyBasic is 0 → the lower ₹200 rate.
   const lateRate = monthlyBasic < LATE_THRESHOLD_BASIC ? LATE_RATE_LOW : LATE_RATE_HIGH;
-  const latePenalty = earnings ? excessLate * lateRate : 0;
+  const latePenalty = excessLate * lateRate;
 
   // Working-hours roll-up. A "worked day" is any day with real punch hours.
   // Sundays and holidays are excluded from the average — unless the employee
@@ -373,7 +376,9 @@ async function computeEmployeeRun(profile, year, month) {
     loanRecovery,
     latePenalty,
     earnings, gross,
-    estimatedNet: gross - loanRecovery - latePenalty,
+    // Take-home estimate only once salary exists; before that gross is 0 and a
+    // net would be a meaningless negative (the late penalty is still shown above).
+    estimatedNet: earnings ? gross - loanRecovery - latePenalty : 0,
     needsSetup: !earnings,
   };
 }
