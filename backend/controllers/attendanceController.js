@@ -12,6 +12,10 @@ const { haversineMeters } = require('../utils/geo');
 // the user sees, so it surfaces correctly on the website's attendance views.
 const { startOfDayIST: startOfDay, monthRangeIST: monthRange, ymdIST: ymdLocal } = require('../utils/dateHelpers');
 
+// Full month names (index 0 = January) for building human-readable export filenames.
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
 function isAdmin(user) {
   return user.role === 'SuperAdmin' || user.role === 'HRManager';
 }
@@ -947,17 +951,24 @@ const runAttendanceExport = async (req, res, opts = {}) => {
 
   const csv = buildAttendanceCsv(records, settings);
 
-  let fname;
+  // Build a self-describing filename: attendance_<employee>_<month>_<day>.csv
+  // where employee = the person's name (or 'all'/'team' for bulk), month = the
+  // month name + year (or a range for a trailing-N-months export), and day = the
+  // day number for a single-day export, else 'all'. Every segment is sanitized so
+  // spaces/quotes can't break the Content-Disposition header.
+  const sanitize = (s) => (s || '').trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
+  const monLabel = (y, m) => `${MONTH_NAMES[m - 1]}-${y}`;
+
+  let empSeg;
   if (employeeProfile) {
-    const code = (employeeProfile.employeeCode || 'employee').replace(/[^A-Za-z0-9_-]/g, '');
-    if (dayMode) fname = `attendance-${code}-${year}-${pad(month)}-${pad(day)}.csv`;
-    else if (months > 1) fname = `attendance-${code}-${sy}${pad(sm)}-to-${year}${pad(month)}.csv`;
-    else fname = `attendance-${code}-${year}-${pad(month)}.csv`;
-  } else if (dayMode) {
-    fname = `attendance-${bulkLabel}-${year}-${pad(month)}-${pad(day)}.csv`;
+    const name = `${employeeProfile.user?.firstName || ''} ${employeeProfile.user?.lastName || ''}`.trim();
+    empSeg = sanitize(name) || sanitize(employeeProfile.employeeCode) || 'employee';
   } else {
-    fname = `attendance-${bulkLabel}-${year}-${pad(month)}.csv`;
+    empSeg = bulkLabel; // 'all' (admin) | 'team' (manager)
   }
+  const monthSeg = months > 1 ? `${monLabel(sy, sm)}-to-${monLabel(year, month)}` : monLabel(year, month);
+  const daySeg = dayMode ? pad(day) : 'all';
+  const fname = `attendance_${empSeg}_${monthSeg}_${daySeg}.csv`;
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);

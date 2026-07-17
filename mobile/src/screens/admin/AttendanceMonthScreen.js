@@ -77,16 +77,26 @@ export default function AttendanceMonthScreen() {
     setExporting(String(kind));
     try {
       const params = new URLSearchParams({ year: String(year), month: String(month) });
+      // Self-describing filename to match the server scheme:
+      //   attendance_<employee>_<month>_<day>.csv  (day is always 'all' on mobile —
+      //   there is no single-day export here). Sanitize so spaces/quotes are safe.
+      const sanitize = (s) => (s || '').trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
+      const selected = employees.find((p) => p._id === employee);
+      const empSeg = sanitize(fullName(selected?.user)) || sanitize(selected?.employeeCode) || 'employee';
       let name;
       if (kind === 'bulk') {
-        name = `attendance-all-${year}-${String(month).padStart(2, '0')}.csv`;
+        name = `attendance_all_${MONTHS_FULL[month]}-${year}_all.csv`;
       } else if (kind === 'month') {
         params.set('employee', employee);
-        name = `attendance-${year}-${String(month).padStart(2, '0')}.csv`;
+        name = `attendance_${empSeg}_${MONTHS_FULL[month]}-${year}_all.csv`;
       } else {
         params.set('employee', employee);
         params.set('months', String(kind));
-        name = `attendance-last-${kind}-months.csv`;
+        // Trailing N months: month range ending at the selected month.
+        let sm = month - (kind - 1);
+        let sy = year;
+        while (sm < 1) { sm += 12; sy -= 1; }
+        name = `attendance_${empSeg}_${MONTHS_FULL[sm]}-${sy}-to-${MONTHS_FULL[month]}-${year}_all.csv`;
       }
       const fileUri = `${FileSystem.cacheDirectory}${name}`;
       const res = await FileSystem.downloadAsync(`${API_BASE}/attendance/export?${params}`, fileUri, {
