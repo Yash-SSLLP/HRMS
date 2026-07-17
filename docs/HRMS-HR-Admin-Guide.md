@@ -11,7 +11,7 @@ The HRMS has **two portals**:
 - **Admin Portal** - HR/leadership tools. This guide covers the Admin Portal.
 
 ### The roles
-- **Super Admin** - full control of everything, including creating other admins and setting permissions.
+- **Backend** - full control of everything, including creating other admins and setting permissions.
 - **HR Manager** - the main HR operator. Can be given **granular permissions** (or, if none are set, has **full HR access** by default).
 - **CEO / MD** - **read-only** across the admin portal (they can *view* everything but not change it). *Important exception below.*
 - **Manager** - sees and approves their own team's leave and attendance (mostly from within the employee portal).
@@ -19,12 +19,12 @@ The HRMS has **two portals**:
 - **Employee** - no admin access.
 
 ### How access is controlled
-- Each admin screen is gated by a **permission** (e.g. `payroll.manage`, `leave.manage`, `announcements.manage`). Super Admin always passes; an HR Manager passes if they hold that permission - **and if an HR Manager's permissions were never set, they hold ALL of them** (so legacy HRs keep full access).
+- Each admin screen is gated by a **permission** (e.g. `payroll.manage`, `leave.manage`, `announcements.manage`). The Backend always passes; an HR Manager passes if they hold that permission - **and if an HR Manager's permissions were never set, they hold ALL of them** (so legacy HRs keep full access).
 - **CEO/MD are read-only**: they can open any admin page and view/read/export, but any *save/edit/delete* is blocked with a "read-only access" message.
 - ⭐ **The one place CEO/MD (and everyone) can act:** the **Leave Approvals** inbox. Because it only lets you act on *your own* approval rung, a CEO/MD (or any manager) can approve the leave requests that have climbed the chain to them - even though they're read-only elsewhere.
-- **Super-Admin-only actions:** creating/editing/deleting *admin-role* users, setting HR permissions and org settings, deleting departments/employee-profiles, and reassigning an employee's HR partner or reporting manager.
+- **Backend-only actions:** creating/editing/deleting *admin-role* users, setting HR permissions and org settings, deleting departments/employee-profiles, and reassigning an employee's HR partner or reporting manager.
 
-💡 Throughout this guide, "HR" means "Super Admin or an HR Manager with the relevant permission," unless noted.
+💡 Throughout this guide, "HR" means "the Backend or an HR Manager with the relevant permission," unless noted.
 
 ---
 
@@ -37,10 +37,10 @@ The admin home page. Shows org-wide cards: **total employees, present today, on 
 Read-only workforce analytics from employee data: headcount by **department** and **employment type**, **gender diversity**, **tenure buckets**, **confirmation** breakdown, **exits by month** and **attrition rate**, and **new hires** trend.
 
 ### Audit Log *(permission: audit.view)*
-A history of **status changes** across the system (e.g. payroll approvals, interview-round changes). Filter by entity, person, text, and date. ⚠️ Non-Super-Admin viewers **never see Super Admin activity** - those entries are filtered out.
+A history of **status changes** across the system (e.g. payroll approvals, interview-round changes). Filter by entity, person, text, and date. ⚠️ **Backend activity is hidden from all other viewers** - those entries are filtered out.
 
-### Chat Export *(Super Admin only)*
-Super Admin can export full chat transcripts. (Everyday chat itself is open to all users.)
+### Chat Export *(Backend only)*
+The Backend can export full chat transcripts. (Everyday chat itself is open to all users.)
 
 ---
 
@@ -49,28 +49,28 @@ Super Admin can export full chat transcripts. (Everyday chat itself is open to a
 ### Org Masters *(org.manage)*
 Reference lists for **Designations, Grades, and Locations** used across forms. Adding one auto-generates a short unique **code**.
 
-### Departments *(org.manage; delete = Super Admin only)*
-Create and rename departments (used everywhere as dropdowns). Only Super Admin can delete one.
+### Departments *(org.manage; delete = Backend only)*
+Create and rename departments (used everywhere as dropdowns). Only the Backend can delete one.
 
 ### Work Locations *(org.manage)*
 Named, **geofenced** work sites: **name, latitude, longitude, radius (metres), active**. Assign employees to a location; their attendance geofence then uses that site (otherwise the global office). ⚠️ You **can't delete** a location while employees are still assigned to it.
 
 ### Org Chart
-A read-only reporting tree built from each person's **reporting manager**. CEO/MD appear as top nodes even though they aren't "employees." To change who reports to whom, edit the employee (a Super-Admin-only field).
+A read-only reporting tree built from each person's **reporting manager**. CEO/MD appear as top nodes even though they aren't "employees." To change who reports to whom, edit the employee (a Backend-only field).
 
 ### Users *(users.manage)*
 Login accounts + HR permissions + org settings.
-- Create/edit/deactivate/reactivate/delete accounts. **HR Managers can only manage Employee accounts**; only **Super Admin** can create or change *admin-role* accounts.
+- Create/edit/deactivate/reactivate/delete accounts. **HR Managers can only manage Employee accounts**; only the **Backend** can create or change *admin-role* accounts.
 - Creating an HR Manager or L&D Manager auto-creates their employee profile. **CEO/MD are not employees** (no profile).
-- **Super-Admin-only:** the **permission catalog** (fine-tune exactly what an HR Manager can do) and **org settings** (e.g. whether CEO/MD appear in people-pickers).
+- **Backend-only:** the **permission catalog** (fine-tune exactly what an HR Manager can do) and **org settings** (e.g. whether CEO/MD appear in people-pickers).
 - You can't deactivate or delete your own account.
 
 ### Employees *(employees.manage)*
 The master employee records.
-- Create a profile (needs the linked user account, an **employee code**, and **date of joining**), edit details, and (Super Admin only) delete.
+- Create a profile (needs the linked user account, an **employee code**, and **date of joining**), edit details, and (Backend only) delete.
 - **Bulk tools:** export to Excel, download an import template, **import from Excel**, export a ZIP of documents (per employee or all), and a **documents-status** report (verified/complete/missing against the required set).
 - **Document collection link:** generate a **tokenised public upload link** so a person (even without a login) can submit their documents.
-- Reassigning an employee's **HR partner** or **reporting manager** is **Super-Admin-only**.
+- Reassigning an employee's **HR partner** or **reporting manager** is **Backend-only**.
 
 ---
 
@@ -119,9 +119,9 @@ Probation → confirmation lifecycle. The **due date** is the date of joining + 
 
 ### Leave Approvals (the hierarchy inbox) *(no permission - visible to all admin roles)*
 - This is where whoever is the **current approver** acts. It's deliberately **not** admin-gated, and every action is scoped to "you are the current approver" - which is why **CEO/MD can approve their own rung** here despite being read-only elsewhere.
-- **The approval chain:** built from the employee's **reporting-manager links**, one rung per active manager, **stopping at the first CEO/MD** (the top). Inactive managers are skipped; cycles are guarded. No manager at all → falls back to HR/Super Admin.
+- **The approval chain:** built from the employee's **reporting-manager links**, one rung per active manager, **stopping at the first CEO/MD** (the top). Inactive managers are skipped; cycles are guarded. No manager at all → falls back to HR/Backend.
 - ⭐ **Auto-stamp on final approval:** when a leave is fully approved, each covered day is written to the attendance calendar - **On Leave** for normal types, **Absent for LOP** - **skipping Sundays and holidays**, and never overwriting a day the employee actually worked. Cancelling an approved leave **removes** those auto-marks. These stamped days feed the **2-paid-leave / LOP** payroll rule.
-- Everyone relevant is **notified** - the current approver at their turn, the applicant on decision, and HR/Super Admin on the final outcome.
+- Everyone relevant is **notified** - the current approver at their turn, the applicant on decision, and HR/Backend on the final outcome.
 
 ### Holidays *(leave.manage)*
 Maintain the company holiday calendar (type: Public / Restricted / Company). Holidays are respected by attendance, payroll, and the Rewards & Recognition banner window.
@@ -251,15 +251,15 @@ The monthly recognition program. **This replaced the old peer "kudos" feature** 
 ## 12. Requests & governance
 
 ### Complaints *(leadership inbox - no permission gate)*
-- The **assigned inbox** is visible to **Super Admin, HR Manager, and CEO** (each sees all complaints except ones against themselves).
-- **Routing:** a complaint about an admin, or about the complainant's own HR partner, escalates to a **Super Admin**; otherwise it goes to the complainant's **HR partner**.
-- ⚠️ **CEO can view but not action** complaints (only HR/Super Admin or the assignee can). Notifications are deliberately vague and **never sent to the accused**. Statuses: open / under review / resolved / dismissed.
+- The **assigned inbox** is visible to the **Backend, HR Manager, and CEO** (each sees all complaints except ones against themselves).
+- **Routing:** a complaint about an admin, or about the complainant's own HR partner, escalates to the **Backend**; otherwise it goes to the complainant's **HR partner**.
+- ⚠️ **CEO can view but not action** complaints (only HR/Backend or the assignee can). Notifications are deliberately vague and **never sent to the accused**. Statuses: open / under review / resolved / dismissed.
 
-### Change Requests *(HR/Super Admin inbox)*
-- Employees can't self-edit most profile fields or credentials - they raise **Change Requests**. HR reviews the inbox and **Approves** (which **applies the value** to the record, with validators like email-uniqueness and password re-hash) or **Declines**. Assigned to the requester's HR partner (Super Admin sees all).
+### Change Requests *(HR/Backend inbox)*
+- Employees can't self-edit most profile fields or credentials - they raise **Change Requests**. HR reviews the inbox and **Approves** (which **applies the value** to the record, with validators like email-uniqueness and password re-hash) or **Declines**. Assigned to the requester's HR partner (the Backend sees all).
 
 ### Password Resets *(users.manage)*
-- Requests come in from the login page. HR can **resolve** and **reset** the password (min 8 chars). ⚠️ **HR Managers can only reset Employee accounts**; admin-account resets are **Super-Admin-only**. A reset logs the user out of all devices.
+- Requests come in from the login page. HR can **resolve** and **reset** the password (min 8 chars). ⚠️ **HR Managers can only reset Employee accounts**; admin-account resets are **Backend-only**. A reset logs the user out of all devices.
 
 ### My Account
 Every admin's own account/password page (not a tool for managing others).
@@ -286,7 +286,7 @@ HR and managers get an admin surface in the Android app too:
 - **Recruitment** - jobs, candidates, interview rounds.
 - ⭐ **Rewards & Recognition** - pick the Employee of the Month + Key Achievers per department, **Save Draft**, and **Announce** (same 2-working-day banner). Gated to HR; others see "HR only."
 
-Role gating on mobile mirrors the web: Super Admin/HR Manager can write, CEO/MD are read-only, Managers get team features.
+Role gating on mobile mirrors the web: the Backend/HR Manager can write, CEO/MD are read-only, Managers get team features.
 
 ---
 
@@ -299,4 +299,4 @@ Role gating on mobile mirrors the web: Super Admin/HR Manager can write, CEO/MD 
 
 ---
 
-*That's the whole Admin Portal. Keep the permission model in mind (Super Admin > HR Manager with caps > CEO/MD read-only), and remember the two big automated rules - the pay policy in payroll and the leave auto-stamp - because they quietly drive a lot of the numbers.*
+*That's the whole Admin Portal. Keep the permission model in mind (Backend > HR Manager with caps > CEO/MD read-only), and remember the two big automated rules - the pay policy in payroll and the leave auto-stamp - because they quietly drive a lot of the numbers.*

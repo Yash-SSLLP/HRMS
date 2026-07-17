@@ -31,7 +31,7 @@ You can use the HRMS on the **web** (browser) and on the **Android mobile app** 
 - Forgot your password? Use the **"Request a password reset"** link on the login screen; HR will reset it for you.
 - Your **role** decides what you see. Most people are an **Employee**. Some are also a **Manager** (you approve your team's leave and see their attendance). Senior leaders (CEO/MD) and HR use the admin portal.
 
-⚠️ You **cannot** change your own login email or password from inside the app (except Super Admins). To change them, you raise a **Change Request** (see §12) - HR approves it.
+⚠️ You **cannot** change your own login email or password from inside the app (except from the Backend). To change them, you raise a **Change Request** (see §12) - HR approves it.
 
 ---
 
@@ -259,7 +259,7 @@ These appear for you when they're relevant:
 
 ### 12.3 Complaints
 - Raise a **confidential** complaint: choose the person it's **against**, add a subject and description.
-- It's shared only with **CEO, HR, and Super Admin** - **never** the person it's about. Track its status (open / under review / resolved / dismissed).
+- It's shared only with **CEO, HR, and the Backend** - **never** the person it's about. Track its status (open / under review / resolved / dismissed).
 
 ---
 
@@ -297,6 +297,6 @@ The **Rewards & Recognition** banner also appears on the mobile dashboard, with 
 - **How do I change my email/password?** Raise a **Change Request** (email) - you can't self-edit those.
 - **What can I edit myself?** Only your **profile photo** and **date of birth**.
 - **How do I report a problem in a course?** Use **"Report an issue"** in the course player.
-- **Who sees my complaint?** Only CEO/HR/Super Admin - never the person it's about.
+- **Who sees my complaint?** Only CEO/HR/Backend - never the person it's about.
 
 Welcome aboard - you're all set! 🎉
