@@ -19,7 +19,7 @@ app.use(express.json());
 app.use(requestContext);
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'indian-hrms-backend' });
+  res.json({ status: 'ok', service: 'sequence-hrms-backend' });
 });
 
 app.use('/api/auth', require('./routes/authRoutes'));

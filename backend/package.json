@@ -1,5 +1,5 @@
 {
-  "name": "indian-hrms-backend",
+  "name": "sequence-hrms-backend",
   "version": "0.1.0",
   "description": "Backend API for Sequence Surface HRMS (Express + MongoDB)",
   "main": "server.js",
