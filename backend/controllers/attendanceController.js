@@ -448,8 +448,8 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
   const cutoff = new Date(day.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
 
   const profiles = await EmployeeProfile.find(empIds ? { _id: { $in: empIds } } : {})
-    .select('_id user employeeCode designation department')
-    .populate('user', 'firstName lastName')
+    .select('_id user employeeCode designation department dateOfJoining dateOfExit')
+    .populate('user', 'firstName lastName isActive')
     .lean();
   const byId = new Map(profiles.map((p) => [String(p._id), p]));
   const userIds = profiles.map((p) => p.user?._id || p.user).filter(Boolean);
@@ -464,11 +464,19 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
     leaveFilter.employee = { $in: empIds };
   }
 
-  const [records, leaves, comps] = await Promise.all([
+  const [records, leaves, comps, holidays] = await Promise.all([
     Attendance.find(attFilter).select('employee status checkIn checkOut date').lean(),
     LeaveRequest.find(leaveFilter).select('employee leaveType isHalfDay halfDaySession').lean(),
     CompOff.find(compFilter).select('employee availedOn').lean(),
+    require('../models/Holiday').find({ date: { $gte: day, $lt: next } }).select('_id').lean().catch(() => []),
   ]);
+
+  // Is this a non-working day? Sunday (weekly off) or a listed holiday. On those
+  // days we don't auto-mark unpunched employees as absent. Weekday is derived from
+  // the date string so it's timezone-independent (0 = Sunday).
+  const [wy, wm, wd] = dateStr.split('-').map(Number);
+  const isSunday = new Date(Date.UTC(wy, wm - 1, wd)).getUTCDay() === 0;
+  const isNonWorkingDay = isSunday || (holidays && holidays.length > 0);
 
   const cat = new Map();  // empId -> category
   const info = new Map(); // empId -> extra fields
@@ -498,6 +506,20 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
     if (!id || !byId.has(id)) continue;
     const cur = cat.get(id);
     if (cur !== 'full' && cur !== 'half') cat.set(id, 'compoff');
+  }
+
+  // Fill in absentees: any employee who is active and employed on this working
+  // day, but has no punch / leave / comp-off, is counted as absent. Skipped on
+  // Sundays and holidays so a weekend worker doesn't flag everyone else absent.
+  if (!isNonWorkingDay) {
+    for (const p of profiles) {
+      const id = String(p._id);
+      if (cat.has(id)) continue;
+      if (p.user?.isActive === false) continue;                       // deactivated login
+      if (p.dateOfExit && new Date(p.dateOfExit) <= day) continue;    // already exited
+      if (p.dateOfJoining && new Date(p.dateOfJoining) >= next) continue; // not yet joined
+      cat.set(id, 'absent');
+    }
   }
 
   const nameOf = (p) => `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode || 'Unknown';
