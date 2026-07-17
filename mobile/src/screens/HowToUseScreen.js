@@ -1,16 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
 
 import api, { errMsg } from '../api/client';
 import { useAuth } from '../store/auth';
 import { canViewAdmin, canApprove } from '../utils/roles';
 import { employeeGuide, hrGuide } from '../content/guides';
-import MarkdownText from '../components/MarkdownText';
-import { Screen, AppButton, Ionicons } from '../components/ui';
+import MarkdownText, { slug } from '../components/MarkdownText';
+import { Screen, AppButton, Ionicons, ModalSheet } from '../components/ui';
 import { colors, radius, spacing } from '../theme';
 
 // The app ships a bundled default; HR edits override it (saved server-side).
 const DEFAULTS = { employee: employeeGuide, hr: hrGuide };
+
+// Fixed inner padding of the content card, so heading offsets reported by
+// MarkdownText can be mapped to absolute scroll positions for "jump to section".
+const CARD_PAD = spacing(5);
 
 // In-app user guide. Employees see the employee guide; HR/Admins default to the
 // HR guide, can switch views, and (HR/Admin only) can EDIT either guide.
@@ -24,6 +28,11 @@ export default function HowToUseScreen() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [tocOpen, setTocOpen] = useState(false);
+
+  const scrollRef = useRef(null);
+  const cardTop = useRef(0);       // content-card y within the scroll content
+  const headingY = useRef({});     // { id: y within MarkdownText }
 
   const loadGuide = async (key) => {
     try {
@@ -33,10 +42,29 @@ export default function HowToUseScreen() {
       /* offline / not deployed — the bundled default is used */
     }
   };
-  useEffect(() => { loadGuide(tab); setEditing(false); }, [tab]);
+  useEffect(() => { loadGuide(tab); setEditing(false); headingY.current = {}; }, [tab]);
 
   const meta = remote[tab];
   const content = (meta && meta.content) || DEFAULTS[tab];
+
+  // Section list (## headings) for the "jump to section" navigator.
+  const toc = useMemo(() => {
+    const items = [];
+    for (const raw of (content || '').split('\n')) {
+      const m = raw.match(/^(#{2})\s+(.*)$/);
+      if (m) items.push({ id: slug(m[2]), title: m[2].replace(/\*\*|`/g, '') });
+    }
+    return items;
+  }, [content]);
+
+  // Stable so MarkdownText's memoised blocks aren't rebuilt on every re-render.
+  const onHeadingY = useCallback((id, y) => { headingY.current[id] = y; }, []);
+
+  const jump = (id) => {
+    setTocOpen(false);
+    const y = cardTop.current + CARD_PAD + (headingY.current[id] || 0) - spacing(3);
+    scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -75,6 +103,7 @@ export default function HowToUseScreen() {
   return (
     <Screen edges={[]}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: spacing(4), paddingBottom: 48 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -118,17 +147,43 @@ export default function HowToUseScreen() {
             <TouchableOpacity onPress={resetDefault} style={{ alignSelf: 'center', marginTop: spacing(3) }}>
               <Text style={styles.resetText}>Reset to built-in default</Text>
             </TouchableOpacity>
-            <Text style={styles.hint}>Supports #/##/### headings, **bold**, *italic*, - bullet, 1. numbered, ---. Saved for everyone.</Text>
+            <Text style={styles.hint}>Supports #/##/### headings, **bold**, *italic*, `code`, - bullet, 1. numbered, ---. Saved for everyone.</Text>
           </>
         ) : (
           <>
-            <MarkdownText md={content} />
-            {meta && meta.updatedAt ? (
-              <Text style={styles.meta}>Last edited by {meta.updatedByName || 'HR'} · {new Date(meta.updatedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</Text>
-            ) : null}
+            {toc.length > 1 && (
+              <TouchableOpacity onPress={() => setTocOpen(true)} style={styles.tocBtn} activeOpacity={0.7}>
+                <Ionicons name="list-outline" size={18} color={colors.primary} />
+                <Text style={styles.tocBtnText}>Jump to section</Text>
+                <Text style={styles.tocBtnCount}>{toc.length}</Text>
+                <Ionicons name="chevron-down" size={16} color={colors.textFaint} style={{ marginLeft: 'auto' }} />
+              </TouchableOpacity>
+            )}
+
+            <View
+              style={styles.card}
+              onLayout={(e) => { cardTop.current = e.nativeEvent.layout.y; }}
+            >
+              <MarkdownText md={content} onHeadingY={onHeadingY} />
+              {meta && meta.updatedAt ? (
+                <Text style={styles.meta}>Last edited by {meta.updatedByName || 'HR'} · {new Date(meta.updatedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</Text>
+              ) : null}
+            </View>
           </>
         )}
       </ScrollView>
+
+      <ModalSheet visible={tocOpen} onClose={() => setTocOpen(false)} title="Jump to section">
+        <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+          {toc.map((s, i) => (
+            <TouchableOpacity key={s.id} onPress={() => jump(s.id)} style={styles.tocRow} activeOpacity={0.6}>
+              <Text style={styles.tocIndex}>{i + 1}</Text>
+              <Text style={styles.tocTitle} numberOfLines={2}>{s.title}</Text>
+              <Ionicons name="arrow-forward" size={16} color={colors.textFaint} />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </ModalSheet>
     </Screen>
   );
 }
@@ -142,10 +197,21 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#1a1a1a' },
   editBtn: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: colors.primary },
   editBtnText: { color: colors.primary, fontWeight: '700', fontSize: 13 },
+
+  tocBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: spacing(3.5), paddingVertical: spacing(3), borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceAlt, marginBottom: spacing(3) },
+  tocBtnText: { color: colors.text, fontWeight: '700', fontSize: 14 },
+  tocBtnCount: { color: colors.textFaint, fontWeight: '700', fontSize: 12, backgroundColor: colors.surface, borderRadius: radius.pill, overflow: 'hidden', paddingHorizontal: 7, paddingVertical: 1 },
+
+  card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, paddingVertical: CARD_PAD, paddingHorizontal: spacing(4) },
+
   editLabel: { fontSize: 12, fontWeight: '700', color: colors.textMuted, marginBottom: spacing(2) },
   editor: { minHeight: 380, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, fontSize: 13.5, lineHeight: 20, padding: spacing(3) },
   actions: { flexDirection: 'row', gap: spacing(3), marginTop: spacing(3) },
   resetText: { color: colors.danger, fontWeight: '700', fontSize: 13 },
   hint: { fontSize: 11, color: colors.textFaint, marginTop: spacing(3), lineHeight: 16 },
   meta: { fontSize: 11, color: colors.textFaint, marginTop: spacing(5), paddingTop: spacing(3), borderTopWidth: 1, borderTopColor: colors.border },
+
+  tocRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(3), paddingVertical: spacing(3), borderBottomWidth: 1, borderBottomColor: colors.border },
+  tocIndex: { minWidth: 22, fontSize: 13, fontWeight: '800', color: colors.primary, textAlign: 'center' },
+  tocTitle: { flex: 1, fontSize: 14, color: colors.text, fontWeight: '600' },
 });
