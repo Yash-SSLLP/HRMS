@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { downloadFile } from '../api/download';
 import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
@@ -106,6 +107,9 @@ export default function AdminAttendance() {
   const [saving, setSaving] = useState(false);
   const [photoModal, setPhotoModal] = useState(null); // { url, label }
 
+  const [exporting, setExporting] = useState(''); // '' | 'month' | 'day'
+  const [exportDay, setExportDay] = useState(new Date().toISOString().slice(0, 10));
+
   // Office / geofence settings (editable by SuperAdmin & HR)
   const [settings, setSettings] = useState({ office: { lat: 0, lng: 0, label: '' }, geofenceThresholdM: 200 });
   const [settingsForm, setSettingsForm] = useState(null); // non-null while the editor is open
@@ -130,6 +134,33 @@ export default function AdminAttendance() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Export attendance as an Excel-compatible CSV. Respects the Employee filter:
+  //   employee = All      → every employee (bulk)
+  //   employee = someone  → just that person (employee-wise)
+  // kind='month' uses the selected Year/Month; kind='day' uses the date picker.
+  const exportCsv = async (kind) => {
+    setExporting(kind);
+    try {
+      const params = new URLSearchParams();
+      if (kind === 'day') {
+        if (!exportDay) { toast.error('Pick a day to export'); setExporting(''); return; }
+        const [y, m, d] = exportDay.split('-').map(Number);
+        params.set('year', y);
+        params.set('month', m);
+        params.set('day', d);
+      } else {
+        params.set('year', filter.year);
+        params.set('month', filter.month);
+      }
+      if (filter.employee) params.set('employee', filter.employee);
+      await downloadFile(`/attendance/export?${params}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Export failed');
+    } finally {
+      setExporting('');
     }
   };
 
@@ -265,6 +296,28 @@ export default function AdminAttendance() {
             ))}
           </select>
         </div>
+      </div>
+
+      {/* Export to Excel (CSV). Respects the Employee filter above:
+          "All" exports everyone, a specific employee exports just that person. */}
+      <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-gray-500 mr-1">Export to Excel:</span>
+        <button onClick={() => exportCsv('month')} disabled={!!exporting}
+          title={filter.employee ? 'Selected employee · selected month' : 'All employees · selected month'}
+          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+          ⬇ {exporting === 'month' ? 'Exporting…' : `Month (${MONTHS[filter.month - 1]} ${filter.year})`}
+        </button>
+        <span className="mx-1 h-5 w-px bg-gray-200" />
+        <input type="date" value={exportDay} onChange={(e) => setExportDay(e.target.value)}
+          className="border rounded-lg px-2 py-1 text-sm" />
+        <button onClick={() => exportCsv('day')} disabled={!!exporting}
+          title={filter.employee ? 'Selected employee · this day' : 'All employees · this day'}
+          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+          ⬇ {exporting === 'day' ? 'Exporting…' : 'Day'}
+        </button>
+        <span className="text-xs text-gray-400 ml-1">
+          {filter.employee ? 'Exporting the selected employee' : 'Exporting all employees'}
+        </span>
       </div>
 
       {error && (

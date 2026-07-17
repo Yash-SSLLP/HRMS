@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
+import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import PresenceBoardView from '../components/PresenceBoardView';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
 
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
@@ -48,10 +53,43 @@ function Avatar({ userId, hasPhoto, name }) {
 }
 
 export default function EmployeeTeam() {
+  const now = new Date();
   const [team, setTeam] = useState([]);
   const [board, setBoard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Team attendance export (scoped to my direct reports by the backend).
+  const [exYear, setExYear] = useState(now.getFullYear());
+  const [exMonth, setExMonth] = useState(now.getMonth() + 1);
+  const [exEmployee, setExEmployee] = useState(''); // '' = whole team
+  const [exDay, setExDay] = useState(new Date().toISOString().slice(0, 10));
+  const [exporting, setExporting] = useState('');
+
+  // Export team attendance as an Excel-compatible CSV. The manager endpoint
+  // limits it to the caller's reports; picking a member exports just that person.
+  const exportCsv = async (kind) => {
+    setExporting(kind);
+    try {
+      const params = new URLSearchParams();
+      if (kind === 'day') {
+        if (!exDay) { toast.error('Pick a day to export'); setExporting(''); return; }
+        const [y, m, d] = exDay.split('-').map(Number);
+        params.set('year', y);
+        params.set('month', m);
+        params.set('day', d);
+      } else {
+        params.set('year', exYear);
+        params.set('month', exMonth);
+      }
+      if (exEmployee) params.set('employee', exEmployee);
+      await downloadFile(`/manager/attendance/export?${params}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Export failed');
+    } finally {
+      setExporting('');
+    }
+  };
 
   const load = async () => {
     setLoading(true); setError('');
@@ -85,6 +123,56 @@ export default function EmployeeTeam() {
           {board && (team.length > 0) && (
             <div className="mb-5">
               <PresenceBoardView board={board} />
+            </div>
+          )}
+
+          {/* Export team attendance to Excel (CSV). Scoped to my reports. */}
+          {team.length > 0 && (
+            <div className="bg-white shadow rounded-lg p-5 mb-4">
+              <h2 className="card-title mb-1">Export Attendance</h2>
+              <p className="text-xs text-gray-500 mb-3">
+                Excel-compatible. Choose a member for one person, or leave it on “Whole team”.
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="block text-xs text-gray-600">Member</label>
+                  <select value={exEmployee} onChange={(e) => setExEmployee(e.target.value)}
+                    className="border rounded-lg px-2 py-1.5 text-sm bg-white min-w-[200px]">
+                    <option value="">Whole team</option>
+                    {team.map((m) => (
+                      <option key={m.profileId} value={m.profileId}>{m.name} ({m.employeeCode || '-'})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600">Year</label>
+                  <select value={exYear} onChange={(e) => setExYear(Number(e.target.value))}
+                    className="border rounded-lg px-2 py-1.5 text-sm bg-white">
+                    {Array.from({ length: 4 }, (_, i) => now.getFullYear() - i).map((y) => <option key={y}>{y}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600">Month</label>
+                  <select value={exMonth} onChange={(e) => setExMonth(Number(e.target.value))}
+                    className="border rounded-lg px-2 py-1.5 text-sm bg-white">
+                    {MONTHS.map((mo, i) => <option key={mo} value={i + 1}>{mo}</option>)}
+                  </select>
+                </div>
+                <button onClick={() => exportCsv('month')} disabled={!!exporting}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+                  ⬇ {exporting === 'month' ? 'Exporting…' : 'Month'}
+                </button>
+                <span className="mx-1 h-6 w-px bg-gray-200" />
+                <div>
+                  <label className="block text-xs text-gray-600">Day</label>
+                  <input type="date" value={exDay} onChange={(e) => setExDay(e.target.value)}
+                    className="border rounded-lg px-2 py-1.5 text-sm" />
+                </div>
+                <button onClick={() => exportCsv('day')} disabled={!!exporting}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+                  ⬇ {exporting === 'day' ? 'Exporting…' : 'Day'}
+                </button>
+              </div>
             </div>
           )}
 

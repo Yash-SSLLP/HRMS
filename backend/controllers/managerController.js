@@ -6,7 +6,7 @@ const { LeaveRequest } = require('../models/Leave');
 const { advanceApproval } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { haversineMeters } = require('../utils/geo');
-const { computeHeatmapWindow, computeDayDetails } = require('./attendanceController');
+const { computeHeatmapWindow, computeDayDetails, runAttendanceExport } = require('./attendanceController');
 
 // EmployeeProfile ids of the caller's direct reports (for team-scoped queries).
 async function myReportIds(userId) {
@@ -248,6 +248,16 @@ const teamDayDetails = asyncHandler(async (req, res) => {
   res.json(await computeDayDetails({ empIds, dateStr }));
 });
 
+// GET /api/manager/attendance/export?year=&month=&day=&employee=&months=
+// Excel-compatible attendance CSV scoped to the caller's direct reports (Sale
+// Team included — anyone whose reportingManager is this user). Same shapes as
+// the admin export: a single day, a whole month (all reports), or one report's
+// month / trailing months. Passing an employee outside the team is rejected.
+const exportTeamAttendance = asyncHandler(async (req, res) => {
+  const scopeIds = await myReportIds(req.user._id);
+  await runAttendanceExport(req, res, { scopeIds, bulkLabel: 'team' });
+});
+
 module.exports = {
   listTeam,
   teamPresence,
@@ -256,4 +266,5 @@ module.exports = {
   rejectTeamLeave,
   teamHeatmap,
   teamDayDetails,
+  exportTeamAttendance,
 };

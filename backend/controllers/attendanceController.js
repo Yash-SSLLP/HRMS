@@ -808,52 +808,19 @@ const punchMap = asyncHandler(async (req, res) => {
   });
 });
 
-// GET /api/attendance/export?employee=&year=&month=&months=   (HR/Admin)
-// Excel-compatible CSV of attendance — one row per attendance day. A single
-// endpoint serves all three shapes HR asked for:
-//   • employee set, months=1 (default)  → one employee, one month
-//   • employee unset                    → every employee, that month (bulk)
-//   • employee set, months=N (2-12)     → one employee, the trailing N months
-// The window is the N calendar months ENDING at the selected year/month.
-const exportAttendance = asyncHandler(async (req, res) => {
-  const now = new Date();
-  const year = Number(req.query.year) || now.getFullYear();
-  const month = Number(req.query.month) || now.getMonth() + 1;
-  const months = Math.min(Math.max(Number(req.query.months) || 1, 1), 12);
+// Build the Excel-compatible CSV body (header + rows, no BOM) for a set of
+// attendance records. Shared by the admin export and the manager (team) export
+// so both produce identical columns. Records are grouped per employee (by code)
+// then chronological, which reads well for bulk/day exports.
+function buildAttendanceCsv(records, settings) {
+  const todayStart = startOfDay(new Date());
+  const fmtT = (d) =>
+    d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '';
+  const esc = (v) => {
+    const s = v === undefined || v === null ? '' : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
 
-  // Trailing N-month window ending at the selected month (inclusive).
-  let sy = year;
-  let sm = month - (months - 1);
-  while (sm < 1) { sm += 12; sy -= 1; }
-  const { start } = monthRange(sy, sm);
-  const { end } = monthRange(year, month);
-
-  const filter = { date: { $gte: start, $lt: end } };
-  let employeeProfile = null;
-  if (req.query.employee) {
-    employeeProfile = await EmployeeProfile.findById(req.query.employee)
-      .select('employeeCode user')
-      .populate('user', 'firstName lastName');
-    if (!employeeProfile) {
-      res.status(404);
-      throw new Error('Employee not found');
-    }
-    filter.employee = req.query.employee;
-  }
-
-  const [records, settings] = await Promise.all([
-    Attendance.find(filter).populate({
-      path: 'employee',
-      select: 'employeeCode user workLocationRef',
-      populate: [
-        { path: 'user', select: 'firstName lastName email' },
-        { path: 'workLocationRef', select: 'name lat lng radiusM' },
-      ],
-    }),
-    Setting.getSettings(),
-  ]);
-
-  // Group per employee (by code), then chronological — reads well for bulk exports.
   const ordered = records
     .filter((r) => r.employee)
     .sort((a, b) => {
@@ -862,14 +829,6 @@ const exportAttendance = asyncHandler(async (req, res) => {
       if (ca !== cb) return ca.localeCompare(cb);
       return new Date(a.date) - new Date(b.date);
     });
-
-  const todayStart = startOfDay(new Date());
-  const fmtT = (d) =>
-    d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '';
-  const esc = (v) => {
-    const s = v === undefined || v === null ? '' : String(v);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
 
   const header = [
     'Employee Code', 'Name', 'Email', 'Date', 'Weekday', 'Status',
@@ -912,24 +871,103 @@ const exportAttendance = asyncHandler(async (req, res) => {
     ].map(esc).join(',');
   });
 
-  const csv = [header.map(esc).join(','), ...rows].join('\r\n');
+  return [header.map(esc).join(','), ...rows].join('\r\n');
+}
 
+// Shared attendance-export runner (Excel-compatible CSV, one row per attendance
+// day). A single code path serves every shape the UI offers, off these query
+// params:  employee, year, month, day, months.
+//   • day set (1-31)                    → one IST day  (day-wise export)
+//   • employee set, months=1 (default)  → one employee, one month
+//   • employee unset                    → every in-scope employee, that month
+//   • employee set, months=N (2-12)     → one employee, the trailing N months
+// `opts.scopeIds` (array of EmployeeProfile ids) limits the export to a subset —
+// used by the manager route so a manager only exports their direct reports; when
+// null (admin/HR), the whole org is in scope. `opts.bulkLabel` names the bulk
+// file (e.g. 'all' vs 'team').
+const runAttendanceExport = async (req, res, opts = {}) => {
+  const scopeIds = opts.scopeIds || null;
+  const bulkLabel = opts.bulkLabel || 'all';
   const pad = (n) => String(n).padStart(2, '0');
+
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const months = Math.min(Math.max(Number(req.query.months) || 1, 1), 12);
+  const day = Number(req.query.day) || 0; // 0 ⇒ whole month(s)
+
+  // Resolve the date window. A specific day wins over the trailing-month window.
+  let start;
+  let end;
+  let sy = year;
+  let sm = month;
+  const dayMode = day >= 1 && day <= 31;
+  if (dayMode) {
+    start = new Date(`${year}-${pad(month)}-${pad(day)}T00:00:00+05:30`);
+    end = new Date(start);
+    end.setDate(end.getDate() + 1);
+  } else {
+    sm = month - (months - 1);
+    while (sm < 1) { sm += 12; sy -= 1; }
+    ({ start } = monthRange(sy, sm));
+    ({ end } = monthRange(year, month));
+  }
+
+  const filter = { date: { $gte: start, $lt: end } };
+  let employeeProfile = null;
+  if (req.query.employee) {
+    // When scoped (manager), the requested employee must be one of their reports.
+    if (scopeIds && !scopeIds.some((id) => String(id) === String(req.query.employee))) {
+      res.status(403);
+      throw new Error('Not allowed to export this employee');
+    }
+    employeeProfile = await EmployeeProfile.findById(req.query.employee)
+      .select('employeeCode user')
+      .populate('user', 'firstName lastName');
+    if (!employeeProfile) {
+      res.status(404);
+      throw new Error('Employee not found');
+    }
+    filter.employee = employeeProfile._id;
+  } else if (scopeIds) {
+    filter.employee = { $in: scopeIds };
+  }
+
+  const [records, settings] = await Promise.all([
+    Attendance.find(filter).populate({
+      path: 'employee',
+      select: 'employeeCode user workLocationRef',
+      populate: [
+        { path: 'user', select: 'firstName lastName email' },
+        { path: 'workLocationRef', select: 'name lat lng radiusM' },
+      ],
+    }),
+    Setting.getSettings(),
+  ]);
+
+  const csv = buildAttendanceCsv(records, settings);
+
   let fname;
   if (employeeProfile) {
     const code = (employeeProfile.employeeCode || 'employee').replace(/[^A-Za-z0-9_-]/g, '');
-    fname = months > 1
-      ? `attendance-${code}-${sy}${pad(sm)}-to-${year}${pad(month)}.csv`
-      : `attendance-${code}-${year}-${pad(month)}.csv`;
+    if (dayMode) fname = `attendance-${code}-${year}-${pad(month)}-${pad(day)}.csv`;
+    else if (months > 1) fname = `attendance-${code}-${sy}${pad(sm)}-to-${year}${pad(month)}.csv`;
+    else fname = `attendance-${code}-${year}-${pad(month)}.csv`;
+  } else if (dayMode) {
+    fname = `attendance-${bulkLabel}-${year}-${pad(month)}-${pad(day)}.csv`;
   } else {
-    fname = `attendance-all-${year}-${pad(month)}.csv`;
+    fname = `attendance-${bulkLabel}-${year}-${pad(month)}.csv`;
   }
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
   // BOM so Excel detects UTF-8 (₹, accented names, etc.).
   res.send('﻿' + csv);
-});
+};
+
+// GET /api/attendance/export?employee=&year=&month=&day=&months=   (HR/Admin)
+// Whole org in scope. See runAttendanceExport for the supported shapes.
+const exportAttendance = asyncHandler((req, res) => runAttendanceExport(req, res, {}));
 
 // GET /api/attendance/daily-stats?days=14  (admin)
 // Per-day org attendance for the dashboard bar charts: number of present
@@ -1236,6 +1274,7 @@ module.exports = {
   listAll,
   monthSummary,
   exportAttendance,
+  runAttendanceExport,
   punchMap,
   dailyStats,
   todayBoard,
