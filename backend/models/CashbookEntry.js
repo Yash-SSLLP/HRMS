@@ -44,6 +44,9 @@ const cashbookEntrySchema = new mongoose.Schema(
     // The two legs of an account-to-account transfer share a transferGroup id.
     transferGroup: { type: mongoose.Schema.Types.ObjectId, index: true },
 
+    // Set when this ledger row was auto-posted from a reimbursed expense claim.
+    sourceExpense: { type: mongoose.Schema.Types.ObjectId, ref: 'Expense', default: null, index: true },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

@@ -544,4 +544,6 @@ module.exports = {
   listEntries, createEntry, updateEntry, deleteEntry, reviewVoucher, transfer,
   // reports
   overview, daybook, summary, exportCsv, getReceipt,
+  // reused by the expense→cashbook sync (never-drift balance recompute)
+  recomputeBalance,
 };

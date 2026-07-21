@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
@@ -21,6 +22,7 @@ export default function ExpensesScreen() {
   const [date, setDate] = useState('');
   const [merchant, setMerchant] = useState('');
   const [description, setDescription] = useState('');
+  const [receipt, setReceipt] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
@@ -32,14 +34,31 @@ export default function ExpensesScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  const pickReceipt = async () => {
+    const res = await DocumentPicker.getDocumentAsync({
+      type: ['application/pdf', 'image/*'],
+      copyToCacheDirectory: true,
+    });
+    if (res.canceled) return;
+    setReceipt(res.assets[0]);
+  };
+
   const submit = async () => {
     if (!amount || Number(amount) <= 0) { Alert.alert('Invalid', 'Enter a positive amount.'); return; }
     if (!date) { Alert.alert('Pick a date', 'Choose the expense date.'); return; }
+    if (!receipt) { Alert.alert('Receipt required', 'Attach a receipt (image or PDF) to verify your claim.'); return; }
     setSubmitting(true);
     try {
-      await api.post('/expenses', { category, amount: Number(amount), expenseDate: date, merchant, description });
+      const form = new FormData();
+      form.append('category', category);
+      form.append('amount', String(Number(amount)));
+      form.append('expenseDate', date);
+      form.append('merchant', merchant);
+      form.append('description', description);
+      form.append('receipt', { uri: receipt.uri, name: receipt.name || 'receipt', type: receipt.mimeType || 'application/octet-stream' });
+      await api.post('/expenses', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       setShowForm(false);
-      setAmount(''); setDate(''); setMerchant(''); setDescription('');
+      setAmount(''); setDate(''); setMerchant(''); setDescription(''); setReceipt(null);
       await load();
       Alert.alert('Submitted', 'Your expense claim has been submitted.');
     } catch (err) {
@@ -86,6 +105,13 @@ export default function ExpensesScreen() {
             </View>
             <Field label="Merchant (optional)"><Input value={merchant} onChangeText={setMerchant} placeholder="Uber, Hotel Taj…" /></Field>
             <Field label="Description (optional)"><Input value={description} onChangeText={setDescription} placeholder="What was this for?" multiline /></Field>
+            <Field label="Receipt (image or PDF)">
+              <TouchableOpacity onPress={pickReceipt} style={styles.receiptBtn}>
+                <Text style={styles.receiptBtnText} numberOfLines={1}>
+                  {receipt ? `📎 ${receipt.name || 'Receipt attached'}` : 'Attach receipt…'}
+                </Text>
+              </TouchableOpacity>
+            </Field>
             <AppButton title="Submit claim" icon="send" onPress={submit} loading={submitting} />
           </Card>
         )}
@@ -119,4 +145,6 @@ const styles = StyleSheet.create({
   chip: { paddingHorizontal: 14, height: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontWeight: '700', fontSize: 13, color: colors.textMuted },
+  receiptBtn: { height: 46, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceAlt, paddingHorizontal: 14, justifyContent: 'center' },
+  receiptBtnText: { fontSize: 14, color: colors.text, fontWeight: '600' },
 });

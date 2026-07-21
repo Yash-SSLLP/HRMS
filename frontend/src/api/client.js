@@ -14,11 +14,19 @@ const DEPLOYED_BACKEND = stripSlash(import.meta.env.VITE_BACKEND_URL);
 // (which always uses Railway) — e.g. to see attendance punched from the app.
 const FORCE_DEPLOYED = String(import.meta.env.VITE_FORCE_DEPLOYED_BACKEND).toLowerCase() === 'true';
 
+// Set VITE_FORCE_LOCAL_BACKEND=true to pin dev to the LOCAL backend with no
+// Railway fallback — a dead local backend then fails loudly instead of silently
+// hitting the production database.
+const FORCE_LOCAL = String(import.meta.env.VITE_FORCE_LOCAL_BACKEND).toLowerCase() === 'true';
+
 // In dev, probe the local backend once on startup and use it if it's running,
 // otherwise fall back to the deployed (Railway) backend. In a production build
 // (e.g. the Vercel deployment) there's no point probing the visitor's localhost,
 // so go straight to the deployed backend.
 async function resolveBaseURL() {
+  if (!import.meta.env.PROD && FORCE_LOCAL) {
+    return `${LOCAL_BACKEND}/api`;
+  }
   if (import.meta.env.PROD || FORCE_DEPLOYED) {
     return DEPLOYED_BACKEND ? `${DEPLOYED_BACKEND}/api` : `${LOCAL_BACKEND}/api`;
   }

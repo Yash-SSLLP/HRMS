@@ -54,6 +54,12 @@ function readStream(relPath) {
   return fs.createReadStream(absoluteOf(relPath));
 }
 
+// Read a stored file fully into a Buffer. Used when we need to copy an existing
+// stored file elsewhere (e.g. duplicate an expense receipt onto its cashbook entry).
+function readBuffer(relPath) {
+  return fs.readFileSync(absoluteOf(relPath));
+}
+
 // True if the stored file actually exists on disk. DB rows can outlive their
 // files (manual cleanup, failed write, migrated storage), so callers should
 // check before streaming to avoid an unhandled ReadStream 'error' crash.
@@ -88,4 +94,4 @@ function remove(relPath) {
   }
 }
 
-module.exports = { saveBuffer, readStream, remove, exists, streamTo };
+module.exports = { saveBuffer, readStream, readBuffer, remove, exists, streamTo };

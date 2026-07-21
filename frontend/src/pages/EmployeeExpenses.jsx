@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import ReceiptView from '../components/ReceiptView';
 
 const CATEGORIES = ['Travel', 'Food', 'Accommodation', 'Supplies', 'Medical', 'Communication', 'Other'];
 
@@ -13,7 +14,7 @@ const STATUS_STYLES = {
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 
-const blank = { category: 'Travel', amount: '', expenseDate: '', merchant: '', description: '', receiptUrl: '' };
+const blank = { category: 'Travel', amount: '', expenseDate: '', merchant: '', description: '' };
 
 export default function EmployeeExpenses() {
   const [expenses, setExpenses] = useState([]);
@@ -22,6 +23,8 @@ export default function EmployeeExpenses() {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(blank);
+  const [receiptFile, setReceiptFile] = useState(null);
+  const fileRef = useRef(null);
 
   const load = async () => {
     setLoading(true);
@@ -38,16 +41,24 @@ export default function EmployeeExpenses() {
 
   useEffect(() => { load(); }, []);
 
-  const openCreate = () => { setForm(blank); setError(''); setShowModal(true); };
+  const openCreate = () => {
+    setForm(blank); setReceiptFile(null); setError(''); setShowModal(true);
+    if (fileRef.current) fileRef.current.value = '';
+  };
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!receiptFile) { setError('Please attach a receipt (image or PDF)'); return; }
     setSaving(true);
     setError('');
     try {
-      await api.post('/expenses', form);
+      const fd = new FormData();
+      Object.entries(form).forEach(([k, v]) => fd.append(k, v));
+      fd.append('receipt', receiptFile);
+      await api.post('/expenses', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       setShowModal(false);
       setForm(blank);
+      setReceiptFile(null);
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not submit claim');
@@ -77,14 +88,15 @@ export default function EmployeeExpenses() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Category</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Merchant</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Amount</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Receipt</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : expenses.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No claims submitted</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No claims submitted</td></tr>
             ) : expenses.map((x) => (
               <tr key={x._id}>
                 <td className="px-4 py-3 text-gray-600">{new Date(x.expenseDate).toLocaleDateString()}</td>
@@ -94,6 +106,9 @@ export default function EmployeeExpenses() {
                   {x.description && <div className="text-xs text-gray-500">{x.description}</div>}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">{inr.format(x.amount)}</td>
+                <td className="px-4 py-3">
+                  <ReceiptView expense={x} />
+                </td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[x.status] || 'bg-gray-100 text-gray-700'}`}>{x.status}</span>
                   {x.reviewNote && <div className="text-xs text-gray-500 mt-1">Note: {x.reviewNote}</div>}
@@ -144,10 +159,11 @@ export default function EmployeeExpenses() {
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
               <div>
-                <label className="block text-sm text-gray-700">Receipt</label>
-                <input value={form.receiptUrl} placeholder="Link to receipt (optional)"
-                  onChange={(e) => setForm({ ...form, receiptUrl: e.target.value })}
-                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                <label className="block text-sm text-gray-700">Receipt (image or PDF) *</label>
+                <input ref={fileRef} type="file" accept="image/*,application/pdf" required
+                  onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
+                  className="mt-1 block w-full text-sm border rounded-lg px-3 py-2 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700" />
+                <p className="mt-1 text-xs text-gray-500">A receipt is required to verify your claim. Max 5 MB.</p>
               </div>
               {error && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

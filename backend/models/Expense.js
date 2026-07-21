@@ -3,6 +3,12 @@ const mongoose = require('mongoose');
 const EXPENSE_CATEGORIES = ['Travel', 'Food', 'Accommodation', 'Supplies', 'Medical', 'Communication', 'Other'];
 const EXPENSE_STATUS = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
 
+// Uploaded receipt proof (image or PDF), mirrors CashbookEntry's attachment.
+const receiptSchema = new mongoose.Schema(
+  { storagePath: String, name: String, sizeBytes: Number, mime: String },
+  { _id: false }
+);
+
 const expenseSchema = new mongoose.Schema(
   {
     employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -11,14 +17,26 @@ const expenseSchema = new mongoose.Schema(
     expenseDate: { type: Date, required: true },
     description: { type: String, trim: true },
     merchant: { type: String, trim: true },
-    receiptUrl: { type: String, trim: true },
+    receiptUrl: { type: String, trim: true }, // legacy free-text link (kept for old rows)
+    receipt: { type: receiptSchema, default: null }, // uploaded receipt file (image/PDF)
     status: { type: String, enum: EXPENSE_STATUS, default: 'Pending', index: true },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: Date,
     reviewNote: { type: String, trim: true },
+    // Ledger row created when this claim is Reimbursed; its presence prevents
+    // a second cash-out from being posted on repeated "Mark Reimbursed" clicks.
+    cashbookEntry: { type: mongoose.Schema.Types.ObjectId, ref: 'CashbookEntry', default: null },
   },
   { timestamps: true }
 );
+
+expenseSchema.set('toJSON', {
+  transform: (_doc, ret) => {
+    ret.hasReceipt = !!ret.receipt?.storagePath;
+    if (ret.receipt) delete ret.receipt.storagePath; // never leak filesystem path
+    return ret;
+  },
+});
 
 expenseSchema.plugin(require("./plugins/auditStatus"));
 
