@@ -16,6 +16,15 @@ const STATUS_COLORS = {
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
 
+// A leave can be cancelled only while it hasn't started yet. Once its start date
+// is in the past, the day has been taken and the option is removed. Date-only
+// compare so a leave starting today is still cancellable.
+const hasStarted = (startDate) => {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  return new Date(startDate) < startOfToday;
+};
+
 const blankForm = {
   leaveType: 'CL',
   startDate: '',
@@ -206,7 +215,7 @@ export default function EmployeeLeave() {
                       {r.decisionNote && <div className="text-[11px] text-gray-400 mt-0.5 italic">“{r.decisionNote}”</div>}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {(r.status === 'Pending' || r.status === 'Approved') && (
+                      {(r.status === 'Pending' || r.status === 'Approved') && !hasStarted(r.startDate) && (
                         <button onClick={() => cancel(r._id)} className="text-red-600 hover:underline">Cancel</button>
                       )}
                     </td>

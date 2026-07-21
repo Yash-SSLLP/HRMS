@@ -366,6 +366,16 @@ const cancelMyRequest = asyncHandler(async (req, res) => {
     throw new Error(`Request is already ${request.status}`);
   }
 
+  // Once the leave has begun (its start date is in the past), it can no longer
+  // be cancelled — the day has been taken. Compare date-only so a leave starting
+  // today is still cancellable.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  if (new Date(request.startDate) < startOfToday) {
+    res.status(400);
+    throw new Error('This leave has already started and can no longer be cancelled');
+  }
+
   // If it was already approved, restore the balance (deducted only at final
   // approval) and remove the auto-stamped leave days from the calendar.
   if (request.status === 'Approved') {
