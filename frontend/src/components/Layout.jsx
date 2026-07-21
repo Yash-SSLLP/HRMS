@@ -9,6 +9,7 @@ import AuthImage from './AuthImage';
 import { FiPlus, FiMinus, FiSun, FiMoon, FiBell, FiCalendar, FiClock } from 'react-icons/fi';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 import { hasPermission, hasAnyPermission } from '../config/permissions';
+import { pageNameForPath } from '../config/pageNames';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
 
@@ -462,6 +463,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const mode = useThemeStore((s) => s.mode);
   const toggleMode = useThemeStore((s) => s.toggle);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   // Re-sync the cached user from the server on load so the top-bar profile
   // reflects any changes made since login (e.g. an approved name-change ticket
@@ -507,6 +509,18 @@ export default function Layout({ navItems = [], sectionTitle }) {
   useEffect(() => {
     document.documentElement.setAttribute('data-portal', portal);
   }, [portal]);
+
+  // Report each in-app page view to the server so its console shows human-
+  // readable navigation, e.g.  "Yash : My Shifts". Users who hold BOTH portals
+  // (e.g. an HR Manager with an admin + employee profile) also get the portal
+  // qualifier, so the console reads "Yash as employee : ..." vs "Yash as admin
+  // : ...". Best-effort telemetry — fire once per route change, never block nav.
+  const dualPortal = isAdmin && canEmployeePortal;
+  useEffect(() => {
+    api
+      .post('/page-view', { page: pageNameForPath(pathname), portal: dualPortal ? portal : undefined })
+      .catch(() => {});
+  }, [pathname, portal, dualPortal]);
 
   // Close the mobile drawer whenever the route changes.
   const closeMobile = () => setMobileOpen(false);
