@@ -3,7 +3,7 @@
  * integration (services/googleCalendar.js).
  *
  * Prerequisites (Google Cloud Console, https://console.cloud.google.com):
- *   1. Enable the "Google Calendar API" for your project.
+ *   1. Enable the "Google Calendar API" AND the "Gmail API" for your project.
  *   2. Create an OAuth 2.0 Client ID of type "Web application".
  *   3. Add this Authorized redirect URI EXACTLY:
  *        http://localhost:5055/oauth2callback
@@ -23,7 +23,11 @@ const { URL } = require('url');
 const CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
 const REDIRECT_URI = 'http://localhost:5055/oauth2callback';
-const SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+// Calendar (interview Meet invites) + Gmail send (outgoing HRMS mail).
+const SCOPE = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/gmail.send',
+].join(' ');
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.error('Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET first.');

@@ -11,6 +11,7 @@
 const nodemailer = require('nodemailer');
 const EmailOutbox = require('../models/EmailOutbox');
 const storage = require('./storage');
+const googleMail = require('./googleMail');
 
 // Map outbox attachment refs to nodemailer attachments. Prefers a storage path
 // (streamed from disk), else uses inline base64 bytes embedded in `content`.
@@ -45,11 +46,9 @@ function getTransporter() {
   return cachedTransporter;
 }
 
-// Build the actual From header. SMTP providers (Hostinger included) reject mail
-// whose From address is not the authenticated mailbox, so we always send from
-// SMTP_FROM/SMTP_USER. If a caller supplied a friendly display name
-// (e.g. "Jane HR <jane@personal.com>") we keep the name but swap the address to
-// the authenticated mailbox; the caller's own address is preserved via Reply-To.
+// Build the actual From header for SMTP sends. Providers reject mail whose From
+// address is not the authenticated mailbox, so we always send from
+// SMTP_FROM/SMTP_USER, keeping any caller-supplied display name.
 function resolveFrom(rawFrom) {
   const addr = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@hrms.local';
   if (!rawFrom) return addr;
@@ -59,6 +58,11 @@ function resolveFrom(rawFrom) {
 }
 
 async function sendMail(opts) {
+  // Preferred transport: Gmail API via the shared Google OAuth credentials.
+  if (googleMail.isConfigured()) {
+    return googleMail.send(opts);
+  }
+
   const t = getTransporter();
   const from = resolveFrom(opts.from);
   if (!t) {

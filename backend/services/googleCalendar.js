@@ -103,4 +103,4 @@ async function createMeetEvent({ summary, description, start, end, attendees = [
   return { meetingLink, eventId: ev.id, htmlLink: ev.htmlLink };
 }
 
-module.exports = { isConfigured, createMeetEvent };
+module.exports = { isConfigured, createMeetEvent, getAccessToken };
