@@ -45,9 +45,22 @@ function getTransporter() {
   return cachedTransporter;
 }
 
+// Build the actual From header. SMTP providers (Hostinger included) reject mail
+// whose From address is not the authenticated mailbox, so we always send from
+// SMTP_FROM/SMTP_USER. If a caller supplied a friendly display name
+// (e.g. "Jane HR <jane@personal.com>") we keep the name but swap the address to
+// the authenticated mailbox; the caller's own address is preserved via Reply-To.
+function resolveFrom(rawFrom) {
+  const addr = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@hrms.local';
+  if (!rawFrom) return addr;
+  const m = /^\s*"?([^"<]*?)"?\s*(?:<[^>]*>)\s*$/.exec(rawFrom);
+  const name = m && m[1] ? m[1].trim() : '';
+  return name ? `${name} <${addr}>` : addr;
+}
+
 async function sendMail(opts) {
   const t = getTransporter();
-  const from = opts.from || process.env.SMTP_FROM || 'no-reply@hrms.local';
+  const from = resolveFrom(opts.from);
   if (!t) {
     console.log('\n=== EMAIL (SMTP not configured — logging instead) ===');
     console.log('To       :', Array.isArray(opts.to) ? opts.to.join(', ') : opts.to);

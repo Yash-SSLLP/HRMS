@@ -24,7 +24,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Parse an HR-typed Cc string (comma / semicolon / whitespace separated) into a
 // clean, de-duplicated list of valid addresses, excluding any already on `exclude`.
 function parseCcList(raw, exclude = []) {
-  const skip = new Set(exclude.filter(Boolean).map((e) => e.toLowerCase()));
+  const skip = new Set(exclude.filter(Boolean).map((e) => e.trim().toLowerCase()));
   return [...new Set(
     String(raw || '')
       .split(/[\s,;]+/)
@@ -847,7 +847,9 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
 
   const subject = String(req.body.subject || '').trim() || defaults.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
-  const cc = parseCcList(req.body.cc, [candidate.email]);
+  // Exclude both the To recipient (candidate) and the acting sender so HR never
+  // ends up Cc'd on their own outgoing mail.
+  const cc = parseCcList(req.body.cc, [candidate.email, req.user?.email]);
   await enqueueMail(
     {
       to: candidate.email,
