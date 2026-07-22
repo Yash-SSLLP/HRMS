@@ -17,6 +17,15 @@ const TYPES = [
 
 const STATUS_TONE = { Pending: 'warning', Approved: 'success', Rejected: 'danger', Cancelled: 'neutral' };
 
+// A leave can be cancelled only until it starts. Once its start date is in the
+// past, the day has been taken and the option is removed (date-only compare, so
+// a leave starting today is still cancellable).
+const hasStarted = (startDate) => {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  return new Date(startDate) < startOfToday;
+};
+
 export default function LeaveScreen() {
   const [balances, setBalances] = useState(null);
   const [requests, setRequests] = useState([]);
@@ -140,7 +149,7 @@ export default function LeaveScreen() {
                 {fmtDate(r.startDate)} → {fmtDate(r.endDate)}
               </Text>
               {r.reason ? <Text style={[font.small, { marginTop: 4 }]}>{r.reason}</Text> : null}
-              {r.status === 'Pending' && (
+              {r.status === 'Pending' && !hasStarted(r.startDate) && (
                 <TouchableOpacity onPress={() => cancel(r._id)} style={styles.cancelBtn}>
                   <Ionicons name="close-circle" size={16} color={colors.danger} />
                   <Text style={styles.cancelText}>Cancel request</Text>
