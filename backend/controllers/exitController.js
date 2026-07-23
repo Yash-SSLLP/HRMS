@@ -17,6 +17,7 @@ const { buildExitEmail } = require('../services/exitEmails');
 const { notify } = require('../services/notify');
 const { buildApprovalChain } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
+const { buildDefaultSections } = require('../config/exitClearance');
 
 const APP_BASE_URL = () => process.env.APP_BASE_URL || 'http://localhost:5173';
 const FEEDBACK_TTL_DAYS = 60;
@@ -213,6 +214,7 @@ async function advanceExitApproval(exit, userId, action, note) {
   const name = await applicantNameOf(exit.employee);
   await notifyEmployeeExitDecision(exit, true, note);
   await notifyHrBeginClearance(exit, name);
+  await notifyAssignedSections(exit, name);
   return exit;
 }
 
@@ -257,6 +259,72 @@ async function finalizeExit(exit) {
   exit.status = 'Completed';
   exit.completedAt = new Date();
   await exit.save();
+}
+
+// ---- No-dues clearance sections ----
+
+// A section is complete when every one of its items is ticked.
+function sectionItemsDone(section) {
+  const items = section?.items || [];
+  return items.length > 0 && items.every((it) => !!it.done);
+}
+
+// Recompute the `completed` flag on a section from its items, stamping who/when.
+function recomputeSection(section, userId) {
+  const done = sectionItemsDone(section);
+  if (done && !section.completed) {
+    section.completed = true;
+    section.completedAt = new Date();
+    if (userId) section.completedBy = userId;
+  } else if (!done && section.completed) {
+    section.completed = false;
+    section.completedAt = undefined;
+    section.completedBy = undefined;
+  }
+  return section;
+}
+
+// Whether the no-dues gate is satisfied: an HR override, or every seeded section
+// completed. Exits created before this feature (no sections) fall back to the
+// legacy flat clearance so they can still be closed.
+function clearanceSatisfied(exit) {
+  if (exit.clearanceOverride?.at) return true;
+  const sections = exit.clearanceSections || [];
+  if (sections.length) return sections.every((s) => s.completed);
+  const c = exit.clearance || {};
+  return ['itAssetsReturned', 'accessRevoked', 'knowledgeTransferDone', 'finalSettlementDone', 'documentsHandedOver']
+    .every((k) => !!c[k]);
+}
+
+// Titles of the sections still pending — for a friendly gate message.
+function pendingSectionTitles(exit) {
+  return (exit.clearanceSections || []).filter((s) => !s.completed).map((s) => s.title);
+}
+
+// Ping a manager that a no-dues section has been assigned to them.
+async function notifyClearanceAssignee(userId, exit, sectionTitle, applicantName) {
+  try {
+    await notify({
+      recipient: userId,
+      type: 'exit',
+      audience: 'all',
+      title: 'No-dues clearance assigned to you',
+      body: `Please complete the ${sectionTitle} no-dues check for ${applicantName} (last working day ${fmtD(exit.lastWorkingDay)}).`,
+      link: '/employee/approvals',
+    });
+  } catch (err) {
+    console.error('clearance assignee notify failed:', err.message);
+  }
+}
+
+// Ping every already-assigned section manager that clearance has begun. Called
+// when an exit transitions into InClearance (approval finalised / termination).
+async function notifyAssignedSections(exit, applicantName) {
+  for (const s of exit.clearanceSections || []) {
+    if (s.assignedTo && !s.completed) {
+      await notifyClearanceAssignee(s.assignedTo, exit, s.title, applicantName);
+    }
+  }
 }
 
 async function getMyProfileOrFail(userId, res) {
@@ -340,6 +408,8 @@ const createExit = asyncHandler(async (req, res) => {
     initiatedBy: req.user._id,
     status,
     resignationDate,
+    // Seed the per-department no-dues checklist (HR assigns managers later).
+    clearanceSections: buildDefaultSections(),
   });
 
   if (exitType === 'Resignation') {
@@ -459,6 +529,17 @@ const completeExit = asyncHandler(async (req, res) => {
     throw new Error('Cannot complete a Cancelled exit');
   }
 
+  // No-dues gate: every department clearance section must be completed before
+  // the account is released. HR can record an override (see overrideClearance).
+  if (!clearanceSatisfied(exit)) {
+    const pending = pendingSectionTitles(exit);
+    res.status(400);
+    throw new Error(
+      `No-dues clearance is incomplete${pending.length ? ` — pending: ${pending.join(', ')}` : ''}. ` +
+      'Have each department manager tick their section, or record an HR override.'
+    );
+  }
+
   // 1-3) Stamp dateOfExit, deactivate the login, ensure a feedback token, and
   // move the exit to Completed. Shared with the notice-period worker.
   await finalizeExit(exit);
@@ -560,6 +641,141 @@ const resendExitEmail = asyncHandler(async (req, res) => {
   res.json({ exit, email: { queued: true, outboxId: outboxRow._id }, feedbackUrl });
 });
 
+// ============ No-dues clearance ============
+
+/**
+ * Assign the responsible manager for each no-dues section (HR/Admin).
+ * @route PATCH /api/exits/:id/clearance-assignees  (HR/Admin)
+ * @param {Object} req.body.assignees - map of section key -> User id (or null to unassign)
+ * @returns {{exit: Object}}; notifies newly-assigned managers to complete their section
+ */
+const assignClearanceApprovers = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findById(req.params.id);
+  if (!exit) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  if (exit.status === 'Completed' || exit.status === 'Cancelled') {
+    res.status(400);
+    throw new Error(`Cannot edit clearance on a ${exit.status} exit`);
+  }
+  if (!exit.clearanceSections?.length) exit.clearanceSections = buildDefaultSections();
+
+  const assignees = req.body?.assignees || {};
+  const applicantName = await applicantNameOf(exit.employee);
+  const newlyAssigned = [];
+  for (const section of exit.clearanceSections) {
+    if (!(section.key in assignees)) continue;
+    const userId = assignees[section.key] || null;
+    const prev = String(section.assignedTo || '');
+    if (String(userId || '') === prev) continue;
+    section.assignedTo = userId || null;
+    if (userId) {
+      const u = await User.findById(userId).select('firstName lastName');
+      section.assignedToName = u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : '';
+      newlyAssigned.push({ userId, title: section.title });
+    } else {
+      section.assignedToName = '';
+    }
+  }
+  await exit.save();
+
+  // Only ping assignees once the exit is actually in clearance (notice period).
+  if (exit.status === 'InClearance') {
+    for (const a of newlyAssigned) await notifyClearanceAssignee(a.userId, exit, a.title, applicantName);
+  }
+  res.json({ exit });
+});
+
+/**
+ * Core: apply an items update to one clearance section and recompute completion.
+ * `privileged` (HR/SuperAdmin) may edit any section; otherwise the actor must be
+ * the section's assignee. Editable only while the exit is InClearance.
+ * Mutates + saves; throws Error with `.status` on a bad request.
+ */
+async function recordClearanceSection(exit, key, userId, privileged, payload) {
+  if (exit.status !== 'InClearance') {
+    const e = new Error('No-dues can only be updated while the exit is serving notice (in clearance).');
+    e.status = 400;
+    throw e;
+  }
+  const section = (exit.clearanceSections || []).find((s) => s.key === key);
+  if (!section) {
+    const e = new Error('Clearance section not found.');
+    e.status = 404;
+    throw e;
+  }
+  if (!privileged && String(section.assignedTo || '') !== String(userId)) {
+    const e = new Error('This no-dues section is not assigned to you.');
+    e.status = 403;
+    throw e;
+  }
+  const incoming = Array.isArray(payload?.items) ? payload.items : [];
+  section.items.forEach((it, i) => {
+    const upd = incoming[i];
+    if (!upd) return;
+    const nextDone = !!upd.done;
+    if (nextDone !== it.done) {
+      it.done = nextDone;
+      it.doneAt = nextDone ? new Date() : undefined;
+      it.doneBy = nextDone ? userId : undefined;
+    }
+    if (upd.note !== undefined) it.note = upd.note;
+  });
+  recomputeSection(section, userId);
+  await exit.save();
+  return section;
+}
+
+/**
+ * HR/Admin ticks a no-dues section from the Exit console.
+ * @route PATCH /api/exits/:id/clearance/:key  (HR/Admin)
+ * @param {Object} req.body.items - array of { done, note } by item index
+ * @returns {{exit: Object}}
+ */
+const updateClearanceSectionAdmin = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findById(req.params.id);
+  if (!exit) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  try {
+    await recordClearanceSection(exit, req.params.key, req.user._id, true, req.body);
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
+  res.json({ exit });
+});
+
+/**
+ * HR/Admin overrides the no-dues gate so the account can be released with pending
+ * sections, on record with a reason.
+ * @route PATCH /api/exits/:id/clearance/override  (HR/Admin)
+ * @param {string} req.body.reason - required justification
+ * @returns {{exit: Object}}
+ */
+const overrideClearance = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findById(req.params.id);
+  if (!exit) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) {
+    res.status(400);
+    throw new Error('A reason is required to override the no-dues clearance.');
+  }
+  exit.clearanceOverride = {
+    by: req.user._id,
+    byName: req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    at: new Date(),
+    reason,
+  };
+  await exit.save();
+  res.json({ exit });
+});
+
 // ============ Employee self-service ============
 
 /**
@@ -612,6 +828,8 @@ const submitMyResignation = asyncHandler(async (req, res) => {
     handledBy: profile.hrPartner || undefined,
     initiatedBy: req.user._id,
     status: 'Pending',
+    // Seed the per-department no-dues checklist (HR assigns managers later).
+    clearanceSections: buildDefaultSections(),
   });
   // Kick off the reporting-hierarchy approval ladder.
   const applicantName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
@@ -700,8 +918,14 @@ module.exports = {
   submitMyResignation,
   getFeedbackContext,
   submitFeedback,
+  // No-dues clearance
+  assignClearanceApprovers,
+  updateClearanceSectionAdmin,
+  overrideClearance,
   // Shared with the approvals controller and the exit worker
   advanceExitApproval,
   ensureExitApprovalChain,
   finalizeExit,
+  recordClearanceSection,
+  clearanceSatisfied,
 };

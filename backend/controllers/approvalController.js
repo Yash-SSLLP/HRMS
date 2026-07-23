@@ -8,7 +8,11 @@ const asyncHandler = require('express-async-handler');
 const { LeaveRequest } = require('../models/Leave');
 const ExitRequest = require('../models/ExitRequest');
 const { advanceApproval, ensureApprovalChain } = require('./leaveController');
-const { advanceExitApproval, ensureExitApprovalChain } = require('./exitController');
+const {
+  advanceExitApproval,
+  ensureExitApprovalChain,
+  recordClearanceSection,
+} = require('./exitController');
 
 // Rebuild the approval chain for any Pending request that has none yet (created
 // before the hierarchy feature, or by an older backend). Runs on inbox load so
@@ -202,6 +206,56 @@ const rejectExit = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
+// ================= No-dues clearance (assigned managers) =================
+// A department manager (assigned per-exit by HR) ticks the no-dues section they
+// own. Scoped to sections where `assignedTo === me`; the tick logic + guard live
+// in exitController.recordClearanceSection.
+
+/**
+ * List exits with a no-dues section assigned to the current user.
+ * @route GET /api/approvals/clearances?scope=pending|history
+ * @param {string} [req.query.scope] - 'pending' (my section still open, InClearance) or 'history'
+ * @returns {{scope, count, requests: Object[]}} exits populated with employee
+ */
+const listMyClearances = asyncHandler(async (req, res) => {
+  const me = req.user._id;
+  const scope = req.query.scope === 'history' ? 'history' : 'pending';
+  const filter =
+    scope === 'history'
+      ? { 'clearanceSections.assignedTo': me }
+      : { status: 'InClearance', clearanceSections: { $elemMatch: { assignedTo: me, completed: false } } };
+  const requests = await ExitRequest.find(filter)
+    .populate({
+      path: 'employee',
+      select: 'employeeCode user designation department',
+      populate: { path: 'user', select: 'firstName lastName email' },
+    })
+    .sort({ lastWorkingDay: 1 });
+  res.json({ scope, count: requests.length, requests });
+});
+
+/**
+ * The assigned manager ticks their no-dues section.
+ * @route PATCH /api/approvals/clearances/:id/:key
+ * @param {Object} req.body.items - array of { done, note } by item index
+ * @returns {{request: Object}}
+ */
+const updateMyClearanceSection = asyncHandler(async (req, res) => {
+  const request = await ExitRequest.findById(req.params.id);
+  if (!request) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  try {
+    // privileged=false → the actor must be the section's assignee.
+    await recordClearanceSection(request, req.params.key, req.user._id, false, req.body);
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
+  res.json({ request });
+});
+
 module.exports = {
   listMyLeaveApprovals,
   approveLeave,
@@ -209,4 +263,6 @@ module.exports = {
   listMyExitApprovals,
   approveExit,
   rejectExit,
+  listMyClearances,
+  updateMyClearanceSection,
 };

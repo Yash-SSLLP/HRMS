@@ -61,6 +61,7 @@ export default function AdminExit() {
   const [exits, setExits] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [hrUsers, setHrUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]); // active users for no-dues assignee pickers
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -90,6 +91,7 @@ export default function AdminExit() {
       setHrUsers(usersRes.data.users.filter(
         (u) => u.role === 'HRManager' || u.role === 'SuperAdmin'
       ));
+      setAllUsers(usersRes.data.users.filter((u) => u.isActive !== false));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -238,6 +240,46 @@ export default function AdminExit() {
   const updateClearance = (key, value) => {
     setDetail({ ...detail, clearance: { ...detail.clearance, [key]: value } });
   };
+
+  // ---- No-dues clearance sections ----
+  const assignApprover = async (key, userId) => {
+    try {
+      const { data } = await api.patch(`/exits/${detail._id}/clearance-assignees`, {
+        assignees: { [key]: userId || null },
+      });
+      setDetail(data.exit);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not assign the manager');
+    }
+  };
+
+  const toggleClearanceItem = async (section, idx, done) => {
+    const items = section.items.map((it, i) => ({ done: i === idx ? done : !!it.done, note: it.note }));
+    try {
+      const { data } = await api.patch(`/exits/${detail._id}/clearance/${section.key}`, { items });
+      setDetail(data.exit);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update the no-dues checklist');
+    }
+  };
+
+  const overrideClearance = async () => {
+    const reason = await promptDialog({
+      title: 'Override no-dues clearance',
+      message: 'Record a reason for releasing the account with pending no-dues sections:',
+      confirmText: 'Override',
+    });
+    if (!reason) return;
+    try {
+      const { data } = await api.patch(`/exits/${detail._id}/clearance/override`, { reason });
+      setDetail(data.exit);
+      setActionMsg('No-dues override recorded — the account can now be released.');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not record the override');
+    }
+  };
+
+  const assigneeName = (u) => `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email;
 
   const isFinal = detail && (detail.status === 'Completed' || detail.status === 'Cancelled');
 
@@ -497,20 +539,77 @@ export default function AdminExit() {
               </div>
             )}
 
-            {/* Clearance checklist */}
-            <div className="mb-4 bg-gray-50 rounded-lg p-3">
-              <h3 className="text-sm font-semibold mb-2">Clearance checklist</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {Object.entries(CLEARANCE_LABELS).map(([k, label]) => (
-                  <label key={k} className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" disabled={isFinal}
-                      checked={!!detail.clearance?.[k]}
-                      onChange={(e) => updateClearance(k, e.target.checked)} />
-                    {label}
-                  </label>
-                ))}
+            {/* No-dues clearance (per-department managers) */}
+            {detail.clearanceSections?.length > 0 ? (
+              <div className="mb-4 bg-gray-50 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold">No-dues clearance</h3>
+                  {detail.clearanceOverride?.at ? (
+                    <span className="text-xs text-amber-700" title={detail.clearanceOverride.reason}>
+                      Overridden by {detail.clearanceOverride.byName || 'HR'}
+                    </span>
+                  ) : !isFinal && (
+                    <button onClick={overrideClearance} className="text-xs text-amber-700 hover:underline">
+                      HR override…
+                    </button>
+                  )}
+                </div>
+                {detail.status === 'Pending' && (
+                  <p className="text-xs text-gray-500 mb-2">Assign a manager to each section now — they can tick items once the resignation is approved and the notice period begins.</p>
+                )}
+                <div className="space-y-3">
+                  {detail.clearanceSections.map((s) => {
+                    const assignedId = s.assignedTo?._id || s.assignedTo || '';
+                    return (
+                      <div key={s.key} className="bg-white border rounded-lg p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                          <div className="text-sm font-medium text-gray-800 flex items-center gap-1.5">
+                            {s.title}
+                            {s.completed
+                              ? <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Cleared</span>
+                              : <span className="text-xs text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">Pending</span>}
+                          </div>
+                          <select disabled={isFinal} value={assignedId}
+                            onChange={(e) => assignApprover(s.key, e.target.value)}
+                            className="text-xs border rounded-lg px-2 py-1 max-w-[14rem] disabled:bg-gray-100">
+                            <option value="">Assign manager…</option>
+                            {allUsers.map((u) => (
+                              <option key={u._id} value={u._id}>{assigneeName(u)}{u.role ? ` (${u.role})` : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                          {s.items.map((it, idx) => (
+                            <label key={idx} className={`flex items-center gap-2 text-sm ${detail.status !== 'InClearance' ? 'text-gray-400' : ''}`}>
+                              <input type="checkbox"
+                                disabled={isFinal || detail.status !== 'InClearance'}
+                                checked={!!it.done}
+                                onChange={(e) => toggleClearanceItem(s, idx, e.target.checked)} />
+                              {it.label}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Legacy flat clearance (exits created before per-department no-dues) */
+              <div className="mb-4 bg-gray-50 rounded-lg p-3">
+                <h3 className="text-sm font-semibold mb-2">Clearance checklist</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {Object.entries(CLEARANCE_LABELS).map(([k, label]) => (
+                    <label key={k} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" disabled={isFinal}
+                        checked={!!detail.clearance?.[k]}
+                        onChange={(e) => updateClearance(k, e.target.checked)} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Submitted feedback */}
             {detail.feedback?.submittedAt && (

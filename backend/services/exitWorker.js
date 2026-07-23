@@ -11,26 +11,11 @@
 // interval-tick pattern as the other workers (attendanceWorker/celebrationWorker).
 const ExitRequest = require('../models/ExitRequest');
 const User = require('../models/User');
-const { finalizeExit } = require('../controllers/exitController');
+const { finalizeExit, clearanceSatisfied } = require('../controllers/exitController');
 const { notify } = require('./notify');
 const { startOfDayIST, ymdIST } = require('../utils/dateHelpers');
 
 const POLL_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
-
-// Every clearance box that must be ticked before an account is released. Kept in
-// sync with clearanceSchema in models/ExitRequest.js.
-const CLEARANCE_KEYS = [
-  'itAssetsReturned',
-  'accessRevoked',
-  'knowledgeTransferDone',
-  'finalSettlementDone',
-  'documentsHandedOver',
-];
-
-function clearanceComplete(clearance) {
-  const c = clearance || {};
-  return CLEARANCE_KEYS.every((k) => !!c[k]);
-}
 
 const fmtD = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
@@ -65,8 +50,8 @@ async function tick() {
       const u = exit.employee.user;
       const name = `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || 'An employee';
 
-      if (clearanceComplete(exit.clearance)) {
-        // Formalities done → release the login.
+      if (clearanceSatisfied(exit)) {
+        // No-dues done (or HR-overridden) → release the login.
         await finalizeExit(exit);
         released += 1;
         const hrId = await resolveHrRecipient(exit);

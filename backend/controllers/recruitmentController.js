@@ -20,7 +20,7 @@ const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
 const { renderOfferLetter, renderAppointmentLetter } = require('../services/letterPdf');
-const { enqueueMail } = require('../services/email');
+const { enqueueMail, sendMail } = require('../services/email');
 const { notify } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
 const { computeNextEmployeeCode } = require('./lifecycleController');
@@ -955,6 +955,32 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
 // (plus the public download link when available). Used by the mobile app and
 // anywhere HR needs a server-side send: HR sees and can edit the exact
 // subject + body before anything goes out. Sending stamps emailedAt.
+// Re-render a stored letter PDF from its saved `data` when the file is missing
+// on disk (UPLOAD_DIR is ephemeral on some hosts, so a letter generated on one
+// deploy can be gone by send time — the classic "email sent but nothing arrived"
+// cause). Returns a storage path that is guaranteed to exist right now.
+async function ensureLetterFile(candidate, kind) {
+  const letter = candidate[kind];
+  if (letter?.letterPath && storage.exists(letter.letterPath)) return letter.letterPath;
+
+  const data = letter?.data ? (letter.data.toObject?.() || letter.data) : {};
+  const buffer = kind === 'offer'
+    ? await renderOfferLetter({ ...data, candidateName: candidate.name })
+    : await renderAppointmentLetter({
+      ...data,
+      candidateName: candidate.name,
+      signatoryName: data.signatoryName || COMPANY.defaultSignatoryName,
+      signatoryTitle: data.signatoryTitle || COMPANY.defaultSignatoryTitle,
+    });
+  const originalName = letter?.letterName
+    || `${kind === 'offer' ? 'Offer-Letter' : 'Appointment-Letter'}-${safeName(candidate.name)}.pdf`;
+  const { storagePath } = storage.saveBuffer({ buffer, ownerType: kind, ownerId: candidate._id, originalName });
+  letter.letterPath = storagePath;
+  letter.letterName = originalName;
+  await candidate.save();
+  return storagePath;
+}
+
 const sendLetterEmail = asyncHandler(async (req, res) => {
   const kind = ['offer', 'appointment'].includes(req.params.kind) ? req.params.kind : null;
   if (!kind) {
@@ -967,7 +993,7 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
     throw new Error('Candidate not found');
   }
   const letter = candidate[kind];
-  if (!letter?.letterPath) {
+  if (!letter?.generatedAt && !letter?.letterPath) {
     res.status(400);
     throw new Error(`Generate the ${kind === 'offer' ? 'offer' : 'appointment'} letter first.`);
   }
@@ -1002,22 +1028,37 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
   // Exclude both the To recipient (candidate) and the acting sender so HR never
   // ends up Cc'd on their own outgoing mail.
   const cc = parseCcList(req.body.cc, [candidate.email, req.user?.email]);
-  await enqueueMail(
-    {
+
+  // Make sure the attachment actually exists (regenerate from stored data if the
+  // file was lost), then send SYNCHRONOUSLY through the shared company mailbox so
+  // HR sees the real outcome instead of a silently-failing background queue.
+  const storagePath = await ensureLetterFile(candidate, kind);
+  let info;
+  try {
+    info = await sendMail({
       to: candidate.email,
       cc: cc.length ? cc : undefined,
       subject,
       text: body,
-      // Send from the acting HR's mailbox so the candidate replies to them.
+      // Keep the HR's name on the From (address is forced to the company mailbox
+      // by the transport) and route replies back to them.
       from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,
       replyTo: req.user?.email,
-      attachments: [{ filename: letter.letterName || `${label}.pdf`, storagePath: letter.letterPath, contentType: 'application/pdf' }],
-    },
-    { type: kind, id: candidate._id }
-  );
+      attachments: [{ filename: letter.letterName || `${label}.pdf`, storagePath, contentType: 'application/pdf' }],
+    });
+  } catch (err) {
+    res.status(502);
+    throw new Error(`The ${label.toLowerCase()} could not be emailed: ${err.message}`);
+  }
+  // No transport configured → sendMail only logs. Report it rather than pretend
+  // the candidate received anything.
+  if (info?.mocked) {
+    res.status(500);
+    throw new Error('Email is not configured on the server (no Gmail/SMTP credentials), so nothing was sent.');
+  }
   letter.emailedAt = new Date();
   await candidate.save();
-  res.json({ mailed: [candidate.email], cc });
+  res.json({ mailed: [candidate.email], cc, messageId: info?.messageId || null });
 });
 
 // Stream a stored letter PDF inline.

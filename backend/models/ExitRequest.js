@@ -8,6 +8,8 @@ const EXIT_TYPES = ['Resignation', 'Termination', 'Retirement'];
 // Pending -> in approval chain; InClearance -> accepted, serving notice/clearance; Completed -> exit done; Cancelled -> withdrawn/rejected.
 const EXIT_STATUSES = ['Pending', 'InClearance', 'Completed', 'Cancelled'];
 
+// Legacy flat HR clearance (kept for older exits + backward compatibility). New
+// exits use the per-department no-dues `clearanceSections` below instead.
 const clearanceSchema = new mongoose.Schema(
   {
     itAssetsReturned: { type: Boolean, default: false },
@@ -15,6 +17,36 @@ const clearanceSchema = new mongoose.Schema(
     knowledgeTransferDone: { type: Boolean, default: false },
     finalSettlementDone: { type: Boolean, default: false },
     documentsHandedOver: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
+// One no-dues line item within a clearance section (e.g. "Laptop", "Sim card").
+const clearanceItemSchema = new mongoose.Schema(
+  {
+    label: { type: String, required: true },
+    done: { type: Boolean, default: false },
+    note: String,
+    doneAt: Date,
+    doneBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { _id: false }
+);
+
+// A department "no-dues" section owned by a manager (IT / HR / Accounts / Sales).
+// HR assigns `assignedTo`; that manager ticks the items to confirm all company
+// assets/dues have been handed back before the login is released.
+const clearanceSectionSchema = new mongoose.Schema(
+  {
+    key: { type: String, required: true }, // stable id: 'it' | 'hr' | 'accounts' | 'sales' | custom
+    title: { type: String, required: true }, // role label shown to users, e.g. "IT Manager"
+    department: String,
+    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    assignedToName: String,
+    items: [clearanceItemSchema],
+    completed: { type: Boolean, default: false },
+    completedAt: Date,
+    completedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { _id: false }
 );
@@ -79,6 +111,21 @@ const exitRequestSchema = new mongoose.Schema(
     decisionNote: String,
 
     clearance: { type: clearanceSchema, default: () => ({}) },
+
+    // Per-department "no-dues" clearance sections (IT / HR / Accounts / Sales).
+    // Seeded from config/exitClearance.js when the exit is created; each section
+    // is assigned to a manager who ticks its items. Once every section is
+    // completed (or HR records an override) the account can be released.
+    clearanceSections: { type: [clearanceSectionSchema], default: undefined },
+
+    // HR hard-override of the no-dues gate: lets SuperAdmin/HR release an account
+    // even with pending sections, on record with a reason.
+    clearanceOverride: {
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      byName: String,
+      at: Date,
+      reason: String,
+    },
 
     // IST 'YYYY-MM-DD' of the last "notice ended, finish clearance" nudge the
     // exit worker sent HR, so it nudges at most once per day.

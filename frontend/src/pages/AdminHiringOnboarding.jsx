@@ -12,6 +12,7 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 import DesignationSelect from '../components/DesignationSelect';
+import ShiftHoursSelect from '../components/ShiftHoursSelect';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '-');
@@ -260,8 +261,9 @@ export default function AdminHiringOnboarding() {
                 <input value={apptForm.location} onChange={(e) => setApptForm({ ...apptForm, location: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
               <div className="sm:col-span-2">
-                <label className="block text-xs text-gray-600 mb-1">Working hours</label>
-                <input value={apptForm.workingHours} onChange={(e) => setApptForm({ ...apptForm, workingHours: e.target.value })} placeholder="e.g. 9:30 AM – 6:30 PM, Mon–Sat" className="block w-full border rounded-lg px-3 py-2" />
+                <label className="block text-xs text-gray-600 mb-1">Working hours / shift</label>
+                <ShiftHoursSelect value={apptForm.workingHours} onChange={(v) => setApptForm({ ...apptForm, workingHours: v })} className="block w-full border rounded-lg px-3 py-2 bg-white" />
+                <p className="text-[11px] text-gray-400 mt-1">Pick a shift or choose “＋ Add another shift…” to save a new one.</p>
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Joining date</label>

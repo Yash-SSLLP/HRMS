@@ -16,6 +16,9 @@ const {
   submitMyResignation,
   getFeedbackContext,
   submitFeedback,
+  assignClearanceApprovers,
+  updateClearanceSectionAdmin,
+  overrideClearance,
 } = require('../controllers/exitController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -56,5 +59,13 @@ router.patch('/:id/cancel', cancelExit);
 router.patch('/:id/complete', completeExit);
 // POST /:id/resend-email — resend the exit email; protected, requires 'exit.manage'.
 router.post('/:id/resend-email', resendExitEmail);
+
+// -------- No-dues clearance (HR/Admin) --------
+// PATCH /:id/clearance-assignees — assign a manager to each no-dues section.
+router.patch('/:id/clearance-assignees', assignClearanceApprovers);
+// PATCH /:id/clearance/override — HR override of the no-dues gate (with reason).
+router.patch('/:id/clearance/override', overrideClearance);
+// PATCH /:id/clearance/:key — HR ticks a no-dues section.
+router.patch('/:id/clearance/:key', updateClearanceSectionAdmin);
 
 module.exports = router;

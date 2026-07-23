@@ -12,6 +12,8 @@ const {
   listMyExitApprovals,
   approveExit,
   rejectExit,
+  listMyClearances,
+  updateMyClearanceSection,
 } = require('../controllers/approvalController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -37,5 +39,10 @@ router.get('/exits', listMyExitApprovals);
 router.patch('/exits/:id/approve', approveExit);
 // PATCH /exits/:id/reject — reject an exit request; protected (must be current approver).
 router.patch('/exits/:id/reject', rejectExit);
+
+// GET /clearances — exits with a no-dues section assigned to me; protected (assignee-scoped).
+router.get('/clearances', listMyClearances);
+// PATCH /clearances/:id/:key — assigned manager ticks their no-dues section; protected (assignee-scoped).
+router.patch('/clearances/:id/:key', updateMyClearanceSection);
 
 module.exports = router;
