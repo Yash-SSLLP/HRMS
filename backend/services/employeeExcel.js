@@ -6,7 +6,9 @@
  */
 const ExcelJS = require('exceljs');
 
-// path-style key reaches into nested objects, e.g. bankDetails.ifsc
+// path-style key reaches into nested objects, e.g. bankDetails.ifsc.
+// `ref` columns are resolved in the controller: reportingManagerEmail /
+// hrPartnerEmail → a User by email; salaryStructureName → a SalaryStructure by name.
 const COLUMNS = [
   { key: 'employeeCode', header: 'Employee Code', width: 14, required: true },
   { key: 'firstName',    header: 'First Name',    width: 18, required: true, on: 'user' },
@@ -15,24 +17,61 @@ const COLUMNS = [
   { key: 'phone',        header: 'Phone',         width: 16, on: 'user' },
   { key: 'role',         header: 'Role',          width: 14, on: 'user', default: 'Employee' },
   { key: 'isActive',     header: 'Active',        width: 8,  on: 'user', type: 'boolean', default: true },
+
+  // Personal
   { key: 'dateOfBirth',     header: 'Date of Birth',     width: 14, type: 'date' },
   { key: 'gender',          header: 'Gender',            width: 10 },
   { key: 'maritalStatus',   header: 'Marital Status',    width: 14 },
+
+  // Job
   { key: 'dateOfJoining',   header: 'Date of Joining',   width: 14, required: true, type: 'date' },
   { key: 'employmentType',  header: 'Employment Type',   width: 16, default: 'FullTime' },
   { key: 'designation',     header: 'Designation',       width: 22 },
   { key: 'department',      header: 'Department',        width: 18 },
   { key: 'workLocation',    header: 'Work Location',     width: 18 },
+  { key: 'grade',           header: 'Grade',             width: 10 },
+  { key: 'reportingManagerEmail', header: 'Reporting Manager Email', width: 28 },
+  { key: 'probationMonths', header: 'Probation Months',  width: 16, type: 'number' },
+  { key: 'confirmationStatus', header: 'Confirmation Status', width: 18, default: 'Probation' },
+
+  // Payroll setup (structure resolved by name; CTC drives the payroll run)
+  { key: 'salaryStructureName', header: 'Salary Structure', width: 20 },
+  { key: 'annualCtc',       header: 'Annual CTC',        width: 14, type: 'number' },
+
+  // Statutory identifiers
   { key: 'pan',             header: 'PAN',               width: 14 },
+  { key: 'aadhaar',         header: 'Aadhaar',           width: 16 },
   { key: 'uan',             header: 'UAN',               width: 14 },
   { key: 'pfNumber',        header: 'PF Number',         width: 18 },
   { key: 'esicNumber',      header: 'ESIC Number',       width: 18 },
+
+  // Bank
   { key: 'bankDetails.accountHolderName', header: 'Bank Account Holder', width: 22 },
   { key: 'bankDetails.bankName',          header: 'Bank Name',           width: 18 },
   { key: 'bankDetails.branch',            header: 'Bank Branch',         width: 18 },
   { key: 'bankDetails.accountNumber',     header: 'Account Number',      width: 20 },
   { key: 'bankDetails.ifsc',              header: 'IFSC',                width: 14 },
   { key: 'bankDetails.accountType',       header: 'Account Type',        width: 12, default: 'Savings' },
+
+  // Current address
+  { key: 'address.current.line1',   header: 'Address Line 1', width: 24 },
+  { key: 'address.current.line2',   header: 'Address Line 2', width: 24 },
+  { key: 'address.current.city',    header: 'City',           width: 16 },
+  { key: 'address.current.state',   header: 'State',          width: 16 },
+  { key: 'address.current.pincode', header: 'Pincode',        width: 10 },
+
+  // Permanent address
+  { key: 'address.permanent.line1',   header: 'Permanent Address Line 1', width: 24 },
+  { key: 'address.permanent.line2',   header: 'Permanent Address Line 2', width: 24 },
+  { key: 'address.permanent.city',    header: 'Permanent City',           width: 16 },
+  { key: 'address.permanent.state',   header: 'Permanent State',          width: 16 },
+  { key: 'address.permanent.pincode', header: 'Permanent Pincode',        width: 10 },
+
+  // Emergency contact
+  { key: 'emergencyContact.name',     header: 'Emergency Contact Name',     width: 22 },
+  { key: 'emergencyContact.relation', header: 'Emergency Contact Relation', width: 18 },
+  { key: 'emergencyContact.phone',    header: 'Emergency Contact Phone',    width: 16 },
+
   // HR Partner is referenced by email so the spreadsheet is human-friendly.
   // On import we look the User up by email; on export we render the user's email.
   { key: 'hrPartnerEmail',                header: 'HR Partner Email',    width: 28 },
@@ -90,6 +129,13 @@ function parseBoolean(v) {
   return undefined;
 }
 
+function parseNumber(v) {
+  if (v == null || v === '') return undefined;
+  // Tolerate "₹", thousands separators and spaces (e.g. "12,00,000").
+  const n = Number(String(v).replace(/[,₹\s]/g, ''));
+  return Number.isFinite(n) ? n : undefined;
+}
+
 function parsePhone(v) {
   if (v == null || v === '') return undefined;
   const digits = String(v).replace(/\D/g, '');
@@ -133,6 +179,10 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
       let v;
       if (c.key === 'hrPartnerEmail') {
         v = p.hrPartner?.email || '';
+      } else if (c.key === 'reportingManagerEmail') {
+        v = p.reportingManager?.email || '';
+      } else if (c.key === 'salaryStructureName') {
+        v = p.salaryStructure?.name || '';
       } else {
         const source = c.on === 'user' ? p.user : p;
         v = source ? getNested(source, c.key) : undefined;
@@ -161,7 +211,14 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
       designation: 'Software Engineer',
       department: 'Engineering',
       workLocation: 'Ahmedabad',
+      grade: 'L3',
+      reportingManagerEmail: 'manager@example.com',
+      probationMonths: 6,
+      confirmationStatus: 'Probation',
+      salaryStructureName: 'Standard 40-20-25',
+      annualCtc: 1200000,
       pan: 'ABCDE1234F',
+      aadhaar: '123412341234',
       uan: '101234567890',
       pfNumber: 'GJ/AHD/1234567/000/0000001',
       esicNumber: '1234567890',
@@ -171,6 +228,19 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
       'bankDetails.accountNumber': '50100123456789',
       'bankDetails.ifsc': 'HDFC0001234',
       'bankDetails.accountType': 'Savings',
+      'address.current.line1': '12, MG Road',
+      'address.current.line2': 'Near City Mall',
+      'address.current.city': 'Ahmedabad',
+      'address.current.state': 'Gujarat',
+      'address.current.pincode': '380009',
+      'address.permanent.line1': '12, MG Road',
+      'address.permanent.line2': 'Near City Mall',
+      'address.permanent.city': 'Ahmedabad',
+      'address.permanent.state': 'Gujarat',
+      'address.permanent.pincode': '380009',
+      'emergencyContact.name': 'Ramesh Patel',
+      'emergencyContact.relation': 'Father',
+      'emergencyContact.phone': '9812345678',
       hrPartnerEmail: 'hr.partner@example.com',
     });
   }
@@ -234,6 +304,7 @@ async function parseWorkbook(buffer) {
       let value;
       if (c.type === 'date') value = parseDate(raw);
       else if (c.type === 'boolean') value = parseBoolean(raw);
+      else if (c.type === 'number') value = parseNumber(raw);
       else if (c.key === 'phone') value = parsePhone(raw);
       else if (c.key === 'pan' || c.key === 'bankDetails.ifsc') value = String(raw).trim().toUpperCase();
       else if (c.key === 'email') value = String(raw).trim().toLowerCase();
@@ -241,10 +312,10 @@ async function parseWorkbook(buffer) {
 
       if (value === undefined || value === null || value === '') continue;
 
-      if (c.key === 'hrPartnerEmail') {
-        // Special-case: surface as profile.hrPartnerEmail so the controller
-        // can resolve it to a User._id once we hit the DB.
-        profile.hrPartnerEmail = String(value).trim().toLowerCase();
+      // Reference-by-lookup columns: surface on the profile object so the
+      // controller can resolve them to ObjectIds once it hits the DB.
+      if (c.key === 'hrPartnerEmail' || c.key === 'reportingManagerEmail') {
+        profile[c.key] = String(value).trim().toLowerCase();
         continue;
       }
 

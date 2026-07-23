@@ -693,6 +693,10 @@ export default function AdminEmployees() {
                 <h2 className="card-title">Import Employees from Excel</h2>
                 <p className="text-xs text-gray-500 mt-1">
                   Use the <strong>Template</strong> button first to get a correctly-formatted file. Required columns: Employee Code, First Name, Last Name, Email, Date of Joining.
+                  The template also covers job, payroll (Salary Structure + Annual CTC), statutory, bank, address and emergency-contact details.
+                </p>
+                <p className="text-[11px] text-amber-700 mt-1">
+                  Lookup columns must match existing records or the row errors: <strong>Reporting Manager Email</strong> / <strong>HR Partner Email</strong> → an existing user's email; <strong>Salary Structure</strong> → an existing structure name (create it under Salary Structures first).
                 </p>
               </div>
               <button onClick={closeImport} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>

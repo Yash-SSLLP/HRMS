@@ -10,6 +10,7 @@ const {
   updateStructure,
   deleteStructure,
   previewStructure,
+  assignStructure,
 } = require('../controllers/salaryStructureController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -23,6 +24,8 @@ router.use(requirePermission('payroll.manage'));
 router.route('/').get(listStructures).post(createStructure);
 // POST /:id/preview — preview a computed structure; protected, requires 'payroll.manage'.
 router.post('/:id/preview', previewStructure);
+// POST /:id/assign — assign this structure (+ optional CTC) to an employee; requires 'payroll.manage'.
+router.post('/:id/assign', assignStructure);
 // PUT /:id — update a structure; DELETE /:id — delete it; protected, requires 'payroll.manage'.
 router.route('/:id').put(updateStructure).delete(deleteStructure);
 

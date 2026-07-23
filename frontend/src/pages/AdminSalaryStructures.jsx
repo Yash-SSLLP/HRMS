@@ -48,12 +48,15 @@ const blankForm = () => ({
 
 export default function AdminSalaryStructures() {
   const [structures, setStructures] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(blankForm());
+  // Optional "assign this structure to an employee" alongside create/edit.
+  const [assign, setAssign] = useState({ employee: '', annualCtc: '' });
   const [saving, setSaving] = useState(false);
 
   // Preview modal
@@ -77,6 +80,10 @@ export default function AdminSalaryStructures() {
   };
   useEffect(() => {
     load();
+    // Employees for the optional "assign to employee" picker.
+    api.get('/employees?excludeExecutives=true')
+      .then(({ data }) => setEmployees((data.profiles || []).filter((p) => p.user)))
+      .catch(() => {});
   }, []);
 
   // Component percentages must sum to at most 100% of CTC; block save if over.
@@ -89,6 +96,7 @@ export default function AdminSalaryStructures() {
   const openCreate = () => {
     setEditingId(null);
     setForm(blankForm());
+    setAssign({ employee: '', annualCtc: '' });
     setError('');
     setShowModal(true);
   };
@@ -100,6 +108,7 @@ export default function AdminSalaryStructures() {
       isActive: s.isActive,
       components: { ...blankComponents(), ...(s.components || {}) },
     });
+    setAssign({ employee: '', annualCtc: '' });
     setError('');
     setShowModal(true);
   };
@@ -113,8 +122,24 @@ export default function AdminSalaryStructures() {
     setSaving(true);
     setError('');
     try {
-      if (editingId) await api.put(`/salary-structures/${editingId}`, form);
-      else await api.post('/salary-structures', form);
+      // 1) Create or update the structure template.
+      let structureId = editingId;
+      if (editingId) {
+        await api.put(`/salary-structures/${editingId}`, form);
+      } else {
+        const { data } = await api.post('/salary-structures', form);
+        structureId = data.structure._id;
+      }
+      // 2) Optionally assign it (and CTC) to the chosen employee.
+      if (assign.employee && structureId) {
+        const { data } = await api.post(`/salary-structures/${structureId}/assign`, {
+          employee: assign.employee,
+          annualCtc: assign.annualCtc === '' ? undefined : Number(assign.annualCtc),
+        });
+        const emp = employees.find((p) => p._id === assign.employee);
+        const name = emp ? `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() : 'the employee';
+        toast.success(`Structure assigned to ${name}${data.annualCtc ? ` · CTC ₹${Number(data.annualCtc).toLocaleString('en-IN')}` : ''}`);
+      }
       setShowModal(false);
       await load();
     } catch (err) {
@@ -295,6 +320,45 @@ export default function AdminSalaryStructures() {
                   Total: {totalPct}%
                   {overLimit && <span className="ml-2">- must not exceed 100%</span>}
                 </div>
+              </div>
+
+              {/* Optional: assign this structure to an employee */}
+              <div className="border-t pt-3">
+                <div className="text-xs font-medium text-gray-500 mb-2">Assign to an employee (optional)</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="text-sm text-gray-700">
+                    <span className="block mb-1 text-xs">Employee</span>
+                    <select
+                      value={assign.employee}
+                      onChange={(e) => setAssign({ ...assign, employee: e.target.value })}
+                      className="block w-full border rounded-lg px-3 py-2 bg-white"
+                    >
+                      <option value="">— none —</option>
+                      {employees.map((p) => (
+                        <option key={p._id} value={p._id}>
+                          {p.employeeCode} · {p.user?.firstName} {p.user?.lastName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-gray-700">
+                    <span className="block mb-1 text-xs">Annual CTC (₹)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      disabled={!assign.employee}
+                      value={assign.annualCtc}
+                      onChange={(e) => setAssign({ ...assign, annualCtc: e.target.value })}
+                      placeholder="keep current"
+                      className="block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100"
+                    />
+                  </label>
+                </div>
+                {assign.employee && (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    This sets the employee's salary structure{assign.annualCtc ? ' and annual CTC' : ' (CTC left unchanged — enter it to make payroll derivable)'}. You can also do this in Monthly Payroll Run.
+                  </p>
+                )}
               </div>
 
               {error && (

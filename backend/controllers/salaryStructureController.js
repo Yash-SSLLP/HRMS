@@ -6,6 +6,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const SalaryStructure = require('../models/SalaryStructure');
+const EmployeeProfile = require('../models/EmployeeProfile');
 
 // Sum the six component percentages from an arbitrary components object.
 const sumComponentPct = (c = {}) =>
@@ -151,10 +152,50 @@ const previewStructure = asyncHandler(async (req, res) => {
   res.json({ annualCtc: ctc, monthly, annual, monthlyGross, annualGross });
 });
 
+/**
+ * Assign this salary structure to an employee (optionally set their annual CTC).
+ * Payroll's own way to set an employee's salary basis without needing the broader
+ * employees.manage permission — mirrors the Monthly Payroll Run salary setup.
+ * @route POST /api/salary-structures/:id/assign  (payroll.manage)
+ * @param {string} req.params.id - structure id
+ * @param {string} req.body.employee - EmployeeProfile id (required)
+ * @param {number} [req.body.annualCtc] - set the CTC too; omit/blank to keep the current one
+ * @returns {{ok: true, employee, annualCtc}}
+ */
+const assignStructure = asyncHandler(async (req, res) => {
+  const structure = await SalaryStructure.findById(req.params.id);
+  if (!structure) {
+    res.status(404);
+    throw new Error('Salary structure not found');
+  }
+  const { employee, annualCtc } = req.body;
+  if (!employee) {
+    res.status(400);
+    throw new Error('employee is required');
+  }
+  const profile = await EmployeeProfile.findById(employee);
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  profile.salaryStructure = structure._id;
+  if (annualCtc !== undefined && annualCtc !== null && annualCtc !== '') {
+    const ctc = Number(annualCtc);
+    if (!Number.isFinite(ctc) || ctc < 0) {
+      res.status(400);
+      throw new Error('Enter a valid annual CTC');
+    }
+    profile.annualCtc = ctc;
+  }
+  await profile.save();
+  res.json({ ok: true, employee: profile._id, annualCtc: profile.annualCtc });
+});
+
 module.exports = {
   listStructures,
   createStructure,
   updateStructure,
   deleteStructure,
   previewStructure,
+  assignStructure,
 };

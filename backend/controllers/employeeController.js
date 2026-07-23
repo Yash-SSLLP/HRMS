@@ -9,6 +9,7 @@ const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
+const SalaryStructure = require('../models/SalaryStructure');
 const crypto = require('crypto');
 const Document = require('../models/Document');
 const { REQUIRED_DOCUMENT_CATEGORIES, SELF_UPLOAD_CATEGORIES, PII_CATEGORIES } = require('../models/Document');
@@ -20,6 +21,9 @@ const { appendEmployee, safe } = require('../services/employeeZip');
 const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds } = require('../utils/visibility');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
+
+// Escape user text before using it inside a RegExp (for case-insensitive lookups).
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Every HR/SuperAdmin sees and manages ALL employees — there is no per-HR
 // "assigned employees" ownership. (Kept as functions so call sites are unchanged.)
@@ -390,6 +394,8 @@ const exportEmployeesXlsx = asyncHandler(async (req, res) => {
   const profiles = await EmployeeProfile.find({})
     .populate('user', 'firstName lastName email phone role isActive')
     .populate('hrPartner', 'firstName lastName email')
+    .populate('reportingManager', 'firstName lastName email')
+    .populate('salaryStructure', 'name')
     .sort({ employeeCode: 1 });
   const stamp = new Date().toISOString().slice(0, 10);
   res.setHeader('Content-Disposition', `attachment; filename="employees-${stamp}.xlsx"`);
@@ -492,25 +498,42 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         hrPartnerId = partner._id;
       }
 
+      // Resolve Reporting Manager email -> User._id (any user; optional)
+      let reportingManagerId;
+      if (p.reportingManagerEmail) {
+        const mgr = await User.findOne({ email: p.reportingManagerEmail });
+        if (!mgr) {
+          throw new Error(`Reporting Manager email "${p.reportingManagerEmail}" does not match any user`);
+        }
+        reportingManagerId = mgr._id;
+      }
+
+      // Resolve Salary Structure name -> SalaryStructure._id (case-insensitive; optional)
+      let salaryStructureId;
+      if (p.salaryStructureName) {
+        const st = await SalaryStructure.findOne({
+          name: new RegExp(`^${escapeRegExp(p.salaryStructureName)}$`, 'i'),
+        });
+        if (!st) {
+          throw new Error(`Salary Structure "${p.salaryStructureName}" not found — create it under Salary Structures first`);
+        }
+        salaryStructureId = st._id;
+      }
+
       // ----- Create EmployeeProfile (rollback user on failure) -----
+      // Spread all parsed profile fields (address, emergencyContact, bankDetails,
+      // grade, probation, statutory, CTC, …) then override the resolved refs and
+      // the special lookup columns.
+      const { hrPartnerEmail, reportingManagerEmail, salaryStructureName, ...profileFields } = p;
       try {
         await EmployeeProfile.create({
+          ...profileFields,
           user: userDoc._id,
           employeeCode: String(p.employeeCode).toUpperCase(),
-          dateOfBirth: p.dateOfBirth,
-          gender: p.gender,
-          maritalStatus: p.maritalStatus,
-          dateOfJoining: p.dateOfJoining,
-          designation: p.designation,
-          department: p.department,
-          workLocation: p.workLocation,
           employmentType: p.employmentType || 'FullTime',
-          pan: p.pan,
-          uan: p.uan,
-          pfNumber: p.pfNumber,
-          esicNumber: p.esicNumber,
-          bankDetails: p.bankDetails,
           hrPartner: hrPartnerId,
+          reportingManager: reportingManagerId,
+          salaryStructure: salaryStructureId,
         });
       } catch (err) {
         await User.deleteOne({ _id: userDoc._id });
