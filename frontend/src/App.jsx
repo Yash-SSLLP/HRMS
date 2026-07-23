@@ -17,6 +17,7 @@ import LetterDownload from './pages/LetterDownload.jsx';
 import PublicCoursePage from './pages/PublicCoursePage.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Layout from './components/Layout.jsx';
+import GlobalModalEscape from './components/GlobalModalEscape.jsx';
 import { useAuthStore } from './store/authStore';
 
 // In-app pages are lazy-loaded — the Layout shows a skeleton (Suspense) while
@@ -142,7 +143,10 @@ export default function App() {
   }, [mode, role]);
 
   return (
-    <Routes>
+    <>
+      {/* App-wide: Esc closes the top-most open modal */}
+      <GlobalModalEscape />
+      <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route path="/login" element={<Login />} />
       <Route path="/privacy" element={<PrivacyPolicy />} />
@@ -276,6 +280,7 @@ export default function App() {
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }

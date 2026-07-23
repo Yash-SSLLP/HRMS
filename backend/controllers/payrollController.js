@@ -193,8 +193,9 @@ const exportPayroll = asyncHandler(async (req, res) => {
 
 async function buildRunRows(year, month) {
   const profiles = await EmployeeProfile.find()
-    .select('employeeCode designation department user')
+    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory')
     .populate('user', 'firstName lastName email isActive')
+    .populate('salaryStructure')
     .sort('employeeCode');
   const active = profiles.filter((p) => p.user && p.user.isActive !== false);
 
@@ -218,10 +219,14 @@ async function buildRunRows(year, month) {
     const k = String(p._id);
     const cur = existingByEmp.get(k);
     const last = lastByEmp.get(k);
+    // Whether payroll can be derived from a salary structure for THIS month
+    // (has a structure assigned and a CTC in force after hike resolution).
+    const hasSalarySetup = !!(p.salaryStructure && resolveCtcForMonth(p, year, month) > 0);
     return {
       profile: p,
       existing: cur || null,
       last: last || null,
+      hasSalarySetup,
       row: {
         employeeId: p._id,
         employeeCode: p.employeeCode,
@@ -229,7 +234,12 @@ async function buildRunRows(year, month) {
         designation: p.designation || '',
         department: p.department || '',
         existingStatus: cur ? cur.status : null,
-        source: last ? `${MONTH_NAMES[last.payPeriodMonth]} ${last.payPeriodYear}` : null,
+        // Where this month's Draft will come from: the salary structure when set
+        // up, else a copy of the employee's most recent payslip.
+        source: hasSalarySetup
+          ? `${p.salaryStructure.name} (structure)`
+          : (last ? `${MONTH_NAMES[last.payPeriodMonth]} ${last.payPeriodYear}` : null),
+        hasSalarySetup,
         lastNetPay: last ? last.netPay : null,
       },
     };
@@ -278,9 +288,47 @@ const runPayroll = asyncHandler(async (req, res) => {
   const rows = await buildRunRows(year, month);
   const daysInMonth = new Date(year, month, 0).getDate();
   const created = [];
+  const derivedCount = [];
+  const copiedCount = [];
   const blank = [];
   for (const r of rows) {
     if (r.existing) continue; // never overwrite an existing payslip
+
+    // Preferred: derive the payslip from the employee's salary structure × CTC,
+    // prorated by attendance, with the leave/late policy + loan EMIs (same engine
+    // as the per-employee run and the manual editor's "fill from structure").
+    if (r.hasSalarySetup) {
+      const computed = await computeEmployeeRun(r.profile, year, month);
+      if (!computed.needsSetup) {
+        const pol = computed.policy;
+        const payslip = await Payroll.create({
+          employee: r.profile._id,
+          payPeriodYear: year,
+          payPeriodMonth: month,
+          workingDays: computed.daysInMonth,
+          paidDays: computed.paidDays,
+          lopDays: computed.lopDays,
+          earnings: computed.earnings,
+          deductions: {
+            epf: computed.statutoryDeductions.epf,
+            esic: computed.statutoryDeductions.esic,
+            professionalTax: computed.statutoryDeductions.professionalTax,
+            loanRecovery: computed.loanRecovery,
+            latePenalty: computed.latePenalty,
+          },
+          status: 'Draft',
+          remarks: `Payroll run: ${r.profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days`
+            + ` · leave ${pol.leaveTaken}/${pol.paidLeaveQuota}` + (pol.excessLeave ? ` (${pol.excessLeave}d LOP)` : pol.unusedLeave ? ` (₹${pol.leaveIncentive} incentive)` : '')
+            + ` · late ${pol.lateDays}/${pol.lateAllowance}` + (pol.excessLate ? ` (₹${pol.latePenalty} penalty)` : ''),
+        });
+        created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
+        derivedCount.push(r.row.name);
+        continue;
+      }
+    }
+
+    // Fallback (no salary structure/CTC set up): copy the employee's most recent
+    // payslip, or leave a blank draft for a brand-new joiner to be filled in.
     const seed = r.last;
     const payslip = await Payroll.create({
       employee: r.profile._id,
@@ -294,17 +342,20 @@ const runPayroll = asyncHandler(async (req, res) => {
       employerContributions: seed ? seed.employerContributions?.toObject?.() || seed.employerContributions : {},
       status: 'Draft',
       remarks: seed
-        ? `Payroll run: copied from ${MONTH_NAMES[seed.payPeriodMonth]} ${seed.payPeriodYear}`
-        : 'Payroll run: no earlier payslip - set the salary components',
+        ? `Payroll run: copied from ${MONTH_NAMES[seed.payPeriodMonth]} ${seed.payPeriodYear} (no salary structure set)`
+        : 'Payroll run: no salary structure or earlier payslip - set the salary components',
     });
     created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
-    if (!seed) blank.push(r.row.name);
+    if (seed) copiedCount.push(r.row.name);
+    else blank.push(r.row.name);
   }
 
   res.status(201).json({
     year,
     month,
     created: created.length,
+    derived: derivedCount.length,
+    copiedFromLast: copiedCount.length,
     skippedExisting: rows.filter((r) => r.existing).length,
     needsSetup: blank,
     payslips: created,
@@ -323,6 +374,54 @@ const LATE_ALLOWANCE = 5;        // free late arrivals each month
 const LATE_THRESHOLD_BASIC = 25000; // monthly Basic cut-off for the penalty rate
 const LATE_RATE_LOW = 200;       // ₹/day when monthly Basic < threshold
 const LATE_RATE_HIGH = 400;      // ₹/day when monthly Basic >= threshold
+
+// Statutory deduction constants (employee side). Used to auto-fill standard
+// deductions when deriving a payslip from a salary structure. All editable by HR.
+const EPF_EMP_RATE = 0.12;          // Employee PF: 12% of Basic
+const ESIC_EMP_RATE = 0.0075;       // Employee ESIC: 0.75% of gross
+const ESIC_WAGE_CEILING = 21000;    // ESIC applies only when monthly gross <= this
+const PROFESSIONAL_TAX = 200;       // Flat monthly professional tax
+
+// Derive monthly earnings + standard statutory deductions from a salary
+// structure's component percentages applied to an annual CTC, prorated by paid
+// days. Pure + side-effect-free so it can back both the payroll run and the
+// manual payslip editor's "fill from structure" action.
+function deriveSalary(components, annualCtc, paidDays, daysInMonth) {
+  const c = components || {};
+  const dim = Number(daysInMonth) || 30;
+  const factor = dim ? Math.min(1, Math.max(0, (Number(paidDays) ?? dim) / dim)) : 1;
+  const comp = (pct) => Math.round((((Number(pct) || 0) / 100) * (Number(annualCtc) || 0) / 12) * factor);
+  const earnings = {
+    basic: comp(c.basicPct),
+    hra: comp(c.hraPct),
+    specialAllowance: comp(c.specialAllowancePct),
+    conveyanceAllowance: comp(c.conveyancePct),
+    medicalAllowance: comp(c.medicalPct),
+    lta: comp(c.ltaPct),
+  };
+  const gross = Object.values(earnings).reduce((a, v) => a + v, 0);
+  const deductions = {
+    epf: Math.round(earnings.basic * EPF_EMP_RATE),
+    esic: gross <= ESIC_WAGE_CEILING ? Math.round(gross * ESIC_EMP_RATE) : 0,
+    professionalTax: PROFESSIONAL_TAX,
+  };
+  return { earnings, deductions, gross };
+}
+
+// The CTC in force for a given pay month, resolved from the employee's hike
+// history: the latest revision whose effective month is on/before the run month
+// wins; a month before the first revision uses that revision's previousCtc;
+// employees with no history fall back to their current annualCtc.
+function resolveCtcForMonth(profile, year, month) {
+  const hist = (profile.ctcHistory || []).filter((r) => r.newCtc != null && r.effectiveYear);
+  if (!hist.length) return profile.annualCtc || 0;
+  const key = (y, m) => Number(y) * 12 + (Number(m || 1) - 1);
+  const target = key(year, month);
+  const asc = hist.slice().sort((a, b) => key(a.effectiveYear, a.effectiveMonth) - key(b.effectiveYear, b.effectiveMonth));
+  const applicable = asc.filter((r) => key(r.effectiveYear, r.effectiveMonth) <= target);
+  if (applicable.length) return applicable[applicable.length - 1].newCtc;
+  return asc[0].previousCtc != null ? asc[0].previousCtc : (profile.annualCtc || 0);
+}
 
 async function computeEmployeeRun(profile, year, month) {
   const { start, end } = monthRangeIST(year, month);
@@ -358,8 +457,10 @@ async function computeEmployeeRun(profile, year, month) {
   const loanRecovery = Math.round(loans.reduce((a, l) => a + (l.emi || 0), 0));
 
   const st = profile.salaryStructure; // populated
-  const ctc = profile.annualCtc || 0;
+  // CTC effective for THIS pay month (honours future-dated / historical hikes).
+  const ctc = resolveCtcForMonth(profile, year, month);
   let earnings = null;
+  let statutoryDeductions = { epf: 0, esic: 0, professionalTax: 0 };
   let monthlyBasic = 0;   // full (unprorated) Basic — drives the late-penalty rate
   let perDayPay = 0;      // full monthly gross ÷ days in month — one day's pay
   if (st && ctc > 0) {
@@ -380,6 +481,15 @@ async function computeEmployeeRun(profile, year, month) {
       lta: comp(c.ltaPct),
       // Unused paid-leave quota paid out at one day's salary each.
       leaveIncentive: Math.round(unusedLeave * perDayPay),
+    };
+    // Standard statutory deductions on the same (prorated) component base used by
+    // the manual editor's derive, so all payroll paths fill the same values.
+    const baseGross = earnings.basic + earnings.hra + earnings.specialAllowance
+      + earnings.conveyanceAllowance + earnings.medicalAllowance + earnings.lta;
+    statutoryDeductions = {
+      epf: Math.round(earnings.basic * EPF_EMP_RATE),
+      esic: baseGross <= ESIC_WAGE_CEILING ? Math.round(baseGross * ESIC_EMP_RATE) : 0,
+      professionalTax: PROFESSIONAL_TAX,
     };
   }
   const leaveIncentive = earnings ? earnings.leaveIncentive : 0;
@@ -426,6 +536,8 @@ async function computeEmployeeRun(profile, year, month) {
       monthlyBasic: Math.round(monthlyBasic),
     },
     paidDays, lopDays,
+    ctc, // CTC effective for this pay month (post hike resolution)
+    statutoryDeductions, // EPF / ESIC / PT derived from the components
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
     loanRecovery,
     latePenalty,
@@ -450,7 +562,7 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
   const profile = await EmployeeProfile.findById(req.query.employee)
-    .select('employeeCode designation department user salaryStructure annualCtc')
+    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory')
     .populate('user', 'firstName lastName email')
     .populate('salaryStructure');
   if (!profile) {
@@ -504,12 +616,17 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
     lopDays: computed.lopDays,
     earnings: computed.earnings,
     deductions: {
+      // Preserve HR-entered non-derivable deductions (TDS, other), (re)compute
+      // the deterministic ones from the structure/attendance.
       ...(payslip?.deductions?.toObject?.() || {}),
+      epf: computed.statutoryDeductions.epf,
+      esic: computed.statutoryDeductions.esic,
+      professionalTax: computed.statutoryDeductions.professionalTax,
       loanRecovery: computed.loanRecovery,
       latePenalty: computed.latePenalty,
     },
     status: 'Draft',
-    remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${profile.annualCtc.toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
+    remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
       + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
       + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
       + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : ''),
@@ -913,10 +1030,128 @@ const deletePayslip = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * Derive a payslip's earnings + standard statutory deductions from the employee's
+ * assigned salary structure × CTC (effective for the month), prorated by paid days.
+ * Backs the manual payslip editor's "Fill from salary structure" action.
+ * @route GET /api/payroll/derive-salary?employee=&year=&month=&paidDays=&daysInMonth=  (HR/Admin)
+ * @returns {{needsSetup, structure, annualCtc, earnings, deductions, monthlyGross}}
+ */
+const deriveSalaryForEditor = asyncHandler(async (req, res) => {
+  if (!req.query.employee) {
+    res.status(400);
+    throw new Error('employee is required');
+  }
+  const profile = await EmployeeProfile.findById(req.query.employee).populate('salaryStructure');
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const daysInMonth = Number(req.query.daysInMonth) || new Date(year, month, 0).getDate();
+  const paidDays = req.query.paidDays != null && req.query.paidDays !== '' ? Number(req.query.paidDays) : daysInMonth;
+  const ctc = resolveCtcForMonth(profile, year, month);
+  const st = profile.salaryStructure;
+  if (!st || !ctc) {
+    return res.json({
+      needsSetup: true,
+      structure: st ? { _id: st._id, name: st.name } : null,
+      annualCtc: ctc || 0,
+    });
+  }
+  const { earnings, deductions, gross } = deriveSalary(st.components, ctc, paidDays, daysInMonth);
+  res.json({
+    needsSetup: false,
+    structure: { _id: st._id, name: st.name, components: st.components },
+    annualCtc: ctc,
+    earnings,
+    deductions,
+    monthlyGross: gross,
+  });
+});
+
+/**
+ * Apply a salary hike / increment to an employee: revises the annual CTC and
+ * records the raise in the CTC history. A hike effective this month (or earlier)
+ * updates the current CTC immediately; a future-dated hike is stored and takes
+ * effect automatically when that month's payroll runs (resolveCtcForMonth).
+ * @route POST /api/payroll/employees/:id/hike  (HR/Admin)
+ * @param {string} req.body.mode - 'percent' | 'amount' | 'set'
+ * @param {number} req.body.value - the % (percent), ₹ increase (amount), or absolute CTC (set)
+ * @param {string} [req.body.newStructure] - optionally switch the salary structure
+ * @param {number} req.body.effectiveYear / req.body.effectiveMonth
+ * @param {string} [req.body.reason]
+ * @returns {{profile, applied, entry}}
+ */
+const giveHike = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findById(req.params.id).populate('user', 'firstName lastName');
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  const { mode, value, newStructure, effectiveYear, effectiveMonth, reason } = req.body;
+  const prevCtc = profile.annualCtc || 0;
+  const v = Number(value) || 0;
+  if (v <= 0) {
+    res.status(400);
+    throw new Error('Enter a positive hike value.');
+  }
+  if ((mode === 'percent' || mode === 'amount') && !prevCtc) {
+    res.status(400);
+    throw new Error('Set a current CTC for this employee before applying a percentage/amount hike (or use "Set to" mode).');
+  }
+  let newCtc;
+  if (mode === 'percent') newCtc = Math.round(prevCtc * (1 + v / 100));
+  else if (mode === 'amount') newCtc = Math.round(prevCtc + v);
+  else if (mode === 'set') newCtc = Math.round(v);
+  else { res.status(400); throw new Error('Invalid hike mode.'); }
+  if (newCtc <= prevCtc) {
+    res.status(400);
+    throw new Error('The new CTC must be higher than the current CTC.');
+  }
+
+  const now = new Date();
+  const eYear = Number(effectiveYear) || now.getFullYear();
+  const eMonth = Number(effectiveMonth) || now.getMonth() + 1;
+  const prevStructure = profile.salaryStructure || null;
+  const entry = {
+    previousCtc: prevCtc,
+    newCtc,
+    mode,
+    value: v,
+    previousStructure: prevStructure,
+    newStructure: newStructure || prevStructure,
+    effectiveYear: eYear,
+    effectiveMonth: eMonth,
+    reason: (reason || '').trim(),
+    by: req.user._id,
+    byName: req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    at: now,
+  };
+  profile.ctcHistory = [...(profile.ctcHistory || []), entry];
+
+  // Apply to the live CTC now only if the hike is effective on/before this month;
+  // a future-dated hike stays pending and is resolved per-month at run time.
+  const effectiveNow = eYear * 12 + (eMonth - 1) <= now.getFullYear() * 12 + now.getMonth();
+  if (effectiveNow) {
+    profile.annualCtc = newCtc;
+    if (newStructure) profile.salaryStructure = newStructure;
+  }
+  await profile.save();
+  res.json({ profile, applied: effectiveNow, entry });
+});
+
 module.exports = {
   listMyPayslips,
   getMyPayslip,
   myAttendanceSummary,
+  deriveSalaryForEditor,
+  giveHike,
+  // exported for unit tests
+  deriveSalary,
+  resolveCtcForMonth,
   listPayslips,
   exportPayroll,
   previewPayrollRun,

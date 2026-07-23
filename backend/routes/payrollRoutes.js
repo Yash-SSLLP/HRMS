@@ -26,6 +26,8 @@ const {
   runPayroll,
   previewEmployeeRun,
   runEmployeePayroll,
+  deriveSalaryForEditor,
+  giveHike,
 } = require('../controllers/payrollController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -62,6 +64,10 @@ router.get('/export', exportPayroll);
 router.route('/run').get(previewPayrollRun).post(runPayroll);
 // GET /run-employee — preview a single-employee run; POST — execute it; protected, requires 'payroll.manage'.
 router.route('/run-employee').get(previewEmployeeRun).post(runEmployeePayroll);
+// GET /derive-salary — earnings+deductions from structure×CTC for the payslip editor; requires 'payroll.manage'.
+router.get('/derive-salary', deriveSalaryForEditor);
+// POST /employees/:id/hike — apply a CTC hike/increment to an employee; requires 'payroll.manage'.
+router.post('/employees/:id/hike', giveHike);
 
 // GET /:id — fetch; PUT /:id — update; DELETE /:id — delete a payslip; protected, requires 'payroll.manage'.
 router.route('/:id')

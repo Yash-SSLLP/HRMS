@@ -51,6 +51,9 @@ export default function AdminPayroll() {
   const [form, setForm] = useState(blankSlip());
   const [saving, setSaving] = useState(false);
   const [mail, setMail] = useState(null); // editable compose modal payload
+  const [salaryInfo, setSalaryInfo] = useState(null); // derived structure×CTC info for the editor
+  const [bonusCalc, setBonusCalc] = useState({ type: 'fixed', value: '' });
+  const [runModal, setRunModal] = useState(null); // org-wide "run payroll" modal state
 
   const load = async () => {
     setLoading(true);
@@ -85,13 +88,49 @@ export default function AdminPayroll() {
   const openCreate = () => {
     setEditingId(null);
     setForm(blankSlip());
+    setSalaryInfo(null);
+    setBonusCalc({ type: 'fixed', value: '' });
     setShowModal(true);
+  };
+
+  // ----- Org-wide "run payroll for everyone" -----
+  const loadRunPreview = async (year, month) => {
+    setRunModal((rm) => ({ ...rm, year, month, loadingPreview: true, result: null }));
+    try {
+      const { data } = await api.get(`/payroll/run?year=${year}&month=${month}`);
+      setRunModal((rm) => ({ ...rm, preview: data, loadingPreview: false }));
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load the run preview');
+      setRunModal((rm) => ({ ...rm, loadingPreview: false }));
+    }
+  };
+
+  const openRun = () => {
+    const month = Number(filter.month) || new Date().getMonth() + 1;
+    const year = filter.year || new Date().getFullYear();
+    setRunModal({ year, month, preview: null, loadingPreview: true, running: false, result: null });
+    loadRunPreview(year, month);
+  };
+
+  const executeRun = async () => {
+    setRunModal((rm) => ({ ...rm, running: true }));
+    try {
+      const { data } = await api.post('/payroll/run', { year: runModal.year, month: runModal.month });
+      toast.success(`Created ${data.created} draft payslip${data.created === 1 ? '' : 's'} · ${data.derived} from structure, ${data.copiedFromLast} copied`);
+      setRunModal((rm) => ({ ...rm, running: false, result: data }));
+      // Surface the new drafts in the list underneath.
+      setFilter((f) => ({ ...f, year: runModal.year, month: runModal.month, status: '' }));
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Run failed');
+      setRunModal((rm) => ({ ...rm, running: false }));
+    }
   };
 
   const openEdit = (p) => {
     setEditingId(p._id);
+    const employee = p.employee?._id || p.employee;
     setForm({
-      employee: p.employee?._id || p.employee,
+      employee,
       payPeriodYear: p.payPeriodYear,
       payPeriodMonth: p.payPeriodMonth,
       workingDays: p.workingDays,
@@ -100,7 +139,60 @@ export default function AdminPayroll() {
       earnings: { ...blankSlip().earnings, ...(p.earnings || {}) },
       deductions: { ...blankSlip().deductions, ...(p.deductions || {}) },
     });
+    setSalaryInfo(null);
+    setBonusCalc({ type: 'fixed', value: '' });
     setShowModal(true);
+    fetchSalaryInfo({
+      over: {
+        employee,
+        payPeriodYear: p.payPeriodYear,
+        payPeriodMonth: p.payPeriodMonth,
+        paidDays: p.paidDays,
+        workingDays: p.workingDays,
+      },
+    });
+  };
+
+  // Load (and optionally apply) the earnings + statutory deductions derived from
+  // the employee's assigned salary structure × CTC, prorated by paid days.
+  const fetchSalaryInfo = async ({ apply = false, over = {} } = {}) => {
+    const f = { ...form, ...over };
+    if (!f.employee) { setSalaryInfo(null); return; }
+    try {
+      const params = new URLSearchParams({
+        employee: f.employee,
+        year: f.payPeriodYear,
+        month: f.payPeriodMonth,
+        paidDays: f.paidDays,
+        daysInMonth: f.workingDays,
+      });
+      const { data } = await api.get(`/payroll/derive-salary?${params}`);
+      setSalaryInfo(data);
+      if (apply && !data.needsSetup) {
+        setForm((prev) => ({
+          ...prev,
+          earnings: { ...prev.earnings, ...data.earnings },
+          deductions: { ...prev.deductions, ...data.deductions },
+        }));
+        toast.success(`Filled from ${data.structure?.name || 'salary structure'}`);
+      }
+      return data;
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load the salary structure');
+    }
+  };
+
+  // Compute the bonus amount from the chosen basis and write it to the bonus earning.
+  const applyBonus = () => {
+    const val = Number(bonusCalc.value) || 0;
+    let amt = 0;
+    if (bonusCalc.type === 'fixed') amt = Math.round(val);
+    else if (bonusCalc.type === 'pctBasic') amt = Math.round((Number(form.earnings.basic) || 0) * val / 100);
+    else if (bonusCalc.type === 'pctGross') {
+      const base = Object.entries(form.earnings).reduce((a, [k, v]) => a + (k === 'bonus' ? 0 : Number(v || 0)), 0);
+      amt = Math.round(base * val / 100);
+    }
+    updateNum('earnings', 'bonus', amt);
   };
 
   const onSave = async (e) => {
@@ -179,6 +271,10 @@ export default function AdminPayroll() {
           title={filter.month ? 'Download this month\'s payroll as an Excel-compatible sheet' : 'No month selected · exports the current month'}
           className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm mr-2">
           ⬇ Download Excel
+        </button>
+        <button onClick={openRun}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm mr-2">
+          ▶ Run Payroll
         </button>
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
@@ -288,7 +384,7 @@ export default function AdminPayroll() {
                   <select
                     required disabled={!!editingId}
                     value={form.employee}
-                    onChange={(e) => setForm({ ...form, employee: e.target.value })}
+                    onChange={(e) => { setForm({ ...form, employee: e.target.value }); fetchSalaryInfo({ over: { employee: e.target.value } }); }}
                     className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100"
                   >
                     <option value="">Select…</option>
@@ -338,6 +434,32 @@ export default function AdminPayroll() {
                 </div>
               </div>
 
+              {/* Salary structure → derive earnings + statutory deductions */}
+              <div className="pt-3 border-t">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm">
+                    <span className="font-semibold text-gray-700">Salary structure: </span>
+                    {salaryInfo == null ? (
+                      <span className="text-gray-400">select an employee…</span>
+                    ) : salaryInfo.needsSetup ? (
+                      <span className="text-amber-700">not assigned — set structure &amp; CTC in Monthly Payroll Run</span>
+                    ) : (
+                      <span className="text-gray-700">{salaryInfo.structure?.name} · CTC {inr(salaryInfo.annualCtc)}/yr</span>
+                    )}
+                  </div>
+                  <button type="button" disabled={!form.employee || !salaryInfo || salaryInfo.needsSetup}
+                    onClick={() => fetchSalaryInfo({ apply: true })}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
+                    Fill earnings &amp; deductions from structure
+                  </button>
+                </div>
+                {salaryInfo && !salaryInfo.needsSetup && (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Prorated by Paid Days ({form.paidDays}/{form.workingDays}) · EPF 12% of Basic, ESIC 0.75% (if gross ≤ ₹21k), PT ₹200 — all editable below.
+                  </p>
+                )}
+              </div>
+
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Earnings (₹)</h3>
               <div className="grid grid-cols-3 gap-3">
                 {Object.keys(form.earnings).map((k) => (
@@ -348,6 +470,24 @@ export default function AdminPayroll() {
                       className="mt-1 block w-full border rounded-lg px-2 py-1" />
                   </div>
                 ))}
+              </div>
+
+              {/* Bonus calculator */}
+              <div className="bg-gray-50 rounded-lg p-2 flex flex-wrap items-end gap-2 text-xs">
+                <span className="font-semibold text-gray-600 self-center">Bonus calculator:</span>
+                <select value={bonusCalc.type} onChange={(e) => setBonusCalc({ ...bonusCalc, value: bonusCalc.value, type: e.target.value })}
+                  className="border rounded px-2 py-1">
+                  <option value="fixed">Fixed ₹</option>
+                  <option value="pctBasic">% of Basic</option>
+                  <option value="pctGross">% of Monthly Gross</option>
+                </select>
+                <input type="number" min="0" value={bonusCalc.value}
+                  onChange={(e) => setBonusCalc({ ...bonusCalc, value: e.target.value })}
+                  placeholder={bonusCalc.type === 'fixed' ? 'Amount ₹' : 'Percent %'}
+                  className="border rounded px-2 py-1 w-28" />
+                <button type="button" onClick={applyBonus}
+                  className="px-2.5 py-1 rounded bg-gray-900 text-white hover:bg-gray-700">Apply to Bonus</button>
+                <span className="text-gray-400 self-center">→ current bonus {inr(form.earnings.bonus)}</span>
               </div>
 
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Deductions (₹)</h3>
@@ -384,6 +524,122 @@ export default function AdminPayroll() {
           </div>
         </div>
       )}
+
+      {/* ===== Run payroll for everyone ===== */}
+      {runModal && (() => {
+        const rows = runModal.preview?.rows || [];
+        const toGen = rows.filter((r) => !r.existingStatus);
+        const willDerive = toGen.filter((r) => r.hasSalarySetup);
+        const willCopy = toGen.filter((r) => !r.hasSalarySetup && r.source);
+        const willBlank = toGen.filter((r) => !r.hasSalarySetup && !r.source);
+        const tag = (r) => r.existingStatus
+          ? ['already generated', 'bg-gray-100 text-gray-500']
+          : r.hasSalarySetup
+            ? ['from structure', 'bg-emerald-100 text-emerald-700']
+            : r.source
+              ? ['copy from last', 'bg-blue-100 text-blue-700']
+              : ['needs setup', 'bg-amber-100 text-amber-700'];
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+            <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
+              <div className="flex justify-between items-start mb-1">
+                <h2 className="card-title">Run payroll for everyone</h2>
+                <button onClick={() => setRunModal(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Creates a Draft payslip for every active employee for the selected month. Existing payslips are never overwritten.
+              </p>
+
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div>
+                  <label className="block text-xs text-gray-600">Year</label>
+                  <input type="number" value={runModal.year} disabled={!!runModal.result}
+                    onChange={(e) => loadRunPreview(Number(e.target.value), runModal.month)}
+                    className="border rounded-lg px-2 py-1 w-24 disabled:bg-gray-100" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600">Month</label>
+                  <select value={runModal.month} disabled={!!runModal.result}
+                    onChange={(e) => loadRunPreview(runModal.year, Number(e.target.value))}
+                    className="border rounded-lg px-2 py-1 disabled:bg-gray-100">
+                    {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {runModal.result ? (
+                <div className="space-y-3">
+                  <div className="text-sm bg-green-50 border border-green-200 text-green-800 px-3 py-2 rounded-lg">
+                    Created <strong>{runModal.result.created}</strong> draft payslip(s) for {MONTHS[runModal.month - 1]} {runModal.year}
+                    {runModal.result.skippedExisting ? ` · skipped ${runModal.result.skippedExisting} existing` : ''}.
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <div className="bg-emerald-50 rounded-lg p-2 text-emerald-800">From structure: <strong>{runModal.result.derived}</strong></div>
+                    <div className="bg-blue-50 rounded-lg p-2 text-blue-800">Copied from last: <strong>{runModal.result.copiedFromLast}</strong></div>
+                    <div className="bg-amber-50 rounded-lg p-2 text-amber-800">Needs setup (blank): <strong>{runModal.result.needsSetup?.length || 0}</strong></div>
+                  </div>
+                  {runModal.result.needsSetup?.length > 0 && (
+                    <div className="text-xs text-amber-700">
+                      Assign a salary structure &amp; CTC (Monthly Payroll Run) for: {runModal.result.needsSetup.join(', ')}
+                    </div>
+                  )}
+                  <div className="flex justify-end pt-1">
+                    <button onClick={() => setRunModal(null)} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">Done</button>
+                  </div>
+                </div>
+              ) : runModal.loadingPreview ? (
+                <div className="text-gray-500 py-6 text-center">Loading preview…</div>
+              ) : runModal.preview ? (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm mb-3">
+                    <div className="bg-gray-50 rounded-lg p-2">To generate: <strong>{toGen.length}</strong></div>
+                    <div className="bg-emerald-50 rounded-lg p-2 text-emerald-800">From structure: <strong>{willDerive.length}</strong></div>
+                    <div className="bg-blue-50 rounded-lg p-2 text-blue-800">Copy from last: <strong>{willCopy.length}</strong></div>
+                    <div className="bg-amber-50 rounded-lg p-2 text-amber-800">Needs setup: <strong>{willBlank.length}</strong></div>
+                  </div>
+                  <div className="border rounded-lg overflow-hidden max-h-72 overflow-y-auto">
+                    <table className="min-w-full text-sm divide-y divide-gray-100">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Employee</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Source</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {rows.map((r) => {
+                          const [label, cls] = tag(r);
+                          return (
+                            <tr key={r.employeeId} className={r.existingStatus ? 'opacity-60' : ''}>
+                              <td className="px-3 py-1.5">
+                                {r.name} <span className="text-xs text-gray-400 font-mono">{r.employeeCode}</span>
+                              </td>
+                              <td className="px-3 py-1.5 text-gray-600">{r.source || '—'}</td>
+                              <td className="px-3 py-1.5">
+                                <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${cls}`}>{label}</span>
+                                {r.existingStatus && <span className="ml-1 text-xs text-gray-400">({r.existingStatus})</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-4">
+                    <button onClick={() => setRunModal(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                    <button onClick={executeRun} disabled={runModal.running || toGen.length === 0}
+                      className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                      {runModal.running ? 'Generating…' : `Generate ${toGen.length} draft${toGen.length === 1 ? '' : 's'}`}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-gray-500 py-6 text-center">No data.</div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <MailComposeModal open={!!mail} onClose={() => setMail(null)} {...(mail || {})} />
     </div>

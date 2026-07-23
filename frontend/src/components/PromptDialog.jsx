@@ -20,7 +20,7 @@ export default function PromptDialog({
 
   useEffect(() => {
     inputRef.current?.focus();
-    const onKey = (e) => { if (e.key === 'Escape' && !busy) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) { e.preventDefault(); onClose(); } };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [busy, onClose]);

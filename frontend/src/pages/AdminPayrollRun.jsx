@@ -63,6 +63,7 @@ export default function AdminPayrollRun() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [setup, setSetup] = useState({ salaryStructure: '', annualCtc: '' });
+  const [hike, setHike] = useState(null); // hike modal form, or null when closed
 
   useEffect(() => {
     api.get('/employees?excludeExecutives=true').then(({ data }) => {
@@ -123,6 +124,45 @@ export default function AdminPayrollRun() {
       await load();
     } catch (err) { toast.error(err.response?.data?.message || 'Save failed'); }
     finally { setBusy(false); }
+  };
+
+  // ----- salary hike / increment -----
+  const openHike = () => setHike({
+    mode: 'percent', value: '',
+    effectiveYear: year, effectiveMonth: month,
+    newStructure: '', reason: '', // '' = keep current structure
+  });
+
+  // Live preview of the resulting CTC from the current hike inputs.
+  const hikePreviewCtc = (() => {
+    if (!hike) return 0;
+    const cur = Number(setup.annualCtc) || 0;
+    const v = Number(hike.value) || 0;
+    if (hike.mode === 'percent') return Math.round(cur * (1 + v / 100));
+    if (hike.mode === 'amount') return Math.round(cur + v);
+    return Math.round(v); // set
+  })();
+
+  const submitHike = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/payroll/employees/${employee}/hike`, {
+        mode: hike.mode,
+        value: Number(hike.value),
+        newStructure: hike.newStructure || undefined,
+        effectiveYear: Number(hike.effectiveYear),
+        effectiveMonth: Number(hike.effectiveMonth),
+        reason: hike.reason,
+      });
+      setHike(null);
+      toast.success(data.applied
+        ? `Hike applied · new CTC ${inr(data.entry.newCtc)}`
+        : `Hike scheduled from ${MONTHS[(data.entry.effectiveMonth || 1) - 1]} ${data.entry.effectiveYear}`);
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not apply the hike');
+    } finally { setBusy(false); }
   };
 
   const generate = async () => {
@@ -247,7 +287,26 @@ export default function AdminPayrollRun() {
                     onChange={(e) => setSetup({ ...setup, annualCtc: e.target.value })}
                     className="border rounded-lg px-3 py-2 text-sm w-40" />
                   <button onClick={saveSetup} disabled={busy} className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">Save</button>
+                  <button onClick={openHike} disabled={busy} title="Revise this employee's CTC (increment)"
+                    className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Give hike</button>
                 </div>
+
+                {run.employee?.ctcHistory?.length > 0 && (
+                  <div className="mb-4 text-xs">
+                    <div className="font-semibold text-gray-600 mb-1">CTC revisions</div>
+                    <ul className="space-y-0.5">
+                      {[...run.employee.ctcHistory].reverse().slice(0, 5).map((h, i) => (
+                        <li key={i} className="text-gray-500 flex justify-between gap-2">
+                          <span>
+                            {MONTHS[(h.effectiveMonth || 1) - 1]} {h.effectiveYear}: {inr(h.previousCtc)} → <span className="text-gray-700 font-medium">{inr(h.newCtc)}</span>
+                            {h.reason ? ` · ${h.reason}` : ''}
+                          </span>
+                          <span className="text-gray-400 shrink-0">{h.byName || ''}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
                   <Stat label="Paid days" value={`${c.paidDays} / ${c.daysInMonth}`} />
                   <Stat label="LOP days" value={c.lopDays} warn={c.lopDays > 0} />
@@ -337,6 +396,85 @@ export default function AdminPayrollRun() {
             </div>
           )}
         </>
+      )}
+
+      {/* Hike / increment modal */}
+      {hike && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
+            <h2 className="font-semibold text-gray-900 mb-1">Give hike · {fullName(run?.employee?.user)}</h2>
+            <p className="text-xs text-gray-500 mb-4">Current CTC: {inr(setup.annualCtc)}/yr</p>
+            <form onSubmit={submitHike} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Hike type</label>
+                  <select value={hike.mode} onChange={(e) => setHike({ ...hike, mode: e.target.value })}
+                    className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
+                    <option value="percent">Percentage (%)</option>
+                    <option value="amount">Increase by ₹</option>
+                    <option value="set">Set new CTC to ₹</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    {hike.mode === 'percent' ? 'Percent (%)' : hike.mode === 'amount' ? 'Increase (₹/yr)' : 'New CTC (₹/yr)'}
+                  </label>
+                  <input type="number" min="0" required value={hike.value}
+                    onChange={(e) => setHike({ ...hike, value: e.target.value })}
+                    className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Effective month</label>
+                  <select value={hike.effectiveMonth} onChange={(e) => setHike({ ...hike, effectiveMonth: Number(e.target.value) })}
+                    className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
+                    {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Effective year</label>
+                  <input type="number" value={hike.effectiveYear}
+                    onChange={(e) => setHike({ ...hike, effectiveYear: Number(e.target.value) })}
+                    className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Switch salary structure (optional)</label>
+                <select value={hike.newStructure} onChange={(e) => setHike({ ...hike, newStructure: e.target.value })}
+                  className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
+                  <option value="">Keep current structure</option>
+                  {structures.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Reason</label>
+                <input value={hike.reason} onChange={(e) => setHike({ ...hike, reason: e.target.value })}
+                  placeholder="e.g. Annual appraisal 2026, promotion" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-sm text-emerald-900 flex justify-between">
+                <span>New CTC</span>
+                <span className="font-semibold">
+                  {inr(setup.annualCtc)} → {inr(hikePreviewCtc)}
+                  {Number(setup.annualCtc) > 0 && hikePreviewCtc > Number(setup.annualCtc) && (
+                    <span className="text-emerald-600 ml-1">(+{Math.round((hikePreviewCtc / Number(setup.annualCtc) - 1) * 100)}%)</span>
+                  )}
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setHike(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={busy} className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60">
+                  {busy ? 'Applying…' : 'Apply hike'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

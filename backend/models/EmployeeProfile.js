@@ -129,6 +129,28 @@ const employeeProfileSchema = new mongoose.Schema(
     salaryStructure: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryStructure' },
     annualCtc: { type: Number, min: 0 },
 
+    // CTC revision history (hikes / increments). `annualCtc` above always holds
+    // the value effective *as of today*; each entry records one raise. The
+    // monthly payroll run resolves the CTC effective for the run month from this
+    // history (see resolveCtcForMonth in payrollController), so a future-dated
+    // hike only affects payroll from its effective month onward.
+    ctcHistory: [
+      {
+        previousCtc: { type: Number, min: 0 },
+        newCtc: { type: Number, min: 0 },
+        mode: { type: String, enum: ['percent', 'amount', 'set'] },
+        value: Number, // the % or ₹ the HR entered
+        previousStructure: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryStructure' },
+        newStructure: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryStructure' },
+        effectiveMonth: { type: Number, min: 1, max: 12 },
+        effectiveYear: Number,
+        reason: { type: String, trim: true },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byName: String,
+        at: { type: Date, default: Date.now },
+      },
+    ],
+
     // HR/Admin manual override: marks the employee's document set as fully
     // submitted regardless of which categories were uploaded.
     documentsVerified: { type: Boolean, default: false },
