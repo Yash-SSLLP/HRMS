@@ -1,3 +1,10 @@
+// App.js — application bootstrap and provider tree.
+// Wraps the app in GestureHandlerRootView + SafeAreaProvider + ErrorBoundary and
+// mounts the NavigationContainer (with navRef) around RootNavigator. On launch it
+// hydrates the persisted auth session and security prefs (showing a splash until
+// both are ready), then, once authenticated, registers for push and wires the
+// notification received/tapped/cold-launch listeners. Renders the biometric
+// LockScreen as an overlay above the nav tree when app-lock is engaged.
 import React, { useEffect, useRef } from 'react';
 import { View, ActivityIndicator, StyleSheet, AppState } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -29,6 +36,10 @@ const navTheme = {
   },
 };
 
+/**
+ * Root application component: sets up providers, session/security hydration,
+ * push registration, notification routing, and the app-lock overlay.
+ */
 export default function App() {
   const { token, hydrated, hydrate } = useAuth();
   const refreshBadges = useBadges((s) => s.refresh);

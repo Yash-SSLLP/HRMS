@@ -1,7 +1,18 @@
+/**
+ * Department controller — CRUD for Department master data. Listing augments each
+ * department with a live employeeCount aggregated from EmployeeProfile.
+ * Mutations are SuperAdmin-only (enforced at the route layer).
+ */
 const asyncHandler = require('express-async-handler');
 const Department = require('../models/Department');
 const EmployeeProfile = require('../models/EmployeeProfile');
 
+/**
+ * List departments with a live employee count per department.
+ * @route GET /api/departments
+ * @param {string} [req.query.active] - 'true' to only return active departments
+ * @returns {{count: number, departments: Object[]}} departments each with employeeCount
+ */
 // GET /api/departments   (any authenticated user — used to populate dropdowns)
 // Each department carries an `employeeCount` so the Departments tab can show how
 // many people are in it.
@@ -14,12 +25,20 @@ const listDepartments = asyncHandler(async (req, res) => {
     { $match: { department: { $nin: [null, ''] } } },
     { $group: { _id: '$department', count: { $sum: 1 } } },
   ]);
+  // Map department name -> headcount so we can attach counts without extra queries
   const countByName = new Map(counts.map((c) => [c._id, c.count]));
 
   const withCounts = departments.map((d) => ({ ...d, employeeCount: countByName.get(d.name) || 0 }));
   res.json({ count: withCounts.length, departments: withCounts });
 });
 
+/**
+ * Create a department (unique name enforced).
+ * @route POST /api/departments  (SuperAdmin)
+ * @param {string} req.body.name - required, trimmed, must be unique
+ * @param {boolean} [req.body.isActive=true]
+ * @returns {{department: Object}} the created department (201); 409 if name exists
+ */
 // POST /api/departments   (SuperAdmin)
 const createDepartment = asyncHandler(async (req, res) => {
   const { name, isActive } = req.body;
@@ -40,6 +59,14 @@ const createDepartment = asyncHandler(async (req, res) => {
   res.status(201).json({ department });
 });
 
+/**
+ * Update a department's name and/or active flag.
+ * @route PUT /api/departments/:id  (SuperAdmin)
+ * @param {string} req.params.id - department id
+ * @param {string} [req.body.name]
+ * @param {boolean} [req.body.isActive]
+ * @returns {{department: Object}} the updated department
+ */
 // PUT /api/departments/:id   (SuperAdmin)
 const updateDepartment = asyncHandler(async (req, res) => {
   const department = await Department.findById(req.params.id);
@@ -54,6 +81,12 @@ const updateDepartment = asyncHandler(async (req, res) => {
   res.json({ department });
 });
 
+/**
+ * Delete a department by id.
+ * @route DELETE /api/departments/:id  (SuperAdmin)
+ * @param {string} req.params.id - department id
+ * @returns {{id: string, deleted: boolean}}
+ */
 // DELETE /api/departments/:id   (SuperAdmin)
 const deleteDepartment = asyncHandler(async (req, res) => {
   const department = await Department.findById(req.params.id);

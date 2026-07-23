@@ -1,3 +1,9 @@
+/**
+ * EmployeeComplaints — confidential complaint filing (employee portal). Lists the
+ * user's own complaints (GET /complaints/mine) and files new ones (POST /complaints)
+ * against a colleague picked from the chat directory (GET /chat/directory).
+ * Complaints are visible only to CEO/HR/SuperAdmin, never the accused.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -25,6 +31,7 @@ export default function EmployeeComplaints() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ againstUserId: '', subject: '', description: '' });
 
+  // Load my complaints and the people directory (for the "against" dropdown).
   const load = async () => {
     setLoading(true);
     setError('');

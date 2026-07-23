@@ -1,3 +1,8 @@
+/**
+ * Lifecycle controller — employee probation/confirmation lifecycle on
+ * EmployeeProfile. Lists confirmation-due employees, lets HR confirm/extend/reset
+ * probation, and suggests the next employee code following the existing code style.
+ */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 
@@ -19,6 +24,12 @@ const effectiveDueDate = (profile) => {
   return null;
 };
 
+/**
+ * List employees for confirmation tracking with their effective due date.
+ * @route GET /api/lifecycle/confirmations
+ * @param {string} [req.query.status] - Probation|Extended|Confirmed
+ * @returns {{count: number, items: Object[]}} sorted by dueDate (nulls last)
+ */
 // GET /api/lifecycle/confirmations  (?status=Probation|Extended|Confirmed)
 const listConfirmations = asyncHandler(async (req, res) => {
   const filter = {};
@@ -55,6 +66,16 @@ const listConfirmations = asyncHandler(async (req, res) => {
   res.json({ count: items.length, items });
 });
 
+/**
+ * Confirm, extend, or reset an employee's probation.
+ * @route PATCH /api/lifecycle/confirmations/:id  (:id = EmployeeProfile _id)
+ * @param {string} req.params.id - EmployeeProfile id
+ * @param {string} req.body.action - 'confirm' | 'extend' | 'reset'
+ * @param {string} [req.body.note]
+ * @param {number} [req.body.probationMonths]
+ * @param {string} [req.body.confirmationDueDate] - explicit due date for 'extend' (else +3 months)
+ * @returns {{profile: Object}}
+ */
 // PATCH /api/lifecycle/confirmations/:id  (:id = EmployeeProfile _id)
 // body { action: 'confirm'|'extend'|'reset', note, probationMonths?, confirmationDueDate? }
 const updateConfirmation = asyncHandler(async (req, res) => {
@@ -138,6 +159,11 @@ async function computeNextEmployeeCode() {
   return { suggestion, prefix, next };
 }
 
+/**
+ * Suggest the next employee code (delegates to computeNextEmployeeCode).
+ * @route GET /api/lifecycle/next-code
+ * @returns {{suggestion: string, prefix: string, next: number}}
+ */
 // GET /api/lifecycle/next-code
 const nextEmployeeCode = asyncHandler(async (req, res) => {
   res.json(await computeNextEmployeeCode());

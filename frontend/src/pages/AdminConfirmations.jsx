@@ -1,3 +1,9 @@
+/**
+ * AdminConfirmations — probation & confirmation tracking (admin portal). Lists
+ * employees with their probation due dates from GET /lifecycle/confirmations
+ * (filterable by status) and confirms or extends probation via
+ * PATCH /lifecycle/confirmations/:id. Rows due within 30 days are flagged.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

@@ -1,3 +1,10 @@
+/**
+ * EmployeeDocuments — the logged-in employee's document vault (employee portal).
+ * Loads documents + category config from GET /documents/me and
+ * GET /documents/categories, self-uploads files via POST /documents/me
+ * (one file per request), and downloads/deletes via /documents/:id. HR-only
+ * categories (offer letter, appraisal, etc.) are read-only here.
+ */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -35,6 +42,7 @@ export default function EmployeeDocuments() {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
 
+  // Load my documents + the category config (self-upload, HR-only, required).
   const load = async () => {
     setLoading(true);
     setError('');

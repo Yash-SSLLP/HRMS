@@ -3,11 +3,20 @@ import { useParams } from 'react-router-dom';
 import api, { getBaseURL } from '../api/client';
 import PublicVideoPlayer from '../components/PublicVideoPlayer';
 
-// Public (no-login) course viewer at /learn/:token.
-// Flow: fill a short lead form (once per browser) → watch the course with a
-// no-skip player → leave comments (held for approval) → give per-video feedback.
+// PublicCoursePage — public (no-login) LMS course viewer at route /learn/:token.
+// Audience: anonymous external leads (no HRMS account); the token in the URL is
+// the only credential. Flow: fill a short lead form (once per browser) → watch
+// the course with a no-skip player → leave comments (held for approval) → give
+// per-video feedback.
+// Backend (all under /public/courses/:token): GET / (course + feedback questions),
+// POST /register (lead capture), GET/POST /comments, POST /feedback, and the
+// streamed video at /modules/:id/video.
+
+// localStorage key that persists the lead session per course token/browser.
 const lsKey = (token) => `pubcourse:${token}`;
 
+// Top-level page: resolves the shareable token into a course, gates access
+// behind the lead form, and hosts the player / curriculum / feedback UI.
 export default function PublicCoursePage() {
   const { token } = useParams();
   const [course, setCourse] = useState(null);
@@ -25,8 +34,11 @@ export default function PublicCoursePage() {
   const [doneFeedback, setDoneFeedback] = useState(() => new Set());
   const [base, setBase] = useState('');
 
+  // Absolute API base is needed to build the raw <video> src (not an axios call).
   useEffect(() => { getBaseURL().then(setBase); }, []);
 
+  // Load the course + feedback questions whenever the token changes; a bad/expired
+  // token surfaces as a friendly "invalid link" message rather than a crash.
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -48,6 +60,7 @@ export default function PublicCoursePage() {
   const active = modules.find((m) => String(m._id) === String(activeId)) || null;
   const activeIndex = modules.findIndex((m) => String(m._id) === String(activeId));
 
+  // Persist the lead session locally so the form isn't shown again on revisit.
   const onRegistered = (s) => {
     localStorage.setItem(lsKey(token), JSON.stringify(s));
     setSession(s);
@@ -162,6 +175,8 @@ function LeadForm({ token, course, onRegistered }) {
     }
     setBusy(true); setError('');
     try {
+      // Registering the lead returns a sessionToken used to authorize every
+      // subsequent public action (video stream, comments, feedback).
       const { data } = await api.post(`/public/courses/${token}/register`, form);
       onRegistered({ sessionToken: data.sessionToken, name: data.viewer?.name || form.name });
     } catch (err) {
@@ -214,6 +229,8 @@ function Comments({ token, module, session }) {
       setComments(data.comments || []);
     } catch { /* ignore */ }
   };
+  // Reset the composer on module switch and reload comments once per module
+  // (lastLoaded guards against duplicate fetches for the same module id).
   useEffect(() => {
     setPosted(false); setText('');
     if (lastLoaded.current !== moduleId) { lastLoaded.current = moduleId; load(); }
@@ -265,6 +282,8 @@ function Comments({ token, module, session }) {
 }
 
 // ===== Per-video feedback modal =====
+// Star rating + configurable multiple-choice questions + free text; posts to
+// /feedback and reports the module id back so it isn't re-prompted this session.
 function FeedbackModal({ token, module, questions, session, onClose, onDone }) {
   const [rating, setRating] = useState(0);
   const [hover, setHover] = useState(0);

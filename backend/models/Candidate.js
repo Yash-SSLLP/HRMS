@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
+// A recruitment candidate and their full journey through the hiring pipeline:
+// interview rounds, pre-offer document collection, generated offer/appointment
+// letters, onboarding, and finally conversion into a User + EmployeeProfile.
+// `stage` is the ordered pipeline position; Hired/Rejected are terminal.
 const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
+// Per interview-round outcome: Pending -> not yet set; Scheduled -> slot booked; Cleared -> passed; Rejected -> failed.
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const NUM_ROUNDS = 4;
 
@@ -208,6 +213,7 @@ candidateSchema.set('toJSON', {
   },
 });
 
+// Audit-status plugin: logs `stage` transitions to AuditLog (labelled by candidate name).
 candidateSchema.plugin(require('./plugins/auditStatus'), { fields: ['stage'], label: (d) => d.name });
 
 module.exports = mongoose.model('Candidate', candidateSchema);

@@ -1,3 +1,9 @@
+/**
+ * Approval controller — the approver's inbox for leave and resignation/exit
+ * requests. Both climb a reporting-hierarchy approval chain (logic lives in
+ * leaveController/exitController); this exposes list/approve/reject per approver
+ * and self-heals Pending requests whose chain was never built.
+ */
 const asyncHandler = require('express-async-handler');
 const { LeaveRequest } = require('../models/Leave');
 const ExitRequest = require('../models/ExitRequest');
@@ -30,6 +36,13 @@ function populateLeave(query) {
     .sort({ appliedAt: -1 });
 }
 
+/**
+ * List leave requests for the current approver.
+ * @route GET /api/approvals/leave?scope=pending|history
+ * @param {string} [req.query.scope] - 'pending' (awaiting my decision) or 'history' (any request I'm in the chain of)
+ * @returns {{scope, count, requests: Object[]}}
+ * @sideeffect heals orphaned Pending chains on load
+ */
 // GET /api/approvals/leave?scope=pending|history
 // pending  → requests awaiting MY decision right now (the action list).
 // history  → every request I appear anywhere in the chain of, so a higher
@@ -46,6 +59,13 @@ const listMyLeaveApprovals = asyncHandler(async (req, res) => {
   res.json({ scope, count: requests.length, requests });
 });
 
+/**
+ * Approve a leave request at the current chain step (may finalise or advance it).
+ * @route PATCH /api/approvals/leave/:id/approve
+ * @param {string} req.params.id - leave request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}
+ */
 // PATCH /api/approvals/leave/:id/approve
 const approveLeave = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
@@ -62,6 +82,13 @@ const approveLeave = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
+/**
+ * Reject a leave request at the current chain step.
+ * @route PATCH /api/approvals/leave/:id/reject
+ * @param {string} req.params.id - leave request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}
+ */
 // PATCH /api/approvals/leave/:id/reject
 const rejectLeave = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
@@ -108,6 +135,13 @@ function populateExit(query) {
     .sort({ createdAt: -1 });
 }
 
+/**
+ * List resignation/exit requests for the current approver.
+ * @route GET /api/approvals/exits?scope=pending|history
+ * @param {string} [req.query.scope] - 'pending' or 'history'
+ * @returns {{scope, count, requests: Object[]}}
+ * @sideeffect heals orphaned Pending exit chains on load
+ */
 // GET /api/approvals/exits?scope=pending|history
 const listMyExitApprovals = asyncHandler(async (req, res) => {
   await healExitOrphanChains();
@@ -121,6 +155,14 @@ const listMyExitApprovals = asyncHandler(async (req, res) => {
   res.json({ scope, count: requests.length, requests });
 });
 
+/**
+ * Approve a resignation/exit at the current chain step (final approval starts the
+ * notice period / InClearance).
+ * @route PATCH /api/approvals/exits/:id/approve
+ * @param {string} req.params.id - exit request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}
+ */
 // PATCH /api/approvals/exits/:id/approve
 const approveExit = asyncHandler(async (req, res) => {
   const request = await ExitRequest.findById(req.params.id);
@@ -137,6 +179,13 @@ const approveExit = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
+/**
+ * Reject a resignation/exit at the current chain step (cancels it).
+ * @route PATCH /api/approvals/exits/:id/reject
+ * @param {string} req.params.id - exit request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}
+ */
 // PATCH /api/approvals/exits/:id/reject
 const rejectExit = asyncHandler(async (req, res) => {
   const request = await ExitRequest.findById(req.params.id);

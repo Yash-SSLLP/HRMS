@@ -1,3 +1,10 @@
+/**
+ * AdminDocuments — employee document management (admin portal). Lists documents
+ * (optionally filtered by employee) from GET /documents, uploads on an employee's
+ * behalf via POST /documents (one file per request), verifies/rejects via
+ * PATCH /documents/:id/status, and downloads/deletes via /documents/:id.
+ * Employee + category lists from GET /employees and GET /documents/categories.
+ */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

@@ -1,3 +1,12 @@
+/**
+ * CoursePlayerScreen — plays a single course's lessons (video via expo-av, or
+ * text), tracks anti-cheat watch progress with a no-skip lock, lets the learner
+ * mark reading lessons complete, report lesson issues, and rate on completion.
+ * Route: "CoursePlayer" — params: { courseId }. Reached from LearningScreen.
+ * Employee-facing (all roles). Backend: GET /courses/me,
+ * PATCH /courses/:id/modules/:mid/progress, POST .../complete, /report, /feedback,
+ * and the authenticated video stream GET /courses/:id/modules/:mid/video.
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -11,6 +20,7 @@ import { Screen, Card, AppButton, Loader, ProgressBar, Pill, ModalSheet, ChipSel
 const REPORT_CATEGORIES = ['Video quality', 'Audio / sound', 'Playback / buffering', 'Content error', 'Other'];
 const GOOD = 0.95; // fraction watched that counts a video as complete
 
+/** Main component. Route param `courseId` selects the course; `token` signs the video URL. */
 export default function CoursePlayerScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -40,6 +50,8 @@ export default function CoursePlayerScreen() {
 
   const [reportOpen, setReportOpen] = useState(false);
 
+  // Find this course's enrollment among the user's; gate on approval, then pick
+  // the first not-yet-completed module as the initially active lesson.
   const load = useCallback(async () => {
     try {
       const { data } = await api.get('/courses/me');
@@ -89,6 +101,8 @@ export default function CoursePlayerScreen() {
     if (updated) setEnrollment((prev) => (prev ? { ...prev, ...updated, course: prev.course } : prev));
   };
 
+  // Persist credited watch seconds to the server, throttled to once per 5s
+  // unless forced (e.g. on video end).
   const sendProgress = async (force) => {
     const now = Date.now();
     if (!force && now - lastSent.current < 5000) return;
@@ -104,6 +118,8 @@ export default function CoursePlayerScreen() {
     }
   };
 
+  // expo-av playback callback: enforces no-skip, credits only real-time forward
+  // playback (delta 0–2s while playing) toward watch progress, and syncs.
   const onStatus = (st) => {
     if (!st.isLoaded) { if (st.error) setVideoFailed(true); return; }
     if (st.durationMillis) durationRef.current = st.durationMillis / 1000;
@@ -283,6 +299,7 @@ export default function CoursePlayerScreen() {
   );
 }
 
+/** Bottom-sheet form to report a problem with a lesson. POSTs /courses/:id/report. */
 function ReportModal({ visible, onClose, courseId, module }) {
   const [category, setCategory] = useState(REPORT_CATEGORIES[0]);
   const [note, setNote] = useState('');
@@ -314,6 +331,7 @@ function ReportModal({ visible, onClose, courseId, module }) {
   );
 }
 
+/** Star-rating + comment card shown at 100% completion. POSTs /courses/:id/feedback. */
 function FeedbackCard({ courseId, existing, onSaved }) {
   const already = existing && existing.rating;
   const [rating, setRating] = useState(existing?.rating || 0);

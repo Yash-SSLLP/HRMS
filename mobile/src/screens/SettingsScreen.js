@@ -1,3 +1,10 @@
+/**
+ * SettingsScreen — app preferences: theme (system/light/dark, restarts the JS
+ * bundle to apply), push-notification enable/disable, biometric app lock, account
+ * info, about/version, and logout. Pushed as "Settings" from Profile. Any role.
+ * Backend: none directly — push register/unregister go through services/push;
+ * theme + lock state persist locally (AsyncStorage / security store).
+ */
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Switch } from 'react-native';
 import Constants from 'expo-constants';
@@ -65,6 +72,8 @@ export default function SettingsScreen() {
     ]);
   };
 
+  // Enabling the lock requires device biometric hardware + enrollment and a
+  // successful auth prompt; disabling is unconditional.
   const toggleLock = async (val) => {
     if (val) {
       const [hw, enrolled] = await Promise.all([
@@ -87,6 +96,7 @@ export default function SettingsScreen() {
   const version = Constants.expoConfig?.version || '1.0.0';
   const host = API_BASE.replace(/^https?:\/\//, '').replace(/\/api$/, '');
 
+  // Re-request notification permission and register this device's push token.
   const reEnablePush = async () => {
     setWorking(true);
     const token = await registerForPush();

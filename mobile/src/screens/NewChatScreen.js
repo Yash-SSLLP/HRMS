@@ -1,3 +1,9 @@
+/**
+ * NewChatScreen — colleague directory for starting a direct chat / sending a
+ * connection request. Pushed as "NewChat" from the Chat (Messages) tab. Any employee role.
+ * Backend: GET /chat/directory (people + connection status), POST /chat/requests (connect),
+ * PATCH /chat/requests/:id (accept). On an open connection it navigates to Conversation.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -14,6 +20,8 @@ const STATUS_META = {
   none: { label: 'Connect', tone: 'primary', icon: 'add' },
 };
 
+// Directory list: search colleagues and act on each row per its connection status
+// (open chat, accept an incoming request, or send a new one).
 export default function NewChatScreen() {
   const nav = useNavigation();
   const [people, setPeople] = useState([]);
@@ -32,6 +40,7 @@ export default function NewChatScreen() {
     }, [load])
   );
 
+  // Row tap handler: branch on the connection status to open, accept, or request.
   const act = async (person) => {
     const s = person.connectionStatus;
     if (s === 'accepted') {

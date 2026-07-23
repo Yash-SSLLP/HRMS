@@ -1,3 +1,9 @@
+/**
+ * EmployeeExpenses — expense-claim self-service (employee portal). Lists the
+ * user's claims from GET /expenses/me and submits new ones (with a mandatory
+ * receipt, multipart) via POST /expenses. Approval/reimbursement happens on the
+ * admin side; reimbursed claims post to the cashbook there.
+ */
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -46,6 +52,7 @@ export default function EmployeeExpenses() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
+  // Submit the claim as multipart form-data; a receipt file is mandatory.
   const submit = async (e) => {
     e.preventDefault();
     if (!receiptFile) { setError('Please attach a receipt (image or PDF)'); return; }

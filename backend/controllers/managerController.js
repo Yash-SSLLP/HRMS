@@ -1,3 +1,10 @@
+/**
+ * Manager controller — team-scoped self-service for a reporting manager (queries
+ * are limited to their direct reports via EmployeeProfile.reportingManager).
+ * Exposes team roster with today's attendance, a presence board, team leave
+ * requests plus hierarchy-aware approve/reject, and team attendance
+ * heatmap/day-details/CSV export (reusing the attendance controller helpers).
+ */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
@@ -39,6 +46,11 @@ function resolveGeofence(profile, settings) {
   return { center: settings.office, radiusM: settings.geofenceThresholdM, label: settings.office?.label || 'office' };
 }
 
+/**
+ * List the caller's direct reports with each one's attendance snapshot for today.
+ * @route GET /api/manager/team
+ * @returns {{count: number, team: Object[]}} each with a `today` snapshot incl. geofence distances
+ */
 // GET /api/manager/team — my direct reports with today's attendance snapshot.
 const listTeam = asyncHandler(async (req, res) => {
   const reports = await myReportProfiles(req.user._id);
@@ -90,6 +102,11 @@ const listTeam = asyncHandler(async (req, res) => {
   res.json({ count: team.length, team });
 });
 
+/**
+ * Team presence board for today: who's present / on leave / absent among reports.
+ * @route GET /api/manager/presence
+ * @returns {{date, counts, present, onLeave, absent}}
+ */
 // GET /api/manager/presence — read-only "who's in / on leave / absent" today,
 // scoped to the caller's direct reports. Same shape as the admin presence board
 // so the UI is shared; the check-in selfie is surfaced the same way (identical
@@ -178,6 +195,12 @@ const teamPresence = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * List leave requests from the caller's direct reports, optionally by status.
+ * @route GET /api/manager/leave-requests?status=
+ * @param {string} [req.query.status]
+ * @returns {{count: number, requests: Object[]}} with populated employee/approver
+ */
 // GET /api/manager/leave-requests?status= — leave requests from my reports.
 const listTeamLeave = asyncHandler(async (req, res) => {
   const reports = await myReportProfiles(req.user._id);
@@ -192,6 +215,13 @@ const listTeamLeave = asyncHandler(async (req, res) => {
   res.json({ count: requests.length, requests });
 });
 
+/**
+ * Approve a report's leave request at this manager's chain step.
+ * @route PATCH /api/manager/leave-requests/:id/approve
+ * @param {string} req.params.id - leave request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}} (advances up the chain; final only at top rung)
+ */
 // PATCH /api/manager/leave-requests/:id/approve
 // Delegates to the hierarchy-aware advanceApproval, which enforces that this
 // manager is the CURRENT approver (their turn) before acting. Approving advances
@@ -212,6 +242,13 @@ const approveTeamLeave = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
+/**
+ * Reject a report's leave request at this manager's chain step.
+ * @route PATCH /api/manager/leave-requests/:id/reject
+ * @param {string} req.params.id - leave request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}
+ */
 // PATCH /api/manager/leave-requests/:id/reject
 const rejectTeamLeave = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
@@ -228,6 +265,12 @@ const rejectTeamLeave = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
+/**
+ * Team-scoped attendance heatmap over the last N days (delegates to attendanceController).
+ * @route GET /api/manager/attendance/heatmap?days=
+ * @param {number} [req.query.days] - capped at 400 (default 365)
+ * @returns {Object} heatmap window scoped to the caller's reports
+ */
 // GET /api/manager/attendance/heatmap?days= — team-scoped attendance heatmap
 // (same shape as the org heatmap, limited to the caller's direct reports).
 const teamHeatmap = asyncHandler(async (req, res) => {
@@ -236,6 +279,12 @@ const teamHeatmap = asyncHandler(async (req, res) => {
   res.json(await computeHeatmapWindow({ empIds, span }));
 });
 
+/**
+ * Per-day attendance breakdown for the team (heatmap click-through).
+ * @route GET /api/manager/attendance/day?date=YYYY-MM-DD
+ * @param {string} req.query.date - YYYY-MM-DD (required)
+ * @returns {Object} day details scoped to the caller's reports
+ */
 // GET /api/manager/attendance/day?date=YYYY-MM-DD — per-day breakdown with names
 // for the heatmap click-through, limited to the caller's direct reports.
 const teamDayDetails = asyncHandler(async (req, res) => {
@@ -248,6 +297,11 @@ const teamDayDetails = asyncHandler(async (req, res) => {
   res.json(await computeDayDetails({ empIds, dateStr }));
 });
 
+/**
+ * Export team attendance as CSV, scoped to the caller's direct reports.
+ * @route GET /api/manager/attendance/export?year=&month=&day=&employee=&months=
+ * @returns {text/csv} attendance rows; an employee outside the team is rejected
+ */
 // GET /api/manager/attendance/export?year=&month=&day=&employee=&months=
 // Excel-compatible attendance CSV scoped to the caller's direct reports (Sale
 // Team included — anyone whose reportingManager is this user). Same shapes as

@@ -1,3 +1,11 @@
+/**
+ * ConversationScreen — a single DM or group chat thread: message bubbles with
+ * read receipts and tappable links, incremental HTTP polling, optimistic send,
+ * a header video-call button (Jitsi), and a resigned-peer block.
+ * Route: "Conversation" — params: { kind: 'dm'|'group', id, title, personName,
+ * hasPhoto, avatarUri, resigned }. Reached from ChatList/NewChat. All roles.
+ * Backend: GET/POST /chat/messages(/:id) and /chat/groups/:id/messages.
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
@@ -61,6 +69,7 @@ function applyReceipts(msgs, seenUpTo, deliveredUpTo) {
   return changed ? out : msgs;
 }
 
+/** Main component. Route params identify the thread (kind/id) and drive the resigned block. */
 export default function ConversationScreen({ route }) {
   const { kind, id, personName, resigned } = route.params || {};
   const isGroup = kind === 'group';
@@ -154,6 +163,8 @@ export default function ConversationScreen({ route }) {
     });
   }, [nav, resigned, startCall]);
 
+  // Send a text message with optimistic append; a full reload reconciles the
+  // temp bubble with the real message, and any failure rolls it back.
   const send = async () => {
     const body = text.trim();
     if (!body || sending || resigned) return;

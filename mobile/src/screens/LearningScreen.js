@@ -1,3 +1,10 @@
+/**
+ * LearningScreen — LMS hub: the employee's active/approved courses with progress
+ * and deadlines, pending enrollment requests, and the browsable course catalog
+ * with self-enroll (request → approval). Opens a course in CoursePlayer.
+ * Route: "Learning" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /courses/me, GET /courses, POST /courses/:id/enroll.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -25,6 +32,7 @@ export default function LearningScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
+  // Load the user's enrollments and the full catalog in parallel.
   const load = useCallback(async () => {
     const [me, cat] = await Promise.all([
       api.get('/courses/me').catch(() => ({ data: {} })),
@@ -38,6 +46,7 @@ export default function LearningScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Self-enroll: sends an enrollment request that HR/manager must approve.
   const requestEnroll = async (course) => {
     setBusyId(course._id);
     try {
@@ -53,6 +62,8 @@ export default function LearningScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
+  // Split enrollments into active (approved) and awaiting-approval buckets, and
+  // index by course id so the catalog can show each course's own enroll state.
   const approved = enrollments.filter((e) => e.approvalStatus === 'Approved' && e.course);
   const pending = enrollments.filter((e) => e.approvalStatus === 'Pending' && e.course);
   const enrolledIds = new Set(enrollments.filter((e) => e.course).map((e) => String(e.course._id)));

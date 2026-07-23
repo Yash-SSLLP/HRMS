@@ -1,3 +1,8 @@
+/**
+ * AdminHolidays — holiday calendar management (admin portal). Lists holidays for
+ * a year from GET /holidays and creates/edits/deletes via POST/PUT/DELETE
+ * /holidays. Holidays feed the shared calendar and attendance status.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

@@ -1,3 +1,9 @@
+/**
+ * AdminProjects — project management (admin portal). Lists projects from
+ * GET /projects (manager + members picked from GET /admin/users) and
+ * creates/edits/deletes via POST/PUT/DELETE /projects. Projects group tasks
+ * (see AdminTasks).
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

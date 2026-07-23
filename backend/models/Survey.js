@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// Employee-engagement surveys. Defines two models: Survey (a questionnaire with
+// embedded questions and an optional open window) and SurveyResponse (one
+// employee's answers, one per respondent). Default export is Survey.
+// single = pick one option; multi = pick several; text = free-text answer.
 const QUESTION_TYPES = ['single', 'multi', 'text'];
 
 const questionSchema = new mongoose.Schema(
@@ -46,6 +50,7 @@ const surveyResponseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// One response per respondent per survey (no double submissions).
 surveyResponseSchema.index({ survey: 1, respondent: 1 }, { unique: true });
 
 const Survey = mongoose.model('Survey', surveySchema);

@@ -1,10 +1,23 @@
+/**
+ * Password-reset-request controller — a public login-page form lets locked-out
+ * employees ask for a reset; HR/SuperAdmin list the requests, mark them Resolved,
+ * or set a new password for the account (which invalidates existing sessions).
+ */
 const asyncHandler = require('express-async-handler');
 const PasswordResetRequest = require('../models/PasswordResetRequest');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
 
+// All of these identity fields must be supplied on the public form
 const REQUIRED = ['name', 'email', 'employeeCode', 'phone', 'designation', 'department'];
 
+/**
+ * Public: submit a password-reset request from the login page.
+ * @route POST /api/password-reset-requests  (PUBLIC, no auth)
+ * @param {Object} req.body - name, email, employeeCode, phone, designation, department (all required); optional reason
+ * @returns {{ok: boolean}} (201)
+ * @sideeffect notifies every active HR Manager and SuperAdmin
+ */
 // POST /api/password-reset-requests  (PUBLIC — submitted from the login page)
 const createPasswordResetRequest = asyncHandler(async (req, res) => {
   const body = req.body || {};
@@ -46,6 +59,11 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+/**
+ * List all password-reset requests, newest first.
+ * @route GET /api/password-reset-requests  (HR / Admin)
+ * @returns {{count: number, requests: Object[]}} with populated resolvedBy
+ */
 // GET /api/password-reset-requests  (HR / Admin)
 const listPasswordResetRequests = asyncHandler(async (req, res) => {
   const requests = await PasswordResetRequest.find()
@@ -54,6 +72,12 @@ const listPasswordResetRequests = asyncHandler(async (req, res) => {
   res.json({ count: requests.length, requests });
 });
 
+/**
+ * Mark a request Resolved without changing the password (e.g. handled offline).
+ * @route PATCH /api/password-reset-requests/:id/resolve  (HR / Admin)
+ * @param {string} req.params.id - request id
+ * @returns {{request: Object}} with populated resolvedBy
+ */
 // PATCH /api/password-reset-requests/:id/resolve  (HR / Admin)
 // Either an HR Manager or a SuperAdmin marking it done flips it to Resolved.
 const resolvePasswordResetRequest = asyncHandler(async (req, res) => {
@@ -70,6 +94,14 @@ const resolvePasswordResetRequest = asyncHandler(async (req, res) => {
   res.json({ request: doc });
 });
 
+/**
+ * Set a new password for the account on the request, then mark it Resolved.
+ * @route PATCH /api/password-reset-requests/:id/reset  (HR / Admin)
+ * @param {string} req.params.id - request id
+ * @param {string} req.body.newPassword - min 8 chars
+ * @returns {{request: Object}}
+ * @sideeffect re-hashes password and invalidates the user's sessions; notifies the user
+ */
 // PATCH /api/password-reset-requests/:id/reset  (HR / Admin)
 // Set a new password for the account named on the request, then resolve it.
 // Saving the user bumps tokenVersion, so the employee is logged out everywhere.
@@ -92,7 +124,7 @@ const resetUserPassword = asyncHandler(async (req, res) => {
     throw new Error('No user account found for this email. Check the request details.');
   }
 
-  // HR Managers may only reset Employee accounts; admin accounts are SuperAdmin-only.
+  // Permission gate: HR Managers may only reset Employee accounts; admin accounts are SuperAdmin-only.
   if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee') {
     res.status(403);
     throw new Error('Only a SuperAdmin may reset admin accounts.');

@@ -1,3 +1,9 @@
+/**
+ * AnnouncementsScreen — read-only feed of company announcements (pinned items
+ * flagged, category-coloured) with pull-to-refresh.
+ * Route: "Announcements" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /announcements.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,6 +20,7 @@ export default function AnnouncementsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Fetch announcements; errors collapse to an empty list rather than throwing.
   const load = useCallback(async () => {
     const { data } = await api.get('/announcements').catch(() => ({ data: {} }));
     setItems(data.announcements || []);

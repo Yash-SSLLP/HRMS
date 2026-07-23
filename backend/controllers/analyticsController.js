@@ -1,3 +1,9 @@
+/**
+ * Analytics controller — org-wide HR analytics computed from EmployeeProfile
+ * records: headcount by department/employment-type, gender diversity, tenure
+ * bands, confirmation status, plus 12-month hires/exits, attrition count & rate.
+ * Admin-only, read-only.
+ */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 
@@ -9,6 +15,13 @@ function tenureBucket(years) {
   return '5y+';
 }
 
+/**
+ * Return the org-wide HR analytics overview.
+ * @route GET /api/analytics/overview  (SuperAdmin / HRManager)
+ * @returns {Object} totalActive, headcountByDepartment/EmploymentType, genderDiversity,
+ *   tenureBuckets, confirmationBreakdown, exitsByMonth, exitsLast12mo, attritionRate,
+ *   newHiresLast12mo, hiresByMonth
+ */
 // GET /api/analytics/overview
 // Org-wide HR analytics derived entirely from EmployeeProfile documents.
 // Admin-only (SuperAdmin / HRManager). Read-only — no data is mutated.

@@ -1,11 +1,17 @@
 const mongoose = require('mongoose');
 const { parseDriveFileId } = require('../utils/drive');
 
+// The LMS / e-learning module. This one file defines the whole learning domain as
+// several related models: Course (with embedded lesson `modules`), Enrollment
+// (an employee taking a course, with per-module watch progress), CourseReport
+// (lesson issue tickets), and the public no-login engagement models
+// (CourseViewer, CourseComment, VideoFeedback). Default export is Course; the
+// others are attached as properties.
 const COURSE_CATEGORIES = ['Technical', 'Soft Skills', 'Compliance', 'Leadership', 'Onboarding', 'Other'];
 const MODULE_TYPES = ['video', 'text'];
-const ENROLLMENT_STATUS = ['Enrolled', 'InProgress', 'Completed'];
-const APPROVAL_STATUS = ['Approved', 'Pending', 'Rejected'];
-const ENROLL_SOURCE = ['Assigned', 'Self'];
+const ENROLLMENT_STATUS = ['Enrolled', 'InProgress', 'Completed']; // learner's progress through the course
+const APPROVAL_STATUS = ['Approved', 'Pending', 'Rejected']; // access gate on an enrollment (self-enrolls need approval)
+const ENROLL_SOURCE = ['Assigned', 'Self']; // how the enrollment was created (HR-assigned vs employee self-enroll)
 
 // A single unit of a course. `_id` is kept (mongoose default) so an enrollment's
 // per-module progress can be keyed by a stable id even when modules are reordered.
@@ -105,8 +111,10 @@ const enrollmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// One enrollment per (course, employee) — no duplicate enrollments.
 enrollmentSchema.index({ course: 1, employee: 1 }, { unique: true });
 
+// Audit-status plugins: log course `status` and enrollment status/approval transitions to AuditLog.
 courseSchema.plugin(require('./plugins/auditStatus'), { label: (d) => d.title });
 enrollmentSchema.plugin(require('./plugins/auditStatus'), {
   entity: 'Enrollment',

@@ -1,3 +1,10 @@
+/**
+ * AdminNewJoinees — new-joinee handling (admin portal). Lists candidates at the
+ * NewJoinee stage (GET /recruitment/candidates?stage=NewJoinee), lets HR email
+ * offer/appointment letters (via /recruitment/candidates/:id/letters/:kind/email,
+ * editable composer) and convert a candidate into an employee + login account
+ * (POST /recruitment/candidates/:id/convert-to-employee).
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -75,6 +82,8 @@ export default function AdminNewJoinees() {
     }
   };
 
+  // Prefill the convert form from the candidate's offer/appointment data and a
+  // suggested next employee code, then open the modal.
   const openConvert = async (c) => {
     setError(''); setInfo('');
     const { firstName, lastName } = splitName(c.name);

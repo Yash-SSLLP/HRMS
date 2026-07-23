@@ -1,3 +1,10 @@
+/**
+ * AdminAttendanceMonth — whole-month attendance for one employee (admin portal).
+ * Loads the month summary + per-day punch history from GET /attendance/month-summary
+ * (employees from GET /employees), edits any day via PUT /attendance/:id, applies
+ * an HR regularization via POST /regularizations/admin, and exports CSV
+ * (this month / trailing N months / all employees) from GET /attendance/export.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

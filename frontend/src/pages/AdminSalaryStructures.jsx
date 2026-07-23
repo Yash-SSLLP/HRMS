@@ -1,3 +1,9 @@
+/**
+ * AdminSalaryStructures — reusable CTC templates (admin portal). Lists structures
+ * from GET /salary-structures and CRUDs them via /salary-structures; each stores
+ * component percentages of CTC. A preview modal posts an annual CTC to
+ * POST /salary-structures/:id/preview to show the monthly/annual breakdown.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -73,6 +79,7 @@ export default function AdminSalaryStructures() {
     load();
   }, []);
 
+  // Component percentages must sum to at most 100% of CTC; block save if over.
   const totalPct = PCT_FIELDS.reduce(
     (sum, [key]) => sum + (Number(form.components[key]) || 0),
     0

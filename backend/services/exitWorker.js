@@ -43,6 +43,13 @@ async function resolveHrRecipient(exit) {
   return sa?._id || null;
 }
 
+/**
+ * One pass over accepted exits whose last working day has passed: release the
+ * login via finalizeExit() when every clearance item is done, otherwise hold the
+ * account and nudge HR at most once per IST day (deduped by clearanceNudgeYmd).
+ * @returns {Promise<void>}
+ * @sideEffects Reads/updates ExitRequest; may deactivate the user (finalizeExit) and send notifications.
+ */
 async function tick() {
   try {
     const todayIST = startOfDayIST(new Date());
@@ -99,6 +106,10 @@ async function tick() {
   }
 }
 
+/**
+ * Start the notice-period worker: a catch-up tick ~20s after boot, then every 6h.
+ * @returns {void}
+ */
 function startWorker() {
   setTimeout(tick, 20_000); // catch up shortly after boot
   setInterval(tick, POLL_INTERVAL_MS);

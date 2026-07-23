@@ -1,3 +1,10 @@
+/**
+ * AdminRecruitment — applicant tracking (admin portal). Manages job openings and
+ * candidates through the hiring pipeline (Applied→…→Hired/Rejected) via /recruitment
+ * endpoints: jobs CRUD, candidate CRUD + stage moves, interview rounds (schedule,
+ * Jitsi/Meet links, feedback), resume download, and offer-letter generation +
+ * emailing (through the editable compose modal). Public apply links per job.
+ */
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

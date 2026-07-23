@@ -60,6 +60,10 @@ const PERMISSIONS = [
 
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 const PERMISSION_KEY_SET = new Set(PERMISSION_KEYS);
+/**
+ * @param {string} key - A capability key to validate.
+ * @returns {boolean} True if `key` is one of the catalogued permission keys.
+ */
 const isValidPermission = (key) => PERMISSION_KEY_SET.has(key);
 
 module.exports = { PERMISSIONS, PERMISSION_KEYS, PERMISSION_KEY_SET, isValidPermission };

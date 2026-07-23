@@ -92,9 +92,12 @@ const DEAD_TOKEN_ERRORS = new Set([
 ]);
 
 /**
- * Push to an explicit list of FCM device tokens.
+ * Push to an explicit list of FCM device tokens. Sends in multicast batches of
+ * up to 500; tokens FCM reports as dead/unregistered are pruned from DeviceToken.
  * @param {string[]} tokens
  * @param {{title:string, body?:string, data?:object, badge?:number}} payload
+ * @returns {Promise<{sent:number}>} Count of successful per-device sends.
+ * @sideEffects Network call to FCM; deletes dead tokens from the DeviceToken collection.
  */
 async function pushToTokens(tokens, { title, body, data, badge } = {}) {
   const m = getMessaging();
@@ -147,6 +150,9 @@ async function pushToTokens(tokens, { title, body, data, badge } = {}) {
 /**
  * Push to every device registered to the given user id(s).
  * @param {string|string[]} userIds
+ * @param {{title:string, body?:string, data?:object, badge?:number}} payload
+ * @returns {Promise<{sent:number}>} Count of successful per-device sends.
+ * @sideEffects Reads DeviceToken; delegates to pushToTokens (FCM call + dead-token cleanup).
  */
 async function pushToUsers(userIds, payload) {
   const ids = (Array.isArray(userIds) ? userIds : [userIds]).filter(Boolean);

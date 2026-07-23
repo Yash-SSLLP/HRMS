@@ -1,3 +1,9 @@
+// components/ui.js — the shared UI kit used across every screen.
+// Themed primitives (Screen, Card, AppButton, Input, Field), native date/time
+// pickers, Avatar (auth-header image with initials fallback), status Pill/Badge,
+// stat/chart bits, loaders/skeletons, EmptyState, ModalSheet, ChipSelect, Stars,
+// and the refresher() factory. Several patterns work around Android OEM render
+// bugs (see the per-export notes). Also re-exports Ionicons for convenience.
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -21,9 +27,12 @@ import { colors, radius, shadow, font, spacing } from '../theme';
 import { toYMD, toHM, to12h, fmtDate } from '../utils/format';
 import { useAuth } from '../store/auth';
 
-// Uses a plain View + safe-area insets (via the hook the tab bar already uses)
-// rather than the native SafeAreaView component, which can render its children
-// blank in some release builds.
+/**
+ * Root screen container applying safe-area padding for the given `edges`.
+ * Uses a plain View + insets hook rather than native SafeAreaView, which can
+ * render its children blank in some release builds.
+ * @prop {string[]} [edges] Which edges to inset (default ['top']).
+ */
 export function Screen({ children, style, edges = ['top'] }) {
   const insets = useSafeAreaInsets();
   const pad = {
@@ -35,6 +44,7 @@ export function Screen({ children, style, edges = ['top'] }) {
   return <View style={[styles.screen, pad, style]}>{children}</View>;
 }
 
+/** Surface card; becomes touchable when `onPress` is provided. */
 export function Card({ children, style, onPress }) {
   const Comp = onPress ? TouchableOpacity : View;
   return (
@@ -44,6 +54,12 @@ export function Card({ children, style, onPress }) {
   );
 }
 
+/**
+ * Primary action button with loading spinner and optional leading icon.
+ * @prop {string} [variant] One of buttonVariants (primary/dark/success/danger/outline/ghost).
+ * @prop {boolean} [loading] Shows a spinner and disables the button.
+ * @prop {string} [icon] Ionicons name shown before the title.
+ */
 export function AppButton({ title, onPress, loading, disabled, variant = 'primary', icon, style }) {
   const v = buttonVariants[variant] || buttonVariants.primary;
   const isDisabled = disabled || loading;
@@ -66,6 +82,7 @@ export function AppButton({ title, onPress, loading, disabled, variant = 'primar
   );
 }
 
+/** Labeled form field wrapper with an optional validation error line. */
 export function Field({ label, error, children }) {
   return (
     <View style={{ marginBottom: spacing(4) }}>
@@ -76,6 +93,7 @@ export function Field({ label, error, children }) {
   );
 }
 
+/** Themed TextInput; grows taller when `multiline`. Forwards all TextInput props. */
 export function Input(props) {
   return (
     <TextInput
@@ -86,8 +104,10 @@ export function Input(props) {
   );
 }
 
-// Native date picker. Stores/returns a 'YYYY-MM-DD' string so it drops into the
-// existing API payloads unchanged; displays the friendly date.
+/**
+ * Native date picker. Stores/returns a 'YYYY-MM-DD' string so it drops into the
+ * existing API payloads unchanged; displays the friendly date.
+ */
 export function DateField({ value, onChange, placeholder = 'Select date', minimumDate, maximumDate }) {
   const [show, setShow] = useState(false);
   const dateObj = value ? new Date(`${value}T00:00:00`) : new Date();
@@ -115,7 +135,7 @@ export function DateField({ value, onChange, placeholder = 'Select date', minimu
   );
 }
 
-// Native time picker. Stores/returns a 24h 'HH:MM' string; displays 12-hour.
+/** Native time picker. Stores/returns a 24h 'HH:MM' string; displays 12-hour. */
 export function TimeField({ value, onChange, placeholder = 'Select time' }) {
   const [show, setShow] = useState(false);
   const base = new Date();
@@ -146,6 +166,12 @@ export function TimeField({ value, onChange, placeholder = 'Select time' }) {
   );
 }
 
+/**
+ * Circular avatar. Renders the photo at `uri` (attaching the auth bearer token
+ * as a request header), falling back to the person's initials.
+ * @prop {string} name Used to derive initials.
+ * @prop {string} [uri] Auth-protected avatar URL.
+ */
 export function Avatar({ name, uri, size = 44, color = colors.primary }) {
   // The avatar endpoint is auth-protected, so a bare <Image uri> 401s and shows
   // nothing. Attach the bearer token as a request header, and fall back to
@@ -184,6 +210,7 @@ export function Avatar({ name, uri, size = 44, color = colors.primary }) {
   );
 }
 
+/** Small count badge; renders nothing when count is falsy, caps display at 99+. */
 export function Badge({ count, style }) {
   if (!count) return null;
   return (
@@ -193,6 +220,7 @@ export function Badge({ count, style }) {
   );
 }
 
+/** Status pill; `tone` selects colour (neutral/success/warning/danger/info/primary). */
 export function Pill({ label, tone = 'neutral' }) {
   const t = pillTones[tone] || pillTones.neutral;
   return (
@@ -202,6 +230,7 @@ export function Pill({ label, tone = 'neutral' }) {
   );
 }
 
+/** Section title row with an optional right-aligned action link. */
 export function SectionHeader({ title, action, onAction }) {
   return (
     <View style={styles.sectionHeader}>
@@ -215,6 +244,7 @@ export function SectionHeader({ title, action, onAction }) {
   );
 }
 
+/** Dashboard stat tile: icon + value + label; touchable when `onPress` is set. */
 export function StatTile({ icon, label, value, tint = colors.primary, onPress }) {
   const Comp = onPress ? TouchableOpacity : View;
   return (
@@ -228,8 +258,10 @@ export function StatTile({ icon, label, value, tint = colors.primary, onPress })
   );
 }
 
-// Lightweight horizontally-scrollable vertical bar chart (no chart lib).
-// data = [{ label, value }].
+/**
+ * Lightweight horizontally-scrollable vertical bar chart (no chart lib).
+ * @prop {{label: string, value: number}[]} data Bars to plot.
+ */
 export function MiniBarChart({ data = [], height = 130, tint = colors.primary }) {
   if (!data.length) return <Text style={font.label}>No data yet.</Text>;
   const max = Math.max(1, ...data.map((d) => d.value || 0));
@@ -252,6 +284,7 @@ export function MiniBarChart({ data = [], height = 130, tint = colors.primary })
   );
 }
 
+/** Horizontal progress bar; `value` is a 0–100 percentage (clamped). */
 export function ProgressBar({ value = 0, tint = colors.primary, height = 8 }) {
   const pct = Math.max(0, Math.min(100, value));
   return (
@@ -261,6 +294,7 @@ export function ProgressBar({ value = 0, tint = colors.primary, height = 8 }) {
   );
 }
 
+/** Centered spinner with optional caption, for first-load states. */
 export function Loader({ text }) {
   return (
     <View style={styles.center}>
@@ -270,7 +304,7 @@ export function Loader({ text }) {
   );
 }
 
-// A single shimmering placeholder bar. Pulses opacity on the native driver.
+/** A single shimmering placeholder bar; pulses opacity on the native driver. */
 export function SkeletonBlock({ width = '100%', height = 14, radius = 8, style }) {
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -287,8 +321,10 @@ export function SkeletonBlock({ width = '100%', height = 14, radius = 8, style }
   return <Animated.View style={[{ width, height, borderRadius: radius, backgroundColor: colors.border, opacity }, style]} />;
 }
 
-// Full-screen skeleton: a title bar + a few card placeholders. Drop-in for the
-// <Loader> that most screens show while their first data load is in flight.
+/**
+ * Full-screen skeleton: a title bar + `cards` card placeholders. Drop-in for the
+ * <Loader> that most screens show while their first data load is in flight.
+ */
 export function SkeletonScreen({ cards = 4 }) {
   return (
     <View style={{ padding: spacing(4) }}>
@@ -310,6 +346,7 @@ export function SkeletonScreen({ cards = 4 }) {
   );
 }
 
+/** Empty-list placeholder: icon + title + optional subtitle. */
 export function EmptyState({ icon = 'file-tray', title, subtitle }) {
   return (
     <View style={styles.center}>
@@ -322,17 +359,21 @@ export function EmptyState({ icon = 'file-tray', title, subtitle }) {
   );
 }
 
-// IMPORTANT: this is a FACTORY FUNCTION, not a component — call it
-// (`refresher(refreshing, onRefresh)`), don't render <Refresher/>. A ScrollView/
-// FlatList `refreshControl` prop must be a literal RefreshControl element;
-// passing a wrapper *component* blanks the whole list on some Android OEMs
-// (realme/ColorOS). Returning the RefreshControl directly avoids that.
+/**
+ * Build a themed RefreshControl element for a ScrollView/FlatList.
+ * IMPORTANT: this is a FACTORY FUNCTION, not a component — call it
+ * (`refresher(refreshing, onRefresh)`), don't render <Refresher/>. The
+ * `refreshControl` prop must be a literal RefreshControl element; passing a
+ * wrapper *component* blanks the whole list on some Android OEMs (realme/ColorOS).
+ */
 export function refresher(refreshing, onRefresh) {
   return <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />;
 }
 
-// A bottom-sheet style modal with a scrollable body and an optional sticky
-// footer (for save/cancel buttons). Used by the recruitment forms.
+/**
+ * Bottom-sheet style modal with a scrollable body and an optional sticky footer
+ * (for save/cancel buttons). Used by the recruitment forms and day sheets.
+ */
 export function ModalSheet({ visible, onClose, title, children, footer }) {
   return (
     <RNModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -356,7 +397,10 @@ export function ModalSheet({ visible, onClose, title, children, footer }) {
   );
 }
 
-// A simple inline chip selector used across the recruitment forms.
+/**
+ * Inline single-select chip group.
+ * @prop {Array} options Choices; `getLabel`/`getValue` map each to text/value.
+ */
 export function ChipSelect({ options, value, onChange, getLabel = (o) => o, getValue = (o) => o }) {
   return (
     <View style={styles.chipsWrap}>
@@ -373,7 +417,7 @@ export function ChipSelect({ options, value, onChange, getLabel = (o) => o, getV
   );
 }
 
-// Read-only / editable 0–5 star rating.
+/** 0–5 star rating; read-only unless `onChange` is provided (tap toggles). */
 export function Stars({ value = 0, onChange, size = 22 }) {
   return (
     <View style={{ flexDirection: 'row' }}>

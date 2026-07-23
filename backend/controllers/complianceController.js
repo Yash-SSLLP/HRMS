@@ -1,3 +1,8 @@
+/**
+ * Statutory-compliance controller — builds monthly/annual statutory reports from
+ * processed Payroll payslips: PF/EPF, ESI, professional tax (PT), TDS, and an
+ * annual Form-16 summary. Read-only; every report returns rows plus column totals.
+ */
 const asyncHandler = require('express-async-handler');
 const Payroll = require('../models/Payroll');
 
@@ -57,7 +62,13 @@ async function fetchPayslips({ month, year }) {
 }
 
 // --- PF report -----------------------------------------------------------
-// GET /api/compliance/pf?month&year
+/**
+ * Provident-fund report: EPF wages and employee/employer EPF + EPS per employee.
+ * @route GET /api/compliance/pf?month&year
+ * @param {number} [req.query.month] 1-12
+ * @param {number} [req.query.year] defaults to current year
+ * @returns {{month, year, count, rows: Object[], totals: Object}}
+ */
 const pfReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
   const payslips = await fetchPayslips({ month, year });
@@ -84,7 +95,13 @@ const pfReport = asyncHandler(async (req, res) => {
 });
 
 // --- ESI report ----------------------------------------------------------
-// GET /api/compliance/esi?month&year
+/**
+ * ESI report: gross and employee/employer ESI contributions per employee.
+ * @route GET /api/compliance/esi?month&year
+ * @param {number} [req.query.month] 1-12
+ * @param {number} [req.query.year] defaults to current year
+ * @returns {{month, year, count, rows: Object[], totals: Object}}
+ */
 // NOTE: ESI typically applies only when an employee's gross <= 21000/month.
 const esiReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
@@ -110,7 +127,13 @@ const esiReport = asyncHandler(async (req, res) => {
 });
 
 // --- PT report -----------------------------------------------------------
-// GET /api/compliance/pt?month&year
+/**
+ * Professional-tax report: gross and PT deducted per employee.
+ * @route GET /api/compliance/pt?month&year
+ * @param {number} [req.query.month] 1-12
+ * @param {number} [req.query.year] defaults to current year
+ * @returns {{month, year, count, rows: Object[], totals: Object}}
+ */
 const ptReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
   const payslips = await fetchPayslips({ month, year });
@@ -133,7 +156,13 @@ const ptReport = asyncHandler(async (req, res) => {
 });
 
 // --- TDS report ----------------------------------------------------------
-// GET /api/compliance/tds?month&year
+/**
+ * TDS report: PAN, gross and TDS deducted per employee.
+ * @route GET /api/compliance/tds?month&year
+ * @param {number} [req.query.month] 1-12
+ * @param {number} [req.query.year] defaults to current year
+ * @returns {{month, year, count, rows: Object[], totals: Object}}
+ */
 const tdsReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
   const payslips = await fetchPayslips({ month, year });
@@ -157,8 +186,13 @@ const tdsReport = asyncHandler(async (req, res) => {
 });
 
 // --- Form-16 annual summary ---------------------------------------------
-// GET /api/compliance/form16?year
-// Aggregates ALL payslips for the given payPeriodYear, grouped by employee.
+/**
+ * Annual Form-16 summary: per-employee annual gross/EPF/PT/TDS/net, aggregated
+ * across every payslip in the year (any month filter is ignored).
+ * @route GET /api/compliance/form16?year
+ * @param {number} [req.query.year] defaults to current year
+ * @returns {{year, count, rows: Object[], totals: Object}}
+ */
 const form16Summary = asyncHandler(async (req, res) => {
   const { year } = parsePeriod(req);
   // Ignore any month filter for the annual summary.

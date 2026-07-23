@@ -1,3 +1,8 @@
+/**
+ * Page-view router — mounted at /api/page-views.
+ * Best-effort SPA navigation telemetry (console-logged, never persisted).
+ * The single route is protected.
+ */
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -14,6 +19,7 @@ const router = express.Router();
 // Best-effort telemetry only — never persisted, never fails the client.
 const PORTALS = { admin: 'admin', employee: 'employee' };
 
+// POST / — log a client-side page/route change; protected.
 router.post('/', protect, (req, res) => {
   const name = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'User';
   const page = String(req.body?.page || '').trim() || 'Unknown Page';

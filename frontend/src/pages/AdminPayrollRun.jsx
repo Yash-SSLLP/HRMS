@@ -1,3 +1,10 @@
+/**
+ * AdminPayrollRun — monthly per-employee payroll run (admin portal). Loads the
+ * month's attendance calendar (GET /attendance/month-summary) and computed pay
+ * (GET /payroll/run-employee), lets HR edit each day's status
+ * (POST/PUT /attendance) and salary setup (PUT /employees/:id), then
+ * generate/hold/approve the draft payslip via /payroll endpoints.
+ */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -335,6 +342,7 @@ export default function AdminPayrollRun() {
   );
 }
 
+// Small labelled stat tile (red value when `warn`) used across the run panels.
 function Stat({ label, value, warn }) {
   return (
     <div className="bg-gray-50 rounded-lg px-3 py-2">

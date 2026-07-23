@@ -1,3 +1,11 @@
+/**
+ * ResignationScreen — submit a resignation and track the exit workflow: shows the
+ * request form when no exit is open, otherwise the status card with the
+ * reporting-manager approval ladder and notice-period info. Home stack route
+ * "Resignation" (Menu > Requests & lifecycle). Any employee role.
+ * Backend: GET /exits/me (current exit), POST /exits/me (submit; notice period is
+ * derived from lastWorkingDay server-side).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';

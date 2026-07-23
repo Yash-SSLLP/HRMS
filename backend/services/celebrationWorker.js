@@ -142,6 +142,13 @@ async function runHolidays(dateStr, everyone) {
   console.log(`Celebration digest: ${holidays.length} holiday(s) notified.`);
 }
 
+/**
+ * One digest pass: if it's past SEND_HOUR_IST, notify today's birthdays,
+ * anniversaries, and holidays. Re-entrancy guarded by the module `ticking` flag
+ * and per-kind DigestLog claims, so overlapping ticks and restarts don't re-send.
+ * @returns {Promise<void>}
+ * @sideEffects Reads profiles/users/holidays; writes DigestLog rows; sends in-app + push notifications.
+ */
 async function tick() {
   if (ticking) return;
   ticking = true;
@@ -162,6 +169,12 @@ async function tick() {
   }
 }
 
+/**
+ * Start the digest worker: an initial catch-up tick ~10s after boot, then every
+ * POLL_INTERVAL_MS. No-op if already started. Timers are unref'd so they don't
+ * keep the process alive.
+ * @returns {void}
+ */
 function startWorker() {
   if (intervalHandle) return;
   // Run shortly after boot, then on a fixed interval.

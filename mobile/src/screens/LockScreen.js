@@ -1,3 +1,9 @@
+/**
+ * LockScreen — app-lock gate shown when the biometric lock is enabled and the
+ * app resumes/launches; blocks the UI until the user passes device auth.
+ * Rendered by the root navigator based on useSecurity state (not a tab route).
+ * Uses expo-local-authentication (fingerprint/face); no backend calls.
+ */
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -6,11 +12,13 @@ import { useSecurity } from '../store/security';
 import { colors, spacing } from '../theme';
 import { AppButton, Ionicons } from '../components/ui';
 
+/** Main component; markUnlocked (from the security store) clears the lock on success. */
 export default function LockScreen() {
   const markUnlocked = useSecurity((s) => s.markUnlocked);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Run the device biometric/PIN prompt; on success unlock, else surface an error.
   const authenticate = useCallback(async () => {
     setBusy(true);
     setError('');

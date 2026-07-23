@@ -1,3 +1,8 @@
+/**
+ * AdminTasks — task management (admin portal). Lists/filters tasks from
+ * GET /tasks (with project + assignee dropdowns from GET /projects and
+ * GET /admin/users) and creates/edits/deletes via POST/PUT/DELETE /tasks.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

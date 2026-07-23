@@ -1,3 +1,11 @@
+/**
+ * AdminCourses — LMS course authoring & administration (admin portal). Lists
+ * courses from GET /courses/admin/all and CRUDs them via /courses, with a module
+ * editor that uploads videos directly to Cloudinary (signed via
+ * /courses/upload-signature) or accepts Drive links. Side modals handle assign,
+ * roster, self-enroll approvals, issue reports, public-share leads/feedback and
+ * comment moderation, each hitting the relevant /courses/* endpoint.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -478,6 +486,7 @@ export default function AdminCourses() {
 }
 
 // ===== Assign to employees =====
+// Multi-select employees and assign the course (with optional due date).
 function AssignModal({ course, onClose, onDone }) {
   const [people, setPeople] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -709,7 +718,7 @@ function ReportsModal({ onClose, onChange }) {
   );
 }
 
-// ===== Public sharing hub: toggle public, copy link, leads, feedback =====
+// ===== Public sharing hub: copy the public link, view captured leads + feedback =====
 function ShareModal({ course, onClose }) {
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState('leads');

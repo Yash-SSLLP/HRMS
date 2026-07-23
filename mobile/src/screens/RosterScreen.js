@@ -1,3 +1,8 @@
+/**
+ * RosterScreen — the employee's upcoming shift roster (next 30 days), with today
+ * highlighted. Home stack route "Roster" (Menu > Time & Attendance). Any employee role.
+ * Backend: GET /shifts/roster/me?from=&to= (date-ranged roster entries).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';

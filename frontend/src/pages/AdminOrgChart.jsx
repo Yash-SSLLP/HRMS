@@ -1,3 +1,9 @@
+/**
+ * AdminOrgChart — reporting-hierarchy tree (admin portal). Loads the org chart
+ * from GET /org/chart and renders it as a decision-tree of avatar nodes. A
+ * SuperAdmin can click a person to set who they report to (PUT /employees/:id)
+ * or change their system role (PUT /admin/users/:id); others see it read-only.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

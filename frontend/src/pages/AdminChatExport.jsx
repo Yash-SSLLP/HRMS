@@ -1,3 +1,9 @@
+/**
+ * AdminChatExport — SuperAdmin-only tool (admin portal) to pull the full DM
+ * transcript between any two users, including messages they deleted from their
+ * own view. Loads the user list from GET /admin/users and the transcript from
+ * GET /chat/admin/transcript, then exports it client-side as .txt or .json.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
@@ -14,6 +20,7 @@ export default function AdminChatExport() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Populate the two person pickers (SuperAdmin only; others see a gate below).
   useEffect(() => {
     if (me?.role !== 'SuperAdmin') return;
     api.get('/admin/users?active=true')

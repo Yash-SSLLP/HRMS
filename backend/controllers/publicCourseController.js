@@ -58,12 +58,28 @@ async function requireViewer(course, sessionToken, res) {
   return viewer;
 }
 
+/**
+ * Public: fetch a course by its public token (video refs stripped).
+ * @route GET /api/public/courses/:token  (PUBLIC, no auth)
+ * @param {string} req.params.token - the course publicToken
+ * @returns {{course: Object, feedbackQuestions: Array}}
+ */
 // GET /api/public/courses/:token — course + feedback questions (no video refs)
 const getPublicCourse = asyncHandler(async (req, res) => {
   const course = await findPublicCourse(req.params.token, res);
   res.json({ course: publicSafeCourse(course), feedbackQuestions: VIDEO_FEEDBACK_QUESTIONS });
 });
 
+/**
+ * Public: register a lead-form viewer and mint a session token for the course.
+ * @route POST /api/public/courses/:token/register  (PUBLIC)
+ * @param {string} req.params.token - course publicToken
+ * @param {string} req.body.name - required
+ * @param {string} req.body.phone - required, validated for digits
+ * @param {string} req.body.location - required
+ * @param {string} [req.body.email]
+ * @returns {{sessionToken: string, viewer: {name}}} (201)
+ */
 // POST /api/public/courses/:token/register  { name, phone, location, email? }
 const registerViewer = asyncHandler(async (req, res) => {
   const course = await findPublicCourse(req.params.token, res);
@@ -91,6 +107,14 @@ const registerViewer = asyncHandler(async (req, res) => {
   res.status(201).json({ sessionToken: viewer.sessionToken, viewer: { name: viewer.name } });
 });
 
+/**
+ * Public: stream a module's video for a registered viewer (Cloudinary 302 or Drive proxy).
+ * @route GET /api/public/courses/:token/modules/:mid/video?viewer=<sessionToken>
+ * @param {string} req.params.token - course publicToken
+ * @param {string} req.params.mid - module id
+ * @param {string} req.query.viewer - viewer sessionToken (required)
+ * @returns {binary|302} redirect to Cloudinary or proxied Drive stream
+ */
 // GET /api/public/courses/:token/modules/:mid/video?viewer=<sessionToken>
 const streamPublicVideo = asyncHandler(async (req, res) => {
   const course = await findPublicCourse(req.params.token, res);
@@ -109,6 +133,13 @@ const streamPublicVideo = asyncHandler(async (req, res) => {
   await streamDriveFile(module.driveFileId, req, res);
 });
 
+/**
+ * Public: list APPROVED comments for a course (optionally a single module).
+ * @route GET /api/public/courses/:token/comments?module=<mid>  (PUBLIC)
+ * @param {string} req.params.token - course publicToken
+ * @param {string} [req.query.module] - module id filter
+ * @returns {{count: number, comments: Object[]}} (max 300)
+ */
 // GET /api/public/courses/:token/comments?module=<mid> — approved comments only
 const listPublicComments = asyncHandler(async (req, res) => {
   const course = await findPublicCourse(req.params.token, res);
@@ -122,6 +153,16 @@ const listPublicComments = asyncHandler(async (req, res) => {
   res.json({ count: comments.length, comments });
 });
 
+/**
+ * Public: a registered viewer posts a comment (held Pending for admin approval).
+ * @route POST /api/public/courses/:token/comments  (PUBLIC)
+ * @param {string} req.params.token - course publicToken
+ * @param {string} req.body.viewer - viewer sessionToken (required)
+ * @param {string} [req.body.module] - module id
+ * @param {string} req.body.text - required, truncated to 2000 chars
+ * @returns {{ok: true, pending: true, id}} (201)
+ * @sideeffect notifies course admins of the pending comment
+ */
 // POST /api/public/courses/:token/comments  { viewer, module?, text }
 const postPublicComment = asyncHandler(async (req, res) => {
   const course = await findPublicCourse(req.params.token, res);
@@ -159,6 +200,17 @@ const postPublicComment = asyncHandler(async (req, res) => {
   res.status(201).json({ ok: true, pending: true, id: comment._id });
 });
 
+/**
+ * Public: a registered viewer submits per-video feedback (rating + fixed answers).
+ * @route POST /api/public/courses/:token/feedback  (PUBLIC)
+ * @param {string} req.params.token - course publicToken
+ * @param {string} req.body.viewer - viewer sessionToken (required)
+ * @param {string} [req.body.module] - module id
+ * @param {number} [req.body.rating] - 1-5 (out-of-range ignored)
+ * @param {Array} [req.body.answers] - answers to VIDEO_FEEDBACK_QUESTIONS (unknown keys dropped)
+ * @param {string} [req.body.comment] - truncated to 2000 chars
+ * @returns {{ok: true, id}} (201)
+ */
 // POST /api/public/courses/:token/feedback  { viewer, module, rating, answers, comment }
 const postPublicFeedback = asyncHandler(async (req, res) => {
   const course = await findPublicCourse(req.params.token, res);

@@ -1,6 +1,10 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+// The login/identity account for anyone who signs in (staff and execs). Holds
+// credentials, role, and access grants; the HR record lives in EmployeeProfile
+// (1:1 via EmployeeProfile.user). Passwords are bcrypt-hashed and never serialized.
+
 // SuperAdmin/HRManager = portal admins. CEO/MD = read-only executives (can view
 // the whole admin portal but not change anything). Manager = an employee who
 // also approves leave for and sees the data of their direct reports. LDManager
@@ -67,6 +71,8 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Hook: hash the password on change and bump tokenVersion so every existing JWT
+// (session) is invalidated — a password change logs the account out everywhere.
 userSchema.pre('save', async function hashPassword(next) {
   if (!this.isModified('password')) return next();
   const salt = await bcrypt.genSalt(10);
@@ -77,14 +83,17 @@ userSchema.pre('save', async function hashPassword(next) {
   next();
 });
 
+// Method: verify a plaintext password against the stored bcrypt hash (login).
 userSchema.methods.comparePassword = function comparePassword(plain) {
   return bcrypt.compare(plain, this.password);
 };
 
+// Virtual: convenient "First Last" display name (not stored).
 userSchema.virtual('fullName').get(function () {
   return `${this.firstName} ${this.lastName}`.trim();
 });
 
+// toJSON transform: include virtuals and strip the password hash before serializing.
 userSchema.set('toJSON', {
   virtuals: true,
   transform: (_doc, ret) => {

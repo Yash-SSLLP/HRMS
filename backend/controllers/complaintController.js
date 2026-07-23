@@ -1,3 +1,9 @@
+/**
+ * Complaint controller — confidential grievances. Employees raise complaints
+ * against a colleague; each is routed to an HR partner or SuperAdmin (escalated
+ * when it concerns an admin or the complainant's own HR). Only leadership (CEO/HR/
+ * SuperAdmin) can view them, and never the person a complaint is raised against.
+ */
 const asyncHandler = require('express-async-handler');
 const Complaint = require('../models/Complaint');
 const { COMPLAINT_STATUSES } = require('../models/Complaint');
@@ -15,6 +21,15 @@ async function findSuperAdmin() {
   return User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 });
 }
 
+/**
+ * Raise a confidential complaint against another user; auto-routes the assignee.
+ * @route POST /api/complaints
+ * @param {string} req.body.againstUserId - required; cannot be self
+ * @param {string} req.body.subject - required
+ * @param {string} req.body.description - required
+ * @returns {{complaint: Object}} (201)
+ * @sideeffect notifies leadership (CEO/HR/SuperAdmin) except the accused and complainant, with no sensitive detail
+ */
 // POST /api/complaints  { againstUserId, subject, description }
 // Routing:
 //  - Complaint about an HRManager/SuperAdmin  -> escalate to a SuperAdmin.
@@ -43,6 +58,7 @@ const createComplaint = asyncHandler(async (req, res) => {
   const myProfile = await EmployeeProfile.findOne({ user: meId }).select('hrPartner');
   const myHrPartnerId = myProfile?.hrPartner ? String(myProfile.hrPartner) : null;
 
+  // Escalate to a SuperAdmin when the complaint targets an admin or the caller's own HR
   const aboutAdmin = ['HRManager', 'SuperAdmin'].includes(against.role);
   const aboutMyHr = myHrPartnerId && myHrPartnerId === String(againstUserId);
 
@@ -83,6 +99,11 @@ const createComplaint = asyncHandler(async (req, res) => {
   res.status(201).json({ complaint });
 });
 
+/**
+ * List complaints raised by the caller, newest first.
+ * @route GET /api/complaints/mine
+ * @returns {{count: number, complaints: Object[]}} with populated against/assignedTo
+ */
 // GET /api/complaints/mine  — complaints the caller raised
 const myComplaints = asyncHandler(async (req, res) => {
   const complaints = await Complaint.find({ complainant: req.user._id })
@@ -92,9 +113,15 @@ const myComplaints = asyncHandler(async (req, res) => {
   res.json({ count: complaints.length, complaints });
 });
 
+/**
+ * Leadership inbox: all complaints except ones raised against the viewer.
+ * @route GET /api/complaints/assigned  (CEO / HR / SuperAdmin)
+ * @returns {{count: number, complaints: Object[]}} with populated complainant/against/assignedTo
+ */
 // GET /api/complaints/assigned  — leadership inbox (CEO / HR / SuperAdmin)
 // Everyone in the group sees every complaint EXCEPT ones raised against them.
 const assignedComplaints = asyncHandler(async (req, res) => {
+  // Permission gate: only leadership roles have an inbox
   if (!COMPLAINT_VIEWER_ROLES.includes(req.user.role)) {
     res.status(403);
     throw new Error('Only the CEO, HR and SuperAdmins can view complaints');
@@ -109,6 +136,14 @@ const assignedComplaints = asyncHandler(async (req, res) => {
   res.json({ count: complaints.length, complaints });
 });
 
+/**
+ * Update a complaint's status/resolution note.
+ * @route PATCH /api/complaints/:id
+ * @param {string} req.params.id - complaint id
+ * @param {string} [req.body.status] - one of COMPLAINT_STATUSES
+ * @param {string} [req.body.resolutionNote]
+ * @returns {{complaint: Object}}; HR/SuperAdmin (not the accused) or the assignee only; CEO is read-only
+ */
 // PATCH /api/complaints/:id  { status, resolutionNote }
 const updateComplaint = asyncHandler(async (req, res) => {
   const complaint = await Complaint.findById(req.params.id);

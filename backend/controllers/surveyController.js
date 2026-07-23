@@ -1,3 +1,8 @@
+/**
+ * Survey controller — employee surveys (Survey) and their responses
+ * (SurveyResponse). Employees list/answer active surveys (one response each); HR
+ * manage surveys and read aggregated results that respect per-survey anonymity.
+ */
 const asyncHandler = require('express-async-handler');
 const Survey = require('../models/Survey');
 const { SurveyResponse } = require('../models/Survey');
@@ -13,6 +18,11 @@ const activeWindowQuery = (now) => ({
 
 // ===== Shared / Employee =====
 
+/**
+ * List surveys open to the caller (active and within their display window).
+ * @route GET /api/surveys
+ * @returns {{count: number, surveys: Object[]}} each with an `answered` flag
+ */
 // GET /  — surveys open to the current user: active AND inside their display
 // window, with an `answered` flag.
 const listActive = asyncHandler(async (req, res) => {
@@ -28,6 +38,12 @@ const listActive = asyncHandler(async (req, res) => {
   res.json({ count: withFlag.length, surveys: withFlag });
 });
 
+/**
+ * Get one survey with the caller's `answered` flag.
+ * @route GET /api/surveys/:id
+ * @param {string} req.params.id - survey id
+ * @returns {Object} the survey plus `answered`
+ */
 // GET /:id  — a single survey with `answered` flag
 const getSurvey = asyncHandler(async (req, res) => {
   const survey = await Survey.findById(req.params.id).lean();
@@ -39,6 +55,13 @@ const getSurvey = asyncHandler(async (req, res) => {
   res.json({ ...survey, answered: !!existing });
 });
 
+/**
+ * Submit the caller's answers to a survey (one response per user).
+ * @route POST /api/surveys/:id/respond
+ * @param {string} req.params.id - survey id
+ * @param {Array} req.body.answers - per-question answers
+ * @returns {{ok: boolean}} (201); 400 if closed or already answered
+ */
 // POST /:id/respond  — submit answers
 const respond = asyncHandler(async (req, res) => {
   const survey = await Survey.findById(req.params.id);
@@ -73,6 +96,11 @@ const respond = asyncHandler(async (req, res) => {
 
 // ===== HR/Admin =====
 
+/**
+ * List every survey (including inactive) with a response count.
+ * @route GET /api/surveys/admin/all  (HR/Admin)
+ * @returns {{count: number, surveys: Object[]}} each with responseCount
+ */
 // GET /admin/all  — every survey incl. inactive, with responseCount
 const listAllAdmin = asyncHandler(async (req, res) => {
   const surveys = await Survey.find({}).sort({ createdAt: -1 }).lean();
@@ -84,6 +112,13 @@ const listAllAdmin = asyncHandler(async (req, res) => {
   res.json({ count: withCount.length, surveys: withCount });
 });
 
+/**
+ * Create a survey with at least one question.
+ * @route POST /api/surveys  (HR/Admin)
+ * @param {string} req.body.title - required
+ * @param {Array} req.body.questions - required, non-empty
+ * @returns {{survey: Object}} (201)
+ */
 // POST /  — create a survey
 const createSurvey = asyncHandler(async (req, res) => {
   const { title, questions } = req.body;
@@ -95,6 +130,13 @@ const createSurvey = asyncHandler(async (req, res) => {
   res.status(201).json({ survey });
 });
 
+/**
+ * Update a survey (partial).
+ * @route PUT /api/surveys/:id  (HR/Admin)
+ * @param {string} req.params.id - survey id
+ * @param {Object} req.body - fields to update
+ * @returns {{survey: Object}}
+ */
 // PUT /:id  — update a survey
 const updateSurvey = asyncHandler(async (req, res) => {
   const survey = await Survey.findById(req.params.id);
@@ -102,12 +144,19 @@ const updateSurvey = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Survey not found');
   }
+  // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
   Object.assign(survey, req.body);
   await survey.save();
   res.json({ survey });
 });
 
+/**
+ * Delete a survey and all its responses.
+ * @route DELETE /api/surveys/:id  (HR/Admin)
+ * @param {string} req.params.id - survey id
+ * @returns {{id: string, deleted: boolean}}
+ */
 // DELETE /:id  — delete a survey and its responses
 const deleteSurvey = asyncHandler(async (req, res) => {
   const survey = await Survey.findById(req.params.id);
@@ -115,11 +164,19 @@ const deleteSurvey = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Survey not found');
   }
+  // Cascade: remove the survey's responses before the survey itself
   await SurveyResponse.deleteMany({ survey: survey._id });
   await survey.deleteOne();
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * Aggregate a survey's results: option counts for choice questions, collected
+ * free-text for text questions (no respondent identities returned).
+ * @route GET /api/surveys/:id/results  (HR/Admin)
+ * @param {string} req.params.id - survey id
+ * @returns {{survey, totalResponses, results: Object[]}}
+ */
 // GET /:id/results  — aggregated results, respecting anonymity
 const results = asyncHandler(async (req, res) => {
   const survey = await Survey.findById(req.params.id).lean();

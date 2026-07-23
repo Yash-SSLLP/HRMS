@@ -1,3 +1,7 @@
+// Auth state slice (zustand + persist). Holds the logged-in `user` and JWT
+// `token`, persisted to localStorage under "hrms-auth" so a refresh keeps the
+// session. The token is read by the axios interceptor (api/client.js); `logout`
+// is also invoked there on a 401. Exposes role/auth helpers for route guards.
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 

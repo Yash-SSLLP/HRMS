@@ -1,3 +1,10 @@
+/**
+ * AdminAssets — company asset inventory + assignment register (admin portal).
+ * Two tabs: Assets (CRUD via /assets) and Assignments (history from
+ * /assets/assignments). Assets are issued/returned by patching
+ * /assets/:id/assign with a userId (or null to return). Employee list from
+ * GET /admin/users.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -60,6 +67,7 @@ export default function AdminAssets() {
   };
   useEffect(() => { load(); }, []);
 
+  // Assignment register — reloaded when the tab opens or the active-only toggle flips.
   const loadAssignments = async () => {
     setALoading(true);
     try {

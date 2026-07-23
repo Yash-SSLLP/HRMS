@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+// A job opening / requisition in the recruitment module. Candidates apply against
+// a Job; drives the hiring pipeline.
+// Open -> accepting candidates; OnHold -> paused; Closed -> filled or cancelled.
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 
 const jobSchema = new mongoose.Schema(
@@ -20,6 +23,7 @@ const jobSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Audit-status plugin: logs `status` transitions to AuditLog (labelled by title).
 jobSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
 
 module.exports = mongoose.model('Job', jobSchema);

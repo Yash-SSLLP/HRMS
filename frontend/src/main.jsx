@@ -1,3 +1,7 @@
+// App bootstrap / entry point. Mounts <App> into #root inside React.StrictMode,
+// wrapped with the router (BrowserRouter) and two global providers: DialogHost
+// (renders imperatively-triggered confirm/prompt dialogs) and ToastContainer
+// (react-toastify notifications). Also pulls in the global stylesheet.
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';

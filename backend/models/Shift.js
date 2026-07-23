@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+// A named work shift (e.g. General, Night) with start/end times. Assigned to
+// employees per day via RosterEntry and used by attendance/scheduling.
 const shiftSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },

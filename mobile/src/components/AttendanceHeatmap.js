@@ -5,10 +5,13 @@ import { colors, font, isDark } from '../theme';
 import { ModalSheet } from './ui';
 import { fmtDate, fmtTime } from '../utils/format';
 
-// GitHub-style attendance heatmap of the trailing 12 months, split into month
-// blocks. Mirrors the website's AttendanceHeatmap.
+// components/AttendanceHeatmap.js — GitHub-style trailing-12-month attendance
+// grid (split into month blocks), mirroring the website's AttendanceHeatmap.
 //   • Personal mode (default): each day coloured by the caller's classification.
-//   • Org mode (org=true, admins): each day shaded by how many were present.
+//   • Org mode (org=true, admins): each day shaded by how many were present, and
+//     tapping a day opens a per-day names breakdown sheet.
+// Endpoints switch by scope: '/attendance/*' for org, '/manager/attendance/*'
+// for a manager's own team.
 
 const EMPTY = isDark ? '#2a2e37' : '#ebedf0';
 const CATEGORIES = [
@@ -35,10 +38,14 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 // touch — the grid scrolls horizontally, so extra width is free.
 const CELL = 15, GAP = 3;
 
-// org=true renders the aggregate view. scope selects whose employees it covers:
-// 'org' = everyone (HR/Admin), 'team' = the caller's direct reports (Manager).
-// In the aggregate view, tapping a day opens a sheet listing who was late / on
-// leave / present etc., by name.
+/**
+ * Attendance heatmap.
+ * @prop {boolean} [org] true renders the aggregate (present-count) view; tapping
+ *   a day opens a names breakdown. false renders the caller's own days.
+ * @prop {number} [days] Trailing window to request.
+ * @prop {'org'|'team'} [scope] Whose employees the aggregate covers: 'org' =
+ *   everyone (HR/Admin), 'team' = the caller's direct reports (Manager).
+ */
 export default function AttendanceHeatmap({ org = false, days = 365, scope = 'org' }) {
   const [byDate, setByDate] = useState({});
   const [maxPresent, setMaxPresent] = useState(0);
@@ -174,7 +181,8 @@ export default function AttendanceHeatmap({ org = false, days = 365, scope = 'or
   );
 }
 
-// One category group (Late / On leave / etc.) with the employees behind it.
+/** One category group (Late / On leave / etc.) listing the employees behind it.
+ *  `sub(person)` optionally renders a trailing detail (e.g. check-in time). */
 function DaySection({ title, color, people, sub }) {
   if (!people || !people.length) return null;
   return (
@@ -197,7 +205,8 @@ function DaySection({ title, color, people, sub }) {
   );
 }
 
-// Tap-through breakdown for one aggregate day: who was late / on leave / present.
+/** Tap-through breakdown sheet for one aggregate day: who was late / on leave /
+ *  half-day / comp-off / absent / present, by name. */
 function DayDetailsSheet({ visible, date, data, loading, onClose }) {
   const title = date
     ? fmtDate(new Date(`${date}T00:00:00+05:30`), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })

@@ -1,3 +1,8 @@
+// Floating WhatsApp-style chat dock mounted once by Layout, so it's present on
+// every authenticated page. Handles 1:1 connections and group chats over HTTP
+// polling (conversation list + incremental after-cursor thread sync), with a
+// localStorage cache for instant paint, read receipts, Jitsi video-call links,
+// group management, and a resigned-user send block. Light/dark themed.
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import AuthImage from './AuthImage';

@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
 
+// The leave module. Defines two models: LeaveRequest (an application that climbs
+// a reporting-manager approval chain) and LeaveBalance (per-employee per-year
+// quota/usage per leave type). Also exports the shared approval-step sub-schema
+// reused by ExitRequest.
+
 // Indian leave taxonomy
 // EL  = Earned / Privilege Leave (accrued, encashable)
 // CL  = Casual Leave
@@ -10,6 +15,7 @@ const mongoose = require('mongoose');
 // LOP = Loss of Pay (unpaid)
 const LEAVE_TYPES = ['EL', 'CL', 'SL', 'ML', 'PL', 'COMP', 'LOP'];
 
+// Pending -> in approval chain; Approved/Rejected -> final decision; Cancelled -> withdrawn.
 const LEAVE_STATUS = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
 
 // One rung of the reporting-hierarchy approval ladder. A request climbs the
@@ -110,8 +116,10 @@ const leaveBalanceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// One balance document per employee per year.
 leaveBalanceSchema.index({ employee: 1, year: 1 }, { unique: true });
 
+// Audit-status plugin: logs LeaveRequest `status` transitions to AuditLog.
 leaveRequestSchema.plugin(require("./plugins/auditStatus"));
 const LeaveRequest = mongoose.model('LeaveRequest', leaveRequestSchema);
 const LeaveBalance = mongoose.model('LeaveBalance', leaveBalanceSchema);

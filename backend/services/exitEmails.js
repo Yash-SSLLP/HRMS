@@ -19,6 +19,7 @@ function fmtDate(d) {
  * @param {Object} ctx.hr         User doc of the HR person handling the exit
  * @param {Date}   ctx.lastWorkingDay
  * @param {string} ctx.feedbackUrl
+ * @returns {{subject:string, text:string, html:string}} Ready-to-send email parts.
  */
 function buildExitEmail(ctx) {
   const empFirst = ctx.employee.user?.firstName || 'there';

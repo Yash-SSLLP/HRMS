@@ -1,8 +1,19 @@
+/**
+ * Org controller — builds the read-only reporting-hierarchy org chart from
+ * EmployeeProfile.reportingManager links, folding in profile-less CEO/MD
+ * executives as top nodes, and guarding against manager cycles so the tree
+ * always renders.
+ */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { hiddenUserIds } = require('../utils/visibility');
 
+/**
+ * Return the reporting hierarchy as a forest of nodes for the org-chart view.
+ * @route GET /api/org/chart
+ * @returns {{roots: Object[]}} each node {id, profileId, name, designation, department, role, managerId, reports[]}
+ */
 // GET /api/org/chart
 // Builds a read-only reporting hierarchy from EmployeeProfile records.
 // Each node is keyed by the profile's USER id and links to its manager via

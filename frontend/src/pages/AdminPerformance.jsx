@@ -1,3 +1,9 @@
+/**
+ * AdminPerformance — employee goal management (admin portal). Lists goals from
+ * GET /performance/goals (employees from GET /admin/users) and creates/edits/
+ * deletes via POST/PUT/DELETE /performance/goals, including progress and rating.
+ * Employees self-update progress on EmployeeGoals.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

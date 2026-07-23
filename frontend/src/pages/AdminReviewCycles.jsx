@@ -1,3 +1,9 @@
+/**
+ * AdminReviewCycles — appraisal cycle management (admin portal). Lists cycles
+ * from GET /reviews/cycles and CRUDs them via /reviews/cycles; a Manage panel
+ * assigns 360° reviewers (self/manager/peer) via POST /reviews/cycles/:id/assign
+ * and lists that cycle's reviews from GET /reviews/cycles/:id/reviews.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -141,6 +147,7 @@ export default function AdminReviewCycles() {
     loadCycleReviews(c._id);
   };
 
+  // Assign one reviewer to review one employee (with their relationship).
   const doAssign = async (e) => {
     e.preventDefault();
     if (!assignForm.employee || !assignForm.reviewer) {

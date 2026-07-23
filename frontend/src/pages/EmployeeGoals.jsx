@@ -1,3 +1,9 @@
+/**
+ * EmployeeGoals — the logged-in employee's performance goals (employee portal).
+ * Loads goals from GET /performance/goals/me and lets the user self-update the
+ * progress slider via PATCH /performance/goals/me/:id/progress. Review notes and
+ * ratings set by the manager are shown read-only.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -26,6 +32,7 @@ export default function EmployeeGoals() {
   };
   useEffect(() => { load(); }, []);
 
+  // Optimistically update the local slider while persisting the new progress.
   const setProgress = async (g, progress) => {
     try {
       await api.patch(`/performance/goals/me/${g._id}/progress`, { progress });

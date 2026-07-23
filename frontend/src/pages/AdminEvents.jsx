@@ -1,3 +1,8 @@
+/**
+ * AdminEvents — company event management (admin portal). Lists events for a year
+ * from GET /events and creates/edits/deletes via POST/PUT/DELETE /events; a new
+ * event notifies every employee and shows on the shared Calendar.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

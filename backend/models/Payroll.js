@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// A monthly payslip for one employee: earnings, statutory deductions and
+// employer contributions (Indian payroll), with computed gross/net. One per
+// employee per month; drives salary disbursement and the shareable payslip PDF.
+
 // Indian salary components (earnings)
 const earningsSchema = new mongoose.Schema(
   {
@@ -70,6 +74,7 @@ const payrollSchema = new mongoose.Schema(
     totalDeductions: { type: Number, default: 0 }, // Sum of deductions
     netPay: { type: Number, default: 0 },          // grossSalary - totalDeductions
 
+    // Draft -> being prepared; Approved -> signed off; Paid -> disbursed; OnHold -> payment withheld.
     status: {
       type: String,
       enum: ['Draft', 'Approved', 'Paid', 'OnHold'],
@@ -123,6 +128,7 @@ payrollSchema.pre('save', function computeTotals(next) {
   next();
 });
 
+// Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 payrollSchema.plugin(require("./plugins/auditStatus"));
 
 module.exports = mongoose.model('Payroll', payrollSchema);

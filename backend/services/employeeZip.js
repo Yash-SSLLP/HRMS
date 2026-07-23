@@ -1,10 +1,19 @@
 /**
  * Builds ZIP archives for employee export — a per-employee bundle containing a
  * human-readable details file plus every uploaded document.
+ *
+ * External systems: the Document collection (looked up per employee) and the
+ * local storage service (streams the stored files into the archive). Works with
+ * an already-open `archiver` instance supplied by the caller.
  */
 const Document = require('../models/Document');
 const storage = require('./storage');
 
+/**
+ * Sanitise an arbitrary string into a filesystem-safe archive entry name.
+ * @param {string} name - Raw name (category, filename, …).
+ * @returns {string} Safe name; 'file' when nothing usable remains.
+ */
 function safe(name) {
   return String(name || '').replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'file';
 }
@@ -16,7 +25,11 @@ function fmtDate(d) {
   return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-// Compose a readable details.txt for one (populated) employee profile.
+/**
+ * Compose a readable details.txt for one (populated) employee profile.
+ * @param {Object} profile - EmployeeProfile with `user` and `hrPartner` populated (bank/address/etc. inline).
+ * @returns {string} A plain-text, section-formatted employee summary.
+ */
 function buildDetailsText(profile) {
   const u = profile.user || {};
   const hr = profile.hrPartner || {};
@@ -85,8 +98,17 @@ function buildDetailsText(profile) {
   ].join('\n');
 }
 
-// Append one employee's details + documents into an open archiver instance,
-// nested under `folder` (use '' for a single-employee archive at root).
+/**
+ * Append one employee's details + documents into an open archiver instance,
+ * nested under `folder` (use '' for a single-employee archive at root).
+ * Missing/unreadable files are noted as placeholder .txt entries rather than
+ * failing the whole archive.
+ * @param {import('archiver').Archiver} archive - An open archiver instance to append entries to.
+ * @param {Object} profile - Populated EmployeeProfile (see buildDetailsText).
+ * @param {string} [folder=''] - Sub-folder prefix inside the archive; '' places entries at root.
+ * @returns {Promise<void>}
+ * @sideEffects Queries the Document collection and reads stored files via the storage service.
+ */
 async function appendEmployee(archive, profile, folder = '') {
   const prefix = folder ? `${folder}/` : '';
   archive.append(buildDetailsText(profile), { name: `${prefix}details.txt` });

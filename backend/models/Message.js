@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+// A single chat message in the internal messaging module. Belongs to either a
+// 1:1 Connection or a group ChatGroup (exactly one), and is never hard-deleted.
 const messageSchema = new mongoose.Schema(
   {
     // A message belongs to either a 1:1 connection OR a group (exactly one).

@@ -1,8 +1,15 @@
+/**
+ * DocumentSubmitForm — public (no-login) page, route /documents/:token, where a
+ * new hire uploads their joining documents from a tokenised HR link. Loads the
+ * required doc-type list via GET /recruitment/documents/:token and submits the
+ * files (multipart, one label per file) via POST to the same URL.
+ */
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
+// Centered card layout wrapper (company logo header) shared by all page states.
 function Shell({ children }) {
   return (
     <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 px-4 py-10">
@@ -29,6 +36,7 @@ export default function DocumentSubmitForm() {
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
+  // Load candidate + required doc types; if already confirmed, show done state.
   useEffect(() => {
     (async () => {
       try {
@@ -45,6 +53,8 @@ export default function DocumentSubmitForm() {
 
   const setFile = (type) => (e) => setFiles((f) => ({ ...f, [type]: Array.from(e.target.files || []) }));
 
+  // Bundle each picked file with a parallel 'labels' entry (its doc type) so the
+  // server can map uploads back to the requested document categories.
   const submit = async (e) => {
     e.preventDefault();
     setError('');

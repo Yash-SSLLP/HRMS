@@ -1,3 +1,9 @@
+/**
+ * CalendarScreen — month-by-month company calendar of holidays, events,
+ * birthdays and anniversaries, grouped by day.
+ * Route: "Calendar" (opened from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /celebrations/calendar?month=YYYY-MM.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, SectionList, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -15,6 +21,7 @@ const TYPE_META = {
   anniversary: { icon: 'ribbon', tint: '#9333ea', label: 'Anniversary' },
 };
 
+/** Main screen component; no route params — defaults to the current month. */
 export default function CalendarScreen() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -22,6 +29,7 @@ export default function CalendarScreen() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Fetch celebrations for a given year/month; swallows errors into empty list.
   const load = useCallback(async (y, m) => {
     setLoading(true);
     const mm = String(m).padStart(2, '0');
@@ -30,8 +38,10 @@ export default function CalendarScreen() {
     setLoading(false);
   }, []);
 
+  // Reload whenever the screen refocuses or the visible month changes.
   useFocusEffect(useCallback(() => { load(year, month); }, [load, year, month]));
 
+  // Step the visible month by +/-1, rolling over the year boundary.
   const shift = (dir) => {
     let m = month + dir;
     let y = year;

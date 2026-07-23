@@ -1,3 +1,7 @@
+// store/auth.js — Zustand slice for the signed-in session.
+// Holds { user, token } persisted to AsyncStorage so the session survives
+// restarts, plus a `hydrated` flag the navigator waits on before deciding
+// Login vs. app. Exposes setSession/setUser/logout and a hasRole() helper.
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 

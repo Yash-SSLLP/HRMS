@@ -1,3 +1,10 @@
+/**
+ * AdminOverview — admin portal dashboard/landing (route /admin). Aggregates
+ * headcount, today's attendance, pending leaves and open complaints from
+ * GET /dashboard/admin plus per-day trends from GET /attendance/daily-stats,
+ * rendering stat cards, charts, heatmap and quick actions. Data scope depends on
+ * the viewer's role (org-wide vs assigned employees). Uses a stale-while-revalidate cache.
+ */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';

@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 
+// An employee business-travel request: trip details + optional advance, plus a
+// second, independent reimbursement claim for out-of-pocket travel expenses.
 const TRAVEL_MODES = ['Flight', 'Train', 'Bus', 'Car', 'Other'];
+// Approval lifecycle of the trip itself: Pending -> awaiting approval; Approved/Rejected -> decided; Completed -> trip done.
 const TRAVEL_STATUS = ['Pending', 'Approved', 'Rejected', 'Completed'];
 // Reimbursement lifecycle for expenses the employee ALREADY PAID out of pocket.
 // 'None' when no claim; ends at 'Reimbursed' once the company pays them back.
@@ -39,6 +42,7 @@ const travelRequestSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 travelRequestSchema.plugin(require("./plugins/auditStatus"));
 
 module.exports = mongoose.model('TravelRequest', travelRequestSchema);

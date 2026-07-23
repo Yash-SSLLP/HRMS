@@ -1,3 +1,10 @@
+/**
+ * ChangeRequestScreen — lets an employee request an update to a profile/login
+ * field (from a server-defined list) with an optional reason, and lists their
+ * past requests with approval status.
+ * Route: "ChangeRequest" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /change-requests/fields, GET /change-requests, POST /change-requests.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,6 +28,7 @@ export default function ChangeRequestScreen() {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Load the editable-field catalogue and the user's own requests together.
   const load = useCallback(async () => {
     const [fl, mine] = await Promise.all([
       api.get('/change-requests/fields').catch(() => ({ data: {} })),
@@ -36,6 +44,7 @@ export default function ChangeRequestScreen() {
 
   const labelFor = (key) => fields.find((f) => f.key === key)?.label || key;
 
+  // Validate then POST the selected field + new value for HR approval.
   const submit = async () => {
     if (!field) { Alert.alert('Pick a field', 'Choose what you want to change.'); return; }
     if (!value.trim()) { Alert.alert('Add a value', 'Enter the new value.'); return; }

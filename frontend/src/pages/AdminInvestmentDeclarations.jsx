@@ -1,3 +1,9 @@
+/**
+ * AdminInvestmentDeclarations — Form 12BB review (admin portal). Lists employee
+ * declarations from GET /declarations (filter by status/financial year), opens a
+ * detail modal with the section breakdown + proofs, and verifies/rejects via
+ * PATCH /declarations/:id/status.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

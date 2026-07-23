@@ -1,3 +1,8 @@
+/**
+ * AdminAuditLog — portal-wide status-change audit trail (admin portal). Loads
+ * entries (who changed what status, when) from GET /audit with module/search/date
+ * filters; the endpoint also returns the list of distinct modules for the filter.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

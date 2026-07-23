@@ -1,3 +1,12 @@
+/**
+ * Payroll controller — payslips (Payroll) and the monthly payroll run. Employees
+ * view/download their own Approved/Paid payslips and an attendance-policy summary.
+ * HR list/export payslips, run payroll org-wide (Draft seeded from the last slip)
+ * or per-employee (salary structure % × CTC, prorated by attendance, with the
+ * 2-paid-leaves/month + late-penalty policy and active loan EMIs), then edit /
+ * approve / mark Paid, render PDFs (with FY-to-date figures), and share/email via
+ * a public no-login link. Status flow: Draft → Approved → Paid.
+ */
 const asyncHandler = require('express-async-handler');
 const crypto = require('crypto');
 const Payroll = require('../models/Payroll');
@@ -18,6 +27,11 @@ async function getMyProfileOrFail(userId, res) {
   return profile;
 }
 
+/**
+ * List the caller's own Approved/Paid payslips, newest first.
+ * @route GET /api/payroll/me  (employee)
+ * @returns {{count: number, payslips: Object[]}}
+ */
 // GET /api/payroll/me  (employee)
 const listMyPayslips = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -28,6 +42,12 @@ const listMyPayslips = asyncHandler(async (req, res) => {
   res.json({ count: payslips.length, payslips });
 });
 
+/**
+ * Get the caller's own payslip for a period (Approved/Paid only).
+ * @route GET /api/payroll/me/:year/:month  (employee)
+ * @param {string} req.params.year / req.params.month
+ * @returns {{payslip: Object}}
+ */
 // GET /api/payroll/me/:year/:month  (employee)
 const getMyPayslip = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -44,6 +64,13 @@ const getMyPayslip = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+/**
+ * The caller's month attendance-policy summary (lateness, paid-leave usage,
+ * expected penalty/incentive).
+ * @route GET /api/payroll/me/attendance-summary?year=&month=  (employee)
+ * @param {number} [req.query.year] / [req.query.month] - default current
+ * @returns {{year, month, needsSetup, policy}}
+ */
 // GET /api/payroll/me/attendance-summary?year=&month=  (employee)
 // Self-service view of this month's lateness + paid-leave usage against policy,
 // and the resulting expected late-penalty / leave-incentive — so an employee can
@@ -63,6 +90,12 @@ const myAttendanceSummary = asyncHandler(async (req, res) => {
 
 // --- HR/Admin endpoints ---
 
+/**
+ * List payslips with optional filters.
+ * @route GET /api/payroll  (HR/Admin)
+ * @param {string} [req.query.employee] / [req.query.year] / [req.query.month] / [req.query.status]
+ * @returns {{count: number, payslips: Object[]}} with populated employee
+ */
 // GET /api/payroll  (HR/Admin) — filters: employee, year, month, status
 const listPayslips = asyncHandler(async (req, res) => {
   const { employee, year, month, status } = req.query;
@@ -82,6 +115,13 @@ const listPayslips = asyncHandler(async (req, res) => {
   res.json({ count: payslips.length, payslips });
 });
 
+/**
+ * Export a month's payroll as an Excel-compatible CSV (one row per employee).
+ * @route GET /api/payroll/export?year=&month=&status=  (HR/Admin)
+ * @param {number} [req.query.year] / [req.query.month]
+ * @param {string} [req.query.status]
+ * @returns {text/csv} UTF-8 with BOM
+ */
 // GET /api/payroll/export?year=&month=&status=  (HR/Admin)
 // Excel-compatible CSV of the whole month's payroll — one row per employee
 // with every earning/deduction component. Opens directly in Excel.
@@ -196,6 +236,12 @@ async function buildRunRows(year, month) {
   });
 }
 
+/**
+ * Preview the org-wide monthly payroll run (who is new vs already generated).
+ * @route GET /api/payroll/run?year=&month=  (HR/Admin)
+ * @param {number} [req.query.year] / [req.query.month]
+ * @returns {{year, month, count, alreadyGenerated, toGenerate, rows}}
+ */
 // GET /api/payroll/run?year=&month=  — preview who gets what
 const previewPayrollRun = asyncHandler(async (req, res) => {
   const now = new Date();
@@ -212,6 +258,14 @@ const previewPayrollRun = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Execute the org-wide monthly run: create Draft payslips seeded from each
+ * employee's most recent payslip (blank for new joiners); never overwrites existing.
+ * @route POST /api/payroll/run  (HR/Admin)
+ * @param {number} req.body.year - required
+ * @param {number} req.body.month - required 1-12
+ * @returns {{year, month, created, skippedExisting, needsSetup, payslips}} (201)
+ */
 // POST /api/payroll/run  { year, month }  — create the Draft payslips
 const runPayroll = asyncHandler(async (req, res) => {
   const year = Number(req.body.year);
@@ -383,6 +437,13 @@ async function computeEmployeeRun(profile, year, month) {
   };
 }
 
+/**
+ * Preview one employee's computed payroll for a month (structure × attendance × loans).
+ * @route GET /api/payroll/run-employee?employee=&year=&month=  (HR/Admin)
+ * @param {string} req.query.employee - EmployeeProfile id (required)
+ * @param {number} [req.query.year] / [req.query.month]
+ * @returns {{year, month, employee, computed, payslip}}
+ */
 // GET /api/payroll/run-employee?employee=&year=&month=
 const previewEmployeeRun = asyncHandler(async (req, res) => {
   const now = new Date();
@@ -401,6 +462,14 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
   res.json({ year, month, employee: profile, computed, payslip });
 });
 
+/**
+ * Create or refresh one employee's Draft payslip from structure + attendance + loans.
+ * @route POST /api/payroll/run-employee  (HR/Admin)
+ * @param {string} req.body.employee - EmployeeProfile id
+ * @param {number} req.body.year - required
+ * @param {number} req.body.month - required 1-12
+ * @returns {{payslip, computed}} (201); 400 if salary not set up or slip already Approved/Paid
+ */
 // POST /api/payroll/run-employee  { employee, year, month }
 // Create or refresh the month's Draft payslip from structure + attendance + loans.
 const runEmployeePayroll = asyncHandler(async (req, res) => {
@@ -454,6 +523,12 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
   res.status(201).json({ payslip, computed });
 });
 
+/**
+ * Get a single payslip by id.
+ * @route GET /api/payroll/:id  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @returns {{payslip: Object}}
+ */
 // GET /api/payroll/:id  (HR/Admin)
 const getPayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id).populate({
@@ -467,6 +542,13 @@ const getPayslip = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+/**
+ * Manually create a payslip.
+ * @route POST /api/payroll  (HR/Admin)
+ * @param {string} req.body.employee - EmployeeProfile id (required)
+ * @param {number} req.body.payPeriodYear / req.body.payPeriodMonth - required
+ * @returns {{payslip: Object}} (201)
+ */
 // POST /api/payroll  (HR/Admin)
 const createPayslip = asyncHandler(async (req, res) => {
   const { employee, payPeriodYear, payPeriodMonth } = req.body;
@@ -483,6 +565,13 @@ const createPayslip = asyncHandler(async (req, res) => {
   res.status(201).json({ payslip });
 });
 
+/**
+ * Update a payslip (not once Paid; identity fields immutable).
+ * @route PUT /api/payroll/:id  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @param {Object} req.body - fields to update
+ * @returns {{payslip: Object}}
+ */
 // PUT /api/payroll/:id  (HR/Admin)
 const updatePayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id);
@@ -504,6 +593,12 @@ const updatePayslip = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+/**
+ * Approve a Draft/OnHold payslip.
+ * @route PATCH /api/payroll/:id/approve  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @returns {{payslip: Object}} with status Approved
+ */
 // PATCH /api/payroll/:id/approve  (HR/Admin)
 const approvePayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id);
@@ -520,6 +615,13 @@ const approvePayslip = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+/**
+ * Mark an Approved payslip as Paid.
+ * @route PATCH /api/payroll/:id/pay  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @param {string} [req.body.paymentDate] / [req.body.paymentReference]
+ * @returns {{payslip: Object}} with status Paid
+ */
 // PATCH /api/payroll/:id/pay  (HR/Admin)
 const markPayslipPaid = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id);
@@ -538,6 +640,12 @@ const markPayslipPaid = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+/**
+ * Download a payslip PDF (with FY-to-date figures).
+ * @route GET /api/payroll/:id/pdf  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @returns {application/pdf}
+ */
 // GET /api/payroll/:id/pdf  (HR/Admin)
 const downloadPayslipPdf = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id).populate({
@@ -551,6 +659,12 @@ const downloadPayslipPdf = asyncHandler(async (req, res) => {
   await streamPayslipPdf(payslip, res);
 });
 
+/**
+ * Download the caller's own payslip PDF (Approved/Paid only).
+ * @route GET /api/payroll/me/:id/pdf  (employee)
+ * @param {string} req.params.id - payslip id (must belong to caller)
+ * @returns {application/pdf}
+ */
 // GET /api/payroll/me/:id/pdf  (employee — own payslips only, Approved or Paid)
 const downloadMyPayslipPdf = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findOne({ user: req.user._id });
@@ -627,6 +741,12 @@ async function streamPayslipPdf(payslip, res) {
   res.send(buffer);
 }
 
+/**
+ * Ensure a public (no-login) share token exists for an Approved/Paid payslip.
+ * @route POST /api/payroll/:id/share  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @returns {{token: string}}; 400 unless Approved/Paid
+ */
 // POST /api/payroll/:id/share  (HR/Admin)
 // Ensure the payslip has a public token and return it, so HR can paste a
 // no-login download link into an email. Only Approved/Paid payslips can be
@@ -648,6 +768,12 @@ const sharePayslip = asyncHandler(async (req, res) => {
   res.json({ token: payslip.publicToken });
 });
 
+/**
+ * Stamp emailedAt to record that the payslip was sent (delivery done externally).
+ * @route POST /api/payroll/:id/mark-sent  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @returns {{payslip: Object}}
+ */
 // POST /api/payroll/:id/mark-sent  (HR/Admin) — stamp emailedAt for the
 // "already sent" remark (delivery happens from HR's own mailbox via compose).
 const markPayslipSent = asyncHandler(async (req, res) => {
@@ -661,6 +787,15 @@ const markPayslipSent = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+/**
+ * Preview or send the payslip email (with PDF attached and a public link).
+ * @route POST /api/payroll/:id/email  (HR/Admin)
+ * @param {string} req.params.id - payslip id (must be Approved/Paid)
+ * @param {boolean} [req.body.preview] - true returns the draft without sending
+ * @param {string} [req.body.subject] / [req.body.body] - HR overrides
+ * @returns {{to, subject, body, attachments, link}} in preview, else {{mailed}}
+ * @sideeffect enqueues the email and stamps emailedAt when not preview
+ */
 // POST /api/payroll/:id/email  { subject?, body?, preview? }  (HR/Admin)
 // Preview or send the payslip email from the company mailbox with the payslip
 // PDF attached — HR sees and can edit the exact subject + body first. Mirrors
@@ -727,6 +862,12 @@ const emailPayslip = asyncHandler(async (req, res) => {
   res.json({ mailed: [email] });
 });
 
+/**
+ * Public: open a payslip PDF from its share token (no login).
+ * @route GET /api/payroll/public/:token  (PUBLIC)
+ * @param {string} req.params.token - publicToken (payslip must be Approved/Paid)
+ * @returns {application/pdf} inline
+ */
 // GET /api/payroll/public/:token  — public; opens a payslip PDF from the
 // shareable link with no login required.
 const downloadPublicPayslip = asyncHandler(async (req, res) => {
@@ -751,6 +892,12 @@ const downloadPublicPayslip = asyncHandler(async (req, res) => {
   res.send(buffer);
 });
 
+/**
+ * Delete a payslip (Draft only).
+ * @route DELETE /api/payroll/:id  (HR/Admin)
+ * @param {string} req.params.id - payslip id
+ * @returns {{id: string, deleted: boolean}}; 400 unless Draft
+ */
 // DELETE /api/payroll/:id  (HR/Admin) — Draft only
 const deletePayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id);

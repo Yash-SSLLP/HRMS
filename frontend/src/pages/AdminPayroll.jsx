@@ -1,3 +1,10 @@
+/**
+ * AdminPayroll — manual payslip management (admin portal). Lists/filters payslips
+ * from GET /payroll (employees from GET /employees), creates/edits drafts via
+ * POST/PUT /payroll, transitions status (approve/pay/delete) via
+ * PATCH /payroll/:id/:action, exports CSV, downloads the PDF, and emails the
+ * payslip from the company mailbox (POST /payroll/:id/email). Bulk runs live on AdminPayrollRun.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -68,6 +75,7 @@ export default function AdminPayroll() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
 
+  // Live gross/deductions/net totals for the payslip form footer.
   const gross = useMemo(() =>
     Object.values(form.earnings).reduce((a, b) => a + Number(b || 0), 0), [form.earnings]);
   const totalDed = useMemo(() =>

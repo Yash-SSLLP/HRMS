@@ -1,3 +1,9 @@
+/**
+ * EmployeeLeave — leave balance + apply/track screen (employee portal). Loads
+ * balances and requests from GET /leave/me/balance and /leave/me/requests,
+ * applies for leave via POST /leave/me/requests, and cancels not-yet-started
+ * requests via PATCH /leave/me/requests/:id/cancel. Requests climb an approval chain.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -42,6 +48,7 @@ export default function EmployeeLeave() {
   const [form, setForm] = useState(blankForm);
   const [submitting, setSubmitting] = useState(false);
 
+  // Load leave balances and my requests together on mount / after any change.
   const load = async () => {
     setLoading(true);
     setError('');

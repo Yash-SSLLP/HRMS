@@ -1,3 +1,12 @@
+// Geospatial helper. Used to measure how far an attendance punch is from the
+// office/work-location pin for geofence enforcement.
+
+/**
+ * Great-circle distance between two coordinates via the Haversine formula.
+ * @param {{lat:number, lng:number}} a - First point.
+ * @param {{lat:number, lng:number}} b - Second point.
+ * @returns {number|null} Distance in whole metres, or null if either point is missing lat/lng.
+ */
 // Great-circle distance between two {lat, lng} points, in metres (Haversine).
 function haversineMeters(a, b) {
   if (!a || !b || a.lat == null || a.lng == null || b.lat == null || b.lng == null) return null;

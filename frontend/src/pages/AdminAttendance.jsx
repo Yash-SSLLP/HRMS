@@ -1,3 +1,10 @@
+/**
+ * AdminAttendance — attendance records administration (admin portal). Lists/
+ * filters records from GET /attendance (with punch photos, GPS distance and
+ * geofence flags), supports manual entry/edit/delete via /attendance, CSV export
+ * (GET /attendance/export), and editing the office location + geofence threshold
+ * via PUT /attendance/settings. Employee list from GET /employees.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

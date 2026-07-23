@@ -1,3 +1,13 @@
+/**
+ * Attendance controller — GPS+selfie punch in/out (photo to Cloudinary with local
+ * fallback), geofence evaluation (captured, never blocking), and all attendance
+ * reporting: personal/org heatmaps, per-day detail, month summary, punch-location
+ * map, daily stats, today's clock board, presence board, manual HR record CRUD,
+ * Excel export, and office/geofence settings. Every "day" is anchored to the IST
+ * calendar day so punches from any client land on the day the user sees. Several
+ * helpers (computeHeatmapWindow/computeDayDetails/runAttendanceExport) are shared
+ * with the manager controller for team-scoped views.
+ */
 const asyncHandler = require('express-async-handler');
 const path = require('path');
 const ExcelJS = require('exceljs');
@@ -111,6 +121,14 @@ function appendRemark(existing, note) {
   return `${base} ${note}`;
 }
 
+/**
+ * Punch in for today with a selfie and optional GPS (geofence captured, not blocked).
+ * @route POST /api/attendance/me/checkin  (multipart field: photo)
+ * @param {File} req.file - selfie (required)
+ * @param {string} [req.body.latitude] / [req.body.longitude] / [req.body.accuracy]
+ * @param {string} [req.body.wfh] - 'true' exempts the geofence check
+ * @returns {{record: Object}} (201); 400 if already checked in
+ */
 // POST /api/attendance/me/checkin   (multipart: photo)
 const checkIn = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -145,6 +163,14 @@ const checkIn = asyncHandler(async (req, res) => {
   res.status(201).json({ record });
 });
 
+/**
+ * Punch out for today with a selfie and optional GPS; may (re)mark the day half-day.
+ * @route POST /api/attendance/me/checkout  (multipart field: photo)
+ * @param {File} req.file - selfie (required)
+ * @param {string} [req.body.latitude] / [req.body.longitude] / [req.body.accuracy] / [req.body.wfh]
+ * @param {string} [req.body.halfDay] - 'true'/'false' to set/clear HalfDay
+ * @returns {{record: Object}}; 400 if no check-in or already checked out
+ */
 // POST /api/attendance/me/checkout   (multipart: photo)
 const checkOut = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -182,6 +208,13 @@ const checkOut = asyncHandler(async (req, res) => {
   res.json({ record });
 });
 
+/**
+ * Stream a punch selfie (Cloudinary proxied, else local disk).
+ * @route GET /api/attendance/:id/photo/:which  (which = checkin | checkout)
+ * @param {string} req.params.id - attendance record id
+ * @param {string} req.params.which - 'checkin' or 'checkout'
+ * @returns {binary}; HR/SuperAdmin or the owning employee only
+ */
 // GET /api/attendance/:id/photo/:which   (which = checkin | checkout)
 // Visible to HR/SuperAdmin or the owning employee. Streams the image inline.
 const getAttendancePhoto = asyncHandler(async (req, res) => {
@@ -240,6 +273,12 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
   if (!storage.streamTo(relPath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
+/**
+ * The caller's day-by-day attendance classification for a heatmap.
+ * @route GET /api/attendance/me/heatmap?days=365
+ * @param {number} [req.query.days] - trailing window, capped at 400 (default 365)
+ * @returns {{from, to, days}} each day categorized full|half|leave|compoff|absent
+ */
 // GET /api/attendance/me/heatmap?days=365
 // Returns the caller's day-by-day attendance classification over the trailing
 // window for a GitHub-style heatmap. Each day is one of:
@@ -563,11 +602,23 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
   };
 };
 
+/**
+ * Org-wide daily attendance counts for a heatmap (delegates to computeHeatmapWindow).
+ * @route GET /api/attendance/org/heatmap?days=365  (HR/Admin)
+ * @param {number} [req.query.days] - trailing window, capped at 400
+ * @returns {{from, to, totalEmployees, maxPresent, days}}
+ */
 const orgHeatmap = asyncHandler(async (req, res) => {
   const span = Math.min(Number(req.query.days) || 365, 400);
   res.json(await computeHeatmapWindow({ empIds: null, span }));
 });
 
+/**
+ * Named per-day breakdown for the whole org (heatmap click-through).
+ * @route GET /api/attendance/org/day?date=YYYY-MM-DD  (HR/Admin)
+ * @param {string} req.query.date - YYYY-MM-DD (required)
+ * @returns {{date, counts, present, late, half, leave, compoff, absent}}
+ */
 // GET /api/attendance/org/day?date=YYYY-MM-DD  (HR/Admin) — who was late / on
 // leave / present / absent on a given day, by name (heatmap click-through).
 const orgDayDetails = asyncHandler(async (req, res) => {
@@ -579,6 +630,12 @@ const orgDayDetails = asyncHandler(async (req, res) => {
   res.json(await computeDayDetails({ empIds: null, dateStr }));
 });
 
+/**
+ * List the caller's attendance records for a month, plus today's record.
+ * @route GET /api/attendance/me?year=&month=
+ * @param {number} [req.query.year] / [req.query.month] - default current
+ * @returns {{year, month, today, count, records}}
+ */
 // GET /api/attendance/me?year=&month=
 const listMine = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -600,6 +657,13 @@ const listMine = asyncHandler(async (req, res) => {
 
 // ===== HR/Admin =====
 
+/**
+ * List attendance records for a month (optionally one employee) with punch distances.
+ * @route GET /api/attendance?year=&month=&employee=  (HR/Admin)
+ * @param {number} [req.query.year] / [req.query.month]
+ * @param {string} [req.query.employee] - EmployeeProfile id
+ * @returns {{year, month, count, records, settings}}
+ */
 // GET /api/attendance?year=&month=&employee=
 const listAll = asyncHandler(async (req, res) => {
   const now = new Date();
@@ -644,6 +708,13 @@ const listAll = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * One employee's whole month with per-day flags and roll-up summary counts.
+ * @route GET /api/attendance/month-summary?employee=&year=&month=  (HR/Admin)
+ * @param {string} req.query.employee - EmployeeProfile id (required)
+ * @param {number} [req.query.year] / [req.query.month]
+ * @returns {{year, month, employee, summary, records, settings}}
+ */
 // GET /api/attendance/month-summary?employee=&year=&month=
 // One employee's whole month for HR/admin review: every day's punches with
 // late / distance / no-punch-out flags, plus the roll-up counts shown in the
@@ -735,6 +806,13 @@ const monthSummary = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Every GPS-tagged punch plotted as map points plus the geofence circles.
+ * @route GET /api/attendance/punch-map?year=&month=&day=  (HR/Admin)
+ * @param {number} [req.query.year] / [req.query.month]
+ * @param {number} [req.query.day] - 1-31 narrows to one IST day; omit for the month
+ * @returns {{year, month, day, count, points, office, geofenceThresholdM, geofences}}
+ */
 // GET /api/attendance/punch-map?year=&month=&day=   (HR/Admin)
 // Every GPS-tagged punch (check-in & check-out) plotted as map points, so HR can
 // see exactly WHERE people punched. `day` (1-31) narrows to a single IST day;
@@ -1027,10 +1105,22 @@ const runAttendanceExport = async (req, res, opts = {}) => {
   res.end();
 };
 
+/**
+ * Export attendance as an Excel workbook for the whole org (see runAttendanceExport
+ * for the supported day/month/trailing-months shapes).
+ * @route GET /api/attendance/export?employee=&year=&month=&day=&months=  (HR/Admin)
+ * @returns {xlsx}
+ */
 // GET /api/attendance/export?employee=&year=&month=&day=&months=   (HR/Admin)
 // Whole org in scope. See runAttendanceExport for the supported shapes.
 const exportAttendance = asyncHandler((req, res) => runAttendanceExport(req, res, {}));
 
+/**
+ * Per-day present count and average hours over the trailing N days (dashboard charts).
+ * @route GET /api/attendance/daily-stats?days=14  (admin)
+ * @param {number} [req.query.days] - clamped 1-60 (default 14)
+ * @returns {{days: Array<{date, label, presentCount, avgHours}>}}
+ */
 // GET /api/attendance/daily-stats?days=14  (admin)
 // Per-day org attendance for the dashboard bar charts: number of present
 // employees and their average hours worked, over the trailing N IST days.
@@ -1073,6 +1163,12 @@ const dailyStats = asyncHandler(async (req, res) => {
   res.json({ days: out });
 });
 
+/**
+ * Today's clock-in/out board split into on-time vs late.
+ * @route GET /api/attendance/today-board?department=  (admin)
+ * @param {string} [req.query.department] - filter, or 'all'
+ * @returns {{date, onTime, late, departments}}
+ */
 // GET /api/attendance/today-board?department=
 // Compact "Clock-In/Out" board for the admin dashboard: everyone who has
 // punched in today, split into on-time vs late, with their clock in/out and
@@ -1131,6 +1227,12 @@ const todayBoard = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Today's presence snapshot: who's present / on leave / absent (one row per active employee).
+ * @route GET /api/attendance/presence-board?department=  (HR/Admin)
+ * @param {string} [req.query.department] - filter, or 'all'
+ * @returns {{date, counts, present, onLeave, absent, departments}}
+ */
 // GET /api/attendance/presence-board?department=
 // A single "who's in / who's on leave / who's absent" snapshot for today, for
 // HR/Admin. Combines today's punches (with the check-in selfie, captured the
@@ -1251,6 +1353,14 @@ const presenceBoard = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Manually create an attendance record (HR/Admin).
+ * @route POST /api/attendance
+ * @param {string} req.body.employee - EmployeeProfile id (required)
+ * @param {string} req.body.date - required
+ * @param {string} [req.body.status='Present'] / [req.body.checkIn] / [req.body.checkOut] / [req.body.remarks]
+ * @returns {{record: Object}} (201); 409 if the day already has a record
+ */
 // POST /api/attendance  (manual admin entry)
 const createRecord = asyncHandler(async (req, res) => {
   const { employee, date, status, checkIn, checkOut, remarks } = req.body;
@@ -1275,6 +1385,13 @@ const createRecord = asyncHandler(async (req, res) => {
   res.status(201).json({ record });
 });
 
+/**
+ * Update an attendance record (employee/date immutable here).
+ * @route PUT /api/attendance/:id  (HR/Admin)
+ * @param {string} req.params.id - record id
+ * @param {Object} req.body - fields to update
+ * @returns {{record: Object}}
+ */
 // PUT /api/attendance/:id
 const updateRecord = asyncHandler(async (req, res) => {
   const record = await Attendance.findById(req.params.id);
@@ -1290,6 +1407,11 @@ const updateRecord = asyncHandler(async (req, res) => {
   res.json({ record });
 });
 
+/**
+ * Get the office location and geofence threshold used for punch distances.
+ * @route GET /api/attendance/settings  (HR/Admin)
+ * @returns {{office, geofenceThresholdM}}
+ */
 // GET /api/attendance/settings  (HR/Admin)
 // Returns the office location + geofence threshold used for punch distances.
 const getSettings = asyncHandler(async (req, res) => {
@@ -1297,6 +1419,13 @@ const getSettings = asyncHandler(async (req, res) => {
   res.json({ office: s.office, geofenceThresholdM: s.geofenceThresholdM });
 });
 
+/**
+ * Update the office coordinates/label and/or geofence threshold.
+ * @route PUT /api/attendance/settings  (HR/Admin)
+ * @param {Object} [req.body.office] - {lat, lng, label}
+ * @param {number} [req.body.geofenceThresholdM] - clamped >= 0
+ * @returns {{office, geofenceThresholdM}}
+ */
 // PUT /api/attendance/settings  (HR/Admin)
 // Update the office coordinates/label and/or the geofence threshold (metres).
 const updateSettings = asyncHandler(async (req, res) => {
@@ -1312,6 +1441,12 @@ const updateSettings = asyncHandler(async (req, res) => {
   res.json({ office: s.office, geofenceThresholdM: s.geofenceThresholdM });
 });
 
+/**
+ * Delete an attendance record.
+ * @route DELETE /api/attendance/:id  (HR/Admin)
+ * @param {string} req.params.id - record id
+ * @returns {{id: string, deleted: boolean}}
+ */
 // DELETE /api/attendance/:id
 const deleteRecord = asyncHandler(async (req, res) => {
   const record = await Attendance.findById(req.params.id);

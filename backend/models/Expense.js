@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 
+// An employee expense/reimbursement claim with a receipt. Once Reimbursed it
+// auto-posts a matching cash-out row in the cashbook (see cashbookEntry ref).
 const EXPENSE_CATEGORIES = ['Travel', 'Food', 'Accommodation', 'Supplies', 'Medical', 'Communication', 'Other'];
+// Pending -> awaiting review; Approved -> sanctioned; Rejected -> denied; Reimbursed -> paid back to employee.
 const EXPENSE_STATUS = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
 
 // Uploaded receipt proof (image or PDF), mirrors CashbookEntry's attachment.
@@ -30,6 +33,7 @@ const expenseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// toJSON transform: expose only whether a receipt exists, never its storage path.
 expenseSchema.set('toJSON', {
   transform: (_doc, ret) => {
     ret.hasReceipt = !!ret.receipt?.storagePath;
@@ -38,6 +42,7 @@ expenseSchema.set('toJSON', {
   },
 });
 
+// Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 expenseSchema.plugin(require("./plugins/auditStatus"));
 
 module.exports = mongoose.model('Expense', expenseSchema);

@@ -1,3 +1,9 @@
+/**
+ * ReviewsScreen — performance reviews assigned to the signed-in user (self or as
+ * a reviewer): star-rate each competency and add strengths/improvements. Home
+ * stack route "Reviews" (Menu > Growth). Any employee role.
+ * Backend: GET /reviews/me/assigned (list), PATCH /reviews/me/:id (submit ratings).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -29,6 +35,7 @@ export default function ReviewsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Open the review modal, seeding score/text fields from any saved draft.
   const open = (review) => {
     setActive(review);
     const init = {};
@@ -41,6 +48,7 @@ export default function ReviewsScreen() {
   const competencies = active?.cycle?.competencies || [];
 
   const submit = async () => {
+    // Require every competency scored; overall is the mean rounded to 1 decimal.
     const ratings = competencies.map((c) => ({ competency: c, score: scores[c] || 0 }));
     if (ratings.some((r) => !r.score)) { Alert.alert('Incomplete', 'Please rate every competency.'); return; }
     const overall = Math.round((ratings.reduce((a, r) => a + r.score, 0) / ratings.length) * 10) / 10;

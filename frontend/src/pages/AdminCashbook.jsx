@@ -1,3 +1,10 @@
+/**
+ * AdminCashbook — cash/bank ledger management (admin portal; also for the
+ * cashbook-only AccountsManager role). Tabbed UI over /cashbook/* endpoints:
+ * Overview, Ledger (in/out entries with running balance), Vouchers (employee
+ * petty-cash approvals), Accounts, Categories, and Reports (day-book/summary).
+ * Supports transfers between accounts and receipt attachments on entries.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

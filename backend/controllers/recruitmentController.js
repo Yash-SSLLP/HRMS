@@ -1,3 +1,12 @@
+/**
+ * Recruitment/ATS controller — the full hiring pipeline. Manages Job openings, a
+ * public application form, Candidates through interview rounds (with interviewer
+ * assignment, Google Meet scheduling, and a self-service "My Interviews" view),
+ * pre-offer document collection + HR confirmation, offer/appointment letter PDF
+ * generation with review-then-send emails and public download links, and finally
+ * converting a New Joinee into a User + EmployeeProfile. Resumes are stored as DB
+ * bytes (legacy on-disk fallback); round decisions write to the central AuditLog.
+ */
 const asyncHandler = require('express-async-handler');
 const path = require('path');
 const crypto = require('crypto');
@@ -35,6 +44,12 @@ function parseCcList(raw, exclude = []) {
 }
 
 // ===== Jobs =====
+/**
+ * List job openings with candidate counts, optionally filtered by status.
+ * @route GET /api/recruitment/jobs  (HR)
+ * @param {string} [req.query.status]
+ * @returns {{count: number, jobs: Object[]}} each with candidateCount
+ */
 const listJobs = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
@@ -47,6 +62,12 @@ const listJobs = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Create a job opening.
+ * @route POST /api/recruitment/jobs  (HR)
+ * @param {string} req.body.title - required
+ * @returns {{job: Object}} (201)
+ */
 const createJob = asyncHandler(async (req, res) => {
   if (!req.body.title) {
     res.status(400);
@@ -56,24 +77,39 @@ const createJob = asyncHandler(async (req, res) => {
   res.status(201).json({ job });
 });
 
+/**
+ * Update a job opening (partial).
+ * @route PUT /api/recruitment/jobs/:id  (HR)
+ * @param {string} req.params.id - job id
+ * @param {Object} req.body - fields to update
+ * @returns {{job: Object}}
+ */
 const updateJob = asyncHandler(async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) {
     res.status(404);
     throw new Error('Job not found');
   }
+  // Prevent clients from overwriting the original poster
   delete req.body.postedBy;
   Object.assign(job, req.body);
   await job.save();
   res.json({ job });
 });
 
+/**
+ * Delete a job opening and all its candidates.
+ * @route DELETE /api/recruitment/jobs/:id  (HR)
+ * @param {string} req.params.id - job id
+ * @returns {{id: string, deleted: boolean}}
+ */
 const deleteJob = asyncHandler(async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) {
     res.status(404);
     throw new Error('Job not found');
   }
+  // Cascade: remove the job's candidates first
   await Candidate.deleteMany({ job: job._id });
   await job.deleteOne();
   res.json({ id: req.params.id, deleted: true });
@@ -81,6 +117,12 @@ const deleteJob = asyncHandler(async (req, res) => {
 
 // ===== Public application form (no auth) =====
 
+/**
+ * Public: fetch job info for the application form.
+ * @route GET /api/recruitment/apply/:jobId  (PUBLIC, no auth)
+ * @param {string} req.params.jobId - job id
+ * @returns {{job}} with an `open` flag (status === 'Open')
+ */
 // GET /api/recruitment/apply/:jobId — public job info for the application form.
 const getPublicJob = asyncHandler(async (req, res) => {
   const job = await Job.findById(req.params.jobId).select('title department location employmentType description status');
@@ -101,6 +143,14 @@ const getPublicJob = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Public: submit a job application with a resume (one per email per job).
+ * @route POST /api/recruitment/apply/:jobId  (PUBLIC, multipart field: resume)
+ * @param {string} req.params.jobId - job id (must be Open)
+ * @param {string} req.body.name / req.body.email - required
+ * @param {File} req.file - resume (required; stored as DB bytes)
+ * @returns {{ok: true, id}} (201); 409 if already applied
+ */
 // POST /api/recruitment/apply/:jobId  (multipart: resume) — public submission.
 const submitApplication = asyncHandler(async (req, res) => {
   const job = await Job.findById(req.params.jobId);
@@ -160,6 +210,12 @@ const submitApplication = asyncHandler(async (req, res) => {
 });
 
 // ===== Candidates (HR) =====
+/**
+ * List candidates with optional job/stage filters.
+ * @route GET /api/recruitment/candidates  (HR)
+ * @param {string} [req.query.job] / [req.query.stage]
+ * @returns {{count: number, candidates: Object[]}} with populated job
+ */
 const listCandidates = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.job) filter.job = req.query.job;
@@ -170,6 +226,13 @@ const listCandidates = asyncHandler(async (req, res) => {
   res.json({ count: candidates.length, candidates });
 });
 
+/**
+ * Manually add a candidate (seeds the default interview rounds).
+ * @route POST /api/recruitment/candidates  (HR)
+ * @param {string} req.body.name - required
+ * @param {string} [req.body.stage] - must be one of CANDIDATE_STAGES
+ * @returns {{candidate: Object}} (201)
+ */
 const createCandidate = asyncHandler(async (req, res) => {
   if (!req.body.name) {
     res.status(400);
@@ -187,6 +250,13 @@ const createCandidate = asyncHandler(async (req, res) => {
   res.status(201).json({ candidate });
 });
 
+/**
+ * Update a candidate's general fields (resume and rounds have dedicated routes).
+ * @route PUT /api/recruitment/candidates/:id  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {Object} req.body - fields to update
+ * @returns {{candidate: Object}}
+ */
 const updateCandidate = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
   if (!candidate) {
@@ -207,6 +277,12 @@ const updateCandidate = asyncHandler(async (req, res) => {
   res.json({ candidate });
 });
 
+/**
+ * Delete a candidate (and any legacy on-disk resume).
+ * @route DELETE /api/recruitment/candidates/:id  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {{id: string, deleted: boolean}}
+ */
 const deleteCandidate = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
   if (!candidate) {
@@ -218,6 +294,18 @@ const deleteCandidate = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * HR edits an interview round: status, feedback, schedule, meeting link, interviewer.
+ * @route PATCH /api/recruitment/candidates/:id/round  (HR)
+ * @param {string} req.params.id - candidate id (must be past 'Applied')
+ * @param {number} req.body.index - round index
+ * @param {string} [req.body.status] - one of ROUND_STATUS
+ * @param {string} [req.body.feedback] / [req.body.scheduledAt] / [req.body.meetingLink]
+ * @param {number} [req.body.meetDurationMinutes] - clamped 15-240
+ * @param {string} [req.body.interviewer] - user id ('' clears)
+ * @returns {{candidate: Object}}
+ * @sideeffect notifies a newly assigned interviewer; writes round-status changes to AuditLog; auto-creates the document link once all rounds are Cleared
+ */
 // PATCH /api/recruitment/candidates/:id/round  { index, status, feedback, scheduledAt, meetingLink, interviewer, meetDurationMinutes }
 const setRound = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -353,6 +441,11 @@ function interviewItem(c, r, idx) {
   };
 }
 
+/**
+ * List interview rounds assigned to the calling user (open first, then decided).
+ * @route GET /api/recruitment/my-interviews
+ * @returns {{interviews: Object[]}}
+ */
 // GET /api/recruitment/my-interviews — rounds assigned to the calling user.
 const myInterviews = asyncHandler(async (req, res) => {
   const candidates = await Candidate.find({ 'rounds.interviewer': req.user._id })
@@ -375,6 +468,16 @@ const myInterviews = asyncHandler(async (req, res) => {
   res.json({ interviews });
 });
 
+/**
+ * Assigned interviewer records their round decision/feedback (self-service).
+ * @route PATCH /api/recruitment/my-interviews/:id/round
+ * @param {string} req.params.id - candidate id
+ * @param {number} req.body.index - round index (caller must be its interviewer)
+ * @param {string} [req.body.status] - one of ROUND_STATUS
+ * @param {string} [req.body.feedback]
+ * @returns {{interview: Object}}
+ * @sideeffect writes to AuditLog; auto-creates the document link once all rounds are Cleared
+ */
 // PATCH /api/recruitment/my-interviews/:id/round  { index, status?, feedback? }
 // The assigned interviewer records their decision/feedback for their round.
 const setMyInterviewRound = asyncHandler(async (req, res) => {
@@ -446,6 +549,12 @@ const setMyInterviewRound = asyncHandler(async (req, res) => {
   res.json({ interview: interviewItem(candidate, round, idx) });
 });
 
+/**
+ * Stream a candidate's resume for an interviewer assigned to any of their rounds.
+ * @route GET /api/recruitment/my-interviews/:id/resume
+ * @param {string} req.params.id - candidate id
+ * @returns {binary} the resume; 403 if not an assigned interviewer
+ */
 // GET /api/recruitment/my-interviews/:id/resume — the assigned interviewer can
 // view the candidate's résumé for any round they're interviewing.
 const downloadMyInterviewResume = asyncHandler(async (req, res) => {
@@ -530,6 +639,17 @@ async function meetInviteRecipients(candidate, round) {
   return to;
 }
 
+/**
+ * Create a Google Meet link + calendar invite for a round, and optionally email
+ * the branded invite (candidate + interviewer) with the resume attached.
+ * @route POST /api/recruitment/candidates/:id/round/meet  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {number} req.body.index - round index
+ * @param {string} [req.body.scheduledAt] - defaults to the round's time, else now+15m
+ * @param {number} [req.body.durationMinutes] - clamped 15-240 (default 45)
+ * @param {boolean} [req.body.sendEmail] - false to review the email first
+ * @returns {{candidate, meetingLink, invited, mailed, mail}}; 503 if Meet unconfigured
+ */
 // POST /api/recruitment/candidates/:id/round/meet  { index, scheduledAt?, durationMinutes?, sendEmail? }
 // Auto-creates a real Google Meet link (via Calendar API) for the round —
 // Google sends the calendar invite with the Meet link to all attendees.
@@ -654,6 +774,15 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Preview or send the interview-invite email for a round that has a meeting link.
+ * @route POST /api/recruitment/candidates/:id/round/meet/email  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {number} req.body.index - round index (must already have a meetingLink)
+ * @param {boolean} [req.body.preview] - true returns the draft without sending
+ * @param {string} [req.body.subject] / [req.body.body] / [req.body.cc]
+ * @returns {{to, subject, body, attachments}} in preview, else {{mailed, cc}}
+ */
 // POST /api/recruitment/candidates/:id/round/meet/email  { index, subject?, body?, preview? }
 // Preview or send the interview-invite email for a round that already has a
 // meeting link (auto-created or pasted). HR/admin sees and can edit the exact
@@ -708,6 +837,12 @@ const sendRoundMeetEmail = asyncHandler(async (req, res) => {
   res.json({ mailed: to, cc });
 });
 
+/**
+ * Stream a candidate's resume (DB bytes preferred, on-disk fallback).
+ * @route GET /api/recruitment/candidates/:id/resume  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {binary} inline; 404 if none
+ */
 // GET /api/recruitment/candidates/:id/resume — serve the resume (HR auth).
 // Prefers the DB-stored bytes; falls back to legacy on-disk resumes.
 const downloadResume = asyncHandler(async (req, res) => {
@@ -739,6 +874,13 @@ const downloadResume = asyncHandler(async (req, res) => {
   if (!storage.streamTo(candidate.resumePath, res)) return res.status(404).json({ message: 'File not found' });
 });
 
+/**
+ * HR uploads/replaces a candidate's resume (stored as DB bytes).
+ * @route POST /api/recruitment/candidates/:id/resume  (HR, multipart field: resume)
+ * @param {string} req.params.id - candidate id
+ * @param {File} req.file - resume (required)
+ * @returns {{candidate: Object}}
+ */
 // POST /api/recruitment/candidates/:id/resume — HR uploads/replaces a resume
 // (multipart: resume). Stored in the DB so it's always viewable.
 const uploadResume = asyncHandler(async (req, res) => {
@@ -798,6 +940,16 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
   );
 }
 
+/**
+ * Preview or send an offer/appointment letter email (PDF attached + public link).
+ * @route POST /api/recruitment/candidates/:id/letters/:kind/email  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {string} req.params.kind - 'offer' or 'appointment' (letter must exist)
+ * @param {boolean} [req.body.preview] - true returns the draft without sending
+ * @param {string} [req.body.subject] / [req.body.body] / [req.body.cc]
+ * @returns {{to, subject, body, attachments, link}} in preview, else {{mailed, cc}}
+ * @sideeffect stamps letter.emailedAt when sent
+ */
 // POST /api/recruitment/candidates/:id/letters/:kind/email  { subject?, body?, preview? }
 // Preview or send the offer / appointment letter email with the PDF attached
 // (plus the public download link when available). Used by the mobile app and
@@ -875,6 +1027,14 @@ function streamLetter(res, relPath, filename) {
   if (!storage.streamTo(relPath, res)) return res.status(404).json({ message: 'File not found' });
 }
 
+/**
+ * Generate (or regenerate) the offer-letter PDF and move the candidate to Offer.
+ * @route POST /api/recruitment/candidates/:id/offer  (HR)
+ * @param {string} req.params.id - candidate id (documents must be HR-confirmed for the first offer)
+ * @param {Object} req.body - offer fields (position, salary, joiningDate, probation, notice, signatory, …)
+ * @param {boolean} [req.body.email] - also email the letter to the candidate
+ * @returns {{candidate, emailed}} (201); keeps a stable share token across regenerations
+ */
 // POST /api/recruitment/candidates/:id/offer
 const generateOffer = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -931,6 +1091,12 @@ const generateOffer = asyncHandler(async (req, res) => {
   res.status(201).json({ candidate, emailed: !!(b.email && candidate.email) });
 });
 
+/**
+ * Stream the stored offer-letter PDF inline.
+ * @route GET /api/recruitment/candidates/:id/offer/pdf  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {application/pdf}; 404 if none
+ */
 // GET /api/recruitment/candidates/:id/offer/pdf
 const downloadOffer = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -941,6 +1107,12 @@ const downloadOffer = asyncHandler(async (req, res) => {
   streamLetter(res, candidate.offer.letterPath, candidate.offer.letterName || 'offer-letter.pdf');
 });
 
+/**
+ * Move a candidate into the Onboarding stage.
+ * @route POST /api/recruitment/candidates/:id/onboard  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {{candidate: Object}}
+ */
 // POST /api/recruitment/candidates/:id/onboard — move a candidate into onboarding.
 const onboardCandidate = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -959,6 +1131,13 @@ const onboardCandidate = asyncHandler(async (req, res) => {
   res.json({ candidate });
 });
 
+/**
+ * Update a candidate's onboarding details.
+ * @route PATCH /api/recruitment/candidates/:id/onboarding  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {string} [req.body.joiningDate] / [req.body.noticePeriod] / [req.body.notes]
+ * @returns {{candidate: Object}}
+ */
 // PATCH /api/recruitment/candidates/:id/onboarding — joining date / notice period / notes.
 const updateOnboarding = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -977,6 +1156,14 @@ const updateOnboarding = asyncHandler(async (req, res) => {
   res.json({ candidate });
 });
 
+/**
+ * Generate (or regenerate) the appointment-letter PDF; moves the candidate to NewJoinee.
+ * @route POST /api/recruitment/candidates/:id/appointment  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {Object} req.body - appointment fields (designation, CTC breakup, joiningDate, signatory, …)
+ * @param {boolean} [req.body.email] - also email the letter to the candidate
+ * @returns {{candidate, emailed}} (201); keeps a stable share token across regenerations
+ */
 // POST /api/recruitment/candidates/:id/appointment
 const generateAppointment = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -1037,6 +1224,12 @@ const generateAppointment = asyncHandler(async (req, res) => {
   res.status(201).json({ candidate, emailed: !!(b.email && candidate.email) });
 });
 
+/**
+ * Stream the stored appointment-letter PDF inline.
+ * @route GET /api/recruitment/candidates/:id/appointment/pdf  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {application/pdf}; 404 if none
+ */
 // GET /api/recruitment/candidates/:id/appointment/pdf
 const downloadAppointment = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -1047,6 +1240,12 @@ const downloadAppointment = asyncHandler(async (req, res) => {
   streamLetter(res, candidate.appointment.letterPath, candidate.appointment.letterName || 'appointment-letter.pdf');
 });
 
+/**
+ * Public: candidate downloads their offer/appointment letter via its token.
+ * @route GET /api/recruitment/letters/:token  (PUBLIC, no auth)
+ * @param {string} req.params.token - offer or appointment token
+ * @returns {application/pdf} inline; 404 if invalid
+ */
 // GET /api/recruitment/letters/:token — public; candidate downloads their letter.
 const downloadLetterByToken = asyncHandler(async (req, res) => {
   const { token } = req.params;
@@ -1078,8 +1277,20 @@ async function markLetterSent(req, res, kind) {
   res.json({ candidate });
 }
 
+/**
+ * Stamp the offer letter as sent (delivery happens from HR's own mailbox).
+ * @route POST /api/recruitment/candidates/:id/offer/mark-sent  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {{candidate: Object}}
+ */
 // POST /api/recruitment/candidates/:id/offer/mark-sent
 const markOfferSent = asyncHandler((req, res) => markLetterSent(req, res, 'offer'));
+/**
+ * Stamp the appointment letter as sent.
+ * @route POST /api/recruitment/candidates/:id/appointment/mark-sent  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {{candidate: Object}}
+ */
 // POST /api/recruitment/candidates/:id/appointment/mark-sent
 const markAppointmentSent = asyncHandler((req, res) => markLetterSent(req, res, 'appointment'));
 
@@ -1091,6 +1302,17 @@ function splitName(full = '') {
   return { firstName, lastName };
 }
 
+/**
+ * Convert a New Joinee candidate into a login (User) + EmployeeProfile.
+ * @route POST /api/recruitment/candidates/:id/convert-to-employee  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {string} [req.body.email] - defaults to the candidate email (must be unique)
+ * @param {string} [req.body.dateOfJoining] - required (or taken from onboarding/letters)
+ * @param {string} [req.body.employeeCode] - defaults to the next suggested code
+ * @param {Object} [req.body] - firstName/lastName/designation/department/etc overrides
+ * @returns {{candidate, employeeCode, user, initialPassword}} (201); rolls back the user if the profile fails
+ * @sideeffect creates a User (Employee role) and EmployeeProfile; sets stage Hired
+ */
 // POST /api/recruitment/candidates/:id/convert-to-employee
 // Turn a New Joinee into an actual login (User) + EmployeeProfile.
 const convertToEmployee = asyncHandler(async (req, res) => {
@@ -1199,6 +1421,12 @@ const DOC_TYPES = [
   'Experience Letter', 'Relieving Letter', 'Latest Payslip', 'Bank Details', 'Other',
 ];
 
+/**
+ * (Re)generate a candidate's public document-submission token.
+ * @route POST /api/recruitment/candidates/:id/documents/request  (HR)
+ * @param {string} req.params.id - candidate id
+ * @returns {{candidate, token}}
+ */
 // POST /api/recruitment/candidates/:id/documents/request — (re)generate the link.
 const requestDocuments = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -1218,6 +1446,12 @@ const requestDocuments = asyncHandler(async (req, res) => {
   res.json({ candidate, token: candidate.documents.token });
 });
 
+/**
+ * Public: fetch the document-submission context for a candidate via token.
+ * @route GET /api/recruitment/documents/:token  (PUBLIC, no auth)
+ * @param {string} req.params.token - documents token
+ * @returns {{candidate, docTypes}}; 404 if invalid
+ */
 // GET /api/recruitment/documents/:token — public; what the candidate sees.
 const getDocumentRequest = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findOne({ 'documents.token': req.params.token }).populate('job', 'title');
@@ -1237,6 +1471,15 @@ const getDocumentRequest = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Public: candidate uploads pre-offer documents via their token.
+ * @route POST /api/recruitment/documents/:token  (PUBLIC, multipart files[] + labels[])
+ * @param {string} req.params.token - documents token (not yet confirmed)
+ * @param {File[]} req.files - documents (at least one required)
+ * @param {string[]} [req.body.labels] - per-file label
+ * @returns {{ok: true, count}} (201); resets any prior HR confirmation
+ * @sideeffect best-effort Cloudinary backup of each file
+ */
 // POST /api/recruitment/documents/:token — public; candidate uploads documents.
 const submitDocuments = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findOne({ 'documents.token': req.params.token });
@@ -1295,6 +1538,13 @@ const submitDocuments = asyncHandler(async (req, res) => {
   res.status(201).json({ ok: true, count: saved.length });
 });
 
+/**
+ * Stream one submitted candidate document (disk first, Cloudinary fallback).
+ * @route GET /api/recruitment/candidates/:id/documents/:fileId  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {string} req.params.fileId - document sub-doc id
+ * @returns {binary} inline; 404 if missing
+ */
 // GET /api/recruitment/candidates/:id/documents/:fileId — HR streams one document.
 const downloadCandidateDocument = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -1326,6 +1576,12 @@ const downloadCandidateDocument = asyncHandler(async (req, res) => {
   return res.status(404).json({ message: 'File not found' });
 });
 
+/**
+ * HR confirms a candidate's submitted documents (gates the first offer letter).
+ * @route POST /api/recruitment/candidates/:id/documents/confirm  (HR)
+ * @param {string} req.params.id - candidate id (must have submitted documents)
+ * @returns {{candidate: Object}}
+ */
 // POST /api/recruitment/candidates/:id/documents/confirm — HR confirms the submission.
 const confirmDocuments = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);

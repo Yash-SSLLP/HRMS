@@ -1,3 +1,9 @@
+/**
+ * AssetsScreen — lists company assets (laptop, phone, furniture, etc.) issued
+ * to the logged-in employee, with category icon, serial and status.
+ * Route: "Assets" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /assets/me.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,6 +20,7 @@ export default function AssetsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Fetch only the current user's assigned assets; errors -> empty list.
   const load = useCallback(async () => {
     const { data } = await api.get('/assets/me').catch(() => ({ data: {} }));
     setAssets(data.assets || []);

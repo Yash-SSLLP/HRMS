@@ -1,3 +1,7 @@
+/**
+ * PrivacyScreen — static privacy policy text. Pushed as "Privacy" from Settings
+ * (About section). Any role. No backend calls; org name comes from app config.
+ */
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import Constants from 'expo-constants';

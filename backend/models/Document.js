@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// An employee document file (ID proof, certificate, HR letter, etc.) attached to
+// an EmployeeProfile. Stored on disk with a durable Cloudinary backup, carries an
+// HR verification status, and never exposes its storage path via the API.
+
 // Categories an employee may upload themselves. ExperienceLetter and
 // RelievingLetter are from previous employers, so employees/candidates provide
 // them — and they may have several (one per past employer).
@@ -79,6 +83,7 @@ const documentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// toJSON transform: strip internal storage refs before sending to API consumers.
 documentSchema.set('toJSON', {
   transform: (_doc, ret) => {
     delete ret.storagePath; // never leak filesystem path to API consumers

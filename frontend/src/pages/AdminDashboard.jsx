@@ -1,3 +1,10 @@
+/**
+ * AdminDashboard — user account management (admin portal, "User Accounts" page).
+ * Lists login accounts from GET /admin/users and creates/edits them via
+ * POST/PUT /admin/users, activates/deactivates and deletes (SuperAdmin only).
+ * SuperAdmin can also edit each HR Manager's granular admin permissions via a
+ * modal backed by GET /admin/permissions/catalog + PATCH /admin/users/:id/permissions.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -16,7 +23,8 @@ const blankForm = {
   isActive: true,
 };
 
-// Whether the current viewer is allowed to manage a given user row
+// Whether the current viewer is allowed to manage a given user row.
+// SuperAdmin manages everyone; HR Managers can only manage Employee accounts.
 function canManage(viewerRole, targetRole) {
   if (viewerRole === 'SuperAdmin') return true;
   return targetRole === 'Employee';

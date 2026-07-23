@@ -1,3 +1,9 @@
+/**
+ * MenuScreen — the "Menu" tab: accordion directory of every module, grouped by
+ * theme. Rows either jump to a bottom tab (item.tab) or push within the Home stack.
+ * Employee self-service groups render for staff; an extra Admin & Manager group is
+ * appended based on role gates (utils/roles). Purely navigational — no backend calls.
+ */
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -73,6 +79,7 @@ export default function MenuScreen() {
   const nav = useNavigation();
   const role = useAuth((s) => s.user?.role);
 
+  // tab items live on the parent tab navigator; everything else is a Home-stack push.
   const go = (item) => {
     if (item.tab) nav.getParent()?.navigate(item.key);
     else nav.navigate(item.key);

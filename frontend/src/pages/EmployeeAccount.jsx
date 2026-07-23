@@ -1,3 +1,9 @@
+/**
+ * EmployeeAccount — self-service account screen (employee portal). Regular users
+ * raise profile change-requests (fields + history) via /change-requests, while a
+ * SuperAdmin edits email/password directly via PATCH /auth/me/credentials.
+ * Also hosts the profile photo card.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -40,6 +46,7 @@ export default function EmployeeAccount() {
 
   const selected = fields.find((f) => f.key === field);
 
+  // Load the editable-field catalog and this user's existing change requests.
   const load = async () => {
     try {
       const [f, r] = await Promise.all([
@@ -75,6 +82,7 @@ export default function EmployeeAccount() {
     }
   };
 
+  // SuperAdmin-only direct credential change (email and/or password).
   const submitCredentials = async (e) => {
     e.preventDefault();
     setCredMsg(''); setCredErr('');

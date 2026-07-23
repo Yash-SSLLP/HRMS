@@ -21,6 +21,14 @@ const BACKOFF_SECONDS = [60, 300, 1800, 7200, 21600, 43200]; // 1m, 5m, 30m, 2h,
 let intervalHandle = null;
 let ticking = false;
 
+/**
+ * Atomically claim and process the single most-due outbox row: mark it Sending,
+ * send via services/email.sendMail, then record Sent, or apply exponential
+ * backoff (marking Dead after maxAttempts). Stale 'Sending' locks older than
+ * STALE_LOCK_MS are reclaimed. Mirrors the outcome back to the related entity.
+ * @returns {Promise<Object|null>} The processed EmailOutbox row, or null when nothing was due.
+ * @sideEffects Sends email; updates EmailOutbox and the related entity (ExitRequest/Candidate).
+ */
 async function processOne() {
   const now = new Date();
   const staleCutoff = new Date(now.getTime() - STALE_LOCK_MS);
@@ -79,6 +87,15 @@ async function processOne() {
   return row;
 }
 
+/**
+ * Reflect a send outcome onto the entity that queued the mail so its own UI shows
+ * the delivery state. Currently handles 'exit' (ExitRequest email status fields)
+ * and 'offer'/'appointment' (Candidate letter emailedAt stamps).
+ * @param {Object} row - The EmailOutbox row (carries relatedType/relatedId + timestamps).
+ * @param {{sent:boolean, error?:string}} outcome - Whether the send succeeded and any error text.
+ * @returns {Promise<void>}
+ * @sideEffects Updates the ExitRequest or Candidate collection.
+ */
 async function mirrorToRelated(row, outcome) {
   if (!row.relatedType || !row.relatedId) return;
   if (row.relatedType === 'exit') {
@@ -100,6 +117,12 @@ async function mirrorToRelated(row, outcome) {
   // Add other related types here as new modules use the outbox
 }
 
+/**
+ * Drain up to MAX_PER_TICK due rows in one pass, stopping early when none remain.
+ * Re-entrancy guarded by the module `ticking` flag.
+ * @returns {Promise<void>}
+ * @sideEffects See processOne (sends email, DB writes).
+ */
 async function tick() {
   if (ticking) return;
   ticking = true;
@@ -113,6 +136,11 @@ async function tick() {
   }
 }
 
+/**
+ * Start the outbox worker: poll every POLL_INTERVAL_MS plus an immediate tick to
+ * drain anything queued during downtime. No-op if already running.
+ * @returns {void}
+ */
 function startWorker() {
   if (intervalHandle) return;
   intervalHandle = setInterval(() => {
@@ -123,6 +151,10 @@ function startWorker() {
   console.log(`[emailWorker] started (polling every ${POLL_INTERVAL_MS / 1000}s)`);
 }
 
+/**
+ * Stop the polling interval (in-flight ticks are not interrupted).
+ * @returns {void}
+ */
 function stopWorker() {
   if (intervalHandle) clearInterval(intervalHandle);
   intervalHandle = null;

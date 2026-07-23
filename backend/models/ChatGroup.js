@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 
-const MEMBER_STATUS = ['invited', 'accepted', 'declined'];
+// A group chat/conversation in the internal messaging module. Holds its members
+// (with roles + invite status embedded) and metadata; messages live in Message.
+const MEMBER_STATUS = ['invited', 'accepted', 'declined']; // invite lifecycle for a group member
 
 // A member of a group chat. An invitee must `accept` before they join and can
 // see the group's messages. `lastReadAt` drives the per-member unread count.

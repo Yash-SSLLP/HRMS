@@ -1,3 +1,6 @@
+// Email-compose helpers: build public backend URLs for outsider-facing links
+// and open a prefilled Gmail web compose tab (attachments are downloaded
+// locally since webmail cannot pre-attach files).
 import { downloadFile } from './download';
 
 // Absolute backend URL for building public links shared with outsiders (e.g. a

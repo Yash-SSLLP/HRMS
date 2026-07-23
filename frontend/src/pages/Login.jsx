@@ -1,3 +1,9 @@
+/**
+ * Login — the app's sign-in screen (route /login), used by all roles.
+ * POST /auth/login authenticates and stores the session, then routes to the
+ * employee vs admin portal by role. Also hosts a "Forgot password?" modal that
+ * files a request to HR via POST /password-reset-requests (no email client).
+ */
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
@@ -35,6 +41,7 @@ export default function Login() {
     setShowReset(true);
   };
 
+  // Submit the "forgot password" request to HR (no self-service reset link).
   const submitReset = async (e) => {
     e.preventDefault();
     setResetErr(''); setResetMsg('');
@@ -50,6 +57,8 @@ export default function Login() {
     }
   };
 
+  // Authenticate, persist the session, then redirect by role (honoring any
+  // protected route the user was bounced from via location.state.from).
   const onSubmit = async (e) => {
     e.preventDefault();
     setError('');

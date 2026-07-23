@@ -1,7 +1,11 @@
 const mongoose = require('mongoose');
-const { approvalStepSchema } = require('./Leave');
+const { approvalStepSchema } = require('./Leave'); // reuse the shared reporting-chain rung schema
 
+// An employee separation/exit case (resignation, termination, retirement). Drives
+// the exit workflow: reporting-chain approval -> notice period + clearance
+// checklist -> final settlement, plus the exit-feedback survey and exit email.
 const EXIT_TYPES = ['Resignation', 'Termination', 'Retirement'];
+// Pending -> in approval chain; InClearance -> accepted, serving notice/clearance; Completed -> exit done; Cancelled -> withdrawn/rejected.
 const EXIT_STATUSES = ['Pending', 'InClearance', 'Completed', 'Cancelled'];
 
 const clearanceSchema = new mongoose.Schema(
@@ -107,6 +111,7 @@ exitRequestSchema.index(
   { unique: true, partialFilterExpression: { status: { $in: ['Pending', 'InClearance'] } } }
 );
 
+// Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 exitRequestSchema.plugin(require("./plugins/auditStatus"));
 
 module.exports = mongoose.model('ExitRequest', exitRequestSchema);

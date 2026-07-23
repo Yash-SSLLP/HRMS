@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+// A compensatory-off request: an employee who worked a holiday/weekend earns a
+// comp-off day, which must be approved and then availed before it expires.
+// Pending -> awaiting review; Approved -> granted; Rejected -> denied; Availed -> comp-off taken.
 const COMPOFF_STATUS = ['Pending', 'Approved', 'Rejected', 'Availed'];
 
 const compOffSchema = new mongoose.Schema(
@@ -17,6 +20,7 @@ const compOffSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Audit-status plugin: logs every `status` transition to AuditLog with actor attribution.
 compOffSchema.plugin(require("./plugins/auditStatus"));
 
 module.exports = mongoose.model('CompOff', compOffSchema);

@@ -1,3 +1,9 @@
+/**
+ * EmployeeReviews — performance reviews for the logged-in user (employee portal).
+ * Loads reviews assigned to me (GET /reviews/me/assigned) and feedback about me
+ * (GET /reviews/me/about, shown anonymised), and submits filled-in reviews via
+ * PATCH /reviews/me/:id (per-competency scores + overall + strengths/improvements).
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -52,6 +58,8 @@ export default function EmployeeReviews() {
   };
   useEffect(() => { load(); }, []);
 
+  // Seed the fill-in modal: use the cycle's competency list (falling back to any
+  // already-saved ratings) and pre-populate scores/comments from prior input.
   const openFill = (review) => {
     const competencies = review.cycle?.competencies?.length
       ? review.cycle.competencies

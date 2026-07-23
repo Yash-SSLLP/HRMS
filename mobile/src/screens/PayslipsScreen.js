@@ -1,3 +1,9 @@
+/**
+ * PayslipsScreen — the employee's monthly payslips with an expandable
+ * gross/deductions/net breakdown and a PDF download/share action. Home stack
+ * route "Payslips" (Menu > Money). Any employee role.
+ * Backend: GET /payroll/me (list), GET /payroll/me/:id/pdf (payslip PDF download).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';

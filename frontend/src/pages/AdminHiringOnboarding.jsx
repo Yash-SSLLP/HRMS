@@ -1,3 +1,10 @@
+/**
+ * AdminHiringOnboarding — the "Onboarding" stage of hiring (admin portal). Lists
+ * candidates at stage=Onboarding (GET /recruitment/candidates), saves joining
+ * details (PATCH /recruitment/candidates/:id/onboarding), generates the
+ * appointment letter with a CTC breakup (POST /recruitment/candidates/:id/appointment),
+ * and emails offer/appointment letters via the editable composer.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

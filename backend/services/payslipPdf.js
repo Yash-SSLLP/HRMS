@@ -1,3 +1,15 @@
+/**
+ * Server-side payslip PDF renderer (pdfkit), styled after the Vertex42 template.
+ *
+ * Produces the PDF entirely in memory and resolves a Buffer — no files are
+ * written. External systems: none (pdfkit only).
+ *
+ * Config / env read:
+ *   PAYSLIP_FONT_PATH / PAYSLIP_FONT_BOLD_PATH  Unicode font for the ₹ glyph
+ *                                               (falls back to Helvetica + "Rs ").
+ *   ORG_DISPLAY_NAME, ORG_ADDRESS/ORG_LOCATION, ORG_PHONE, ORG_EMAIL, ORG_LOGO_PATH
+ *                                               header/footer branding.
+ */
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
@@ -58,6 +70,12 @@ function setupFonts(doc) {
  * blue Company Name / PAYSLIP header, employee-information block, a blue/gray
  * info grid, an EARNINGS table (HOURS / RATE / CURRENT / YTD) with GROSS PAY,
  * a DEDUCTIONS table with TOTAL DEDUCTIONS, a NET PAY band, and a footer.
+ * @param {Object} payslip - Payslip doc with populated `employee` (and `employee.user`),
+ *   `earnings`, `deductions`, `payPeriodMonth`/`payPeriodYear`, totals, paid/LOP days.
+ * @param {{earnings:Object, deductions:Object}} [ytd] - Year-to-date component sums;
+ *   each per-component value falls back to the current period when absent.
+ * @returns {Promise<Buffer>} Resolves with the rendered PDF bytes.
+ * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
 function renderPayslip(payslip, ytd = { earnings: {}, deductions: {} }) {
   return new Promise((resolve, reject) => {

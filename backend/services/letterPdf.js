@@ -112,10 +112,13 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance) {
 }
 
 /**
- * Offer letter — wording mirrors the uploaded sample.
- * data: { candidateName, position, department, address, refInterviewDate,
- *         salaryMonthly, salaryAnnual, probationMonths, noticePeriodDays,
- *         joiningDate, acceptanceDeadline, signatoryName, signatoryTitle }
+ * Offer letter — wording mirrors the uploaded sample. Renders in memory and
+ * resolves the PDF bytes (no file written).
+ * @param {Object} data - { candidateName, position, department, address, refInterviewDate,
+ *   salaryMonthly, salaryAnnual, probationMonths, noticePeriodDays, joiningDate,
+ *   acceptanceDeadline, signatoryName, signatoryTitle }.
+ * @returns {Promise<Buffer>} Resolves with the rendered PDF bytes.
+ * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
 function renderOfferLetter(data = {}) {
   return new Promise((resolve, reject) => {
@@ -173,11 +176,14 @@ function renderOfferLetter(data = {}) {
 }
 
 /**
- * Appointment letter — full terms + an Annexure A CTC breakup table.
- * data: { candidateName, designation, department, reportingManager, location,
- *         workingHours, joiningDate, probationMonths, noticePeriodDays, ctcAnnual,
- *         basic, hra, specialAllowance, conveyance, employerPf, gratuity, otherAllowances,
- *         signatoryName, signatoryTitle }
+ * Appointment letter — full terms + an Annexure A CTC breakup table (second page).
+ * Renders in memory and resolves the PDF bytes (no file written).
+ * @param {Object} data - { candidateName, designation, department, reportingManager,
+ *   location, workingHours, joiningDate, probationMonths, noticePeriodDays, ctcAnnual,
+ *   basic, hra, specialAllowance, conveyance, employerPf, gratuity, otherAllowances,
+ *   signatoryName, signatoryTitle }.
+ * @returns {Promise<Buffer>} Resolves with the rendered PDF bytes.
+ * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
 function renderAppointmentLetter(data = {}) {
   return new Promise((resolve, reject) => {

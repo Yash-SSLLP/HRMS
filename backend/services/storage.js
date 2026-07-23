@@ -50,19 +50,33 @@ function absoluteOf(relPath) {
   return abs;
 }
 
+/**
+ * Open a readable stream for a stored file.
+ * @param {string} relPath - Path relative to UPLOAD_DIR (as stored in the DB).
+ * @returns {import('fs').ReadStream} A read stream (emits 'error' if the file is missing).
+ */
 function readStream(relPath) {
   return fs.createReadStream(absoluteOf(relPath));
 }
 
-// Read a stored file fully into a Buffer. Used when we need to copy an existing
-// stored file elsewhere (e.g. duplicate an expense receipt onto its cashbook entry).
+/**
+ * Read a stored file fully into a Buffer. Used when we need to copy an existing
+ * stored file elsewhere (e.g. duplicate an expense receipt onto its cashbook entry).
+ * @param {string} relPath - Path relative to UPLOAD_DIR.
+ * @returns {Buffer} The file contents.
+ * @throws {Error} If the resolved path escapes UPLOAD_DIR, or the file cannot be read.
+ */
 function readBuffer(relPath) {
   return fs.readFileSync(absoluteOf(relPath));
 }
 
-// True if the stored file actually exists on disk. DB rows can outlive their
-// files (manual cleanup, failed write, migrated storage), so callers should
-// check before streaming to avoid an unhandled ReadStream 'error' crash.
+/**
+ * True if the stored file actually exists on disk. DB rows can outlive their
+ * files (manual cleanup, failed write, migrated storage), so callers should
+ * check before streaming to avoid an unhandled ReadStream 'error' crash.
+ * @param {string} relPath - Path relative to UPLOAD_DIR.
+ * @returns {boolean} True when the file exists and the path is within UPLOAD_DIR.
+ */
 function exists(relPath) {
   try {
     return fs.existsSync(absoluteOf(relPath));
@@ -71,10 +85,16 @@ function exists(relPath) {
   }
 }
 
-// Safely stream a stored file to an Express response. Returns false (without
-// touching the response) when the file is missing, so the caller can 404.
-// Attaches an error handler so a mid-stream failure ends the response instead
-// of crashing the process.
+/**
+ * Safely stream a stored file to an Express response. Returns false (without
+ * touching the response) when the file is missing, so the caller can 404.
+ * Attaches an error handler so a mid-stream failure ends the response instead
+ * of crashing the process.
+ * @param {string} relPath - Path relative to UPLOAD_DIR.
+ * @param {import('http').ServerResponse} res - Express response to pipe into.
+ * @returns {boolean} True if streaming started; false if the file was missing.
+ * @sideEffects Pipes bytes to the response; on error sends 404 or destroys the response.
+ */
 function streamTo(relPath, res) {
   if (!exists(relPath)) return false;
   const stream = fs.createReadStream(absoluteOf(relPath));
@@ -86,6 +106,13 @@ function streamTo(relPath, res) {
   return true;
 }
 
+/**
+ * Delete a stored file. A missing file (ENOENT) is treated as success.
+ * @param {string} relPath - Path relative to UPLOAD_DIR.
+ * @returns {void}
+ * @throws {Error} For any unlink error other than ENOENT, or a path outside UPLOAD_DIR.
+ * @sideEffects Removes the file from disk.
+ */
 function remove(relPath) {
   try {
     fs.unlinkSync(absoluteOf(relPath));

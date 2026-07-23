@@ -1,3 +1,10 @@
+/**
+ * ComplaintsScreen — lets an employee confidentially raise a workplace complaint
+ * against a colleague (subject + description) and track its status; picks the
+ * target person from the chat directory via a modal.
+ * Route: "Complaints" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /complaints/mine, GET /chat/directory, POST /complaints.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, FlatList, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -24,6 +31,7 @@ export default function ComplaintsScreen() {
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Load the user's complaints plus the people directory (for the "About" picker).
   const load = useCallback(async () => {
     const [mine, dir] = await Promise.all([
       api.get('/complaints/mine').catch(() => ({ data: {} })),
@@ -37,6 +45,7 @@ export default function ComplaintsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Validate target + text, then POST the complaint confidentially to HR.
   const submit = async () => {
     if (!against) { Alert.alert('Pick a person', 'Choose who the complaint is about.'); return; }
     if (!subject.trim() || !description.trim()) { Alert.alert('Incomplete', 'Add a subject and description.'); return; }

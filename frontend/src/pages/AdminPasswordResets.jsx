@@ -1,3 +1,9 @@
+/**
+ * AdminPasswordResets — HR/Admin inbox for "forgot password" requests filed from
+ * the login screen (admin portal). Lists requests from GET /password-reset-requests
+ * and either sets a new password (PATCH /password-reset-requests/:id/reset) or
+ * just marks the request resolved (PATCH /password-reset-requests/:id/resolve).
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -20,6 +26,7 @@ function Field({ label, value }) {
   );
 }
 
+// One reset request with inline "set new password" / "mark resolved" actions.
 function RequestCard({ r, onResolved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');

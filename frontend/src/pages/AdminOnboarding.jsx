@@ -1,3 +1,9 @@
+/**
+ * AdminOnboarding — employee onboarding-task management (admin portal). Lists
+ * onboarding tasks (optionally filtered by employee) from GET /onboarding and
+ * creates/edits/deletes via POST/PUT/DELETE /onboarding; employees see and update
+ * their own tasks on EmployeeOnboarding. Employee list from GET /admin/users.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

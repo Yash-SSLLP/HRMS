@@ -1,7 +1,22 @@
+// Authentication & authorization middleware. Provides JWT verification
+// (`protect` / `protectMedia`), role gating (`restrictTo`), and granular
+// capability gates (`hasPermission`, `requirePermission`, `requireAnyPermission`)
+// used across every protected route in the app.
 const jwt = require('jsonwebtoken');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 
+/**
+ * Authenticate a request via `Authorization: Bearer <jwt>`. Verifies the token,
+ * loads the User, and rejects deactivated accounts or tokens invalidated by a
+ * password change (tokenVersion mismatch). On success sets `req.user`.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ * @throws 401/403 Error when the token is missing/invalid or the account is inactive/expired.
+ * @sideeffect Sets req.user; sets res.status on failure.
+ */
 const protect = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ')) {
@@ -39,6 +54,18 @@ const protect = asyncHandler(async (req, res, next) => {
   next();
 });
 
+/**
+ * Same auth checks as `protect`, but also accepts the JWT via a
+ * `?access_token=` query parameter. Media elements (<video>, <img>, download
+ * links) can't send an Authorization header, so streaming routes authenticate
+ * the URL the browser fetches directly. On success sets `req.user`.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ * @throws 401/403 Error when the token is missing/invalid or the account is inactive/expired.
+ * @sideeffect Sets req.user; sets res.status on failure.
+ */
 // Like `protect`, but also accepts the token via a `?access_token=` query
 // parameter. Media elements (<video>, <img>, download links) can't set an
 // Authorization header, so streaming routes use this to authenticate the URL
@@ -82,6 +109,14 @@ const protectMedia = asyncHandler(async (req, res, next) => {
 const EXEC_VIEWERS = ['CEO', 'MD'];
 const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 
+/**
+ * Role gate factory. Allows the listed roles through; on admin-gated routes
+ * (SuperAdmin/HRManager) CEO/MD additionally get read-only access — safe methods
+ * pass, writes are rejected. Requires `protect` to have run first.
+ * @param {...string} roles - Role names permitted to proceed.
+ * @returns {import('express').RequestHandler} Express middleware.
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
 // Usage: restrictTo('SuperAdmin', 'HRManager')
 const restrictTo = (...roles) => (req, res, next) => {
   if (!req.user) {
@@ -103,6 +138,12 @@ const restrictTo = (...roles) => (req, res, next) => {
   return next(new Error('You do not have permission to perform this action'));
 };
 
+/**
+ * Whether a user holds a granular capability key. See inline rules below.
+ * @param {object|null} user - The User doc (needs role, and optionally permissions/cashbookAccess).
+ * @param {string} cap - Capability key (e.g. 'payroll.manage'), from config/permissions.js.
+ * @returns {boolean} True if the user is allowed the capability.
+ */
 // Does this user hold a given granular capability? SuperAdmin → always. HRManager
 // → yes if their `permissions` array includes it, OR if the array is absent
 // (undefined = ALL, so existing HRs keep full access until a SuperAdmin trims
@@ -123,6 +164,13 @@ function hasPermission(user, cap) {
   return false;
 }
 
+/**
+ * Build a capability gate. CEO/MD keep read-only access on safe methods;
+ * otherwise the user must hold at least one of the given capabilities.
+ * @param {string|string[]} caps - One capability key, or several (user needs ANY one).
+ * @returns {import('express').RequestHandler} Express middleware.
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
 // Gate a route on a granular capability. Behaves like restrictTo for the base
 // roles (SuperAdmin all; CEO/MD read-only on safe methods) but, for HRManager,
 // additionally requires the capability. `caps` = one required key, or several of
@@ -146,7 +194,9 @@ function makePermissionGuard(caps) {
   };
 }
 
+// Gate requiring one specific capability.
 const requirePermission = (cap) => makePermissionGuard(cap);
+// Gate satisfied by holding ANY of the listed capabilities.
 const requireAnyPermission = (...caps) => makePermissionGuard(caps);
 
 module.exports = {

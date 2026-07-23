@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+// A reusable salary/CTC template defining how an annual CTC splits into pay
+// components. Applied to employees so payroll can derive Basic, HRA, etc. from CTC.
+
 // All percentages are expressed as a percentage of the ANNUAL CTC, so a
 // structure can be previewed against any CTC amount. The controller validates
 // that the sum of all component percentages is <= 100.

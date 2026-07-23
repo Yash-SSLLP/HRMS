@@ -1,3 +1,8 @@
+// components/MailComposeSheet.js — reusable "review before sending" email sheet.
+// The mobile twin of the web MailComposeModal: previews recipients/attachments/
+// link, lets HR edit the subject + body, and only delivers (via the caller's
+// mail.onSend) when the send button is pressed. Used for offer/appointment/
+// payslip emails.
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Alert } from 'react-native';
 import { colors, radius, spacing, font } from '../theme';

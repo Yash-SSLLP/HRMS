@@ -1,3 +1,9 @@
+/**
+ * ApplyForm — public (no-login) job application page, route /apply/:jobId.
+ * Used by external candidates who open a shared job link. Fetches the opening
+ * via GET /recruitment/apply/:jobId and submits the application (with resume
+ * file, multipart) via POST /recruitment/apply/:jobId.
+ */
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
@@ -8,6 +14,7 @@ const blank = {
   experienceYears: '', noticePeriod: '', expectedCtc: '', coverNote: '',
 };
 
+// Centered card layout wrapper (company logo header) shared by all page states.
 function Shell({ children }) {
   return (
     <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 px-4 py-10">
@@ -21,6 +28,8 @@ function Shell({ children }) {
   );
 }
 
+// Main page component: loads the opening, renders the application form, and
+// swaps to loading / error / closed / success states as appropriate.
 export default function ApplyForm() {
   const { jobId } = useParams();
   const [job, setJob] = useState(null);
@@ -31,6 +40,7 @@ export default function ApplyForm() {
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
+  // Load the public job posting; a failure (closed/removed) shows an error card.
   useEffect(() => {
     (async () => {
       try {
@@ -46,6 +56,7 @@ export default function ApplyForm() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  // Submit the application as multipart form-data (resume is required).
   const submit = async (e) => {
     e.preventDefault();
     setError('');

@@ -1,3 +1,9 @@
+/**
+ * Calendar — month grid of company celebrations & events, shared by employee
+ * and admin portals. Aggregates holidays, events, birthdays, work anniversaries
+ * and (for interviewers) scheduled interviews from GET /celebrations/calendar.
+ * Interview events can open the candidate resume (blob) and join a meeting link.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { FiVideo, FiFileText, FiX } from 'react-icons/fi';
 import api from '../api/client';
@@ -34,6 +40,7 @@ export default function Calendar() {
   const [selected, setSelected] = useState(null); // event opened in the detail modal
   const [resumeBusy, setResumeBusy] = useState(false);
 
+  // Reload the month's events whenever the visible year/month changes.
   const load = async () => {
     setLoading(true);
     setError('');
@@ -50,6 +57,7 @@ export default function Calendar() {
 
   useEffect(() => { load(); }, [year, month]);
 
+  // Group events by day-of-month for quick cell lookup when rendering the grid.
   const eventsByDay = useMemo(() => {
     const map = {};
     for (const e of events) {

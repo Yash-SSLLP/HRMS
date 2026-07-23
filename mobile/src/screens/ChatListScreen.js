@@ -1,3 +1,11 @@
+/**
+ * ChatListScreen — the Chat tab landing: merged, recency-sorted list of DM and
+ * group conversations with unread badges and pending group invites; FAB / empty
+ * CTA opens NewChat, tapping a row opens Conversation.
+ * Route: "ChatList" (Chat tab). Employee-facing (all roles).
+ * Backend: GET /chat/connections, GET /chat/groups,
+ * PATCH /chat/groups/:id/respond. Uses a local cache for instant paint.
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -20,6 +28,8 @@ export default function ChatListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Fetch DMs and groups, normalise both into a common row shape, merge and sort
+  // by last-message time; also caches the list and refreshes unread badges.
   const load = useCallback(async () => {
     const [dm, gr] = await Promise.all([
       api.get('/chat/connections').catch(() => ({ data: {} })),
@@ -75,11 +85,13 @@ export default function ChatListScreen() {
     setRefreshing(false);
   };
 
+  // Accept/decline a group invite, then reload the list.
   const respondInvite = async (groupId, action) => {
     await api.patch(`/chat/groups/${groupId}/respond`, { action }).catch(() => {});
     load();
   };
 
+  // Open a DM or group thread, passing the params ConversationScreen needs.
   const openConvo = (item) => {
     nav.navigate('Conversation', {
       kind: item.kind,

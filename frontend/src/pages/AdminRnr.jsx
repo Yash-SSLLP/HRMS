@@ -1,3 +1,9 @@
+/**
+ * AdminRnr — Rewards & Recognition (admin portal). HR picks one Employee of the
+ * Month and one Key Achiever per department for a month, saving a hidden draft
+ * (POST /rnr) that stays secret until announced (POST /rnr/:id/announce), which
+ * notifies everyone and shows a dashboard banner. People/depts from GET /rnr/people.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import { FiAward, FiStar, FiLock } from 'react-icons/fi';

@@ -1,7 +1,13 @@
+/**
+ * Guide controller — HR-editable overrides for the app's built-in help guides,
+ * keyed by a fixed set (GUIDE_KEYS). Reading returns the override or null (so the
+ * client falls back to its bundled default); saving upserts; deleting reverts.
+ */
 const asyncHandler = require('express-async-handler');
 const Guide = require('../models/Guide');
 const { GUIDE_KEYS } = require('../models/Guide');
 
+// Reject any key not in the known guide catalogue
 function assertKey(key, res) {
   if (!GUIDE_KEYS.includes(key)) {
     res.status(400);
@@ -9,6 +15,12 @@ function assertKey(key, res) {
   }
 }
 
+/**
+ * Get a guide's HR override (content:null means use the client default).
+ * @route GET /api/guides/:key  (any authenticated user)
+ * @param {string} req.params.key - one of GUIDE_KEYS
+ * @returns {{key, content, updatedAt, updatedByName}}
+ */
 // GET /api/guides/:key  (any authenticated user)
 // Returns the HR-edited override, or content:null so the client uses its
 // bundled default.
@@ -23,6 +35,13 @@ const getGuide = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Save (upsert) a guide override, stamping the editor's name.
+ * @route PUT /api/guides/:key  (announcements.manage)
+ * @param {string} req.params.key - one of GUIDE_KEYS
+ * @param {string} req.body.content
+ * @returns {{key, content, updatedAt, updatedByName}}
+ */
 // PUT /api/guides/:key { content }  (announcements.manage)
 const saveGuide = asyncHandler(async (req, res) => {
   assertKey(req.params.key, res);
@@ -38,6 +57,12 @@ const saveGuide = asyncHandler(async (req, res) => {
   res.json({ key: doc.key, content: doc.content, updatedAt: doc.updatedAt, updatedByName: doc.updatedByName });
 });
 
+/**
+ * Delete a guide override, reverting to the client's bundled default.
+ * @route DELETE /api/guides/:key  (announcements.manage)
+ * @param {string} req.params.key - one of GUIDE_KEYS
+ * @returns {{key, content: null, reset: true}}
+ */
 // DELETE /api/guides/:key  (announcements.manage) — revert to the bundled default.
 const resetGuide = asyncHandler(async (req, res) => {
   assertKey(req.params.key, res);

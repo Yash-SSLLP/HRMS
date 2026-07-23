@@ -1,3 +1,9 @@
+/**
+ * EmployeeLearning — LMS landing page (employee portal), route /employee/learning.
+ * Shows my active/pending course enrollments (GET /courses/me) plus the full
+ * catalog (GET /courses), and lets the user request self-enrollment via
+ * POST /courses/:id/enroll (which needs HR approval). Cards link to the player.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
@@ -35,6 +41,7 @@ export default function EmployeeLearning() {
   const [error, setError] = useState('');
   const [busyEnroll, setBusyEnroll] = useState(null);
 
+  // Load my enrollments and the catalog together on mount / after enrolling.
   const load = async () => {
     setLoading(true);
     setError('');
@@ -50,6 +57,7 @@ export default function EmployeeLearning() {
   };
   useEffect(() => { load(); }, []);
 
+  // Index enrollments by course id so catalog cards can show their own state.
   const byCourseId = useMemo(() => {
     const m = {};
     enrollments.forEach((e) => { if (e.course) m[String(e.course._id)] = e; });

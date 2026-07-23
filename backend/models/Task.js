@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 
+// A work item assigned to an employee, optionally under a Project. Core unit of
+// the task-tracking / kanban module.
+// Todo -> not started; InProgress -> being worked; Review -> awaiting review; Done -> completed.
 const TASK_STATUS = ['Todo', 'InProgress', 'Review', 'Done'];
 const TASK_PRIORITY = ['Low', 'Medium', 'High', 'Urgent'];
 
@@ -7,7 +10,7 @@ const taskSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
-    project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', index: true },
+    project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', index: true }, // parent Project (optional)
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
     status: { type: String, enum: TASK_STATUS, default: 'Todo' },
     priority: { type: String, enum: TASK_PRIORITY, default: 'Medium' },
@@ -17,6 +20,7 @@ const taskSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Audit-status plugin: logs `status` transitions to AuditLog (labelled by title).
 taskSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
 
 module.exports = mongoose.model('Task', taskSchema);

@@ -10,6 +10,11 @@ const { Readable } = require('stream');
 //   https://drive.google.com/uc?id=<ID>&export=download
 //   https://drive.usercontent.google.com/download?id=<ID>&export=download
 //   <ID>
+/**
+ * Extract a Google Drive file id from any common link shape or a bare id.
+ * @param {string} input - A Drive URL or a raw file id.
+ * @returns {string|null} The file id, or null if none could be parsed.
+ */
 function parseDriveFileId(input) {
   if (!input) return null;
   const s = String(input).trim();
@@ -35,6 +40,17 @@ function parseDriveFileId(input) {
 const DOWNLOAD_URL = (id) =>
   `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download&confirm=t`;
 
+/**
+ * Proxy-stream a Drive file to an Express response, forwarding Range headers so
+ * a media element can seek, and relaying the content headers it needs.
+ * @param {string} fileId - Drive file id (from parseDriveFileId).
+ * @param {import('express').Request} req - Used to read the incoming Range header.
+ * @param {import('express').Response} res - Streamed to (status + headers + body).
+ * @returns {Promise<void>}
+ * @throws {Error} with `.status = 502` before headers are sent if the file can't
+ *   be fetched or isn't publicly shared (Drive returns an HTML interstitial).
+ * @sideeffect Writes status/headers and pipes the upstream body to `res`.
+ */
 // Proxy-stream a Drive file to an Express response, forwarding Range headers so
 // the browser's <video> can seek. Resolves after headers/stream are wired up;
 // throws (before writing headers) if the file can't be fetched so the caller can

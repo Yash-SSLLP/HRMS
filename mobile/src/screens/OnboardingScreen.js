@@ -1,3 +1,9 @@
+/**
+ * OnboardingScreen — the new-joiner's onboarding checklist with an overall
+ * progress bar and per-task status toggles. Home stack route "Onboarding"
+ * (Menu > Requests & lifecycle). Any employee role.
+ * Backend: GET /onboarding/me (my tasks), PATCH /onboarding/me/:taskId/status.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -25,6 +31,7 @@ export default function OnboardingScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Optimistically flip the task status, then persist; reload to revert on error.
   const setStatus = async (task, status) => {
     setTasks((prev) => prev.map((t) => (t._id === task._id ? { ...t, status } : t)));
     try {
@@ -37,6 +44,7 @@ export default function OnboardingScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
+  // Derive overall completion for the progress card.
   const done = tasks.filter((t) => t.status === 'Done').length;
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
 

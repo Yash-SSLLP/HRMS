@@ -1,3 +1,7 @@
+/**
+ * EmployeeShifts — read-only roster of the logged-in employee's assigned shifts
+ * (employee portal). Data from GET /shifts/roster/me; times shown in 12-hour.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

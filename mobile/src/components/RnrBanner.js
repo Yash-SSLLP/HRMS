@@ -1,3 +1,7 @@
+// components/RnrBanner.js — dashboard Rewards & Recognition banner.
+// Fetches the current live award (/rnr/current) on focus and renders the
+// Employee of the Month + Key Achievers. Server enforces the display window
+// (~2 working days after HR announces); the user can dismiss it per-award.
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -15,9 +19,10 @@ const AMBER = '#f59e0b';
 const winnerUri = (w) =>
   w.photo ? `${mediaUrl(`/auth/users/${w.user}/avatar`)}?p=${encodeURIComponent(w.photo)}` : null;
 
-// Celebratory dashboard banner for the month's Rewards & Recognition winners.
-// Shows for 2 working days after HR announces (server-enforced) and is closeable
-// per-user. Renders nothing when there's no live award for this viewer.
+/**
+ * Celebratory dashboard banner for the month's Rewards & Recognition winners.
+ * Renders nothing when there's no live award for this viewer or after dismiss.
+ */
 export default function RnrBanner() {
   const [award, setAward] = useState(null);
   const [closed, setClosed] = useState(false);

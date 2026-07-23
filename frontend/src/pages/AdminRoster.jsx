@@ -1,3 +1,9 @@
+/**
+ * AdminRoster — shift definitions + roster assignment (admin portal). Manages
+ * shifts via /shifts (GET/POST/PUT/DELETE) and roster entries via /shifts/roster
+ * (GET with date filter, POST to assign, DELETE to remove). Employee list for the
+ * assign dropdown comes from GET /admin/users. Times shown in 12-hour format.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

@@ -1,3 +1,7 @@
+/**
+ * EmployeeAssets — read-only list of company assets assigned to the logged-in
+ * employee (employee portal). Data from GET /assets/me.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

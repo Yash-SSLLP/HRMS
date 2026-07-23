@@ -1,3 +1,10 @@
+/**
+ * Document controller — employee document store (Document). Employees upload/list
+ * a limited set of self-upload categories; HR upload any category on an employee's
+ * behalf and verify/reject submissions. Files persist to local disk (primary) with
+ * a best-effort Cloudinary backup, and downloads fall back to the cloud copy.
+ * Category constants gate who may upload/delete what.
+ */
 const asyncHandler = require('express-async-handler');
 const path = require('path');
 const Document = require('../models/Document');
@@ -42,6 +49,11 @@ function isAdmin(user) {
 
 // ===== Employee =====
 
+/**
+ * List the caller's own documents, newest first.
+ * @route GET /api/documents/me
+ * @returns {{count: number, documents: Object[]}}
+ */
 // GET /api/documents/me
 const listMine = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -49,6 +61,15 @@ const listMine = asyncHandler(async (req, res) => {
   res.json({ count: docs.length, documents: docs });
 });
 
+/**
+ * Employee uploads a document in an allowed self-upload category.
+ * @route POST /api/documents/me  (multipart: file + category)
+ * @param {File} req.file - the file (required)
+ * @param {string} req.body.category - must be in SELF_UPLOAD_CATEGORIES
+ * @param {string} [req.body.note]
+ * @returns {{document: Object}} (201)
+ * @sideeffect persists to disk and best-effort backs up to Cloudinary
+ */
 // POST /api/documents/me  (multipart: file + category)
 const uploadMine = asyncHandler(async (req, res) => {
   if (!req.file) {
@@ -87,6 +108,12 @@ const uploadMine = asyncHandler(async (req, res) => {
 
 // ===== HR/Admin =====
 
+/**
+ * List documents, optionally filtered by employee.
+ * @route GET /api/documents?employee=  (HR/Admin)
+ * @param {string} [req.query.employee] - EmployeeProfile id
+ * @returns {{count: number, documents: Object[]}} with populated employee
+ */
 // GET /api/documents?employee=
 const listForEmployee = asyncHandler(async (req, res) => {
   const filter = {};
@@ -101,6 +128,16 @@ const listForEmployee = asyncHandler(async (req, res) => {
   res.json({ count: docs.length, documents: docs });
 });
 
+/**
+ * HR uploads a document on an employee's behalf (any category).
+ * @route POST /api/documents  (HR/Admin, multipart: file + employee + category)
+ * @param {File} req.file - the file (required)
+ * @param {string} req.body.employee - EmployeeProfile id (required)
+ * @param {string} req.body.category - must be in ALL_CATEGORIES (required)
+ * @param {string} [req.body.note]
+ * @returns {{document: Object}} (201)
+ * @sideeffect persists to disk and best-effort backs up to Cloudinary
+ */
 // POST /api/documents  (HR uploads on behalf)  multipart: file + employee + category
 const uploadForEmployee = asyncHandler(async (req, res) => {
   if (!req.file) {
@@ -145,6 +182,12 @@ const uploadForEmployee = asyncHandler(async (req, res) => {
   res.status(201).json({ document: doc });
 });
 
+/**
+ * Download a document (HR/Admin, or the owning employee); disk first, cloud fallback.
+ * @route GET /api/documents/:id/download
+ * @param {string} req.params.id - document id
+ * @returns {binary} the file as an attachment; 403 if unauthorized, 404 if missing
+ */
 // GET /api/documents/:id/download
 const download = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
@@ -153,7 +196,7 @@ const download = asyncHandler(async (req, res) => {
     throw new Error('Document not found');
   }
 
-  // Authorize: HR/Admin always, or the owner employee
+  // Permission gate: HR/Admin always, or the owner employee
   let allowed = isAdmin(req.user);
   if (!allowed) {
     const profile = await EmployeeProfile.findOne({ user: req.user._id });
@@ -185,6 +228,12 @@ const download = asyncHandler(async (req, res) => {
   return res.status(404).json({ message: 'File not found' });
 });
 
+/**
+ * Delete a document (HR any; employee only their own non-HR-issued doc).
+ * @route DELETE /api/documents/:id
+ * @param {string} req.params.id - document id
+ * @returns {{id: string, deleted: boolean}}; 403 if unauthorized
+ */
 // DELETE /api/documents/:id
 const remove = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
@@ -193,7 +242,7 @@ const remove = asyncHandler(async (req, res) => {
     throw new Error('Document not found');
   }
 
-  // HR can delete any; employee can delete only their own non-HR-issued doc
+  // Permission gate: HR can delete any; employee only their own non-HR-issued doc
   if (!isAdmin(req.user)) {
     const profile = await EmployeeProfile.findOne({ user: req.user._id });
     const isOwner = profile && profile._id.equals(doc.employee);
@@ -213,6 +262,14 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * Set a document's verification status (verify/reject a submission).
+ * @route PATCH /api/documents/:id/status  (HR/Admin)
+ * @param {string} req.params.id - document id
+ * @param {string} req.body.status - 'Submitted' | 'Verified' | 'Rejected'
+ * @param {string} [req.body.note]
+ * @returns {{document: Object}}; records verifiedBy/verifiedAt unless status is Submitted
+ */
 // PATCH /api/documents/:id/status  { status, note }  (HR/Admin)
 // Verify or reject an employee-submitted document.
 const setStatus = asyncHandler(async (req, res) => {
@@ -234,6 +291,11 @@ const setStatus = asyncHandler(async (req, res) => {
   res.json({ document: doc.toJSON() });
 });
 
+/**
+ * Return the document category constants for building upload forms.
+ * @route GET /api/documents/categories
+ * @returns {{selfUpload, hrOnly, all, required}} category name arrays
+ */
 // GET /api/documents/categories  (helper for forms)
 const categories = asyncHandler(async (req, res) => {
   res.json({

@@ -1,3 +1,9 @@
+/**
+ * TravelScreen — request business travel and track existing trip requests.
+ * Home stack route "Travel" (Menu > Money). Any employee role; requests go to
+ * HR/manager for approval.
+ * Backend: GET /travel/me (my trips), POST /travel (new request).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -29,6 +35,7 @@ export default function TravelScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Validate required fields and date order, POST, then reset the form and reload.
   const submit = async () => {
     if (!f.purpose || !f.origin || !f.destination) { Alert.alert('Missing info', 'Purpose, origin and destination are required.'); return; }
     if (!f.fromDate || !f.toDate) { Alert.alert('Pick dates', 'Choose both travel dates.'); return; }

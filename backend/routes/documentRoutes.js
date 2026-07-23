@@ -1,3 +1,9 @@
+/**
+ * Document router — mounted at /api/documents.
+ * Employee HR-document self-upload plus HR/Admin management, with
+ * multer memory upload (5MB, PDF/image/Word allowlist).
+ * All routes require authentication (router.use(protect)).
+ */
 const express = require('express');
 const multer = require('multer');
 const {
@@ -38,20 +44,28 @@ const upload = multer({
 
 router.use(protect);
 
+// GET /categories — list document categories; protected.
 router.get('/categories', categories);
 
 // Employee self-service
+// GET /me — list current user's documents; protected.
 router.get('/me', listMine);
+// POST /me — upload own document; protected + multer single 'file' (5MB allowlist).
 router.post('/me', upload.single('file'), uploadMine);
 
 // Download is auth-checked inside the controller (allows both owner + admin)
+// GET /:id/download — download a document; protected (owner or admin, checked in controller).
 router.get('/:id/download', download);
+// DELETE /:id — delete a document; protected (owner or admin, checked in controller).
 router.delete('/:id', remove);
 
-// HR/Admin
+// HR/Admin — everything below requires the 'documents.manage' permission.
 router.use(requirePermission('documents.manage'));
+// GET / — list an employee's documents; protected, requires 'documents.manage'.
 router.get('/', listForEmployee);
+// POST / — upload a document for an employee; protected, requires 'documents.manage' + multer single 'file'.
 router.post('/', upload.single('file'), uploadForEmployee);
+// PATCH /:id/status — set document verify status; protected, requires 'documents.manage'.
 router.patch('/:id/status', setStatus);
 
 module.exports = router;

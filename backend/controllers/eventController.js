@@ -1,13 +1,23 @@
+/**
+ * Event controller — CRUD for company calendar Events. Creating an event fans out
+ * an in-app + push notification to all active users. Mutations are HR/SuperAdmin.
+ */
 const asyncHandler = require('express-async-handler');
 const Event = require('../models/Event');
 const User = require('../models/User');
 const { notifyMany } = require('../services/notify');
 
+// Format a date as e.g. "5 Jan 2026" for notification bodies
 function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// GET /api/events?year=YYYY   (any authenticated user)
+/**
+ * List events, optionally scoped to a calendar year, sorted by date.
+ * @route GET /api/events?year=YYYY   (any authenticated user)
+ * @param {string} [req.query.year]
+ * @returns {{count: number, events: Object[]}} with populated createdBy
+ */
 const listEvents = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.year) {
@@ -20,6 +30,17 @@ const listEvents = asyncHandler(async (req, res) => {
   res.json({ count: events.length, events });
 });
 
+/**
+ * Create a calendar event and notify all other active users.
+ * @route POST /api/events   (HR/SuperAdmin)
+ * @param {string} req.body.title - required
+ * @param {string} req.body.date - required
+ * @param {string} [req.body.time]
+ * @param {string} [req.body.location]
+ * @param {string} [req.body.description]
+ * @returns {{event: Object, notified: number}} (201)
+ * @sideeffect notifies every active user except the creator
+ */
 // POST /api/events   (HR/SuperAdmin) — fans out a notification to every other active user
 const createEvent = asyncHandler(async (req, res) => {
   const { title, date, time, location, description } = req.body;
@@ -50,6 +71,13 @@ const createEvent = asyncHandler(async (req, res) => {
   res.status(201).json({ event, notified: recipients.length });
 });
 
+/**
+ * Update a calendar event's fields (partial).
+ * @route PUT /api/events/:id   (HR/SuperAdmin)
+ * @param {string} req.params.id - event id
+ * @param {Object} req.body - title/date/time/location/description
+ * @returns {{event: Object}}
+ */
 // PUT /api/events/:id   (HR/SuperAdmin)
 const updateEvent = asyncHandler(async (req, res) => {
   const event = await Event.findById(req.params.id);
@@ -67,6 +95,12 @@ const updateEvent = asyncHandler(async (req, res) => {
   res.json({ event });
 });
 
+/**
+ * Delete a calendar event by id.
+ * @route DELETE /api/events/:id   (HR/SuperAdmin)
+ * @param {string} req.params.id - event id
+ * @returns {{id: string, deleted: boolean}}
+ */
 // DELETE /api/events/:id   (HR/SuperAdmin)
 const deleteEvent = asyncHandler(async (req, res) => {
   const event = await Event.findById(req.params.id);

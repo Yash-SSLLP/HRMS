@@ -19,6 +19,10 @@ const crypto = require('crypto');
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
+/**
+ * Whether the Google OAuth credentials needed for Calendar/Gmail are all present.
+ * @returns {boolean} True when client id, secret, and refresh token are all set.
+ */
 function isConfigured() {
   return Boolean(
     process.env.GOOGLE_OAUTH_CLIENT_ID &&
@@ -30,6 +34,14 @@ function isConfigured() {
 // Cache the short-lived access token until shortly before it expires.
 let cached = { token: null, expiresAt: 0 };
 
+/**
+ * Get a valid short-lived OAuth access token, refreshing via the refresh-token
+ * grant when the cached one is missing or within 60s of expiry. Shared by the
+ * Calendar and Gmail services.
+ * @returns {Promise<string>} A bearer access token.
+ * @throws {Error} If the token refresh request fails.
+ * @sideEffects Network call to Google's OAuth token endpoint; updates the module cache.
+ */
 async function getAccessToken() {
   if (cached.token && Date.now() < cached.expiresAt - 60_000) return cached.token;
 

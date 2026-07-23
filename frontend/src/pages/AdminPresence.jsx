@@ -1,3 +1,9 @@
+/**
+ * AdminPresence — "Who's In & On Leave" live board (admin portal). Loads today's
+ * presence snapshot (present/on-leave/absent, with selfies) from
+ * GET /attendance/presence-board, filterable by department, and renders it via
+ * the shared PresenceBoardView.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

@@ -1,10 +1,19 @@
+// navigation/navRef.js — imperative navigation from outside React.
+// Exposes a NavigationContainerRef so non-component code (a tapped push
+// notification) can navigate, plus helpers that translate a backend
+// notification's logical `link`/`type` into a concrete tab/screen destination.
 import { createNavigationContainerRef } from '@react-navigation/native';
 
+// Shared ref attached to the NavigationContainer in App.js.
 export const navRef = createNavigationContainerRef();
 
-// Map a notification's logical `link`/`type` to an in-app destination.
-// Mirrors the backend notification `link` values ('chat', 'calendar',
-// 'celebrations', …) used by the web portal.
+/**
+ * Map a notification's logical `link`/`type` to an in-app destination.
+ * Mirrors the backend notification `link` values ('chat', 'calendar',
+ * 'celebrations', …) used by the web portal.
+ * @param {object} [data] Notification payload ({ link, type, ... }).
+ * @returns {{tab: string, screen?: string, params?: object}} Target route.
+ */
 export function routeForNotification(data = {}) {
   const link = data.link || data.type;
   // Course/learning links (web paths like /employee/learning/<id> or
@@ -36,6 +45,11 @@ export function routeForNotification(data = {}) {
   }
 }
 
+/**
+ * Navigate to the destination for a tapped notification, if the navigator is
+ * mounted. No-op when navigation isn't ready yet.
+ * @param {object} data Notification payload.
+ */
 export function navigateFromNotification(data) {
   if (!navRef.isReady()) return;
   const { tab, screen, params } = routeForNotification(data || {});

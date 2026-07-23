@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// A single entry in the company holiday calendar (public/restricted/company holidays).
+// Used to mark non-working days across attendance, payroll and leave calculations.
+
+// Public = statutory holiday for all; Restricted = optional/floater; Company = org-specific day off.
 const HOLIDAY_TYPES = ['Public', 'Restricted', 'Company'];
 
 const holidaySchema = new mongoose.Schema(

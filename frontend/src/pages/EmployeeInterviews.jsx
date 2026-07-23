@@ -1,3 +1,9 @@
+/**
+ * EmployeeInterviews — "My Interviews" self-service (employee portal), for staff
+ * assigned as interviewers. Loads assigned rounds from GET /recruitment/my-interviews,
+ * saves feedback/result via PATCH /recruitment/my-interviews/:candidateId/round,
+ * and opens the candidate résumé (auth blob download).
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -39,6 +45,7 @@ export default function EmployeeInterviews() {
   };
   useEffect(() => { load(); }, []);
 
+  // Persist a round update (status and/or feedback) and swap in the server copy.
   const save = async (iv, patch) => {
     const k = key(iv);
     setSavingKey(k);

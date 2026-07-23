@@ -1,9 +1,16 @@
+/**
+ * EmployeeProfile — read-only view of the logged-in employee's HR record
+ * (employee portal). Loads the profile from GET /employees/me. Most fields are
+ * changed only via change-requests, but date-of-birth is self-service and saved
+ * directly through PATCH /employees/me/birthday.
+ */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import ProfilePhotoCard from '../components/ProfilePhotoCard';
 
+// Compact label/value pair used across the personal/statutory/bank sections.
 function Field({ label, value, mono }) {
   return (
     <div>
@@ -38,6 +45,7 @@ export default function EmployeeProfile() {
     })();
   }, []);
 
+  // Self-service birthday update (no HR approval needed, unlike other fields).
   const saveBirthday = async () => {
     if (!dob) { setDobMsg('Please pick a date.'); return; }
     setSavingDob(true);

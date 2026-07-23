@@ -1,3 +1,10 @@
+/**
+ * DocumentsScreen — employee document vault: highlights still-missing required
+ * documents, lets the user pick a category and upload a PDF/image, and lists
+ * uploaded documents with HR verification status (Submitted/Verified/Rejected).
+ * Route: "Documents" (quick action / More list). Employee-facing (all roles).
+ * Backend: GET /documents/me, GET /documents/categories, POST /documents/me (multipart).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -34,6 +41,8 @@ export default function DocumentsScreen() {
   const [category, setCategory] = useState('PAN');
   const [uploading, setUploading] = useState(false);
 
+  // Load the user's docs plus the category config (self-uploadable vs required);
+  // default the picker to the first self-upload category if the current one is invalid.
   const load = useCallback(async () => {
     const [list, cats] = await Promise.all([
       api.get('/documents/me').catch(() => ({ data: {} })),
@@ -50,6 +59,7 @@ export default function DocumentsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Pick a PDF/image from the device and upload it under the selected category.
   const pickAndUpload = async () => {
     const res = await DocumentPicker.getDocumentAsync({
       type: ['application/pdf', 'image/*'],
@@ -74,6 +84,8 @@ export default function DocumentsScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
+  // Work out which required docs are still missing, split into ones the employee
+  // can upload themselves vs. ones HR must add.
   const submitted = new Set(docs.map((d) => d.category));
   const missing = required.filter((c) => !submitted.has(c));
   const missingSelf = missing.filter((c) => categories.includes(c));

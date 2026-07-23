@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+// An in-app notification delivered to a single user's bell/feed. Created by many
+// modules (events, approvals, social) and scoped per portal via `audience`.
 const notificationSchema = new mongoose.Schema(
   {
     recipient: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },

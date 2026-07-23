@@ -1,3 +1,9 @@
+/**
+ * EmployeeInvestmentDeclaration — Form 12BB tax-saving declaration (employee
+ * portal). Loads the declaration for a financial year via GET /declarations/me,
+ * saves drafts with POST /declarations/me and submits via
+ * PATCH /declarations/me/submit. Submitted/Verified declarations are read-only.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -53,6 +59,7 @@ export default function EmployeeInvestmentDeclaration() {
 
   const readOnly = status === 'Submitted' || status === 'Verified';
 
+  // Live sum of all declared section amounts, shown as "Total declared".
   const total = useMemo(
     () => SECTION_FIELDS.reduce((sum, f) => sum + (Number(sections[f.key]) || 0), 0),
     [sections]
@@ -123,6 +130,7 @@ export default function EmployeeInvestmentDeclaration() {
     }
   };
 
+  // Save then submit so the reviewer always sees the latest entered values.
   const submit = async () => {
     setSaving(true);
     setError('');

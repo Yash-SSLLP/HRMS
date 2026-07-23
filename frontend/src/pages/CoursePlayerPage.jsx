@@ -1,3 +1,9 @@
+/**
+ * CoursePlayerPage — full-page LMS course player for employees, route
+ * /employee/learning/:courseId. Loads the learner's enrollments from
+ * GET /courses/me, plays video/text lessons, and posts progress/completion,
+ * issue reports and end-of-course feedback to /courses/:courseId/*.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
@@ -20,6 +26,7 @@ export default function CoursePlayerPage() {
   // Clear the "video failed" hint whenever the lesson changes.
   useEffect(() => { setVideoFailed(false); }, [activeId]);
 
+  // Fetch all my enrollments, pick this course, and gate on approval status.
   const load = async () => {
     setLoading(true);
     setError('');
@@ -220,6 +227,7 @@ export default function CoursePlayerPage() {
 }
 
 // ===== Report an issue modal =====
+// Lets the learner flag a problem with a lesson; posts to /courses/:id/report.
 function ReportModal({ courseId, module, onClose }) {
   const [category, setCategory] = useState(REPORT_CATEGORIES[0]);
   const [note, setNote] = useState('');
@@ -279,6 +287,8 @@ function ReportModal({ courseId, module, onClose }) {
 }
 
 // ===== End-of-course feedback =====
+// Star rating + comment shown once a course hits 100%; posts to /feedback.
+// Renders a read-only thank-you if feedback already exists.
 function FeedbackCard({ courseId, existing, onSaved }) {
   const already = existing && existing.rating;
   const [rating, setRating] = useState(existing?.rating || 0);

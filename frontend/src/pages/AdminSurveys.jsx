@@ -1,3 +1,9 @@
+/**
+ * AdminSurveys — survey/poll authoring & results (admin portal). Lists all
+ * surveys from GET /surveys/admin/all, creates/edits (with a question builder)
+ * via POST/PUT /surveys, deletes via DELETE, and shows aggregated responses from
+ * GET /surveys/:id/results. Supports single/multi/text questions and anonymity.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

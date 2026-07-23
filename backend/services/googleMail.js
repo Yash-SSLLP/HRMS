@@ -16,22 +16,13 @@ const { isConfigured, getAccessToken } = require('./googleCalendar');
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
-// Cache the authenticated sender address (derived from the Gmail profile) so we
-// don't hit the profile endpoint on every send.
-let cachedSender = process.env.GOOGLE_MAIL_SENDER || null;
-
-async function getSenderAddress() {
-  if (cachedSender) return cachedSender;
-  const token = await getAccessToken();
-  const res = await fetch(`${GMAIL_API}/profile`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || !json.emailAddress) {
-    throw new Error(`Gmail profile lookup failed: ${json.error?.message || res.status}`);
-  }
-  cachedSender = json.emailAddress;
-  return cachedSender;
+// The sender address. We deliberately do NOT call the Gmail profile endpoint to
+// auto-detect it, because the gmail.send scope doesn't grant profile-read access
+// (that would need gmail.readonly and force another re-consent). Gmail always
+// sends *as* the authenticated account regardless; GOOGLE_MAIL_SENDER just lets
+// us put a proper From address + display name on the message.
+function getSenderAddress() {
+  return process.env.GOOGLE_MAIL_SENDER || null;
 }
 
 // RFC 2047 encode a header value when it contains non-ASCII characters.
@@ -43,8 +34,11 @@ function encodeHeader(value) {
 }
 
 // Build a From header: keep the display name (if the caller passed one) but use
-// the authenticated sender address.
+// the authenticated sender address. When the sender address is unknown, return
+// null so the header is omitted entirely and Gmail defaults to the authenticated
+// account's address.
 function buildFrom(rawFrom, senderAddr) {
+  if (!senderAddr) return null;
   if (!rawFrom) return senderAddr;
   const m = /^\s*"?([^"<]*?)"?\s*(?:<[^>]*>)?\s*$/.exec(rawFrom);
   const name = m && m[1] ? m[1].trim() : '';
@@ -69,10 +63,9 @@ function buildRawMessage({ from, to, cc, replyTo, subject, text, html, attachmen
   const altBoundary = `alt_${boundary}`;
   const files = (attachments || []).map((a) => ({ meta: a, bytes: attachmentBytes(a) })).filter((f) => f.bytes);
 
-  const headers = [
-    `From: ${from}`,
-    `To: ${to}`,
-  ];
+  const headers = [];
+  if (from) headers.push(`From: ${from}`);
+  headers.push(`To: ${to}`);
   if (cc) headers.push(`Cc: ${cc}`);
   if (replyTo) headers.push(`Reply-To: ${replyTo}`);
   headers.push(`Subject: ${encodeHeader(subject)}`);
@@ -114,9 +107,19 @@ function buildRawMessage({ from, to, cc, replyTo, subject, text, html, attachmen
     .replace(/=+$/, '');
 }
 
+/**
+ * Send an email through the Gmail API using the shared Google OAuth access token.
+ * Builds a raw RFC 2822 MIME message (base64url) and POSTs it to messages/send.
+ * @param {Object} opts - { to, cc, from, replyTo, subject, text, html, attachments }.
+ *   `to`/`cc` accept a string or an array of addresses; `attachments` items carry
+ *   either a `storagePath` or base64 `content` plus `filename`/`contentType`.
+ * @returns {Promise<{messageId:string, response:string}>} Gmail message id on success.
+ * @throws {Error} If the Gmail API responds with a non-2xx status.
+ * @sideEffects Performs a network call to the Gmail API (sends real email).
+ */
 async function send(opts) {
   const token = await getAccessToken();
-  const senderAddr = await getSenderAddress();
+  const senderAddr = getSenderAddress();
   const raw = buildRawMessage({
     from: buildFrom(opts.from, senderAddr),
     to: Array.isArray(opts.to) ? opts.to.join(', ') : opts.to,

@@ -1,3 +1,9 @@
+/**
+ * AdminExpenses — expense-claim review (admin portal). Lists/filters claims from
+ * GET /expenses, approves/rejects via PATCH /expenses/:id/status, and reimburses
+ * by picking a cashbook account (GET /expenses/accounts) — reimbursement posts a
+ * cash-out entry to that account.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -57,6 +63,7 @@ export default function AdminExpenses() {
 
   const inr2 = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 
+  // Open the reimburse modal and load cashbook accounts to pay from.
   const openReimburse = async (x) => {
     setPayFor(x); setAccountId('');
     try {

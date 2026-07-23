@@ -1,3 +1,9 @@
+/**
+ * AdminPunchMap — GPS punch-location map (admin portal). Loads every GPS-tagged
+ * check-in/check-out for a month/day from GET /attendance/punch-map and plots
+ * them on a Leaflet/OpenStreetMap map with geofence circles; out-of-area punches
+ * are highlighted. A side list groups punches by employee and zooms to them.
+ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';

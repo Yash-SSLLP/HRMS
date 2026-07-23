@@ -57,6 +57,15 @@ function resolveFrom(rawFrom) {
   return name ? `${name} <${addr}>` : addr;
 }
 
+/**
+ * Deliver one email immediately (used by the outbox worker). Transport priority:
+ * Gmail API when Google OAuth is configured, else SMTP via nodemailer, else a
+ * dev-mode stdout log that returns { mocked: true } so flows keep working.
+ * @param {Object} opts - { to, cc, subject, text, html, from, replyTo, attachments }.
+ * @returns {Promise<{messageId?:string, response?:string, mocked?:boolean}>} Provider result.
+ * @throws {Error} If the chosen transport fails to send.
+ * @sideEffects Sends a real email (network) except in the mocked/log path.
+ */
 async function sendMail(opts) {
   // Preferred transport: Gmail API via the shared Google OAuth credentials.
   if (googleMail.isConfigured()) {

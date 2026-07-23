@@ -1,3 +1,9 @@
+/**
+ * AdminAnalytics — HR analytics & reports (admin portal). Loads a computed
+ * overview (headcount, attrition, tenure, diversity, hires/exits by month) from
+ * GET /analytics/overview and renders bar/pie/line charts. Clicking a hires/exits
+ * point opens a modal listing who joined or left that month.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

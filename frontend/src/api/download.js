@@ -1,3 +1,6 @@
+// Helpers for fetching protected binary responses through the axios `api`
+// instance (so the Bearer token is attached) and turning them into browser
+// downloads or object URLs for <img>/<video> elements.
 import api from './client';
 
 /**

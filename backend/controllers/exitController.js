@@ -1,3 +1,12 @@
+/**
+ * Exit controller — the resignation/exit lifecycle on ExitRequest. Resignations
+ * climb the reporting-hierarchy approval ladder (shared with leave) into a notice
+ * period (InClearance, login still active), then a manual/worker finalize step
+ * stamps dateOfExit, disables the login, and issues a public exit-feedback link.
+ * Also exposes HR admin CRUD, employee self-service, and the public feedback API.
+ * Several helpers (advanceExitApproval, ensureExitApprovalChain, finalizeExit) are
+ * exported for the approvals controller and the notice-period worker.
+ */
 const crypto = require('crypto');
 const asyncHandler = require('express-async-handler');
 const ExitRequest = require('../models/ExitRequest');
@@ -261,6 +270,13 @@ async function getMyProfileOrFail(userId, res) {
 
 // ============ Admin ============
 
+/**
+ * List exit requests with optional status/employee filters.
+ * @route GET /api/exits  (HR/Admin)
+ * @param {string} [req.query.status]
+ * @param {string} [req.query.employee]
+ * @returns {{count: number, exits: Object[]}} with populated employee/handledBy/initiatedBy
+ */
 // GET /api/exits  (HR/Admin)
 const listExits = asyncHandler(async (req, res) => {
   const { status, employee } = req.query;
@@ -280,6 +296,17 @@ const listExits = asyncHandler(async (req, res) => {
   res.json({ count: exits.length, exits });
 });
 
+/**
+ * HR initiates an exit for an employee; a Resignation starts the approval ladder,
+ * while Termination/Retirement go straight to clearance.
+ * @route POST /api/exits  (HR/Admin)
+ * @param {string} req.body.employee - EmployeeProfile id (required)
+ * @param {string} req.body.lastWorkingDay - required
+ * @param {string} [req.body.type='Resignation']
+ * @param {string} [req.body.reason]
+ * @param {string} [req.body.handledBy] - HR owner (defaults to hrPartner/caller)
+ * @returns {{exit: Object}} (201); noticePeriodDays derived from the dates
+ */
 // POST /api/exits  (HR/Admin)  — initiate exit on behalf of an employee
 const createExit = asyncHandler(async (req, res) => {
   const { employee, type, lastWorkingDay, reason, handledBy } = req.body;
@@ -322,6 +349,12 @@ const createExit = asyncHandler(async (req, res) => {
   res.status(201).json({ exit });
 });
 
+/**
+ * Get a single exit request with related profile/user/handler populated.
+ * @route GET /api/exits/:id  (HR/Admin)
+ * @param {string} req.params.id - exit request id
+ * @returns {{exit: Object}}
+ */
 // GET /api/exits/:id  (HR/Admin)
 const getExit = asyncHandler(async (req, res) => {
   const exit = await ExitRequest.findById(req.params.id)
@@ -338,6 +371,13 @@ const getExit = asyncHandler(async (req, res) => {
   res.json({ exit });
 });
 
+/**
+ * Edit an open exit's dates/reason/handler/clearance/status (not Completed/Cancelled).
+ * @route PUT /api/exits/:id  (HR/Admin)
+ * @param {string} req.params.id - exit request id
+ * @param {Object} req.body - editable subset: type, lastWorkingDay, reason, handledBy, clearance, status
+ * @returns {{exit: Object}}; noticePeriodDays re-derived from the dates
+ */
 // PUT /api/exits/:id  (HR/Admin)  — edit clearance, dates, reason, handler
 const updateExit = asyncHandler(async (req, res) => {
   const exit = await ExitRequest.findById(req.params.id);
@@ -365,6 +405,13 @@ const updateExit = asyncHandler(async (req, res) => {
   res.json({ exit });
 });
 
+/**
+ * Cancel an exit request (not allowed once Completed).
+ * @route PATCH /api/exits/:id/cancel  (HR/Admin)
+ * @param {string} req.params.id - exit request id
+ * @param {string} [req.body.reason]
+ * @returns {{exit: Object}} with status Cancelled
+ */
 // PATCH /api/exits/:id/cancel
 const cancelExit = asyncHandler(async (req, res) => {
   const exit = await ExitRequest.findById(req.params.id);
@@ -383,6 +430,14 @@ const cancelExit = asyncHandler(async (req, res) => {
   res.json({ exit });
 });
 
+/**
+ * Finalise an exit: stamp dateOfExit, deactivate the login, mint a feedback token,
+ * and return a draft feedback email for HR to review (nothing is sent silently).
+ * @route PATCH /api/exits/:id/complete  (HR/Admin)
+ * @param {string} req.params.id - exit request id
+ * @returns {{exit, email, feedbackUrl, mail?}} mail carries the draft to/subject/body
+ * @sideeffect deactivates the employee's user account
+ */
 // PATCH /api/exits/:id/complete  — finalise: deactivate user, queue feedback email
 const completeExit = asyncHandler(async (req, res) => {
   const exit = await ExitRequest.findById(req.params.id)
@@ -438,6 +493,16 @@ const completeExit = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Preview or send the exit-feedback email (exit must be Completed).
+ * @route POST /api/exits/:id/resend-email  (HR/Admin)
+ * @param {string} req.params.id - exit request id
+ * @param {boolean} [req.body.preview] - true returns the default draft without sending
+ * @param {string} [req.body.subject] - HR override
+ * @param {string} [req.body.body] - HR override (branded HTML dropped when edited)
+ * @returns {{exit, email, feedbackUrl}} or the draft {to, subject, body, feedbackUrl} in preview mode
+ * @sideeffect enqueues an outbound email unless preview
+ */
 // POST /api/exits/:id/resend-email  { subject?, body?, preview? }
 // Preview or enqueue the exit feedback email. With preview: true it returns
 // the default recipient/subject/body for the compose modal; otherwise it
@@ -497,6 +562,11 @@ const resendExitEmail = asyncHandler(async (req, res) => {
 
 // ============ Employee self-service ============
 
+/**
+ * Get the calling employee's most recent exit request.
+ * @route GET /api/exits/me
+ * @returns {{exit: Object|null}} with populated handledBy
+ */
 // GET /api/exits/me  — the calling employee's open or completed exit
 const getMyExit = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -506,6 +576,13 @@ const getMyExit = asyncHandler(async (req, res) => {
   res.json({ exit });
 });
 
+/**
+ * Employee submits their own resignation, kicking off the approval ladder.
+ * @route POST /api/exits/me
+ * @param {string} req.body.lastWorkingDay - required
+ * @param {string} [req.body.reason]
+ * @returns {{exit: Object}} (201); 409 if an open exit already exists
+ */
 // POST /api/exits/me  — submit your own resignation
 const submitMyResignation = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -544,6 +621,12 @@ const submitMyResignation = asyncHandler(async (req, res) => {
 
 // ============ Public feedback ============
 
+/**
+ * Public: fetch the context for the exit-feedback form via its token.
+ * @route GET /api/exits/feedback/:token  (PUBLIC, no auth)
+ * @param {string} req.params.token - feedbackToken
+ * @returns {Object} employeeName, handledBy, lastWorkingDay, orgName, alreadySubmitted; 410 if expired
+ */
 // GET /api/exits/feedback/:token   — public
 const getFeedbackContext = asyncHandler(async (req, res) => {
   const exit = await ExitRequest.findOne({ feedbackToken: req.params.token })
@@ -569,6 +652,13 @@ const getFeedbackContext = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Public: submit exit-feedback answers via the token (one submission only).
+ * @route POST /api/exits/feedback/:token  (PUBLIC, no auth)
+ * @param {string} req.params.token - feedbackToken
+ * @param {Object} req.body - primaryReason, likedMost, couldImprove, recommendScore, openFeedback
+ * @returns {{ok: true, submittedAt}}; 409 if already submitted, 410 if expired
+ */
 // POST /api/exits/feedback/:token   — public
 const submitFeedback = asyncHandler(async (req, res) => {
   const exit = await ExitRequest.findOne({ feedbackToken: req.params.token });

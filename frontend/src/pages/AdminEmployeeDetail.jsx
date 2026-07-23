@@ -1,3 +1,10 @@
+/**
+ * AdminEmployeeDetail — read-only employee profile detail (admin portal), route
+ * /admin/employees/:id. Loads the full profile from GET /employees/:id and the
+ * employee's documents from GET /documents?employee=. HR can generate a
+ * document-submission link (POST /employees/:id/doc-link) and verify/reject
+ * submitted documents (PATCH /documents/:id/status).
+ */
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';

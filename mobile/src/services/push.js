@@ -1,3 +1,8 @@
+// services/push.js — push-notification setup for the app.
+// Configures the foreground notification handler and the Android channel, asks
+// for permission, obtains the native FCM/APNs device token, and registers it
+// with the backend (delivery goes through Firebase Cloud Messaging). Also
+// handles unregister-on-logout and clearing the app-icon badge.
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -27,9 +32,12 @@ async function ensureAndroidChannel() {
   });
 }
 
-// Ask permission, get the native FCM device token, and register it with the
-// backend (which sends via Firebase Admin / FCM). Returns the token string, or
-// null if unavailable (e.g. simulator / denied / FCM not configured).
+/**
+ * Ask permission, get the native FCM/APNs device token, and register it with
+ * the backend (which sends via Firebase Admin / FCM).
+ * @returns {Promise<string|null>} The token, or null if unavailable
+ *   (simulator, permission denied, or FCM not configured in the build).
+ */
 export async function registerForPush() {
   try {
     await ensureAndroidChannel();
@@ -72,7 +80,11 @@ export async function registerForPush() {
   }
 }
 
-// Tell the backend to stop pushing to this device (called on logout).
+/**
+ * Tell the backend to stop pushing to this device (called on logout).
+ * Best-effort; no-op when no token was registered this session.
+ * @returns {Promise<void>}
+ */
 export async function unregisterPush() {
   if (!cachedToken) return;
   try {
@@ -84,7 +96,10 @@ export async function unregisterPush() {
   }
 }
 
-// Clear the app icon badge counter.
+/**
+ * Clear the app-icon badge counter.
+ * @returns {Promise<void>}
+ */
 export async function clearBadge() {
   try {
     await Notifications.setBadgeCountAsync(0);

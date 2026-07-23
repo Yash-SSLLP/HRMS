@@ -1,3 +1,9 @@
+/**
+ * AdminLoans — loans & advances administration (admin portal). Lists/filters
+ * loans from GET /loans, creates them on an employee's behalf via
+ * POST /loans/admin, approves/rejects via PATCH /loans/:id/status and records
+ * repayments via PATCH /loans/:id/repay. Employee list from GET /admin/users.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -59,6 +65,7 @@ export default function AdminLoans() {
     finally { setSaving(false); }
   };
 
+  // Approve/reject a loan; rejection prompts for an optional review note.
   const setStatus = async (l, status) => {
     const body = { status };
     if (status === 'Rejected') {

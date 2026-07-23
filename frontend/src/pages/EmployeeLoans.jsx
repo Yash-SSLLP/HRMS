@@ -1,3 +1,8 @@
+/**
+ * EmployeeLoans — loans & advances self-service (employee portal). Lists the
+ * user's loan requests from GET /loans/me and submits new ones via POST /loans.
+ * EMI/balance and status are set by HR/payroll and shown read-only here.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -34,6 +39,7 @@ export default function EmployeeLoans() {
   useEffect(() => { load(); }, []);
 
   const openCreate = () => { setForm(blank); setShowModal(true); };
+  // Submit a new loan/advance request (principal coerced to a number).
   const save = async (e) => {
     e.preventDefault(); setSaving(true); setError('');
     try {

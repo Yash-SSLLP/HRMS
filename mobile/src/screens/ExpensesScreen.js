@@ -1,3 +1,10 @@
+/**
+ * ExpensesScreen — employee expense reimbursement: submit a claim (category,
+ * amount, date, merchant, mandatory receipt image/PDF) and track claims with a
+ * pending-reimbursement summary and per-claim status.
+ * Route: "Expenses" (quick action / More list). Employee-facing (all roles).
+ * Backend: GET /expenses/me, POST /expenses (multipart with receipt).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -34,6 +41,7 @@ export default function ExpensesScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Pick a receipt file (image/PDF) to attach to the claim.
   const pickReceipt = async () => {
     const res = await DocumentPicker.getDocumentAsync({
       type: ['application/pdf', 'image/*'],
@@ -43,6 +51,7 @@ export default function ExpensesScreen() {
     setReceipt(res.assets[0]);
   };
 
+  // Validate amount/date/receipt, then POST the claim as multipart with the file.
   const submit = async () => {
     if (!amount || Number(amount) <= 0) { Alert.alert('Invalid', 'Enter a positive amount.'); return; }
     if (!date) { Alert.alert('Pick a date', 'Choose the expense date.'); return; }

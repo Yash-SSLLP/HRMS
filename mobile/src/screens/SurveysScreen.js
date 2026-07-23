@@ -1,3 +1,9 @@
+/**
+ * SurveysScreen — list of surveys the employee can take, plus a modal to answer
+ * single/multi-choice and text questions (optionally anonymous). Home stack route
+ * "Surveys" (Menu > Workplace). Any employee role.
+ * Backend: GET /surveys (list), GET /surveys/:id (questions), POST /surveys/:id/respond.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -24,6 +30,7 @@ export default function SurveysScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Open a not-yet-answered survey, fetching its full question set.
   const openSurvey = async (s) => {
     if (s.answered) return;
     try {
@@ -35,6 +42,7 @@ export default function SurveysScreen() {
     }
   };
 
+  // Toggle a choice: multi-select adds/removes, single-select replaces.
   const setChoice = (qi, option, multi) => {
     setAnswers((prev) => {
       const cur = prev[qi]?.choice || [];

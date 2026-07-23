@@ -1,3 +1,8 @@
+// Root router + app shell. Declares every route: public/entry pages (login,
+// privacy, and tokenised outsider links) rendered eagerly, and two guarded
+// portal trees — /admin and /employee — each wrapped in <ProtectedRoute> (role
+// gate) + <Layout> (sidebar shell), with all in-app pages lazy-loaded for
+// code-splitting. Also applies the dark-mode class and per-role accent to <html>.
 import { lazy, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useThemeStore } from './store/themeStore';
@@ -100,6 +105,8 @@ const AdminCashbook = lazy(() => import('./pages/AdminCashbook.jsx'));
 const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
 
+/** Index route ("/"): send unauthenticated users to login, otherwise route each
+ *  role to its home portal (employee vs admin). */
 function RootRedirect() {
   const user = useAuthStore((s) => s.user);
   if (!user) return <Navigate to="/login" replace />;
@@ -120,6 +127,8 @@ function AdminHome() {
   return <Navigate to="dashboard" replace />;
 }
 
+/** Root component: applies theme/role attributes to <html> and declares the
+ *  full route table (public pages + guarded /admin and /employee portals). */
 export default function App() {
   const mode = useThemeStore((s) => s.mode);
   const role = useAuthStore((s) => s.user?.role);
@@ -154,6 +163,8 @@ export default function App() {
       {/* Public — no-login course viewer (shareable link) */}
       <Route path="/learn/:token" element={<PublicCoursePage />} />
 
+      {/* Admin portal — role-gated to admin/exec roles; sidebar nav swaps to the
+          single-page nav for the LMS-only and cashbook-only admins. */}
       <Route
         path="/admin"
         element={
@@ -220,6 +231,8 @@ export default function App() {
         <Route path="exits" element={<AdminExit />} />
       </Route>
 
+      {/* Employee (self-service) portal — Employees, Managers, and dual-role
+          HRManagers who also use their own "My Portal". */}
       <Route
         path="/employee"
         element={

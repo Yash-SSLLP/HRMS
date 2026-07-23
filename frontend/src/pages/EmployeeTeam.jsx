@@ -1,3 +1,9 @@
+/**
+ * EmployeeTeam — "My Team" manager view (employee portal), for anyone who is a
+ * reporting manager in the org chart. Loads direct reports and today's presence
+ * from GET /manager/team and GET /manager/presence, shows a presence board +
+ * attendance heatmap, and exports team attendance CSV via GET /manager/attendance/export.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

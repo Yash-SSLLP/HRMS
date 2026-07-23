@@ -1,3 +1,9 @@
+/**
+ * AdminAnnouncements — company announcement management (admin portal). Lists,
+ * creates, edits and deletes announcements via /announcements (GET/POST/PUT/DELETE);
+ * posting a new one notifies every employee. Supports category, pinning and an
+ * optional visible-from/until window.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -77,6 +83,7 @@ export default function AdminAnnouncements() {
     setShowModal(true);
   };
 
+  // Create or update (by editingId); a new post reports how many were notified.
   const save = async (e) => {
     e.preventDefault();
     setSaving(true);

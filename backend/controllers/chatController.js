@@ -1,3 +1,11 @@
+/**
+ * Chat controller — internal messaging over HTTP polling. Covers 1:1 chats built
+ * on connection requests (Connection) with WhatsApp-style sent/delivered/seen
+ * ticks and incremental after-cursor sync, plus group chats (ChatGroup) with
+ * invites, roles (owner/admin/member), photos and management. People who have left
+ * the org (deactivated or past dateOfExit) are blocked from being messaged.
+ * Messages soft-delete per user; a SuperAdmin transcript export sees everything.
+ */
 const asyncHandler = require('express-async-handler');
 const path = require('path');
 const Connection = require('../models/Connection');
@@ -64,6 +72,11 @@ function messageStatus(m) {
   return 'sent';
 }
 
+/**
+ * List active users (except self) with the caller's connection status to each.
+ * @route GET /api/chat/directory
+ * @returns {{count: number, people: Object[]}} each with connectionStatus/connectionId; departed users excluded
+ */
 // GET /api/chat/directory  — active users (except self) with the caller's
 // connection status to each. Reused by the complaints target picker.
 const directory = asyncHandler(async (req, res) => {
@@ -99,6 +112,12 @@ const directory = asyncHandler(async (req, res) => {
   res.json({ count: people.length, people });
 });
 
+/**
+ * Send a connection request (SuperAdmin requests are auto-accepted).
+ * @route POST /api/chat/requests
+ * @param {string} req.body.recipientId - required, not self, not departed
+ * @returns {{connection: Object}} (201); 409 if already connected/pending
+ */
 // POST /api/chat/requests  { recipientId }
 const sendRequest = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -158,6 +177,11 @@ const sendRequest = asyncHandler(async (req, res) => {
   res.status(201).json({ connection: conn });
 });
 
+/**
+ * List the caller's pending connection requests, split by direction.
+ * @route GET /api/chat/requests
+ * @returns {{incoming: Object[], outgoing: Object[]}}
+ */
 // GET /api/chat/requests  — pending requests, split into incoming/outgoing
 const listRequests = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -178,6 +202,13 @@ const listRequests = asyncHandler(async (req, res) => {
   res.json({ incoming, outgoing });
 });
 
+/**
+ * Accept or decline an incoming connection request (recipient only).
+ * @route PATCH /api/chat/requests/:id
+ * @param {string} req.params.id - connection id
+ * @param {string} req.body.action - 'accept' or 'decline'
+ * @returns {{connection: Object}}
+ */
 // PATCH /api/chat/requests/:id  { action: 'accept' | 'decline' }
 const respondRequest = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -202,6 +233,12 @@ const respondRequest = asyncHandler(async (req, res) => {
   res.json({ connection: conn });
 });
 
+/**
+ * List the caller's accepted 1:1 conversations with last message and unread count.
+ * @route GET /api/chat/connections
+ * @returns {{count: number, connections: Object[]}}
+ * @sideeffect marks messages addressed to the caller as delivered
+ */
 // GET /api/chat/connections  — accepted connections with last message + unread count
 const listConnections = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -264,6 +301,14 @@ async function loadParticipantConnection(connectionId, meId) {
   return conn;
 }
 
+/**
+ * Fetch a 1:1 thread (full or incremental via ?after) and mark the other party's
+ * messages delivered + read.
+ * @route GET /api/chat/messages/:connectionId
+ * @param {string} req.params.connectionId - connection id
+ * @param {string} [req.query.after] - ISO cursor for incremental sync
+ * @returns {{incremental, seenUpTo, deliveredUpTo, messages}}
+ */
 // GET /api/chat/messages/:connectionId  — thread; marks the other party's messages read
 const getMessages = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -313,6 +358,14 @@ const getMessages = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Send a 1:1 message (blocked if the recipient has left the org).
+ * @route POST /api/chat/messages
+ * @param {string} req.body.connectionId - required (caller must be a participant)
+ * @param {string} req.body.body - required
+ * @returns {{message: Object}} (201)
+ * @sideeffect notifies the recipient (in-app + push)
+ */
 // POST /api/chat/messages  { connectionId, body }
 const sendMessage = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -352,6 +405,12 @@ const sendMessage = asyncHandler(async (req, res) => {
 
 // ===== Soft delete (hide for me; never removed from the DB) =====
 
+/**
+ * Soft-delete a single message from the caller's own view (kept in the DB).
+ * @route DELETE /api/chat/messages/:messageId
+ * @param {string} req.params.messageId - message id (caller must be a participant/member)
+ * @returns {{ok: true}}
+ */
 // DELETE /api/chat/messages/:messageId — hide a single message from my view.
 const deleteMessage = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -378,6 +437,12 @@ const deleteMessage = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Clear an entire 1:1 conversation from the caller's own view.
+ * @route DELETE /api/chat/conversations/:connectionId
+ * @param {string} req.params.connectionId - connection id
+ * @returns {{ok: true}}
+ */
 // DELETE /api/chat/conversations/:connectionId — clear a 1:1 chat from my view.
 const clearConversation = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -388,6 +453,13 @@ const clearConversation = asyncHandler(async (req, res) => {
 
 // ===== SuperAdmin transcript export (includes deleted messages) =====
 
+/**
+ * SuperAdmin: full transcript of a 1:1 pair or a group, including soft-deleted messages.
+ * @route GET /api/chat/admin/transcript?userA=&userB=  (or ?groupId=)
+ * @param {string} [req.query.userA] / [req.query.userB] - the 1:1 pair
+ * @param {string} [req.query.groupId] - a group instead
+ * @returns {{meta, messages}} messages flagged with deleted/deletedBy
+ */
 // GET /api/chat/admin/transcript?userA=&userB=   (or ?groupId=)
 const adminTranscript = asyncHandler(async (req, res) => {
   const { userA, userB, groupId } = req.query;
@@ -430,6 +502,13 @@ const adminTranscript = asyncHandler(async (req, res) => {
 
 // ===== Group chats =====
 
+/**
+ * Create a group chat; the creator is owner, others are invited.
+ * @route POST /api/chat/groups
+ * @param {string} req.body.name - required
+ * @param {string[]} [req.body.memberIds] - users to invite (active only, self removed)
+ * @returns {{group: {groupId, name, invited}}} (201)
+ */
 // POST /api/chat/groups  { name, memberIds: [] }
 const createGroup = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -450,6 +529,11 @@ const createGroup = asyncHandler(async (req, res) => {
   res.status(201).json({ group: { groupId: group._id, name: group.name, invited: valid.length } });
 });
 
+/**
+ * List the caller's accepted groups (with last message/unread) and pending invites.
+ * @route GET /api/chat/groups
+ * @returns {{groups: Object[], invites: Object[]}}
+ */
 // GET /api/chat/groups  — my accepted groups + my pending invites
 const listGroups = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -489,6 +573,13 @@ const listGroups = asyncHandler(async (req, res) => {
   res.json({ groups: mine, invites });
 });
 
+/**
+ * Accept or decline a group invite.
+ * @route PATCH /api/chat/groups/:id/respond
+ * @param {string} req.params.id - group id
+ * @param {string} req.body.action - 'accept' or 'decline'
+ * @returns {{ok: true}}
+ */
 // PATCH /api/chat/groups/:id/respond  { action: 'accept' | 'decline' }
 const respondGroup = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -522,6 +613,13 @@ async function loadGroupForMember(groupId, meId) {
   return { group, mem };
 }
 
+/**
+ * Fetch a group thread (full or incremental via ?after) and mark it read.
+ * @route GET /api/chat/groups/:id/messages
+ * @param {string} req.params.id - group id (caller must be an accepted member)
+ * @param {string} [req.query.after] - ISO cursor for incremental sync
+ * @returns {{name, hasPhoto, myRole, memberCount, incremental, messages}}
+ */
 // GET /api/chat/groups/:id/messages
 const getGroupMessages = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -556,6 +654,14 @@ const getGroupMessages = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Send a group message.
+ * @route POST /api/chat/groups/:id/messages
+ * @param {string} req.params.id - group id (caller must be an accepted member)
+ * @param {string} req.body.body - required
+ * @returns {{message: Object}} (201)
+ * @sideeffect notifies every other accepted member (in-app + push)
+ */
 // POST /api/chat/groups/:id/messages  { body }
 const sendGroupMessage = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -587,6 +693,12 @@ const sendGroupMessage = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Clear a group chat from the caller's own view.
+ * @route DELETE /api/chat/groups/:id/messages
+ * @param {string} req.params.id - group id
+ * @returns {{ok: true}}
+ */
 // DELETE /api/chat/groups/:id/messages — clear a group chat from my view.
 const clearGroup = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -613,6 +725,12 @@ function shapeMember(m) {
   return { ...publicUser(m.user), role: m.role, status: m.status };
 }
 
+/**
+ * Full group detail (members, roles) for the settings panel.
+ * @route GET /api/chat/groups/:id
+ * @param {string} req.params.id - group id (caller must be an accepted member)
+ * @returns {{groupId, name, hasPhoto, myRole, createdBy, members}}
+ */
 // GET /api/chat/groups/:id — full group detail for the settings panel.
 const getGroupInfo = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -638,6 +756,13 @@ const getGroupInfo = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Rename a group (owner/admin).
+ * @route PATCH /api/chat/groups/:id
+ * @param {string} req.params.id - group id
+ * @param {string} req.body.name - required (truncated to 80 chars)
+ * @returns {{ok: true, name}}
+ */
 // PATCH /api/chat/groups/:id  { name } — rename the group (owner/admin).
 const renameGroup = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -652,6 +777,13 @@ const renameGroup = asyncHandler(async (req, res) => {
   res.json({ ok: true, name: group.name });
 });
 
+/**
+ * Set a group photo (owner/admin), replacing any existing one.
+ * @route POST /api/chat/groups/:id/photo  (multipart field: photo)
+ * @param {string} req.params.id - group id
+ * @param {File} req.file - the image (required)
+ * @returns {{ok: true}}
+ */
 // POST /api/chat/groups/:id/photo  (multipart: photo) — set group photo (owner/admin).
 const uploadGroupPhoto = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -675,6 +807,12 @@ const uploadGroupPhoto = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Remove a group photo (owner/admin).
+ * @route DELETE /api/chat/groups/:id/photo
+ * @param {string} req.params.id - group id
+ * @returns {{ok: true}}
+ */
 // DELETE /api/chat/groups/:id/photo — remove group photo (owner/admin).
 const deleteGroupPhoto = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -687,6 +825,12 @@ const deleteGroupPhoto = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Stream a group photo (accepted members only).
+ * @route GET /api/chat/groups/:id/photo
+ * @param {string} req.params.id - group id
+ * @returns {binary} the image; 403 if not a member, 404 if none
+ */
 // GET /api/chat/groups/:id/photo — stream the group photo (members only).
 const getGroupPhoto = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -707,6 +851,13 @@ const getGroupPhoto = asyncHandler(async (req, res) => {
   if (!storage.streamTo(group.photo, res)) return res.status(404).json({ message: 'File not found' });
 });
 
+/**
+ * Invite more people to a group (owner/admin); re-invites previously declined.
+ * @route POST /api/chat/groups/:id/members
+ * @param {string} req.params.id - group id
+ * @param {string[]} req.body.memberIds - users to add (active only)
+ * @returns {{ok: true, added}}
+ */
 // POST /api/chat/groups/:id/members  { memberIds: [] } — invite more people (owner/admin).
 const addGroupMembers = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -740,6 +891,13 @@ const addGroupMembers = asyncHandler(async (req, res) => {
   res.json({ ok: true, added });
 });
 
+/**
+ * Remove a member from a group (owner/admin; only owner may remove an admin).
+ * @route DELETE /api/chat/groups/:id/members/:userId
+ * @param {string} req.params.id - group id
+ * @param {string} req.params.userId - member to remove (not self, not the owner)
+ * @returns {{ok: true}}
+ */
 // DELETE /api/chat/groups/:id/members/:userId — remove a member (owner/admin).
 const removeGroupMember = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -770,6 +928,14 @@ const removeGroupMember = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Promote/demote a group member (owner only).
+ * @route PATCH /api/chat/groups/:id/members/:userId
+ * @param {string} req.params.id - group id
+ * @param {string} req.params.userId - target member (must be accepted, not owner)
+ * @param {string} req.body.role - 'admin' or 'member'
+ * @returns {{ok: true}}
+ */
 // PATCH /api/chat/groups/:id/members/:userId  { role: 'admin' | 'member' }
 // Promote/demote a member. Owner only.
 const setMemberRole = asyncHandler(async (req, res) => {
@@ -800,6 +966,13 @@ const setMemberRole = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Leave a group and clear it from the caller's view; reassigns ownership or
+ * deletes the group when the last member leaves.
+ * @route POST /api/chat/groups/:id/leave
+ * @param {string} req.params.id - group id
+ * @returns {{ok: true, groupDeleted?: boolean}}
+ */
 // POST /api/chat/groups/:id/leave — leave the group and clear it from my view.
 // If the owner leaves, ownership passes to an admin (or the longest-standing
 // member); if no one is left, the group and its messages are removed.

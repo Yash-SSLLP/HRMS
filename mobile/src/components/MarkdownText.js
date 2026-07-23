@@ -1,3 +1,6 @@
+// components/MarkdownText.js — tiny Markdown renderer for the in-app guides.
+// Dependency-free and theme-aware; parses the guide content into RN <Text>/<View>
+// blocks. Also exports slug() for generating section anchor ids.
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { colors, spacing, radius } from '../theme';
@@ -11,6 +14,7 @@ import { colors, spacing, radius } from '../theme';
 // this component) so a parent can implement "jump to section" scrolling. The id
 // matches slug(text), the same scheme the web guide uses for anchors.
 
+/** Slugify a heading into an anchor id (matches the web guide's scheme). */
 export const slug = (s) => s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '') || 'section';
 
 const MONO = Platform.OS === 'ios' ? 'Courier' : 'monospace';
@@ -39,6 +43,12 @@ function calloutOf(line) {
   return null;
 }
 
+/**
+ * Render a Markdown string as native views.
+ * @prop {string} md Markdown source.
+ * @prop {(id: string, y: number) => void} [onHeadingY] Reports each ## section's
+ *   vertical offset (keyed by slug) so a parent can implement jump-to-section.
+ */
 export default function MarkdownText({ md, onHeadingY }) {
   const blocks = useMemo(() => {
     const lines = (md || '').split('\n');

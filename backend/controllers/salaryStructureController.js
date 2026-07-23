@@ -1,3 +1,9 @@
+/**
+ * Salary-structure controller — CRUD for named CTC templates whose components are
+ * expressed as percentages (basic, HRA, special allowance, conveyance, medical,
+ * LTA). Validates that component percentages never exceed 100%, and can preview a
+ * full monthly/annual breakup for a given annual CTC.
+ */
 const asyncHandler = require('express-async-handler');
 const SalaryStructure = require('../models/SalaryStructure');
 
@@ -10,12 +16,24 @@ const sumComponentPct = (c = {}) =>
   (Number(c.medicalPct) || 0) +
   (Number(c.ltaPct) || 0);
 
+/**
+ * List all salary structures, alphabetically.
+ * @route GET /api/salary-structures
+ * @returns {{count: number, structures: Object[]}}
+ */
 // GET /api/salary-structures
 const listStructures = asyncHandler(async (req, res) => {
   const structures = await SalaryStructure.find().sort({ name: 1 });
   res.json({ count: structures.length, structures });
 });
 
+/**
+ * Create a salary structure (unique name; component percentages must total <=100).
+ * @route POST /api/salary-structures
+ * @param {string} req.body.name - required, unique
+ * @param {Object} [req.body.components] - percentage components
+ * @returns {{structure: Object}} the created structure (201); 409 if name exists
+ */
 // POST /api/salary-structures
 const createStructure = asyncHandler(async (req, res) => {
   const { name } = req.body;
@@ -24,6 +42,7 @@ const createStructure = asyncHandler(async (req, res) => {
     throw new Error('name is required');
   }
 
+  // Guard: the six percentage components cannot exceed the full 100% of CTC
   const total = sumComponentPct(req.body.components);
   if (total > 100) {
     res.status(400);
@@ -40,6 +59,13 @@ const createStructure = asyncHandler(async (req, res) => {
   res.status(201).json({ structure });
 });
 
+/**
+ * Update a salary structure (partial); re-validates component totals if changed.
+ * @route PUT /api/salary-structures/:id
+ * @param {string} req.params.id - structure id
+ * @param {Object} req.body - fields to update
+ * @returns {{structure: Object}} the updated structure
+ */
 // PUT /api/salary-structures/:id
 const updateStructure = asyncHandler(async (req, res) => {
   const structure = await SalaryStructure.findById(req.params.id);
@@ -56,12 +82,19 @@ const updateStructure = asyncHandler(async (req, res) => {
     }
   }
 
+  // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
   Object.assign(structure, req.body);
   await structure.save();
   res.json({ structure });
 });
 
+/**
+ * Delete a salary structure by id.
+ * @route DELETE /api/salary-structures/:id
+ * @param {string} req.params.id - structure id
+ * @returns {{id: string, deleted: boolean}}
+ */
 // DELETE /api/salary-structures/:id
 const deleteStructure = asyncHandler(async (req, res) => {
   const structure = await SalaryStructure.findById(req.params.id);
@@ -73,6 +106,13 @@ const deleteStructure = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * Preview the full salary breakup a structure produces for a given annual CTC.
+ * @route POST /api/salary-structures/:id/preview
+ * @param {string} req.params.id - structure id
+ * @param {number} req.body.annualCtc - the annual CTC to apply percentages to
+ * @returns {{annualCtc, monthly, annual, monthlyGross, annualGross}} per-component amounts
+ */
 // POST /api/salary-structures/:id/preview  { annualCtc }
 const previewStructure = asyncHandler(async (req, res) => {
   const structure = await SalaryStructure.findById(req.params.id);

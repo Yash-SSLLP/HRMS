@@ -1,9 +1,15 @@
+// components/ErrorBoundary.js — top-level React error boundary.
+// Catches render-time errors from anywhere in the tree below it and shows the
+// error message + component stack (with a "Try again" reset) instead of a blank
+// white screen, so production crashes are diagnosable on-device.
 import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { colors, radius, spacing, font } from '../theme';
 
-// Catches render-time errors anywhere below it and shows the message instead of
-// a blank white screen — so production crashes are diagnosable on-device.
+/**
+ * Class component error boundary. Wrap around the navigation tree.
+ * @prop {React.ReactNode} children Subtree to guard.
+ */
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);

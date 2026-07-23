@@ -1,3 +1,11 @@
+/**
+ * LeaveScreen — leave self-service: shows EL/CL/SL balances, an apply form
+ * (type, date range, reason), and the user's request history with the option to
+ * cancel a pending request before it starts.
+ * Route: "Leave" (Leave tab / quick action). Employee-facing (all roles).
+ * Backend: GET /leave/me/balance, GET /leave/me/requests, POST /leave/me/requests,
+ * PATCH /leave/me/requests/:id/cancel.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -39,6 +47,7 @@ export default function LeaveScreen() {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Load leave balances and request history together; both fault-tolerant.
   const load = useCallback(async () => {
     const [bal, reqs] = await Promise.all([
       api.get('/leave/me/balance').catch(() => null),
@@ -53,6 +62,7 @@ export default function LeaveScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Validate the date range, then POST the leave request for approval.
   const apply = async () => {
     if (!start || !end) {
       Alert.alert('Pick dates', 'Choose a start and end date.');
@@ -76,6 +86,7 @@ export default function LeaveScreen() {
     }
   };
 
+  // Withdraw a still-pending request (only offered before its start date).
   const cancel = (id) => {
     Alert.alert('Cancel request?', 'This will withdraw your leave request.', [
       { text: 'No' },

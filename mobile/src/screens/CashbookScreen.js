@@ -1,3 +1,10 @@
+/**
+ * CashbookScreen — employee petty-cash: submit a cash voucher (category, amount,
+ * date, payment mode, party, description) for approval and track submitted
+ * vouchers with a pending-total summary and per-voucher status.
+ * Route: "Cashbook" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /cashbook/me, GET /cashbook/me/categories, POST /cashbook/me.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -26,6 +33,8 @@ export default function CashbookScreen() {
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Load the user's vouchers and the active cash-OUT categories (excludes 'in'
+  // kinds); falls back to FALLBACK_CATS when none are configured.
   const load = useCallback(async () => {
     const [v, c] = await Promise.all([
       api.get('/cashbook/me').catch(() => ({ data: {} })),
@@ -40,6 +49,7 @@ export default function CashbookScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Validate amount + date, then POST the voucher for approval and reset the form.
   const submit = async () => {
     if (!amount || Number(amount) <= 0) { Alert.alert('Invalid', 'Enter a positive amount.'); return; }
     if (!date) { Alert.alert('Pick a date', 'Choose the voucher date.'); return; }

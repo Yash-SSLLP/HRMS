@@ -1,3 +1,13 @@
+/**
+ * DashboardScreen — the home tab: greeting, role-aware admin entry, announcements,
+ * R&R banner, today's attendance punch, leave balances, attendance heatmap, quick
+ * actions, latest payslip, profile, celebrations, upcoming events and alerts.
+ * Route: "Home"/Dashboard tab. Used by every role; content varies by role
+ * (employee self-service vs SuperAdmin/exec admin shortcuts).
+ * Backend: /celebrations/today, /celebrations/upcoming, /notifications,
+ * /announcements, and (employees) /leave/me/balance, /attendance/me, /payroll/me,
+ * /employees/me. Uses a local cache for instant paint.
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -43,6 +53,7 @@ const ADMIN_ACTIONS = [
   { key: 'Menu', label: 'More', icon: 'grid', tint: '#0d9488' },
 ];
 
+/** Main home component; reads the current user from the auth store to tailor content by role. */
 export default function DashboardScreen() {
   const nav = useNavigation();
   const user = useAuth((s) => s.user);
@@ -60,6 +71,8 @@ export default function DashboardScreen() {
     return () => { active = false; };
   }, []);
 
+  // Fetch all dashboard data in parallel; every request is fault-tolerant so a
+  // partial outage still renders. Employee-only calls are appended conditionally.
   const load = useCallback(async () => {
     const isEmp = canEmployeeSelf(user?.role);
     const base = [
@@ -344,6 +357,7 @@ export default function DashboardScreen() {
   );
 }
 
+/** Small label/value row used in the profile card. */
 function ProfileRow({ label, value }) {
   return (
     <View style={styles.profileRow}>

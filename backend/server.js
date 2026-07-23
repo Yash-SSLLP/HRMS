@@ -1,3 +1,28 @@
+/**
+ * HRMS backend entrypoint. Boots the Express app and, after the DB connects,
+ * starts the background workers and begins listening.
+ *
+ * Middleware pipeline (order matters):
+ *   1. CORS (exposes Content-Disposition for named file downloads)
+ *   2. express.json() body parser
+ *   3. requestContext — AsyncLocalStorage so the audit plugin can attribute
+ *      changes to req.user
+ *   ...all route groups...
+ *   last. notFound (404) then errorHandler (central error responder)
+ *
+ * Mounted route groups: everything under /api/* — health, auth, admin,
+ * employees, payroll, leave/approvals/manager, attendance/shifts/regularizations,
+ * documents, celebrations, exits, chat, complaints, change/password-reset
+ * requests, holidays/events/notifications/devices, departments/work-locations,
+ * dashboard, projects/tasks, recruitment, assets, performance/training,
+ * expenses, onboarding, announcements, rnr, guides, org masters/org/lifecycle,
+ * salary-structures/loans/cashbook/declarations/compliance, surveys, travel,
+ * courses (+ public), reviews, analytics, audit, and page-view.
+ *
+ * Startup (after connectDB): email, celebration, attendance, and exit workers;
+ * a one-off HR-profile backfill; then app.listen on PORT (default 5000).
+ * The workers own their own cron schedules internally.
+ */
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');

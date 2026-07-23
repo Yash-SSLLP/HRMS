@@ -1,3 +1,9 @@
+/**
+ * EmployeeTravel — business-travel requests (employee portal). Lists the user's
+ * requests from GET /travel/me and creates new ones via POST /travel; an optional
+ * reimbursement claim uploads a receipt to POST /travel/:id/receipt and receipts
+ * are viewed via GET /travel/:id/receipt (auth image blob).
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { fetchImageObjectUrl } from '../api/download';
@@ -65,6 +71,8 @@ export default function EmployeeTravel() {
 
   useEffect(() => { load(); }, []);
 
+  // Create the travel request, then (if a reimbursement receipt was attached)
+  // upload it in a second multipart call against the new record's id.
   const submit = async (e) => {
     e.preventDefault();
     setSaving(true);

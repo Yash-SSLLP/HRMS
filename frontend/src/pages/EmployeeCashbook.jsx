@@ -1,3 +1,9 @@
+/**
+ * EmployeeCashbook — petty-cash voucher self-service (employee portal). Lists the
+ * user's vouchers from GET /cashbook/me (categories from /cashbook/me/categories)
+ * and submits new payment vouchers (optional receipt, multipart) via POST
+ * /cashbook/me. Vouchers stay Pending until the Account Manager approves/pays them.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

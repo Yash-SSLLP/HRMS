@@ -1,3 +1,10 @@
+/**
+ * Admin controller — user-account administration (User model). SuperAdmin manages
+ * all accounts and roles; HRManager is limited to Employee accounts. Covers user
+ * CRUD, activate/deactivate, per-HRManager permission grants, a standalone
+ * cashbook-access flag, and org-wide settings (executive visibility in pickers).
+ * Creating/promoting HR/L&D/Accounts staff auto-provisions an EmployeeProfile.
+ */
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
@@ -5,6 +12,12 @@ const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { PERMISSIONS, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 
+/**
+ * List user accounts with optional role/active/text filters.
+ * @route GET /api/admin/users?role=&active=&q=
+ * @param {string} [req.query.role] / [req.query.active] / [req.query.q]
+ * @returns {{count: number, users: Object[]}} (SuperAdmin, and optionally CEO/MD, hidden per viewer)
+ */
 // GET /api/admin/users?role=&active=&q=
 const listUsers = asyncHandler(async (req, res) => {
   const { role, active, q } = req.query;
@@ -35,6 +48,12 @@ const listUsers = asyncHandler(async (req, res) => {
   res.json({ count: users.length, users });
 });
 
+/**
+ * Get a single user account by id.
+ * @route GET /api/admin/users/:id
+ * @param {string} req.params.id - user id
+ * @returns {{user: Object}}
+ */
 // GET /api/admin/users/:id
 const getUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
@@ -45,6 +64,15 @@ const getUser = asyncHandler(async (req, res) => {
   res.json({ user });
 });
 
+/**
+ * Create a user account (admin roles are SuperAdmin-only).
+ * @route POST /api/admin/users
+ * @param {string} req.body.email / password / firstName / lastName / role - required
+ * @param {string} [req.body.phone]
+ * @param {boolean} [req.body.isActive=true]
+ * @returns {{user: Object}} (201); 409 if email exists
+ * @sideeffect auto-creates an EmployeeProfile for HR/L&D/Accounts staff roles
+ */
 // POST /api/admin/users
 const createUser = asyncHandler(async (req, res) => {
   const { email, password, firstName, lastName, role, phone, isActive } = req.body;
@@ -91,6 +119,15 @@ const createUser = asyncHandler(async (req, res) => {
   res.status(201).json({ user });
 });
 
+/**
+ * Update a user account (HRManager limited to Employee accounts; role changes to
+ * admin roles are SuperAdmin-only).
+ * @route PUT /api/admin/users/:id
+ * @param {string} req.params.id - user id
+ * @param {Object} req.body - firstName/lastName/role/phone/isActive/password
+ * @returns {{user: Object}}
+ * @sideeffect auto-creates an EmployeeProfile when promoted to HR/L&D/Accounts staff
+ */
 // PUT /api/admin/users/:id
 const updateUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
@@ -99,7 +136,7 @@ const updateUser = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
-  // HRManagers can only touch Employee accounts. They cannot edit other
+  // Permission gate: HRManagers can only touch Employee accounts. They cannot edit other
   // admins, and they cannot promote anyone to/from an admin role.
   if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee') {
     res.status(403);
@@ -137,6 +174,12 @@ const updateUser = asyncHandler(async (req, res) => {
   res.json({ user });
 });
 
+/**
+ * Deactivate a user account (SuperAdmin only; cannot deactivate self).
+ * @route PATCH /api/admin/users/:id/deactivate
+ * @param {string} req.params.id - user id
+ * @returns {{user: Object}}
+ */
 // PATCH /api/admin/users/:id/deactivate
 const deactivateUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
@@ -158,6 +201,12 @@ const deactivateUser = asyncHandler(async (req, res) => {
   res.json({ user });
 });
 
+/**
+ * Reactivate a user account (SuperAdmin only).
+ * @route PATCH /api/admin/users/:id/activate
+ * @param {string} req.params.id - user id
+ * @returns {{user: Object}}
+ */
 // PATCH /api/admin/users/:id/activate
 const activateUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
@@ -175,6 +224,12 @@ const activateUser = asyncHandler(async (req, res) => {
   res.json({ user });
 });
 
+/**
+ * Permanently delete a user account (SuperAdmin only; cannot delete self).
+ * @route DELETE /api/admin/users/:id
+ * @param {string} req.params.id - user id
+ * @returns {{id: string, deleted: boolean}}
+ */
 // DELETE /api/admin/users/:id  (SuperAdmin only)
 const deleteUser = asyncHandler(async (req, res) => {
   if (req.user.role !== 'SuperAdmin') {
@@ -194,11 +249,23 @@ const deleteUser = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * Return the capability/permission catalog for building the admin UI.
+ * @route GET /api/admin/permissions/catalog
+ * @returns {{permissions: Object}}
+ */
 // GET /api/admin/permissions/catalog — the capability catalog for the UI.
 const getPermissionCatalog = asyncHandler(async (req, res) => {
   res.json({ permissions: PERMISSIONS });
 });
 
+/**
+ * Set an HRManager's explicit permission set.
+ * @route PATCH /api/admin/users/:id/permissions  (SuperAdmin only)
+ * @param {string} req.params.id - user id (must be an HRManager)
+ * @param {string[]} req.body.permissions - valid capability keys (deduped)
+ * @returns {{user: Object}}
+ */
 // PATCH /api/admin/users/:id/permissions  (SuperAdmin only — enforced by route)
 // Body: { permissions: [key,...] }. Only meaningful for HRManager accounts.
 const updateUserPermissions = asyncHandler(async (req, res) => {
@@ -227,6 +294,13 @@ const updateUserPermissions = asyncHandler(async (req, res) => {
   res.json({ user });
 });
 
+/**
+ * Grant or revoke standalone Cashbook access for any user (role-independent flag).
+ * @route PATCH /api/admin/users/:id/cashbook-access  (SuperAdmin)
+ * @param {string} req.params.id - user id
+ * @param {boolean} req.body.enabled
+ * @returns {{id, cashbookAccess}}
+ */
 // PATCH /api/admin/users/:id/cashbook-access  { enabled }  (SuperAdmin)
 // Grant or revoke Cashbook access for ANY user/employee — a standalone flag that
 // works regardless of role, so no separate finance login is needed.
@@ -241,6 +315,11 @@ const setCashbookAccess = asyncHandler(async (req, res) => {
   res.json({ id: user._id, cashbookAccess: user.cashbookAccess });
 });
 
+/**
+ * Read org-wide settings a SuperAdmin controls.
+ * @route GET /api/admin/org-settings  (SuperAdmin)
+ * @returns {{includeExecutivesInLists: boolean}}
+ */
 // GET /api/admin/org-settings  (SuperAdmin)
 // Org-wide preferences a SuperAdmin controls. Currently: whether CEO/MD show up
 // in employee-selection pickers.
@@ -250,6 +329,12 @@ const getOrgSettings = asyncHandler(async (req, res) => {
   res.json({ includeExecutivesInLists: !!s.includeExecutivesInLists });
 });
 
+/**
+ * Update org-wide settings.
+ * @route PUT /api/admin/org-settings  (SuperAdmin)
+ * @param {boolean} [req.body.includeExecutivesInLists]
+ * @returns {{includeExecutivesInLists: boolean}}
+ */
 // PUT /api/admin/org-settings  (SuperAdmin)
 const updateOrgSettings = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');

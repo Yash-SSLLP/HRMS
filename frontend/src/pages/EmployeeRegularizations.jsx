@@ -1,3 +1,8 @@
+/**
+ * EmployeeRegularizations — attendance-correction requests (employee portal).
+ * Lists the user's requests from GET /regularizations/me and submits new ones
+ * via POST /regularizations. Approval is done by HR/manager on the admin side.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

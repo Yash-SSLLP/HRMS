@@ -1,3 +1,11 @@
+/**
+ * Cashbook controller — petty-cash accounting: cash accounts (CashAccount),
+ * categories (CashCategory), and an in/out ledger (CashbookEntry) with a
+ * never-drift running balance recomputed from Approved entries. Employees submit
+ * vouchers for finance (SuperAdmin/AccountsManager) to approve; finance posts
+ * direct entries, transfers between accounts, and runs day-book/summary/CSV
+ * reports. recomputeBalance is exported and reused by the expense→cashbook sync.
+ */
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const CashAccount = require('../models/CashAccount');
@@ -102,6 +110,11 @@ const publicEntry = (e) => ({
 
 // ============================ Employee self-service ============================
 
+/**
+ * List the caller's own submitted petty-cash vouchers.
+ * @route GET /api/cashbook/me
+ * @returns {{count: number, vouchers: Object[]}}
+ */
 // GET /api/cashbook/me — my submitted vouchers
 const listMyVouchers = asyncHandler(async (req, res) => {
   const entries = await CashbookEntry.find({ employee: req.user._id, submittedByEmployee: true })
@@ -110,6 +123,16 @@ const listMyVouchers = asyncHandler(async (req, res) => {
   res.json({ count: entries.length, vouchers: entries.map(publicEntry) });
 });
 
+/**
+ * Employee submits a petty-cash voucher (out entry, status Pending).
+ * @route POST /api/cashbook/me  (multipart, optional receipt)
+ * @param {number} req.body.amount - required, > 0
+ * @param {string} [req.body.date] - defaults to now
+ * @param {string} [req.body.category] / [req.body.paymentMode] / [req.body.description] / [req.body.party] / [req.body.referenceNo]
+ * @param {File} [req.file] - optional receipt
+ * @returns {{voucher: Object}} (201)
+ * @sideeffect notifies finance managers (SuperAdmin/AccountsManager)
+ */
 // POST /api/cashbook/me — submit a petty-cash voucher (multipart, optional receipt)
 const submitVoucher = asyncHandler(async (req, res) => {
   const amount = toNum(req.body.amount);
@@ -145,11 +168,24 @@ const submitVoucher = asyncHandler(async (req, res) => {
 
 // ============================ Accounts ============================
 
+/**
+ * List all cash accounts (active first).
+ * @route GET /api/cashbook/accounts
+ * @returns {{count: number, accounts: Object[]}}
+ */
 const listAccounts = asyncHandler(async (req, res) => {
   const accounts = await CashAccount.find().sort({ isActive: -1, name: 1 }).lean();
   res.json({ count: accounts.length, accounts });
 });
 
+/**
+ * Create a cash account (currentBalance seeded from openingBalance).
+ * @route POST /api/cashbook/accounts
+ * @param {string} req.body.name - required
+ * @param {string} [req.body.type] / [req.body.note]
+ * @param {number} [req.body.openingBalance=0]
+ * @returns {{account: Object}} (201)
+ */
 const createAccount = asyncHandler(async (req, res) => {
   const { name, type, note } = req.body;
   if (!name || !name.trim()) { res.status(400); throw new Error('Account name is required'); }
@@ -165,6 +201,13 @@ const createAccount = asyncHandler(async (req, res) => {
   res.status(201).json({ account: acc });
 });
 
+/**
+ * Update a cash account; an opening-balance change flows into currentBalance.
+ * @route PUT /api/cashbook/accounts/:id
+ * @param {string} req.params.id - account id
+ * @param {Object} req.body - name/type/note/isActive/openingBalance
+ * @returns {{account: Object}}
+ */
 const updateAccount = asyncHandler(async (req, res) => {
   const acc = await CashAccount.findById(req.params.id);
   if (!acc) { res.status(404); throw new Error('Account not found'); }
@@ -181,6 +224,12 @@ const updateAccount = asyncHandler(async (req, res) => {
   res.json({ account: fresh });
 });
 
+/**
+ * Delete a cash account, only if it has no ledger entries.
+ * @route DELETE /api/cashbook/accounts/:id
+ * @param {string} req.params.id - account id
+ * @returns {{id: string, deleted: boolean}}; 400 if entries exist
+ */
 const deleteAccount = asyncHandler(async (req, res) => {
   const count = await CashbookEntry.countDocuments({ account: req.params.id });
   if (count > 0) {
@@ -193,12 +242,24 @@ const deleteAccount = asyncHandler(async (req, res) => {
 
 // ============================ Categories ============================
 
+/**
+ * List cash categories, seeding defaults on first use.
+ * @route GET /api/cashbook/categories
+ * @returns {{count: number, categories: Object[]}}
+ */
 const listCategories = asyncHandler(async (req, res) => {
   await ensureCategories();
   const categories = await CashCategory.find().sort({ name: 1 }).lean();
   res.json({ count: categories.length, categories });
 });
 
+/**
+ * Create a cash category (unique name).
+ * @route POST /api/cashbook/categories
+ * @param {string} req.body.name - required, unique
+ * @param {string} [req.body.kind] - 'in' | 'out' | 'both'
+ * @returns {{category: Object}} (201); 409 if name exists
+ */
 const createCategory = asyncHandler(async (req, res) => {
   const { name, kind } = req.body;
   if (!name || !name.trim()) { res.status(400); throw new Error('Category name is required'); }
@@ -211,6 +272,13 @@ const createCategory = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * Update a cash category (partial).
+ * @route PUT /api/cashbook/categories/:id
+ * @param {string} req.params.id - category id
+ * @param {Object} req.body - name/kind/isActive
+ * @returns {{category: Object}}
+ */
 const updateCategory = asyncHandler(async (req, res) => {
   const cat = await CashCategory.findById(req.params.id);
   if (!cat) { res.status(404); throw new Error('Category not found'); }
@@ -244,6 +312,12 @@ function entryFilterFromQuery(q) {
   return filter;
 }
 
+/**
+ * List ledger entries with rich filters, paginated (max 1000/page).
+ * @route GET /api/cashbook/entries
+ * @param {Object} req.query - account/type/status/category/employee/from/to/q/page/limit
+ * @returns {{count, total, page, entries: Object[]}}
+ */
 // GET /api/cashbook/entries
 const listEntries = asyncHandler(async (req, res) => {
   const filter = entryFilterFromQuery(req.query);
@@ -262,6 +336,16 @@ const listEntries = asyncHandler(async (req, res) => {
   res.json({ count: entries.length, total, page, entries: entries.map(publicEntry) });
 });
 
+/**
+ * Finance posts a direct in/out ledger entry (status Approved).
+ * @route POST /api/cashbook/entries  (multipart, optional receipt)
+ * @param {string} req.body.type - 'in' or 'out' (required)
+ * @param {string} req.body.account - account id (required)
+ * @param {number} req.body.amount - required, > 0
+ * @param {Object} [req.body] - date/category/paymentMode/description/party/referenceNo
+ * @returns {{entry: Object}} (201)
+ * @sideeffect recomputes the account balance
+ */
 // POST /api/cashbook/entries — finance posts a direct in/out entry (multipart)
 const createEntry = asyncHandler(async (req, res) => {
   const { type, account } = req.body;
@@ -292,6 +376,14 @@ const createEntry = asyncHandler(async (req, res) => {
   res.status(201).json({ entry: publicEntry(entry) });
 });
 
+/**
+ * Edit a ledger entry (transfer legs are immutable), then resync balances.
+ * @route PUT /api/cashbook/entries/:id
+ * @param {string} req.params.id - entry id
+ * @param {Object} req.body - type/category/paymentMode/description/party/referenceNo/amount/date/account/status
+ * @returns {{entry: Object}}; 400 for transfer legs
+ * @sideeffect recomputes both old and new account balances
+ */
 // PUT /api/cashbook/entries/:id — edit an entry, then resync balances
 const updateEntry = asyncHandler(async (req, res) => {
   const entry = await CashbookEntry.findById(req.params.id);
@@ -318,6 +410,13 @@ const updateEntry = asyncHandler(async (req, res) => {
   res.json({ entry: publicEntry(entry) });
 });
 
+/**
+ * Delete a ledger entry (and its paired transfer leg), then resync balances.
+ * @route DELETE /api/cashbook/entries/:id
+ * @param {string} req.params.id - entry id
+ * @returns {{id: string, deleted: boolean}}
+ * @sideeffect removes attachments and recomputes affected account balances
+ */
 // DELETE /api/cashbook/entries/:id — remove an entry (and its transfer sibling)
 const deleteEntry = asyncHandler(async (req, res) => {
   const entry = await CashbookEntry.findById(req.params.id);
@@ -337,6 +436,16 @@ const deleteEntry = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * Approve or reject a Pending employee voucher (approval picks a paying account).
+ * @route PATCH /api/cashbook/entries/:id/review
+ * @param {string} req.params.id - entry id
+ * @param {string} req.body.action - 'approve' or 'reject'
+ * @param {string} [req.body.account] - required to approve if none set
+ * @param {string} [req.body.reviewNote]
+ * @returns {{entry: Object}}
+ * @sideeffect on approve recomputes the account balance; notifies the employee either way
+ */
 // PATCH /api/cashbook/entries/:id/review — approve/reject an employee voucher
 const reviewVoucher = asyncHandler(async (req, res) => {
   const { action, account, reviewNote } = req.body;
@@ -382,6 +491,16 @@ const reviewVoucher = asyncHandler(async (req, res) => {
   res.json({ entry: publicEntry(entry) });
 });
 
+/**
+ * Transfer money between two accounts as two linked Approved legs (out + in).
+ * @route POST /api/cashbook/transfer
+ * @param {string} req.body.fromAccount - required
+ * @param {string} req.body.toAccount - required (must differ)
+ * @param {number} req.body.amount - required, > 0
+ * @param {Object} [req.body] - date/paymentMode/description
+ * @returns {{ok: true, transferGroup}} (201)
+ * @sideeffect recomputes both account balances
+ */
 // POST /api/cashbook/transfer — move money between two accounts (two linked legs)
 const transfer = asyncHandler(async (req, res) => {
   const { fromAccount, toAccount } = req.body;
@@ -406,6 +525,11 @@ const transfer = asyncHandler(async (req, res) => {
 
 // ============================ Reports ============================
 
+/**
+ * Cashbook dashboard headline numbers: total cash, today's in/out, pending count.
+ * @route GET /api/cashbook/overview
+ * @returns {{totalCash, accounts, todayIn, todayOut, pendingVouchers}}
+ */
 // GET /api/cashbook/overview — headline numbers for the dashboard
 const overview = asyncHandler(async (req, res) => {
   const accounts = await CashAccount.find({ isActive: true }).lean();
@@ -423,6 +547,13 @@ const overview = asyncHandler(async (req, res) => {
   res.json({ totalCash, accounts, todayIn, todayOut, pendingVouchers: pending });
 });
 
+/**
+ * Day-book: a single account's ledger over a date range with a running balance.
+ * @route GET /api/cashbook/reports/daybook?account=&from=&to=
+ * @param {string} req.query.account - required
+ * @param {string} [req.query.from] / [req.query.to]
+ * @returns {{account, opening, totalIn, totalOut, closing, rows: Object[]}}
+ */
 // GET /api/cashbook/reports/daybook?account=&from=&to= — running-balance ledger
 const daybook = asyncHandler(async (req, res) => {
   const { account } = req.query;
@@ -462,6 +593,12 @@ const daybook = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Summary report: in/out totals plus breakdowns by category and payment mode.
+ * @route GET /api/cashbook/reports/summary?from=&to=&account=
+ * @param {string} [req.query.account] / [req.query.from] / [req.query.to]
+ * @returns {{totalIn, totalOut, net, byCategory, byMode}}
+ */
 // GET /api/cashbook/reports/summary?from=&to=&account= — category/mode breakdown
 const summary = asyncHandler(async (req, res) => {
   const match = { status: 'Approved' };
@@ -484,6 +621,12 @@ const summary = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Export the filtered ledger as a CSV download.
+ * @route GET /api/cashbook/reports/export
+ * @param {Object} req.query - same filters as listEntries
+ * @returns {text/csv} cashbook.csv
+ */
 // GET /api/cashbook/reports/export — CSV of the filtered ledger
 const exportCsv = asyncHandler(async (req, res) => {
   const filter = entryFilterFromQuery(req.query);
@@ -520,6 +663,12 @@ const exportCsv = asyncHandler(async (req, res) => {
   res.send(lines.join('\n'));
 });
 
+/**
+ * Stream a ledger entry's receipt (owner or a cashbook manager role).
+ * @route GET /api/cashbook/entries/:id/receipt
+ * @param {string} req.params.id - entry id
+ * @returns {binary} the receipt; 403 if unauthorized, 404 if missing
+ */
 // GET /api/cashbook/entries/:id/receipt — stream the receipt (owner or manager)
 const getReceipt = asyncHandler(async (req, res) => {
   const entry = await CashbookEntry.findById(req.params.id).select('attachment employee');

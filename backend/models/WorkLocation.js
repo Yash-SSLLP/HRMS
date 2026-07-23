@@ -17,6 +17,7 @@ const workLocationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Audit-status plugin: logs `active` (enable/disable) changes to AuditLog (labelled by name).
 workLocationSchema.plugin(require('./plugins/auditStatus'), { entity: 'WorkLocation', fields: ['active'], label: (d) => d.name });
 
 module.exports = mongoose.model('WorkLocation', workLocationSchema);

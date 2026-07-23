@@ -1,3 +1,9 @@
+/**
+ * GoalsScreen — lists the employee's performance goals with a progress bar and
+ * quick 0/25/50/75/100% step buttons to update completion inline.
+ * Route: "Goals" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /performance/goals/me, PATCH /performance/goals/me/:id/progress.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -23,6 +29,7 @@ export default function GoalsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Optimistically update progress locally, then persist; reload to revert on error.
   const setProgress = async (goal, progress) => {
     setGoals((prev) => prev.map((g) => (g._id === goal._id ? { ...g, progress } : g)));
     try {

@@ -1,3 +1,8 @@
+/**
+ * EmployeePayslips — the logged-in employee's payslip history (employee portal).
+ * Lists finalized payslips from GET /payroll/me, opens a detail modal with the
+ * earnings/deductions breakdown, and downloads the PDF via GET /payroll/me/:id/pdf.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
@@ -13,6 +18,7 @@ const inr = (n) =>
 
 const labelize = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
 
+// Modal showing one payslip's earnings/deductions/net + PDF download.
 function PayslipDetail({ slip, onClose }) {
   if (!slip) return null;
   const earnings = slip.earnings || {};

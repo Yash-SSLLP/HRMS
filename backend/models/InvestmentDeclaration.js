@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 
-const REGIMES = ['Old', 'New'];
+// An employee's annual tax investment/deduction declaration for a financial year,
+// used for TDS/income-tax computation in payroll. One per employee per FY.
+const REGIMES = ['Old', 'New']; // Indian income-tax regime chosen for the year
+// Draft -> employee editing; Submitted -> sent for HR review; Verified -> proofs accepted; Rejected -> sent back.
 const DECLARATION_STATUSES = ['Draft', 'Submitted', 'Verified', 'Rejected'];
 
 const num = { type: Number, default: 0, min: 0 };
@@ -40,8 +43,10 @@ const investmentDeclarationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// One declaration per employee per financial year.
 investmentDeclarationSchema.index({ employee: 1, financialYear: 1 }, { unique: true });
 
+// Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 investmentDeclarationSchema.plugin(require("./plugins/auditStatus"));
 
 module.exports = mongoose.model('InvestmentDeclaration', investmentDeclarationSchema);

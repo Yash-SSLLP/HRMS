@@ -1,3 +1,9 @@
+/**
+ * SearchScreen — global spotlight-style search: jump to any role-permitted page,
+ * and (HR/Admin/execs only) look up employees. Pushed as "Search" from the header.
+ * Backend: GET /employees?q= (debounced employee lookup); page list is static and
+ * role-gated via utils/roles. Employee rows deep-link to EmployeeDetail.
+ */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -71,12 +77,16 @@ export default function SearchScreen() {
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
 
+  // Auto-focus the input shortly after mount (once the screen transition settles).
   useEffect(() => { const t = setTimeout(() => inputRef.current?.focus(), 250); return () => clearTimeout(t); }, []);
 
+  // Page results are filtered client-side from the role-permitted subset.
   const myPages = useMemo(() => PAGES.filter((p) => p.show(role)), [role]);
   const term = q.trim().toLowerCase();
   const pageMatches = term ? myPages.filter((p) => p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)) : [];
 
+  // Debounced employee search (HR/Admin only); cancels the pending request on
+  // each keystroke so only the last query fires.
   useEffect(() => {
     if (!canSearchEmployees || !term) { setEmployees([]); setLoading(false); return undefined; }
     setLoading(true);

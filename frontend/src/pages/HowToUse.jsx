@@ -1,3 +1,9 @@
+/**
+ * HowToUse — the in-app user guide screen (route /employee/how-to-use and
+ * /admin/how-to-use). Employees see the employee guide; HR/Admins see the HR
+ * guide and (with announcements.manage permission) can edit either. Loads/saves
+ * the Markdown via GET/PUT/DELETE /guides/:key, falling back to bundled defaults.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';

@@ -1,3 +1,10 @@
+/**
+ * ProfileScreen — the "Profile" tab: the signed-in user's own profile with a
+ * role-accented banner, avatar/banner photo upload, work + personal details, and
+ * logout. Any employee role.
+ * Backend: GET /employees/me (profile), POST /auth/me/avatar, POST /auth/me/banner;
+ * logout unregisters the push token first. Uses the photo library permission for uploads.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -34,6 +41,8 @@ export default function ProfileScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Pick a square image from the library and upload it as the new avatar; bump the
+  // cache-buster so the <Image> reloads. Needs media-library permission.
   const changeAvatar = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert('Permission needed', 'Allow photo access to update your picture.'); return; }
@@ -50,6 +59,7 @@ export default function ProfileScreen() {
     }
   };
 
+  // Same flow as changeAvatar but for the 16:9 header banner image.
   const changeBanner = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert('Permission needed', 'Allow photo access to update your banner.'); return; }
@@ -79,6 +89,7 @@ export default function ProfileScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
+  // Cache-buster query param forces a fresh fetch after each upload.
   const avatarUri = user?.photo ? mediaUrl(`/auth/users/${user._id}/avatar`) + `?b=${avatarBust}` : null;
   const bannerUri = user?.banner ? mediaUrl(`/auth/users/${user._id}/banner`) + `?b=${bannerBust}` : null;
 

@@ -1,8 +1,15 @@
+/**
+ * Investment-declaration controller — employees file per-financial-year tax
+ * investment declarations (regime, section amounts, proof links) as a Draft, then
+ * Submit; HR lists and Verifies/Rejects them. Manages InvestmentDeclaration docs.
+ */
 const asyncHandler = require('express-async-handler');
 const InvestmentDeclaration = require('../models/InvestmentDeclaration');
 const { DECLARATION_STATUSES, REGIMES } = require('../models/InvestmentDeclaration');
 
 const EMPLOYEE_FIELDS = 'firstName lastName email';
+
+// Deduction/section fields accepted from clients (all coerced to non-negative numbers)
 
 const SECTION_KEYS = [
   'section80C',
@@ -34,6 +41,12 @@ function cleanProofs(input) {
     .filter((p) => p.label || p.url);
 }
 
+/**
+ * Get the caller's declaration for a financial year (or their latest).
+ * @route GET /api/declarations/me?financialYear=
+ * @param {string} [req.query.financialYear]
+ * @returns {{declaration: Object|null}}
+ */
 // GET /api/declarations/me?financialYear=
 // Returns the caller's declaration for that FY (or the latest if not specified).
 const getMine = asyncHandler(async (req, res) => {
@@ -45,6 +58,15 @@ const getMine = asyncHandler(async (req, res) => {
   res.json({ declaration });
 });
 
+/**
+ * Upsert the caller's declaration draft for a financial year.
+ * @route POST /api/declarations/me
+ * @param {string} req.body.financialYear - required
+ * @param {string} [req.body.regime] - one of REGIMES, defaults to 'Old'
+ * @param {Object} [req.body.sections] - section amounts (cleaned to non-negative)
+ * @param {Array} [req.body.proofs] - [{label, url}] proof rows (empty dropped)
+ * @returns {{declaration: Object}} saved with status 'Draft'
+ */
 // POST /api/declarations/me  { financialYear, regime, sections, proofs }
 // Upsert the caller's draft. Only when current status is Draft/Rejected/absent.
 const saveMine = asyncHandler(async (req, res) => {
@@ -59,6 +81,7 @@ const saveMine = asyncHandler(async (req, res) => {
     financialYear,
   });
 
+  // Cannot edit once Submitted/Verified — only Draft or Rejected are editable
   if (declaration && !['Draft', 'Rejected'].includes(declaration.status)) {
     res.status(400);
     throw new Error('Already submitted');
@@ -80,6 +103,12 @@ const saveMine = asyncHandler(async (req, res) => {
   res.json({ declaration });
 });
 
+/**
+ * Submit the caller's declaration for review (Draft/Rejected -> Submitted).
+ * @route PATCH /api/declarations/me/submit
+ * @param {string} req.body.financialYear - required
+ * @returns {{declaration: Object}} with status 'Submitted'
+ */
 // PATCH /api/declarations/me/submit  { financialYear }
 const submitMine = asyncHandler(async (req, res) => {
   const { financialYear } = req.body;
@@ -106,6 +135,13 @@ const submitMine = asyncHandler(async (req, res) => {
   res.json({ declaration });
 });
 
+/**
+ * List all declarations, optionally filtered by status/financial year (admin).
+ * @route GET /api/declarations?status=&financialYear=
+ * @param {string} [req.query.status]
+ * @param {string} [req.query.financialYear]
+ * @returns {{count: number, declarations: Object[]}} with populated employee
+ */
 // GET /api/declarations?status=&financialYear=  (admin)
 const listAll = asyncHandler(async (req, res) => {
   const { status, financialYear } = req.query;
@@ -119,6 +155,14 @@ const listAll = asyncHandler(async (req, res) => {
   res.json({ count: declarations.length, declarations });
 });
 
+/**
+ * HR verifies or rejects a submitted declaration (records reviewer + timestamp).
+ * @route PATCH /api/declarations/:id/status
+ * @param {string} req.params.id - declaration id
+ * @param {string} req.body.status - must be 'Verified' or 'Rejected'
+ * @param {string} [req.body.reviewNote]
+ * @returns {{declaration: Object}} the reviewed declaration
+ */
 // PATCH /api/declarations/:id/status  { status: Verified|Rejected, reviewNote }  (admin)
 const reviewDeclaration = asyncHandler(async (req, res) => {
   const { status, reviewNote } = req.body;

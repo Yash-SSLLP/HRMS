@@ -1,3 +1,11 @@
+/**
+ * Course/LMS controller — internal courses with video (Cloudinary signed upload +
+ * authenticated signed-URL 302; Google Drive kept as legacy) or text modules, plus
+ * enrollments (Enrollment) with accurate anti-cheat watch progress, assign vs
+ * self-enroll-with-approval, deadlines, issue reports, and feedback. Also admin
+ * moderation of the public-course sharing (leads/comments/video feedback). Course
+ * administration is gated to COURSE_ADMIN_ROLES (SuperAdmin/HRManager/LDManager).
+ */
 const crypto = require('crypto');
 const asyncHandler = require('express-async-handler');
 const Course = require('../models/Course');
@@ -91,6 +99,11 @@ function cloudinaryIdsOf(course) {
     .map((m) => m.cloudinaryPublicId);
 }
 
+/**
+ * Mint a short-lived Cloudinary upload signature for direct browser upload.
+ * @route POST /api/courses/upload-signature  (course admin)
+ * @returns {Object} cloud name, api key, timestamp, folder, type, signature; 503 if unconfigured
+ */
 // POST /api/courses/upload-signature
 // Admin-only: mint a short-lived signature so the browser uploads the video
 // straight to Cloudinary (the backend never buffers the file). Returns the
@@ -105,6 +118,11 @@ const createUploadSignature = asyncHandler(async (req, res) => {
 
 // ===== Shared / Employee =====
 
+/**
+ * List active internal courses for the employee catalog with the caller's enrollment.
+ * @route GET /api/courses
+ * @returns {{count: number, courses: Object[]}} module refs stripped; external courses excluded
+ */
 // GET /api/courses  — active INTERNAL courses for employees, with caller's
 // enrollment if any. External (public) courses are not shown in the employee
 // catalog; they're reached only via their /learn/:token link.
@@ -146,6 +164,11 @@ function safeCourse(course) {
   return { ...course, modules };
 }
 
+/**
+ * List the caller's enrollments with their (Drive-safe) courses.
+ * @route GET /api/courses/me
+ * @returns {{count: number, enrollments: Object[]}} each with daysToDue/overdue meta
+ */
 // GET /api/courses/me — all enrollments for caller, populated with course
 const myLearning = asyncHandler(async (req, res) => {
   const enrollments = await Enrollment.find({ employee: req.user._id })
@@ -156,6 +179,13 @@ const myLearning = asyncHandler(async (req, res) => {
   res.json({ count: out.length, enrollments: out });
 });
 
+/**
+ * Employee self-enrolls in a course (created Pending approval).
+ * @route POST /api/courses/:id/enroll
+ * @param {string} req.params.id - course id
+ * @returns {{enrollment: Object}} (201 new / 200 existing)
+ * @sideeffect notifies course admins of the request
+ */
 // POST /api/courses/:id/enroll — employee self-enroll (needs approval)
 const enroll = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -187,6 +217,13 @@ const enroll = asyncHandler(async (req, res) => {
   res.status(201).json({ enrollment });
 });
 
+/**
+ * Stream a module's video (Cloudinary signed-URL 302 or Drive proxy).
+ * @route GET /api/courses/:id/modules/:mid/video
+ * @param {string} req.params.id - course id
+ * @param {string} req.params.mid - module id
+ * @returns {binary|302}; requires course admin (preview) or an Approved enrollment
+ */
 // GET /api/courses/:id/modules/:mid/video — proxy-stream the module's Drive video
 const streamModuleVideo = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -238,6 +275,14 @@ async function getApprovedEnrollment(courseId, userId, res) {
   return enrollment;
 }
 
+/**
+ * Record watch progress on a video module; completes at ~95% watched.
+ * @route PATCH /api/courses/:id/modules/:mid/progress
+ * @param {string} req.params.id / req.params.mid - course/module ids
+ * @param {number} req.body.watchedSec - monotonically increasing watched time
+ * @param {number} req.body.durationSec - video length
+ * @returns {{enrollment: Object}}; requires an Approved enrollment
+ */
 // PATCH /api/courses/:id/modules/:mid/progress  { watchedSec, durationSec }
 const updateModuleProgress = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -275,6 +320,13 @@ const updateModuleProgress = asyncHandler(async (req, res) => {
   res.json({ enrollment: withDueMeta(enrollment.toObject()) });
 });
 
+/**
+ * Mark (or unmark) a text module as read.
+ * @route POST /api/courses/:id/modules/:mid/complete
+ * @param {string} req.params.id / req.params.mid - course/module ids
+ * @param {boolean} [req.body.completed=true]
+ * @returns {{enrollment: Object}}; requires an Approved enrollment
+ */
 // POST /api/courses/:id/modules/:mid/complete — mark a TEXT module read
 const completeTextModule = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -302,6 +354,16 @@ const completeTextModule = asyncHandler(async (req, res) => {
   res.json({ enrollment: withDueMeta(enrollment.toObject()) });
 });
 
+/**
+ * Employee reports an issue about a lesson (video/audio/playback…).
+ * @route POST /api/courses/:id/report
+ * @param {string} req.params.id - course id
+ * @param {string} [req.body.module] - module id
+ * @param {string} [req.body.category] - one of REPORT_CATEGORIES
+ * @param {string} [req.body.note]
+ * @returns {{report: Object}} (201)
+ * @sideeffect notifies course admins; requires an Approved enrollment
+ */
 // POST /api/courses/:id/report  { module?, category, note }
 // Employee raises an issue about a lesson (video quality, audio, playback…).
 const reportIssue = asyncHandler(async (req, res) => {
@@ -342,6 +404,15 @@ const reportIssue = asyncHandler(async (req, res) => {
   res.status(201).json({ report });
 });
 
+/**
+ * Submit a 1-5 rating and comment for a course the caller is enrolled in.
+ * @route POST /api/courses/:id/feedback
+ * @param {string} req.params.id - course id
+ * @param {number} req.body.rating - 1-5 (required)
+ * @param {string} [req.body.comment]
+ * @returns {{enrollment: Object}}
+ * @sideeffect notifies course admins; requires an Approved enrollment
+ */
 // POST /api/courses/:id/feedback  { rating, comment }
 const submitFeedback = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -377,6 +448,12 @@ const submitFeedback = asyncHandler(async (req, res) => {
 
 // ===== Admin =====
 
+/**
+ * List employee-raised course issue reports, optionally by status.
+ * @route GET /api/courses/reports?status=  (admin)
+ * @param {string} [req.query.status] - 'Open' or 'Resolved'
+ * @returns {{count: number, reports: Object[]}}
+ */
 // GET /api/courses/reports?status=Open — course issues raised by employees
 const listReports = asyncHandler(async (req, res) => {
   const filter = {};
@@ -389,6 +466,13 @@ const listReports = asyncHandler(async (req, res) => {
   res.json({ count: reports.length, reports });
 });
 
+/**
+ * Resolve (or reopen) a course issue report.
+ * @route PATCH /api/courses/reports/:rid/resolve  (admin)
+ * @param {string} req.params.rid - report id
+ * @param {string} [req.body.status] - 'Open' to reopen, else Resolved
+ * @returns {{report: Object}}
+ */
 // PATCH /api/courses/reports/:rid/resolve
 const resolveReport = asyncHandler(async (req, res) => {
   const report = await CourseReport.findById(req.params.rid);
@@ -401,6 +485,12 @@ const resolveReport = asyncHandler(async (req, res) => {
   res.json({ report });
 });
 
+/**
+ * List every course (incl. inactive) with enrollment/completion/overdue and
+ * open-report / pending-comment counts.
+ * @route GET /api/courses/admin/all  (admin)
+ * @returns {{count: number, courses: Object[]}}
+ */
 // GET /api/courses/admin/all — all courses incl inactive, with enrollment counts
 const listAdmin = asyncHandler(async (req, res) => {
   const courses = await Course.find().sort({ createdAt: -1 }).lean();
@@ -443,6 +533,14 @@ function applyCourseType(course, courseType) {
   }
 }
 
+/**
+ * Create a course with normalized modules.
+ * @route POST /api/courses  (admin)
+ * @param {string} req.body.title - required
+ * @param {Array} [req.body.modules] - video (Cloudinary/Drive) or text modules
+ * @param {string} [req.body.courseType] - 'external' makes it public with a token
+ * @returns {{course: Object}} (201)
+ */
 // POST /api/courses
 const createCourse = asyncHandler(async (req, res) => {
   if (!req.body.title) {
@@ -465,6 +563,14 @@ const createCourse = asyncHandler(async (req, res) => {
   res.status(201).json({ course });
 });
 
+/**
+ * Update a course (partial); deletes Cloudinary assets orphaned by module edits.
+ * @route PUT /api/courses/:id  (admin)
+ * @param {string} req.params.id - course id
+ * @param {Object} req.body - title/description/category/durationHours/deadlineDays/active/courseType/modules
+ * @returns {{course: Object}}
+ * @sideeffect best-effort destroy of removed Cloudinary videos
+ */
 // PUT /api/courses/:id
 const updateCourse = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -492,6 +598,13 @@ const updateCourse = asyncHandler(async (req, res) => {
   res.json({ course });
 });
 
+/**
+ * Delete a course plus all its enrollments, reports, viewers, comments and feedback.
+ * @route DELETE /api/courses/:id  (admin)
+ * @param {string} req.params.id - course id
+ * @returns {{id: string, deleted: boolean}}
+ * @sideeffect best-effort destroy of the course's Cloudinary videos
+ */
 // DELETE /api/courses/:id — also remove enrollments
 const deleteCourse = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -517,6 +630,15 @@ function computeDueDate(course, explicit) {
   return undefined;
 }
 
+/**
+ * Assign a course to employees (auto-Approved enrollments) with an optional due date.
+ * @route POST /api/courses/:id/assign  (admin)
+ * @param {string} req.params.id - course id
+ * @param {string[]} req.body.employeeIds - at least one
+ * @param {string} [req.body.dueDate] - else derived from the course deadlineDays
+ * @returns {{assigned: number}} (201)
+ * @sideeffect notifies each assigned employee
+ */
 // POST /api/courses/:id/assign  { employeeIds: [userId], dueDate? }
 const assignCourse = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.id);
@@ -554,6 +676,11 @@ const assignCourse = asyncHandler(async (req, res) => {
   res.status(201).json({ assigned: results.length });
 });
 
+/**
+ * List self-enroll requests awaiting approval.
+ * @route GET /api/courses/enrollments/pending  (admin)
+ * @returns {{count: number, enrollments: Object[]}}
+ */
 // GET /api/courses/enrollments/pending — self-enroll requests awaiting approval
 const listPending = asyncHandler(async (req, res) => {
   const pending = await Enrollment.find({ approvalStatus: 'Pending' })
@@ -564,6 +691,12 @@ const listPending = asyncHandler(async (req, res) => {
   res.json({ count: pending.length, enrollments: pending });
 });
 
+/**
+ * List the enrollment roster for one course.
+ * @route GET /api/courses/:id/enrollments  (admin)
+ * @param {string} req.params.id - course id
+ * @returns {{count: number, enrollments: Object[]}} with due meta
+ */
 // GET /api/courses/:id/enrollments — roster for one course
 const courseRoster = asyncHandler(async (req, res) => {
   const enrollments = await Enrollment.find({ course: req.params.id })
@@ -573,6 +706,14 @@ const courseRoster = asyncHandler(async (req, res) => {
   res.json({ count: enrollments.length, enrollments: enrollments.map(withDueMeta) });
 });
 
+/**
+ * Approve a pending self-enrollment, optionally setting a due date.
+ * @route PATCH /api/courses/enrollments/:eid/approve  (admin)
+ * @param {string} req.params.eid - enrollment id
+ * @param {string} [req.body.dueDate] - else derived from the course deadlineDays
+ * @returns {{enrollment: Object}}
+ * @sideeffect notifies the employee
+ */
 // PATCH /api/courses/enrollments/:eid/approve  { dueDate? }
 const approveEnrollment = asyncHandler(async (req, res) => {
   const enrollment = await Enrollment.findById(req.params.eid).populate('course', 'title deadlineDays');
@@ -598,6 +739,13 @@ const approveEnrollment = asyncHandler(async (req, res) => {
   res.json({ enrollment });
 });
 
+/**
+ * Reject a pending self-enrollment.
+ * @route PATCH /api/courses/enrollments/:eid/reject  (admin)
+ * @param {string} req.params.eid - enrollment id
+ * @returns {{enrollment: Object}}
+ * @sideeffect notifies the employee
+ */
 // PATCH /api/courses/enrollments/:eid/reject
 const rejectEnrollment = asyncHandler(async (req, res) => {
   const enrollment = await Enrollment.findById(req.params.eid).populate('course', 'title');
@@ -622,6 +770,13 @@ const rejectEnrollment = asyncHandler(async (req, res) => {
 
 // ===== Public sharing + moderation (admin) =====
 
+/**
+ * Toggle public sharing for a course (mints a stable publicToken on first enable).
+ * @route POST /api/courses/:id/public  (admin)
+ * @param {string} req.params.id - course id
+ * @param {boolean} [req.body.enabled=true]
+ * @returns {{isPublic, publicToken}}
+ */
 // POST /api/courses/:id/public  { enabled } — turn public sharing on/off.
 // Mints a stable publicToken on first enable (kept across toggles).
 const setCoursePublic = asyncHandler(async (req, res) => {
@@ -637,12 +792,24 @@ const setCoursePublic = asyncHandler(async (req, res) => {
   res.json({ isPublic: course.isPublic, publicToken: course.publicToken });
 });
 
+/**
+ * List public viewers (leads) who registered for a course (max 2000).
+ * @route GET /api/courses/:id/leads  (admin)
+ * @param {string} req.params.id - course id
+ * @returns {{count: number, leads: Object[]}}
+ */
 // GET /api/courses/:id/leads — public viewers who filled the lead form
 const listCourseLeads = asyncHandler(async (req, res) => {
   const leads = await CourseViewer.find({ course: req.params.id }).sort({ createdAt: -1 }).limit(2000).lean();
   res.json({ count: leads.length, leads });
 });
 
+/**
+ * List public course comments across all courses for moderation (max 1000).
+ * @route GET /api/courses/comments?status=  (admin)
+ * @param {string} [req.query.status] - Pending/Approved/Rejected
+ * @returns {{count: number, comments: Object[]}}
+ */
 // GET /api/courses/comments?status= — comments across all courses for moderation
 const listAllComments = asyncHandler(async (req, res) => {
   const filter = {};
@@ -655,6 +822,13 @@ const listAllComments = asyncHandler(async (req, res) => {
   res.json({ count: comments.length, comments });
 });
 
+/**
+ * Moderate a public course comment (approve/reject/re-pending).
+ * @route PATCH /api/courses/comments/:cid  (admin)
+ * @param {string} req.params.cid - comment id
+ * @param {string} [req.body.status] - Pending/Approved/Rejected (default Approved)
+ * @returns {{comment: Object}}
+ */
 // PATCH /api/courses/comments/:cid  { status } — approve / reject / re-pending
 const moderateComment = asyncHandler(async (req, res) => {
   const comment = await CourseComment.findById(req.params.cid);
@@ -667,6 +841,12 @@ const moderateComment = asyncHandler(async (req, res) => {
   res.json({ comment });
 });
 
+/**
+ * Delete a public course comment.
+ * @route DELETE /api/courses/comments/:cid  (admin)
+ * @param {string} req.params.cid - comment id
+ * @returns {{id: string, deleted: boolean}}
+ */
 // DELETE /api/courses/comments/:cid
 const deleteComment = asyncHandler(async (req, res) => {
   const comment = await CourseComment.findById(req.params.cid);
@@ -678,6 +858,12 @@ const deleteComment = asyncHandler(async (req, res) => {
   res.json({ id: req.params.cid, deleted: true });
 });
 
+/**
+ * List public per-video feedback for a course (max 2000).
+ * @route GET /api/courses/:id/video-feedback  (admin)
+ * @param {string} req.params.id - course id
+ * @returns {{count: number, feedback: Object[]}} with populated viewer
+ */
 // GET /api/courses/:id/video-feedback — public per-video feedback for a course
 const listVideoFeedback = asyncHandler(async (req, res) => {
   const feedback = await VideoFeedback.find({ course: req.params.id })

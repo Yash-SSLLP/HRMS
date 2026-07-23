@@ -1,3 +1,9 @@
+/**
+ * LoansScreen — request a loan / salary advance (type, amount, reason) and track
+ * existing loans with status, outstanding balance, EMI and tenure.
+ * Route: "Loans" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /loans/me, POST /loans.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -29,6 +35,7 @@ export default function LoansScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Validate amount + reason, then POST the loan/advance request for approval.
   const submit = async () => {
     if (!(Number(principal) > 0)) { Alert.alert('Invalid', 'Enter a positive amount.'); return; }
     if (!reason.trim()) { Alert.alert('Reason needed', 'Add a reason.'); return; }

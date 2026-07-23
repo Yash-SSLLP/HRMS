@@ -1,3 +1,9 @@
+/**
+ * Rewards & Recognition controller — monthly R&R awards (RnrAward) with an
+ * Employee-of-the-Month and Key Achievers. HR draft (secret) then announce an
+ * award, which notifies everyone and shows a banner for 2 working days; employees
+ * see and dismiss the current banner.
+ */
 const asyncHandler = require('express-async-handler');
 const RnrAward = require('../models/RnrAward');
 const EmployeeProfile = require('../models/EmployeeProfile');
@@ -63,6 +69,11 @@ async function enrichWinners(winners) {
 
 // ===== Employee / self-service =====
 
+/**
+ * Get the live R&R banner for the caller (announced, not expired, not dismissed).
+ * @route GET /api/rnr/current
+ * @returns {{award: Object|null}} winners + period, or null when nothing to show
+ */
 // GET /api/rnr/current — the live banner for this user (announced, not expired,
 // not dismissed). Returns { award: null } when there's nothing to show.
 const currentBanner = asyncHandler(async (req, res) => {
@@ -85,6 +96,12 @@ const currentBanner = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Dismiss the R&R banner for the caller (adds them to dismissedBy).
+ * @route POST /api/rnr/:id/dismiss
+ * @param {string} req.params.id - award id
+ * @returns {{dismissed: boolean}}
+ */
 // POST /api/rnr/:id/dismiss — hide the banner for this user.
 const dismissBanner = asyncHandler(async (req, res) => {
   await RnrAward.updateOne({ _id: req.params.id }, { $addToSet: { dismissedBy: req.user._id } });
@@ -93,6 +110,13 @@ const dismissBanner = asyncHandler(async (req, res) => {
 
 // ===== HR / Admin =====
 
+/**
+ * Get a single month's award, or the recent award history (last 24).
+ * @route GET /api/rnr?year=&month=  (HR/Admin)
+ * @param {number} [req.query.year]
+ * @param {number} [req.query.month]
+ * @returns {{award: Object}} when year+month given, else {{awards: Object[]}}
+ */
 // GET /api/rnr?year=&month=  — a single month's award, or the recent history.
 const listAwards = asyncHandler(async (req, res) => {
   const { year, month } = req.query;
@@ -104,6 +128,11 @@ const listAwards = asyncHandler(async (req, res) => {
   res.json({ awards });
 });
 
+/**
+ * List active employees plus the department set, for the winner pickers.
+ * @route GET /api/rnr/people  (HR/Admin)
+ * @returns {{people: Object[], departments: string[]}}
+ */
 // GET /api/rnr/people — active employees (+ the department list) for the pickers.
 const listPeople = asyncHandler(async (req, res) => {
   const profiles = await EmployeeProfile.find()
@@ -123,6 +152,14 @@ const listPeople = asyncHandler(async (req, res) => {
   res.json({ people, departments });
 });
 
+/**
+ * Create or update the (secret) Draft award for a month; cannot edit once announced.
+ * @route POST /api/rnr  (HR/Admin)
+ * @param {number} req.body.year - required
+ * @param {number} req.body.month - required 1-12
+ * @param {Array} req.body.winners - [{category, department, user, citation}]; enriched with a name/photo snapshot
+ * @returns {{award: Object}} (201)
+ */
 // POST /api/rnr  { year, month, winners:[{category, department, user, citation}] }
 // Create or update the (secret) Draft for a month.
 const upsertAward = asyncHandler(async (req, res) => {
@@ -148,6 +185,14 @@ const upsertAward = asyncHandler(async (req, res) => {
   res.status(201).json({ award });
 });
 
+/**
+ * Publish a draft award: mark Announced, set the 2-working-day banner expiry, and
+ * notify all active users.
+ * @route POST /api/rnr/:id/announce  (HR/Admin)
+ * @param {string} req.params.id - award id
+ * @returns {{award: Object}}; 400 if already announced or has no winners
+ * @sideeffect notifies every active user of the winners
+ */
 // POST /api/rnr/:id/announce — publish the award: notify everyone + start the
 // 2-working-day banner.
 const announceAward = asyncHandler(async (req, res) => {
@@ -186,6 +231,12 @@ const announceAward = asyncHandler(async (req, res) => {
   res.json({ award });
 });
 
+/**
+ * Delete a Draft award (announced awards are retained as a permanent record).
+ * @route DELETE /api/rnr/:id  (HR/Admin)
+ * @param {string} req.params.id - award id
+ * @returns {{id: string, deleted: boolean}}; 400 if already announced
+ */
 // DELETE /api/rnr/:id — remove a Draft (announced awards are kept as a record).
 const deleteAward = asyncHandler(async (req, res) => {
   const award = await RnrAward.findById(req.params.id);

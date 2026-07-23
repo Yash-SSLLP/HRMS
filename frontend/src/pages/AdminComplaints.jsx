@@ -1,3 +1,9 @@
+/**
+ * AdminComplaints — HR/CEO/SuperAdmin inbox for employee complaints (admin
+ * portal). Loads complaints assigned to the handler from GET /complaints/assigned
+ * (SuperAdmin can view all) and updates status + resolution note via
+ * PATCH /complaints/:id. The accused person never sees these.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';

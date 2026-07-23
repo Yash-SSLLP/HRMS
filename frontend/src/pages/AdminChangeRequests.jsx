@@ -1,3 +1,9 @@
+/**
+ * AdminChangeRequests — HR/Admin inbox for employee profile change-requests
+ * (admin portal). Loads requests assigned to the admin from
+ * GET /change-requests/assigned (SuperAdmin can see all) and approves/declines
+ * (editing the applied value first) via PATCH /change-requests/:id.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -13,6 +19,8 @@ function fmt(d) {
   return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
 }
 
+// One request row with an inline approve/decline form. `onDecided` bubbles the
+// updated record up to the list. Password requests hide the value (isSecret).
 function RequestRow({ r, onDecided }) {
   const isSecret = r.field === 'password';
   const inputType = r.field === 'dateOfBirth' ? 'date' : isSecret ? 'password' : 'text';

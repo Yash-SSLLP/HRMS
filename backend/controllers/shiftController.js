@@ -1,3 +1,9 @@
+/**
+ * Shift controller — shift definitions (Shift) and the per-employee roster
+ * (RosterEntry). HR manage shifts and assign roster days; assigning a new shift
+ * notifies the employee across three channels (in-app+push, chat, email).
+ * Employees read their own roster.
+ */
 const asyncHandler = require('express-async-handler');
 const Shift = require('../models/Shift');
 const RosterEntry = require('../models/RosterEntry');
@@ -117,11 +123,22 @@ async function notifyShiftAssignment({ employeeId, shiftId, date, note, assigned
 }
 
 // ===== Shifts (HR/Admin) =====
+/**
+ * List all shift definitions, newest first.
+ * @route GET /api/shifts  (HR/Admin)
+ * @returns {{count: number, shifts: Object[]}}
+ */
 const listShifts = asyncHandler(async (req, res) => {
   const shifts = await Shift.find().sort({ createdAt: -1 });
   res.json({ count: shifts.length, shifts });
 });
 
+/**
+ * Create a shift definition.
+ * @route POST /api/shifts  (HR/Admin)
+ * @param {string} req.body.name - required
+ * @returns {{shift: Object}} (201)
+ */
 const createShift = asyncHandler(async (req, res) => {
   const { name } = req.body;
   if (!name) {
@@ -132,18 +149,32 @@ const createShift = asyncHandler(async (req, res) => {
   res.status(201).json({ shift });
 });
 
+/**
+ * Update a shift definition (partial).
+ * @route PUT /api/shifts/:id  (HR/Admin)
+ * @param {string} req.params.id - shift id
+ * @param {Object} req.body - fields to update
+ * @returns {{shift: Object}}
+ */
 const updateShift = asyncHandler(async (req, res) => {
   const shift = await Shift.findById(req.params.id);
   if (!shift) {
     res.status(404);
     throw new Error('Shift not found');
   }
+  // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
   Object.assign(shift, req.body);
   await shift.save();
   res.json({ shift });
 });
 
+/**
+ * Delete a shift definition by id.
+ * @route DELETE /api/shifts/:id  (HR/Admin)
+ * @param {string} req.params.id - shift id
+ * @returns {{id: string, deleted: boolean}}
+ */
 const deleteShift = asyncHandler(async (req, res) => {
   const shift = await Shift.findById(req.params.id);
   if (!shift) {
@@ -155,6 +186,14 @@ const deleteShift = asyncHandler(async (req, res) => {
 });
 
 // ===== Roster (HR/Admin) =====
+/**
+ * List roster entries with optional employee/date-range filters.
+ * @route GET /api/shifts/roster  (HR/Admin)
+ * @param {string} [req.query.employee]
+ * @param {string} [req.query.from]
+ * @param {string} [req.query.to]
+ * @returns {{count: number, entries: Object[]}} with populated employee/shift
+ */
 const listRoster = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.employee) filter.employee = req.query.employee;
@@ -170,6 +209,16 @@ const listRoster = asyncHandler(async (req, res) => {
   res.json({ count: entries.length, entries });
 });
 
+/**
+ * Assign (or update) an employee's shift for a date; notifies on a shift change.
+ * @route POST /api/shifts/roster  (HR/Admin)
+ * @param {string} req.body.employee - required
+ * @param {string} req.body.date - required
+ * @param {string} req.body.shift - required
+ * @param {string} [req.body.note]
+ * @returns {{entry: Object}} (201)
+ * @sideeffect fires notifyShiftAssignment (in-app+push, chat, email) only when the shift actually changes
+ */
 const assignRoster = asyncHandler(async (req, res) => {
   const { employee, date, shift, note } = req.body;
   if (!employee || !date || !shift) {
@@ -208,6 +257,12 @@ const assignRoster = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * Delete a roster entry by id.
+ * @route DELETE /api/shifts/roster/:id  (HR/Admin)
+ * @param {string} req.params.id - roster entry id
+ * @returns {{id: string, deleted: boolean}}
+ */
 const deleteRoster = asyncHandler(async (req, res) => {
   const entry = await RosterEntry.findById(req.params.id);
   if (!entry) {
@@ -219,6 +274,13 @@ const deleteRoster = asyncHandler(async (req, res) => {
 });
 
 // ===== Roster (Employee self-service) =====
+/**
+ * List the caller's own roster entries with optional date range.
+ * @route GET /api/shifts/roster/me
+ * @param {string} [req.query.from]
+ * @param {string} [req.query.to]
+ * @returns {{count: number, entries: Object[]}} with populated shift
+ */
 const myRoster = asyncHandler(async (req, res) => {
   const filter = { employee: req.user._id };
   if (req.query.from || req.query.to) {

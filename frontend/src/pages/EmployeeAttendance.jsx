@@ -1,3 +1,9 @@
+/**
+ * EmployeeAttendance — self check-in/out attendance screen (employee portal).
+ * Loads monthly records + today's punch from GET /attendance/me and the pay/late
+ * policy summary from GET /payroll/me/attendance-summary. Each punch requires a
+ * selfie (camera) plus an accurate GPS fix, posted to POST /attendance/me/checkin|checkout.
+ */
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -222,6 +228,7 @@ export default function EmployeeAttendance() {
     setSnapshot(null);
   };
 
+  // Post the selfie + GPS + WFH/half-day flags as multipart to the punch endpoint.
   const submitPunch = async () => {
     if (!snapshot || !capture) return;
     setBusy(true);
@@ -250,6 +257,8 @@ export default function EmployeeAttendance() {
     }
   };
 
+  // Load the month's attendance records + today's punch, plus the pay-policy
+  // summary (optional — swallowed if the endpoint isn't available).
   const load = async () => {
     setLoading(true);
     setError('');
@@ -533,6 +542,7 @@ export default function EmployeeAttendance() {
   );
 }
 
+// Small labelled stat tile used in the lateness/leave policy summary card.
 function Metric({ label, value, sub, tone = 'gray' }) {
   const valueTone = tone === 'red' ? 'text-red-600' : tone === 'green' ? 'text-green-700' : 'text-gray-900';
   return (

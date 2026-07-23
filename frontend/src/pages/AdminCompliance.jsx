@@ -1,3 +1,9 @@
+/**
+ * AdminCompliance — statutory compliance reports (admin portal): PF, ESI, PT,
+ * TDS and Form 16. Each tab loads a computed summary (from processed payslips)
+ * from its /compliance/* endpoint for the chosen month/year, renders a totals
+ * table, and exports a CSV client-side. TABS drives endpoints + column layout.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -111,6 +117,8 @@ export default function AdminCompliance() {
 
   const meta = TABS[tab];
 
+  // Reload the active tab's report on tab/period change; the cancelled flag
+  // guards against a slow response overwriting a newer one (race protection).
   useEffect(() => {
     let cancelled = false;
     const load = async () => {

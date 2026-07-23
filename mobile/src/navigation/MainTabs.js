@@ -1,3 +1,10 @@
+// navigation/MainTabs.js — the signed-in app shell.
+// A bottom-tab navigator with five tabs: Home, Calendar, Chat, Alerts, Profile.
+// Home, Chat and Profile each wrap a JS stack navigator (createStackNavigator,
+// not native-stack — see note below) holding all the module screens; Home's
+// stack also carries the admin/manager screens, which self-gate by role. Chat
+// and Alerts tabs show live unread badges from the badges store, refreshed on a
+// 30s foreground poll.
 import React, { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -73,6 +80,8 @@ const stackOpts = {
   cardStyle: { backgroundColor: colors.bg },
 };
 
+/** Home-tab stack: dashboard plus every employee module and the role-gated
+ *  admin/manager screens. */
 function HomeStack() {
   return (
     <HomeStackNav.Navigator screenOptions={stackOpts}>
@@ -123,6 +132,7 @@ function HomeStack() {
   );
 }
 
+/** Profile-tab stack: profile, settings and privacy policy. */
 function ProfileStack() {
   return (
     <ProfileStackNav.Navigator screenOptions={stackOpts}>
@@ -133,6 +143,7 @@ function ProfileStack() {
   );
 }
 
+/** Chat-tab stack: conversation list, a single conversation, and new-chat. */
 function ChatStack() {
   return (
     <ChatStackNav.Navigator screenOptions={stackOpts}>
@@ -155,6 +166,10 @@ const ICONS = {
   Profile: 'person',
 };
 
+/**
+ * Bottom-tab navigator shown once authenticated. Wires the five tabs, their
+ * unread badges, and the foreground badge-refresh polling.
+ */
 export default function MainTabs() {
   const { notifications, chat, refresh } = useBadges();
   const appState = useRef(AppState.currentState);

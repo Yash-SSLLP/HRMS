@@ -1,3 +1,11 @@
+/**
+ * Leave controller — leave requests (LeaveRequest) and per-year balances
+ * (LeaveBalance). Employees apply/cancel and see their balance; requests climb a
+ * reporting-hierarchy approval ladder (buildApprovalChain) with email/in-app
+ * nudges. Final approval deducts the balance bucket and auto-stamps the covered
+ * working days onto the attendance calendar; HR has an override path. Several
+ * helpers are exported for the approvals/manager controllers.
+ */
 const asyncHandler = require('express-async-handler');
 const { LeaveRequest, LeaveBalance, LEAVE_TYPES } = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
@@ -255,6 +263,12 @@ function adjustBalance(balance, leaveType, delta) {
 
 // ===== Employee self-service =====
 
+/**
+ * Get the caller's leave balance for a year (creates one if absent).
+ * @route GET /api/leave/me/balance?year=
+ * @param {number} [req.query.year] - defaults to current year
+ * @returns {{balance: Object}}
+ */
 // GET /api/leave/me/balance?year=
 const getMyBalance = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -263,6 +277,11 @@ const getMyBalance = asyncHandler(async (req, res) => {
   res.json({ balance });
 });
 
+/**
+ * List the caller's own leave requests, newest first.
+ * @route GET /api/leave/me/requests
+ * @returns {{count: number, requests: Object[]}} with populated approver
+ */
 // GET /api/leave/me/requests
 const listMyRequests = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -272,6 +291,18 @@ const listMyRequests = asyncHandler(async (req, res) => {
   res.json({ count: requests.length, requests });
 });
 
+/**
+ * Apply for leave; builds the approval ladder and notifies the first approver
+ * (or HR when there is no reporting manager).
+ * @route POST /api/leave/me/requests
+ * @param {string} req.body.leaveType - one of LEAVE_TYPES (required)
+ * @param {string} req.body.startDate - required
+ * @param {string} req.body.endDate - required
+ * @param {boolean} [req.body.isHalfDay] - if set, start==end and totalDays=0.5
+ * @param {string} [req.body.halfDaySession] - FirstHalf|SecondHalf (required for half-day)
+ * @param {string} [req.body.reason]
+ * @returns {{request: Object}} (201)
+ */
 // POST /api/leave/me/requests
 const applyForLeave = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -350,6 +381,13 @@ const applyForLeave = asyncHandler(async (req, res) => {
   res.status(201).json({ request });
 });
 
+/**
+ * Cancel the caller's own leave request (not once it has started).
+ * @route PATCH /api/leave/me/requests/:id/cancel
+ * @param {string} req.params.id - request id
+ * @returns {{request: Object}} with status Cancelled
+ * @sideeffect if it was Approved, restores the balance and un-stamps the calendar
+ */
 // PATCH /api/leave/me/requests/:id/cancel
 const cancelMyRequest = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
@@ -399,6 +437,12 @@ const cancelMyRequest = asyncHandler(async (req, res) => {
 
 // ===== HR/Admin endpoints =====
 
+/**
+ * List all leave requests with optional filters (admin).
+ * @route GET /api/leave/requests?employee=&status=&from=&to=
+ * @param {string} [req.query.employee] / [req.query.status] / [req.query.from] / [req.query.to]
+ * @returns {{count: number, requests: Object[]}} with populated employee/approver
+ */
 // GET /api/leave/requests?employee=&status=&from=&to=
 const listAllRequests = asyncHandler(async (req, res) => {
   const { employee, status, from, to } = req.query;
@@ -611,6 +655,13 @@ async function applyLeaveDecision(request, userId, action, note) {
   return request;
 }
 
+/**
+ * HR override approve — force-approve a Pending request regardless of chain position.
+ * @route PATCH /api/leave/requests/:id/approve  (HR/SuperAdmin)
+ * @param {string} req.params.id - request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}; 400 on bad transition or insufficient balance
+ */
 // PATCH /api/leave/requests/:id/approve
 const approveRequest = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
@@ -627,6 +678,13 @@ const approveRequest = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
+/**
+ * HR override reject — force-reject a Pending request regardless of chain position.
+ * @route PATCH /api/leave/requests/:id/reject  (HR/SuperAdmin)
+ * @param {string} req.params.id - request id
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}
+ */
 // PATCH /api/leave/requests/:id/reject
 const rejectRequest = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
@@ -643,6 +701,12 @@ const rejectRequest = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
+/**
+ * List all employees' leave balances for a year (admin).
+ * @route GET /api/leave/balances?year=
+ * @param {number} [req.query.year] - defaults to current year
+ * @returns {{year, count, balances: Object[]}} with populated employee
+ */
 // GET /api/leave/balances?year= — list balances (admin)
 const listBalances = asyncHandler(async (req, res) => {
   const year = Number(req.query.year) || currentYear();
@@ -654,6 +718,15 @@ const listBalances = asyncHandler(async (req, res) => {
   res.json({ year, count: balances.length, balances });
 });
 
+/**
+ * Upsert an employee's leave-balance grants for a year; recomputes each bucket's
+ * balance as opening + granted - used - encashed.
+ * @route PUT /api/leave/balances/:employeeId/:year
+ * @param {string} req.params.employeeId - EmployeeProfile id
+ * @param {string} req.params.year
+ * @param {Object} [req.body.balances] - per-type grant fields to merge
+ * @returns {{balance: Object}}
+ */
 // PUT /api/leave/balances/:employeeId/:year — upsert grant for an employee/year
 const upsertBalance = asyncHandler(async (req, res) => {
   const { employeeId, year } = req.params;

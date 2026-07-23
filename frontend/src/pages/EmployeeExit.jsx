@@ -1,3 +1,9 @@
+/**
+ * EmployeeExit — resignation & exit self-service (employee portal). Loads the
+ * user's exit record from GET /exits/me and, if none exists, lets them submit a
+ * resignation via POST /exits/me. The request then climbs the reporting-manager
+ * approval chain; status (Pending/InClearance/Completed/Cancelled) is shown here.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

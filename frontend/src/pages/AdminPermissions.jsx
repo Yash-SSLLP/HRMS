@@ -1,3 +1,10 @@
+/**
+ * AdminPermissions — SuperAdmin-only access-control page (admin portal). Lists
+ * users from GET /admin/users and grants module access: cashbook access for
+ * anyone (PATCH /admin/users/:id/cashbook-access) and granular HR capabilities
+ * for HR Managers (catalog from GET /admin/permissions/catalog,
+ * saved via PATCH /admin/users/:id/permissions).
+ */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

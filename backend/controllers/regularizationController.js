@@ -1,3 +1,9 @@
+/**
+ * Regularization controller — attendance-correction requests. Employees raise
+ * requests to fix a day's check-in/out; HR approve/reject, and an approval APPLIES
+ * the corrected times straight onto the day's Attendance record (recording a
+ * before/after snapshot). HR can also regularize any employee's day directly.
+ */
 const asyncHandler = require('express-async-handler');
 const Regularization = require('../models/Regularization');
 const Attendance = require('../models/Attendance');
@@ -55,12 +61,27 @@ async function applyToAttendance(item, reviewer) {
   return record;
 }
 
+/**
+ * List the caller's own regularization requests, newest first.
+ * @route GET /api/regularizations/me
+ * @returns {{count: number, items: Object[]}}
+ */
 // GET /api/regularizations/me  — the caller's own requests
 const listMine = asyncHandler(async (req, res) => {
   const items = await Regularization.find({ employee: req.user._id }).sort({ createdAt: -1 });
   res.json({ count: items.length, items });
 });
 
+/**
+ * Employee raises a regularization request (status Pending).
+ * @route POST /api/regularizations
+ * @param {string} req.body.date - required
+ * @param {string} req.body.reason - required
+ * @param {string} [req.body.type]
+ * @param {string} [req.body.requestedCheckIn] - 'HH:mm' or date string
+ * @param {string} [req.body.requestedCheckOut] - 'HH:mm' or date string
+ * @returns {{item: Object}} (201)
+ */
 // POST /api/regularizations  { date, type, requestedCheckIn, requestedCheckOut, reason }
 const createRequest = asyncHandler(async (req, res) => {
   const { date, type, requestedCheckIn, requestedCheckOut, reason } = req.body;
@@ -83,6 +104,12 @@ const createRequest = asyncHandler(async (req, res) => {
   res.status(201).json({ item });
 });
 
+/**
+ * List all regularization requests, optionally filtered by status (admin).
+ * @route GET /api/regularizations  (admin)
+ * @param {string} [req.query.status]
+ * @returns {{count: number, items: Object[]}} with populated employee/reviewedBy
+ */
 // GET /api/regularizations  (admin) — optional ?status filter
 const listAll = asyncHandler(async (req, res) => {
   const filter = {};
@@ -95,6 +122,15 @@ const listAll = asyncHandler(async (req, res) => {
   res.json({ count: items.length, items });
 });
 
+/**
+ * Approve or reject a request; approval applies the fix to the Attendance record.
+ * @route PATCH /api/regularizations/:id/status  (admin)
+ * @param {string} req.params.id - request id
+ * @param {string} req.body.status - 'Approved' or 'Rejected'
+ * @param {string} [req.body.reviewNote]
+ * @returns {{item: Object, applied: boolean}}
+ * @sideeffect on approval writes to Attendance; notifies the employee either way
+ */
 // PATCH /api/regularizations/:id/status  (admin)  { status, reviewNote }
 // Approving now also APPLIES the requested times to the day's Attendance
 // record, so the fix is visible everywhere immediately.
@@ -141,6 +177,18 @@ const reviewRequest = asyncHandler(async (req, res) => {
   res.json({ item, applied: !!applied });
 });
 
+/**
+ * HR regularizes any employee's day directly (recorded pre-Approved and applied).
+ * @route POST /api/regularizations/admin  (admin)
+ * @param {string} req.body.employee - target user id (required)
+ * @param {string} req.body.date - required
+ * @param {string} req.body.reason - required
+ * @param {string} [req.body.type='Other']
+ * @param {string} [req.body.requestedCheckIn]
+ * @param {string} [req.body.requestedCheckOut]
+ * @returns {{item: Object, record: Object}} (201)
+ * @sideeffect writes to the day's Attendance record; notifies the employee
+ */
 // POST /api/regularizations/admin  (admin)
 // { employee (User id), date, type, requestedCheckIn, requestedCheckOut, reason }
 // HR regularizes any employee's attendance directly: the request is recorded

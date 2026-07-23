@@ -1,3 +1,9 @@
+/**
+ * Dashboard controller — builds the SmartHR-style admin overview: summary cards
+ * (headcount, present/leave/absent today, pending leaves, open complaints,
+ * incomplete documents), headcount-by-department, recent pending leave requests,
+ * and upcoming holidays. Read-only aggregation across several models.
+ */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
@@ -15,6 +21,11 @@ function startOfToday() {
   return startOfDayIST();
 }
 
+/**
+ * Return the admin dashboard summary for the whole organisation.
+ * @route GET /api/dashboard/admin  (HR/SuperAdmin)
+ * @returns {{scope, cards, headcountByDepartment, pendingLeaveRequests, nextHolidays}}
+ */
 // GET /api/dashboard/admin
 // SmartHR-style overview. HRManagers see figures scoped to their assigned
 // employees; SuperAdmin sees the whole organisation.

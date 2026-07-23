@@ -1,3 +1,9 @@
+/**
+ * Celebrations controller — surfaces birthdays and work anniversaries (from
+ * EmployeeProfile), builds a combined month calendar (holidays, events,
+ * celebrations, the viewer's interviews), and lets colleagues send a wish that
+ * fans out as an in-app notification, a chat message, and a celebratory email.
+ */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Holiday = require('../models/Holiday');
@@ -8,6 +14,7 @@ const Message = require('../models/Message');
 const { enqueueMail } = require('../services/email');
 const { hiddenUserIds } = require('../utils/visibility');
 
+// Extract {month, day} from a date (month is 1-based) for recurring-date matching
 function md(date) {
   const d = new Date(date);
   return { m: d.getMonth() + 1, d: d.getDate() };
@@ -50,6 +57,11 @@ async function loadActiveProfiles(viewer) {
   return profiles.filter((p) => p.user && p.user.isActive !== false);
 }
 
+/**
+ * List today's birthdays and (>=1yr) work anniversaries among active employees.
+ * @route GET /api/celebrations/today
+ * @returns {{today: string, birthdays: Object[], anniversaries: Object[]}}
+ */
 // GET /api/celebrations/today
 const todayCelebrations = asyncHandler(async (req, res) => {
   const profiles = await loadActiveProfiles(req.user);
@@ -78,6 +90,12 @@ const todayCelebrations = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * List upcoming birthdays/anniversaries within the next N days (1-30, default 7).
+ * @route GET /api/celebrations/upcoming?days=7
+ * @param {number} [req.query.days] - clamped to 1-30
+ * @returns {{days: number, count: number, events: Object[]}} sorted by daysAway
+ */
 // GET /api/celebrations/upcoming?days=7
 const upcomingCelebrations = asyncHandler(async (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
@@ -120,6 +138,13 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
   res.json({ days, count: events.length, events });
 });
 
+/**
+ * Build a combined calendar for a month: holidays, custom events, recurring
+ * birthdays/anniversaries, and interviews the viewer is assigned to take.
+ * @route GET /api/celebrations/calendar?month=YYYY-MM
+ * @param {string} [req.query.month] - YYYY-MM, defaults to the current month
+ * @returns {{year, month, count, events: Object[]}} each {day, type, label, meta}, sorted by day
+ */
 // GET /api/celebrations/calendar?month=YYYY-MM
 // Returns every event (holiday / birthday / anniversary) falling in the given
 // month, each normalized to { day, type, label, meta }. Birthdays & anniversaries
@@ -231,6 +256,15 @@ const monthCalendar = asyncHandler(async (req, res) => {
   res.json({ year, month, count: events.length, events });
 });
 
+/**
+ * Send a birthday/anniversary wish to a colleague.
+ * @route POST /api/celebrations/wish
+ * @param {string} req.body.employeeId - recipient's profile id (required)
+ * @param {string} [req.body.type='birthday'] - 'birthday' or 'anniversary'
+ * @param {string} [req.body.message] - custom note, truncated to 280 chars
+ * @returns {{ok: boolean}} (201); 400 if wishing yourself
+ * @sideeffect creates a notification, posts a chat message (auto-connecting), and enqueues an email
+ */
 // POST /api/celebrations/wish
 // Send a birthday / work-anniversary greeting to a colleague. Creates an in-app
 // notification for the recipient and enqueues a celebratory email. Body:
@@ -311,6 +345,12 @@ const sendWish = asyncHandler(async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+/**
+ * List celebration wishes the caller has received (drives the dashboard card).
+ * @route GET /api/celebrations/wishes/received?limit=
+ * @param {number} [req.query.limit] - max rows, capped at 50 (default 10)
+ * @returns {{count: number, wishes: Object[]}}
+ */
 // GET /api/celebrations/wishes/received — recent birthday/anniversary wishes
 // received by the current user (drives the dashboard "Wishes for you" card).
 const receivedWishes = asyncHandler(async (req, res) => {

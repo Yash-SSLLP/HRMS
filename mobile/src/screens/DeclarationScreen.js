@@ -1,3 +1,10 @@
+/**
+ * DeclarationScreen — annual investment/tax declaration for the current financial
+ * year: pick Old/New regime, enter per-section amounts (80C, HRA, etc.), save a
+ * draft or submit for HR review. Locks once submitted until reviewed.
+ * Route: "Declaration" (from the More/Menu list). Employee-facing (all roles).
+ * Backend: GET /declarations/me, POST /declarations/me, PATCH /declarations/me/submit.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -20,6 +27,7 @@ const SECTIONS = [
 ];
 const STATUS_TONE = { Draft: 'neutral', Submitted: 'info', Verified: 'success', Rejected: 'danger' };
 
+// Indian financial year (Apr–Mar) as "YYYY-YY" for the current date.
 function currentFY() {
   const d = new Date();
   const y = d.getFullYear();
@@ -36,6 +44,7 @@ export default function DeclarationScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Load this FY's declaration and hydrate regime + per-section amount inputs.
   const load = useCallback(async () => {
     const { data } = await api.get(`/declarations/me?financialYear=${fy}`).catch(() => ({ data: {} }));
     const d = data.declaration || null;
@@ -50,6 +59,7 @@ export default function DeclarationScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Only editable before submission (no record yet, or Draft/Rejected).
   const editable = !decl || ['Draft', 'Rejected'].includes(decl.status);
   const total = SECTIONS.reduce((a, { key }) => a + (Number(sections[key]) || 0), 0);
 
@@ -69,6 +79,7 @@ export default function DeclarationScreen() {
     finally { setSaving(false); }
   };
 
+  // Confirm, save the latest values, then flip status to Submitted (locks editing).
   const submit = () => {
     Alert.alert('Submit declaration?', 'Once submitted you cannot edit it until HR reviews it.', [
       { text: 'Cancel' },

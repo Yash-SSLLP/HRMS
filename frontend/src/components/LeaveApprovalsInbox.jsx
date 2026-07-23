@@ -1,3 +1,8 @@
+// Leave-approval inbox rendered in both the admin (Leave Approvals) and employee
+// (Approvals) portals. Shows requests where the current user is the active
+// approver in the reporting-hierarchy chain ("To approve") plus a history tab,
+// and lets them approve/reject their rung. Exports ChainProgress for reuse by
+// ExitApprovalsInbox.
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { promptDialog } from './dialogs';

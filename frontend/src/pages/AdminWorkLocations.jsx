@@ -1,3 +1,9 @@
+/**
+ * AdminWorkLocations — named work sites + per-site check-in geofence (admin
+ * portal). Lists locations from GET /work-locations and (HR/SuperAdmin) CRUDs
+ * them via /work-locations, and assigns/unassigns employees to a site via
+ * POST /work-locations/:id/assign|unassign (employees from GET /employees).
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -36,6 +42,7 @@ export default function AdminWorkLocations() {
   const openCreate = () => setEditing(blank());
   const openEdit = (l) => setEditing({ _id: l._id, name: l.name, lat: l.lat ?? '', lng: l.lng ?? '', radiusM: l.radiusM ?? 200, active: l.active });
 
+  // Fill lat/lng from the admin's current device GPS position.
   const useMyLocation = () => {
     if (!('geolocation' in navigator)) { setError('Location is not supported on this device.'); return; }
     navigator.geolocation.getCurrentPosition(
@@ -182,6 +189,7 @@ export default function AdminWorkLocations() {
 
 // Assign / unassign employees to a location. A checked employee belongs to THIS
 // location; unchecking moves them off it. Employees on another site show a hint.
+// Modal to assign/unassign employees to a site by diffing checked vs currently-here.
 function AssignModal({ location, locations, onClose, onDone }) {
   const [people, setPeople] = useState([]);
   const [checked, setChecked] = useState(new Set());

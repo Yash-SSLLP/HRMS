@@ -1,3 +1,10 @@
+/**
+ * Employee controller — the core employee directory (EmployeeProfile linked to
+ * User). HR/Admin do profile CRUD (with org-hierarchy validation), document-status
+ * checks, ZIP/Excel export and Excel import, plus a public per-employee document
+ * submission link. Employees have limited self-service (own profile, birthday).
+ * Visibility helpers hide SuperAdmin (and optionally CEO/MD) from non-SuperAdmins.
+ */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
@@ -58,6 +65,12 @@ async function validateHierarchy(body, linkedUserId) {
   }
 }
 
+/**
+ * Employee self-service update of their own date of birth.
+ * @route PATCH /api/employees/me/birthday
+ * @param {string} req.body.dateOfBirth - required, not in the future
+ * @returns {{profile: {_id, dateOfBirth}}}
+ */
 // PATCH /api/employees/me/birthday  { dateOfBirth }
 // Self-service: an employee may set/update their own date of birth (used by the
 // birthday wisher). Low-sensitivity, so it doesn't go through a change request.
@@ -87,6 +100,11 @@ const updateMyBirthday = asyncHandler(async (req, res) => {
   res.json({ profile: { _id: profile._id, dateOfBirth: profile.dateOfBirth } });
 });
 
+/**
+ * Get the calling user's own employee profile.
+ * @route GET /api/employees/me
+ * @returns {{profile: Object}} with populated user/hrPartner; 404 if not created
+ */
 // GET /api/employees/me  -- the calling user's own profile
 const getMyProfile = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findOne({ user: req.user._id })
@@ -99,6 +117,14 @@ const getMyProfile = asyncHandler(async (req, res) => {
   res.json({ profile });
 });
 
+/**
+ * List employee profiles with optional text/department filters.
+ * @route GET /api/employees  (HR/Admin)
+ * @param {string} [req.query.q] - matches code/designation/name/email
+ * @param {string} [req.query.department]
+ * @param {string} [req.query.excludeExecutives] - 'true' hides CEO/MD from pickers
+ * @returns {{count: number, profiles: Object[]}} (SuperAdmin hidden from non-SuperAdmins)
+ */
 // GET /api/employees  (HR/Admin)
 const listEmployees = asyncHandler(async (req, res) => {
   const { q, department } = req.query;
@@ -131,6 +157,11 @@ const listEmployees = asyncHandler(async (req, res) => {
   res.json({ count: profiles.length, profiles });
 });
 
+/**
+ * Report per-employee required-document completeness.
+ * @route GET /api/employees/documents-status  (HR/Admin)
+ * @returns {{required: string[], statuses: Array<{employee, verified, complete, missing}>}}
+ */
 // GET /api/employees/documents-status  (HR/Admin)
 // For each in-scope employee, report whether their required documents are complete.
 const employeesDocumentStatus = asyncHandler(async (req, res) => {
@@ -155,6 +186,12 @@ const employeesDocumentStatus = asyncHandler(async (req, res) => {
   res.json({ required: REQUIRED_DOCUMENT_CATEGORIES, statuses });
 });
 
+/**
+ * Get one employee profile by id.
+ * @route GET /api/employees/:id  (HR/Admin)
+ * @param {string} req.params.id - EmployeeProfile id
+ * @returns {{profile: Object}} with populated user/hrPartner/reportingManager
+ */
 // GET /api/employees/:id  (HR/Admin)
 const getEmployee = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findById(req.params.id)
@@ -172,6 +209,14 @@ const getEmployee = asyncHandler(async (req, res) => {
   res.json({ profile });
 });
 
+/**
+ * Create an employee profile for an existing user (hierarchy-validated).
+ * @route POST /api/employees  (HR/Admin)
+ * @param {string} req.body.user - user id (required)
+ * @param {string} req.body.employeeCode - required
+ * @param {string} req.body.dateOfJoining - required
+ * @returns {{profile: Object}} (201); 409 if a profile already exists
+ */
 // POST /api/employees  (HR/Admin)
 const createEmployee = asyncHandler(async (req, res) => {
   const { user: userId, employeeCode, dateOfJoining } = req.body;
@@ -198,6 +243,14 @@ const createEmployee = asyncHandler(async (req, res) => {
   res.status(201).json({ profile });
 });
 
+/**
+ * Update an employee profile (hierarchy-validated). Reassigning hrPartner/
+ * reportingManager is SuperAdmin-only; the linked user cannot be changed.
+ * @route PUT /api/employees/:id  (HR/Admin)
+ * @param {string} req.params.id - EmployeeProfile id
+ * @param {Object} req.body - fields to update
+ * @returns {{profile: Object}}
+ */
 // PUT /api/employees/:id  (HR/Admin)
 const updateEmployee = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findById(req.params.id);
@@ -225,8 +278,15 @@ const updateEmployee = asyncHandler(async (req, res) => {
   res.json({ profile });
 });
 
+/**
+ * Delete an employee profile.
+ * @route DELETE /api/employees/:id  (SuperAdmin only)
+ * @param {string} req.params.id - EmployeeProfile id
+ * @returns {{id: string, deleted: boolean}}; 403 for non-SuperAdmin
+ */
 // DELETE /api/employees/:id  (SuperAdmin)
 const deleteEmployee = asyncHandler(async (req, res) => {
+  // Permission gate: only SuperAdmin may delete profiles
   if (req.user.role !== 'SuperAdmin') {
     res.status(403);
     throw new Error('Only SuperAdmin may delete employee profiles');
@@ -240,6 +300,12 @@ const deleteEmployee = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+/**
+ * Stream a ZIP of one employee's details.txt plus all their documents.
+ * @route GET /api/employees/:id/export.zip  (HR/Admin)
+ * @param {string} req.params.id - EmployeeProfile id
+ * @returns {application/zip}
+ */
 // GET /api/employees/:id/export.zip  (HR/Admin; HR limited to assigned employees)
 // Streams a ZIP with the employee's details.txt plus all their documents.
 const exportEmployeeZip = asyncHandler(async (req, res) => {
@@ -270,6 +336,11 @@ const exportEmployeeZip = asyncHandler(async (req, res) => {
   await archive.finalize();
 });
 
+/**
+ * Bulk-export all employees as a ZIP (one folder each: details.txt + documents).
+ * @route GET /api/employees/export-all.zip  (SuperAdmin only)
+ * @returns {application/zip}; 403 for non-SuperAdmin
+ */
 // GET /api/employees/export-all.zip  (SuperAdmin only)
 // One folder per employee, each containing details.txt + documents.
 const exportAllEmployeesZip = asyncHandler(async (req, res) => {
@@ -309,6 +380,11 @@ const exportAllEmployeesZip = asyncHandler(async (req, res) => {
   await archive.finalize();
 });
 
+/**
+ * Export all employees as an Excel workbook.
+ * @route GET /api/employees/export.xlsx  (HR/Admin)
+ * @returns {xlsx}
+ */
 // GET /api/employees/export.xlsx  (HR/Admin)
 const exportEmployeesXlsx = asyncHandler(async (req, res) => {
   const profiles = await EmployeeProfile.find({})
@@ -320,12 +396,24 @@ const exportEmployeesXlsx = asyncHandler(async (req, res) => {
   await writeWorkbook(res, profiles, { sheetName: 'Employees' });
 });
 
+/**
+ * Download the employee-import Excel template (with a sample row).
+ * @route GET /api/employees/template.xlsx  (HR/Admin)
+ * @returns {xlsx}
+ */
 // GET /api/employees/template.xlsx  (HR/Admin)
 const downloadImportTemplate = asyncHandler(async (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="employee-import-template.xlsx"');
   await writeWorkbook(res, [], { sheetName: 'Employees', includeSample: true });
 });
 
+/**
+ * Import employees from an Excel workbook (creates User + EmployeeProfile per row).
+ * @route POST /api/employees/import  (HR/Admin, multipart field: file)
+ * @param {File} req.file - the .xlsx (required)
+ * @returns {{total, createdCount, skippedCount, errorCount, defaultPassword, created, skipped, errors}}
+ * @sideeffect creates accounts with a default password; only SuperAdmin may import admin roles; rolls back the user if profile creation fails
+ */
 // POST /api/employees/import  (HR/Admin)  multipart file=<xlsx>
 const importEmployeesXlsx = asyncHandler(async (req, res) => {
   if (!req.file) {
@@ -452,6 +540,12 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
 
 // ===== Per-employee document submission link =====
 
+/**
+ * Ensure a public document-submission token exists for an employee.
+ * @route POST /api/employees/:id/doc-link  (HR)
+ * @param {string} req.params.id - EmployeeProfile id
+ * @returns {{token: string}}
+ */
 // POST /api/employees/:id/doc-link  (HR) — ensure a public submission token.
 const createDocLink = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findById(req.params.id);
@@ -466,6 +560,12 @@ const createDocLink = asyncHandler(async (req, res) => {
   res.json({ token: profile.docToken });
 });
 
+/**
+ * Public: fetch the document-submission context for an employee via token.
+ * @route GET /api/employees/public-docs/:token  (PUBLIC, no auth)
+ * @param {string} req.params.token - docToken
+ * @returns {{employee, docTypes, files}}; 404 if the link is invalid
+ */
 // GET /api/employees/public-docs/:token  (public) — what the employee sees.
 const getPublicDocRequest = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findOne({ docToken: req.params.token })
@@ -488,6 +588,15 @@ const getPublicDocRequest = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Public: an employee uploads documents via their token (saved as Submitted).
+ * @route POST /api/employees/public-docs/:token  (PUBLIC, multipart files[] + labels[])
+ * @param {string} req.params.token - docToken
+ * @param {File[]} req.files - documents (at least one required)
+ * @param {string[]} [req.body.labels] - per-file category (unknown -> 'Other')
+ * @returns {{ok: true, count}} (201)
+ * @sideeffect best-effort Cloudinary backup of each file
+ */
 // POST /api/employees/public-docs/:token  (public, multipart files[] + labels[])
 const submitPublicDocs = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findOne({ docToken: req.params.token });

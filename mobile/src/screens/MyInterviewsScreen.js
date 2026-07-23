@@ -1,3 +1,9 @@
+/**
+ * MyInterviewsScreen — interview rounds where the signed-in employee is the interviewer.
+ * Home stack route "MyInterviews" (reached from the Menu > Growth group). Any employee role.
+ * Backend: GET /recruitment/my-interviews (list), PATCH /recruitment/my-interviews/:candidateId/round
+ * (save result + feedback), GET /recruitment/my-interviews/:candidateId/resume (download résumé PDF).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -57,6 +63,8 @@ export default function MyInterviewsScreen() {
     }
   };
 
+  // Download the candidate's résumé to the app cache (auth header required) then
+  // hand it to the OS share sheet so the user can open it in a PDF viewer.
   const viewResume = async (iv) => {
     const key = `${iv.candidateId}:${iv.index}`;
     setDownloadingId(key);

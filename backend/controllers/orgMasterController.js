@@ -1,3 +1,8 @@
+/**
+ * Org-master controller — CRUD for organisational master data (OrgMaster),
+ * shared across kinds: Designation / Grade / Location. Auto-generates a unique
+ * short code from the name when one isn't supplied.
+ */
 const asyncHandler = require('express-async-handler');
 const OrgMaster = require('../models/OrgMaster');
 const { ORG_MASTER_KINDS } = require('../models/OrgMaster');
@@ -26,6 +31,12 @@ async function generateUniqueCode(kind, name, excludeId) {
   return `${base}-${n}`;
 }
 
+/**
+ * List org-master entries, optionally filtered by kind.
+ * @route GET /api/org-masters
+ * @param {string} [req.query.kind] - Designation/Grade/Location
+ * @returns {{count: number, masters: Object[]}}
+ */
 const listMasters = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.kind) filter.kind = req.query.kind;
@@ -33,6 +44,14 @@ const listMasters = asyncHandler(async (req, res) => {
   res.json({ count: masters.length, masters });
 });
 
+/**
+ * Create an org-master entry (unique name within its kind; auto-code if omitted).
+ * @route POST /api/org-masters
+ * @param {string} req.body.kind - one of ORG_MASTER_KINDS (required)
+ * @param {string} req.body.name - required, unique within kind
+ * @param {string} [req.body.code] - upper-cased; auto-generated when absent
+ * @returns {{master: Object}} (201); 409 if name exists for that kind
+ */
 const createMaster = asyncHandler(async (req, res) => {
   const { kind, name, code } = req.body;
   if (!kind || !ORG_MASTER_KINDS.includes(kind) || !name) {
@@ -53,12 +72,20 @@ const createMaster = asyncHandler(async (req, res) => {
   res.status(201).json({ master });
 });
 
+/**
+ * Update an org-master entry (partial); backfills a code if blank.
+ * @route PUT /api/org-masters/:id
+ * @param {string} req.params.id - entry id
+ * @param {Object} req.body - fields to update
+ * @returns {{master: Object}}
+ */
 const updateMaster = asyncHandler(async (req, res) => {
   const master = await OrgMaster.findById(req.params.id);
   if (!master) {
     res.status(404);
     throw new Error('Org master not found');
   }
+  // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
   Object.assign(master, req.body);
   // Backfill / regenerate a code if it's blank (e.g. an older row saved without
@@ -70,6 +97,12 @@ const updateMaster = asyncHandler(async (req, res) => {
   res.json({ master });
 });
 
+/**
+ * Delete an org-master entry by id.
+ * @route DELETE /api/org-masters/:id
+ * @param {string} req.params.id - entry id
+ * @returns {{id: string, deleted: boolean}}
+ */
 const deleteMaster = asyncHandler(async (req, res) => {
   const master = await OrgMaster.findById(req.params.id);
   if (!master) {

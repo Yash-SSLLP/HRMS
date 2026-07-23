@@ -1,3 +1,10 @@
+/**
+ * EmployeeDashboard — landing page of the employee portal (route /employee).
+ * Aggregates the user's profile, latest payslip, leave balance & pending leave,
+ * and received wishes from /employees/me, /payroll/me, /leave/me/* and
+ * /celebrations/wishes/received, plus banner widgets (announcements, R&R,
+ * surveys, interviews, manager team status). Uses a stale-while-revalidate cache.
+ */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
@@ -59,6 +66,8 @@ export default function EmployeeDashboard() {
   const [wishes, setWishes] = useState(() => readCache('emp:wishes') || []);
   const [errors, setErrors] = useState({});
 
+  // Fetch each dashboard section independently so one failure doesn't blank the
+  // whole page; results are written back to the cache for the next fast paint.
   useEffect(() => {
     (async () => {
       try {

@@ -3,8 +3,12 @@ import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
-// Public page (no login) where a candidate opens their offer / appointment
-// letter from the tokenised link emailed to them.
+/**
+ * LetterDownload — public (no-login) page, route /letters/:token.
+ * A candidate/employee opens their offer or appointment letter from the
+ * tokenised link emailed to them. Fetches the PDF as a blob via
+ * GET /recruitment/letters/:token and renders it inline + a download button.
+ */
 export default function LetterDownload() {
   const { token } = useParams();
   const [url, setUrl] = useState('');
@@ -12,6 +16,8 @@ export default function LetterDownload() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Fetch the letter as a blob, derive the filename from Content-Disposition,
+  // and build an object URL for the iframe/download (revoked on unmount).
   useEffect(() => {
     let objUrl;
     (async () => {

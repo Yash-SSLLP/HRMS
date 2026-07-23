@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 
+// A single checklist item in a new hire's onboarding plan (e.g. issue laptop,
+// collect documents). One employee has many onboarding tasks across categories.
 const ONBOARDING_CATEGORIES = ['Documentation', 'IT Setup', 'HR', 'Finance', 'Training', 'Introduction', 'Other'];
+// Pending -> not started; InProgress -> being worked on; Done -> completed.
 const ONBOARDING_STATUS = ['Pending', 'InProgress', 'Done'];
 
 const onboardingTaskSchema = new mongoose.Schema(
@@ -17,6 +20,7 @@ const onboardingTaskSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Audit-status plugin: logs `status` transitions to AuditLog (labelled by title).
 onboardingTaskSchema.plugin(require("./plugins/auditStatus"), { label: (d) => d.title });
 
 module.exports = mongoose.model('OnboardingTask', onboardingTaskSchema);

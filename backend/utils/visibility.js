@@ -1,3 +1,6 @@
+// People-visibility helpers. Central place for the rules that hide SuperAdmin
+// accounts from non-SuperAdmins everywhere people are listed, and that keep
+// executives (CEO/MD) out of opt-in "select an employee" pickers.
 const User = require('../models/User');
 
 /**
@@ -5,10 +8,22 @@ const User = require('../models/User');
  * viewer wherever people are listed; a SuperAdmin sees everyone.
  */
 
+/**
+ * Mongo filter fragment for User queries — merge into the query's filter object.
+ * @param {object|null} viewer - The requesting user (checked for role).
+ * @returns {object} `{}` for a SuperAdmin viewer, else `{ role: { $ne: 'SuperAdmin' } }`.
+ */
 // Mongo filter fragment for User queries. Merge into the query's filter object.
 const hideSuperAdminFilter = (viewer) =>
   viewer && viewer.role === 'SuperAdmin' ? {} : { role: { $ne: 'SuperAdmin' } };
 
+/**
+ * SuperAdmin User _ids to exclude from profile/relationship-based listings
+ * (e.g. EmployeeProfile populated by user), where a Mongo filter fragment can't
+ * be applied directly.
+ * @param {object|null} viewer - The requesting user.
+ * @returns {Promise<import('mongoose').Types.ObjectId[]>} Ids to exclude; [] for a SuperAdmin viewer.
+ */
 // User _ids to exclude from profile/relationship-based listings (e.g. EmployeeProfile
 // populated by user). Returns [] when the viewer is a SuperAdmin.
 async function hiddenUserIds(viewer) {
@@ -21,6 +36,13 @@ async function hiddenUserIds(viewer) {
 // selectors — only the opt-in pickers hide them.
 const EXECUTIVE_ROLES = ['CEO', 'MD'];
 
+/**
+ * Whether a picker that opted into executive exclusion should hide CEO/MD.
+ * Requires the request to carry `?excludeExecutives=true` AND the global
+ * `includeExecutivesInLists` Setting to be off (the default).
+ * @param {import('express').Request} req
+ * @returns {Promise<boolean>} True to hide executives from this picker.
+ */
 // True when a picker that opted into executive exclusion (?excludeExecutives=true)
 // should actually hide CEO/MD — i.e. the SuperAdmin toggle is off (the default).
 async function shouldExcludeExecutives(req) {
@@ -30,6 +52,10 @@ async function shouldExcludeExecutives(req) {
   return !s.includeExecutivesInLists;
 }
 
+/**
+ * @returns {Promise<import('mongoose').Types.ObjectId[]>} User _ids of the
+ *   executive accounts (CEO/MD), for excluding from profile-based listings.
+ */
 // User _ids of the executive accounts (CEO/MD), for excluding from profile-based
 // listings populated by user (e.g. EmployeeProfile).
 async function executiveUserIds() {

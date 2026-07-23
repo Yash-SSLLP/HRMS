@@ -1,3 +1,8 @@
+// Central axios instance for all backend API calls.
+// Resolves the API base URL at startup (local backend if reachable in dev,
+// otherwise the deployed Railway backend) and wires two interceptors:
+// a request interceptor that attaches the Bearer auth token, and a response
+// interceptor that logs the user out on any 401. Exported as the default `api`.
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 

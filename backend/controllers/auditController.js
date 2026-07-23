@@ -1,6 +1,22 @@
+/**
+ * Audit controller — read-only access to the portal-wide status-change AuditLog.
+ * Supports filtering by entity/actor/text/date, and redacts all SuperAdmin
+ * activity for non-SuperAdmin viewers so the SuperAdmin account stays invisible.
+ */
 const asyncHandler = require('express-async-handler');
 const AuditLog = require('../models/AuditLog');
 
+/**
+ * List audit-log entries with optional filters (HR / SuperAdmin).
+ * @route GET /api/audit
+ * @param {string} [req.query.entity] - filter by entity type
+ * @param {string} [req.query.by] - filter by actor user id
+ * @param {string} [req.query.q] - case-insensitive text across label/name/status
+ * @param {string} [req.query.from] - start date (inclusive)
+ * @param {string} [req.query.to] - end date (inclusive, end-of-day)
+ * @param {number} [req.query.limit] - max rows, capped at 500 (default 200)
+ * @returns {{count: number, items: Object[], entities: string[]}}
+ */
 // GET /api/audit — status-change history (HR / SuperAdmin only).
 // Filters: entity, by (userId), q (text), from, to (dates), limit.
 const listAudit = asyncHandler(async (req, res) => {

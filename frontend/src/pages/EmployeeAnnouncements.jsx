@@ -1,3 +1,7 @@
+/**
+ * EmployeeAnnouncements — read-only company announcements feed (employee portal).
+ * Lists posts from GET /announcements with category badges and pinned markers.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

@@ -1,3 +1,8 @@
+/**
+ * EmployeeSurveys — surveys & polls the logged-in user can respond to (employee
+ * portal). Lists open surveys from GET /surveys (each flagged answered/not) and
+ * opens SurveyRespondModal to submit responses; answered ones are locked.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

@@ -1,3 +1,8 @@
+// App shell for both portals (rendered by App.jsx inside each ProtectedRoute).
+// Provides the collapsible role/permission-filtered sidebar, the top bar
+// (global search, quick shortcuts, portal switcher, theme toggle, notification
+// bell, profile menu) and a <Suspense><Outlet/></Suspense> content area plus the
+// docked chat. `navItems`/`sectionTitle` select the admin vs employee portal.
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -456,6 +461,12 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
   );
 }
 
+/**
+ * Portal shell wrapping every authenticated page.
+ * @param {object} props
+ * @param {Array} props.navItems  sidebar nav config (flat or grouped) for this portal
+ * @param {string} props.sectionTitle  "Admin" or "My Portal" — also selects the colour theme
+ */
 export default function Layout({ navItems = [], sectionTitle }) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);

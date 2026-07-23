@@ -1,3 +1,9 @@
+/**
+ * EmployeeApprovals — approver inbox (employee portal). Hosts the leave and
+ * resignation approval inboxes (LeaveApprovalsInbox / ExitApprovalsInbox), which
+ * fetch requests from the user's reporting chain. Data fetching lives in those
+ * child components; this page just composes them.
+ */
 import PageHeader from '../components/PageHeader';
 import LeaveApprovalsInbox from '../components/LeaveApprovalsInbox';
 import ExitApprovalsInbox from '../components/ExitApprovalsInbox';

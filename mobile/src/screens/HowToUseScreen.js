@@ -1,3 +1,11 @@
+/**
+ * HowToUseScreen — in-app Markdown user guide with a "jump to section" navigator.
+ * Employees see the employee guide; HR/Admin default to the HR guide, can switch
+ * views, and (approvers only) edit/save/reset either guide for everyone.
+ * Route: "HowToUse" (from the More/Menu list). All roles; edit gated by canApprove.
+ * Backend: GET /guides/:key, PUT /guides/:key, DELETE /guides/:key. Bundled
+ * defaults from ../content/guides are used when no server copy exists.
+ */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
 
@@ -34,6 +42,7 @@ export default function HowToUseScreen() {
   const cardTop = useRef(0);       // content-card y within the scroll content
   const headingY = useRef({});     // { id: y within MarkdownText }
 
+  // Fetch a guide's server-side override; silently keeps the bundled default on failure.
   const loadGuide = async (key) => {
     try {
       const { data } = await api.get(`/guides/${key}`);
@@ -66,6 +75,7 @@ export default function HowToUseScreen() {
     scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
   };
 
+  // Persist the edited Markdown to the server (approvers only); applies for everyone.
   const save = async () => {
     setSaving(true);
     try {

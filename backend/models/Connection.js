@@ -19,10 +19,12 @@ const connectionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Static: canonical pair key from two user ids (order-independent) used for the unique index.
 connectionSchema.statics.buildPairKey = function buildPairKey(a, b) {
   return [String(a), String(b)].sort().join('_');
 };
 
+// Hook: derive pairKey before validation so the unique index blocks duplicate/reverse requests.
 connectionSchema.pre('validate', function setPairKey(next) {
   if (this.requester && this.recipient) {
     this.pairKey = this.constructor.buildPairKey(this.requester, this.recipient);

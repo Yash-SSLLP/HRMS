@@ -1,3 +1,9 @@
+/**
+ * RegularizationScreen — raise and track attendance regularization requests
+ * (fix a missed/wrong punch). Home stack route "Regularization" (Menu > Time &
+ * Attendance). Any employee role; requests route to a manager/HR for approval.
+ * Backend: GET /regularizations/me (my requests), POST /regularizations (submit).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -31,6 +37,7 @@ export default function RegularizationScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Validate, POST the request, then reset the form and reload the list.
   const submit = async () => {
     if (!date) { Alert.alert('Pick a date', 'Choose the date to regularize.'); return; }
     if (!reason.trim()) { Alert.alert('Reason needed', 'Add a reason.'); return; }

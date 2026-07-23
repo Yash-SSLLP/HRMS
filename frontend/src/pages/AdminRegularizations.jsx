@@ -1,3 +1,9 @@
+/**
+ * AdminRegularizations — attendance-regularization review (admin portal). Lists
+ * requests from GET /regularizations and approves/rejects via
+ * PATCH /regularizations/:id/status (an approval applies the corrected punch).
+ * Read-only CEO/MD see oversight columns (who changed what) but no actions.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

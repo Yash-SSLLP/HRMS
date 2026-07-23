@@ -10,6 +10,13 @@ const { startOfDayIST } = require('../utils/dateHelpers');
 
 const POLL_INTERVAL_MS = 60 * 60 * 1000; // hourly
 
+/**
+ * One pass: stamp `noPunchOut: true` on every past-day record that has a check-in
+ * but no check-out. Idempotent — the flag itself excludes already-processed rows,
+ * and filling a check-out later clears it.
+ * @returns {Promise<void>}
+ * @sideEffects Bulk-updates the Attendance collection.
+ */
 async function tick() {
   try {
     const todayIST = startOfDayIST(new Date());
@@ -30,6 +37,10 @@ async function tick() {
   }
 }
 
+/**
+ * Start the auto-close worker: a catch-up tick ~15s after boot, then hourly.
+ * @returns {void}
+ */
 function startWorker() {
   setTimeout(tick, 15_000); // catch up shortly after boot
   setInterval(tick, POLL_INTERVAL_MS);

@@ -1,3 +1,8 @@
+/**
+ * EmployeeOnboarding — the new hire's onboarding checklist (employee portal).
+ * Loads assigned tasks from GET /onboarding/me and updates each task's status
+ * via PATCH /onboarding/me/:id/status; a progress bar tracks completion.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

@@ -1,3 +1,7 @@
+// store/security.js — Zustand slice for the biometric app-lock.
+// `enabled` (the user's preference) persists to AsyncStorage; `unlocked` is
+// session-only, resetting on cold start and on background so a fresh biometric
+// check is required. Exposes setEnabled/markUnlocked/lock.
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 

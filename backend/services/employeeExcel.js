@@ -104,6 +104,11 @@ function parsePhone(v) {
 /**
  * Build a workbook from an array of EmployeeProfile docs (with user populated)
  * and pipe it into the response.
+ * @param {import('http').ServerResponse} res - Express response; the xlsx stream is written and ended on it.
+ * @param {Object[]} profiles - EmployeeProfile docs with `user` (and optionally `hrPartner`) populated.
+ * @param {{sheetName?:string, includeSample?:boolean}} [opts] - Sheet name and whether to append a sample row.
+ * @returns {Promise<void>} Resolves after the workbook is written and the response ended.
+ * @sideEffects Sets the xlsx Content-Type header and writes/ends the HTTP response.
  */
 async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSample = false } = {}) {
   const wb = new ExcelJS.Workbook();
@@ -180,6 +185,11 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
 /**
  * Parse an uploaded .xlsx buffer into per-row objects ready for the controller
  * to validate and persist. Returns [{ excelRow, user: {...}, profile: {...} }, ...].
+ * Headers are matched case-insensitively against COLUMNS; `hrPartnerEmail` is
+ * surfaced on `profile.hrPartnerEmail` for the controller to resolve to a User._id.
+ * @param {Buffer} buffer - Raw bytes of the uploaded .xlsx file.
+ * @returns {Promise<Array<{excelRow:number, user:Object, profile:Object}>>} One entry per non-empty data row.
+ * @throws {Error} If the workbook has no worksheet.
  */
 async function parseWorkbook(buffer) {
   const wb = new ExcelJS.Workbook();

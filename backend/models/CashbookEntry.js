@@ -4,7 +4,8 @@ const mongoose = require('mongoose');
 // account. Finance-created entries post immediately (status 'Approved');
 // employee-submitted petty-cash vouchers start 'Pending' and only affect the
 // account balance once approved.
-const ENTRY_TYPES = ['in', 'out'];
+const ENTRY_TYPES = ['in', 'out']; // in = receipt/money in; out = payment/money out
+// Pending -> voucher awaiting approval (no balance effect); Approved -> posted to balance; Rejected -> declined.
 const ENTRY_STATUS = ['Pending', 'Approved', 'Rejected'];
 const PAYMENT_MODES = ['Cash', 'Bank', 'UPI', 'Cheque', 'Card', 'Other'];
 
@@ -54,6 +55,7 @@ const cashbookEntrySchema = new mongoose.Schema(
 
 cashbookEntrySchema.index({ account: 1, date: 1, createdAt: 1 });
 
+// Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 cashbookEntrySchema.plugin(require('./plugins/auditStatus'));
 
 module.exports = mongoose.model('CashbookEntry', cashbookEntrySchema);

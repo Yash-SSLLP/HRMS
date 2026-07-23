@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// One attendance record per employee per work day: the day's punches (with
+// selfie + GPS + geofence flags), computed hours, and the day's status. Feeds
+// payroll (paid/LOP days) and attendance reports.
+// Present/Absent/HalfDay = worked state; WeeklyOff/Holiday = non-working day; OnLeave = on an approved leave.
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
 // GPS location captured by the client at the moment of a punch photo.
@@ -65,6 +69,7 @@ const attendanceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// One attendance record per employee per day.
 attendanceSchema.index({ employee: 1, date: 1 }, { unique: true });
 
 // A later-filled check-out (HR edit / regularization) clears the no-punch-out mark.
@@ -84,8 +89,9 @@ attendanceSchema.pre('save', function computeHours(next) {
   next();
 });
 
-// Never leak the filesystem path; expose only whether a photo exists. The image
-// itself is served through the authenticated GET /api/attendance/:id/photo/:which route.
+// toJSON transform: never leak the filesystem/Cloudinary path; expose only
+// booleans for whether a photo exists. The image itself is served through the
+// authenticated GET /api/attendance/:id/photo/:which route.
 attendanceSchema.set('toJSON', {
   transform: (_doc, ret) => {
     ret.hasCheckInPhoto = !!(ret.checkInPhoto || ret.checkInPhotoCloud?.publicId);

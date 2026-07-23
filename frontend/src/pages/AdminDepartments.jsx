@@ -1,3 +1,9 @@
+/**
+ * AdminDepartments — department master (admin portal). Lists departments with
+ * headcount from GET /departments and (HR/SuperAdmin) creates/renames via
+ * POST/PUT /departments; only SuperAdmin can DELETE. Expanding a row lazily
+ * loads its members from GET /employees?department=.
+ */
 import { Fragment, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

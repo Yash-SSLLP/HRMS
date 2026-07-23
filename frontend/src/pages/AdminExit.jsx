@@ -1,3 +1,11 @@
+/**
+ * AdminExit — resignation/exit administration (admin portal). Lists/filters exits
+ * from GET /exits (employees from /employees, HR handlers from /admin/users),
+ * initiates one via POST /exits, edits details/clearance via PUT /exits/:id, and
+ * completes (PATCH /exits/:id/complete — deactivates login, prepares feedback
+ * email) or cancels (PATCH /exits/:id/cancel). The exit email is sent from the
+ * company mailbox via POST /exits/:id/resend-email.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -171,6 +179,8 @@ export default function AdminExit() {
     });
   };
 
+  // Finalize the exit: sets date of exit, deactivates login, and prepares the
+  // feedback email for HR to review/send.
   const complete = async () => {
     const ok = await confirmDialog({
       title: 'Mark exit complete?',

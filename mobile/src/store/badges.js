@@ -1,3 +1,7 @@
+// store/badges.js — Zustand slice for bottom-tab unread counts.
+// Tracks notification and chat unread totals; refresh() fetches notifications +
+// chat connections/groups and sums their unread counts. Polled while
+// foregrounded and re-run after reading notifications or opening a chat.
 import { create } from 'zustand';
 import api from '../api/client';
 

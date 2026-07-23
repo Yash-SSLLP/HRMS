@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
 import { COMPANY_NAME } from '../config/company';
 
-// Minimal, self-contained privacy policy — reachable at /privacy without login.
+// PrivacyPolicy — static, self-contained privacy notice at route /privacy.
+// Audience: anyone (public, no login required); linked from the sign-in page.
+// Purely presentational: no backend API calls, no state; company name comes
+// from the local COMPANY_NAME config constant.
 export default function PrivacyPolicy() {
   const org = COMPANY_NAME || 'the Company';
   return (

@@ -1,3 +1,8 @@
+/**
+ * AdminLeaveApprovals — leave approver inbox for the admin portal. Thin wrapper
+ * that renders LeaveApprovalsInbox (which fetches from the protect-only
+ * /approvals/* routes, so read-only CEO/MD execs can still act here).
+ */
 import PageHeader from '../components/PageHeader';
 import LeaveApprovalsInbox from '../components/LeaveApprovalsInbox';
 

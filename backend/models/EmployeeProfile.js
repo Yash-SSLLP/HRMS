@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
 
+// The HR record for an employee — a 1:1 companion to the User login account
+// (linked via `user`). Holds personal, statutory (PAN/Aadhaar/UAN/ESIC), job,
+// probation/confirmation, payroll and bank details used across HR, payroll and
+// attendance. One profile per user.
+
 // Indian statutory identifiers — formats enforced via regex
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;            // e.g. ABCDE1234F
 const AADHAAR_REGEX = /^\d{12}$/;                       // 12 digits
@@ -105,6 +110,7 @@ const employeeProfileSchema = new mongoose.Schema(
 
     // --- Probation / confirmation lifecycle ---
     probationMonths: { type: Number, default: 6, min: 0 },
+    // Probation -> serving probation; Confirmed -> made permanent; Extended -> probation prolonged.
     confirmationStatus: {
       type: String,
       enum: ['Probation', 'Confirmed', 'Extended'],
@@ -146,6 +152,8 @@ const employeeProfileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Hook: on save, best-effort register this employee's designation and department
+// into the OrgMaster/Department managed lists so they appear in the admin catalogues.
 // Keep the Org Masters designation list in sync: any designation set on an
 // employee (via the form, import, or recruitment conversion) is registered as an
 // OrgMaster so it appears under Admin → Org Masters. Best-effort, non-blocking.

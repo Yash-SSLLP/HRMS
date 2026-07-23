@@ -1,3 +1,8 @@
+/**
+ * AdminOrgMasters — org master data (admin portal): designations, grades and
+ * locations. A kind toggle drives GET /org-masters?kind=… and CRUD via
+ * POST/PUT/DELETE /org-masters. These feed the pickers used across employee forms.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

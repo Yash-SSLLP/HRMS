@@ -1,3 +1,9 @@
+/**
+ * AdminAttendanceReport — per-employee daily login/logout report (admin portal).
+ * Loads a month's attendance for one employee from GET /attendance and renders a
+ * combo chart (AttendanceDayChart) plus average login/logout and total-hours
+ * summary cards. Employee list from GET /employees.
+ */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';

@@ -1,3 +1,9 @@
+/**
+ * Expense controller — employee expense/reimbursement claims (Expense) with a
+ * mandatory receipt. Employees submit and list claims; HR review and, on payout,
+ * post a matching cash-out entry into the cashbook (copying the receipt) and
+ * notify the employee. Reimbursement posting is idempotent via cashbookEntry link.
+ */
 const asyncHandler = require('express-async-handler');
 const Expense = require('../models/Expense');
 const { EXPENSE_STATUS } = require('../models/Expense');
@@ -27,11 +33,27 @@ function attachReceipt(expense, file) {
 }
 
 // ===== Employee self-service =====
+/**
+ * List the caller's own expense claims, newest first.
+ * @route GET /api/expenses/me
+ * @returns {{count: number, expenses: Object[]}}
+ */
 const listMyExpenses = asyncHandler(async (req, res) => {
   const expenses = await Expense.find({ employee: req.user._id }).sort({ createdAt: -1 });
   res.json({ count: expenses.length, expenses });
 });
 
+/**
+ * Submit an expense claim with a required receipt (status Pending).
+ * @route POST /api/expenses  (multipart: file + fields)
+ * @param {number} req.body.amount - required, > 0
+ * @param {string} req.body.expenseDate - required
+ * @param {File} req.file - receipt image/PDF (required)
+ * @param {string} [req.body.category]
+ * @param {string} [req.body.description]
+ * @param {string} [req.body.merchant]
+ * @returns {{expense: Object}} (201)
+ */
 const createExpense = asyncHandler(async (req, res) => {
   const { amount, expenseDate } = req.body;
   if (amount === undefined || amount === null || Number(amount) <= 0) {
@@ -61,6 +83,12 @@ const createExpense = asyncHandler(async (req, res) => {
   res.status(201).json({ expense });
 });
 
+/**
+ * Stream an expense's receipt (owner or expenses.manage).
+ * @route GET /api/expenses/:id/receipt
+ * @param {string} req.params.id - expense id
+ * @returns {binary} the receipt; 403 if unauthorized, 404 if missing
+ */
 // GET /api/expenses/:id/receipt — stream the receipt (owner or expenses.manage)
 const downloadReceipt = asyncHandler(async (req, res) => {
   const expense = await Expense.findById(req.params.id).select('receipt employee');
@@ -81,6 +109,13 @@ const downloadReceipt = asyncHandler(async (req, res) => {
 });
 
 // ===== HR/Admin =====
+/**
+ * List all expense claims with optional status/category filters.
+ * @route GET /api/expenses  (expenses.manage)
+ * @param {string} [req.query.status]
+ * @param {string} [req.query.category]
+ * @returns {{count: number, expenses: Object[]}} with populated employee
+ */
 const listExpenses = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
@@ -91,6 +126,11 @@ const listExpenses = asyncHandler(async (req, res) => {
   res.json({ count: expenses.length, expenses });
 });
 
+/**
+ * List active cashbook accounts a reviewer can pay a reimbursement from.
+ * @route GET /api/expenses/accounts  (expenses.manage)
+ * @returns {{count: number, accounts: Object[]}}
+ */
 // GET /api/expenses/accounts — active cashbook accounts to pay a reimbursement from.
 // Exposed here (gated by expenses.manage) so a reviewer without cashbook.manage
 // can still pick a paying account.
@@ -156,6 +196,16 @@ async function postReimbursementToCashbook(expense, accountId, actor) {
   return entry;
 }
 
+/**
+ * Review an expense; a 'Reimbursed' status posts a cashbook cash-out entry once.
+ * @route PATCH /api/expenses/:id/review  (expenses.manage)
+ * @param {string} req.params.id - expense id
+ * @param {string} req.body.status - one of EXPENSE_STATUS
+ * @param {string} [req.body.reviewNote]
+ * @param {string} [req.body.account] - paying cashbook account (required to reimburse)
+ * @returns {{expense: Object}}
+ * @sideeffect on first reimbursement posts a cashbook entry (with receipt copy) and notifies the employee
+ */
 const reviewExpense = asyncHandler(async (req, res) => {
   const { status, reviewNote, account } = req.body;
   if (!EXPENSE_STATUS.includes(status)) {
@@ -197,6 +247,12 @@ const reviewExpense = asyncHandler(async (req, res) => {
   res.json({ expense });
 });
 
+/**
+ * Delete an expense claim and its stored receipt.
+ * @route DELETE /api/expenses/:id  (expenses.manage)
+ * @param {string} req.params.id - expense id
+ * @returns {{id: string, deleted: boolean}}
+ */
 const deleteExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense) {

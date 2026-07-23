@@ -1,3 +1,10 @@
+/**
+ * AdminEmployees — employee HR-profile management (admin portal). Lists profiles
+ * from GET /employees (with document-completeness status), creates/edits/deletes
+ * via /employees, imports/exports via Excel/ZIP (/employees/import, /export*),
+ * generates per-employee document-submission links (POST /employees/:id/doc-link),
+ * and (SuperAdmin) activates accounts + toggles the include-executives org setting.
+ */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -93,6 +100,8 @@ export default function AdminEmployees() {
     }
   };
 
+  // Load everything the page needs together: profiles, user lists (for the
+  // account + manager pickers), doc-completeness, designations and work locations.
   const load = async () => {
     setLoading(true);
     setError('');

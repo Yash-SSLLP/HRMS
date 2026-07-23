@@ -1,3 +1,10 @@
+/**
+ * NotificationsScreen — the "Alerts" bottom tab: in-app notification feed with
+ * unread badge sync and deep-linking into the target screen. Any employee role.
+ * Backend: GET /notifications, PATCH /notifications/:id/read, PATCH /notifications/read-all.
+ * Feeds the global unread badge store (useBadges); routeForNotification maps a
+ * notification to its destination tab/screen.
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -42,6 +49,7 @@ export default function NotificationsScreen() {
     setRefreshing(false);
   };
 
+  // Optimistically clear all unread state locally, then persist; reload on failure.
   const markAllRead = async () => {
     setItems((prev) => prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
     setUnread(0);
@@ -54,6 +62,7 @@ export default function NotificationsScreen() {
     refreshBadges();
   };
 
+  // Mark read optimistically, then deep-link to the notification's destination.
   const openItem = async (n) => {
     if (!n.readAt) {
       setItems((prev) => prev.map((x) => (x._id === n._id ? { ...x, readAt: new Date().toISOString() } : x)));

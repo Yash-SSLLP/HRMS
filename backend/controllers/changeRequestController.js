@@ -1,3 +1,9 @@
+/**
+ * Change-request controller — employees request edits to whitelisted profile/user
+ * fields (FIELD_CATALOG); requests route to the employee's HR partner (or a
+ * SuperAdmin) who approves (applying the value to User/EmployeeProfile) or
+ * declines. Both sides receive notifications; secret fields hide their values.
+ */
 const asyncHandler = require('express-async-handler');
 const ChangeRequest = require('../models/ChangeRequest');
 const { CHANGE_REQUEST_STATUSES, FIELD_CATALOG } = require('../models/ChangeRequest');
@@ -7,6 +13,7 @@ const Notification = require('../models/Notification');
 
 const USER_FIELDS = 'firstName lastName email role';
 
+// Fallback approver when an employee has no HR partner: the oldest active SuperAdmin
 async function findSuperAdmin() {
   return User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 });
 }
@@ -35,6 +42,11 @@ async function resolveAssignee(userId) {
   return sa?._id;
 }
 
+/**
+ * List the editable field catalogue with the caller's current values.
+ * @route GET /api/change-requests/fields
+ * @returns {{fields: Array<{key,label,secret,type,currentValue}>}} secret fields have empty currentValue
+ */
 // GET /api/change-requests/fields
 // The catalogue plus the caller's current values, so the UI can show what each
 // field is today and let them pick one to change. Secret fields show no value.
@@ -61,6 +73,15 @@ const getFields = asyncHandler(async (req, res) => {
   res.json({ fields });
 });
 
+/**
+ * Create a change request for one whitelisted field and notify the assignee.
+ * @route POST /api/change-requests
+ * @param {string} req.body.field - key in FIELD_CATALOG
+ * @param {string} req.body.requestedValue - required
+ * @param {string} [req.body.reason]
+ * @returns {{changeRequest: Object}} (201)
+ * @sideeffect snapshots current value (non-secret), assigns to HR partner/SuperAdmin, notifies assignee
+ */
 // POST /api/change-requests  { field, requestedValue, reason }
 const createChangeRequest = asyncHandler(async (req, res) => {
   const { field, requestedValue, reason } = req.body;
@@ -113,6 +134,11 @@ const createChangeRequest = asyncHandler(async (req, res) => {
   res.status(201).json({ changeRequest: cr });
 });
 
+/**
+ * List the caller's own change requests, newest first.
+ * @route GET /api/change-requests/mine
+ * @returns {{count: number, changeRequests: Object[]}}
+ */
 // GET /api/change-requests/mine
 const myChangeRequests = asyncHandler(async (req, res) => {
   const changeRequests = await ChangeRequest.find({ requestedBy: req.user._id })
@@ -122,8 +148,15 @@ const myChangeRequests = asyncHandler(async (req, res) => {
   res.json({ count: changeRequests.length, changeRequests });
 });
 
+/**
+ * List change requests in the admin's inbox.
+ * @route GET /api/change-requests/assigned  (HR/SuperAdmin)
+ * @param {string} [req.query.all] - 'true' (SuperAdmin only) returns every request
+ * @returns {{count: number, changeRequests: Object[]}}
+ */
 // GET /api/change-requests/assigned  (HR/SuperAdmin; ?all=true for SuperAdmin)
 const assignedChangeRequests = asyncHandler(async (req, res) => {
+  // Permission gate: only HR/SuperAdmin have an inbox
   if (!['HRManager', 'SuperAdmin'].includes(req.user.role)) {
     res.status(403);
     throw new Error('Only HR Managers and SuperAdmins have a change-request inbox');
@@ -164,6 +197,16 @@ async function applyChange(requestedByUserId, meta, value) {
   }
 }
 
+/**
+ * Approve (applying the value) or decline a pending change request.
+ * @route PATCH /api/change-requests/:id
+ * @param {string} req.params.id - change request id
+ * @param {string} req.body.action - 'approve' or 'decline'
+ * @param {string} [req.body.appliedValue] - admin override of the requested value
+ * @param {string} [req.body.decisionNote]
+ * @returns {{changeRequest: Object}}
+ * @sideeffect on approve writes the value to User/EmployeeProfile; notifies the requester either way
+ */
 // PATCH /api/change-requests/:id  { action: 'approve'|'decline', appliedValue, decisionNote }
 const decideChangeRequest = asyncHandler(async (req, res) => {
   const cr = await ChangeRequest.findById(req.params.id);
@@ -172,6 +215,7 @@ const decideChangeRequest = asyncHandler(async (req, res) => {
     throw new Error('Change request not found');
   }
 
+  // Permission gate: only the assigned admin (or any SuperAdmin) may decide
   const isAssignee = cr.assignedTo && cr.assignedTo.equals(req.user._id);
   if (!isAssignee && req.user.role !== 'SuperAdmin') {
     res.status(403);

@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// An employee's request to change one of their own profile/credential fields,
+// routed to HR/Admin for approval before it is applied to the User or
+// EmployeeProfile record. FIELD_CATALOG whitelists which fields are changeable.
+// pending -> awaiting decision; approved -> applied; declined -> rejected.
 const CHANGE_REQUEST_STATUSES = ['pending', 'approved', 'declined'];
 
 // Catalogue of fields an employee may request a change to. Each entry says
@@ -75,6 +79,7 @@ const changeRequestSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 changeRequestSchema.plugin(require("./plugins/auditStatus"));
 
 module.exports = mongoose.model('ChangeRequest', changeRequestSchema);

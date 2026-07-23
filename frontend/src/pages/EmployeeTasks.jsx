@@ -1,3 +1,8 @@
+/**
+ * EmployeeTasks — the logged-in employee's assigned tasks (employee portal).
+ * Loads from GET /tasks/me; the status dropdown persists via
+ * PATCH /tasks/me/:id/status. Task details/priority are set by managers.
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -29,6 +34,7 @@ export default function EmployeeTasks() {
   };
   useEffect(() => { load(); }, []);
 
+  // Persist the new status and optimistically reflect it in the local row.
   const setStatus = async (t, status) => {
     try {
       await api.patch(`/tasks/me/${t._id}/status`, { status });

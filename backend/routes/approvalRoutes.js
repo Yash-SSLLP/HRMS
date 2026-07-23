@@ -1,3 +1,9 @@
+/**
+ * Approval router — mounted at /api/approvals.
+ * Reporting-chain approvals for leave and exit requests, scoped to the
+ * current approver (any authenticated user may be in a chain).
+ * All routes require authentication (router.use(protect)).
+ */
 const express = require('express');
 const {
   listMyLeaveApprovals,
@@ -18,12 +24,18 @@ const router = express.Router();
 // read-only on the admin-gated routes.
 router.use(protect);
 
+// GET /leave — leave requests awaiting the current user's approval; protected (chain-scoped).
 router.get('/leave', listMyLeaveApprovals);
+// PATCH /leave/:id/approve — approve a leave request; protected (must be current approver).
 router.patch('/leave/:id/approve', approveLeave);
+// PATCH /leave/:id/reject — reject a leave request; protected (must be current approver).
 router.patch('/leave/:id/reject', rejectLeave);
 
+// GET /exits — exit requests awaiting the current user's approval; protected (chain-scoped).
 router.get('/exits', listMyExitApprovals);
+// PATCH /exits/:id/approve — approve an exit request; protected (must be current approver).
 router.patch('/exits/:id/approve', approveExit);
+// PATCH /exits/:id/reject — reject an exit request; protected (must be current approver).
 router.patch('/exits/:id/reject', rejectExit);
 
 module.exports = router;

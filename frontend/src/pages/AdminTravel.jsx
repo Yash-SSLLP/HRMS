@@ -1,3 +1,9 @@
+/**
+ * AdminTravel — travel request review (admin portal). Lists/filters requests from
+ * GET /travel, approves/rejects/completes via PATCH /travel/:id/status, and
+ * separately reviews any reimbursement claim via PATCH /travel/:id/reimbursement
+ * (viewing the uploaded receipt from GET /travel/:id/receipt).
+ */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { fetchImageObjectUrl } from '../api/download';

@@ -1,3 +1,9 @@
+/**
+ * ExitFeedback — public (no-login) exit survey, route /exit-feedback/:token, that
+ * a departing employee fills from a tokenised HR link. Loads context via
+ * GET /exits/feedback/:token and submits responses via POST to the same URL;
+ * re-visits after submission show a thank-you state.
+ */
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';

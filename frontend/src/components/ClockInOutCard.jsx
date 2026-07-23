@@ -1,3 +1,6 @@
+// Admin dashboard "Clock-In/Out" card: shows today's checked-in employees split
+// into on-time and late groups, filterable by department, with expandable rows
+// (clock in/out/production hours). Data comes from /attendance/today-board.
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';

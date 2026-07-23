@@ -1,3 +1,10 @@
+/**
+ * AttendanceScreen — self-service check-in/out with a selfie + GPS punch, a live
+ * working-time clock, WFH toggle, and this month's attendance history.
+ * Route: "Attendance" tab/menu entry. Employee-facing (all roles).
+ * Requires camera + foreground-location permissions. Backend: GET /attendance/me,
+ * POST /attendance/me/checkin, POST /attendance/me/checkout (multipart photo+coords).
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert, Switch } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -27,6 +34,7 @@ const fmtElapsed = (ms) => {
   return `${hh}:${mm}:${ss}`;
 };
 
+/** Main component; no route params. Reads today's punch + month records from /attendance/me. */
 export default function AttendanceScreen() {
   const [today, setToday] = useState(null);
   const [records, setRecords] = useState([]);
@@ -56,6 +64,7 @@ export default function AttendanceScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Prompt for camera access and take a front-camera selfie for the punch.
   const capture = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
@@ -107,6 +116,8 @@ export default function AttendanceScreen() {
     }
   };
 
+  // Selfie -> best GPS fix -> multipart POST to checkin/checkout, then reload.
+  // `which` is 'checkin' or 'checkout'; aborts if no selfie captured.
   const punch = async (which) => {
     const asset = await capture();
     if (!asset) return;

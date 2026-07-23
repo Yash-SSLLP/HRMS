@@ -1,3 +1,9 @@
+/**
+ * TasksScreen — tasks assigned to the signed-in employee, with an inline status
+ * switcher (Todo/InProgress/Review/Done). Home stack route "Tasks" (Menu >
+ * Growth). Any employee role.
+ * Backend: GET /tasks/me (list), PATCH /tasks/me/:id/status (update status).
+ */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -26,6 +32,7 @@ export default function TasksScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Optimistically update the task status, then persist; reload to revert on error.
   const setStatus = async (task, status) => {
     setTasks((prev) => prev.map((t) => (t._id === task._id ? { ...t, status } : t)));
     try {

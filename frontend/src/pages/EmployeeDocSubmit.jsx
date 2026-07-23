@@ -1,8 +1,15 @@
+/**
+ * EmployeeDocSubmit — public (no-login) page, route /submit-docs/:token, where an
+ * existing employee uploads documents from the tokenised link HR shares. Loads
+ * the required doc-type list + already-submitted files (with HR verify status)
+ * from GET /employees/public-docs/:token and submits via POST to the same URL.
+ */
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
 
+// Centered card layout wrapper (company logo header) shared by all page states.
 function Shell({ children }) {
   return (
     <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 px-4 py-10">
@@ -28,7 +35,6 @@ const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
 // Categories a person may legitimately have several of (past employers, degrees).
 const MULTI_CATEGORIES = new Set(['ExperienceLetter', 'RelievingLetter', 'EducationCertificate']);
 
-// Public page (no login) where an employee submits documents from the link HR shares.
 export default function EmployeeDocSubmit() {
   const { token } = useParams();
   const [info, setInfo] = useState(null);
@@ -64,6 +70,8 @@ export default function EmployeeDocSubmit() {
     }
     setSubmitting(true);
     try {
+      // Pair each file with a parallel 'labels' entry so the server can map
+      // uploads to the requested categories ('Other' for the free-form bucket).
       const fd = new FormData();
       picked.forEach(([type, list]) => list.forEach((f) => { fd.append('files', f); fd.append('labels', type); }));
       others.forEach((f) => { fd.append('files', f); fd.append('labels', 'Other'); });

@@ -1,3 +1,9 @@
+/**
+ * LoginScreen — email/password sign-in shown by the root navigator when no auth
+ * session exists; on success stores the session and registers the device for push.
+ * Not a tab route (pre-auth gate). Used by every role before entering the app.
+ * Backend: POST /auth/login.
+ */
 import React, { useState } from 'react';
 import {
   View,
@@ -27,6 +33,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Authenticate, persist the session, then kick off push registration.
   const submit = async () => {
     if (!email.trim() || !password) {
       setError('Enter your email and password');

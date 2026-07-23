@@ -1,3 +1,9 @@
+/**
+ * AdminTraining — instructor-led training program management (admin portal).
+ * Lists programs from GET /training (participants picked from GET /admin/users)
+ * and creates/edits/deletes via POST/PUT/DELETE /training. Distinct from the LMS
+ * courses managed on AdminCourses.
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';

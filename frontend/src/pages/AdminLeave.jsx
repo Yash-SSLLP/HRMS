@@ -1,3 +1,11 @@
+/**
+ * AdminLeave — HR leave administration (admin portal), two tabs:
+ *  - Requests: all leave requests (GET /leave/requests) with an HR force
+ *    approve/reject override (PATCH /leave/requests/:id/approve|reject).
+ *  - Balances: per-employee yearly balances (GET /leave/balances,
+ *    GET /employees) editable via PUT /leave/balances/:employeeId/:year.
+ * Normal approval flows through the reporting chain (see Leave Approvals page).
+ */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -16,6 +24,7 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
 
 // ============ Requests tab ============
 
+// All leave requests with a status filter and HR force-decide override actions.
 function RequestsTab() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -133,6 +142,7 @@ function RequestsTab() {
 }
 
 // ============ Balances tab ============
+// Per-employee yearly leave grants (EL/CL/SL/ML); every employee gets a row.
 
 const blankGrant = () => ({
   EL: { opening: 0, granted: 0 },

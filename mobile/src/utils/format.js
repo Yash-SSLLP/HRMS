@@ -1,6 +1,7 @@
 // Shared formatting helpers. All time-of-day displays use 12-hour AM/PM per the
 // portal convention (durations are exempt).
 
+/** Format a date as "23 Jul 2026" (en-IN); returns "-" for empty/invalid input. */
 export function fmtDate(d, opts = { day: 'numeric', month: 'short', year: 'numeric' }) {
   if (!d) return '-';
   try {
@@ -10,6 +11,7 @@ export function fmtDate(d, opts = { day: 'numeric', month: 'short', year: 'numer
   }
 }
 
+/** Format a time as 12-hour "9:30 AM" (en-IN); "" for empty/invalid input. */
 export function fmtTime(d) {
   if (!d) return '';
   try {
@@ -19,6 +21,7 @@ export function fmtTime(d) {
   }
 }
 
+/** Combined date + 12-hour time, e.g. "23 Jul 2026 · 9:30 AM". */
 export function fmtDateTime(d) {
   if (!d) return '-';
   return `${fmtDate(d)} · ${fmtTime(d)}`;
@@ -39,6 +42,7 @@ export function timeAgo(d) {
   return fmtDate(d);
 }
 
+/** Format a number as INR currency, e.g. "₹1,25,000". */
 export function rupees(n) {
   const v = Number(n || 0);
   return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -77,6 +81,7 @@ export function toHM(d) {
   return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
 }
 
+/** Time-of-day greeting ("Good morning/afternoon/evening") for the dashboard. */
 export function greeting() {
   const hr = new Date().getHours();
   if (hr < 12) return 'Good morning';

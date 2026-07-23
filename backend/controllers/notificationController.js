@@ -1,3 +1,9 @@
+/**
+ * Notification controller — the caller's in-app notification inbox. Lists and
+ * marks notifications read, scoped by portal audience (admin/employee/all) so a
+ * dual-role user only sees the relevant set, and hides alerts predating a new
+ * joiner's start date.
+ */
 const asyncHandler = require('express-async-handler');
 const Notification = require('../models/Notification');
 const EmployeeProfile = require('../models/EmployeeProfile');
@@ -23,6 +29,12 @@ async function joinCutoff(userId) {
   return { createdAt: { $gte: profile.dateOfJoining } };
 }
 
+/**
+ * List the caller's recent notifications (max 50) with an unread count.
+ * @route GET /api/notifications?audience=admin|employee
+ * @param {string} [req.query.audience] - portal scope: 'admin' or 'employee'
+ * @returns {{unreadCount: number, notifications: Object[]}}
+ */
 // GET /api/notifications?audience=admin|employee  — recent notifications + unread count
 const listNotifications = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -34,6 +46,12 @@ const listNotifications = asyncHandler(async (req, res) => {
   res.json({ unreadCount, notifications });
 });
 
+/**
+ * Mark all the caller's unread notifications read, scoped to the current portal.
+ * @route PATCH /api/notifications/read-all?audience=
+ * @param {string} [req.query.audience] - portal scope: 'admin' or 'employee'
+ * @returns {{ok: boolean}}
+ */
 // PATCH /api/notifications/read-all?audience=  — mark the caller's notifications
 // read (scoped to the current portal so one portal's "mark all" doesn't clear the
 // other's unread).
@@ -45,6 +63,12 @@ const markAllRead = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Mark a single notification read (must belong to the caller).
+ * @route PATCH /api/notifications/:id/read
+ * @param {string} req.params.id - notification id
+ * @returns {{notification: Object}}
+ */
 // PATCH /api/notifications/:id/read  — mark one read
 const markRead = asyncHandler(async (req, res) => {
   const notification = await Notification.findOne({ _id: req.params.id, recipient: req.user._id });

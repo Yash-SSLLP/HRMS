@@ -15,15 +15,22 @@ const scope = () => {
 };
 const keyFor = (key) => `${PREFIX}${scope()}:${key}`;
 
-// Synchronous read from the in-memory cache (populated during the session or by
-// hydrate()). Returns null if not present in memory.
+/**
+ * Synchronous read from the in-memory cache (populated during the session or by
+ * hydrate()). Used for instant paint before the network refresh.
+ * @param {string} key Cache key (scoped per-user internally).
+ * @returns {*} Cached value, or null if not present in memory.
+ */
 export function readCacheSync(key) {
   const k = keyFor(key);
   return mem.has(k) ? mem.get(k) : null;
 }
 
-// Load a key from AsyncStorage into memory (for cold starts). Resolves to the
-// value or null.
+/**
+ * Load a key from AsyncStorage into memory (for cold starts).
+ * @param {string} key Cache key.
+ * @returns {Promise<*>} The value, or null if absent/corrupt.
+ */
 export async function hydrate(key) {
   const k = keyFor(key);
   if (mem.has(k)) return mem.get(k);
@@ -34,7 +41,11 @@ export async function hydrate(key) {
   return null;
 }
 
-// Persist a value (memory + AsyncStorage, fire-and-forget).
+/**
+ * Persist a value to both memory and AsyncStorage (fire-and-forget).
+ * @param {string} key Cache key.
+ * @param {*} data Value to store; ignored when undefined.
+ */
 export function writeCache(key, data) {
   if (data === undefined) return;
   const k = keyFor(key);
@@ -42,7 +53,10 @@ export function writeCache(key, data) {
   AsyncStorage.setItem(k, JSON.stringify(data)).catch(() => {});
 }
 
-// Drop all cached snapshots (e.g. on logout).
+/**
+ * Drop all cached snapshots from memory and AsyncStorage (e.g. on logout).
+ * @returns {Promise<void>}
+ */
 export async function clearCache() {
   mem.clear();
   try {
