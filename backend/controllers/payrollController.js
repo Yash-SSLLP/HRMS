@@ -498,6 +498,11 @@ const LATE_RATE_HIGH = 400;      // ₹/day when monthly Basic >= threshold
 
 // Statutory deduction constants (employee side). Used to auto-fill standard
 // deductions when deriving a payslip from a salary structure. All editable by HR.
+// The company does NOT currently run PF/EPF or ESI, so both are auto-filled as
+// zero everywhere (editor "fill from structure", the org run, and the register).
+// Flip these flags to re-enable the statutory calc — the rates below still apply.
+const EPF_ENABLED = false;          // PF/EPF deduction currently not run
+const ESIC_ENABLED = false;         // ESI deduction currently not run
 const EPF_EMP_RATE = 0.12;          // Employee PF: 12% of Basic
 const ESIC_EMP_RATE = 0.0075;       // Employee ESIC: 0.75% of gross
 const ESIC_WAGE_CEILING = 21000;    // ESIC applies only when monthly gross <= this
@@ -522,8 +527,8 @@ function deriveSalary(components, annualCtc, paidDays, daysInMonth) {
   };
   const gross = Object.values(earnings).reduce((a, v) => a + v, 0);
   const deductions = {
-    epf: Math.round(earnings.basic * EPF_EMP_RATE),
-    esic: gross <= ESIC_WAGE_CEILING ? Math.round(gross * ESIC_EMP_RATE) : 0,
+    epf: EPF_ENABLED ? Math.round(earnings.basic * EPF_EMP_RATE) : 0,
+    esic: ESIC_ENABLED && gross <= ESIC_WAGE_CEILING ? Math.round(gross * ESIC_EMP_RATE) : 0,
     professionalTax: PROFESSIONAL_TAX,
   };
   return { earnings, deductions, gross };
@@ -640,8 +645,8 @@ async function computeEmployeeRun(profile, year, month) {
     const baseGross = earnings.basic + earnings.hra + earnings.specialAllowance
       + earnings.conveyanceAllowance + earnings.medicalAllowance + earnings.lta;
     statutoryDeductions = {
-      epf: Math.round(earnings.basic * EPF_EMP_RATE),
-      esic: baseGross <= ESIC_WAGE_CEILING ? Math.round(baseGross * ESIC_EMP_RATE) : 0,
+      epf: EPF_ENABLED ? Math.round(earnings.basic * EPF_EMP_RATE) : 0,
+      esic: ESIC_ENABLED && baseGross <= ESIC_WAGE_CEILING ? Math.round(baseGross * ESIC_EMP_RATE) : 0,
       professionalTax: PROFESSIONAL_TAX,
     };
   }

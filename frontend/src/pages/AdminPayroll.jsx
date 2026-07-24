@@ -142,15 +142,21 @@ export default function AdminPayroll() {
     setSalaryInfo(null);
     setBonusCalc({ type: 'fixed', value: '' });
     setShowModal(true);
-    fetchSalaryInfo({
+    // Refresh the day counts from attendance, then reflect them in the derived
+    // preview (without applying — the saved earnings/deductions are left intact).
+    syncAttendanceDays({
+      employee,
+      payPeriodYear: p.payPeriodYear,
+      payPeriodMonth: p.payPeriodMonth,
+    }).then((days) => fetchSalaryInfo({
       over: {
         employee,
         payPeriodYear: p.payPeriodYear,
         payPeriodMonth: p.payPeriodMonth,
-        paidDays: p.paidDays,
-        workingDays: p.workingDays,
+        paidDays: days?.paidDays ?? p.paidDays,
+        workingDays: days?.workingDays ?? p.workingDays,
       },
-    });
+    }));
   };
 
   // Load (and optionally apply) the earnings + statutory deductions derived from
@@ -179,6 +185,30 @@ export default function AdminPayroll() {
       return data;
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not load the salary structure');
+    }
+  };
+
+  // Pull the attendance-normalized day counts (working / paid / LOP) for the
+  // employee's month and write them into the form, so the payslip always reflects
+  // real attendance — the same LOP + leave-quota normalization the payroll run
+  // uses — instead of a manual guess or a copy of last month. Returns the days.
+  const syncAttendanceDays = async (over = {}) => {
+    const f = { ...form, ...over };
+    if (!f.employee) return null;
+    try {
+      const { data } = await api.get(
+        `/payroll/run-employee?employee=${f.employee}&year=${f.payPeriodYear}&month=${f.payPeriodMonth}`
+      );
+      const c = data.computed || {};
+      const days = {
+        workingDays: c.daysInMonth ?? f.workingDays,
+        paidDays: c.paidDays ?? f.paidDays,
+        lopDays: c.lopDays ?? f.lopDays,
+      };
+      setForm((prev) => ({ ...prev, ...days }));
+      return days;
+    } catch {
+      return null; // attendance unavailable — keep whatever is in the form
     }
   };
 
@@ -385,7 +415,12 @@ export default function AdminPayroll() {
                   <select
                     required disabled={!!editingId}
                     value={form.employee}
-                    onChange={(e) => { setForm({ ...form, employee: e.target.value }); fetchSalaryInfo({ over: { employee: e.target.value } }); }}
+                    onChange={(e) => {
+                      const employee = e.target.value;
+                      setForm({ ...form, employee });
+                      syncAttendanceDays({ employee }).then((days) =>
+                        fetchSalaryInfo({ over: { employee, paidDays: days?.paidDays, workingDays: days?.workingDays } }));
+                    }}
                     className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100"
                   >
                     <option value="">Select…</option>
@@ -400,14 +435,24 @@ export default function AdminPayroll() {
                   <label className="block text-sm text-gray-700">Year *</label>
                   <input type="number" required disabled={!!editingId}
                     value={form.payPeriodYear}
-                    onChange={(e) => setForm({ ...form, payPeriodYear: Number(e.target.value) })}
+                    onChange={(e) => {
+                      const payPeriodYear = Number(e.target.value);
+                      setForm({ ...form, payPeriodYear });
+                      if (form.employee) syncAttendanceDays({ payPeriodYear }).then((days) =>
+                        fetchSalaryInfo({ over: { payPeriodYear, paidDays: days?.paidDays, workingDays: days?.workingDays } }));
+                    }}
                     className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100" />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Month *</label>
                   <select required disabled={!!editingId}
                     value={form.payPeriodMonth}
-                    onChange={(e) => setForm({ ...form, payPeriodMonth: Number(e.target.value) })}
+                    onChange={(e) => {
+                      const payPeriodMonth = Number(e.target.value);
+                      setForm({ ...form, payPeriodMonth });
+                      if (form.employee) syncAttendanceDays({ payPeriodMonth }).then((days) =>
+                        fetchSalaryInfo({ over: { payPeriodMonth, paidDays: days?.paidDays, workingDays: days?.workingDays } }));
+                    }}
                     className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100">
                     {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                   </select>
@@ -434,6 +479,9 @@ export default function AdminPayroll() {
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
               </div>
+              <p className="text-[11px] text-gray-400 -mt-1">
+                Auto-filled from attendance (after LOP &amp; leave-quota normalization) · editable.
+              </p>
 
               {/* Salary structure → derive earnings + statutory deductions */}
               <div className="pt-3 border-t">
@@ -456,7 +504,7 @@ export default function AdminPayroll() {
                 </div>
                 {salaryInfo && !salaryInfo.needsSetup && (
                   <p className="text-[11px] text-gray-400 mt-1">
-                    Prorated by Paid Days ({form.paidDays}/{form.workingDays}) · EPF 12% of Basic, ESIC 0.75% (if gross ≤ ₹21k), PT ₹200 — all editable below.
+                    Prorated by Paid Days ({form.paidDays}/{form.workingDays}) · PF/EPF &amp; ESI not deducted (₹0), PT ₹200 — all editable below.
                   </p>
                 )}
               </div>

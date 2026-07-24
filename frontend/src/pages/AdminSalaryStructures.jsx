@@ -61,6 +61,7 @@ export default function AdminSalaryStructures() {
 
   // Preview modal
   const [previewFor, setPreviewFor] = useState(null);
+  const [previewEmp, setPreviewEmp] = useState(null); // employee this structure is assigned to, if any
   const [annualCtc, setAnnualCtc] = useState(1200000);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -163,7 +164,17 @@ export default function AdminSalaryStructures() {
     setPreviewFor(s);
     setPreview(null);
     setPreviewError('');
-    runPreview(s._id, annualCtc);
+    // Prefill with the real CTC of an employee actually on this structure (e.g. a
+    // per-person structure) so the preview shows their original salary, not the
+    // placeholder default. Falls back to the last-entered CTC when none is found.
+    const assigned = employees.find(
+      (p) => String(p.salaryStructure?._id || p.salaryStructure || '') === String(s._id)
+        && Number(p.annualCtc) > 0
+    );
+    setPreviewEmp(assigned || null);
+    const ctc = assigned ? Number(assigned.annualCtc) : annualCtc;
+    setAnnualCtc(ctc);
+    runPreview(s._id, ctc);
   };
 
   const runPreview = async (id, ctc) => {
@@ -405,6 +416,12 @@ export default function AdminSalaryStructures() {
                 onChange={(e) => onCtcChange(e.target.value)}
                 className="block w-full border rounded-lg px-3 py-2"
               />
+              {previewEmp && (
+                <span className="block mt-1 text-xs text-gray-500">
+                  Prefilled from {`${previewEmp.user?.firstName || ''} ${previewEmp.user?.lastName || ''}`.trim()}
+                  &rsquo;s current CTC (₹{Number(previewEmp.annualCtc).toLocaleString('en-IN')}).
+                </span>
+              )}
             </label>
 
             {previewError && (
@@ -449,6 +466,7 @@ export default function AdminSalaryStructures() {
                 onClick={() => {
                   setPreviewFor(null);
                   setPreview(null);
+                  setPreviewEmp(null);
                 }}
                 className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50"
               >
