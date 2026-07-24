@@ -2,11 +2,13 @@
  * AdminCompliance — statutory compliance reports (admin portal): PF, ESI, PT,
  * TDS and Form 16. Each tab loads a computed summary (from processed payslips)
  * from its /compliance/* endpoint for the chosen month/year, renders a totals
- * table, and exports a CSV client-side. TABS drives endpoints + column layout.
+ * table, and exports an .xlsx (via POST /reports/xlsx). TABS drives endpoints +
+ * column layout.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { downloadTableXlsx } from '../api/download';
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -100,13 +102,6 @@ const TAB_KEYS = Object.keys(TABS);
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-// Escape a CSV cell (quote when it contains a comma, quote, or newline).
-function csvCell(value) {
-  const s = value == null ? '' : String(value);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
 export default function AdminCompliance() {
   const [tab, setTab] = useState('pf');
   const [month, setMonth] = useState(CURRENT_MONTH);
@@ -150,39 +145,31 @@ export default function AdminCompliance() {
     return value == null || value === '' ? '-' : value;
   };
 
-  const downloadCsv = () => {
+  const downloadXlsx = async () => {
     if (!rows.length) return;
-    const header = meta.columns.map((c) => c.label);
-    const lines = [header.map(csvCell).join(',')];
-
-    for (const row of rows) {
-      lines.push(
-        meta.columns
-          .map((c) => csvCell(c.money ? Number(row[c.key]) || 0 : row[c.key]))
-          .join(',')
-      );
-    }
-
-    // Totals row.
-    const totalsLine = meta.columns.map((c, idx) => {
-      if (c.money) return csvCell(Number(totals[c.key]) || 0);
-      if (idx === 0) return csvCell('TOTAL');
+    const headers = meta.columns.map((c) => c.label);
+    const moneyCols = meta.columns.map((c, i) => (c.money ? i : -1)).filter((i) => i >= 0);
+    const dataRows = rows.map((row) =>
+      meta.columns.map((c) => (c.money ? Number(row[c.key]) || 0 : (row[c.key] ?? '')))
+    );
+    const totalsRow = meta.columns.map((c, idx) => {
+      if (c.money) return Number(totals[c.key]) || 0;
+      if (idx === 0) return 'TOTAL';
       return '';
     });
-    lines.push(totalsLine.join(','));
-
     const period = meta.monthly ? `${year}-${pad2(month)}` : `${year}`;
-    const filename = `${tab}-${period}.csv`;
-
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      await downloadTableXlsx({
+        filename: `${tab}-${period}`,
+        sheetName: `${meta.label} ${period}`,
+        headers,
+        rows: dataRows,
+        moneyCols,
+        totals: totalsRow,
+      });
+    } catch {
+      /* surfaced by the axios interceptor; no-op here */
+    }
   };
 
   return (
@@ -247,11 +234,11 @@ export default function AdminCompliance() {
 
           <button
             type="button"
-            onClick={downloadCsv}
+            onClick={downloadXlsx}
             disabled={!rows.length}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Download CSV
+            Download Excel
           </button>
         </div>
 

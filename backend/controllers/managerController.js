@@ -298,12 +298,12 @@ const teamDayDetails = asyncHandler(async (req, res) => {
 });
 
 /**
- * Export team attendance as CSV, scoped to the caller's direct reports.
+ * Export team attendance as an .xlsx, scoped to the caller's direct reports.
  * @route GET /api/manager/attendance/export?year=&month=&day=&employee=&months=
- * @returns {text/csv} attendance rows; an employee outside the team is rejected
+ * @returns {application/vnd...spreadsheetml.sheet} attendance rows; an employee outside the team is rejected
  */
 // GET /api/manager/attendance/export?year=&month=&day=&employee=&months=
-// Excel-compatible attendance CSV scoped to the caller's direct reports (Sale
+// Attendance .xlsx scoped to the caller's direct reports (Sale
 // Team included — anyone whose reportingManager is this user). Same shapes as
 // the admin export: a single day, a whole month (all reports), or one report's
 // month / trailing months. Passing an employee outside the team is rejected.

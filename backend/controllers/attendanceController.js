@@ -1007,7 +1007,7 @@ function buildAttendanceWorkbook(records, settings) {
   return wb;
 }
 
-// Shared attendance-export runner (Excel-compatible CSV, one row per attendance
+// Shared attendance-export runner (.xlsx workbook, one row per attendance
 // day). A single code path serves every shape the UI offers, off these query
 // params:  employee, year, month, day, months.
 //   • day set (1-31)                    → one IST day  (day-wise export)

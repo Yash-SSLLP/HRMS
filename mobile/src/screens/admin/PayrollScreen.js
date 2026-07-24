@@ -83,16 +83,17 @@ export default function PayrollScreen() {
     }
   };
 
-  // Download the whole month's payroll as an Excel-compatible CSV and hand it
-  // to the OS share sheet (save / send anywhere).
+  // Download the whole month's payroll register as an .xlsx and hand it to the
+  // OS share sheet (save / send anywhere).
   const exportExcel = async () => {
     setBusyId('export');
     try {
-      const fileUri = `${FileSystem.cacheDirectory}payroll-${year}-${String(month).padStart(2, '0')}.csv`;
-      const q = `year=${year}&month=${month}${status !== 'All' ? `&status=${status}` : ''}`;
-      const res = await FileSystem.downloadAsync(`${API_BASE}/payroll/export?${q}`, fileUri, { headers: { Authorization: `Bearer ${token}` } });
+      const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const fileUri = `${FileSystem.cacheDirectory}payroll-${year}-${String(month).padStart(2, '0')}.xlsx`;
+      const q = `year=${year}&month=${month}`;
+      const res = await FileSystem.downloadAsync(`${API_BASE}/payroll/export-sheet?${q}`, fileUri, { headers: { Authorization: `Bearer ${token}` } });
       if (res.status !== 200) throw new Error('Export not available');
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri, { mimeType: 'text/csv' });
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri, { mimeType: XLSX_MIME, UTI: 'org.openxmlformats.spreadsheetml.sheet' });
     } catch (err) {
       Alert.alert('Export failed', err.message);
     } finally {

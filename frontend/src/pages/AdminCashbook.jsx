@@ -183,8 +183,11 @@ export default function AdminCashbook() {
   const exportCsv = async () => {
     try {
       const res = await api.get('/cashbook/reports/export', { params: clean(filters), responseType: 'blob' });
+      // Server sets the .xlsx filename via Content-Disposition; honour it, else fall back.
+      const cd = res.headers['content-disposition'] || '';
+      const m = /filename="?([^";]+)"?/i.exec(cd);
       const url = URL.createObjectURL(res.data);
-      const a = document.createElement('a'); a.href = url; a.download = 'cashbook.csv'; a.click();
+      const a = document.createElement('a'); a.href = url; a.download = m ? m[1] : 'cashbook.xlsx'; a.click();
       URL.revokeObjectURL(url);
     } catch (err) { errToast(err, 'Could not export'); }
   };
@@ -251,7 +254,7 @@ export default function AdminCashbook() {
             <div><label className="block text-xs text-gray-500">From</label><input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} className="border rounded-lg px-2 py-1.5 text-sm" /></div>
             <div><label className="block text-xs text-gray-500">To</label><input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} className="border rounded-lg px-2 py-1.5 text-sm" /></div>
             <div><label className="block text-xs text-gray-500">Search</label><input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="party / ref / note" className="border rounded-lg px-2 py-1.5 text-sm" /></div>
-            <button onClick={exportCsv} className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">Export CSV</button>
+            <button onClick={exportCsv} className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">Export Excel</button>
             <button onClick={() => openEntry('create')} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Entry</button>
           </div>
           <div className="bg-white shadow rounded-lg overflow-x-auto">

@@ -104,6 +104,7 @@ app.use('/api/public/courses', require('./routes/publicCourseRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/audit', require('./routes/auditRoutes'));
+app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/page-view', require('./routes/pageViewRoutes'));
 
 app.use(notFound);

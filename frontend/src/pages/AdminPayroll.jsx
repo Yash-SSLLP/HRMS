@@ -264,11 +264,12 @@ export default function AdminPayroll() {
         <button
           onClick={() => {
             const m = Number(filter.month) || new Date().getMonth() + 1;
-            const q = `year=${filter.year}&month=${m}${filter.status ? `&status=${filter.status}` : ''}`;
-            downloadFile(`/payroll/export?${q}`, `payroll-${filter.year}-${String(m).padStart(2, '0')}.csv`)
+            const q = `year=${filter.year}&month=${m}`;
+            // Server names the file payroll_<Month>-<Year>_<date>_<time>.xlsx (Content-Disposition).
+            downloadFile(`/payroll/export-sheet?${q}`, `payroll-${filter.year}-${String(m).padStart(2, '0')}.xlsx`)
               .catch((err) => toast.error(err.response?.data?.message || 'Export failed'));
           }}
-          title={filter.month ? 'Download this month\'s payroll as an Excel-compatible sheet' : 'No month selected · exports the current month'}
+          title={filter.month ? 'Download this month\'s payroll register (.xlsx)' : 'No month selected · exports the current month'}
           className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm mr-2">
           ⬇ Download Excel
         </button>

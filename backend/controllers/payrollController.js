@@ -17,7 +17,8 @@ const Holiday = require('../models/Holiday');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { renderPayslip } = require('../services/payslipPdf');
 const { enqueueMail } = require('../services/email');
-// (exportPayroll below builds the month CSV by hand — no spreadsheet lib needed)
+const ExcelJS = require('exceljs');
+// exportPayrollSheet builds the company payroll register (.xlsx) via ExcelJS — see below.
 
 async function getMyProfileOrFail(userId, res) {
   const profile = await EmployeeProfile.findOne({ user: userId });
@@ -116,75 +117,193 @@ const listPayslips = asyncHandler(async (req, res) => {
   res.json({ count: payslips.length, payslips });
 });
 
-/**
- * Export a month's payroll as an Excel-compatible CSV (one row per employee).
- * @route GET /api/payroll/export?year=&month=&status=  (HR/Admin)
- * @param {number} [req.query.year] / [req.query.month]
- * @param {string} [req.query.status]
- * @returns {text/csv} UTF-8 with BOM
- */
-// GET /api/payroll/export?year=&month=&status=  (HR/Admin)
-// Excel-compatible CSV of the whole month's payroll — one row per employee
-// with every earning/deduction component. Opens directly in Excel.
 const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
-const exportPayroll = asyncHandler(async (req, res) => {
+
+// ===== Payroll register (.xlsx) =====
+// The company's payroll sheet, one row per active employee, in the exact column
+// layout HR uses to disburse salaries. This is a SIMPLER money model than the
+// in-app payslip (no EPF/ESIC/loan): the full monthly salary is shown, and lost
+// days are charged back as a single "ABSENT AMOUNT" deduction line.
+//
+//   NET DAYS         present days (a half-day counts 0.5)
+//   ABSENT DAYS      LOP days = Absent + missed-punch + leave beyond the 2/mo quota
+//   LNT + EXTRA DAYS unused paid-leave quota = max(0, 2 − leaves taken)
+//   SALARY           full monthly salary = CTC ÷ 12 (independent of attendance)
+//   ARREARS/BONUS    optional, from a saved payslip for the month
+//   GROSS SALARY     = SALARY + ARREARS/BONUS
+//   Old/Weekly/ADVANCE + Interest   left blank for HR to fill in manually
+//   LATE DEDUCTION   late-arrival penalty (> 5 late/mo rule) — as in the app
+//   ABSENT AMOUNT    per-day salary × LOP days   (perDay = SALARY ÷ days-in-month)
+//   PT               professional tax (flat, set by HR)
+//   DEDUCTIONS       = advances + LATE + Interest + ABSENT AMOUNT + PT
+//   NET PAYABLE      = GROSS − DEDUCTIONS
+const PAYROLL_SHEET_COLUMNS = [
+  { header: 'SL.NO', key: 'sl', width: 6 },
+  { header: 'NAME', key: 'name', width: 24 },
+  { header: 'EMP NO', key: 'empNo', width: 10 },
+  { header: 'DESIGNATION', key: 'designation', width: 16 },
+  { header: 'NET DAYS', key: 'netDays', width: 9 },
+  { header: 'ABSENT DAYS', key: 'absentDays', width: 11 },
+  { header: 'LNT + EXTRA DAYS', key: 'lnt', width: 15 },
+  { header: 'SALARY', key: 'salary', width: 12 },
+  { header: 'ARREARS/BONUS', key: 'bonus', width: 14 },
+  { header: 'GROSS SALARY', key: 'gross', width: 13 },
+  { header: 'Old Advance', key: 'oldAdvance', width: 12 },
+  { header: 'Weekly Advance', key: 'weeklyAdvance', width: 14 },
+  { header: 'ADVANCE', key: 'advance', width: 11 },
+  { header: 'LATE DEDUCTION', key: 'lateDeduction', width: 14 },
+  { header: 'Interest', key: 'interest', width: 10 },
+  { header: 'ABSENT AMOUNT', key: 'absentAmount', width: 14 },
+  { header: 'PT', key: 'pt', width: 8 },
+  { header: 'DEDUCTIONS', key: 'deductions', width: 12 },
+  { header: 'NET PAYABLE', key: 'netPayable', width: 13 },
+];
+
+const round1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+
+/**
+ * Build one payroll-register row from a computed monthly run. Pure (no I/O) so
+ * the column arithmetic is unit-testable. Advances + interest are always blank
+ * (HR fills them in), so the GROSS/DEDUCTIONS/NET totals are written as live
+ * Excel formulas — the sheet re-totals itself when HR types those in.
+ * @param {number} sl - 1-based serial number
+ * @param {{name,empNo,designation}} meta
+ * @param {object} run - a computeEmployeeRun(...) result
+ * @param {number} [bonus] - ARREARS/BONUS from a saved payslip, if any
+ * @returns {object} keyed by PAYROLL_SHEET_COLUMNS keys (numbers, '' for blanks)
+ */
+function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
+  const daysInMonth = run.daysInMonth || 0;
+  const monthlySalary = Math.round((run.ctc || 0) / 12);
+  const perDay = daysInMonth ? monthlySalary / daysInMonth : 0;
+  const lopDays = round1(run.lopDays || 0);
+  const present = round1((run.counts?.present || 0) + 0.5 * (run.counts?.halfDay || 0));
+  const absentAmount = Math.round(perDay * lopDays);
+  const lateDeduction = Math.round((run.policy && run.policy.latePenalty) || run.latePenalty || 0);
+  const pt = Math.round((run.statutoryDeductions && run.statutoryDeductions.professionalTax) || 0);
+  const bonusAmt = Math.round(bonus || 0);
+  return {
+    sl,
+    name: meta.name,
+    empNo: meta.empNo || '',
+    designation: meta.designation || '',
+    netDays: present,
+    absentDays: lopDays,
+    lnt: run.policy ? (run.policy.unusedLeave || 0) : 0,
+    salary: monthlySalary,
+    bonus: bonusAmt || '',      // optional — blank when there's no arrear/bonus
+    gross: monthlySalary + bonusAmt,
+    oldAdvance: '',             // ── advances + interest are filled in by HR ──
+    weeklyAdvance: '',
+    advance: '',
+    lateDeduction,
+    interest: '',
+    absentAmount,
+    pt,
+    deductions: lateDeduction + absentAmount + pt,
+    netPayable: (monthlySalary + bonusAmt) - (lateDeduction + absentAmount + pt),
+  };
+}
+
+// Assemble the workbook from pre-built rows. GROSS/DEDUCTIONS/NET are set as
+// formulas so the file recalculates if HR edits salary, bonus or the advances.
+function buildPayrollWorkbook(rows, year, month) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Sequence - HRMS';
+  wb.created = new Date();
+  const ws = wb.addWorksheet(`Payroll ${MONTH_NAMES[month]} ${year}`.slice(0, 31));
+  ws.columns = PAYROLL_SHEET_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
+
+  // Header styling.
+  const head = ws.getRow(1);
+  head.font = { bold: true };
+  head.alignment = { vertical: 'middle', wrapText: true };
+  head.height = 28;
+  head.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFD4D4D8' } } };
+  });
+
+  const MONEY = '#,##0';
+  const DAYS = '0.##';
+  rows.forEach((r, i) => {
+    const excelRow = ws.addRow(r);
+    const n = excelRow.number; // 1-based sheet row (header is row 1)
+    // Live totals so the sheet stays correct when HR fills advances/interest.
+    ws.getCell(`J${n}`).value = { formula: `H${n}+I${n}` };            // GROSS = SALARY + BONUS
+    ws.getCell(`R${n}`).value = { formula: `SUM(K${n}:Q${n})` };       // DEDUCTIONS = advances+late+interest+absent+PT
+    ws.getCell(`S${n}`).value = { formula: `J${n}-R${n}` };            // NET = GROSS − DEDUCTIONS
+    // Number formats.
+    ['E', 'F', 'G'].forEach((c) => { ws.getCell(`${c}${n}`).numFmt = DAYS; });
+    ['H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S'].forEach((c) => { ws.getCell(`${c}${n}`).numFmt = MONEY; });
+  });
+
+  // Totals row (sum of every money column) so HR sees the payout at a glance.
+  if (rows.length) {
+    const first = 2;
+    const last = rows.length + 1;
+    const totals = ws.addRow({ designation: 'TOTAL' });
+    const n = totals.number;
+    ['H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S'].forEach((c) => {
+      ws.getCell(`${c}${n}`).value = { formula: `SUM(${c}${first}:${c}${last})` };
+      ws.getCell(`${c}${n}`).numFmt = MONEY;
+    });
+    totals.font = { bold: true };
+    totals.eachCell((cell) => { cell.border = { top: { style: 'thin', color: { argb: 'FFD4D4D8' } } }; });
+  }
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  return wb;
+}
+
+/**
+ * Download a month's payroll register as an .xlsx in the company layout.
+ * @route GET /api/payroll/export-sheet?year=&month=  (HR/Admin)
+ * @returns {application/vnd...spreadsheetml.sheet} filename payroll_<Month>-<Year>_<date>_<time>.xlsx
+ */
+const exportPayrollSheet = asyncHandler(async (req, res) => {
   const now = new Date();
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
-  const filter = { payPeriodYear: year, payPeriodMonth: month };
-  if (req.query.status) filter.status = req.query.status;
 
-  const payslips = await Payroll.find(filter)
-    .populate({
-      path: 'employee',
-      select: 'employeeCode designation department user',
-      populate: { path: 'user', select: 'firstName lastName email' },
-    })
-    .sort({ 'employee.employeeCode': 1, createdAt: 1 });
+  const profiles = await EmployeeProfile.find()
+    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit')
+    .populate('user', 'firstName lastName isActive')
+    .populate('salaryStructure')
+    .sort('employeeCode');
+  const active = profiles.filter((p) => p.user && p.user.isActive !== false);
 
-  const esc = (v) => {
-    const s = v === undefined || v === null ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const header = [
-    'Employee Code', 'Name', 'Email', 'Designation', 'Department',
-    'Month', 'Year', 'Working Days', 'Paid Days', 'LOP Days',
-    'Basic', 'HRA', 'Special Allowance', 'Conveyance', 'Medical', 'LTA', 'Bonus', 'Overtime', 'Leave Incentive', 'Other Earnings',
-    'Gross Salary',
-    'EPF', 'ESIC', 'Professional Tax', 'TDS', 'Loan Recovery', 'Late Penalty', 'Other Deductions',
-    'Total Deductions', 'Net Pay',
-    'Employer EPF', 'Employer EPS', 'Employer ESIC', 'Gratuity',
-    'Status', 'Payment Date', 'Payment Reference',
-  ];
-  const rows = payslips.map((p) => {
-    const u = p.employee?.user || {};
-    const e = p.earnings || {};
-    const d = p.deductions || {};
-    const c = p.employerContributions || {};
-    return [
-      p.employee?.employeeCode, `${u.firstName || ''} ${u.lastName || ''}`.trim(), u.email,
-      p.employee?.designation, p.employee?.department,
-      MONTH_NAMES[p.payPeriodMonth], p.payPeriodYear, p.workingDays, p.paidDays, p.lopDays,
-      e.basic, e.hra, e.specialAllowance, e.conveyanceAllowance, e.medicalAllowance, e.lta, e.bonus, e.overtime, e.leaveIncentive, e.otherEarnings,
-      p.grossSalary,
-      d.epf, d.esic, d.professionalTax, d.tds, d.loanRecovery, d.latePenalty, d.otherDeductions,
-      p.totalDeductions, p.netPay,
-      c.epf, c.eps, c.esic, c.gratuity,
-      p.status,
-      p.paymentDate ? new Date(p.paymentDate).toLocaleDateString('en-IN') : '',
-      p.paymentReference,
-    ].map(esc).join(',');
-  });
-  const csv = [header.map(esc).join(','), ...rows].join('\r\n');
+  // ARREARS/BONUS is pulled from any saved payslip for the month (optional).
+  const slips = await Payroll.find({ payPeriodYear: year, payPeriodMonth: month }).select('employee earnings.bonus');
+  const bonusByEmp = new Map(slips.map((s) => [String(s.employee), (s.earnings && s.earnings.bonus) || 0]));
 
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader(
-    'Content-Disposition',
-    `attachment; filename="payroll-${year}-${String(month).padStart(2, '0')}.csv"`
-  );
-  // BOM so Excel detects UTF-8 (₹, names with accents, etc.).
-  res.send('﻿' + csv);
+  const runs = await Promise.all(active.map((p) => computeEmployeeRun(p, year, month)));
+  const rows = active.map((p, i) => buildPayrollSheetRow(
+    i + 1,
+    {
+      name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim(),
+      empNo: p.employeeCode,
+      designation: p.designation,
+    },
+    runs[i],
+    bonusByEmp.get(String(p._id)) || 0,
+  ));
+
+  const wb = buildPayrollWorkbook(rows, year, month);
+
+  // Filename: payroll_<Month>-<Year>_<download date>_<download time>, timestamped in IST.
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(now).reduce((a, p) => { a[p.type] = p.value; return a; }, {});
+  const dateSeg = `${parts.year}-${parts.month}-${parts.day}`;
+  const timeSeg = `${parts.hour}-${parts.minute}-${parts.second}`;
+  const fname = `payroll_${MONTH_NAMES[month]}-${year}_${dateSeg}_${timeSeg}.xlsx`;
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 // ===== Monthly payroll run =====
@@ -1185,11 +1304,13 @@ module.exports = {
   myAttendanceSummary,
   deriveSalaryForEditor,
   giveHike,
+  exportPayrollSheet,
   // exported for unit tests
   deriveSalary,
   resolveCtcForMonth,
+  buildPayrollSheetRow,
+  buildPayrollWorkbook,
   listPayslips,
-  exportPayroll,
   previewPayrollRun,
   runPayroll,
   previewEmployeeRun,

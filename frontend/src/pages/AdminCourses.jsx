@@ -13,6 +13,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import CourseVideoPlayer from '../components/CourseVideoPlayer';
 import { confirmDialog } from '../components/dialogs';
+import { downloadTableXlsx } from '../api/download';
 
 const CATEGORIES = ['Technical', 'Soft Skills', 'Compliance', 'Leadership', 'Onboarding', 'Other'];
 
@@ -739,14 +740,20 @@ function ShareModal({ course, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  const exportLeads = () => {
-    const rows = [['Name', 'Phone', 'Location', 'Email', 'Date']].concat(
-      (leads || []).map((l) => [l.name, l.phone, l.location, l.email || '', new Date(l.createdAt).toLocaleString('en-IN')])
-    );
-    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const a = document.createElement('a'); a.href = url; a.download = `${course.title}-leads.csv`; a.click();
-    URL.revokeObjectURL(url);
+  const exportLeads = async () => {
+    const rows = (leads || []).map((l) => [
+      l.name, l.phone, l.location, l.email || '', new Date(l.createdAt).toLocaleString('en-IN'),
+    ]);
+    try {
+      await downloadTableXlsx({
+        filename: `${course.title}-leads`,
+        sheetName: 'Leads',
+        headers: ['Name', 'Phone', 'Location', 'Email', 'Date'],
+        rows,
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not export leads');
+    }
   };
 
   return (
@@ -775,7 +782,7 @@ function ShareModal({ course, onClose }) {
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-500">{leads ? `${leads.length} lead${leads.length === 1 ? '' : 's'}` : 'Loading…'}</span>
-              {leads && leads.length > 0 && <button onClick={exportLeads} className="text-xs text-blue-600 hover:underline">Export CSV</button>}
+              {leads && leads.length > 0 && <button onClick={exportLeads} className="text-xs text-blue-600 hover:underline">Export Excel</button>}
             </div>
             <div className="max-h-80 overflow-y-auto border rounded-lg divide-y">
               {!leads ? <div className="p-3 text-sm text-gray-400">Loading…</div> : leads.length === 0 ? (

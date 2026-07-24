@@ -3,11 +3,12 @@
  * categories (CashCategory), and an in/out ledger (CashbookEntry) with a
  * never-drift running balance recomputed from Approved entries. Employees submit
  * vouchers for finance (SuperAdmin/AccountsManager) to approve; finance posts
- * direct entries, transfers between accounts, and runs day-book/summary/CSV
+ * direct entries, transfers between accounts, and runs day-book/summary/.xlsx
  * reports. recomputeBalance is exported and reused by the expense→cashbook sync.
  */
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
+const ExcelJS = require('exceljs');
 const CashAccount = require('../models/CashAccount');
 const CashCategory = require('../models/CashCategory');
 const CashbookEntry = require('../models/CashbookEntry');
@@ -622,45 +623,94 @@ const summary = asyncHandler(async (req, res) => {
 });
 
 /**
- * Export the filtered ledger as a CSV download.
+ * Export the filtered ledger as an .xlsx download.
  * @route GET /api/cashbook/reports/export
  * @param {Object} req.query - same filters as listEntries
- * @returns {text/csv} cashbook.csv
+ * @returns {application/vnd...spreadsheetml.sheet} filename cashbook_<date>_<time>.xlsx
  */
-// GET /api/cashbook/reports/export — CSV of the filtered ledger
-const exportCsv = asyncHandler(async (req, res) => {
+// GET /api/cashbook/reports/export — Excel workbook of the filtered ledger
+const exportExcel = asyncHandler(async (req, res) => {
   const filter = entryFilterFromQuery(req.query);
   const entries = await CashbookEntry.find(filter)
     .populate('account', 'name')
     .populate('employee', USER_FIELDS)
     .sort({ date: 1, createdAt: 1 })
     .lean();
-  const esc = (v) => {
-    const s = v === undefined || v === null ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const header = ['Date', 'Account', 'Type', 'Category', 'Payment Mode', 'Party', 'Reference', 'Description', 'In', 'Out', 'Status', 'Submitted By'];
-  const lines = [header.join(',')];
+
+  const COLS = [
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Account', key: 'account', width: 18 },
+    { header: 'Type', key: 'type', width: 8 },
+    { header: 'Category', key: 'category', width: 16 },
+    { header: 'Payment Mode', key: 'paymentMode', width: 14 },
+    { header: 'Party', key: 'party', width: 18 },
+    { header: 'Reference', key: 'reference', width: 14 },
+    { header: 'Description', key: 'description', width: 30 },
+    { header: 'In', key: 'in', width: 12 },
+    { header: 'Out', key: 'out', width: 12 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Submitted By', key: 'submittedBy', width: 20 },
+  ];
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Sequence - HRMS';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Cashbook');
+  ws.columns = COLS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
+
+  const head = ws.getRow(1);
+  head.font = { bold: true };
+  head.alignment = { vertical: 'middle' };
+  head.height = 20;
+  head.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFD4D4D8' } } };
+  });
+
+  const MONEY = '#,##0.00';
   for (const e of entries) {
     const who = e.employee?.firstName ? `${e.employee.firstName} ${e.employee.lastName}`.trim() : '';
-    lines.push([
-      new Date(e.date).toISOString().slice(0, 10),
-      e.account?.name || '',
-      e.type,
-      e.category || '',
-      e.paymentMode || '',
-      e.party || '',
-      e.referenceNo || '',
-      e.description || '',
-      e.type === 'in' ? e.amount : '',
-      e.type === 'out' ? e.amount : '',
-      e.status,
-      e.submittedByEmployee ? who : '',
-    ].map(esc).join(','));
+    const row = ws.addRow({
+      date: new Date(e.date).toISOString().slice(0, 10),
+      account: e.account?.name || '',
+      type: e.type,
+      category: e.category || '',
+      paymentMode: e.paymentMode || '',
+      party: e.party || '',
+      reference: e.referenceNo || '',
+      description: e.description || '',
+      in: e.type === 'in' ? e.amount : null,
+      out: e.type === 'out' ? e.amount : null,
+      status: e.status,
+      submittedBy: e.submittedByEmployee ? who : '',
+    });
+    row.getCell('in').numFmt = MONEY;
+    row.getCell('out').numFmt = MONEY;
   }
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="cashbook.csv"');
-  res.send(lines.join('\n'));
+
+  // Totals row for the In / Out columns (I = In, J = Out).
+  if (entries.length) {
+    const last = entries.length + 1; // header is row 1
+    const totals = ws.addRow({ description: 'TOTAL' });
+    const n = totals.number;
+    ws.getCell(`I${n}`).value = { formula: `SUM(I2:I${last})` };
+    ws.getCell(`J${n}`).value = { formula: `SUM(J2:J${last})` };
+    ws.getCell(`I${n}`).numFmt = MONEY;
+    ws.getCell(`J${n}`).numFmt = MONEY;
+    totals.font = { bold: true };
+    totals.eachCell((cell) => { cell.border = { top: { style: 'thin', color: { argb: 'FFD4D4D8' } } }; });
+  }
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date()).reduce((a, p) => { a[p.type] = p.value; return a; }, {});
+  const fname = `cashbook_${parts.year}-${parts.month}-${parts.day}_${parts.hour}-${parts.minute}-${parts.second}.xlsx`;
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 /**
@@ -692,7 +742,7 @@ module.exports = {
   // entries
   listEntries, createEntry, updateEntry, deleteEntry, reviewVoucher, transfer,
   // reports
-  overview, daybook, summary, exportCsv, getReceipt,
+  overview, daybook, summary, exportExcel, getReceipt,
   // reused by the expense→cashbook sync (never-drift balance recompute)
   recomputeBalance,
 };

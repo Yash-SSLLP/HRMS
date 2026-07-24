@@ -76,7 +76,7 @@ router.post('/transfer', ctrl.transfer);
 router.get('/reports/daybook', ctrl.daybook);
 // GET /reports/summary — summary report; protected, requires 'cashbook.manage'.
 router.get('/reports/summary', ctrl.summary);
-// GET /reports/export — export ledger CSV; protected, requires 'cashbook.manage'.
-router.get('/reports/export', ctrl.exportCsv);
+// GET /reports/export — export ledger (.xlsx); protected, requires 'cashbook.manage'.
+router.get('/reports/export', ctrl.exportExcel);
 
 module.exports = router;

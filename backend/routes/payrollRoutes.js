@@ -21,7 +21,7 @@ const {
   markPayslipSent,
   emailPayslip,
   downloadPublicPayslip,
-  exportPayroll,
+  exportPayrollSheet,
   previewPayrollRun,
   runPayroll,
   previewEmployeeRun,
@@ -58,8 +58,8 @@ router.route('/')
   .get(listPayslips)
   .post(createPayslip);
 
-// GET /export — export payroll CSV; protected, requires 'payroll.manage'.
-router.get('/export', exportPayroll);
+// GET /export-sheet — export the company payroll register (.xlsx); requires 'payroll.manage'.
+router.get('/export-sheet', exportPayrollSheet);
 // GET /run — preview a payroll run; POST /run — execute it; protected, requires 'payroll.manage'.
 router.route('/run').get(previewPayrollRun).post(runPayroll);
 // GET /run-employee — preview a single-employee run; POST — execute it; protected, requires 'payroll.manage'.

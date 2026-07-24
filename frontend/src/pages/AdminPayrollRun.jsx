@@ -86,7 +86,10 @@ export default function AdminPayrollRun() {
       setRun(rRes.data);
       setSetup({
         salaryStructure: rRes.data.employee?.salaryStructure?._id || '',
-        annualCtc: rRes.data.employee?.annualCtc || '',
+        // Prefill the current CTC so "Give hike" always starts from the effective
+        // figure — fall back to the resolved CTC (from hike history) when the raw
+        // annualCtc field hasn't been set yet.
+        annualCtc: rRes.data.employee?.annualCtc || rRes.data.computed?.ctc || '',
       });
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
