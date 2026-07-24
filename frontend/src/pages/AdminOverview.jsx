@@ -20,8 +20,9 @@ import AttendanceReportWidget from '../components/AttendanceReportWidget';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import { hasPermission } from '../config/permissions';
 import {
-  FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiGrid, FiFileText,
+  FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiFileText,
 } from 'react-icons/fi';
+import { TbSitemap } from 'react-icons/tb';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
@@ -110,7 +111,7 @@ export default function AdminOverview() {
         <StatCard icon={<FiUserX />} tint="bg-red-100" iconColor="text-red-600" value={c.absentToday ?? '-'} label="Absent today" to="/admin/attendance" />
         <StatCard icon={<FiClock />} tint="bg-amber-100" iconColor="text-amber-600" value={c.pendingLeaves ?? '-'} label="Pending leaves" to="/admin/leave" />
         <StatCard icon={<FiAlertTriangle />} tint="bg-rose-100" iconColor="text-rose-600" value={c.openComplaints ?? '-'} label="Open complaints" to="/admin/complaints" />
-        <StatCard icon={<FiGrid />} tint="bg-sky-100" iconColor="text-sky-600" value={c.departments ?? '-'} label="Departments" to="/admin/departments" />
+        <StatCard icon={<TbSitemap />} tint="bg-sky-100" iconColor="text-sky-600" value={c.departments ?? '-'} label="Departments" to="/admin/departments" />
         <StatCard icon={<FiFileText />} tint="bg-orange-100" iconColor="text-orange-600" value={c.documentsIncomplete ?? '-'} label="Docs incomplete" to="/admin/employees" />
       </div>
 

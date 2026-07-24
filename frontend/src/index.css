@@ -6,6 +6,16 @@ html, body, #root {
   height: 100%;
 }
 
+/* Always reserve space for the vertical scrollbar so the layout width never
+   changes between a short page (no scrollbar) and a tall one (scrollbar). This
+   stops the horizontal "shake"/jump when navigating (e.g. My Portal → Admin).
+   `overflow-y: scroll` is the universal fallback for browsers without
+   scrollbar-gutter support. */
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 /* ---------------------------------------------------------------------------
    Theme tokens
    - Per-role accent colours (set via data-role on <html>).

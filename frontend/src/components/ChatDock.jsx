@@ -1,5 +1,7 @@
-// Floating WhatsApp-style chat dock mounted once by Layout, so it's present on
-// every authenticated page. Handles 1:1 connections and group chats over HTTP
+// WhatsApp-style chat dock mounted once by Layout. Hidden until opened from the
+// top-bar Chats launcher (shared open state via chatStore); when open it docks
+// bottom-right on desktop and full-screen on mobile. Handles 1:1 connections and
+// group chats over HTTP
 // polling (conversation list + incremental after-cursor thread sync), with a
 // localStorage cache for instant paint, read receipts, Jitsi video-call links,
 // group management, and a resigned-user send block. Light/dark themed.
@@ -8,6 +10,7 @@ import api from '../api/client';
 import AuthImage from './AuthImage';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
+import { useChatStore } from '../store/chatStore';
 import { confirmDialog } from './dialogs';
 
 const POLL_MS = 4000;        // conversation-list poll
@@ -121,7 +124,7 @@ function Avatar({ name, size = 38, group, photoUrl }) {
 const userPhotoUrl = (id, has, bust) => (has ? `/auth/users/${id}/avatar?b=${bust}` : null);
 const groupPhotoUrl = (id, has, bust) => (has ? `/chat/groups/${id}/photo?b=${bust}` : null);
 
-// Floating WhatsApp-style messaging dock with 1:1 + group chats.
+// WhatsApp-style messaging dock (1:1 + group chats), opened from the top bar.
 export default function ChatDock() {
   const mode = useThemeStore((s) => s.mode);
   const wa = mode === 'dark' ? WA_DARK : WA_LIGHT;
@@ -129,7 +132,9 @@ export default function ChatDock() {
 
   const [isMobile, setIsMobile] = useState(false);
   const [bust, setBust] = useState(0); // bump to force avatar/photo re-fetch
-  const [open, setOpen] = useState(false);
+  // Dock open/close lives in a shared store so the top-bar launcher can toggle it.
+  const open = useChatStore((s) => s.open);
+  const setOpen = useChatStore((s) => s.setOpen);
   const [connections, setConnections] = useState([]);
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
   const [groups, setGroups] = useState([]);
@@ -169,6 +174,9 @@ export default function ChatDock() {
   const unreadTotal =
     connections.reduce((s, c) => s + (c.unread || 0), 0) +
     groups.reduce((s, g) => s + (g.unread || 0), 0);
+
+  // Mirror the unread total into the shared store for the top-bar launcher badge.
+  useEffect(() => { useChatStore.getState().setUnread(unreadTotal); }, [unreadTotal]);
 
   useEffect(() => {
     const update = () => setIsMobile(window.innerWidth <= 639);
@@ -452,24 +460,10 @@ export default function ChatDock() {
 
   const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
-  // --- Phone, collapsed: a circular floating button ---
-  if (isMobile && !open && !showFind && !showGroup) {
-    return (
-      <button onClick={() => setOpen(true)} aria-label="Open chats"
-        className="fixed bottom-5 right-5 z-40 w-14 h-14 rounded-full shadow-xl flex items-center justify-center print:hidden"
-        style={{ background: '#008069' }}>
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff">
-          <path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z" />
-        </svg>
-        {unreadTotal > 0 && (
-          <span className="chat-badge absolute -top-0.5 -right-0.5 text-[10px] rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center font-bold"
-            style={{ background: wa.badge, color: '#0b141a', border: '2px solid #fff' }}>
-            {unreadTotal > 9 ? '9+' : unreadTotal}
-          </span>
-        )}
-      </button>
-    );
-  }
+  // Closed: the dock is hidden entirely — the top-bar launcher (in Layout) opens
+  // it. This removes the old always-on bottom-right bar / floating button that
+  // overlapped page content. Modals can still be open on their own overlay.
+  if (!open && !showFind && !showGroup) return null;
 
   const windowClass = isMobile ? 'absolute inset-0 flex flex-col' : 'w-80 max-w-[92vw] rounded-t-xl shadow-2xl flex flex-col overflow-hidden';
   const windowStyle = isMobile ? { background: wa.chatBg } : { height: '28rem', background: wa.chatBg, border: `1px solid ${wa.border}` };
@@ -580,7 +574,7 @@ export default function ChatDock() {
       {(!isMobile || !active) && (
         <div className={panelClass} style={{ background: wa.panel, border: isMobile ? 'none' : `1px solid ${wa.border}` }}>
           <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: wa.header }}>
-            <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+            <button onClick={() => setOpen(false)} className="flex items-center gap-2 flex-1 min-w-0 text-left" aria-label="Minimize chats">
               <span className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,.18)' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill={wa.headerText}><path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z"/></svg>
               </span>
@@ -599,8 +593,8 @@ export default function ChatDock() {
               className="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90" style={{ background: 'rgba(255,255,255,.18)', color: wa.headerText }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
             </button>
-            <button onClick={() => setOpen((o) => !o)} className="px-1 text-sm" style={{ color: wa.headerText }} aria-label="Collapse">
-              {isMobile ? '×' : (open ? '▾' : '▴')}
+            <button onClick={() => setOpen(false)} className="px-1.5 text-lg leading-none" style={{ color: wa.headerText }} aria-label="Close chats" title="Close">
+              ×
             </button>
           </div>
 

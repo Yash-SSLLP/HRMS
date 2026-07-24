@@ -9,6 +9,7 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import api from '../api/client';
 import ChatDock from './ChatDock';
+import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
 import { FiPlus, FiMinus, FiSun, FiMoon, FiBell, FiCalendar, FiClock } from 'react-icons/fi';
@@ -257,6 +258,60 @@ function NotificationBell({ isAdmin, portal }) {
         </div>
       )}
     </div>
+  );
+}
+
+// A premium top-bar shortcut pill (gradient fill, soft tinted glow, white icon +
+// label). Matches the Chats launcher so the quick shortcuts read as one set.
+function NavPill({ to, icon, label, gradient, glow }) {
+  return (
+    <Link
+      to={to}
+      title={label}
+      aria-label={label}
+      className="inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold text-white transition-all duration-150 hover:brightness-105 active:scale-95"
+      style={{ background: gradient, boxShadow: `0 2px 6px ${glow}, inset 0 1px 0 rgba(255,255,255,.28)` }}
+    >
+      {icon}
+      <span className="hidden sm:inline">{label}</span>
+    </Link>
+  );
+}
+
+// Top-bar chat launcher — a premium WhatsApp-style green pill that toggles the
+// shared chat dock (ChatDock reads the same store) and shows the live unread
+// badge. Sits just left of the global search.
+function ChatLauncher() {
+  const toggle = useChatStore((s) => s.toggle);
+  const open = useChatStore((s) => s.open);
+  const unread = useChatStore((s) => s.unread);
+  return (
+    <button
+      onClick={toggle}
+      title="Chats"
+      aria-label="Chats"
+      className="group relative inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold text-white transition-all duration-150 hover:brightness-105 active:scale-95"
+      style={{
+        // WhatsApp brand gradient; a deeper teal-green when the dock is open.
+        background: open
+          ? 'linear-gradient(135deg, #12b06a 0%, #075E54 100%)'
+          : 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)',
+        boxShadow: '0 2px 6px rgba(18,140,126,.35), inset 0 1px 0 rgba(255,255,255,.30)',
+      }}
+    >
+      {/* WhatsApp-style chat bubble */}
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+        className="drop-shadow-sm">
+        <path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z" />
+      </svg>
+      <span className="hidden sm:inline">Chats</span>
+      {unread > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none"
+          style={{ boxShadow: '0 0 0 2px #fff' }}>
+          {unread > 9 ? '9+' : unread}
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -591,18 +646,24 @@ export default function Layout({ navItems = [], sectionTitle }) {
             <span className="text-xl leading-none">☰</span>
           </button>
 
-          {/* Quick shortcuts — available to everyone, in both portals. Icon shows
-              on all sizes; the label appears from sm up so each is unmistakable. */}
-          <Link to={calendarPath} title="Calendar" aria-label="Calendar"
-            className="inline-flex items-center gap-1.5 shrink-0 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900">
-            <FiCalendar size={16} strokeWidth={2} />
-            <span className="hidden sm:inline">Calendar</span>
-          </Link>
-          <Link to={attendancePath} title="Attendance" aria-label="Attendance"
-            className="inline-flex items-center gap-1.5 shrink-0 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900">
-            <FiClock size={16} strokeWidth={2} />
-            <span className="hidden sm:inline">Attendance</span>
-          </Link>
+          {/* Quick shortcuts — available to everyone, in both portals. Premium
+              gradient pills; the label appears from sm up so each is unmistakable. */}
+          <NavPill
+            to={calendarPath}
+            label="Calendar"
+            icon={<FiCalendar size={16} strokeWidth={2.2} />}
+            gradient="linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)"
+            glow="rgba(37,99,235,.35)"
+          />
+          <NavPill
+            to={attendancePath}
+            label="Attendance"
+            icon={<FiClock size={16} strokeWidth={2.2} />}
+            gradient="linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)"
+            glow="rgba(109,40,217,.35)"
+          />
+
+          <ChatLauncher />
 
           <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
 
@@ -615,31 +676,68 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
           <div className="flex items-center gap-1 sm:gap-2 ml-auto">
             {isAdmin && canEmployeePortal && (
-              <div className="hidden sm:flex items-center gap-1 bg-gray-100 rounded-full p-0.5 mr-1">
+              // Sliding segmented portal switch — an accent knob slides under the
+              // active portal. Matches the theme toggle's height + track styling.
+              <div
+                className="relative hidden sm:grid grid-cols-2 items-center rounded-full mr-1"
+                style={{
+                  height: 30, padding: 3,
+                  background: mode === 'dark' ? '#3b4457' : '#e5e7eb',
+                  boxShadow: 'inset 0 1px 2px rgba(0,0,0,.12)',
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  className="accent-bg absolute rounded-full transition-transform duration-200"
+                  style={{
+                    top: 3, bottom: 3, left: 3, width: 'calc(50% - 3px)',
+                    boxShadow: '0 1px 3px rgba(0,0,0,.25)',
+                    transform: portal === 'employee' ? 'translateX(100%)' : 'translateX(0)',
+                  }}
+                />
                 <Link
                   to="/admin"
-                  className={`text-sm px-3 py-1 rounded-full transition-colors ${
-                    portal === 'admin' ? 'accent-bg text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className="relative z-10 flex h-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors"
+                  style={{ color: portal === 'admin' ? '#fff' : (mode === 'dark' ? '#cbd5e1' : '#4b5563') }}
                 >
                   Admin
                 </Link>
                 <Link
                   to="/employee"
-                  className={`text-sm px-3 py-1 rounded-full transition-colors ${
-                    portal === 'employee' ? 'accent-bg text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className="relative z-10 flex h-full items-center justify-center whitespace-nowrap rounded-full px-4 text-sm font-semibold transition-colors"
+                  style={{ color: portal === 'employee' ? '#fff' : (mode === 'dark' ? '#cbd5e1' : '#4b5563') }}
                 >
                   My Portal
                 </Link>
               </div>
             )}
+            {/* Segmented sun/moon theme toggle: a white knob slides to the active
+                side; the active icon lights up (amber sun / indigo moon). */}
             <button
               onClick={toggleMode}
               title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="topbar-icon-btn"
+              aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="relative shrink-0 rounded-full transition-colors duration-200"
+              style={{
+                width: 64, height: 30,
+                background: mode === 'dark' ? '#3b4457' : '#e5e7eb',
+                boxShadow: 'inset 0 1px 2px rgba(0,0,0,.12)',
+              }}
             >
-              {mode === 'dark' ? <FiSun size={19} strokeWidth={2} /> : <FiMoon size={18} strokeWidth={2} />}
+              {/* sliding white knob — centered under the active half */}
+              <span
+                className="absolute rounded-full bg-white transition-transform duration-200"
+                style={{
+                  top: 3, left: 4, width: 24, height: 24,
+                  boxShadow: '0 1px 3px rgba(0,0,0,.28)',
+                  transform: mode === 'dark' ? 'translateX(32px)' : 'translateX(0)',
+                }}
+              />
+              {/* icons in two equal halves so each lines up with the knob */}
+              <span className="relative grid h-full grid-cols-2 items-center justify-items-center" style={{ zIndex: 1 }}>
+                <FiSun size={15} strokeWidth={2.4} color={mode === 'dark' ? '#94a3b8' : '#f59e0b'} />
+                <FiMoon size={14} strokeWidth={2.4} color={mode === 'dark' ? '#6366f1' : '#94a3b8'} />
+              </span>
             </button>
             <NotificationBell isAdmin={isAdmin} portal={portal} />
             <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
@@ -647,9 +745,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
           </div>
         </header>
 
-        {/* pb-24 keeps page content (e.g. bottom action buttons) clear of the
-            fixed ChatDock bar in the bottom-right corner. */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6 pb-24">
+        {/* The chat dock is now launched from the top bar and hidden until opened
+            (no always-on bottom bar), so no extra bottom padding is needed here. */}
+        <main className="flex-1 min-w-0 p-4 sm:p-6">
           <Suspense fallback={<PageSkeleton />}>
             <Outlet />
           </Suspense>

@@ -212,7 +212,7 @@ export default function AdminPayrollRun() {
 
       {/* Filters + OK */}
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
-        <select value={employee} onChange={(e) => setEmployee(e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[210px]">
+        <select value={employee} onChange={(e) => { setEmployee(e.target.value); load(e.target.value); }} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[210px]">
           {employees.map((p) => <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '-'})</option>)}
         </select>
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
