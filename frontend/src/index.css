@@ -63,6 +63,33 @@ a, button, input, select, textarea,
   transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease;
 }
 
+/* Premium page transition — the routed content fades and gently rises on every
+   navigation (e.g. My Portal → Admin). No animation-fill-mode, so the transform
+   reverts to `none` when it finishes and never creates a containing block that
+   would break fixed modals / sticky headers inside a page. */
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-transition {
+  animation: pageEnter .28s cubic-bezier(.22, .61, .36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-transition { animation: none; }
+}
+
+/* Dark/light circular reveal (View Transitions API). The default cross-fade is
+   turned off; the JS (handleThemeToggle) animates a clip-path circle on the new
+   snapshot so the new theme wipes in from the toggle button. The new snapshot
+   sits on top of the old one during the transition. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
+
 /* Softer, more modern card shadows */
 .shadow { box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 12px rgba(15, 23, 42, .06); }
 .shadow-lg { box-shadow: 0 10px 30px rgba(15, 23, 42, .18); }

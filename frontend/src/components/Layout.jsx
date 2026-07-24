@@ -4,6 +4,7 @@
 // bell, profile menu) and a <Suspense><Outlet/></Suspense> content area plus the
 // docked chat. `navItems`/`sectionTitle` select the admin vs employee portal.
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
@@ -531,6 +532,35 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
+  // Dark/light toggle with a circular-reveal (View Transitions API): the new
+  // theme wipes in as a circle expanding from the toggle button. Falls back to
+  // an instant flip when the API is unavailable or reduced motion is requested.
+  const handleThemeToggle = (e) => {
+    const canAnimate =
+      typeof document !== 'undefined' &&
+      document.startViewTransition &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!canAnimate) { toggleMode(); return; }
+
+    // Originate the reveal from the toggle's centre (not the raw cursor point) so
+    // it's consistent wherever the button is clicked — and works for keyboard
+    // activation, where clientX/Y would be 0,0.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+    const transition = document.startViewTransition(() => {
+      // flushSync so the .dark class is on <html> before the "new" snapshot.
+      flushSync(() => toggleMode());
+    });
+    transition.ready.then(() => {
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`] },
+        { duration: 550, easing: 'cubic-bezier(.65, 0, .35, 1)', pseudoElement: '::view-transition-new(root)' }
+      );
+    }).catch(() => {});
+  };
+
   // Re-sync the cached user from the server on load so the top-bar profile
   // reflects any changes made since login (e.g. an approved name-change ticket
   // or an admin edit), instead of showing the stale name until re-login.
@@ -714,7 +744,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
             {/* Segmented sun/moon theme toggle: a white knob slides to the active
                 side; the active icon lights up (amber sun / indigo moon). */}
             <button
-              onClick={toggleMode}
+              onClick={handleThemeToggle}
               title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               className="relative shrink-0 rounded-full transition-colors duration-200"
@@ -749,7 +779,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
             (no always-on bottom bar), so no extra bottom padding is needed here. */}
         <main className="flex-1 min-w-0 p-4 sm:p-6">
           <Suspense fallback={<PageSkeleton />}>
-            <Outlet />
+            <div key={pathname} className="page-transition">
+              <Outlet />
+            </div>
           </Suspense>
         </main>
       </div>
