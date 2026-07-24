@@ -529,6 +529,22 @@ const completeExit = asyncHandler(async (req, res) => {
     throw new Error('Cannot complete a Cancelled exit');
   }
 
+  // Last-working-day gate: a resigning employee keeps their access through their
+  // last working day — the account must NOT be released before then. Normally the
+  // notice-period worker releases it automatically the day after the LWD; HR can
+  // release early (e.g. termination for cause / garden leave) only by explicitly
+  // passing `force`/`releaseImmediately`.
+  const force = req.body?.force === true || req.body?.releaseImmediately === true;
+  const todayIST = startOfDayIST(new Date());
+  const lwdIST = exit.lastWorkingDay ? startOfDayIST(exit.lastWorkingDay) : null;
+  if (!force && lwdIST && todayIST < lwdIST) {
+    res.status(400);
+    throw new Error(
+      `This employee's last working day is ${fmtD(exit.lastWorkingDay)}. Their access stays active until then and is ` +
+      'released automatically after it. To revoke access immediately anyway (e.g. termination), confirm early release.'
+    );
+  }
+
   // No-dues gate: every department clearance section must be completed before
   // the account is released. HR can record an override (see overrideClearance).
   if (!clearanceSatisfied(exit)) {

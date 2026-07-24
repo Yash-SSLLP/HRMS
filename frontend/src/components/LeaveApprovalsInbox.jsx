@@ -131,6 +131,7 @@ export default function LeaveApprovalsInbox() {
                     </div>
                     <div className="text-xs text-gray-500">
                       {r.leaveType} · {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d
+                      {r.lopDays > 0 && <span className="text-red-600 font-medium"> · {r.lopDays} LOP</span>}
                       {r.reason ? ` · “${r.reason}”` : ''}
                     </div>
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>

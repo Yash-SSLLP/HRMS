@@ -9,6 +9,7 @@ const {
   getMyBalance,
   listMyRequests,
   applyForLeave,
+  previewLeave,
   cancelMyRequest,
   listAllRequests,
   approveRequest,
@@ -27,6 +28,8 @@ router.use(protect);
 router.get('/me/balance', getMyBalance);
 // GET /me/requests — current user's leave requests; protected.
 router.get('/me/requests', listMyRequests);
+// GET /me/leave-preview — preview paid-vs-LOP split for a would-be request; protected.
+router.get('/me/leave-preview', previewLeave);
 // POST /me/requests — apply for leave; protected.
 router.post('/me/requests', applyForLeave);
 // PATCH /me/requests/:id/cancel — cancel own leave request; protected.

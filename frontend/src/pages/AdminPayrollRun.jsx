@@ -314,6 +314,7 @@ export default function AdminPayrollRun() {
                   <Stat label="Half days" value={c.counts.halfDay} />
                   <Stat label={`Leave (of ${c.policy?.paidLeaveQuota ?? 2})`} value={c.counts.onLeave} warn={c.policy?.excessLeave > 0} />
                   <Stat label="Absent" value={c.counts.absent} warn={c.counts.absent > 0} />
+                  <Stat label="No-punch (LOP)" value={c.counts.noPunchAbsent ?? 0} warn={(c.counts.noPunchAbsent ?? 0) > 0} />
                 </div>
                 {c.policy && (
                   <>
@@ -322,10 +323,12 @@ export default function AdminPayrollRun() {
                       <Stat label={`Late arrivals (of ${c.policy.lateAllowance})`} value={c.policy.lateDays} warn={c.policy.excessLate > 0} />
                       <Stat label="Excess late" value={c.policy.excessLate} warn={c.policy.excessLate > 0} />
                       <Stat label="Excess leave" value={c.policy.excessLeave} warn={c.policy.excessLeave > 0} />
+                      <Stat label="No-punch days" value={c.policy.noPunchDays ?? 0} warn={(c.policy.noPunchDays ?? 0) > 0} />
                     </div>
                     <p className="text-[11px] text-gray-400 mt-2">
                       {c.policy.paidLeaveQuota} paid leaves/month - unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
                       {' '}First {c.policy.lateAllowance} lates free; each extra costs {inr(c.policy.lateRate)}/day (monthly Basic {c.policy.monthlyBasic < 25000 ? '<' : '≥'} ₹25,000).
+                      {' '}Working days with no punch-in/out are LOP ({c.policy.noPunchDays ?? 0} this month) unless regularised.
                     </p>
                   </>
                 )}

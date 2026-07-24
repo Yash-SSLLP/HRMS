@@ -13,6 +13,7 @@ const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
+const Holiday = require('../models/Holiday');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { renderPayslip } = require('../services/payslipPdf');
 const { enqueueMail } = require('../services/email');
@@ -193,7 +194,7 @@ const exportPayroll = asyncHandler(async (req, res) => {
 
 async function buildRunRows(year, month) {
   const profiles = await EmployeeProfile.find()
-    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory')
+    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit')
     .populate('user', 'firstName lastName email isActive')
     .populate('salaryStructure')
     .sort('employeeCode');
@@ -319,6 +320,7 @@ const runPayroll = asyncHandler(async (req, res) => {
           status: 'Draft',
           remarks: `Payroll run: ${r.profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days`
             + ` · leave ${pol.leaveTaken}/${pol.paidLeaveQuota}` + (pol.excessLeave ? ` (${pol.excessLeave}d LOP)` : pol.unusedLeave ? ` (₹${pol.leaveIncentive} incentive)` : '')
+            + (pol.noPunchDays ? ` · no-punch ${pol.noPunchDays}d LOP` : '')
             + ` · late ${pol.lateDays}/${pol.lateAllowance}` + (pol.excessLate ? ` (₹${pol.latePenalty} penalty)` : ''),
         });
         created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
@@ -432,6 +434,37 @@ async function computeEmployeeRun(profile, year, month) {
   const absent = count('Absent');
   const onLeaveDays = count('OnLeave');
 
+  // ----- No-punch working days → LOP (unless regularised) -----
+  // A working day (not a Sunday or listed holiday) that is already over but has
+  // NO punch-in and NO punch-out — and no leave / holiday / weekly-off credit —
+  // is treated as Loss of Pay. Regularising the day writes a check-in (or a
+  // Present/Leave status), which credits it back. These days usually have no
+  // attendance record at all, so they aren't caught by the `absent` count above.
+  const holidays = await Holiday.find({ date: { $gte: start, $lt: end } }).select('date').lean().catch(() => []);
+  const holidayKeys = new Set((holidays || []).map((h) => ymdIST(h.date)));
+  const recByKey = new Map(records.map((r) => [ymdIST(r.date), r]));
+  const CREDITED = new Set(['Present', 'HalfDay', 'OnLeave', 'Holiday', 'WeeklyOff']);
+  const todayKey = ymdIST(new Date());
+  const joinKey = profile.dateOfJoining ? ymdIST(profile.dateOfJoining) : null;
+  const exitKey = profile.dateOfExit ? ymdIST(profile.dateOfExit) : null;
+  let noPunchDays = 0;
+  for (let i = 0; i < daysInMonth; i += 1) {
+    // Midday IST anchor so the calendar day is unambiguous.
+    const key = ymdIST(new Date(start.getTime() + i * 86400000 + 12 * 3600000));
+    if (key >= todayKey) continue;                // today or future — not yet due (may still punch in)
+    if (joinKey && key < joinKey) continue;       // before this employee joined
+    if (exitKey && key > exitKey) continue;       // after they exited
+    const [Y, M, D] = key.split('-').map(Number);
+    if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) continue; // Sunday
+    if (holidayKeys.has(key)) continue;                              // holiday
+    const rec = recByKey.get(key);
+    if (!rec) { noPunchDays += 1; continue; }     // no record at all → no punch
+    if (rec.status === 'Absent') continue;        // already in `absent`
+    if (rec.checkIn) continue;                    // punched in (incl. regularised)
+    if (CREDITED.has(rec.status)) continue;       // leave / holiday / present credit
+    noPunchDays += 1;                             // record exists but no punch/credit
+  }
+
   // ----- Monthly paid-leave quota (2 days) -----
   // Leave days beyond the quota become LOP; unused quota converts to extra pay
   // (leave incentive) at one day's salary each. Settled monthly, never carried.
@@ -446,9 +479,10 @@ async function computeEmployeeRun(profile, year, month) {
   }).length;
   const excessLate = Math.max(0, lateDays - LATE_ALLOWANCE);
 
-  // Paid days: everything except Absent (full LOP), half of each HalfDay, and
-  // leave days beyond the monthly paid-leave quota.
-  const paidDays = +(daysInMonth - absent - 0.5 * halfDay - excessLeave).toFixed(1);
+  // Paid days: everything except Absent (full LOP), no-punch days (full LOP unless
+  // regularised), half of each HalfDay, and leave days beyond the monthly paid
+  // quota.
+  const paidDays = +(daysInMonth - absent - noPunchDays - 0.5 * halfDay - excessLeave).toFixed(1);
   const lopDays = +(daysInMonth - paidDays).toFixed(1);
 
   // Active loan/advance recovery for this employee (Loan.employee is the User).
@@ -518,7 +552,7 @@ async function computeEmployeeRun(profile, year, month) {
     daysInMonth,
     counts: {
       present: count('Present'), halfDay, onLeave: count('OnLeave'),
-      absent, weeklyOff: count('WeeklyOff'), holiday: count('Holiday'),
+      absent, noPunchAbsent: noPunchDays, weeklyOff: count('WeeklyOff'), holiday: count('Holiday'),
     },
     hours: { daysPresent, totalHours, avgHours, compOff },
     // Attendance-policy roll-up: monthly paid-leave quota + late allowance.
@@ -528,6 +562,7 @@ async function computeEmployeeRun(profile, year, month) {
       excessLeave,          // leave days beyond the quota → added to LOP
       unusedLeave,          // quota not used → paid out as leaveIncentive
       leaveIncentive,
+      noPunchDays,          // past working days with no punch (LOP unless regularised)
       lateAllowance: LATE_ALLOWANCE,
       lateDays,
       excessLate,           // late days beyond the allowance → penalised
@@ -562,7 +597,7 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
   const profile = await EmployeeProfile.findById(req.query.employee)
-    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory')
+    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit')
     .populate('user', 'firstName lastName email')
     .populate('salaryStructure');
   if (!profile) {
@@ -629,6 +664,7 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
     remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
       + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
       + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
+      + (p.noPunchDays ? ` · no-punch ${p.noPunchDays}d LOP` : '')
       + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : ''),
   };
   if (payslip) {

@@ -204,6 +204,8 @@ export default function App() {
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
+        <Route path="approvals" element={<AdminLeaveApprovals />} />
+        {/* Back-compat: the page was renamed from "Leave Approvals" to the unified "Approvals". */}
         <Route path="leave-approvals" element={<AdminLeaveApprovals />} />
         <Route path="expenses" element={<AdminExpenses />} />
         <Route path="travel" element={<AdminTravel />} />

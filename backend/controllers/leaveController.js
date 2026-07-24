@@ -14,10 +14,18 @@ const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
 const { enqueueMail } = require('../services/email');
 const { notify, notifyMany } = require('../services/notify');
-const { daysInclusive, currentYear, startOfDayIST, ymdIST } = require('../utils/dateHelpers');
+const { daysInclusive, currentYear, startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 
-// Leave types that draw down from a tracked balance bucket
-const BALANCED_TYPES = ['EL', 'CL', 'SL', 'ML'];
+// Company leave policy: 2 PAID leave days per calendar month, settled monthly
+// (no carry-forward). Any leave day beyond the 2/month quota is Loss of Pay
+// (unpaid). Mirrors PAID_LEAVE_QUOTA in payrollController — keep them in sync.
+const MONTHLY_PAID_LEAVE = 2;
+
+// Leave types that draw down from a tracked balance bucket. Only Maternity (ML)
+// is a banked entitlement now — EL/CL/SL are governed by the monthly paid-leave
+// quota above (their pay treatment is uniform), so they never draw a bucket and
+// never block approval on a zero balance.
+const BALANCED_TYPES = ['ML'];
 
 // Build the reporting-hierarchy approval ladder for an applicant. Walk up the
 // `reportingManager` links (each is a User → find THAT user's EmployeeProfile to
@@ -261,6 +269,140 @@ function adjustBalance(balance, leaveType, delta) {
   bucket.balance = (bucket.balance || 0) - delta;
 }
 
+// ===== Monthly paid-leave quota (2 days/month, extra → LOP) =====
+
+// The IST-midnight instants covered by [start, end] inclusive.
+function eachDayInclusive(startDate, endDate) {
+  const days = [];
+  let cur = startOfDayIST(startDate);
+  const last = startOfDayIST(endDate).getTime();
+  let guard = 0;
+  while (cur.getTime() <= last && guard < 400) {
+    guard += 1;
+    days.push(cur);
+    cur = startOfDayIST(new Date(cur.getTime() + 24 * 60 * 60 * 1000)); // +1 day (IST has no DST)
+  }
+  return days;
+}
+
+// Working days (Sundays + holidays excluded) covered by [start, end], grouped by
+// IST calendar month → { 'YYYY-MM': ['YYYY-MM-DD', …] } in chronological order.
+// These are the only days that carry a pay effect (matches attendance stamping).
+async function workingDaysByMonth(startDate, endDate) {
+  const days = eachDayInclusive(startDate, endDate);
+  if (!days.length) return {};
+  const holidays = await Holiday.find({ date: { $gte: days[0], $lte: days[days.length - 1] } })
+    .select('date').lean().catch(() => []);
+  const holidayKeys = new Set((holidays || []).map((h) => ymdIST(h.date)));
+  const byMonth = {};
+  for (const d of days) {
+    const key = ymdIST(d);
+    const [Y, M, D] = key.split('-').map(Number);
+    if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) continue; // Sunday
+    if (holidayKeys.has(key)) continue;                              // holiday
+    const ym = `${Y}-${String(M).padStart(2, '0')}`;
+    (byMonth[ym] ||= []).push(key);
+  }
+  return byMonth;
+}
+
+// Count of PAID leave days already committed in an IST month `ym` ('YYYY-MM') for
+// an employee, so a new request knows how much of the 2-day quota is left. Sums
+// (a) already-approved leave days stamped OnLeave on the calendar, plus (b) the
+// working days of the employee's other still-Pending non-LOP requests overlapping
+// the month (excluding `excludeRequestId`). (b) is a conservative estimate that
+// protects the quota when several requests are queued at once.
+async function paidLeaveUsedInMonth(employeeId, ym, excludeRequestId = null) {
+  const [Y, M] = ym.split('-').map(Number);
+  const { start, end } = monthRangeIST(Y, M); // [start, end)
+  const stamped = await Attendance.countDocuments({
+    employee: employeeId,
+    status: 'OnLeave',
+    date: { $gte: start, $lt: end },
+  });
+  const pendFilter = {
+    employee: employeeId,
+    status: 'Pending',
+    leaveType: { $ne: 'LOP' },
+    startDate: { $lt: end },
+    endDate: { $gte: start },
+  };
+  if (excludeRequestId) pendFilter._id = { $ne: excludeRequestId };
+  const pending = await LeaveRequest.find(pendFilter).select('startDate endDate isHalfDay').lean();
+  let pendingDays = 0;
+  for (const r of pending) {
+    const byMonth = await workingDaysByMonth(r.startDate, r.endDate);
+    const n = byMonth[ym]?.length || 0;
+    pendingDays += r.isHalfDay ? Math.min(0.5, n) : n;
+  }
+  return stamped + pendingDays;
+}
+
+// Split a leave request's working days into PAID vs LOP under the monthly quota.
+// - LOP type  → every day is LOP (explicitly unpaid, no cap).
+// - ML type   → every day is paid (maternity is not subject to the monthly cap).
+// - otherwise → the first (2 − alreadyUsed) working days of each calendar month
+//   are paid; the rest become LOP.
+// Returns day counts plus the set of LOP day-keys and a per-month breakdown so
+// the calendar can be stamped and the employee shown the split at apply time.
+async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, isHalfDay }, excludeRequestId = null) {
+  const byMonth = await workingDaysByMonth(startDate, endDate);
+  const months = Object.keys(byMonth).sort();
+  const workingKeys = months.flatMap((ym) => byMonth[ym]);
+  const half = !!isHalfDay;
+  // Half-day requests cover a single day counted as 0.5.
+  const weightOf = () => (half ? 0.5 : 1);
+
+  const lopKeys = new Set();
+  const perMonth = [];
+  let paidDays = 0;
+  let lopDays = 0;
+
+  if (leaveType === 'LOP') {
+    for (const key of workingKeys) lopKeys.add(key);
+    lopDays = half ? Math.min(0.5, workingKeys.length) : workingKeys.length;
+    return { paidDays: 0, lopDays, lopKeys, workingKeys, perMonth };
+  }
+  if (leaveType === 'ML') {
+    paidDays = half ? Math.min(0.5, workingKeys.length) : workingKeys.length;
+    return { paidDays, lopDays: 0, lopKeys, workingKeys, perMonth };
+  }
+
+  for (const ym of months) {
+    const used = await paidLeaveUsedInMonth(employeeId, ym, excludeRequestId);
+    let remaining = Math.max(0, MONTHLY_PAID_LEAVE - used);
+    let monthPaid = 0;
+    let monthLop = 0;
+    for (const key of byMonth[ym]) {
+      const w = weightOf();
+      // A calendar day is stamped atomically (OnLeave or Absent), so it is paid
+      // only when the whole day's weight fits in the remaining quota.
+      if (remaining >= w) {
+        remaining -= w;
+        monthPaid += w;
+        paidDays += w;
+      } else {
+        lopKeys.add(key);
+        monthLop += w;
+        lopDays += w;
+      }
+    }
+    perMonth.push({ ym, working: byMonth[ym].length, alreadyUsed: used, quota: MONTHLY_PAID_LEAVE, paid: monthPaid, lop: monthLop });
+  }
+  return { paidDays, lopDays, lopKeys, workingKeys, perMonth };
+}
+
+// Paid leave days actually taken (stamped OnLeave) in an IST month — for the
+// employee's dashboard "used this month" figure (approved leave only).
+async function stampedPaidLeaveInMonth(employeeId, year, month) {
+  const { start, end } = monthRangeIST(year, month);
+  return Attendance.countDocuments({
+    employee: employeeId,
+    status: 'OnLeave',
+    date: { $gte: start, $lt: end },
+  });
+}
+
 // ===== Employee self-service =====
 
 /**
@@ -274,7 +416,22 @@ const getMyBalance = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
   const year = Number(req.query.year) || currentYear();
   const balance = await getOrCreateBalance(profile._id, year);
-  res.json({ balance });
+
+  // Monthly paid-leave quota status for the current IST month (2 paid days/month,
+  // extra → LOP). Drives the dashboard/leave-page "this month" indicator.
+  const [nowY, nowM] = ymdIST().split('-').map(Number);
+  const usedThisMonth = await stampedPaidLeaveInMonth(profile._id, nowY, nowM);
+  const monthly = {
+    year: nowY,
+    month: nowM,
+    quota: MONTHLY_PAID_LEAVE,
+    used: usedThisMonth,
+    remaining: Math.max(0, MONTHLY_PAID_LEAVE - usedThisMonth),
+  };
+
+  const out = balance.toObject();
+  out.monthly = monthly;
+  res.json({ balance: out, monthly });
 });
 
 /**
@@ -336,6 +493,10 @@ const applyForLeave = asyncHandler(async (req, res) => {
     }
   }
 
+  // Apply the monthly paid-leave quota (2 paid days/calendar month) up front so
+  // the record — and the employee — know how much of this request is LOP.
+  const split = await computeLeaveSplit(profile._id, { leaveType, startDate, endDate, isHalfDay }, null);
+
   // Build the reporting-hierarchy approval ladder. The first rung is Pending
   // (their turn); the rest wait. Empty chain = no reporting manager → HR decides.
   const chain = await buildApprovalChain(profile);
@@ -349,6 +510,8 @@ const applyForLeave = asyncHandler(async (req, res) => {
     isHalfDay: !!isHalfDay,
     halfDaySession,
     totalDays,
+    paidDays: split.paidDays,
+    lopDays: split.lopDays,
     reason,
     approvalChain: chain,
     currentApprover: chain.length ? chain[0].approver : null,
@@ -378,7 +541,36 @@ const applyForLeave = asyncHandler(async (req, res) => {
     }
   }
 
-  res.status(201).json({ request });
+  res.status(201).json({ request, split: { paidDays: split.paidDays, lopDays: split.lopDays, perMonth: split.perMonth } });
+});
+
+/**
+ * Preview the paid-vs-LOP split for a would-be leave request without creating it.
+ * Lets the apply form show, live, how many days will be Loss of Pay under the
+ * 2/month quota.
+ * @route GET /api/leave/me/leave-preview?leaveType=&startDate=&endDate=&isHalfDay=
+ * @returns {{paidDays, lopDays, quota, perMonth}}
+ */
+// GET /api/leave/me/leave-preview
+const previewLeave = asyncHandler(async (req, res) => {
+  const profile = await getMyProfileOrFail(req.user._id, res);
+  const { leaveType, startDate, endDate, isHalfDay } = req.query;
+  if (!leaveType || !startDate || !endDate) {
+    res.status(400);
+    throw new Error('leaveType, startDate, endDate are required');
+  }
+  if (!LEAVE_TYPES.includes(leaveType)) {
+    res.status(400);
+    throw new Error(`Invalid leaveType. Allowed: ${LEAVE_TYPES.join(', ')}`);
+  }
+  const half = isHalfDay === 'true' || isHalfDay === '1' || isHalfDay === true;
+  const split = await computeLeaveSplit(profile._id, { leaveType, startDate, endDate, isHalfDay: half }, null);
+  res.json({
+    paidDays: split.paidDays,
+    lopDays: split.lopDays,
+    quota: MONTHLY_PAID_LEAVE,
+    perMonth: split.perMonth,
+  });
 });
 
 /**
@@ -505,18 +697,26 @@ function eachLeaveDay(request) {
 
 async function stampLeaveAttendance(request) {
   try {
-    const days = eachLeaveDay(request);
-    if (!days.length) return;
-    const holidays = await Holiday.find({ date: { $gte: days[0], $lte: days[days.length - 1] } })
-      .select('date').lean().catch(() => []);
-    const holidayKeys = new Set((holidays || []).map((h) => ymdIST(h.date)));
-    const stampStatus = request.leaveType === 'LOP' ? 'Absent' : 'OnLeave';
+    // Re-run the quota split at approval time (authoritative — other leave in the
+    // month may have been approved since apply). Paid days → OnLeave (count toward
+    // the 2/month quota); LOP days → Absent (unpaid). Persist the final split back
+    // onto the request so payslip/reporting reflect what was actually granted.
+    const split = await computeLeaveSplit(
+      request.employee,
+      { leaveType: request.leaveType, startDate: request.startDate, endDate: request.endDate, isHalfDay: request.isHalfDay },
+      request._id
+    );
+    if (request.paidDays !== split.paidDays || request.lopDays !== split.lopDays) {
+      request.paidDays = split.paidDays;
+      request.lopDays = split.lopDays;
+      try { await request.save(); } catch (_) { /* best-effort */ }
+    }
+    if (!split.workingKeys.length) return;
+
     const remark = `${LEAVE_AUTO_REMARK} (${request.leaveType})`;
-    for (const day of days) {
-      const key = ymdIST(day);
-      const [Y, M, D] = key.split('-').map(Number);
-      if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) continue; // Sunday
-      if (holidayKeys.has(key)) continue;                              // holiday
+    for (const key of split.workingKeys) {
+      const day = startOfDayIST(`${key}T00:00:00+05:30`);
+      const stampStatus = split.lopKeys.has(key) ? 'Absent' : 'OnLeave';
       const existing = await Attendance.findOne({ employee: request.employee, date: day });
       if (existing) {
         if (existing.checkIn) continue;              // actually worked — respect reality
@@ -755,6 +955,7 @@ module.exports = {
   getMyBalance,
   listMyRequests,
   applyForLeave,
+  previewLeave,
   cancelMyRequest,
   listAllRequests,
   approveRequest,

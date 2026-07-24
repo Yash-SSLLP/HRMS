@@ -47,6 +47,8 @@ export default function EmployeeLeave() {
   const [error, setError] = useState('');
   const [form, setForm] = useState(blankForm);
   const [submitting, setSubmitting] = useState(false);
+  // Live paid-vs-LOP preview for the dates/type currently in the apply form.
+  const [preview, setPreview] = useState(null);
 
   // Load leave balances and my requests together on mount / after any change.
   const load = async () => {
@@ -67,6 +69,25 @@ export default function EmployeeLeave() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Debounced preview of how many of the requested days will be paid vs LOP under
+  // the 2-paid-days/month quota, so the employee sees the impact before applying.
+  useEffect(() => {
+    const { leaveType, startDate, endDate, isHalfDay } = form;
+    if (!startDate || !endDate) { setPreview(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/leave/me/leave-preview', {
+          params: { leaveType, startDate, endDate, isHalfDay },
+        });
+        if (!cancelled) setPreview(data);
+      } catch {
+        if (!cancelled) setPreview(null);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [form.leaveType, form.startDate, form.endDate, form.isHalfDay]);
 
   const onApply = async (e) => {
     e.preventDefault();
@@ -94,26 +115,45 @@ export default function EmployeeLeave() {
   };
 
   const bal = balance?.balances || {};
+  const monthly = balance?.monthly || { quota: 2, used: 0, remaining: 2, month: null, year: null };
+  const monthLabel = monthly.month
+    ? new Date(monthly.year, monthly.month - 1, 1).toLocaleDateString('en-IN', { month: 'long' })
+    : 'this month';
+  const mlBal = bal.ML?.balance ?? 0;
+  const mlTotal = (bal.ML?.granted ?? 0) || 0;
 
   return (
     <div>
       <PageHeader title="Leave" />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        {[
-          { key: 'EL', label: 'Earned' },
-          { key: 'CL', label: 'Casual' },
-          { key: 'SL', label: 'Sick' },
-          { key: 'ML', label: 'Maternity' },
-        ].map((t) => (
-          <div key={t.key} className="bg-white shadow rounded-lg p-4">
-            <div className="text-xs text-gray-500">{t.label} ({t.key})</div>
-            <div className="text-2xl font-semibold">{bal[t.key]?.balance ?? 0}</div>
-            <div className="text-xs text-gray-500">
-              used {bal[t.key]?.used ?? 0} of {(bal[t.key]?.opening ?? 0) + (bal[t.key]?.granted ?? 0) || (bal[t.key]?.granted ?? 0)}
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div className="bg-white shadow rounded-lg p-4">
+          <div className="text-xs text-gray-500">Paid leave left ({monthLabel})</div>
+          <div className="text-2xl font-semibold text-emerald-700">{monthly.remaining}</div>
+          <div className="text-xs text-gray-500">of {monthly.quota} / month</div>
+        </div>
+        <div className="bg-white shadow rounded-lg p-4">
+          <div className="text-xs text-gray-500">Paid leave used</div>
+          <div className="text-2xl font-semibold text-gray-800">{monthly.used}</div>
+          <div className="text-xs text-gray-500">this month · resets monthly</div>
+        </div>
+        <div className="bg-white shadow rounded-lg p-4">
+          <div className="text-xs text-gray-500">Beyond quota</div>
+          <div className="text-2xl font-semibold text-red-600">LOP</div>
+          <div className="text-xs text-gray-500">extra days = loss of pay</div>
+        </div>
+        <div className="bg-white shadow rounded-lg p-4">
+          <div className="text-xs text-gray-500">Maternity (ML)</div>
+          <div className="text-2xl font-semibold text-purple-700">{mlBal}</div>
+          <div className="text-xs text-gray-500">of {mlTotal} · separate</div>
+        </div>
+      </div>
+
+      <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
+        ℹ️ Company policy: <strong>2 paid leave days per calendar month</strong>. Any
+        leave beyond 2 in a month is <strong>Loss of Pay (LOP)</strong>. The quota
+        resets each month and is not carried forward. Maternity leave is a separate
+        entitlement and is not counted against this quota.
       </div>
 
       {error && (
@@ -174,6 +214,21 @@ export default function EmployeeLeave() {
                 className="mt-1 block w-full border rounded-lg px-3 py-2" />
             </div>
 
+            {preview && (preview.paidDays > 0 || preview.lopDays > 0) && (
+              <div className={`rounded-lg border px-3 py-2 text-xs ${preview.lopDays > 0 ? 'bg-red-50 border-red-200 text-red-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+                <div className="font-medium">
+                  {preview.paidDays} paid day{preview.paidDays === 1 ? '' : 's'}
+                  {preview.lopDays > 0 && <> · <span className="font-semibold">{preview.lopDays} LOP (unpaid)</span></>}
+                </div>
+                {preview.lopDays > 0 && (
+                  <div className="mt-0.5">
+                    You have used up the {preview.quota}-day monthly paid quota for the
+                    covered month(s), so {preview.lopDays} day{preview.lopDays === 1 ? '' : 's'} will be Loss of Pay.
+                  </div>
+                )}
+              </div>
+            )}
+
             <button type="submit" disabled={submitting}
               className="w-full bg-gray-900 text-white py-2 rounded-lg hover:bg-gray-700 disabled:opacity-60">
               {submitting ? 'Submitting…' : 'Apply'}
@@ -208,7 +263,12 @@ export default function EmployeeLeave() {
                     </td>
                     <td className="px-4 py-3">{fmtDate(r.startDate)}</td>
                     <td className="px-4 py-3">{fmtDate(r.endDate)}</td>
-                    <td className="px-4 py-3 text-right">{r.totalDays}</td>
+                    <td className="px-4 py-3 text-right">
+                      {r.totalDays}
+                      {r.lopDays > 0 && (
+                        <span className="block text-[11px] text-red-600">{r.lopDays} LOP</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
                       {r.approvalChain?.length > 0 && (

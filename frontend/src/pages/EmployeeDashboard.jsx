@@ -27,14 +27,6 @@ const MONTHS = [
   'July','August','September','October','November','December',
 ];
 
-// Leave buckets shown on the employee dashboard.
-const LEAVE_META = [
-  { code: 'EL', label: 'Earned Leave', color: 'text-emerald-600', bar: 'bg-emerald-500' },
-  { code: 'CL', label: 'Casual Leave', color: 'text-blue-600', bar: 'bg-blue-500' },
-  { code: 'SL', label: 'Sick Leave', color: 'text-amber-600', bar: 'bg-amber-500' },
-  { code: 'ML', label: 'Maternity', color: 'text-purple-600', bar: 'bg-purple-500' },
-];
-
 function bucketStats(b) {
   if (!b) return { total: 0, used: 0, remaining: 0 };
   const total = (b.opening || 0) + (b.granted || 0);
@@ -101,10 +93,13 @@ export default function EmployeeDashboard() {
     })();
   }, []);
 
-  const annual = ['EL', 'CL', 'SL'].map((k) => bucketStats(balance?.balances?.[k]));
-  const remaining = annual.reduce((s, b) => s + b.remaining, 0);
-  const totalEntitled = annual.reduce((s, b) => s + b.total, 0);
-  const used = annual.reduce((s, b) => s + b.used, 0);
+  // Company leave policy is a monthly quota: 2 PAID leave days per calendar month,
+  // anything beyond becomes Loss of Pay (LOP). The dashboard surfaces this month's
+  // status (from balance.monthly); the annual EL/CL/SL buckets are no longer used.
+  const monthly = balance?.monthly || { quota: 2, used: 0, remaining: 2, month: null, year: null };
+  const monthLabel = monthly.month
+    ? new Date(monthly.year, monthly.month - 1, 1).toLocaleDateString('en-IN', { month: 'long' })
+    : '';
 
   const today = new Date().toLocaleDateString('en-IN', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -116,7 +111,7 @@ export default function EmployeeDashboard() {
         editTo="/employee/profile"
         stats={[
           { value: pendingLeaves, label: 'Pending Requests', to: '/employee/leave' },
-          { value: balance ? remaining : 0, label: 'Leave Days Left', to: '/employee/leave' },
+          { value: balance ? monthly.remaining : 0, label: 'Paid Leave Left (mo)', to: '/employee/leave' },
         ]}
         actions={[
           { label: 'Add Request', to: '/employee/regularizations', icon: '🛠️' },
@@ -170,8 +165,8 @@ export default function EmployeeDashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-        <StatCard icon="🏖️" tint="bg-emerald-100" value={balance ? remaining : '-'}
-          label="Remaining leave" sub="EL + CL + SL" to="/employee/leave" />
+        <StatCard icon="🏖️" tint="bg-emerald-100" value={balance ? monthly.remaining : '-'}
+          label="Paid leave left" sub="of 2 / month · extra = LOP" to="/employee/leave" />
         <StatCard icon="⏳" tint="bg-amber-100" value={pendingLeaves}
           label="Pending requests" sub="awaiting approval" to="/employee/leave" />
         <StatCard icon="💰" tint="bg-blue-100"
@@ -210,14 +205,16 @@ export default function EmployeeDashboard() {
             <>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                 <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-4">
-                  <div className="text-3xl font-semibold text-emerald-700">{remaining}</div>
-                  <div className="text-sm text-emerald-800">Remaining leave days</div>
-                  <div className="text-xs text-emerald-700/70 mt-1">EL + CL + SL</div>
+                  <div className="text-3xl font-semibold text-emerald-700">{monthly.remaining}</div>
+                  <div className="text-sm text-emerald-800">Paid leave left</div>
+                  <div className="text-xs text-emerald-700/70 mt-1">
+                    of {monthly.quota} this {monthLabel ? monthLabel : 'month'}
+                  </div>
                 </div>
                 <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
-                  <div className="text-3xl font-semibold text-gray-800">{used}</div>
-                  <div className="text-sm text-gray-600">Leave days used</div>
-                  <div className="text-xs text-gray-400 mt-1">of {totalEntitled} entitled</div>
+                  <div className="text-3xl font-semibold text-gray-800">{monthly.used}</div>
+                  <div className="text-sm text-gray-600">Paid leave used</div>
+                  <div className="text-xs text-gray-400 mt-1">this month · resets monthly</div>
                 </div>
                 <div className="rounded-lg bg-amber-50 border border-amber-200 p-4">
                   <div className="text-3xl font-semibold text-amber-700">{pendingLeaves}</div>
@@ -226,25 +223,22 @@ export default function EmployeeDashboard() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {LEAVE_META.map(({ code, label, color, bar }) => {
-                  const s = bucketStats(balance.balances?.[code]);
-                  const pct = s.total > 0 ? Math.min(100, (s.used / s.total) * 100) : 0;
-                  return (
-                    <div key={code} className="border border-gray-200 rounded-lg p-3">
-                      <div className="flex items-baseline justify-between">
-                        <span className="text-xs font-medium text-gray-500">{label}</span>
-                        <span className={`text-lg font-semibold ${color}`}>{s.remaining}</span>
-                      </div>
-                      <div className="h-1.5 bg-gray-100 rounded mt-2">
-                        <div className={`h-1.5 rounded ${bar}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="text-[11px] text-gray-400 mt-1">
-                        {s.used} used / {s.total} total
-                      </div>
-                    </div>
-                  );
-                })}
+              {/* Policy explainer + maternity (the one remaining banked entitlement). */}
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800 flex items-start gap-2">
+                <span>ℹ️</span>
+                <span>
+                  <strong>2 paid leave days per month.</strong> Any leave beyond 2 in a
+                  calendar month is counted as <strong>Loss of Pay (LOP)</strong>. The
+                  quota resets each month and does not carry forward.
+                  {(() => {
+                    const ml = bucketStats(balance.balances?.ML);
+                    return ml.total > 0 ? (
+                      <span className="block mt-1 text-purple-700">
+                        Maternity leave: {ml.remaining} of {ml.total} days remaining (separate entitlement).
+                      </span>
+                    ) : null;
+                  })()}
+                </span>
               </div>
             </>
           )}

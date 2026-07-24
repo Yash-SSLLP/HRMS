@@ -53,7 +53,7 @@ export const adminNav = [
   ] },
   { group: 'Leave & Holidays', items: [
     { to: '/admin/leave', label: 'Leave', icon: FiUmbrella, perm: 'leave.manage' },
-    { to: '/admin/leave-approvals', label: 'Leave Approvals', icon: FiCheckSquare },
+    { to: '/admin/approvals', label: 'Approvals', icon: FiCheckSquare },
     { to: '/admin/holidays', label: 'Holidays', icon: FiSun, perm: 'leave.manage' },
   ] },
   { group: 'Payroll & Compensation', items: [

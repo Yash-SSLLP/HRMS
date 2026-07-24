@@ -315,10 +315,12 @@ export default function EmployeeAttendance() {
               <Metric label="Expected late deduction" value={inr(p.latePenalty)} tone={p.latePenalty > 0 ? 'red' : 'gray'} sub={p.excessLate > 0 ? `${p.excessLate} × ${inr(p.lateRate)}/day` : '-'} />
               <Metric label="Paid leave used" value={`${p.leaveTaken} / ${p.paidLeaveQuota}`} tone={p.excessLeave > 0 ? 'red' : 'gray'} sub={p.excessLeave > 0 ? `${p.excessLeave} day(s) LOP` : 'of monthly quota'} />
               <Metric label="Leave incentive" value={inr(p.leaveIncentive)} tone={p.leaveIncentive > 0 ? 'green' : 'gray'} sub={p.unusedLeave > 0 ? `${p.unusedLeave} unused day(s)` : '-'} />
+              <Metric label="No-punch days" value={p.noPunchDays ?? 0} tone={p.noPunchDays > 0 ? 'red' : 'gray'} sub={p.noPunchDays > 0 ? 'LOP - regularise to recover' : 'all days punched'} />
             </div>
             <p className="text-[11px] text-gray-400 mt-3">
               First {p.lateAllowance} late arrivals each month are free; beyond that, every late day is deducted at {inr(p.lateRate)}/day.
               {' '}{p.paidLeaveQuota} paid leaves each month - unused days are added to your pay, extra days are unpaid (LOP).
+              {' '}A working day with no punch-in and no punch-out is unpaid (LOP) unless you get it regularised.
               {policy.needsSetup ? ' Amounts finalise once your salary is set up by HR.' : ''}
             </p>
           </div>

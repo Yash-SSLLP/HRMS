@@ -184,6 +184,41 @@ export default function AdminExit() {
   // Finalize the exit: sets date of exit, deactivates login, and prepares the
   // feedback email for HR to review/send.
   const complete = async () => {
+    // A resigning employee keeps access through their last working day. If the LWD
+    // hasn't passed yet, completing now revokes access EARLY — require an explicit
+    // "release immediately" confirmation and send force:true.
+    const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD (local)
+    const lwdStr = detail.lastWorkingDay ? String(detail.lastWorkingDay).slice(0, 10) : null;
+    const beforeLwd = lwdStr && todayStr < lwdStr;
+
+    if (beforeLwd) {
+      const releaseNow = await confirmDialog({
+        title: 'Release access before the last working day?',
+        message: `This employee's last working day is ${fmtDate(detail.lastWorkingDay)}. Their access normally stays active until then and is released automatically after it. Completing now revokes their access immediately.`,
+        details: [
+          'Immediately deactivate their login (before their last working day)',
+          'Stamp their date of exit and prepare the feedback email',
+        ],
+        confirmText: 'Release access now',
+        tone: 'danger',
+      });
+      if (!releaseNow) return;
+      try {
+        const { data } = await api.patch(`/exits/${detail._id}/complete`, { force: true });
+        setDetail(data.exit);
+        setActionMsg(
+          data.mail
+            ? 'Exit completed (early release). Review the feedback email and send it.'
+            : `Exit completed (early release)${data.email?.reason ? ` · email not prepared: ${data.email.reason}` : ''}`
+        );
+        await load();
+        if (data.mail) openExitMail(data.exit._id, { ...data.mail, feedbackUrl: data.feedbackUrl });
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Could not complete exit');
+      }
+      return;
+    }
+
     const ok = await confirmDialog({
       title: 'Mark exit complete?',
       message: 'This will:',
@@ -642,6 +677,13 @@ export default function AdminExit() {
                   </button>
                 )}
               </div>
+              {!isFinal && detail.lastWorkingDay
+                && new Date().toLocaleDateString('en-CA') < String(detail.lastWorkingDay).slice(0, 10) && (
+                <p className="text-[11px] text-gray-500 mb-2 w-full">
+                  ℹ️ Access stays active until the last working day ({fmtDate(detail.lastWorkingDay)}) and is
+                  released automatically after it. “Complete Exit” before then will ask you to confirm early release.
+                </p>
+              )}
               <div className="flex gap-2">
                 {!isFinal && (
                   <>

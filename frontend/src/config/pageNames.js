@@ -25,7 +25,8 @@ const NAV_LABELS = buildMap(adminNav, employeeNav);
 const EXTRA = {
   '/admin': 'Admin Home',
   '/employee': 'Overview',
-  '/admin/leave-approvals': 'Leave Approvals',
+  '/admin/approvals': 'Approvals',
+  '/admin/leave-approvals': 'Approvals',
   '/admin/payroll-run': 'Monthly Payroll Run',
 };
 

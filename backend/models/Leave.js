@@ -53,6 +53,12 @@ const leaveRequestSchema = new mongoose.Schema(
     isHalfDay: { type: Boolean, default: false },
     halfDaySession: { type: String, enum: ['FirstHalf', 'SecondHalf'] },
     totalDays: { type: Number, required: true, min: 0.5 },
+    // Split of the request's working days under the monthly paid-leave quota
+    // (2 paid days/calendar month; anything beyond becomes Loss of Pay). Computed
+    // at apply time (preview) and finalised at approval/stamp time. Excludes
+    // Sundays + holidays, so paidDays + lopDays can be < totalDays.
+    paidDays: { type: Number, default: 0 },
+    lopDays: { type: Number, default: 0 },
     reason: { type: String, trim: true, maxlength: 1000 },
     status: { type: String, enum: LEAVE_STATUS, default: 'Pending' },
     appliedAt: { type: Date, default: Date.now },
