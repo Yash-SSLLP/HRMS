@@ -733,17 +733,20 @@ export default function Layout({ navItems = [], sectionTitle }) {
                     transform: portal === 'employee' ? 'translateX(100%)' : 'translateX(0)',
                   }}
                 />
+                {/* The active side sits on the accent knob, so its ink comes from
+                    `.on-accent` (white, or onyx where the accent is a light gold)
+                    rather than a hardcoded #fff. */}
                 <Link
                   to="/admin"
-                  className="relative z-10 flex h-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors"
-                  style={{ color: portal === 'admin' ? '#fff' : (mode === 'dark' ? '#cbd5e1' : '#4b5563') }}
+                  className={`relative z-10 flex h-full items-center justify-center rounded-full px-4 text-sm font-semibold transition-colors${portal === 'admin' ? ' on-accent' : ''}`}
+                  style={portal === 'admin' ? undefined : { color: mode === 'dark' ? '#cbd5e1' : '#4b5563' }}
                 >
                   Admin
                 </Link>
                 <Link
                   to="/employee"
-                  className="relative z-10 flex h-full items-center justify-center whitespace-nowrap rounded-full px-4 text-sm font-semibold transition-colors"
-                  style={{ color: portal === 'employee' ? '#fff' : (mode === 'dark' ? '#cbd5e1' : '#4b5563') }}
+                  className={`relative z-10 flex h-full items-center justify-center whitespace-nowrap rounded-full px-4 text-sm font-semibold transition-colors${portal === 'employee' ? ' on-accent' : ''}`}
+                  style={portal === 'employee' ? undefined : { color: mode === 'dark' ? '#cbd5e1' : '#4b5563' }}
                 >
                   My Portal
                 </Link>
