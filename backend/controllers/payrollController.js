@@ -15,6 +15,7 @@ const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
 const Holiday = require('../models/Holiday');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
+const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
 const { renderPayslip } = require('../services/payslipPdf');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
@@ -126,15 +127,18 @@ const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
 // in-app payslip (no EPF/ESIC/loan): the full monthly salary is shown, and lost
 // days are charged back as a single "ABSENT AMOUNT" deduction line.
 //
-//   NET DAYS         present days (a half-day counts 0.5)
-//   ABSENT DAYS      LOP days = Absent + missed-punch + leave beyond the 2/mo quota
+//   NET DAYS         paid days out of the month — Sundays and holidays are paid,
+//                    so a clean full month = every calendar day (July = 31)
+//   ABSENT DAYS      unpaid days = Absent + missed-punch + leave beyond the 2/mo
+//                    quota + any days before joining / after exit
+//                    (NET DAYS + ABSENT DAYS = days in the month)
 //   LNT + EXTRA DAYS unused paid-leave quota = max(0, 2 − leaves taken)
 //   SALARY           full monthly salary = CTC ÷ 12 (independent of attendance)
 //   ARREARS/BONUS    optional, from a saved payslip for the month
 //   GROSS SALARY     = SALARY + ARREARS/BONUS
 //   Old/Weekly/ADVANCE + Interest   left blank for HR to fill in manually
 //   LATE DEDUCTION   late-arrival penalty (> 5 late/mo rule) — as in the app
-//   ABSENT AMOUNT    per-day salary × LOP days   (perDay = SALARY ÷ days-in-month)
+//   ABSENT AMOUNT    per-day salary × ABSENT DAYS  (perDay = SALARY ÷ days-in-month)
 //   PT               professional tax (flat, set by HR)
 //   DEDUCTIONS       = advances + LATE + Interest + ABSENT AMOUNT + PT
 //   NET PAYABLE      = GROSS − DEDUCTIONS
@@ -177,9 +181,11 @@ function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
   const daysInMonth = run.daysInMonth || 0;
   const monthlySalary = Math.round((run.ctc || 0) / 12);
   const perDay = daysInMonth ? monthlySalary / daysInMonth : 0;
-  const lopDays = round1(run.lopDays || 0);
-  const present = round1((run.counts?.present || 0) + 0.5 * (run.counts?.halfDay || 0));
-  const absentAmount = Math.round(perDay * lopDays);
+  // Charge back everything not paid out of the full month — LOP plus any days
+  // before joining / after exit — because SALARY below is the full monthly figure.
+  const unpaidDays = round1(run.unpaidDays != null ? run.unpaidDays : (run.lopDays || 0));
+  const netDays = round1(run.paidDays || 0);
+  const absentAmount = Math.round(perDay * unpaidDays);
   const lateDeduction = Math.round((run.policy && run.policy.latePenalty) || run.latePenalty || 0);
   const pt = Math.round((run.statutoryDeductions && run.statutoryDeductions.professionalTax) || 0);
   const bonusAmt = Math.round(bonus || 0);
@@ -188,8 +194,8 @@ function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
     name: meta.name,
     empNo: meta.empNo || '',
     designation: meta.designation || '',
-    netDays: present,
-    absentDays: lopDays,
+    netDays,
+    absentDays: unpaidDays,
     lnt: run.policy ? (run.policy.unusedLeave || 0) : 0,
     salary: monthlySalary,
     bonus: bonusAmt || '',      // optional — blank when there's no arrear/bonus
@@ -438,6 +444,7 @@ const runPayroll = asyncHandler(async (req, res) => {
           },
           status: 'Draft',
           remarks: `Payroll run: ${r.profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days`
+            + (computed.notEmployedDays ? ` (on payroll ${computed.eligibleDays}/${computed.daysInMonth} days)` : '')
             + ` · leave ${pol.leaveTaken}/${pol.paidLeaveQuota}` + (pol.excessLeave ? ` (${pol.excessLeave}d LOP)` : pol.unusedLeave ? ` (₹${pol.leaveIncentive} incentive)` : '')
             + (pol.noPunchDays ? ` · no-punch ${pol.noPunchDays}d LOP` : '')
             + ` · late ${pol.lateDays}/${pol.lateAllowance}` + (pol.excessLate ? ` (₹${pol.latePenalty} penalty)` : ''),
@@ -490,6 +497,9 @@ const runPayroll = asyncHandler(async (req, res) => {
 
 // Attendance policy constants (mirror attendanceController's WORKDAY_START_HOUR).
 const WORKDAY_START_HOUR = 10;   // check-in after 10:00 AM IST counts as late
+// Both monthly allowances below are a full month's entitlement and are prorated
+// by the days an employee was actually on the payroll that month (see
+// prorateAllowance in computeEmployeeRun) — a mid-month joiner gets a part quota.
 const PAID_LEAVE_QUOTA = 2;      // paid leave days granted each month
 const LATE_ALLOWANCE = 5;        // free late arrivals each month
 const LATE_THRESHOLD_BASIC = 25000; // monthly Basic cut-off for the penalty rate
@@ -571,6 +581,16 @@ async function computeEmployeeRun(profile, year, month) {
   const todayKey = ymdIST(new Date());
   const joinKey = profile.dateOfJoining ? ymdIST(profile.dateOfJoining) : null;
   const exitKey = profile.dateOfExit ? ymdIST(profile.dateOfExit) : null;
+
+  // ----- Days this employee was on the payroll this month -----
+  // Salary is prorated over CALENDAR days — Sundays and holidays are paid — so a
+  // full month is `daysInMonth` (July = 31). A mid-month joiner (or leaver) is
+  // only entitled to the days from their joining date up to their exit date, so
+  // their paid days are capped at that count: joined 5 July → 27 of 31 days.
+  // The per-day rate stays monthly gross ÷ daysInMonth regardless, so a day of
+  // excess leave or absence costs the same (salary ÷ 31) for everyone.
+  const { eligibleDays, notEmployedDays } = daysOnPayroll(profile, year, month);
+
   let noPunchDays = 0;
   for (let i = 0; i < daysInMonth; i += 1) {
     // Midday IST anchor so the calendar day is unambiguous.
@@ -589,11 +609,20 @@ async function computeEmployeeRun(profile, year, month) {
     noPunchDays += 1;                             // record exists but no punch/credit
   }
 
-  // ----- Monthly paid-leave quota (2 days) -----
+  // ----- Prorated monthly allowances -----
+  // The paid-leave quota and the free-late allowance are a FULL month's
+  // entitlement, so an employee who was only on the payroll for part of the month
+  // (joined or exited mid-month) earns them in proportion to those days. The leave
+  // module prorates the same quota the same way (shared prorateAllowance), so the
+  // paid/LOP split an employee is shown when applying matches their payslip.
+  const paidLeaveQuota = prorateAllowance(PAID_LEAVE_QUOTA, eligibleDays, daysInMonth);
+  const lateAllowance = prorateAllowance(LATE_ALLOWANCE, eligibleDays, daysInMonth);
+
+  // ----- Monthly paid-leave quota (2 days, prorated) -----
   // Leave days beyond the quota become LOP; unused quota converts to extra pay
   // (leave incentive) at one day's salary each. Settled monthly, never carried.
-  const excessLeave = Math.max(0, onLeaveDays - PAID_LEAVE_QUOTA);
-  const unusedLeave = Math.max(0, PAID_LEAVE_QUOTA - onLeaveDays);
+  const excessLeave = Math.max(0, onLeaveDays - paidLeaveQuota);
+  const unusedLeave = Math.max(0, paidLeaveQuota - onLeaveDays);
 
   // ----- Late arrivals (check-in after WORKDAY_START_HOUR) on worked days -----
   const lateDays = records.filter((r) => {
@@ -601,13 +630,18 @@ async function computeEmployeeRun(profile, year, month) {
     const cutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
     return new Date(r.checkIn) > cutoff;
   }).length;
-  const excessLate = Math.max(0, lateDays - LATE_ALLOWANCE);
+  const excessLate = Math.max(0, lateDays - lateAllowance);
 
-  // Paid days: everything except Absent (full LOP), no-punch days (full LOP unless
-  // regularised), half of each HalfDay, and leave days beyond the monthly paid
-  // quota.
-  const paidDays = +(daysInMonth - absent - noPunchDays - 0.5 * halfDay - excessLeave).toFixed(1);
-  const lopDays = +(daysInMonth - paidDays).toFixed(1);
+  // Paid days: every day the employee was on the payroll (all calendar days for a
+  // full month, else only the days from joining to exit) except Absent (full LOP),
+  // no-punch days (full LOP unless regularised), half of each HalfDay, and leave
+  // days beyond the monthly paid quota.
+  const paidDays = +Math.max(0, eligibleDays - absent - noPunchDays - 0.5 * halfDay - excessLeave).toFixed(1);
+  const lopDays = +(eligibleDays - paidDays).toFixed(1);
+  // Unpaid days out of the whole month = LOP + the days before joining / after
+  // exit. This is what the payroll register charges back, since that sheet shows
+  // the full monthly salary and recovers everything not worked as one deduction.
+  const unpaidDays = +(daysInMonth - paidDays).toFixed(1);
 
   // Active loan/advance recovery for this employee (Loan.employee is the User).
   const userId = profile.user?._id || profile.user;
@@ -679,22 +713,34 @@ async function computeEmployeeRun(profile, year, month) {
       absent, noPunchAbsent: noPunchDays, weeklyOff: count('WeeklyOff'), holiday: count('Holiday'),
     },
     hours: { daysPresent, totalHours, avgHours, compOff },
-    // Attendance-policy roll-up: monthly paid-leave quota + late allowance.
+    // Attendance-policy roll-up: monthly paid-leave quota + late allowance. Both
+    // allowances are the effective (prorated) entitlement for this employee-month;
+    // the full-month figures are alongside so the UI can explain a short quota.
     policy: {
-      paidLeaveQuota: PAID_LEAVE_QUOTA,
+      paidLeaveQuota,       // prorated for a mid-month joiner / leaver
+      fullPaidLeaveQuota: PAID_LEAVE_QUOTA,
       leaveTaken: onLeaveDays,
       excessLeave,          // leave days beyond the quota → added to LOP
       unusedLeave,          // quota not used → paid out as leaveIncentive
       leaveIncentive,
       noPunchDays,          // past working days with no punch (LOP unless regularised)
-      lateAllowance: LATE_ALLOWANCE,
+      lateAllowance,        // prorated for a mid-month joiner / leaver
+      fullLateAllowance: LATE_ALLOWANCE,
       lateDays,
       excessLate,           // late days beyond the allowance → penalised
       lateRate,
       latePenalty,
       monthlyBasic: Math.round(monthlyBasic),
+      // Part-month context, so a short quota can be explained wherever only the
+      // policy roll-up is available (e.g. the employee's own summary).
+      daysInMonth,
+      eligibleDays,
+      prorated: notEmployedDays > 0,
     },
     paidDays, lopDays,
+    // Proration base: eligibleDays are the days on the payroll this month (mid-month
+    // joiners/leavers get fewer), while daysInMonth stays the per-day divisor.
+    eligibleDays, notEmployedDays, unpaidDays,
     ctc, // CTC effective for this pay month (post hike resolution)
     statutoryDeductions, // EPF / ESIC / PT derived from the components
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
@@ -786,6 +832,7 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
     },
     status: 'Draft',
     remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
+      + (computed.notEmployedDays ? ` (on payroll ${computed.eligibleDays}/${computed.daysInMonth} days)` : '')
       + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
       + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
       + (p.noPunchDays ? ` · no-punch ${p.noPunchDays}d LOP` : '')

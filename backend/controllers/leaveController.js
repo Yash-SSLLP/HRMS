@@ -15,11 +15,22 @@ const Holiday = require('../models/Holiday');
 const { enqueueMail } = require('../services/email');
 const { notify, notifyMany } = require('../services/notify');
 const { daysInclusive, currentYear, startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
+const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
 
 // Company leave policy: 2 PAID leave days per calendar month, settled monthly
 // (no carry-forward). Any leave day beyond the 2/month quota is Loss of Pay
 // (unpaid). Mirrors PAID_LEAVE_QUOTA in payrollController — keep them in sync.
+// It is a full month's entitlement: a mid-month joiner/leaver gets a share of it,
+// via the shared prorateAllowance the payroll run uses (utils/monthlyQuota).
 const MONTHLY_PAID_LEAVE = 2;
+
+// This employee's paid-leave quota for one IST month ('YYYY-MM'), prorated when
+// they were only on the payroll for part of it.
+function monthlyQuotaFor(profile, ym) {
+  const [Y, M] = ym.split('-').map(Number);
+  const { daysInMonth, eligibleDays } = daysOnPayroll(profile, Y, M);
+  return prorateAllowance(MONTHLY_PAID_LEAVE, eligibleDays, daysInMonth);
+}
 
 // Leave types that draw down from a tracked balance bucket. Only Maternity (ML)
 // is a banked entitlement now — EL/CL/SL are governed by the monthly paid-leave
@@ -341,8 +352,9 @@ async function paidLeaveUsedInMonth(employeeId, ym, excludeRequestId = null) {
 // Split a leave request's working days into PAID vs LOP under the monthly quota.
 // - LOP type  → every day is LOP (explicitly unpaid, no cap).
 // - ML type   → every day is paid (maternity is not subject to the monthly cap).
-// - otherwise → the first (2 − alreadyUsed) working days of each calendar month
-//   are paid; the rest become LOP.
+// - otherwise → the first (quota − alreadyUsed) working days of each calendar
+//   month are paid; the rest become LOP. The quota is 2/month, prorated for a
+//   month the employee only worked part of (joined or exited mid-month).
 // Returns day counts plus the set of LOP day-keys and a per-month breakdown so
 // the calendar can be stamped and the employee shown the split at apply time.
 async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, isHalfDay }, excludeRequestId = null) {
@@ -368,9 +380,12 @@ async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, is
     return { paidDays, lopDays: 0, lopKeys, workingKeys, perMonth };
   }
 
+  // Joining / exit dates decide how much of each month's quota this employee has.
+  const emp = await EmployeeProfile.findById(employeeId).select('dateOfJoining dateOfExit').lean();
   for (const ym of months) {
+    const quota = monthlyQuotaFor(emp, ym);
     const used = await paidLeaveUsedInMonth(employeeId, ym, excludeRequestId);
-    let remaining = Math.max(0, MONTHLY_PAID_LEAVE - used);
+    let remaining = Math.max(0, quota - used);
     let monthPaid = 0;
     let monthLop = 0;
     for (const key of byMonth[ym]) {
@@ -387,7 +402,7 @@ async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, is
         lopDays += w;
       }
     }
-    perMonth.push({ ym, working: byMonth[ym].length, alreadyUsed: used, quota: MONTHLY_PAID_LEAVE, paid: monthPaid, lop: monthLop });
+    perMonth.push({ ym, working: byMonth[ym].length, alreadyUsed: used, quota, paid: monthPaid, lop: monthLop });
   }
   return { paidDays, lopDays, lopKeys, workingKeys, perMonth };
 }
@@ -418,15 +433,22 @@ const getMyBalance = asyncHandler(async (req, res) => {
   const balance = await getOrCreateBalance(profile._id, year);
 
   // Monthly paid-leave quota status for the current IST month (2 paid days/month,
-  // extra → LOP). Drives the dashboard/leave-page "this month" indicator.
+  // extra → LOP). Drives the dashboard/leave-page "this month" indicator. The
+  // quota is prorated in the month the employee joined (or exits).
   const [nowY, nowM] = ymdIST().split('-').map(Number);
   const usedThisMonth = await stampedPaidLeaveInMonth(profile._id, nowY, nowM);
+  const { daysInMonth, eligibleDays } = daysOnPayroll(profile, nowY, nowM);
+  const quota = prorateAllowance(MONTHLY_PAID_LEAVE, eligibleDays, daysInMonth);
   const monthly = {
     year: nowY,
     month: nowM,
-    quota: MONTHLY_PAID_LEAVE,
+    quota,
+    fullQuota: MONTHLY_PAID_LEAVE,
+    prorated: eligibleDays < daysInMonth,
+    daysInMonth,
+    eligibleDays,
     used: usedThisMonth,
-    remaining: Math.max(0, MONTHLY_PAID_LEAVE - usedThisMonth),
+    remaining: Math.max(0, quota - usedThisMonth),
   };
 
   const out = balance.toObject();
@@ -568,7 +590,10 @@ const previewLeave = asyncHandler(async (req, res) => {
   res.json({
     paidDays: split.paidDays,
     lopDays: split.lopDays,
-    quota: MONTHLY_PAID_LEAVE,
+    // The quota actually applied to the first month covered (prorated in a
+    // part-month); split.perMonth carries it per month.
+    quota: split.perMonth.length ? split.perMonth[0].quota : MONTHLY_PAID_LEAVE,
+    fullQuota: MONTHLY_PAID_LEAVE,
     perMonth: split.perMonth,
   });
 });

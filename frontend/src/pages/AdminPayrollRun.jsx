@@ -313,6 +313,9 @@ export default function AdminPayrollRun() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
                   <Stat label="Paid days" value={`${c.paidDays} / ${c.daysInMonth}`} />
                   <Stat label="LOP days" value={c.lopDays} warn={c.lopDays > 0} />
+                  {c.notEmployedDays > 0 && (
+                    <Stat label="On payroll" value={`${c.eligibleDays} / ${c.daysInMonth} days`} warn />
+                  )}
                   <Stat label="Present" value={c.counts.present} />
                   <Stat label="Half days" value={c.counts.halfDay} />
                   <Stat label={`Leave (of ${c.policy?.paidLeaveQuota ?? 2})`} value={c.counts.onLeave} warn={c.policy?.excessLeave > 0} />
@@ -332,6 +335,10 @@ export default function AdminPayrollRun() {
                       {c.policy.paidLeaveQuota} paid leaves/month - unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
                       {' '}First {c.policy.lateAllowance} lates free; each extra costs {inr(c.policy.lateRate)}/day (monthly Basic {c.policy.monthlyBasic < 25000 ? '<' : '≥'} ₹25,000).
                       {' '}Working days with no punch-in/out are LOP ({c.policy.noPunchDays ?? 0} this month) unless regularised.
+                      {' '}Salary is spread over all {c.daysInMonth} days of the month (Sundays &amp; holidays are paid)
+                      {c.ctc > 0 ? `, so one day costs ${inr(Math.round(c.ctc / 12 / (c.daysInMonth || 1)))}` : ''}.
+                      {c.notEmployedDays > 0 && ` This employee was on the payroll for ${c.eligibleDays} of those days (joined/exited mid-month), so pay is ${c.paidDays}/${c.daysInMonth}`
+                        + ` and the monthly allowances are prorated to ${c.policy.paidLeaveQuota} paid leave (of ${c.policy.fullPaidLeaveQuota}) and ${c.policy.lateAllowance} free lates (of ${c.policy.fullLateAllowance}).`}
                     </p>
                   </>
                 )}

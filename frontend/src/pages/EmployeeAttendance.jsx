@@ -321,6 +321,7 @@ export default function EmployeeAttendance() {
               First {p.lateAllowance} late arrivals each month are free; beyond that, every late day is deducted at {inr(p.lateRate)}/day.
               {' '}{p.paidLeaveQuota} paid leaves each month - unused days are added to your pay, extra days are unpaid (LOP).
               {' '}A working day with no punch-in and no punch-out is unpaid (LOP) unless you get it regularised.
+              {p.prorated ? ` You were on the payroll for ${p.eligibleDays} of this month's ${p.daysInMonth} days, so the usual ${p.fullPaidLeaveQuota} paid leaves and ${p.fullLateAllowance} free lates are prorated for this month.` : ''}
               {policy.needsSetup ? ' Amounts finalise once your salary is set up by HR.' : ''}
             </p>
           </div>

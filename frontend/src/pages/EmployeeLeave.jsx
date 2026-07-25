@@ -150,10 +150,14 @@ export default function EmployeeLeave() {
       </div>
 
       <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
-        ℹ️ Company policy: <strong>2 paid leave days per calendar month</strong>. Any
-        leave beyond 2 in a month is <strong>Loss of Pay (LOP)</strong>. The quota
+        ℹ️ Company policy: <strong>{monthly.fullQuota ?? 2} paid leave days per calendar month</strong>. Any
+        leave beyond that in a month is <strong>Loss of Pay (LOP)</strong>. The quota
         resets each month and is not carried forward. Maternity leave is a separate
         entitlement and is not counted against this quota.
+        {monthly.prorated && (
+          <> You were on the payroll for <strong>{monthly.eligibleDays} of {monthLabel}'s {monthly.daysInMonth} days</strong>,
+          so this month your quota is prorated to <strong>{monthly.quota}</strong>.</>
+        )}
       </div>
 
       {error && (
