@@ -252,6 +252,70 @@ const monthCalendar = asyncHandler(async (req, res) => {
     }
   }
 
+  // --- Reminders visible to the viewer ---
+  // Their own reminders plus any aimed at them by HR/Admin/CEO (directly, via
+  // their department, or company-wide). `reminder` = personal, `hrReminder` =
+  // pushed to them by someone else, so the calendar can colour them apart.
+  const Reminder = require('../models/Reminder');
+  const { myDepartment } = require('./reminderController');
+  const reminders = await Reminder.find({
+    ...Reminder.visibleFilter(req.user, await myDepartment(req.user)),
+    date: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) },
+  })
+    .populate('createdBy', 'firstName lastName role')
+    .sort({ date: 1 });
+  for (const r of reminders) {
+    const mine = String(r.createdBy?._id || r.createdBy) === String(req.user._id);
+    const setByName = `${r.createdBy?.firstName || ''} ${r.createdBy?.lastName || ''}`.trim();
+    events.push({
+      day: new Date(r.date).getDate(),
+      type: mine ? 'reminder' : 'hrReminder',
+      label: r.title,
+      meta: {
+        reminderId: String(r._id),
+        time: r.time || '',
+        notes: r.notes || '',
+        priority: r.priority,
+        scope: r.scope,
+        department: r.department || '',
+        // Only the creator can edit, so only they need the audience ids (the
+        // edit form pre-selects them).
+        recipientIds: mine ? (r.recipients || []).map(String) : [],
+        setBy: mine ? 'You' : (setByName || 'HR'),
+        setByRole: r.createdByRole || r.createdBy?.role || '',
+        canEdit: mine || req.user.role === 'SuperAdmin',
+      },
+    });
+  }
+
+  // --- Task deadlines (assigned to, or created by, the viewer) ---
+  const Task = require('../models/Task');
+  const tasks = await Task.find({
+    $or: [{ assignedTo: req.user._id }, { createdBy: req.user._id }],
+    dueDate: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) },
+  })
+    .populate('project', 'name')
+    .populate('assignedTo', 'firstName lastName')
+    .sort({ dueDate: 1 });
+  for (const t of tasks) {
+    const assignee = `${t.assignedTo?.firstName || ''} ${t.assignedTo?.lastName || ''}`.trim();
+    events.push({
+      day: new Date(t.dueDate).getDate(),
+      type: 'task',
+      label: t.title,
+      meta: {
+        taskId: String(t._id),
+        status: t.status,
+        priority: t.priority,
+        project: t.project?.name || '',
+        assignedTo: String(t.assignedTo?._id || t.assignedTo || '') === String(req.user._id)
+          ? 'You'
+          : (assignee || '—'),
+        done: t.status === 'Done',
+      },
+    });
+  }
+
   events.sort((a, b) => a.day - b.day);
   res.json({ year, month, count: events.length, events });
 });

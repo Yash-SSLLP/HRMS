@@ -4,7 +4,6 @@
 // bell, profile menu) and a <Suspense><Outlet/></Suspense> content area plus the
 // docked chat. `navItems`/`sectionTitle` select the admin vs employee portal.
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
@@ -13,8 +12,10 @@ import ChatDock from './ChatDock';
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus, FiSun, FiMoon, FiBell, FiCalendar, FiClock } from 'react-icons/fi';
-import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
+import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown } from 'react-icons/fi';
+import ThemeToggle from './ThemeToggle';
+import { COMPANY_NAME } from '../config/company';
+import BrandLockup from './BrandLockup';
 import { hasPermission, hasAnyPermission } from '../config/permissions';
 import { pageNameForPath } from '../config/pageNames';
 
@@ -225,34 +226,48 @@ function NotificationBell({ isAdmin, portal }) {
       >
         <FiBell size={19} strokeWidth={2} />
         {unread > 0 && (
-          <span className="bell-badge absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] px-1 bg-red-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center shadow-sm">
+          <span
+            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none"
+            style={{ boxShadow: '0 0 0 2px var(--surface)' }}
+          >
             {unread > 9 ? '9+' : unread}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+        <div className="menu-pop absolute right-0 mt-2 w-[22rem] max-w-[92vw] bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-            <span className="text-sm font-semibold text-gray-800">Notifications</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-800">Notifications</span>
+              {unread > 0 && (
+                <span className="accent-bg text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unread > 99 ? '99+' : unread}</span>
+              )}
+            </div>
             {unread > 0 && (
-              <button onClick={markAll} className="text-xs text-blue-600 hover:underline">Mark all read</button>
+              <button onClick={markAll} className="accent-text text-xs font-medium hover:underline">Mark all read</button>
             )}
           </div>
           <div className="max-h-96 overflow-y-auto">
             {items.length === 0 ? (
-              <div className="px-3 py-8 text-center text-sm text-gray-500">No notifications</div>
+              <div className="px-4 py-10 flex flex-col items-center gap-2 text-center">
+                <span className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-3)' }}>
+                  <FiBell size={18} className="text-gray-400" />
+                </span>
+                <span className="text-sm text-gray-500">You're all caught up</span>
+              </div>
             ) : items.map((n) => (
               <button
                 key={n._id}
                 onClick={() => openNotif(n)}
-                className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${
-                  n.readAt ? '' : 'bg-blue-50'
-                }`}
+                className="group w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 flex gap-2.5 transition-colors"
               >
-                <div className="text-sm text-gray-900 break-words">{n.title}</div>
-                {n.body && <div className="text-xs text-gray-600 mt-0.5 break-words line-clamp-3">{n.body}</div>}
-                <div className="text-[10px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString([], { hour12: true })}</div>
+                <span className="mt-1.5 shrink-0 w-2 h-2 rounded-full" style={{ background: n.readAt ? 'transparent' : 'var(--accent)' }} />
+                <span className="min-w-0 flex-1">
+                  <span className={`block text-sm break-words ${n.readAt ? 'text-gray-600 font-normal' : 'text-gray-900 font-semibold'}`}>{n.title}</span>
+                  {n.body && <span className="block text-xs text-gray-500 mt-0.5 break-words line-clamp-3">{n.body}</span>}
+                  <span className="block text-[10px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString([], { hour12: true })}</span>
+                </span>
               </button>
             ))}
           </div>
@@ -482,35 +497,56 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
+  const roleLabel = ROLE_LABELS[user?.role] || user?.role;
+
   return (
     <div className="relative" ref={wrapRef}>
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-gray-100">
-        <UserAvatar user={user} />
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2.5 pl-1 pr-2.5 py-1 rounded-full hover:bg-gray-100 transition-colors"
+      >
+        <span className="avatar-ring inline-flex rounded-full"><UserAvatar user={user} /></span>
         <span className="hidden sm:flex flex-col items-start leading-tight">
-          <span className="text-sm font-medium text-gray-800">{user?.firstName} {user?.lastName}</span>
+          <span className="text-sm font-semibold text-gray-800">{user?.firstName} {user?.lastName}</span>
           <span className="text-[11px] text-gray-500">
-            {employeeCode ? `${employeeCode} · ${ROLE_LABELS[user?.role] || user?.role}` : (ROLE_LABELS[user?.role] || user?.role)}
+            {employeeCode ? `${employeeCode} · ${roleLabel}` : roleLabel}
           </span>
         </span>
-        <span className="text-gray-400 text-xs hidden sm:inline">▾</span>
+        <FiChevronDown
+          size={15}
+          className="hidden sm:block text-gray-400 transition-transform duration-200"
+          style={{ transform: open ? 'rotate(180deg)' : 'none' }}
+        />
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
-            <UserAvatar user={user} />
+        <div className="menu-pop absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden">
+          <div className="px-4 py-3.5 border-b border-gray-100 flex items-center gap-3" style={{ background: 'var(--surface-2)' }}>
+            <span className="avatar-ring inline-flex rounded-full"><UserAvatar user={user} /></span>
             <div className="min-w-0">
-              <div className="text-sm font-medium text-gray-900 truncate">{user?.firstName} {user?.lastName}</div>
-              {employeeCode && <div className="text-xs text-gray-500 truncate">{employeeCode}</div>}
-              <div className="text-xs text-gray-500 truncate">{user?.email}</div>
+              <div className="text-sm font-semibold text-gray-900 truncate">{user?.firstName} {user?.lastName}</div>
+              {(employeeCode || roleLabel) && (
+                <div className="text-[11px] text-gray-500 truncate">{employeeCode ? `${employeeCode} · ${roleLabel}` : roleLabel}</div>
+              )}
+              <div className="text-[11px] text-gray-400 truncate">{user?.email}</div>
             </div>
           </div>
-          <Link to={profilePath} onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">My Profile</Link>
-          <Link to="/privacy" onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Privacy Policy</Link>
-          <button onClick={() => { setOpen(false); onLogout(); }}
-            className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Log out</button>
+          <div className="p-1.5">
+            <Link to={profilePath} onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+              <FiUser size={16} className="text-gray-400" /> My Profile
+            </Link>
+            <Link to="/privacy" onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+              <FiLock size={16} className="text-gray-400" /> Privacy Policy
+            </Link>
+          </div>
+          <div className="p-1.5 border-t border-gray-100">
+            <button onClick={() => { setOpen(false); onLogout(); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+              <FiLogOut size={16} /> Log out
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -527,39 +563,11 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const setUser = useAuthStore((s) => s.setUser);
+  // Only used for the portal switcher's track/label colours — the theme toggle
+  // itself lives in <ThemeToggle/>.
   const mode = useThemeStore((s) => s.mode);
-  const toggleMode = useThemeStore((s) => s.toggle);
   const navigate = useNavigate();
   const { pathname } = useLocation();
-
-  // Dark/light toggle with a circular-reveal (View Transitions API): the new
-  // theme wipes in as a circle expanding from the toggle button. Falls back to
-  // an instant flip when the API is unavailable or reduced motion is requested.
-  const handleThemeToggle = (e) => {
-    const canAnimate =
-      typeof document !== 'undefined' &&
-      document.startViewTransition &&
-      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!canAnimate) { toggleMode(); return; }
-
-    // Originate the reveal from the toggle's centre (not the raw cursor point) so
-    // it's consistent wherever the button is clicked — and works for keyboard
-    // activation, where clientX/Y would be 0,0.
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
-    const transition = document.startViewTransition(() => {
-      // flushSync so the .dark class is on <html> before the "new" snapshot.
-      flushSync(() => toggleMode());
-    });
-    transition.ready.then(() => {
-      document.documentElement.animate(
-        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`] },
-        { duration: 550, easing: 'cubic-bezier(.65, 0, .35, 1)', pseudoElement: '::view-transition-new(root)' }
-      );
-    }).catch(() => {});
-  };
 
   // Re-sync the cached user from the server on load so the top-bar profile
   // reflects any changes made since login (e.g. an approved name-change ticket
@@ -623,10 +631,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
   const sidebar = (
     <div className="flex flex-col h-full">
-      <div className="h-16 flex items-center gap-2 px-5 border-b border-gray-100 shrink-0">
-        <Link to={isAdmin ? '/admin' : '/employee'} onClick={closeMobile} className="flex items-center gap-2 min-w-0">
-          <img src={COMPANY_LOGO} alt={COMPANY_NAME} className="h-8 w-auto" />
-          <span className="text-base font-bold text-gray-900 truncate">{COMPANY_NAME}</span>
+      <div className="brand-bar h-16 flex items-center gap-2 px-5 shrink-0">
+        <Link to={isAdmin ? '/admin' : '/employee'} onClick={closeMobile} aria-label={COMPANY_NAME} className="min-w-0">
+          <BrandLockup />
         </Link>
       </div>
       <nav className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 space-y-0.5">
@@ -652,7 +659,8 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
   return (
     <div className="min-h-full" style={{ backgroundColor: 'var(--bg)' }}>
-      <div className="h-1 accent-bg fixed top-0 inset-x-0 z-50" />
+      {/* Brushed-gold top edge — the brand signature across every page. */}
+      <div className="brand-strip h-1 fixed top-0 inset-x-0 z-50" />
 
       {/* Desktop fixed sidebar */}
       <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-80 bg-white border-r border-gray-200 z-40">
@@ -741,34 +749,10 @@ export default function Layout({ navItems = [], sectionTitle }) {
                 </Link>
               </div>
             )}
-            {/* Segmented sun/moon theme toggle: a white knob slides to the active
-                side; the active icon lights up (amber sun / indigo moon). */}
-            <button
-              onClick={handleThemeToggle}
-              title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="relative shrink-0 rounded-full transition-colors duration-200"
-              style={{
-                width: 64, height: 30,
-                background: mode === 'dark' ? '#3b4457' : '#e5e7eb',
-                boxShadow: 'inset 0 1px 2px rgba(0,0,0,.12)',
-              }}
-            >
-              {/* sliding white knob — centered under the active half */}
-              <span
-                className="absolute rounded-full bg-white transition-transform duration-200"
-                style={{
-                  top: 3, left: 4, width: 24, height: 24,
-                  boxShadow: '0 1px 3px rgba(0,0,0,.28)',
-                  transform: mode === 'dark' ? 'translateX(32px)' : 'translateX(0)',
-                }}
-              />
-              {/* icons in two equal halves so each lines up with the knob */}
-              <span className="relative grid h-full grid-cols-2 items-center justify-items-center" style={{ zIndex: 1 }}>
-                <FiSun size={15} strokeWidth={2.4} color={mode === 'dark' ? '#94a3b8' : '#f59e0b'} />
-                <FiMoon size={14} strokeWidth={2.4} color={mode === 'dark' ? '#6366f1' : '#94a3b8'} />
-              </span>
-            </button>
+            {/* Segmented sun/moon theme toggle (shared with the login screen):
+                a white knob slides to the active side; the active icon lights up
+                (amber sun / indigo moon) and the new theme wipes in as a circle. */}
+            <ThemeToggle />
             <NotificationBell isAdmin={isAdmin} portal={portal} />
             <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
             <ProfileMenu user={user} employeeCode={employeeCode} onLogout={() => setConfirmLogout(true)} />

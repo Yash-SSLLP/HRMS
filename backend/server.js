@@ -71,6 +71,7 @@ app.use('/api/change-requests', require('./routes/changeRequestRoutes'));
 app.use('/api/password-reset-requests', require('./routes/passwordResetRoutes'));
 app.use('/api/holidays', require('./routes/holidayRoutes'));
 app.use('/api/events', require('./routes/eventRoutes'));
+app.use('/api/reminders', require('./routes/reminderRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/devices', require('./routes/deviceRoutes'));
 app.use('/api/departments', require('./routes/departmentRoutes'));

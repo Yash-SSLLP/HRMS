@@ -4,12 +4,13 @@
  * employee vs admin portal by role. Also hosts a "Forgot password?" modal that
  * files a request to HR via POST /password-reset-requests (no email client).
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
-import { useThemeStore } from '../store/themeStore';
-import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
+import { COMPANY_NAME } from '../config/company';
+import BrandLockup from '../components/BrandLockup';
+import ThemeToggle from '../components/ThemeToggle';
 
 const BLANK_RESET = {
   name: '', email: '', employeeCode: '', phone: '', designation: '', department: '', reason: '',
@@ -19,8 +20,13 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const setSession = useAuthStore((s) => s.setSession);
-  const mode = useThemeStore((s) => s.mode);
-  const toggleMode = useThemeStore((s) => s.toggle);
+
+  // Layout sets data-portal on <html> and it survives logout, which left the
+  // login screen wearing the last portal's palette (e.g. a green-tinted toggle
+  // after signing out of My Portal). Clear it so login is always brand-neutral.
+  useEffect(() => {
+    document.documentElement.removeAttribute('data-portal');
+  }, []);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -81,20 +87,13 @@ export default function Login() {
 
   return (
     <div className="relative min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 px-4 py-10">
-      <button
-        type="button"
-        onClick={toggleMode}
-        title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        className="absolute top-4 right-4 h-10 w-10 flex items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
-      >
-        <span className="text-lg leading-none">{mode === 'dark' ? '☀️' : '🌙'}</span>
-      </button>
+      {/* Same segmented sun/moon toggle as the logged-in top bar. */}
+      <ThemeToggle className="absolute top-4 right-4 z-10" />
 
       <div className="w-full max-w-md bg-white shadow-lg rounded-2xl p-8 border border-gray-100">
         <div className="flex flex-col items-center text-center mb-6">
-          <img src={COMPANY_LOGO} alt={COMPANY_NAME} className="h-14 w-auto mb-3" />
-          <h1 className="text-2xl font-bold text-gray-900">{COMPANY_NAME} HRMS</h1>
+          <BrandLockup variant="stacked" />
+          <h1 className="text-2xl font-bold text-gray-900 mt-4">HRMS Portal</h1>
           <p className="text-sm text-gray-500 mt-1">Sign in to your account</p>
         </div>
 

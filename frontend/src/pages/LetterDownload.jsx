@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
-import { COMPANY_NAME, COMPANY_LOGO } from '../config/company';
+import { COMPANY_NAME } from '../config/company';
+import BrandLockup from '../components/BrandLockup';
 
 /**
  * LetterDownload — public (no-login) page, route /letters/:token.
@@ -48,8 +49,8 @@ export default function LetterDownload() {
     <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 px-4 py-10">
       <div className="w-full max-w-2xl bg-white shadow-lg rounded-2xl p-6 sm:p-8 border border-gray-100">
         <div className="flex flex-col items-center text-center mb-5">
-          <img src={COMPANY_LOGO} alt={COMPANY_NAME} className="h-12 w-auto mb-3" />
-          <h1 className="text-xl font-bold text-gray-900">Your letter from {COMPANY_NAME}</h1>
+          <BrandLockup variant="stacked" />
+          <h1 className="text-xl font-bold text-gray-900 mt-4">Your letter from {COMPANY_NAME}</h1>
         </div>
 
         {loading ? (

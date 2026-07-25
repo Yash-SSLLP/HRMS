@@ -14,11 +14,17 @@ import { Screen, Loader, EmptyState, Ionicons } from '../components/ui';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+// Keep the keys in step with the web calendar's TYPE_META (frontend/src/pages/
+// Calendar.jsx) — both read the same GET /celebrations/calendar payload.
 const TYPE_META = {
   holiday: { icon: 'sunny', tint: '#d97706', label: 'Holiday' },
   event: { icon: 'megaphone', tint: '#4f46e5', label: 'Event' },
   birthday: { icon: 'gift', tint: '#db2777', label: 'Birthday' },
   anniversary: { icon: 'ribbon', tint: '#9333ea', label: 'Anniversary' },
+  interview: { icon: 'people', tint: '#ca8a04', label: 'Interview' },
+  reminder: { icon: 'alarm', tint: '#059669', label: 'My reminder' },
+  hrReminder: { icon: 'notifications', tint: '#ea580c', label: 'HR reminder' },
+  task: { icon: 'checkbox', tint: '#0891b2', label: 'Task deadline' },
 };
 
 /** Main screen component; no route params — defaults to the current month. */
