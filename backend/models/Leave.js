@@ -5,15 +5,34 @@ const mongoose = require('mongoose');
 // quota/usage per leave type). Also exports the shared approval-step sub-schema
 // reused by ExitRequest.
 
-// Indian leave taxonomy
-// EL  = Earned / Privilege Leave (accrued, encashable)
-// CL  = Casual Leave
-// SL  = Sick Leave
-// ML  = Maternity Leave (Maternity Benefit Act, 1961 — 26 weeks)
-// PL  = Paternity Leave (policy-driven; no central statute)
-// COMP = Compensatory Off
-// LOP = Loss of Pay (unpaid)
-const LEAVE_TYPES = ['EL', 'CL', 'SL', 'ML', 'PL', 'COMP', 'LOP'];
+// Leave taxonomy. The stored value IS the full display name, so every screen
+// that prints `leaveType` reads correctly without a lookup table.
+//
+//   Paid Leave      the ordinary ask. Paid while the employee's 2 days/month
+//                   quota lasts; every day beyond it is automatically unpaid.
+//   Unpaid Leave    explicitly unpaid — never touches the paid quota.
+//   Emergency Leave granted the moment it is filed (no approval ladder); the
+//                   whole reporting hierarchy + HR are informed instead. Pays
+//                   exactly like Paid Leave. Repeat use in one month is flagged,
+//                   and a manager/HR can then charge that day at double.
+//   Maternity Leave the statutory 26-week entitlement — always paid, exempt from
+//                   the monthly quota, drawn from the ML balance bucket.
+const PAID_LEAVE = 'Paid Leave';
+const UNPAID_LEAVE = 'Unpaid Leave';
+const EMERGENCY_LEAVE = 'Emergency Leave';
+const MATERNITY_LEAVE = 'Maternity Leave';
+const LEAVE_TYPES = [PAID_LEAVE, UNPAID_LEAVE, EMERGENCY_LEAVE, MATERNITY_LEAVE];
+
+// Retired short codes (EL/CL/SL/ML/PL/COMP/LOP). Kept in the enum ONLY so leave
+// filed before this taxonomy stays valid when an old request is saved again —
+// they are never offered for a new request.
+const LEGACY_LEAVE_TYPES = ['EL', 'CL', 'SL', 'ML', 'PL', 'COMP', 'LOP'];
+
+// Type predicates — always use these rather than comparing strings, so legacy
+// records keep behaving the same as their modern equivalent.
+const isUnpaidType = (t) => t === UNPAID_LEAVE || t === 'LOP';
+const isMaternityType = (t) => t === MATERNITY_LEAVE || t === 'ML';
+const isEmergencyType = (t) => t === EMERGENCY_LEAVE;
 
 // Pending -> in approval chain; Approved/Rejected -> final decision; Cancelled -> withdrawn.
 const LEAVE_STATUS = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
@@ -46,7 +65,7 @@ const leaveRequestSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    leaveType: { type: String, enum: LEAVE_TYPES, required: true },
+    leaveType: { type: String, enum: [...LEAVE_TYPES, ...LEGACY_LEAVE_TYPES], required: true },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
     // Allow half-day requests (counted as 0.5)
@@ -76,6 +95,21 @@ const leaveRequestSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+
+    // ----- Emergency leave -----
+    // Emergency leave is granted on filing, so instead of an approval ladder the
+    // chain is recorded as "informed". Which emergency of the month this was
+    // (1st, 2nd, …) drives the flag: from the 2nd onward the managers and HR are
+    // told it is a repeat, and any of them can then charge the day at double.
+    emergencyIndexInMonth: { type: Number, default: 0 },
+    emergencyFlagged: { type: Boolean, default: false },
+    // Double salary cut: the day costs 2× a day's pay in that month's payroll
+    // (see the emergencyPenalty deduction). Reversible until the payslip is run.
+    doubleCut: { type: Boolean, default: false },
+    doubleCutBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    doubleCutByName: String,
+    doubleCutAt: Date,
+    doubleCutNote: { type: String, trim: true, maxlength: 500 },
   },
   { timestamps: true }
 );
@@ -132,4 +166,9 @@ const LeaveBalance = mongoose.model('LeaveBalance', leaveBalanceSchema);
 
 // The reporting-hierarchy rung shape is reused by other models that climb the
 // same approval ladder (e.g. ExitRequest). Exported so they share one definition.
-module.exports = { LeaveRequest, LeaveBalance, LEAVE_TYPES, LEAVE_STATUS, approvalStepSchema, CHAIN_STEP_STATUS };
+module.exports = {
+  LeaveRequest, LeaveBalance, LEAVE_STATUS, approvalStepSchema, CHAIN_STEP_STATUS,
+  LEAVE_TYPES, LEGACY_LEAVE_TYPES,
+  PAID_LEAVE, UNPAID_LEAVE, EMERGENCY_LEAVE, MATERNITY_LEAVE,
+  isUnpaidType, isMaternityType, isEmergencyType,
+};

@@ -63,6 +63,30 @@ function RequestsTab() {
     }
   };
 
+  // Emergency leave is granted without anyone's approval, so this is the control
+  // that comes after it: charge the day at DOUBLE pay (it costs two days' salary
+  // in that month's payroll). Reversible while the payslip is still a Draft.
+  const toggleDoubleCut = async (r) => {
+    const apply = !r.doubleCut;
+    if (apply) {
+      if (!(await confirmDialog({
+        message: `Charge this emergency leave at double pay? ${r.employee?.user?.firstName || 'The employee'} will lose 2 days' salary for ${r.totalDays} day(s) in this month's payroll.`,
+        tone: 'danger',
+        confirmText: 'Apply double cut',
+      }))) return;
+    } else if (!(await confirmDialog({ message: 'Remove the double salary cut from this emergency leave?' }))) {
+      return;
+    }
+    const note = apply ? await promptDialog({ message: 'Optional note (the employee sees this):', initialValue: '' }) : '';
+    if (note === null) return;
+    try {
+      await api.patch(`/leave/emergency/${r._id}/double-cut`, { apply, note });
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Action failed');
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-end mb-3">
@@ -103,8 +127,18 @@ function RequestsTab() {
                   <div className="text-xs text-gray-500 font-mono">{r.employee?.employeeCode}</div>
                 </td>
                 <td className="px-4 py-3">
-                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{r.leaveType}</span>
+                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${r.emergencyFlagged ? 'bg-red-100 text-red-800' : r.leaveType === 'Emergency Leave' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100'}`}>{r.leaveType}</span>
                   {r.isHalfDay && <span className="ml-1 text-xs text-gray-500">(half)</span>}
+                  {r.emergencyFlagged && (
+                    <div className="text-[11px] text-red-700 mt-0.5" title="Repeat emergency leave in the same month">
+                      ⚑ {r.emergencyIndexInMonth} emergency leaves this month
+                    </div>
+                  )}
+                  {r.doubleCut && (
+                    <div className="text-[11px] text-red-600 mt-0.5 font-medium">
+                      Double cut{r.doubleCutByName ? ` · ${r.doubleCutByName}` : ''}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3">{fmtDate(r.startDate)}</td>
                 <td className="px-4 py-3">{fmtDate(r.endDate)}</td>
@@ -130,6 +164,13 @@ function RequestsTab() {
                       <button onClick={() => decide(r._id, 'approve')} className="text-green-700 hover:underline">Force approve</button>
                       <button onClick={() => decide(r._id, 'reject')} className="text-red-600 hover:underline">Force reject</button>
                     </>
+                  )}
+                  {r.leaveType === 'Emergency Leave' && r.status === 'Approved' && (
+                    <button onClick={() => toggleDoubleCut(r)}
+                      className={r.doubleCut ? 'text-gray-600 hover:underline' : 'text-red-600 hover:underline'}
+                      title={r.doubleCut ? 'Remove the double salary cut' : 'Charge this day at 2× salary in payroll'}>
+                      {r.doubleCut ? 'Undo double cut' : 'Double cut'}
+                    </button>
                   )}
                 </td>
               </tr>

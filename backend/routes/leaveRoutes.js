@@ -11,6 +11,7 @@ const {
   applyForLeave,
   previewLeave,
   cancelMyRequest,
+  setDoubleCut,
   listAllRequests,
   approveRequest,
   rejectRequest,
@@ -34,6 +35,11 @@ router.get('/me/leave-preview', previewLeave);
 router.post('/me/requests', applyForLeave);
 // PATCH /me/requests/:id/cancel — cancel own leave request; protected.
 router.patch('/me/requests/:id/cancel', cancelMyRequest);
+
+// PATCH /emergency/:id/double-cut — charge (or un-charge) a flagged emergency
+// leave at double pay. Sits ABOVE the leave.manage gate on purpose: the handler
+// authorises HR *or* a manager on that employee's reporting ladder itself.
+router.patch('/emergency/:id/double-cut', setDoubleCut);
 
 // HR/Admin — everything below requires the 'leave.manage' permission.
 router.use(requirePermission('leave.manage'));

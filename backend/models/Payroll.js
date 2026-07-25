@@ -34,6 +34,11 @@ const deductionsSchema = new mongoose.Schema(
     // Penalty for late arrivals beyond the 5/month allowance. ₹200/day when the
     // employee's monthly Basic < ₹25,000, else ₹400/day.
     latePenalty: { type: Number, default: 0, min: 0 },
+    // Emergency leave a manager/HR chose to charge at DOUBLE pay. Emergency
+    // leave needs no approval, so this is the after-the-fact control on misuse:
+    // the day ends up costing two days' salary in total. This line is whatever
+    // is owed on top of what the day already cost through paid/LOP days.
+    emergencyPenalty: { type: Number, default: 0, min: 0 },
     otherDeductions: { type: Number, default: 0, min: 0 },
   },
   { _id: false }
@@ -122,6 +127,7 @@ payrollSchema.pre('save', function computeTotals(next) {
     (d.tds || 0) +
     (d.loanRecovery || 0) +
     (d.latePenalty || 0) +
+    (d.emergencyPenalty || 0) +
     (d.otherDeductions || 0);
 
   this.netPay = this.grossSalary - this.totalDeductions;

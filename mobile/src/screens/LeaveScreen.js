@@ -15,13 +15,16 @@ import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
+// Mirrors the web apply form. The value IS the stored name, so request history
+// prints it as-is. Paid Leave spends the monthly quota first and turns unpaid
+// beyond it; Emergency Leave is granted without approval.
 const TYPES = [
-  { key: 'EL', label: 'Earned' },
-  { key: 'CL', label: 'Casual' },
-  { key: 'SL', label: 'Sick' },
-  { key: 'COMP', label: 'Comp-off' },
-  { key: 'LOP', label: 'Loss of Pay' },
+  { key: 'Paid Leave', label: 'Paid' },
+  { key: 'Unpaid Leave', label: 'Unpaid' },
+  { key: 'Emergency Leave', label: 'Emergency' },
+  { key: 'Maternity Leave', label: 'Maternity' },
 ];
+const EMERGENCY = 'Emergency Leave';
 
 const STATUS_TONE = { Pending: 'warning', Approved: 'success', Rejected: 'danger', Cancelled: 'neutral' };
 
@@ -36,12 +39,13 @@ const hasStarted = (startDate) => {
 
 export default function LeaveScreen() {
   const [balances, setBalances] = useState(null);
+  const [monthly, setMonthly] = useState(null);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const [type, setType] = useState('CL');
+  const [type, setType] = useState('Paid Leave');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [reason, setReason] = useState('');
@@ -54,6 +58,7 @@ export default function LeaveScreen() {
       api.get('/leave/me/requests').catch(() => null),
     ]);
     setBalances(bal?.data?.balance?.balances || null);
+    setMonthly(bal?.data?.monthly || null);
     setRequests(reqs?.data?.requests || []);
     setLoading(false);
   }, []);
@@ -74,11 +79,25 @@ export default function LeaveScreen() {
     }
     setSubmitting(true);
     try {
-      await api.post('/leave/me/requests', { leaveType: type, startDate: start, endDate: end, reason });
+      const { data } = await api.post('/leave/me/requests', { leaveType: type, startDate: start, endDate: end, reason });
       setShowForm(false);
       setStart(''); setEnd(''); setReason('');
       await load();
-      Alert.alert('Submitted', 'Your leave request has been sent for approval.');
+      // Emergency leave is granted on submission — never tell the employee to
+      // wait for an approval that will not come.
+      if (data?.emergency) {
+        const told = data.emergency.informed?.length
+          ? `${data.emergency.informed.join(', ')} and HR have been informed.`
+          : 'HR has been informed.';
+        Alert.alert(
+          'Emergency leave granted',
+          data.emergency.flagged
+            ? `Granted without approval, but this is emergency leave #${data.emergency.indexInMonth} this month, so it has been flagged to your managers and HR — they can charge the day at double pay. ${told}`
+            : `No approval was needed. ${told}`
+        );
+      } else {
+        Alert.alert('Submitted', 'Your leave request has been sent for approval.');
+      }
     } catch (err) {
       Alert.alert('Could not apply', errMsg(err));
     } finally {
@@ -107,15 +126,23 @@ export default function LeaveScreen() {
   return (
     <Screen edges={[]}>
       <ScrollView contentContainerStyle={{ padding: spacing(4), paddingBottom: 32 }} refreshControl={refresher(refreshing, onRefresh)}>
-        {/* Balance cards */}
+        {/* This month's paid-leave quota (the policy that actually governs pay),
+            plus the separate maternity entitlement. */}
         <View style={styles.balRow}>
-          {[['EL', 'Earned', '#0ea5e9'], ['CL', 'Casual', '#16a34a'], ['SL', 'Sick', '#dc2626']].map(([k, label, tint]) => (
-            <View key={k} style={styles.balCard}>
-              <Text style={[styles.balValue, { color: tint }]}>{bucket(k)}</Text>
+          {[
+            [Number(monthly?.remaining ?? 0), 'Paid leave left', '#16a34a'],
+            [Number(monthly?.used ?? 0), 'Used this month', '#0ea5e9'],
+            [bucket('ML'), 'Maternity', '#dc2626'],
+          ].map(([value, label, tint]) => (
+            <View key={label} style={styles.balCard}>
+              <Text style={[styles.balValue, { color: tint }]}>{value}</Text>
               <Text style={font.small}>{label}</Text>
             </View>
           ))}
         </View>
+        <Text style={[font.small, { marginBottom: spacing(3) }]}>
+          {monthly?.quota ?? 2} paid leave days a month — extra days are unpaid (LOP).
+        </Text>
 
         {/* Apply toggle */}
         {!showForm ? (
@@ -132,6 +159,13 @@ export default function LeaveScreen() {
                 ))}
               </View>
             </Field>
+            {type === EMERGENCY && (
+              <Text style={[font.small, { marginBottom: spacing(3), color: '#b45309' }]}>
+                Granted as soon as you submit — no approval needed. Your managers and HR are
+                informed automatically. Taking it more than once in a month is flagged, and they
+                can then charge that day at double pay.
+              </Text>
+            )}
             <View style={{ flexDirection: 'row', gap: spacing(3) }}>
               <View style={{ flex: 1 }}>
                 <Field label="From"><DateField value={start} onChange={setStart} /></Field>
@@ -156,6 +190,16 @@ export default function LeaveScreen() {
                 <Text style={font.h3}>{r.leaveType} · {r.totalDays}d</Text>
                 <Pill label={r.status} tone={STATUS_TONE[r.status] || 'neutral'} />
               </View>
+              {r.emergencyFlagged && (
+                <Text style={[font.small, { color: '#b91c1c', marginTop: 4 }]}>
+                  ⚑ Emergency leave #{r.emergencyIndexInMonth} that month — flagged to your managers and HR
+                </Text>
+              )}
+              {r.doubleCut && (
+                <Text style={[font.small, { color: '#b91c1c', marginTop: 2, fontWeight: '600' }]}>
+                  Charged at double pay{r.doubleCutByName ? ` by ${r.doubleCutByName}` : ''}
+                </Text>
+              )}
               <Text style={[font.label, { marginTop: 6 }]}>
                 {fmtDate(r.startDate)} → {fmtDate(r.endDate)}
               </Text>

@@ -14,6 +14,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
 const Holiday = require('../models/Holiday');
+const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
 const { renderPayslip } = require('../services/payslipPdf');
@@ -441,6 +442,7 @@ const runPayroll = asyncHandler(async (req, res) => {
             professionalTax: computed.statutoryDeductions.professionalTax,
             loanRecovery: computed.loanRecovery,
             latePenalty: computed.latePenalty,
+            emergencyPenalty: computed.emergencyPenalty,
           },
           status: 'Draft',
           remarks: `Payroll run: ${r.profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days`
@@ -694,6 +696,25 @@ async function computeEmployeeRun(profile, year, month) {
   const lateRate = monthlyBasic < LATE_THRESHOLD_BASIC ? LATE_RATE_LOW : LATE_RATE_HIGH;
   const latePenalty = excessLate * lateRate;
 
+  // ----- Emergency leave charged at DOUBLE -----
+  // Emergency leave is granted without approval, so misuse is controlled after
+  // the fact: a manager or HR can mark a day "double cut", making it cost two
+  // days' salary in total. The day has already cost whatever its paid/LOP split
+  // says, so this line is only the balance still owed to reach 2×:
+  //     days owed = 2 × paidDays + lopDays        (per request)
+  // A day inside the paid quota therefore costs 2 days (it was free), while one
+  // already beyond the quota costs 1 more on top of the day it had lost.
+  const doubleCutLeaves = await LeaveRequest.find({
+    employee: profile._id,
+    leaveType: EMERGENCY_LEAVE,
+    status: 'Approved',
+    doubleCut: true,
+    startDate: { $gte: start, $lt: end },
+  }).select('paidDays lopDays totalDays startDate').lean().catch(() => []);
+  const doubleCutDays = +(doubleCutLeaves || [])
+    .reduce((a, l) => a + 2 * (l.paidDays || 0) + (l.lopDays || 0), 0).toFixed(1);
+  const emergencyPenalty = Math.round(doubleCutDays * perDayPay);
+
   // Working-hours roll-up. A "worked day" is any day with real punch hours.
   // Sundays and holidays are excluded from the average — unless the employee
   // actually worked that day, in which case its hours count and the day is
@@ -730,6 +751,10 @@ async function computeEmployeeRun(profile, year, month) {
       excessLate,           // late days beyond the allowance → penalised
       lateRate,
       latePenalty,
+      // Emergency leave a manager/HR charged at double pay this month.
+      doubleCutLeaves: (doubleCutLeaves || []).length,
+      doubleCutDays,
+      emergencyPenalty,
       monthlyBasic: Math.round(monthlyBasic),
       // Part-month context, so a short quota can be explained wherever only the
       // policy roll-up is available (e.g. the employee's own summary).
@@ -746,10 +771,11 @@ async function computeEmployeeRun(profile, year, month) {
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
     loanRecovery,
     latePenalty,
+    emergencyPenalty,
     earnings, gross,
     // Take-home estimate only once salary exists; before that gross is 0 and a
     // net would be a meaningless negative (the late penalty is still shown above).
-    estimatedNet: earnings ? gross - loanRecovery - latePenalty : 0,
+    estimatedNet: earnings ? gross - loanRecovery - latePenalty - emergencyPenalty : 0,
     needsSetup: !earnings,
   };
 }
@@ -829,6 +855,7 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
       professionalTax: computed.statutoryDeductions.professionalTax,
       loanRecovery: computed.loanRecovery,
       latePenalty: computed.latePenalty,
+      emergencyPenalty: computed.emergencyPenalty,
     },
     status: 'Draft',
     remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
@@ -836,7 +863,8 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
       + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
       + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
       + (p.noPunchDays ? ` · no-punch ${p.noPunchDays}d LOP` : '')
-      + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : ''),
+      + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : '')
+      + (p.emergencyPenalty ? ` · emergency double-cut ${p.doubleCutLeaves}× (₹${p.emergencyPenalty})` : ''),
   };
   if (payslip) {
     Object.assign(payslip, fields);

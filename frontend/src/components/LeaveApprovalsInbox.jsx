@@ -5,7 +5,7 @@
 // ExitApprovalsInbox.
 import { useEffect, useState } from 'react';
 import api from '../api/client';
-import { promptDialog } from './dialogs';
+import { promptDialog, confirmDialog } from './dialogs';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
@@ -81,6 +81,29 @@ export default function LeaveApprovalsInbox() {
       await load();
     } catch (err) {
       setError(err.response?.data?.message || `Could not ${action} the request`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Emergency leave reaches a manager already granted — it needs no approval, so
+  // the only lever afterwards is charging the day at double pay. Available to
+  // every manager on the employee's ladder (and HR).
+  const toggleDoubleCut = async (r) => {
+    const apply = !r.doubleCut;
+    if (apply && !(await confirmDialog({
+      message: `Charge ${empName(r)}'s emergency leave at double pay? They lose 2 days' salary for ${r.totalDays} day(s) in this month's payroll.`,
+      tone: 'danger',
+      confirmText: 'Apply double cut',
+    }))) return;
+    const note = apply ? await promptDialog({ message: 'Optional note (the employee sees this):' }) : '';
+    if (note === null) return;
+    setBusyId(r._id); setError('');
+    try {
+      await api.patch(`/leave/emergency/${r._id}/double-cut`, { apply, note });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not update the double cut');
     } finally {
       setBusyId(null);
     }
@@ -162,9 +185,28 @@ export default function LeaveApprovalsInbox() {
                       {empName(r)}
                       <span className="text-xs text-gray-500"> · {r.leaveType} · {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d</span>
                     </div>
+                    {r.emergencyFlagged && (
+                      <div className="text-[11px] text-red-700 mt-0.5">
+                        ⚑ {r.emergencyIndexInMonth} emergency leaves this month — no approval was required
+                      </div>
+                    )}
+                    {r.doubleCut && (
+                      <div className="text-[11px] text-red-600 mt-0.5 font-medium">
+                        Charged at double pay{r.doubleCutByName ? ` by ${r.doubleCutByName}` : ''}
+                      </div>
+                    )}
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
-                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg shrink-0 ${REQ_COLORS[r.status] || ''}`}>{r.status}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {r.leaveType === 'Emergency Leave' && r.status === 'Approved' && (
+                      <button onClick={() => toggleDoubleCut(r)} disabled={busyId === r._id}
+                        className={r.doubleCut ? 'text-gray-600 hover:underline' : 'text-red-600 hover:underline'}
+                        title={r.doubleCut ? 'Remove the double salary cut' : 'Charge this day at 2× salary in payroll'}>
+                        {r.doubleCut ? 'Undo double cut' : 'Double cut'}
+                      </button>
+                    )}
+                    <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${REQ_COLORS[r.status] || ''}`}>{r.status}</span>
+                  </div>
                 </li>
               ))}
             </ul>

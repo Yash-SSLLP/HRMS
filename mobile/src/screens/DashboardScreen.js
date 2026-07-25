@@ -23,12 +23,9 @@ import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import RnrBanner from '../components/RnrBanner';
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const LEAVE_TYPES = [
-  { key: 'EL', label: 'Earned (EL)', tint: '#0ea5e9' },
-  { key: 'CL', label: 'Casual (CL)', tint: '#16a34a' },
-  { key: 'SL', label: 'Sick (SL)', tint: '#dc2626' },
-  { key: 'ML', label: 'Maternity (ML)', tint: '#db2777' },
-];
+// Leave pay is governed by the monthly quota (2 paid days a month, extras
+// unpaid), not by annual EL/CL/SL buckets — those no longer exist. Maternity is
+// the one banked entitlement left, so it keeps a bar of its own.
 
 const QUICK_ACTIONS = [
   { key: 'Leave', label: 'Leave', icon: 'airplane', tint: '#0ea5e9' },
@@ -91,6 +88,8 @@ export default function DashboardScreen() {
     const [today, upcoming, notif, ann, bal, att, pay, me] = await Promise.all([...base, ...emp]);
     const next = {
       balances: bal?.data?.balance?.balances || null,
+      // This month's paid-leave quota {quota, used, remaining, prorated, …}.
+      monthly: bal?.data?.monthly || null,
       todayAtt: att?.data?.today || null,
       celebToday: today?.data || { birthdays: [], anniversaries: [] },
       upcoming: upcoming?.data?.events || [],
@@ -129,7 +128,8 @@ export default function DashboardScreen() {
     ...(data.celebToday?.birthdays || []).map((b) => ({ ...b, kind: 'birthday' })),
     ...(data.celebToday?.anniversaries || []).map((a) => ({ ...a, kind: 'anniversary' })),
   ];
-  const leaveTypes = LEAVE_TYPES.filter((lt) => data.balances?.[lt.key]);
+  const monthly = data.monthly;
+  const ml = data.balances?.ML;
   const latestPay = Array.isArray(data.payslips) && data.payslips.length ? data.payslips[0] : null;
   const quickActions = employeeSelf ? QUICK_ACTIONS : ADMIN_ACTIONS;
   const announcements = (data.announcements || []).filter((a) => !a.dismissed && !dismissed.has(a._id));
@@ -213,27 +213,43 @@ export default function DashboardScreen() {
           </Card>
         )}
 
-        {/* Leave balance breakdown */}
-        {leaveTypes.length > 0 && (
+        {/* This month's paid-leave quota — the rule that actually decides pay. */}
+        {employeeSelf && monthly && (
           <>
             <SectionHeader title="My leaves" action="Apply" onAction={() => nav.navigate('Leave')} />
             <Card style={{ marginBottom: spacing(4) }}>
-              {leaveTypes.map((lt, i) => {
-                const b = data.balances[lt.key] || {};
-                const total = Number(b.opening || 0) + Number(b.granted || 0);
-                const used = Number(b.used || 0);
-                const bal = Number(b.balance ?? total - used);
-                return (
-                  <View key={lt.key} style={i > 0 ? styles.leaveRowDivider : null}>
-                    <View style={styles.leaveHead}>
-                      <Text style={font.body}>{lt.label}</Text>
-                      <Text style={[styles.leaveBal, { color: lt.tint }]}>{bal} <Text style={font.small}>left</Text></Text>
-                    </View>
-                    <ProgressBar value={total ? (used / total) * 100 : 0} tint={lt.tint} />
-                    <Text style={[font.small, { marginTop: 4 }]}>{used} used of {total || '-'}</Text>
+              <View style={styles.leaveHead}>
+                <Text style={font.body}>Paid leave · {MONTHS[monthly.month] || 'this month'}</Text>
+                <Text style={[styles.leaveBal, { color: '#16a34a' }]}>
+                  {Number(monthly.remaining ?? 0)} <Text style={font.small}>left</Text>
+                </Text>
+              </View>
+              <ProgressBar
+                value={monthly.quota ? (Number(monthly.used || 0) / Number(monthly.quota)) * 100 : 0}
+                tint="#16a34a"
+              />
+              <Text style={[font.small, { marginTop: 4 }]}>
+                {Number(monthly.used || 0)} used of {monthly.quota ?? 2} this month · extra days are unpaid (LOP)
+                {monthly.prorated ? ` · prorated, you were on the payroll ${monthly.eligibleDays}/${monthly.daysInMonth} days` : ''}
+              </Text>
+
+              {ml && Number(ml.balance ?? 0) > 0 && (
+                <View style={styles.leaveRowDivider}>
+                  <View style={styles.leaveHead}>
+                    <Text style={font.body}>Maternity</Text>
+                    <Text style={[styles.leaveBal, { color: '#db2777' }]}>
+                      {Number(ml.balance ?? 0)} <Text style={font.small}>left</Text>
+                    </Text>
                   </View>
-                );
-              })}
+                  <ProgressBar
+                    value={Number(ml.granted || 0) ? (Number(ml.used || 0) / Number(ml.granted)) * 100 : 0}
+                    tint="#db2777"
+                  />
+                  <Text style={[font.small, { marginTop: 4 }]}>
+                    {Number(ml.used || 0)} used of {Number(ml.granted || 0) || '-'} · separate entitlement
+                  </Text>
+                </View>
+              )}
             </Card>
           </>
         )}

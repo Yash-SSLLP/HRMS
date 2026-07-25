@@ -11,7 +11,20 @@ import PageHeader from '../components/PageHeader';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import { confirmDialog } from '../components/dialogs';
 
-const LEAVE_TYPES = ['EL', 'CL', 'SL', 'ML', 'PL', 'COMP', 'LOP'];
+// What an employee can apply for. The value IS the label — the backend stores
+// these full names, so every screen prints them as-is.
+//   Paid Leave      draws the 2 paid days/month first; the rest turns unpaid
+//   Unpaid Leave    deliberately unpaid, never touches the quota
+//   Emergency Leave granted immediately, no approval — the hierarchy is informed
+//   Maternity Leave statutory 26 weeks, always paid, outside the quota
+const LEAVE_TYPES = ['Paid Leave', 'Unpaid Leave', 'Emergency Leave', 'Maternity Leave'];
+const TYPE_HELP = {
+  'Paid Leave': 'Uses your monthly paid days first. Anything beyond the quota is automatically unpaid.',
+  'Unpaid Leave': 'Deliberately unpaid — your paid days stay untouched for later in the month.',
+  'Emergency Leave': 'Granted the moment you apply — nobody has to approve it. Your managers and HR are informed automatically.',
+  'Maternity Leave': 'Statutory 26-week entitlement. Always paid and does not count against the monthly quota.',
+};
+const EMERGENCY = 'Emergency Leave';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -21,6 +34,7 @@ const STATUS_COLORS = {
 };
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
+const ordinal = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th');
 
 // A leave can be cancelled only while it hasn't started yet. Once its start date
 // is in the past, the day has been taken and the option is removed. Date-only
@@ -32,7 +46,7 @@ const hasStarted = (startDate) => {
 };
 
 const blankForm = {
-  leaveType: 'CL',
+  leaveType: 'Paid Leave',
   startDate: '',
   endDate: '',
   isHalfDay: false,
@@ -94,7 +108,19 @@ export default function EmployeeLeave() {
     setSubmitting(true);
     setError('');
     try {
-      await api.post('/leave/me/requests', form);
+      const { data } = await api.post('/leave/me/requests', form);
+      // Emergency leave is granted on the spot — say so, and say who was told,
+      // rather than leaving the employee waiting for an approval that never comes.
+      if (data.emergency) {
+        const told = data.emergency.informed?.length
+          ? ` ${data.emergency.informed.join(', ')} and HR have been informed.`
+          : ' HR has been informed.';
+        if (data.emergency.flagged) {
+          toast.warn(`Emergency leave granted — but this is your ${data.emergency.indexInMonth}${ordinal(data.emergency.indexInMonth)} this month, so it has been flagged to your managers and HR.${told}`);
+        } else {
+          toast.success(`Emergency leave granted — no approval needed.${told}`);
+        }
+      }
       setForm(blankForm);
       await load();
     } catch (err) {
@@ -175,7 +201,20 @@ export default function EmployeeLeave() {
                 className="mt-1 block w-full border rounded-lg px-3 py-2">
                 {LEAVE_TYPES.map((t) => <option key={t}>{t}</option>)}
               </select>
+              <p className="mt-1 text-[11px] text-gray-500">{TYPE_HELP[form.leaveType]}</p>
             </div>
+
+            {form.leaveType === EMERGENCY && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <span className="font-semibold">No approval needed.</span> This is granted as soon as
+                you submit it, and everyone up your reporting line plus HR is informed automatically.
+                It still uses your paid days first, like Paid Leave.
+                <span className="block mt-0.5">
+                  Taking emergency leave more than once in the same month is flagged to your managers
+                  and HR, who can then charge that day at double pay.
+                </span>
+              </div>
+            )}
 
             <label className="inline-flex items-center gap-2 text-sm text-gray-700">
               <input type="checkbox" checked={form.isHalfDay}
@@ -235,7 +274,7 @@ export default function EmployeeLeave() {
 
             <button type="submit" disabled={submitting}
               className="w-full bg-gray-900 text-white py-2 rounded-lg hover:bg-gray-700 disabled:opacity-60">
-              {submitting ? 'Submitting…' : 'Apply'}
+              {submitting ? 'Submitting…' : form.leaveType === EMERGENCY ? 'Take emergency leave' : 'Apply'}
             </button>
           </form>
         </div>
@@ -262,8 +301,18 @@ export default function EmployeeLeave() {
                 ) : requests.map((r) => (
                   <tr key={r._id}>
                     <td className="px-4 py-3">
-                      <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{r.leaveType}</span>
+                      <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${r.leaveType === EMERGENCY ? 'bg-amber-100 text-amber-800' : 'bg-gray-100'}`}>{r.leaveType}</span>
                       {r.isHalfDay && <span className="ml-1 text-xs text-gray-500">(half)</span>}
+                      {r.emergencyFlagged && (
+                        <span className="block mt-0.5 text-[11px] text-amber-700" title="Repeat emergency leave in the same month">
+                          ⚑ {r.emergencyIndexInMonth}{ordinal(r.emergencyIndexInMonth)} emergency this month
+                        </span>
+                      )}
+                      {r.doubleCut && (
+                        <span className="block mt-0.5 text-[11px] text-red-600 font-medium">
+                          Charged at double pay{r.doubleCutByName ? ` by ${r.doubleCutByName}` : ''}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">{fmtDate(r.startDate)}</td>
                     <td className="px-4 py-3">{fmtDate(r.endDate)}</td>

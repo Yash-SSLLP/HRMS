@@ -7,7 +7,10 @@
  * helpers are exported for the approvals/manager controllers.
  */
 const asyncHandler = require('express-async-handler');
-const { LeaveRequest, LeaveBalance, LEAVE_TYPES } = require('../models/Leave');
+const {
+  LeaveRequest, LeaveBalance, LEAVE_TYPES, EMERGENCY_LEAVE, UNPAID_LEAVE,
+  isUnpaidType, isMaternityType, isEmergencyType,
+} = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const Attendance = require('../models/Attendance');
@@ -16,6 +19,7 @@ const { enqueueMail } = require('../services/email');
 const { notify, notifyMany } = require('../services/notify');
 const { daysInclusive, currentYear, startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
+const { hasPermission } = require('../middleware/authMiddleware');
 
 // Company leave policy: 2 PAID leave days per calendar month, settled monthly
 // (no carry-forward). Any leave day beyond the 2/month quota is Loss of Pay
@@ -32,11 +36,17 @@ function monthlyQuotaFor(profile, ym) {
   return prorateAllowance(MONTHLY_PAID_LEAVE, eligibleDays, daysInMonth);
 }
 
-// Leave types that draw down from a tracked balance bucket. Only Maternity (ML)
-// is a banked entitlement now — EL/CL/SL are governed by the monthly paid-leave
-// quota above (their pay treatment is uniform), so they never draw a bucket and
-// never block approval on a zero balance.
-const BALANCED_TYPES = ['ML'];
+// Only Maternity Leave draws down a banked entitlement (the ML bucket, 182 days).
+// Paid / Unpaid / Emergency are governed by the monthly quota above, so they
+// never draw a bucket and never block approval on a zero balance.
+// Returns the LeaveBalance.balances key a type consumes, or null for none.
+function balanceBucketFor(leaveType) {
+  return isMaternityType(leaveType) ? 'ML' : null;
+}
+
+// Emergency leave: granted without approval, but from this many in a calendar
+// month it is flagged to the reporting hierarchy and HR as a repeat.
+const EMERGENCY_FLAG_FROM = 2;
 
 // Build the reporting-hierarchy approval ladder for an applicant. Walk up the
 // `reportingManager` links (each is a User → find THAT user's EmployeeProfile to
@@ -273,8 +283,9 @@ async function getOrCreateBalance(employeeId, year) {
 
 function adjustBalance(balance, leaveType, delta) {
   // delta > 0 → consume; delta < 0 → restore
-  if (!BALANCED_TYPES.includes(leaveType)) return;
-  const bucket = balance.balances[leaveType];
+  const key = balanceBucketFor(leaveType);
+  if (!key) return;
+  const bucket = balance.balances[key];
   if (!bucket) return;
   bucket.used = (bucket.used || 0) + delta;
   bucket.balance = (bucket.balance || 0) - delta;
@@ -334,7 +345,9 @@ async function paidLeaveUsedInMonth(employeeId, ym, excludeRequestId = null) {
   const pendFilter = {
     employee: employeeId,
     status: 'Pending',
-    leaveType: { $ne: 'LOP' },
+    // Deliberately-unpaid leave never touches the quota, so a queued one must
+    // not reserve paid days. Both the current name and the retired code.
+    leaveType: { $nin: [UNPAID_LEAVE, 'LOP'] },
     startDate: { $lt: end },
     endDate: { $gte: start },
   };
@@ -350,11 +363,13 @@ async function paidLeaveUsedInMonth(employeeId, ym, excludeRequestId = null) {
 }
 
 // Split a leave request's working days into PAID vs LOP under the monthly quota.
-// - LOP type  → every day is LOP (explicitly unpaid, no cap).
-// - ML type   → every day is paid (maternity is not subject to the monthly cap).
-// - otherwise → the first (quota − alreadyUsed) working days of each calendar
-//   month are paid; the rest become LOP. The quota is 2/month, prorated for a
-//   month the employee only worked part of (joined or exited mid-month).
+// - Unpaid Leave    → every day is LOP (explicitly unpaid, no cap).
+// - Maternity Leave → every day is paid (not subject to the monthly cap).
+// - Paid / Emergency → the first (quota − alreadyUsed) working days of each
+//   calendar month are paid; the rest become LOP. So an employee always spends
+//   their paid days first, and a request longer than what is left of the quota
+//   turns unpaid for the remainder by itself. The quota is 2/month, prorated for
+//   a month the employee only worked part of (joined or exited mid-month).
 // Returns day counts plus the set of LOP day-keys and a per-month breakdown so
 // the calendar can be stamped and the employee shown the split at apply time.
 async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, isHalfDay }, excludeRequestId = null) {
@@ -370,12 +385,12 @@ async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, is
   let paidDays = 0;
   let lopDays = 0;
 
-  if (leaveType === 'LOP') {
+  if (isUnpaidType(leaveType)) {
     for (const key of workingKeys) lopKeys.add(key);
     lopDays = half ? Math.min(0.5, workingKeys.length) : workingKeys.length;
     return { paidDays: 0, lopDays, lopKeys, workingKeys, perMonth };
   }
-  if (leaveType === 'ML') {
+  if (isMaternityType(leaveType)) {
     paidDays = half ? Math.min(0.5, workingKeys.length) : workingKeys.length;
     return { paidDays, lopDays: 0, lopKeys, workingKeys, perMonth };
   }
@@ -416,6 +431,127 @@ async function stampedPaidLeaveInMonth(employeeId, year, month) {
     status: 'OnLeave',
     date: { $gte: start, $lt: end },
   });
+}
+
+// ===== Emergency leave =====
+// Granted the instant it is filed — no approval ladder. Everyone up the
+// reporting hierarchy (plus HR) is INFORMED rather than asked, and repeats are
+// policed after the fact: from the EMERGENCY_FLAG_FROM'th in a calendar month
+// the notice is escalated to a flag, and any of those managers (or HR) can then
+// charge that day at double via setDoubleCut.
+
+// How many emergency leaves this employee already has in the IST month of
+// `date`. Cancelled / rejected ones don't count.
+async function countEmergencyInMonth(employeeId, date, excludeRequestId = null) {
+  const [Y, M] = ymdIST(date).split('-').map(Number);
+  const { start, end } = monthRangeIST(Y, M);
+  const filter = {
+    employee: employeeId,
+    leaveType: EMERGENCY_LEAVE,
+    status: { $in: ['Approved', 'Pending'] },
+    startDate: { $gte: start, $lt: end },
+  };
+  if (excludeRequestId) filter._id = { $ne: excludeRequestId };
+  return LeaveRequest.countDocuments(filter);
+}
+
+// Tell the hierarchy + HR. Best-effort: never blocks the leave being granted.
+// Returns the names of the people informed, so the employee sees who was told.
+async function notifyEmergencyTaken(request, profile, chain) {
+  const names = chain.map((s) => s.approverName).filter(Boolean);
+  try {
+    const ids = new Set(chain.filter((s) => s.approver).map((s) => String(s.approver)));
+    if (profile.hrPartner) ids.add(String(profile.hrPartner));
+    const sa = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('_id');
+    if (sa) ids.add(String(sa._id));
+    if (!ids.size) return names;
+
+    const who = await applicantNameOf(request);
+    const days = `${request.totalDays} day${request.totalDays === 1 ? '' : 's'}`;
+    const nth = request.emergencyIndexInMonth;
+    const flagged = request.emergencyFlagged;
+    await notifyMany([...ids], {
+      type: 'leave',
+      audience: 'admin',
+      title: flagged ? 'Repeat emergency leave — please review' : 'Emergency leave taken',
+      body: flagged
+        ? `${who} has now taken emergency leave ${nth} times this month (latest ${days}). It needed no approval, but repeat use is flagged — you can charge the day at double pay from the leave record.`
+        : `${who} has taken emergency leave (${days}). Emergency leave needs no approval — you're being informed.`,
+      link: 'leave',
+    });
+
+    // Email the same people, so it reaches them even if they aren't in the app.
+    const users = await User.find({ _id: { $in: [...ids] } }).select('email');
+    const to = users.map((u) => u.email).filter(Boolean);
+    if (to.length) {
+      const fmt = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      await enqueueMail(
+        {
+          to,
+          subject: flagged
+            ? `Repeat emergency leave — ${who} (${nth} this month)`
+            : `Emergency leave — ${who} (${days})`,
+          text: [
+            `${who} has taken emergency leave. No approval is required for it; this is to inform you.`,
+            '',
+            `Dates      : ${fmt(request.startDate)}${request.isHalfDay ? ' (half day)' : ` – ${fmt(request.endDate)}`}`,
+            `Total days : ${request.totalDays}`,
+            `Reason     : ${request.reason || '-'}`,
+            `This month : emergency leave #${nth}`,
+            '',
+            flagged
+              ? 'This is a repeat within the same month and has been flagged. If it is being misused, you or HR can apply a double salary cut for that day from the leave record in the portal.'
+              : 'No action is needed.',
+          ].join('\n'),
+        },
+        { type: 'leave', id: request._id }
+      );
+    }
+  } catch (err) {
+    console.error('emergency leave notify failed:', err.message);
+  }
+  return names;
+}
+
+// Create + grant an emergency leave in one step, then inform everyone.
+async function grantEmergencyLeave(profile, data) {
+  const { leaveType, startDate, endDate, isHalfDay, halfDaySession, totalDays, reason, split } = data;
+  const now = new Date();
+  // The ladder is recorded so the request still shows WHO was informed, with
+  // every rung marked Skipped — nobody's decision was ever required.
+  const chain = (await buildApprovalChain(profile)).map((s) => ({
+    ...s,
+    status: 'Skipped',
+    decidedAt: now,
+    note: 'Informed — emergency leave is granted without approval',
+  }));
+  const indexInMonth = (await countEmergencyInMonth(profile._id, startDate)) + 1;
+
+  const request = await LeaveRequest.create({
+    employee: profile._id,
+    leaveType,
+    startDate,
+    endDate,
+    isHalfDay: !!isHalfDay,
+    halfDaySession,
+    totalDays,
+    paidDays: split.paidDays,
+    lopDays: split.lopDays,
+    reason,
+    status: 'Approved',
+    approvalChain: chain,
+    currentApprover: null,
+    decisionAt: now,
+    decisionNote: 'Emergency leave — granted on filing; reporting hierarchy and HR informed',
+    emergencyIndexInMonth: indexInMonth,
+    emergencyFlagged: indexInMonth >= EMERGENCY_FLAG_FROM,
+  });
+
+  // Put it on the calendar straight away (paid days OnLeave, beyond-quota days
+  // Absent) — same treatment an approved Paid Leave gets.
+  await stampLeaveAttendance(request);
+  const informedNames = await notifyEmergencyTaken(request, profile, chain);
+  return { request, informedNames };
 }
 
 // ===== Employee self-service =====
@@ -519,6 +655,23 @@ const applyForLeave = asyncHandler(async (req, res) => {
   // the record — and the employee — know how much of this request is LOP.
   const split = await computeLeaveSplit(profile._id, { leaveType, startDate, endDate, isHalfDay }, null);
 
+  // Emergency leave needs nobody's approval — it is granted the moment it is
+  // filed, and the hierarchy is informed instead of asked.
+  if (isEmergencyType(leaveType)) {
+    const granted = await grantEmergencyLeave(profile, {
+      leaveType, startDate, endDate, isHalfDay, halfDaySession, totalDays, reason, split,
+    });
+    return res.status(201).json({
+      request: granted.request,
+      emergency: {
+        indexInMonth: granted.request.emergencyIndexInMonth,
+        flagged: granted.request.emergencyFlagged,
+        informed: granted.informedNames,
+      },
+      split: { paidDays: split.paidDays, lopDays: split.lopDays, perMonth: split.perMonth },
+    });
+  }
+
   // Build the reporting-hierarchy approval ladder. The first rung is Pending
   // (their turn); the rest wait. Empty chain = no reporting manager → HR decides.
   const chain = await buildApprovalChain(profile);
@@ -599,6 +752,73 @@ const previewLeave = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Apply / lift the double salary cut on a flagged emergency leave. Open to HR
+ * (leave.manage) and to any manager on that employee's reporting ladder — the
+ * same people the emergency leave was reported to.
+ * @route PATCH /api/leave/emergency/:id/double-cut  (manager or leave.manage)
+ * @param {string} req.params.id - leave request id
+ * @param {boolean} [req.body.apply=true] - false lifts a cut already applied
+ * @param {string} [req.body.note]
+ * @returns {{request: Object}}
+ * @sideeffect notifies the employee; the month's payroll then deducts 2× that day
+ */
+const setDoubleCut = asyncHandler(async (req, res) => {
+  const request = await LeaveRequest.findById(req.params.id);
+  if (!request) {
+    res.status(404);
+    throw new Error('Leave request not found');
+  }
+  if (!isEmergencyType(request.leaveType)) {
+    res.status(400);
+    throw new Error('A double salary cut only applies to emergency leave.');
+  }
+  if (request.status !== 'Approved') {
+    res.status(400);
+    throw new Error(`This emergency leave is ${request.status} — nothing to charge.`);
+  }
+
+  // Either HR (leave.manage) or someone on this employee's reporting ladder.
+  const onLadder = (request.approvalChain || [])
+    .some((s) => s.approver && String(s.approver) === String(req.user._id));
+  if (!hasPermission(req.user, 'leave.manage') && !onLadder) {
+    res.status(403);
+    throw new Error('Only this employee\'s managers or HR can charge an emergency leave double.');
+  }
+
+  const apply = req.body.apply !== false;
+  request.doubleCut = apply;
+  request.doubleCutBy = apply ? req.user._id : null;
+  request.doubleCutByName = apply
+    ? (req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim())
+    : undefined;
+  request.doubleCutAt = apply ? new Date() : undefined;
+  request.doubleCutNote = apply ? String(req.body.note || '').trim() : undefined;
+  await request.save();
+
+  // Tell the employee either way — this costs them a day's pay, so it must not
+  // be a surprise on the payslip.
+  try {
+    const prof = await EmployeeProfile.findById(request.employee).select('user');
+    if (prof?.user) {
+      await notify({
+        recipient: prof.user,
+        type: 'leave',
+        audience: 'employee',
+        title: apply ? 'Emergency leave charged at double' : 'Double cut on emergency leave lifted',
+        body: apply
+          ? `Your emergency leave (${request.totalDays} day${request.totalDays === 1 ? '' : 's'}) has been charged at double pay by ${request.doubleCutByName || 'your manager'}.${request.doubleCutNote ? ` Note: ${request.doubleCutNote}` : ''}`
+          : `The double salary cut on your emergency leave (${request.totalDays} day${request.totalDays === 1 ? '' : 's'}) has been removed.`,
+        link: 'leave',
+      });
+    }
+  } catch (err) {
+    console.error('double-cut notify failed:', err.message);
+  }
+
+  res.json({ request });
+});
+
+/**
  * Cancel the caller's own leave request (not once it has started).
  * @route PATCH /api/leave/me/requests/:id/cancel
  * @param {string} req.params.id - request id
@@ -619,6 +839,14 @@ const cancelMyRequest = asyncHandler(async (req, res) => {
   if (request.status === 'Cancelled' || request.status === 'Rejected') {
     res.status(400);
     throw new Error(`Request is already ${request.status}`);
+  }
+
+  // A double salary cut has already been decided against this emergency leave —
+  // cancelling would erase the penalty (payroll only counts Approved ones), so
+  // only the manager/HR who applied it can lift it first.
+  if (request.doubleCut) {
+    res.status(400);
+    throw new Error('This emergency leave has been charged at double pay and cannot be cancelled. Ask your manager or HR to lift the double cut first.');
   }
 
   // Once the leave has begun (its start date is in the past), it can no longer
@@ -685,10 +913,11 @@ const listAllRequests = asyncHandler(async (req, res) => {
 // Deduct the balance bucket for an approval, throwing a 400 if insufficient.
 // No-op for unbalanced leave types (PL/COMP/LOP).
 async function consumeBalanceOrThrow(request) {
-  if (!BALANCED_TYPES.includes(request.leaveType)) return;
+  const key = balanceBucketFor(request.leaveType);
+  if (!key) return;
   const year = new Date(request.startDate).getFullYear();
   const balance = await getOrCreateBalance(request.employee, year);
-  const available = balance.balances[request.leaveType]?.balance || 0;
+  const available = balance.balances[key]?.balance || 0;
   if (available < request.totalDays) {
     const err = new Error(`Insufficient ${request.leaveType} balance (have ${available}, need ${request.totalDays})`);
     err.status = 400;
@@ -982,6 +1211,7 @@ module.exports = {
   applyForLeave,
   previewLeave,
   cancelMyRequest,
+  setDoubleCut,
   listAllRequests,
   approveRequest,
   rejectRequest,
