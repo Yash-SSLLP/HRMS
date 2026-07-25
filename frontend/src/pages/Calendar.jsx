@@ -26,17 +26,21 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // One solid colour per entry type, plus the legend label. `fg` is the text colour
 // that stays legible on that fill. Order here is the legend order and also the
-// priority used to pick which entry "owns" a day cell.
+// order entries take inside a day cell — which decides what survives the
+// `MAX_TILES` cut, so celebrations sit near the front: a birthday shows ONLY on
+// the calendar, whereas reminders/tasks/interviews also arrive as notifications.
 const TYPE_META = {
   holiday:     { label: 'Holiday',              color: '#f43f5e', fg: '#ffffff' },
   event:       { label: 'Company event',        color: '#3b82f6', fg: '#ffffff' },
+  birthday:    { label: 'Birthday',             color: '#ec4899', fg: '#ffffff' },
+  anniversary: { label: 'Work anniversary',     color: '#6366f1', fg: '#ffffff' },
+  interview:   { label: 'Interview',            color: '#eab308', fg: '#1f2937' },
   hrReminder:  { label: 'HR / Admin reminder',  color: '#f97316', fg: '#ffffff' },
   reminder:    { label: 'My reminder',          color: '#10b981', fg: '#06281f' },
   task:        { label: 'Task deadline',        color: '#06b6d4', fg: '#062a30' },
-  interview:   { label: 'Interview',            color: '#eab308', fg: '#1f2937' },
-  birthday:    { label: 'Birthday',             color: '#ec4899', fg: '#ffffff' },
-  anniversary: { label: 'Work anniversary',     color: '#6366f1', fg: '#ffffff' },
 };
+// Chips drawn in a cell before collapsing the rest into "+N more".
+const MAX_TILES = 3;
 const TYPE_ORDER = Object.keys(TYPE_META);
 const metaFor = (type) => TYPE_META[type] || { label: type, color: '#64748b', fg: '#ffffff' };
 
@@ -325,7 +329,7 @@ export default function Calendar() {
           <>
             <span className="cal-daynum">{cell.day}</span>
             {loading && cell.inMonth && (idx % 5 === 2) && <span className="skeleton block h-3.5 rounded mt-1" />}
-            {dayEvents.slice(0, 2).map((e, i) => {
+            {dayEvents.slice(0, MAX_TILES).map((e, i) => {
               const m = metaFor(e.type);
               return (
                 <button
@@ -340,9 +344,9 @@ export default function Calendar() {
                 </button>
               );
             })}
-            {dayEvents.length > 2 && (
+            {dayEvents.length > MAX_TILES && (
               <button type="button" className="cal-more" onClick={() => setDayList(cell.day)}>
-                +{dayEvents.length - 2} more
+                +{dayEvents.length - MAX_TILES} more
               </button>
             )}
           </>

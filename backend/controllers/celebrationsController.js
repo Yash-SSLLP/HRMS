@@ -13,24 +13,25 @@ const Connection = require('../models/Connection');
 const Message = require('../models/Message');
 const { enqueueMail } = require('../services/email');
 const { hiddenUserIds } = require('../utils/visibility');
+const { IST_TZ, istParts, istMonthDay, istMonthRange } = require('../utils/istDate');
 
-// Extract {month, day} from a date (month is 1-based) for recurring-date matching
-function md(date) {
-  const d = new Date(date);
-  return { m: d.getMonth() + 1, d: d.getDate() };
-}
+// {month, day} of a date **in IST**, for recurring-date matching. Must not use
+// the server's local timezone: the deployed server runs UTC, where an IST-entered
+// date reads back a day early (and 1st-of-month dates fall into the previous
+// month), which hid birthdays/anniversaries from the calendar. See utils/istDate.
+const md = istMonthDay;
 
 function sameMonthDay(a, b) {
   return a.m === b.m && a.d === b.d;
 }
 
+// The next `n` IST calendar days, as {m, d, daysAway}.
 function nextNDays(n) {
   const out = [];
-  const today = new Date();
+  const now = Date.now();
   for (let i = 0; i <= n; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
-    out.push({ m: d.getMonth() + 1, d: d.getDate(), daysAway: i });
+    const { m, d } = istMonthDay(now + i * 24 * 60 * 60 * 1000);
+    out.push({ m, d, daysAway: i });
   }
   return out;
 }
@@ -66,7 +67,7 @@ async function loadActiveProfiles(viewer) {
 const todayCelebrations = asyncHandler(async (req, res) => {
   const profiles = await loadActiveProfiles(req.user);
   const t = md(new Date());
-  const currentYear = new Date().getFullYear();
+  const currentYear = istParts(new Date()).y;
 
   const birthdays = [];
   const anniversaries = [];
@@ -76,7 +77,7 @@ const todayCelebrations = asyncHandler(async (req, res) => {
       birthdays.push({ ...personPayload(p), date: p.dateOfBirth });
     }
     if (p.dateOfJoining) {
-      const years = currentYear - new Date(p.dateOfJoining).getFullYear();
+      const years = currentYear - istParts(p.dateOfJoining).y;
       if (years >= 1 && sameMonthDay(md(p.dateOfJoining), t)) {
         anniversaries.push({ ...personPayload(p), date: p.dateOfJoining, years });
       }
@@ -101,7 +102,7 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
   const profiles = await loadActiveProfiles(req.user);
   const range = nextNDays(days);
-  const currentYear = new Date().getFullYear();
+  const currentYear = istParts(new Date()).y;
 
   const events = [];
 
@@ -121,7 +122,7 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
     if (p.dateOfJoining) {
       const x = md(p.dateOfJoining);
       const hit = range.find((r) => sameMonthDay(x, r));
-      const years = currentYear - new Date(p.dateOfJoining).getFullYear();
+      const years = currentYear - istParts(p.dateOfJoining).y;
       if (hit && years >= 1) {
         events.push({
           type: 'anniversary',
@@ -150,9 +151,9 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
 // month, each normalized to { day, type, label, meta }. Birthdays & anniversaries
 // match on month+day in any year; holidays match the exact month.
 const monthCalendar = asyncHandler(async (req, res) => {
-  const now = new Date();
-  let year = now.getFullYear();
-  let month = now.getMonth() + 1; // 1-12
+  const nowIst = istParts(new Date());
+  let year = nowIst.y;
+  let month = nowIst.m; // 1-12
 
   if (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) {
     const [y, m] = req.query.month.split('-').map(Number);
@@ -163,14 +164,18 @@ const monthCalendar = asyncHandler(async (req, res) => {
   }
 
   const events = [];
+  // Every dated query below is bounded by the IST month, and every entry is
+  // placed on its IST calendar day, so the grid matches what people see on a
+  // wall calendar in India no matter where the server runs.
+  const [monthStart, monthEnd] = istMonthRange(year, month);
 
   // --- Holidays for the exact month/year ---
   const holidays = await Holiday.find({
-    date: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) },
+    date: { $gte: monthStart, $lt: monthEnd },
   }).sort({ date: 1 });
   for (const h of holidays) {
     events.push({
-      day: new Date(h.date).getDate(),
+      day: istParts(h.date).d,
       type: 'holiday',
       label: h.name,
       meta: { holidayType: h.type, description: h.description },
@@ -179,11 +184,11 @@ const monthCalendar = asyncHandler(async (req, res) => {
 
   // --- Events for the exact month/year ---
   const customEvents = await Event.find({
-    date: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) },
+    date: { $gte: monthStart, $lt: monthEnd },
   }).sort({ date: 1 });
   for (const ev of customEvents) {
     events.push({
-      day: new Date(ev.date).getDate(),
+      day: istParts(ev.date).d,
       type: 'event',
       label: ev.title,
       meta: { time: ev.time, location: ev.location, description: ev.description },
@@ -205,11 +210,11 @@ const monthCalendar = asyncHandler(async (req, res) => {
       }
     }
     if (p.dateOfJoining) {
-      const x = md(p.dateOfJoining);
-      const years = year - new Date(p.dateOfJoining).getFullYear();
-      if (x.m === month && years >= 1) {
+      const joined = istParts(p.dateOfJoining);
+      const years = year - joined.y;
+      if (joined.m === month && years >= 1) {
         events.push({
-          day: x.d,
+          day: joined.d,
           type: 'anniversary',
           label: `${personPayload(p).fullName} (${years} yr)`,
           meta: { ...personPayload(p), years },
@@ -221,7 +226,6 @@ const monthCalendar = asyncHandler(async (req, res) => {
   // --- Interviews the viewer is assigned to take (their own calendar) ---
   // Interviews reference the interviewer as a User; the viewer is req.user.
   const Candidate = require('../models/Candidate');
-  const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000; // IST is a fixed UTC+5:30
   const interviewCands = await Candidate.find({ 'rounds.interviewer': req.user._id })
     .populate('job', 'title')
     .select('name job rounds resumeName resumePath');
@@ -229,15 +233,15 @@ const monthCalendar = asyncHandler(async (req, res) => {
     for (const r of c.rounds || []) {
       if (!r.scheduledAt || String(r.interviewer) !== String(req.user._id)) continue;
       // Place the interview on its IST calendar day (scheduledAt is stored UTC).
-      const ist = new Date(new Date(r.scheduledAt).getTime() + IST_OFFSET_MS);
-      if (ist.getUTCFullYear() !== year || ist.getUTCMonth() + 1 !== month) continue;
+      const at = istParts(r.scheduledAt);
+      if (at.y !== year || at.m !== month) continue;
       events.push({
-        day: ist.getUTCDate(),
+        day: at.d,
         type: 'interview',
         label: `${c.name} · ${r.label}`,
         meta: {
           time: new Date(r.scheduledAt).toLocaleTimeString('en-IN', {
-            hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
+            hour: 'numeric', minute: '2-digit', hour12: true, timeZone: IST_TZ,
           }),
           candidateId: String(c._id),
           candidateName: c.name,
@@ -260,7 +264,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   const { myDepartment } = require('./reminderController');
   const reminders = await Reminder.find({
     ...Reminder.visibleFilter(req.user, await myDepartment(req.user)),
-    date: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) },
+    date: { $gte: monthStart, $lt: monthEnd },
   })
     .populate('createdBy', 'firstName lastName role')
     .sort({ date: 1 });
@@ -268,7 +272,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
     const mine = String(r.createdBy?._id || r.createdBy) === String(req.user._id);
     const setByName = `${r.createdBy?.firstName || ''} ${r.createdBy?.lastName || ''}`.trim();
     events.push({
-      day: new Date(r.date).getDate(),
+      day: istParts(r.date).d,
       type: mine ? 'reminder' : 'hrReminder',
       label: r.title,
       meta: {
@@ -292,7 +296,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   const Task = require('../models/Task');
   const tasks = await Task.find({
     $or: [{ assignedTo: req.user._id }, { createdBy: req.user._id }],
-    dueDate: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) },
+    dueDate: { $gte: monthStart, $lt: monthEnd },
   })
     .populate('project', 'name')
     .populate('assignedTo', 'firstName lastName')
@@ -300,7 +304,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   for (const t of tasks) {
     const assignee = `${t.assignedTo?.firstName || ''} ${t.assignedTo?.lastName || ''}`.trim();
     events.push({
-      day: new Date(t.dueDate).getDate(),
+      day: istParts(t.dueDate).d,
       type: 'task',
       label: t.title,
       meta: {

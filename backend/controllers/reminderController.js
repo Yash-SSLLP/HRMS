@@ -36,11 +36,15 @@ function fmtDate(d) {
  * @returns {Promise<string[]>}
  */
 async function resolveRecipients(reminder) {
-  const exclude = String(reminder.createdBy);
+  // `createdBy` may arrive populated (the morning digest populates it for the
+  // sender's name), so read through to the id rather than stringifying the doc.
+  const exclude = String(reminder.createdBy?._id || reminder.createdBy);
   if (reminder.scope === 'self') return [];
 
   if (reminder.scope === 'users') {
-    return (reminder.recipients || []).map(String).filter((id) => id !== exclude);
+    return (reminder.recipients || [])
+      .map((r) => String(r?._id || r))
+      .filter((id) => id !== exclude);
   }
 
   if (reminder.scope === 'department') {
@@ -55,7 +59,7 @@ async function resolveRecipients(reminder) {
   }
 
   // everyone
-  const active = await User.find({ isActive: true, _id: { $ne: reminder.createdBy } }).select('_id');
+  const active = await User.find({ isActive: true, _id: { $ne: exclude } }).select('_id');
   return active.map((u) => String(u._id));
 }
 
@@ -239,4 +243,7 @@ module.exports = {
   deleteReminder,
   myDepartment,
   canBroadcast,
+  // Shared with services/celebrationWorker.js so the morning-of digest resolves
+  // a reminder's audience exactly the way creation did.
+  resolveRecipients,
 };

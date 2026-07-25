@@ -1,35 +1,39 @@
 /**
- * Daily celebration & holiday digest.
- *
- * Once a day (after SEND_HOUR_IST) this scans for:
+ * Daily morning digest — everything on today's calendar, sent once at
+ * SEND_HOUR_IST (8 AM IST). One pass per kind:
  *   - birthdays today          → notify everyone + the birthday person
  *   - work anniversaries today → notify everyone + the celebrant
  *   - holidays today           → notify everyone
+ *   - company events today     → notify everyone
+ *   - reminders dated today     → notify the reminder's own audience (+ its creator)
+ *   - interviews today          → notify the assigned interviewer
+ *   - task deadlines today      → notify the assignee (open tasks only)
  *
  * Each kind is guarded by a DigestLog row keyed on (date, kind) so it fires
  * at most once per day even across restarts or overlapping ticks.
  *
- * New events/holidays created by HR push instantly via their controllers; this
- * worker covers the recurring, date-driven occasions that have no "create" hook.
+ * Events/holidays/reminders created by HR also push instantly from their
+ * controllers; that is the "it was just created" notice, while this worker is the
+ * morning-of nudge for whatever falls on today.
  */
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Holiday = require('../models/Holiday');
+const Event = require('../models/Event');
+const Reminder = require('../models/Reminder');
+const Candidate = require('../models/Candidate');
+const Task = require('../models/Task');
 const User = require('../models/User');
 const DigestLog = require('../models/DigestLog');
 const { notify, notifyMany } = require('./notify');
+const { resolveRecipients } = require('../controllers/reminderController');
+
+const { IST_TZ, istMonthDay, istParts, istDateString, istDayRange } = require('../utils/istDate');
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 min
 const SEND_HOUR_IST = 8; // 8 AM IST
-const IST_TZ = 'Asia/Kolkata';
 
 let intervalHandle = null;
 let ticking = false;
-
-// 'YYYY-MM-DD' for `date` in IST.
-function istDateString(date = new Date()) {
-  // en-CA gives ISO-like YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', { timeZone: IST_TZ }).format(date);
-}
 
 // Current hour (0-23) in IST.
 function istHour(date = new Date()) {
@@ -38,10 +42,9 @@ function istHour(date = new Date()) {
   );
 }
 
-function monthDay(d) {
-  const x = new Date(d);
-  return { m: x.getMonth() + 1, d: x.getDate() };
-}
+// Recurring occasions must be matched on their IST calendar day — server-local
+// month/day is wrong wherever the server isn't in IST (see utils/istDate).
+const monthDay = istMonthDay;
 
 // Claim today's digest for `kind`; returns false if already claimed.
 async function claim(kind, dateStr) {
@@ -92,14 +95,14 @@ async function runBirthdays(dateStr, today, profiles, everyone) {
       link: 'celebrations',
     });
   }
-  console.log(`Celebration digest: ${people.length} birthday(s) notified.`);
+  console.log(`Morning digest: ${people.length} birthday(s) notified.`);
 }
 
 async function runAnniversaries(dateStr, today, profiles, everyone) {
-  const year = new Date().getFullYear();
+  const year = istParts(new Date()).y;
   const people = profiles
     .filter((p) => p.dateOfJoining && monthDay(p.dateOfJoining).m === today.m && monthDay(p.dateOfJoining).d === today.d)
-    .map((p) => ({ p, years: year - new Date(p.dateOfJoining).getFullYear() }))
+    .map((p) => ({ p, years: year - istParts(p.dateOfJoining).y }))
     .filter((x) => x.years >= 1);
   if (!people.length) return;
   if (!(await claim('anniversary', dateStr))) return;
@@ -121,12 +124,11 @@ async function runAnniversaries(dateStr, today, profiles, everyone) {
       link: 'celebrations',
     });
   }
-  console.log(`Celebration digest: ${people.length} anniversary(ies) notified.`);
+  console.log(`Morning digest: ${people.length} anniversary(ies) notified.`);
 }
 
 async function runHolidays(dateStr, everyone) {
-  const start = new Date(`${dateStr}T00:00:00+05:30`);
-  const end = new Date(`${dateStr}T23:59:59+05:30`);
+  const [start, end] = istDayRange(dateStr);
   const holidays = await Holiday.find({ date: { $gte: start, $lte: end } });
   if (!holidays.length) return;
   if (!(await claim('holiday', dateStr))) return;
@@ -139,15 +141,148 @@ async function runHolidays(dateStr, everyone) {
       link: 'calendar',
     });
   }
-  console.log(`Celebration digest: ${holidays.length} holiday(s) notified.`);
+  console.log(`Morning digest: ${holidays.length} holiday(s) notified.`);
+}
+
+async function runEvents(dateStr, everyone) {
+  const [start, end] = istDayRange(dateStr);
+  const events = await Event.find({ date: { $gte: start, $lte: end } });
+  if (!events.length) return;
+  if (!(await claim('event', dateStr))) return;
+
+  for (const ev of events) {
+    const detail = [ev.time, ev.location].filter(Boolean).join(' · ');
+    await notifyMany(everyone, {
+      type: 'event',
+      title: `📅 Today: ${ev.title}`,
+      body: detail || ev.description || 'Happening today.',
+      link: 'calendar',
+    });
+  }
+  console.log(`Morning digest: ${events.length} event(s) notified.`);
 }
 
 /**
- * One digest pass: if it's past SEND_HOUR_IST, notify today's birthdays,
- * anniversaries, and holidays. Re-entrancy guarded by the module `ticking` flag
- * and per-kind DigestLog claims, so overlapping ticks and restarts don't re-send.
+ * Reminders dated today → notify each reminder's own audience plus its creator.
+ * Audience resolution is reused from the reminder controller so the morning nudge
+ * reaches exactly the people the reminder was aimed at.
+ */
+async function runReminders(dateStr, activeIds) {
+  const [start, end] = istDayRange(dateStr);
+  const reminders = await Reminder.find({ date: { $gte: start, $lte: end } })
+    .populate('createdBy', 'firstName lastName');
+  if (!reminders.length) return;
+  if (!(await claim('reminder', dateStr))) return;
+
+  const active = new Set(activeIds.map(String));
+  let sent = 0;
+  for (const r of reminders) {
+    const audience = await resolveRecipients(r); // excludes the creator
+    const creatorId = String(r.createdBy?._id || r.createdBy);
+    const ids = [...new Set([creatorId, ...audience])].filter((id) => active.has(id));
+    if (!ids.length) continue;
+
+    const who = `${r.createdBy?.firstName || ''} ${r.createdBy?.lastName || ''}`.trim();
+    const bits = [
+      r.time ? `at ${r.time}` : null,
+      r.scope !== 'self' && who ? `set by ${who}` : null,
+      r.priority === 'High' ? 'High priority' : null,
+      r.notes || null,
+    ].filter(Boolean);
+    await notifyMany(ids, {
+      type: 'reminder',
+      // Personal item — visible in both portals for dual-role users.
+      audience: 'all',
+      title: `⏰ Reminder today: ${r.title}`,
+      body: bits.join(' · ').slice(0, 300) || 'Due today.',
+      link: 'calendar',
+    });
+    sent += ids.length;
+  }
+  console.log(`Morning digest: ${reminders.length} reminder(s) → ${sent} recipient(s).`);
+}
+
+/** Interviews scheduled today → nudge the assigned interviewer. */
+async function runInterviews(dateStr, activeIds) {
+  const [start, end] = istDayRange(dateStr);
+  const candidates = await Candidate.find({ 'rounds.scheduledAt': { $gte: start, $lte: end } })
+    .populate('job', 'title')
+    .select('name job rounds');
+
+  const active = new Set(activeIds.map(String));
+  const items = [];
+  for (const c of candidates) {
+    for (const r of c.rounds || []) {
+      if (!r.scheduledAt || !r.interviewer) continue;
+      // Already-decided rounds don't need a nudge.
+      if (r.status === 'Cleared' || r.status === 'Rejected') continue;
+      const at = new Date(r.scheduledAt);
+      if (at < start || at > end) continue;
+      if (!active.has(String(r.interviewer))) continue;
+      items.push({ c, r, at });
+    }
+  }
+  if (!items.length) return;
+  if (!(await claim('interview', dateStr))) return;
+
+  for (const { c, r, at } of items) {
+    const time = at.toLocaleTimeString('en-IN', {
+      hour: 'numeric', minute: '2-digit', hour12: true, timeZone: IST_TZ,
+    });
+    await notify({
+      recipient: r.interviewer,
+      type: 'interview',
+      audience: 'all',
+      title: `🗓 Interview today: ${c.name}`,
+      body: [time, r.label, c.job?.title].filter(Boolean).join(' · '),
+      link: 'calendar',
+    });
+  }
+  console.log(`Morning digest: ${items.length} interview(s) notified.`);
+}
+
+/** Open tasks due today → nudge the assignee. */
+async function runTaskDeadlines(dateStr, activeIds) {
+  const [start, end] = istDayRange(dateStr);
+  const tasks = await Task.find({
+    dueDate: { $gte: start, $lte: end },
+    status: { $ne: 'Done' },
+    assignedTo: { $ne: null },
+  }).populate('project', 'name');
+  if (!tasks.length) return;
+  if (!(await claim('task', dateStr))) return;
+
+  const active = new Set(activeIds.map(String));
+  let sent = 0;
+  for (const t of tasks) {
+    if (!active.has(String(t.assignedTo))) continue;
+    const bits = [
+      t.project?.name || null,
+      t.priority && t.priority !== 'Medium' ? `${t.priority} priority` : null,
+      t.status !== 'Todo' ? t.status : null,
+    ].filter(Boolean);
+    await notify({
+      recipient: t.assignedTo,
+      type: 'task',
+      audience: 'all',
+      title: `⏳ Task due today: ${t.title}`,
+      body: bits.join(' · ') || 'Due today.',
+      link: '/employee/tasks',
+    });
+    sent += 1;
+  }
+  console.log(`Morning digest: ${sent} task deadline(s) notified.`);
+}
+
+/**
+ * One digest pass: if it's past SEND_HOUR_IST, notify everything dated today —
+ * birthdays, anniversaries, holidays, company events, reminders, interviews and
+ * task deadlines. Re-entrancy guarded by the module `ticking` flag and per-kind
+ * DigestLog claims, so overlapping ticks and restarts don't re-send. Each pass is
+ * isolated: one failing kind (e.g. a bad reminder row) must not silence the rest.
  * @returns {Promise<void>}
- * @sideEffects Reads profiles/users/holidays; writes DigestLog rows; sends in-app + push notifications.
+ * @sideEffects Reads profiles/users/holidays/events/reminders/candidates/tasks;
+ *   writes DigestLog rows; sends in-app + push notifications.
  */
 async function tick() {
   if (ticking) return;
@@ -159,11 +294,24 @@ async function tick() {
 
     const [profiles, everyone] = await Promise.all([activeProfiles(), allActiveUserIds()]);
 
-    await runBirthdays(dateStr, today, profiles, everyone);
-    await runAnniversaries(dateStr, today, profiles, everyone);
-    await runHolidays(dateStr, everyone);
+    const passes = [
+      ['birthday', () => runBirthdays(dateStr, today, profiles, everyone)],
+      ['anniversary', () => runAnniversaries(dateStr, today, profiles, everyone)],
+      ['holiday', () => runHolidays(dateStr, everyone)],
+      ['event', () => runEvents(dateStr, everyone)],
+      ['reminder', () => runReminders(dateStr, everyone)],
+      ['interview', () => runInterviews(dateStr, everyone)],
+      ['task', () => runTaskDeadlines(dateStr, everyone)],
+    ];
+    for (const [kind, run] of passes) {
+      try {
+        await run();
+      } catch (err) {
+        console.error(`Morning digest (${kind}) failed:`, err.message);
+      }
+    }
   } catch (err) {
-    console.error('Celebration worker tick failed:', err.message);
+    console.error('Morning digest tick failed:', err.message);
   } finally {
     ticking = false;
   }
@@ -181,7 +329,7 @@ function startWorker() {
   setTimeout(tick, 10_000).unref?.();
   intervalHandle = setInterval(tick, POLL_INTERVAL_MS);
   intervalHandle.unref?.();
-  console.log('Celebration digest worker started.');
+  console.log('Morning digest worker started.');
 }
 
 module.exports = { startWorker, tick };

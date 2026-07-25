@@ -1,8 +1,9 @@
 const mongoose = require('mongoose');
 
-// Idempotency guard for the daily celebration/holiday digest. One row per
-// (date, kind) so a server restart (or a second worker tick) never double-sends
-// the same day's birthday/anniversary/holiday notifications.
+// Idempotency guard for the daily morning digest (services/celebrationWorker.js).
+// One row per (date, kind) so a server restart (or a second worker tick) never
+// double-sends the same day's notifications. Kinds: 'birthday' | 'anniversary' |
+// 'holiday' | 'event' | 'reminder' | 'interview' | 'task'.
 const digestLogSchema = new mongoose.Schema(
   {
     date: { type: String, required: true }, // 'YYYY-MM-DD' in IST
