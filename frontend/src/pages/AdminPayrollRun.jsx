@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { confirmDialog } from '../components/dialogs';
 import { minutesToHHMM } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -169,6 +170,14 @@ export default function AdminPayrollRun() {
   };
 
   const generate = async () => {
+    // Recomputing an approved payslip sends it back to Draft, which hides it from
+    // the employee and breaks the shared link until it is approved again.
+    if (run?.payslip?.status === 'Approved' && !(await confirmDialog({
+      message: 'This payslip is approved. Re-generating recomputes it and resets it to Draft — '
+        + 'the shared payslip link stops working until it is approved again. Continue?',
+      tone: 'danger',
+      confirmText: 'Re-generate',
+    }))) return;
     setBusy(true);
     try {
       await api.post('/payroll/run-employee', { employee, year: att.year, month: att.month });
@@ -392,7 +401,7 @@ export default function AdminPayrollRun() {
 
                 <div className="flex flex-wrap justify-end gap-2 mt-auto pt-4">
                   {slip && <Link to="/admin/payroll" className="px-3 py-2 text-xs border rounded-lg hover:bg-gray-50">Open on Payroll page →</Link>}
-                  <button onClick={generate} disabled={busy || c.needsSetup || ['Approved', 'Paid'].includes(slip?.status)}
+                  <button onClick={generate} disabled={busy || c.needsSetup || slip?.status === 'Paid'}
                     className="px-4 py-2 text-sm border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 disabled:opacity-50">
                     {slip ? 'Regenerate Draft' : 'Generate Draft'}
                   </button>

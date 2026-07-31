@@ -349,6 +349,10 @@ async function buildRunRows(year, month) {
     // Whether payroll can be derived from a salary structure for THIS month
     // (has a structure assigned and a CTC in force after hike resolution).
     const hasSalarySetup = !!(p.salaryStructure && resolveCtcForMonth(p, year, month) > 0);
+    // A Paid payslip is never overwritten; anything else can be recomputed as
+    // long as there is a structure + CTC to recompute it from (a hand-entered or
+    // copied payslip has no source to re-derive from, so it is left alone).
+    const existingLocked = !!cur && cur.status === 'Paid';
     return {
       profile: p,
       existing: cur || null,
@@ -361,6 +365,10 @@ async function buildRunRows(year, month) {
         designation: p.designation || '',
         department: p.department || '',
         existingStatus: cur ? cur.status : null,
+        existingLocked,
+        canRegenerate: !!cur && hasSalarySetup && !existingLocked,
+        existingNetPay: cur ? cur.netPay : null,
+        existingEmailed: !!(cur && cur.emailedAt),
         // Where this month's Draft will come from: the salary structure when set
         // up, else a copy of the employee's most recent payslip.
         source: hasSalarySetup
@@ -377,7 +385,7 @@ async function buildRunRows(year, month) {
  * Preview the org-wide monthly payroll run (who is new vs already generated).
  * @route GET /api/payroll/run?year=&month=  (HR/Admin)
  * @param {number} [req.query.year] / [req.query.month]
- * @returns {{year, month, count, alreadyGenerated, toGenerate, rows}}
+ * @returns {{year, month, count, alreadyGenerated, toGenerate, regeneratable, rows}}
  */
 // GET /api/payroll/run?year=&month=  — preview who gets what
 const previewPayrollRun = asyncHandler(async (req, res) => {
@@ -391,19 +399,25 @@ const previewPayrollRun = asyncHandler(async (req, res) => {
     count: rows.length,
     alreadyGenerated: rows.filter((r) => r.existing).length,
     toGenerate: rows.filter((r) => !r.existing).length,
+    // Already-generated payslips HR may tick to recompute for this month.
+    regeneratable: rows.filter((r) => r.row.canRegenerate).length,
     rows: rows.map((r) => r.row),
   });
 });
 
 /**
  * Execute the org-wide monthly run: create Draft payslips seeded from each
- * employee's most recent payslip (blank for new joiners); never overwrites existing.
+ * employee's most recent payslip (blank for new joiners). Existing payslips are
+ * skipped unless their employee id is listed in `regenerate`, in which case they
+ * are recomputed from structure + current attendance and reset to Draft (Paid
+ * payslips are never overwritten).
  * @route POST /api/payroll/run  (HR/Admin)
  * @param {number} req.body.year - required
  * @param {number} req.body.month - required 1-12
- * @returns {{year, month, created, skippedExisting, needsSetup, payslips}} (201)
+ * @param {string[]|boolean} [req.body.regenerate] - EmployeeProfile ids to overwrite, or true/'all'
+ * @returns {{year, month, created, regenerated, skippedExisting, regenerateBlocked, needsSetup, payslips}} (201)
  */
-// POST /api/payroll/run  { year, month }  — create the Draft payslips
+// POST /api/payroll/run  { year, month, regenerate }  — create/refresh the Draft payslips
 const runPayroll = asyncHandler(async (req, res) => {
   const year = Number(req.body.year);
   const month = Number(req.body.month);
@@ -414,12 +428,40 @@ const runPayroll = asyncHandler(async (req, res) => {
 
   const rows = await buildRunRows(year, month);
   const daysInMonth = new Date(year, month, 0).getDate();
+  // Which already-generated payslips HR asked to overwrite.
+  const regenAll = req.body.regenerate === true || req.body.regenerate === 'all';
+  const regenSet = new Set(
+    Array.isArray(req.body.regenerate) ? req.body.regenerate.map(String) : []
+  );
   const created = [];
   const derivedCount = [];
   const copiedCount = [];
   const blank = [];
+  const regenerated = [];
+  const regenBlockedPaid = [];
+  const regenBlockedNoSetup = [];
+  let skippedExisting = 0;
   for (const r of rows) {
-    if (r.existing) continue; // never overwrite an existing payslip
+    if (r.existing) {
+      const asked = regenAll ? r.row.canRegenerate : regenSet.has(String(r.profile._id));
+      if (!asked) { skippedExisting += 1; continue; }
+      // A disbursed payslip is a financial record — never rewrite it.
+      if (r.existing.status === 'Paid') { regenBlockedPaid.push(r.row.name); continue; }
+      // Nothing to recompute from: the payslip was hand-entered or copied, and
+      // overwriting it would wipe HR's work.
+      if (!r.hasSalarySetup) { regenBlockedNoSetup.push(r.row.name); continue; }
+      const computed = await computeEmployeeRun(r.profile, year, month);
+      if (computed.needsSetup) { regenBlockedNoSetup.push(r.row.name); continue; }
+      const fromStatus = r.existing.status;
+      const wasEmailed = !!r.existing.emailedAt;
+      // Approved → Draft is picked up by the auditStatus plugin on save().
+      Object.assign(r.existing, buildRunFields(r.profile, computed, r.existing, { rerun: true }));
+      await r.existing.save();
+      regenerated.push({
+        name: r.row.name, netPay: r.existing.netPay, id: r.existing._id, fromStatus, wasEmailed,
+      });
+      continue;
+    }
 
     // Preferred: derive the payslip from the employee's salary structure × CTC,
     // prorated by attendance, with the leave/late policy + loan EMIs (same engine
@@ -427,29 +469,11 @@ const runPayroll = asyncHandler(async (req, res) => {
     if (r.hasSalarySetup) {
       const computed = await computeEmployeeRun(r.profile, year, month);
       if (!computed.needsSetup) {
-        const pol = computed.policy;
         const payslip = await Payroll.create({
           employee: r.profile._id,
           payPeriodYear: year,
           payPeriodMonth: month,
-          workingDays: computed.daysInMonth,
-          paidDays: computed.paidDays,
-          lopDays: computed.lopDays,
-          earnings: computed.earnings,
-          deductions: {
-            epf: computed.statutoryDeductions.epf,
-            esic: computed.statutoryDeductions.esic,
-            professionalTax: computed.statutoryDeductions.professionalTax,
-            loanRecovery: computed.loanRecovery,
-            latePenalty: computed.latePenalty,
-            emergencyPenalty: computed.emergencyPenalty,
-          },
-          status: 'Draft',
-          remarks: `Payroll run: ${r.profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days`
-            + (computed.notEmployedDays ? ` (on payroll ${computed.eligibleDays}/${computed.daysInMonth} days)` : '')
-            + ` · leave ${pol.leaveTaken}/${pol.paidLeaveQuota}` + (pol.excessLeave ? ` (${pol.excessLeave}d LOP)` : pol.unusedLeave ? ` (₹${pol.leaveIncentive} incentive)` : '')
-            + (pol.noPunchDays ? ` · no-punch ${pol.noPunchDays}d LOP` : '')
-            + ` · late ${pol.lateDays}/${pol.lateAllowance}` + (pol.excessLate ? ` (₹${pol.latePenalty} penalty)` : ''),
+          ...buildRunFields(r.profile, computed),
         });
         created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
         derivedCount.push(r.row.name);
@@ -486,9 +510,14 @@ const runPayroll = asyncHandler(async (req, res) => {
     created: created.length,
     derived: derivedCount.length,
     copiedFromLast: copiedCount.length,
-    skippedExisting: rows.filter((r) => r.existing).length,
+    skippedExisting,
+    regenerated: regenerated.length,
+    regeneratedFromApproved: regenerated.filter((p) => p.fromStatus === 'Approved').length,
+    // Their already-sent PDF is now stale — HR should resend after reviewing.
+    regeneratedEmailed: regenerated.filter((p) => p.wasEmailed).map((p) => p.name),
+    regenerateBlocked: { paid: regenBlockedPaid, noSetup: regenBlockedNoSetup },
     needsSetup: blank,
-    payslips: created,
+    payslips: created.concat(regenerated.map((p) => ({ name: p.name, netPay: p.netPay, id: p.id }))),
   });
 });
 
@@ -781,6 +810,58 @@ async function computeEmployeeRun(profile, year, month) {
 }
 
 /**
+ * Build the payslip fields for a (re)run from a computeEmployeeRun() result.
+ * Shared by the org-wide run and the per-employee run so both write the same
+ * shape. When `existing` is given (a re-generate), the values the engine cannot
+ * derive - HR-entered bonus/overtime/other earnings, TDS and other deductions -
+ * are carried over; everything else is recomputed from structure + attendance.
+ * @param {Object} profile - EmployeeProfile with salaryStructure populated
+ * @param {Object} computed - computeEmployeeRun() result (needsSetup must be false)
+ * @param {Object|null} [existing] - the payslip being overwritten, if any
+ * @param {{rerun?: boolean}} [opts] - rerun marks the remarks as an overwrite
+ * @returns {Object} fields to Object.assign onto a Payroll doc
+ */
+function buildRunFields(profile, computed, existing = null, { rerun = false } = {}) {
+  const p = computed.policy;
+  const prevEarnings = existing?.earnings?.toObject?.() || existing?.earnings || {};
+  const prevDeductions = existing?.deductions?.toObject?.() || existing?.deductions || {};
+  return {
+    workingDays: computed.daysInMonth,
+    paidDays: computed.paidDays,
+    lopDays: computed.lopDays,
+    earnings: {
+      // Keep the manually entered earnings the run cannot derive.
+      bonus: prevEarnings.bonus || 0,
+      overtime: prevEarnings.overtime || 0,
+      otherEarnings: prevEarnings.otherEarnings || 0,
+      ...computed.earnings,
+    },
+    deductions: {
+      // Preserve HR-entered non-derivable deductions (TDS, other), (re)compute
+      // the deterministic ones from the structure/attendance.
+      ...prevDeductions,
+      epf: computed.statutoryDeductions.epf,
+      esic: computed.statutoryDeductions.esic,
+      professionalTax: computed.statutoryDeductions.professionalTax,
+      loanRecovery: computed.loanRecovery,
+      latePenalty: computed.latePenalty,
+      emergencyPenalty: computed.emergencyPenalty,
+    },
+    status: 'Draft',
+    remarks: `${rerun ? 'Re-run' : 'Payroll run'}: ${profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
+      + (computed.notEmployedDays ? ` (on payroll ${computed.eligibleDays}/${computed.daysInMonth} days)` : '')
+      + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
+      + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
+      + (p.noPunchDays ? ` · no-punch ${p.noPunchDays}d LOP` : '')
+      + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : '')
+      + (p.emergencyPenalty ? ` · emergency double-cut ${p.doubleCutLeaves}× (₹${p.emergencyPenalty})` : '')
+      // Amount edits are not covered by the status audit log, so record the
+      // overwrite on the payslip itself.
+      + (rerun && existing ? ` · re-generated over ${existing.status} on ${new Date().toLocaleDateString('en-IN')}` : ''),
+  };
+}
+
+/**
  * Preview one employee's computed payroll for a month (structure × attendance × loans).
  * @route GET /api/payroll/run-employee?employee=&year=&month=  (HR/Admin)
  * @param {string} req.query.employee - EmployeeProfile id (required)
@@ -811,10 +892,11 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
  * @param {string} req.body.employee - EmployeeProfile id
  * @param {number} req.body.year - required
  * @param {number} req.body.month - required 1-12
- * @returns {{payslip, computed}} (201); 400 if salary not set up or slip already Approved/Paid
+ * @returns {{payslip, computed}} (201); 400 if salary not set up or the slip is already Paid
  */
 // POST /api/payroll/run-employee  { employee, year, month }
 // Create or refresh the month's Draft payslip from structure + attendance + loans.
+// An Approved payslip is recomputed and drops back to Draft; Paid is locked.
 const runEmployeePayroll = asyncHandler(async (req, res) => {
   const year = Number(req.body.year);
   const month = Number(req.body.month);
@@ -836,36 +918,13 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
   }
 
   let payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
-  if (payslip && ['Approved', 'Paid'].includes(payslip.status)) {
+  // A disbursed payslip is a financial record; an Approved one can still be
+  // recomputed (it drops back to Draft, which the audit log records).
+  if (payslip && payslip.status === 'Paid') {
     res.status(400);
     throw new Error(`The ${MONTH_NAMES[month]} payslip is already ${payslip.status} - it can't be regenerated.`);
   }
-  const p = computed.policy;
-  const fields = {
-    workingDays: computed.daysInMonth,
-    paidDays: computed.paidDays,
-    lopDays: computed.lopDays,
-    earnings: computed.earnings,
-    deductions: {
-      // Preserve HR-entered non-derivable deductions (TDS, other), (re)compute
-      // the deterministic ones from the structure/attendance.
-      ...(payslip?.deductions?.toObject?.() || {}),
-      epf: computed.statutoryDeductions.epf,
-      esic: computed.statutoryDeductions.esic,
-      professionalTax: computed.statutoryDeductions.professionalTax,
-      loanRecovery: computed.loanRecovery,
-      latePenalty: computed.latePenalty,
-      emergencyPenalty: computed.emergencyPenalty,
-    },
-    status: 'Draft',
-    remarks: `Payroll run: ${profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
-      + (computed.notEmployedDays ? ` (on payroll ${computed.eligibleDays}/${computed.daysInMonth} days)` : '')
-      + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
-      + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
-      + (p.noPunchDays ? ` · no-punch ${p.noPunchDays}d LOP` : '')
-      + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : '')
-      + (p.emergencyPenalty ? ` · emergency double-cut ${p.doubleCutLeaves}× (₹${p.emergencyPenalty})` : ''),
-  };
+  const fields = buildRunFields(profile, computed, payslip, { rerun: !!payslip });
   if (payslip) {
     Object.assign(payslip, fields);
     await payslip.save();
@@ -1388,6 +1447,7 @@ module.exports = {
   // exported for unit tests
   deriveSalary,
   resolveCtcForMonth,
+  buildRunFields,
   buildPayrollSheetRow,
   buildPayrollWorkbook,
   listPayslips,

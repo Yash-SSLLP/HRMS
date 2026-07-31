@@ -95,7 +95,9 @@ export default function AdminPayroll() {
 
   // ----- Org-wide "run payroll for everyone" -----
   const loadRunPreview = async (year, month) => {
-    setRunModal((rm) => ({ ...rm, year, month, loadingPreview: true, result: null }));
+    // Changing the period invalidates the re-generate ticks (they are employee
+    // ids for that month's existing payslips).
+    setRunModal((rm) => ({ ...rm, year, month, loadingPreview: true, result: null, regen: [] }));
     try {
       const { data } = await api.get(`/payroll/run?year=${year}&month=${month}`);
       setRunModal((rm) => ({ ...rm, preview: data, loadingPreview: false }));
@@ -108,15 +110,40 @@ export default function AdminPayroll() {
   const openRun = () => {
     const month = Number(filter.month) || new Date().getMonth() + 1;
     const year = filter.year || new Date().getFullYear();
-    setRunModal({ year, month, preview: null, loadingPreview: true, running: false, result: null });
+    setRunModal({ year, month, preview: null, loadingPreview: true, running: false, result: null, regen: [] });
     loadRunPreview(year, month);
   };
 
+  // Tick / untick an already-generated payslip for re-generation.
+  const toggleRegen = (id) => setRunModal((rm) => ({
+    ...rm,
+    regen: rm.regen.includes(id) ? rm.regen.filter((x) => x !== id) : [...rm.regen, id],
+  }));
+
+  const toggleAllRegen = (ids) => setRunModal((rm) => ({
+    ...rm,
+    regen: ids.every((id) => rm.regen.includes(id)) ? [] : ids,
+  }));
+
   const executeRun = async () => {
+    const regen = runModal.regen || [];
+    // Overwriting an Approved payslip sends it back to Draft, which hides it from
+    // the employee and breaks the shared link until it is approved again.
+    const approved = (runModal.preview?.rows || [])
+      .filter((r) => regen.includes(r.employeeId) && r.existingStatus === 'Approved');
+    if (approved.length && !(await confirmDialog({
+      message: `${approved.length} approved payslip${approved.length === 1 ? '' : 's'} will be recomputed and reset to Draft. `
+        + 'Their shared payslip links stop working until they are approved again. Continue?',
+      tone: 'danger',
+      confirmText: 'Re-generate',
+    }))) return;
     setRunModal((rm) => ({ ...rm, running: true }));
     try {
-      const { data } = await api.post('/payroll/run', { year: runModal.year, month: runModal.month });
-      toast.success(`Created ${data.created} draft payslip${data.created === 1 ? '' : 's'} · ${data.derived} from structure, ${data.copiedFromLast} copied`);
+      const { data } = await api.post('/payroll/run', { year: runModal.year, month: runModal.month, regenerate: regen });
+      toast.success(
+        `Created ${data.created} draft payslip${data.created === 1 ? '' : 's'} · ${data.derived} from structure, ${data.copiedFromLast} copied`
+        + (data.regenerated ? ` · re-generated ${data.regenerated}` : '')
+      );
       setRunModal((rm) => ({ ...rm, running: false, result: data }));
       // Surface the new drafts in the list underneath.
       setFilter((f) => ({ ...f, year: runModal.year, month: runModal.month, status: '' }));
@@ -581,13 +608,22 @@ export default function AdminPayroll() {
         const willDerive = toGen.filter((r) => r.hasSalarySetup);
         const willCopy = toGen.filter((r) => !r.hasSalarySetup && r.source);
         const willBlank = toGen.filter((r) => !r.hasSalarySetup && !r.source);
-        const tag = (r) => r.existingStatus
-          ? ['already generated', 'bg-gray-100 text-gray-500']
-          : r.hasSalarySetup
-            ? ['from structure', 'bg-emerald-100 text-emerald-700']
-            : r.source
-              ? ['copy from last', 'bg-blue-100 text-blue-700']
-              : ['needs setup', 'bg-amber-100 text-amber-700'];
+        // Already-generated payslips HR may tick to recompute (Paid never, and
+        // hand-entered/copied payslips have no structure to re-derive from).
+        const regen = runModal.regen || [];
+        const regenIds = rows.filter((r) => r.canRegenerate).map((r) => r.employeeId);
+        const isRegen = (r) => regen.includes(r.employeeId);
+        const tag = (r) => isRegen(r)
+          ? ['will re-generate', 'bg-indigo-100 text-indigo-700']
+          : r.existingLocked
+            ? ['locked (Paid)', 'bg-gray-100 text-gray-500']
+            : r.existingStatus
+              ? ['already generated', 'bg-gray-100 text-gray-500']
+              : r.hasSalarySetup
+                ? ['from structure', 'bg-emerald-100 text-emerald-700']
+                : r.source
+                  ? ['copy from last', 'bg-blue-100 text-blue-700']
+                  : ['needs setup', 'bg-amber-100 text-amber-700'];
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
             <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
@@ -596,7 +632,9 @@ export default function AdminPayroll() {
                 <button onClick={() => setRunModal(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
               </div>
               <p className="text-sm text-gray-500 mb-4">
-                Creates a Draft payslip for every active employee for the selected month. Existing payslips are never overwritten.
+                Creates a Draft payslip for every active employee for the selected month. Payslips that already exist
+                are skipped unless you tick them to re-generate — those are recomputed from the salary structure and
+                the current attendance. Paid payslips can never be overwritten.
               </p>
 
               <div className="flex flex-wrap items-end gap-3 mb-4">
@@ -620,8 +658,29 @@ export default function AdminPayroll() {
                 <div className="space-y-3">
                   <div className="text-sm bg-green-50 border border-green-200 text-green-800 px-3 py-2 rounded-lg">
                     Created <strong>{runModal.result.created}</strong> draft payslip(s) for {MONTHS[runModal.month - 1]} {runModal.year}
+                    {runModal.result.regenerated ? ` · re-generated ${runModal.result.regenerated}` : ''}
                     {runModal.result.skippedExisting ? ` · skipped ${runModal.result.skippedExisting} existing` : ''}.
+                    {runModal.result.regeneratedFromApproved
+                      ? ` ${runModal.result.regeneratedFromApproved} approved payslip(s) are back to Draft — approve them again.`
+                      : ''}
                   </div>
+                  {runModal.result.regeneratedEmailed?.length > 0 && (
+                    <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-lg">
+                      Already emailed before this re-run — the sent PDF is now out of date, resend after reviewing:{' '}
+                      {runModal.result.regeneratedEmailed.join(', ')}
+                    </div>
+                  )}
+                  {(runModal.result.regenerateBlocked?.paid?.length > 0
+                    || runModal.result.regenerateBlocked?.noSetup?.length > 0) && (
+                    <div className="text-xs bg-gray-50 border border-gray-200 text-gray-600 px-3 py-2 rounded-lg space-y-1">
+                      {runModal.result.regenerateBlocked.paid?.length > 0 && (
+                        <div>Not re-generated (already Paid): {runModal.result.regenerateBlocked.paid.join(', ')}</div>
+                      )}
+                      {runModal.result.regenerateBlocked.noSetup?.length > 0 && (
+                        <div>Not re-generated (no salary structure to recompute from): {runModal.result.regenerateBlocked.noSetup.join(', ')}</div>
+                      )}
+                    </div>
+                  )}
                   <div className="grid grid-cols-3 gap-2 text-sm">
                     <div className="bg-emerald-50 rounded-lg p-2 text-emerald-800">From structure: <strong>{runModal.result.derived}</strong></div>
                     <div className="bg-blue-50 rounded-lg p-2 text-blue-800">Copied from last: <strong>{runModal.result.copiedFromLast}</strong></div>
@@ -640,16 +699,24 @@ export default function AdminPayroll() {
                 <div className="text-gray-500 py-6 text-center">Loading preview…</div>
               ) : runModal.preview ? (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm mb-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-sm mb-3">
                     <div className="bg-gray-50 rounded-lg p-2">To generate: <strong>{toGen.length}</strong></div>
                     <div className="bg-emerald-50 rounded-lg p-2 text-emerald-800">From structure: <strong>{willDerive.length}</strong></div>
                     <div className="bg-blue-50 rounded-lg p-2 text-blue-800">Copy from last: <strong>{willCopy.length}</strong></div>
                     <div className="bg-amber-50 rounded-lg p-2 text-amber-800">Needs setup: <strong>{willBlank.length}</strong></div>
+                    <div className="bg-indigo-50 rounded-lg p-2 text-indigo-800">Re-generate: <strong>{regen.length}</strong></div>
                   </div>
                   <div className="border rounded-lg overflow-hidden max-h-72 overflow-y-auto">
                     <table className="min-w-full text-sm divide-y divide-gray-100">
                       <thead className="bg-gray-50 sticky top-0">
                         <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600" title="Re-generate the existing payslip">
+                            <input type="checkbox" disabled={regenIds.length === 0}
+                              checked={regenIds.length > 0 && regenIds.every((id) => regen.includes(id))}
+                              onChange={() => toggleAllRegen(regenIds)}
+                              className="align-middle disabled:opacity-40" />
+                            <span className="ml-1 text-xs font-normal">redo</span>
+                          </th>
                           <th className="px-3 py-2 text-left font-medium text-gray-600">Employee</th>
                           <th className="px-3 py-2 text-left font-medium text-gray-600">Source</th>
                           <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
@@ -659,11 +726,28 @@ export default function AdminPayroll() {
                         {rows.map((r) => {
                           const [label, cls] = tag(r);
                           return (
-                            <tr key={r.employeeId} className={r.existingStatus ? 'opacity-60' : ''}>
+                            <tr key={r.employeeId} className={r.existingStatus && !isRegen(r) ? 'opacity-60' : ''}>
+                              <td className="px-3 py-1.5">
+                                {r.existingStatus ? (
+                                  <input type="checkbox" checked={isRegen(r)} disabled={!r.canRegenerate}
+                                    onChange={() => toggleRegen(r.employeeId)}
+                                    title={r.canRegenerate
+                                      ? 'Recompute this payslip from the salary structure & attendance'
+                                      : r.existingLocked
+                                        ? 'Paid payslips cannot be overwritten'
+                                        : 'No salary structure to recompute from — edit this payslip from the list instead'}
+                                    className="align-middle disabled:opacity-40" />
+                                ) : <span className="text-xs text-gray-300">—</span>}
+                              </td>
                               <td className="px-3 py-1.5">
                                 {r.name} <span className="text-xs text-gray-400 font-mono">{r.employeeCode}</span>
                               </td>
-                              <td className="px-3 py-1.5 text-gray-600">{r.source || '—'}</td>
+                              <td className="px-3 py-1.5 text-gray-600">
+                                {r.source || '—'}
+                                {r.existingNetPay != null && (
+                                  <span className="ml-1 text-xs text-gray-400">current {inr(r.existingNetPay)}</span>
+                                )}
+                              </td>
                               <td className="px-3 py-1.5">
                                 <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${cls}`}>{label}</span>
                                 {r.existingStatus && <span className="ml-1 text-xs text-gray-400">({r.existingStatus})</span>}
@@ -676,9 +760,12 @@ export default function AdminPayroll() {
                   </div>
                   <div className="flex justify-end gap-2 pt-4">
                     <button onClick={() => setRunModal(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                    <button onClick={executeRun} disabled={runModal.running || toGen.length === 0}
+                    <button onClick={executeRun} disabled={runModal.running || toGen.length + regen.length === 0}
                       className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                      {runModal.running ? 'Generating…' : `Generate ${toGen.length} draft${toGen.length === 1 ? '' : 's'}`}
+                      {runModal.running ? 'Generating…' : [
+                        toGen.length ? `Generate ${toGen.length} draft${toGen.length === 1 ? '' : 's'}` : '',
+                        regen.length ? `Re-generate ${regen.length}` : '',
+                      ].filter(Boolean).join(' · ') || 'Generate'}
                     </button>
                   </div>
                 </>
