@@ -57,7 +57,7 @@ export const adminNav = [
   ] },
   { group: 'Payroll & Compensation', items: [
     { to: '/admin/payroll', label: 'Payroll', icon: FiDollarSign, perm: 'payroll.manage' },
-    { to: '/admin/payroll-run', label: 'Monthly Payroll Run', icon: FiRepeat, perm: 'payroll.manage' },
+    { to: '/admin/payroll-run', label: 'Hikes', icon: FiRepeat, perm: 'payroll.manage' },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders, perm: 'payroll.manage' },
     { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard, perm: 'loans.manage' },
     { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent, perm: 'declarations.manage' },

@@ -13,11 +13,13 @@ import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
 import ComplaintsBanner from '../components/ComplaintsBanner';
+import SalarySetupAlert from '../components/SalarySetupAlert';
 import PieChart from '../components/PieChart';
 import BarChart from '../components/BarChart';
 import ClockInOutCard from '../components/ClockInOutCard';
 import AttendanceReportWidget from '../components/AttendanceReportWidget';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import { ATTENDANCE_COLORS } from '../theme/chartColors';
 import { hasPermission } from '../config/permissions';
 import {
   FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiFileText,
@@ -68,10 +70,12 @@ export default function AdminOverview() {
 
   const c = data?.cards || {};
 
+  // Attendance states use the shared attendance colours so a "present" green
+  // means the same thing here, on the heatmap and in the day chart.
   const attendancePie = [
-    { label: 'Present', value: c.presentToday || 0, color: '#10b981' },
-    { label: 'On leave', value: c.onLeaveToday || 0, color: '#f59e0b' },
-    { label: 'Absent', value: c.absentToday || 0, color: '#ef4444' },
+    { label: 'Present', value: c.presentToday || 0, color: ATTENDANCE_COLORS.full },
+    { label: 'On leave', value: c.onLeaveToday || 0, color: ATTENDANCE_COLORS.leave },
+    { label: 'Absent', value: c.absentToday || 0, color: ATTENDANCE_COLORS.absent },
   ];
   const deptBars = (data?.headcountByDepartment || []).map((d) => ({ label: d.department, value: d.count }));
 
@@ -98,6 +102,9 @@ export default function AdminOverview() {
 
       {/* High-priority: open complaints for the CEO / HR / SuperAdmin group. */}
       <ComplaintsBanner />
+
+      {/* Employees payroll can't compute — shown only to payroll.manage holders. */}
+      <SalarySetupAlert />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

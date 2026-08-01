@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import api from '../api/client';
-import { colors, font, isDark } from '../theme';
+import { colors, font } from '../theme';
 import { ModalSheet } from './ui';
 import { fmtDate, fmtTime } from '../utils/format';
 
@@ -13,17 +13,20 @@ import { fmtDate, fmtTime } from '../utils/format';
 // Endpoints switch by scope: '/attendance/*' for org, '/manager/attendance/*'
 // for a manager's own team.
 
-const EMPTY = isDark ? '#2a2e37' : '#ebedf0';
+// Colours come from the shared theme palette (see `chart*` in theme.js) so a
+// day state looks identical here and on the web heatmap.
+const EMPTY = colors.chartEmpty;
 const CATEGORIES = [
-  { key: 'full', label: 'Full', color: '#16a34a' },
-  { key: 'half', label: 'Half', color: '#f59e0b' },
-  { key: 'leave', label: 'Leave', color: '#8b5cf6' },
-  { key: 'compoff', label: 'Comp off', color: '#0ea5e9' },
-  { key: 'absent', label: 'Absent', color: '#ef4444' },
+  { key: 'full', label: 'Full', color: colors.chartGood },
+  { key: 'half', label: 'Half', color: colors.chartWarning },
+  { key: 'leave', label: 'Leave', color: colors.chart[6] },     // violet
+  { key: 'compoff', label: 'Comp off', color: colors.chart[0] }, // blue
+  { key: 'absent', label: 'Absent', color: colors.chartCritical },
 ];
 const COLOR_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.color]));
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const ORG_RAMP = ['#9be9a8', '#40c463', '#30a14e', '#216e39'];
+// Sequential ramp (one hue, light → dark) for the org present-count intensity.
+const ORG_RAMP = colors.chartSeq;
 const orgColor = (p, max) => {
   if (!p) return EMPTY;
   if (max <= 0) return ORG_RAMP[0];

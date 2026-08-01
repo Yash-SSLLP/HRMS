@@ -10,9 +10,12 @@ import PageHeader from '../components/PageHeader';
 import PieChart from '../components/PieChart';
 import BarChart from '../components/BarChart';
 import LineChart from '../components/LineChart';
+import { CHART_SERIES, CHART_STATUS } from '../theme/chartColors';
 
 // Slice colours for the pie charts.
-const PIE_COLORS = ['#2563eb', '#f59e0b', '#10b981', '#a855f7', '#ef4444', '#14b8a6', '#f97316', '#6366f1'];
+// Series colours come from the shared chart palette (theme/chartColors), so the
+// analytics charts match every other chart in the portal.
+const PIE_COLORS = CHART_SERIES;
 
 function StatCard({ icon, tint, value, label }) {
   return (
@@ -159,8 +162,10 @@ export default function AdminAnalytics() {
             <p className="text-xs text-gray-400 -mt-2 mb-1 text-center">Click a dot to see which employees joined or left that month.</p>
             <LineChart
               series={[
-                { name: 'New Employees', color: '#16a34a', data: hiresLine },
-                { name: 'Exits', color: '#ef4444', data: exitsLine },
+                // Joining vs leaving is a good/bad pair, so it reads better in
+                // the reserved state colours than in two arbitrary series hues.
+                { name: 'New Employees', color: CHART_STATUS.good, data: hiresLine },
+                { name: 'Exits', color: CHART_STATUS.critical, data: exitsLine },
               ]}
               onPointClick={openPoint}
             />

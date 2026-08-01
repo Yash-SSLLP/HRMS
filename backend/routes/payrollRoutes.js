@@ -28,6 +28,7 @@ const {
   runEmployeePayroll,
   deriveSalaryForEditor,
   giveHike,
+  salarySetupStatus,
 } = require('../controllers/payrollController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -68,6 +69,9 @@ router.route('/run-employee').get(previewEmployeeRun).post(runEmployeePayroll);
 router.get('/derive-salary', deriveSalaryForEditor);
 // POST /employees/:id/hike — apply a CTC hike/increment to an employee; requires 'payroll.manage'.
 router.post('/employees/:id/hike', giveHike);
+// GET /salary-setup-status — active employees missing a salary structure and/or
+// CTC; requires 'payroll.manage'. Declared before '/:id' so it isn't read as an id.
+router.get('/salary-setup-status', salarySetupStatus);
 
 // GET /:id — fetch; PUT /:id — update; DELETE /:id — delete a payslip; protected, requires 'payroll.manage'.
 router.route('/:id')

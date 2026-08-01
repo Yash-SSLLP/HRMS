@@ -1,23 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
+import { ATTENDANCE_COLORS, CHART_SEQUENTIAL, CHART_EMPTY } from '../theme/chartColors';
 
 // Attendance heatmap of the trailing ~12 months, split into month blocks.
 //   • Personal mode (default): each day coloured by the caller's classification.
 //   • Org mode (org=true, admins): each day shaded by how many employees were
 //     present — darker = more present — with a hover card showing the breakdown.
 
-const EMPTY = '#ebedf0';
+const EMPTY = CHART_EMPTY;
 // Day-type tints used to fill otherwise-blank cells so weekends/holidays/comp-off
-// days are visible rather than looking like plain "no data" gaps.
-const WEEKEND = '#cdd6f4'; // Sunday — soft periwinkle
-const HOLIDAY = '#ffd8a8'; // holiday — soft amber
+// days are visible rather than looking like plain "no data" gaps. Deliberately
+// desaturated so they read as background, not as a category.
+const WEEKEND = 'var(--chart-seq-1)'; // Sunday — palest step of the ramp
+const HOLIDAY = '#ffd8a8';            // holiday — soft amber
+// One shared definition of what each day state looks like — see
+// ATTENDANCE_COLORS in theme/chartColors.
 const CATEGORIES = [
-  { key: 'absent', label: 'Absent', color: '#ef4444' },
-  { key: 'full', label: 'Full day', color: '#16a34a' },
-  { key: 'late', label: 'Late', color: '#ec4899' },
-  { key: 'half', label: 'Half day', color: '#f59e0b' },
-  { key: 'leave', label: 'Leave', color: '#8b5cf6' },
-  { key: 'compoff', label: 'Comp off', color: '#0ea5e9' },
+  { key: 'absent', label: 'Absent', color: ATTENDANCE_COLORS.absent },
+  { key: 'full', label: 'Full day', color: ATTENDANCE_COLORS.full },
+  { key: 'late', label: 'Late', color: ATTENDANCE_COLORS.late },
+  { key: 'half', label: 'Half day', color: ATTENDANCE_COLORS.half },
+  { key: 'leave', label: 'Leave', color: ATTENDANCE_COLORS.leave },
+  { key: 'compoff', label: 'Comp off', color: ATTENDANCE_COLORS.compoff },
 ];
 const COLOR_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.color]));
 const LABEL_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]));
@@ -25,8 +29,10 @@ const LABEL_BY_CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]))
 const effCat = (rec) => (rec && rec.category === 'full' && rec.late ? 'late' : rec?.category);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// GitHub-style green ramp for the org "present count" intensity.
-const ORG_RAMP = ['#9be9a8', '#40c463', '#30a14e', '#216e39'];
+// Sequential ramp for the org "present count" intensity — one hue, light to
+// dark, so the shade reads as a magnitude. It is deliberately a different hue
+// from the day-state categories above, which sit on the personal view.
+const ORG_RAMP = CHART_SEQUENTIAL;
 const orgColor = (present, max) => {
   if (!present) return EMPTY;
   if (max <= 0) return ORG_RAMP[0];
@@ -347,12 +353,14 @@ function DayDetailsModal({ date, endpoint, onClose }) {
               <div className="text-sm text-gray-400 italic">No attendance recorded for this day.</div>
             ) : (
               <>
-                <Section title="Late" color="#ec4899" people={data.late} render={(p) => fmtTime(p.checkIn)} />
-                <Section title="On leave" color="#8b5cf6" people={data.leave} render={(p) => (p.leaveType ? `${p.leaveType}${p.half ? ' · half' : ''}` : null)} />
-                <Section title="Half day" color="#f59e0b" people={data.half} render={(p) => fmtTime(p.checkIn)} />
-                <Section title="Comp off" color="#0ea5e9" people={data.compoff} />
-                <Section title="Absent" color="#ef4444" people={data.absent} />
-                <Section title="Present (full day)" color="#16a34a" people={data.present} render={(p) => (p.late ? 'late' : fmtTime(p.checkIn))} />
+                {/* Same colours as the grid above — from COLOR_BY_CAT, so a
+                    state can never drift between the cells and this breakdown. */}
+                <Section title="Late" color={COLOR_BY_CAT.late} people={data.late} render={(p) => fmtTime(p.checkIn)} />
+                <Section title="On leave" color={COLOR_BY_CAT.leave} people={data.leave} render={(p) => (p.leaveType ? `${p.leaveType}${p.half ? ' · half' : ''}` : null)} />
+                <Section title="Half day" color={COLOR_BY_CAT.half} people={data.half} render={(p) => fmtTime(p.checkIn)} />
+                <Section title="Comp off" color={COLOR_BY_CAT.compoff} people={data.compoff} />
+                <Section title="Absent" color={COLOR_BY_CAT.absent} people={data.absent} />
+                <Section title="Present (full day)" color={COLOR_BY_CAT.full} people={data.present} render={(p) => (p.late ? 'late' : fmtTime(p.checkIn))} />
               </>
             )
           )}

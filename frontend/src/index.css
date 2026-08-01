@@ -44,6 +44,42 @@ html {
   --gold-700: #B08843;
   --gold-900: #7E5A1C;
   --onyx: #1B1E24;
+
+  /* ---- Chart palette -------------------------------------------------
+     Solid colours only — no gradients on any data mark. Defined as tokens
+     so every chart draws from one set and dark mode swaps in one place
+     (charts reference var(--chart-N), so they follow html.dark for free).
+
+     Categorical slots are assigned in this FIXED ORDER and never cycled;
+     the order is what keeps adjacent series distinguishable for colour-blind
+     readers. Validated as a set against both surfaces (#ffffff / #17181d):
+     lightness band, chroma floor, colour-blind separation, normal-vision
+     separation and contrast all pass. Re-validate before changing a hex or
+     the order. */
+  --chart-1: #2a78d6;  /* blue    */
+  --chart-2: #eb6834;  /* orange  */
+  --chart-3: #1baf7a;  /* aqua    */
+  --chart-4: #eda100;  /* yellow  */
+  --chart-5: #e87ba4;  /* magenta */
+  --chart-6: #008300;  /* green   */
+  --chart-7: #4a3aa7;  /* violet  */
+  --chart-8: #e34948;  /* red     */
+
+  /* Reserved for state, never for a series. Always shown with a label. */
+  --chart-good: #0ca30c;
+  --chart-warning: #fab219;
+  --chart-serious: #ec835a;
+  --chart-critical: #d03b3b;
+
+  /* Sequential (one hue, light → dark) for magnitude ramps. */
+  --chart-seq-1: #9ec5f4;
+  --chart-seq-2: #5598e7;
+  --chart-seq-3: #2a78d6;
+  --chart-seq-4: #184f95;
+
+  /* Recessive chrome: gridlines, axes, empty cells. */
+  --chart-grid: #e5e7eb;
+  --chart-empty: #eef0f3;
 }
 
 html[data-role="SuperAdmin"] { --accent: #7c3aed; --accent-700: #6d28d9; } /* violet */
@@ -58,6 +94,25 @@ html.dark {
   --surface-2: #1f2127;
   --surface-3: #292c34;
   --border: #363a44;
+
+  /* Chart palette, re-stepped for the dark surface — the same eight hues at
+     steps that clear 3:1 against #17181d, not an automatic lightening. */
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
+  --chart-7: #9085e9;
+  --chart-8: #e66767;
+
+  --chart-seq-1: #184f95;
+  --chart-seq-2: #2a78d6;
+  --chart-seq-3: #5598e7;
+  --chart-seq-4: #9ec5f4;
+
+  --chart-grid: #363a44;
+  --chart-empty: #23252c;
 }
 /* Brighten accents a touch in dark mode for contrast */
 /* No violet/purple in dark theme — SuperAdmin uses an amber/gold accent instead. */

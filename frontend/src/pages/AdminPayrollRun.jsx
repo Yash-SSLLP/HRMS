@@ -1,39 +1,21 @@
 /**
- * AdminPayrollRun — monthly per-employee payroll run (admin portal). Loads the
- * month's attendance calendar (GET /attendance/month-summary) and computed pay
- * (GET /payroll/run-employee), lets HR edit each day's status
- * (POST/PUT /attendance) and salary setup (PUT /employees/:id), then
- * generate/hold/approve the draft payslip via /payroll endpoints.
+ * AdminPayrollRun — "Hikes" (admin portal). Sets an employee's salary basis:
+ * their salary structure and annual CTC (PUT /employees/:id), CTC increments
+ * (POST /payroll/employees/:id/hike), and the revision history — alongside the
+ * month's attendance roll-up (GET /attendance/month-summary,
+ * GET /payroll/run-employee) for context on what a hike is being given against.
+ *
+ * Generating, holding and approving payslips lives on the Payroll page; this
+ * screen no longer carries the day calendar or the computed-salary panel.
  */
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
-import { confirmDialog } from '../components/dialogs';
-import { formatDuration } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// Day-status dropdown: label shown to HR → Attendance.status value.
-const DAY_OPTIONS = [
-  ['Full Day', 'Present'],
-  ['Half Day', 'HalfDay'],
-  ['Leave', 'OnLeave'],
-  ['Absent', 'Absent'],
-  ['Weekly Off', 'WeeklyOff'],
-  ['Holiday', 'Holiday'],
-];
-const STATUS_BADGE = {
-  Present: ['P', 'bg-green-100 text-green-700'],
-  HalfDay: ['Half Day', 'bg-amber-100 text-amber-700'],
-  OnLeave: ['Leave', 'bg-blue-100 text-blue-700'],
-  Absent: ['A', 'bg-red-100 text-red-700'],
-  WeeklyOff: ['WO', 'bg-gray-100 text-gray-500'],
-  Holiday: ['H', 'bg-purple-100 text-purple-700'],
-};
 const PAYSLIP_STYLES = {
   Draft: 'bg-gray-100 text-gray-700',
   Approved: 'bg-blue-100 text-blue-800',
@@ -42,15 +24,11 @@ const PAYSLIP_STYLES = {
 };
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '');
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
-// Monthly Payroll Run — a whole-month calendar of one employee's attendance
-// (from their real punch-ins/outs) with a per-day status dropdown and late /
-// on-time remarks. Salary is computed from the employee's salary structure ×
-// annual CTC and paid in full — unpaid days, late coming and active loan /
-// advance EMIs come off as deductions; drafts are generated / put on hold /
-// approved from here.
+// Hikes — pick an employee and a month, set their salary structure + annual CTC,
+// and give increments. The attendance roll-up beside it (paid/LOP days, leave,
+// lateness) is context for the decision, not an editing surface.
 export default function AdminPayrollRun() {
   const now = new Date();
   const [employees, setEmployees] = useState([]);
@@ -101,23 +79,7 @@ export default function AdminPayrollRun() {
   // First load once the employee list arrives; after that the OK button applies.
   useEffect(() => { if (employee && !att) load(employee); /* eslint-disable-next-line */ }, [employee]);
 
-  // ----- per-day status change -----
-  const setDay = async (dayNum, record, status) => {
-    if (!status) return;
-    setBusy(true);
-    try {
-      if (record) await api.put(`/attendance/${record._id}`, { status });
-      else {
-        const ymd = `${att.year}-${String(att.month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
-        await api.post('/attendance', { employee, date: ymd, status });
-      }
-      await load();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not update the day');
-    } finally { setBusy(false); }
-  };
-
-  // ----- salary setup + payslip actions -----
+  // ----- salary setup + hikes -----
   const saveSetup = async () => {
     setBusy(true);
     try {
@@ -170,55 +132,12 @@ export default function AdminPayrollRun() {
     } finally { setBusy(false); }
   };
 
-  const generate = async () => {
-    // Recomputing an approved payslip sends it back to Draft, which hides it from
-    // the employee and breaks the shared link until it is approved again.
-    if (run?.payslip?.status === 'Approved' && !(await confirmDialog({
-      message: 'This payslip is approved. Re-generating recomputes it and resets it to Draft — '
-        + 'the shared payslip link stops working until it is approved again. Continue?',
-      tone: 'danger',
-      confirmText: 'Re-generate',
-    }))) return;
-    setBusy(true);
-    try {
-      await api.post('/payroll/run-employee', { employee, year: att.year, month: att.month });
-      toast.success('Draft payslip generated');
-      await load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Generation failed'); }
-    finally { setBusy(false); }
-  };
-  const approve = async () => {
-    setBusy(true);
-    try {
-      await api.patch(`/payroll/${run.payslip._id}/approve`);
-      toast.success('Payslip approved');
-      await load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Approve failed'); }
-    finally { setBusy(false); }
-  };
-  const hold = async () => {
-    setBusy(true);
-    try {
-      await api.put(`/payroll/${run.payslip._id}`, { status: 'OnHold' });
-      toast.success('Payslip put on hold');
-      await load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
-    finally { setBusy(false); }
-  };
-
-  // ----- calendar grid -----
-  const recordsByDay = {};
-  (att?.records || []).forEach((r) => { recordsByDay[new Date(r.date).getDate()] = r; });
-  const daysInMonth = att ? new Date(att.year, att.month, 0).getDate() : 0;
-  const firstDow = att ? new Date(att.year, att.month - 1, 1).getDay() : 0;
-  const cells = att ? [...Array(firstDow).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)] : [];
-
   const c = run?.computed;
   const slip = run?.payslip;
 
   return (
     <div>
-      <PageHeader title="Monthly Payroll Run" subtitle="Attendance calendar from real punch-ins/outs → salary from the employee's structure & CTC, minus loan EMIs" />
+      <PageHeader title="Hikes" subtitle="Set an employee's salary structure & annual CTC, give increments, and review the CTC revision history" />
 
       {/* Filters + OK */}
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
@@ -246,48 +165,9 @@ export default function AdminPayrollRun() {
 
       {att && (
         <>
-          {/* Calendar */}
-          <div className="bg-white shadow rounded-xl overflow-hidden mb-4">
-            <div className="grid grid-cols-7 border-b bg-gray-50">
-              {WEEKDAYS.map((d) => <div key={d} className="px-2 py-2 text-center text-xs font-semibold text-gray-500">{d}</div>)}
-            </div>
-            <div className="grid grid-cols-7">
-              {cells.map((day, i) => {
-                if (!day) return <div key={`b${i}`} className="border-b border-r border-gray-100 min-h-[92px]" />;
-                const r = recordsByDay[day];
-                const badge = r ? STATUS_BADGE[r.status] : null;
-                return (
-                  <div key={day} className="border-b border-r border-gray-100 min-h-[92px] p-1.5 flex flex-col gap-1">
-                    <div className="text-[11px] text-gray-400">{day}</div>
-                    {badge && (
-                      <span className={`self-start text-[11px] px-1.5 py-0.5 rounded font-bold ${badge[1]}`}>{badge[0]}</span>
-                    )}
-                    {r?.checkIn && (
-                      <div className={`text-[10px] leading-tight ${r.lateMinutes > 0 ? 'text-red-600' : 'text-green-600'}`}
-                        title={`${fmtTime(r.checkIn)}${r.checkOut ? ` – ${fmtTime(r.checkOut)}` : ''}`}>
-                        {r.lateMinutes > 0 ? `Late +${formatDuration(r.lateMinutes)}` : 'On time'}
-                        {r.noPunchOut ? <span className="text-red-600"> · no out</span> : ''}
-                      </div>
-                    )}
-                    <select
-                      value={r?.status || ''}
-                      onChange={(e) => setDay(day, r, e.target.value)}
-                      disabled={busy}
-                      className="mt-auto w-full border border-gray-200 rounded text-[10px] px-1 py-0.5 text-gray-600 bg-white"
-                    >
-                      <option value="" disabled>Set…</option>
-                      {DAY_OPTIONS.map(([label, val]) => <option key={val} value={val}>{label}</option>)}
-                    </select>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Salary computation panel */}
           {c && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Setup + attendance roll-up */}
+            <div>
+              {/* Salary setup, CTC revisions + the attendance roll-up behind them */}
               <div className="bg-white shadow rounded-xl p-5">
                 <h3 className="font-semibold text-gray-800 mb-3">Salary setup · {fullName(run.employee.user)}</h3>
                 <div className="flex flex-wrap gap-2 items-center mb-4">
@@ -368,76 +248,6 @@ export default function AdminPayrollRun() {
                 )}
               </div>
 
-              {/* Computation + actions */}
-              <div className="bg-white shadow rounded-xl p-5 flex flex-col">
-                <h3 className="font-semibold text-gray-800 mb-3">Computed salary · {MONTHS[att.month - 1]} {att.year}</h3>
-                {c.needsSetup ? (
-                  <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    Assign a salary structure and annual CTC above to compute this employee's salary.
-                  </div>
-                ) : (
-                  <div className="text-sm space-y-1">
-                    {Object.entries({
-                      Basic: c.earnings.basic, HRA: c.earnings.hra, 'Special allowance': c.earnings.specialAllowance,
-                      Conveyance: c.earnings.conveyanceAllowance, Medical: c.earnings.medicalAllowance, LTA: c.earnings.lta,
-                    }).map(([k, v]) => (
-                      <div key={k} className="flex justify-between text-gray-600"><span>{k}</span><span>{inr(v)}</span></div>
-                    ))}
-                    {c.earnings.leaveIncentive > 0 && (
-                      <div className="flex justify-between text-green-700">
-                        <span>Leave incentive ({c.policy.unusedLeave} unused)</span><span>+ {inr(c.earnings.leaveIncentive)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between font-semibold text-gray-900 border-t pt-1">
-                      <span>Gross (full month)</span><span>{inr(c.gross)}</span>
-                    </div>
-                    {/* Earnings above are never prorated — days not worked come off here. */}
-                    {c.lopDeduction > 0 && (
-                      <div className="flex justify-between text-red-600">
-                        <span>LOP / unpaid days ({c.unpaidDays} × {inr(c.policy.perDayPay)})</span>
-                        <span>− {inr(c.lopDeduction)}</span>
-                      </div>
-                    )}
-                    {c.latePenalty > 0 && (
-                      <div className="flex justify-between text-red-600">
-                        <span>Late coming ({c.policy.excessLate} × {inr(c.policy.lateRate)})</span><span>− {inr(c.latePenalty)}</span>
-                      </div>
-                    )}
-                    {c.emergencyPenalty > 0 && (
-                      <div className="flex justify-between text-red-600">
-                        <span>Emergency leave double cut ({c.policy.doubleCutDays}d)</span><span>− {inr(c.emergencyPenalty)}</span>
-                      </div>
-                    )}
-                    {c.loanRecovery > 0 && (
-                      <div className="flex justify-between text-red-600">
-                        <span>Loan EMI</span><span>− {inr(c.loanRecovery)}</span>
-                      </div>
-                    )}
-                    {c.salaryAdvance > 0 && (
-                      <div className="flex justify-between text-red-600">
-                        <span>Salary advance EMI</span><span>− {inr(c.salaryAdvance)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between font-bold text-green-700 border-t pt-1"><span>Estimated net</span><span>{inr(c.estimatedNet)}</span></div>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap justify-end gap-2 mt-auto pt-4">
-                  {slip && <Link to="/admin/payroll" className="px-3 py-2 text-xs border rounded-lg hover:bg-gray-50">Open on Payroll page →</Link>}
-                  <button onClick={generate} disabled={busy || c.needsSetup || slip?.status === 'Paid'}
-                    className="px-4 py-2 text-sm border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50 disabled:opacity-50">
-                    {slip ? 'Regenerate Draft' : 'Generate Draft'}
-                  </button>
-                  <button onClick={hold} disabled={busy || !slip || ['OnHold', 'Paid'].includes(slip?.status)}
-                    className="px-4 py-2 text-sm border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 disabled:opacity-50">
-                    On Hold
-                  </button>
-                  <button onClick={approve} disabled={busy || !slip || !['Draft', 'OnHold'].includes(slip?.status)}
-                    className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                    Approve
-                  </button>
-                </div>
-              </div>
             </div>
           )}
         </>

@@ -100,9 +100,10 @@ export default function AdminHubScreen() {
         {viewAdmin && cards && (
           <Card style={{ marginTop: spacing(2), marginBottom: spacing(2) }}>
             <Text style={[font.h3, { marginBottom: spacing(3) }]}>Today's attendance</Text>
-            <SplitBar label="Present" value={cards.presentToday} total={cards.totalEmployees} tint="#16a34a" />
-            <SplitBar label="On leave" value={cards.onLeaveToday} total={cards.totalEmployees} tint="#0ea5e9" />
-            <SplitBar label="Absent" value={cards.absentToday} total={cards.totalEmployees} tint="#dc2626" />
+            {/* Same attendance colours as the web pie + heatmap. */}
+            <SplitBar label="Present" value={cards.presentToday} total={cards.totalEmployees} tint={colors.chartGood} />
+            <SplitBar label="On leave" value={cards.onLeaveToday} total={cards.totalEmployees} tint={colors.chart[6]} />
+            <SplitBar label="Absent" value={cards.absentToday} total={cards.totalEmployees} tint={colors.chartCritical} />
           </Card>
         )}
 
@@ -112,11 +113,11 @@ export default function AdminHubScreen() {
             <SectionHeader title="Per-day trends" />
             <Card style={{ marginBottom: spacing(3) }}>
               <Text style={[font.h3, { marginBottom: spacing(2) }]}>Avg login hours / day</Text>
-              <MiniBarChart data={daily.map((d) => ({ label: d.label, value: d.avgHours }))} tint={colors.primary} />
+              <MiniBarChart data={daily.map((d) => ({ label: d.label, value: d.avgHours }))} tint={colors.chart[0]} />
             </Card>
             <Card style={{ marginBottom: spacing(2) }}>
               <Text style={[font.h3, { marginBottom: spacing(2) }]}>Present employees / day</Text>
-              <MiniBarChart data={daily.map((d) => ({ label: d.label, value: d.presentCount }))} tint={colors.success} />
+              <MiniBarChart data={daily.map((d) => ({ label: d.label, value: d.presentCount }))} tint={colors.chart[2]} />
             </Card>
           </>
         )}

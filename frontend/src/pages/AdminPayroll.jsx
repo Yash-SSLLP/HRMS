@@ -12,11 +12,17 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog } from '../components/dialogs';
+import SalarySetupAlert from '../components/SalarySetupAlert';
 
 const MONTHS = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ];
+
+// Free late arrivals per month before the penalty starts. Mirrors LATE_ALLOWANCE
+// in backend/controllers/payrollController.js — display only (the amount itself
+// is always computed server-side), but keep the two in step.
+const LATE_ALLOWANCE = 5;
 
 const STATUS_COLORS = {
   Draft: 'bg-gray-100 text-gray-700',
@@ -353,6 +359,10 @@ export default function AdminPayroll() {
 
   return (
     <div>
+      {/* Warn before the run, not after: employees with no structure/CTC
+          silently produce ₹0 payslips. */}
+      <SalarySetupAlert />
+
       <PageHeader title="Payroll">
         <button
           onClick={() => {
@@ -412,6 +422,10 @@ export default function AdminPayroll() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Period</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Gross</th>
+              <th className="px-4 py-3 text-right font-medium text-gray-700"
+                title="Late-arrival penalty: the first 5 late days each month are free; each day beyond that costs ₹200 (monthly Basic under ₹25,000) or ₹400 (₹25,000 and above).">
+                Late deduction
+              </th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Deductions</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Net</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
@@ -420,9 +434,9 @@ export default function AdminPayroll() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : payslips.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No payslips</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No payslips</td></tr>
             ) : payslips.map((p) => (
               <tr key={p._id}>
                 <td className="px-4 py-3">
@@ -431,6 +445,22 @@ export default function AdminPayroll() {
                 </td>
                 <td className="px-4 py-3">{MONTHS[p.payPeriodMonth - 1]} {p.payPeriodYear}</td>
                 <td className="px-4 py-3 text-right">{inr(p.grossSalary)}</td>
+                {/* Broken out of the Deductions total because it is the one
+                    line HR is most often asked to justify. */}
+                <td className="px-4 py-3 text-right">
+                  {p.deductions?.latePenalty > 0 ? (
+                    <>
+                      <div className="text-red-600 font-medium">− {inr(p.deductions.latePenalty)}</div>
+                      <div className="text-[11px] text-gray-400">
+                        {p.lateDays || 0} late · {Math.max(0, (p.lateDays || 0) - LATE_ALLOWANCE)} over
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-gray-400">
+                      {p.lateDays > 0 ? `${p.lateDays} late · within limit` : '—'}
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right">{inr(p.totalDeductions)}</td>
                 <td className="px-4 py-3 text-right font-semibold">{inr(p.netPay)}</td>
                 <td className="px-4 py-3">
@@ -565,7 +595,7 @@ export default function AdminPayroll() {
                     {salaryInfo == null ? (
                       <span className="text-gray-400">select an employee…</span>
                     ) : salaryInfo.needsSetup ? (
-                      <span className="text-amber-700">not assigned — set structure &amp; CTC in Monthly Payroll Run</span>
+                      <span className="text-amber-700">not assigned — set structure &amp; CTC on the Hikes page</span>
                     ) : (
                       <span className="text-gray-700">{salaryInfo.structure?.name} · CTC {inr(salaryInfo.annualCtc)}/yr</span>
                     )}
@@ -737,7 +767,7 @@ export default function AdminPayroll() {
                   </div>
                   {runModal.result.needsSetup?.length > 0 && (
                     <div className="text-xs text-amber-700">
-                      Assign a salary structure &amp; CTC (Monthly Payroll Run) for: {runModal.result.needsSetup.join(', ')}
+                      Assign a salary structure &amp; CTC (Hikes page) for: {runModal.result.needsSetup.join(', ')}
                     </div>
                   )}
                   <div className="flex justify-end pt-1">

@@ -1380,6 +1380,49 @@ const deriveSalaryForEditor = asyncHandler(async (req, res) => {
  * @param {string} [req.body.reason]
  * @returns {{profile, applied, entry}}
  */
+/**
+ * Active employees whose salary basis is incomplete — no salary structure, or no
+ * annual CTC, or both. Without both, payroll cannot compute anything for them:
+ * they come out of a run with a ₹0 payslip, and even the late-arrival penalty is
+ * ₹0 because its ₹200/₹400 rate keys off monthly Basic. HR gets this as a
+ * standing alert rather than discovering it at run time.
+ *
+ * Deliberately lightweight (a projected, lean query on one collection) — it is
+ * polled by a banner on page load, not by an explicit user action.
+ * @route GET /api/payroll/salary-setup-status  (HR/Admin, payroll.manage)
+ * @returns {{count: number, employees: Array<{id, employeeCode, name, designation, department, missing: string[]}>}}
+ */
+const salarySetupStatus = asyncHandler(async (req, res) => {
+  const profiles = await EmployeeProfile.find({
+    $or: [
+      { salaryStructure: { $in: [null, undefined] } },
+      { annualCtc: { $in: [null, undefined, 0] } },
+    ],
+  })
+    .select('employeeCode designation department salaryStructure annualCtc dateOfExit user')
+    .populate('user', 'firstName lastName isActive')
+    .lean();
+
+  const today = new Date();
+  const employees = profiles
+    // Someone who has already left is not a payroll problem.
+    .filter((p) => p.user && p.user.isActive !== false && !(p.dateOfExit && new Date(p.dateOfExit) < today))
+    .map((p) => ({
+      id: String(p._id),
+      employeeCode: p.employeeCode || '',
+      name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim(),
+      designation: p.designation || '',
+      department: p.department || '',
+      missing: [
+        !p.salaryStructure ? 'structure' : null,
+        !p.annualCtc ? 'ctc' : null,
+      ].filter(Boolean),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  res.json({ count: employees.length, employees });
+});
+
 const giveHike = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findById(req.params.id).populate('user', 'firstName lastName');
   if (!profile) {
@@ -1444,6 +1487,7 @@ module.exports = {
   myAttendanceSummary,
   deriveSalaryForEditor,
   giveHike,
+  salarySetupStatus,
   exportPayrollSheet,
   // exported for unit tests
   deriveSalary,

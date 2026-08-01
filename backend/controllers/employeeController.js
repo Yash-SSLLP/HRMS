@@ -19,8 +19,67 @@ const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
 const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds } = require('../utils/visibility');
+const { hasPermission } = require('../middleware/authMiddleware');
+const { notifyMany } = require('../services/notify');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
+
+/**
+ * Tell whoever runs payroll that new employees were added without a salary
+ * basis. Payroll can compute nothing for them — they produce a ₹0 payslip, and
+ * even the late-arrival penalty is ₹0 because its rate keys off monthly Basic.
+ *
+ * A bulk import sends ONE notification covering all of them rather than one per
+ * person, so importing fifty rows doesn't bury every HR inbox. Best-effort: a
+ * notification failure must never fail the employee creation that triggered it.
+ *
+ * @param {Array<{id?: string, employeeCode?: string, name?: string}>} people - the ones missing salary
+ * @returns {Promise<void>}
+ */
+async function notifyMissingSalarySetup(people) {
+  try {
+    const list = (people || []).filter(Boolean);
+    if (!list.length) return;
+
+    // Only people who can actually fix it: SuperAdmin, plus HR Managers holding
+    // the payroll capability.
+    const admins = await User.find({ role: { $in: ['SuperAdmin', 'HRManager'] }, isActive: true })
+      .select('_id role permissions cashbookAccess')
+      .lean();
+    const recipients = admins.filter((u) => hasPermission(u, 'payroll.manage')).map((u) => u._id);
+    if (!recipients.length) return;
+
+    const label = (p) => `${p.name || 'A new employee'}${p.employeeCode ? ` (${p.employeeCode})` : ''}`;
+    const single = list.length === 1;
+    const title = single
+      ? `${label(list[0])} has no salary set up`
+      : `${list.length} new employees have no salary set up`;
+    const names = list.slice(0, 3).map(label).join(', ');
+    const body = `${single ? '' : `${names}${list.length > 3 ? ` and ${list.length - 3} more` : ''}. `}`
+      + 'No salary structure or annual CTC, so payroll will compute ₹0. '
+      + 'Set it on the Hikes page.';
+
+    await notifyMany(recipients, {
+      type: 'payroll',
+      // Admin-portal notification — a dual-role HR Manager should not see this
+      // in My Portal (see the notification-audience convention).
+      audience: 'admin',
+      title,
+      body,
+      // Straight to the assign modal for that person when it is about one
+      // employee; the bare page when it covers several, since the deep link
+      // only carries one id.
+      link: single && list[0].id
+        ? `/admin/salary-structures?assign=${list[0].id}`
+        : '/admin/salary-structures',
+    });
+  } catch (err) {
+    console.error('missing-salary notify failed:', err.message);
+  }
+}
+
+// Does this profile payload leave the employee without a computable salary?
+const missingSalary = (p) => !p?.salaryStructure || !p?.annualCtc;
 
 // Escape user text before using it inside a RegExp (for case-insensitive lookups).
 const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -295,6 +354,18 @@ const createEmployee = asyncHandler(async (req, res) => {
   await validateHierarchy(req.body, userId);
 
   const profile = await EmployeeProfile.create(req.body);
+
+  // Flag a new joiner with no salary basis to whoever runs payroll. Not awaited:
+  // the profile is created either way, and a notification hiccup must not turn a
+  // successful create into an error response.
+  if (missingSalary(profile)) {
+    notifyMissingSalarySetup([{
+      id: String(profile._id),
+      name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+      employeeCode: profile.employeeCode,
+    }]);
+  }
+
   res.status(201).json({ profile });
 });
 
@@ -493,6 +564,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
   const created = [];
   const skipped = [];
   const errors = [];
+  const noSalary = []; // imported rows with no salary structure and/or CTC
 
   for (const { excelRow, user: u, profile: p } of rows) {
     try {
@@ -579,8 +651,9 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       // grade, probation, statutory, CTC, …) then override the resolved refs and
       // the special lookup columns.
       const { hrPartnerEmail, reportingManagerEmail, salaryStructureName, ...profileFields } = p;
+      let createdProfile;
       try {
-        await EmployeeProfile.create({
+        createdProfile = await EmployeeProfile.create({
           ...profileFields,
           user: userDoc._id,
           employeeCode: String(p.employeeCode).toUpperCase(),
@@ -595,6 +668,15 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       }
 
       created.push({ excelRow, email: u.email, employeeCode: p.employeeCode });
+      // Imports often omit the salary columns — collect them and send ONE
+      // notification after the loop rather than one per row.
+      if (!salaryStructureId || !p.annualCtc) {
+        noSalary.push({
+          id: String(createdProfile._id),
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+          employeeCode: p.employeeCode,
+        });
+      }
     } catch (err) {
       errors.push({
         excelRow,
@@ -602,6 +684,8 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       });
     }
   }
+
+  notifyMissingSalarySetup(noSalary);
 
   res.json({
     total: rows.length,

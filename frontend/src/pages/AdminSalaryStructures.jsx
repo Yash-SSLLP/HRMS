@@ -4,7 +4,8 @@
  * component percentages of CTC. A preview modal posts an annual CTC to
  * POST /salary-structures/:id/preview to show the monthly/annual breakdown.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -113,6 +114,41 @@ export default function AdminSalaryStructures() {
     setError('');
     setShowModal(true);
   };
+
+  // ----- deep link: /admin/salary-structures?assign=<employeeProfileId> -----
+  // The "no salary set up" alert links here per employee. Open the assign modal
+  // already pointed at them, and pick the RIGHT modal for what they're missing:
+  //   • already has a structure (only the CTC is missing) → edit that structure,
+  //     so HR just types the CTC instead of authoring a duplicate template
+  //   • has no structure → a blank New Structure form
+  // Runs once, after both the structures and the employee list have arrived.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const assignParam = searchParams.get('assign');
+  const handledAssign = useRef(false);
+
+  useEffect(() => {
+    if (!assignParam || handledAssign.current) return;
+    if (loading || !employees.length) return; // wait for the data the lookup needs
+
+    const profile = employees.find((p) => p._id === assignParam);
+    if (!profile) return; // unknown/stale id — leave the page as it is
+    handledAssign.current = true;
+
+    const existing = profile.salaryStructure
+      && structures.find((s) => s._id === (profile.salaryStructure._id || profile.salaryStructure));
+    if (existing) openEdit(existing); else openCreate();
+
+    setAssign({
+      employee: profile._id,
+      // Carry a CTC they already have so editing doesn't look like it clears it;
+      // blank when that is the missing piece, so the field is theirs to fill.
+      annualCtc: profile.annualCtc ? String(profile.annualCtc) : '',
+    });
+
+    // Drop the param so a refresh (or a later visit) doesn't reopen the modal.
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignParam, loading, employees, structures]);
 
   const setPct = (key, value) =>
     setForm((f) => ({ ...f, components: { ...f.components, [key]: value } }));
@@ -367,7 +403,7 @@ export default function AdminSalaryStructures() {
                 </div>
                 {assign.employee && (
                   <p className="text-[11px] text-gray-400 mt-1">
-                    This sets the employee's salary structure{assign.annualCtc ? ' and annual CTC' : ' (CTC left unchanged — enter it to make payroll derivable)'}. You can also do this in Monthly Payroll Run.
+                    This sets the employee's salary structure{assign.annualCtc ? ' and annual CTC' : ' (CTC left unchanged — enter it to make payroll derivable)'}. You can also do this on the Hikes page.
                   </p>
                 )}
               </div>

@@ -13,6 +13,7 @@ import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import MailComposeModal from '../components/MailComposeModal';
+import EmployeePicker from '../components/EmployeePicker';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
@@ -74,7 +75,8 @@ export default function AdminRecruitment() {
   const [docsBusy, setDocsBusy] = useState(false);
   const [docLinkCopied, setDocLinkCopied] = useState(false);
 
-  // Active users available to be assigned as interviewers.
+  // Active people available as interviewers, each {id, name, role, designation,
+  // department} — the shape EmployeePicker expects.
   const [users, setUsers] = useState([]);
 
   const load = async () => {
@@ -93,9 +95,31 @@ export default function AdminRecruitment() {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [selectedJob]);
 
-  // Load active users once for the interviewer picker.
+  // Load the interviewer pool once. Two calls because the round stores a User id
+  // but `department` lives on the employee profile — /admin/users has no
+  // department concept at all, and /employees misses anyone without a profile
+  // (CEO/MD). Merging both gives every possible interviewer, department-tagged
+  // where one exists.
   useEffect(() => {
-    api.get('/admin/users?active=true').then(({ data }) => setUsers(data.users)).catch(() => {});
+    Promise.all([
+      api.get('/admin/users?active=true').catch(() => ({ data: { users: [] } })),
+      api.get('/employees').catch(() => ({ data: { profiles: [] } })),
+    ]).then(([uRes, pRes]) => {
+      const byUser = new Map();
+      for (const p of pRes.data.profiles || []) {
+        if (p.user?._id) byUser.set(String(p.user._id), p);
+      }
+      setUsers((uRes.data.users || []).map((u) => {
+        const p = byUser.get(String(u._id));
+        return {
+          id: String(u._id),
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email,
+          role: u.role,
+          designation: p?.designation || '',
+          department: p?.department || '',
+        };
+      }));
+    });
   }, []);
 
   // ----- Jobs -----
@@ -585,17 +609,16 @@ export default function AdminRecruitment() {
                             >
                               {ROUND_STATUS.map((s) => <option key={s}>{s}</option>)}
                             </select>
-                            <select
+                            {/* Scoped to the job's department by default, with
+                                search and a one-click widen to everyone. */}
+                            <EmployeePicker
                               value={r.interviewer || ''}
-                              onChange={(e) => setRound(c, idx, { interviewer: e.target.value })}
-                              className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2"
-                              title="Assign interviewer"
-                            >
-                              <option value="">Assign interviewer</option>
-                              {users.map((u) => (
-                                <option key={u._id} value={u._id}>{u.firstName} {u.lastName}{u.role !== 'Employee' ? ` (${u.role})` : ''}</option>
-                              ))}
-                            </select>
+                              onChange={(id) => setRound(c, idx, { interviewer: id })}
+                              people={users}
+                              department={c.job?.department || ''}
+                              valueLabel={r.interviewerName || ''}
+                              placeholder="Assign interviewer"
+                            />
                             <input
                               defaultValue={r.feedback || ''}
                               onBlur={(e) => { if (e.target.value !== (r.feedback || '')) setRound(c, idx, { feedback: e.target.value }); }}

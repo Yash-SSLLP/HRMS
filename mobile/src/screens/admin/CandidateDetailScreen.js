@@ -40,6 +40,8 @@ export default function CandidateDetailScreen() {
   const [form, setForm] = useState({});
   const [roundIdx, setRoundIdx] = useState(0);
   const [mailSheet, setMailSheet] = useState(null); // editable email preview payload
+  const [ivQuery, setIvQuery] = useState('');       // interviewer search text
+  const [ivShowAll, setIvShowAll] = useState(false); // widen beyond the job's department
 
   const load = useCallback(async () => {
     const [cRes, eRes] = await Promise.all([
@@ -128,6 +130,8 @@ export default function CandidateDetailScreen() {
       feedback: r.feedback || '',
       meetingLink: r.meetingLink || '',
     });
+    setIvQuery('');
+    setIvShowAll(false);
     setModal('round');
   };
 
@@ -322,7 +326,24 @@ export default function CandidateDetailScreen() {
     try { await Share.share({ message: `Hi ${cand.name}, here is your ${kind === 'offer' ? 'offer' : 'appointment'} letter: ${url}`, url }); } catch { /* dismissed */ }
   };
 
-  const interviewerOptions = [{ _id: '', user: { firstName: 'Unassigned', lastName: '' } }, ...employees];
+  // Interviewer shortlist: people from the job's department by default (with a
+  // search box and a "Show all" escape hatch), rather than every employee in the
+  // company rendered as chips. Whoever is already assigned always stays visible.
+  // Plain computation, not useMemo — this sits below the `if (loading)` early
+  // return above, so a hook here would change the hook count between renders.
+  const jobDept = cand.job?.department || '';
+  const interviewerOptions = (() => {
+    const term = ivQuery.trim().toLowerCase();
+    let list = employees;
+    if (jobDept && !ivShowAll) {
+      list = list.filter((p) => p.department === jobDept || p.user?._id === form.interviewer);
+    }
+    if (term) {
+      list = list.filter((p) => `${fullName(p.user)} ${p.designation || ''} ${p.department || ''}`
+        .toLowerCase().includes(term));
+    }
+    return [{ _id: '', user: { firstName: 'Unassigned', lastName: '' } }, ...list];
+  })();
 
   return (
     <Screen edges={[]}>
@@ -527,9 +548,23 @@ export default function CandidateDetailScreen() {
       <ModalSheet visible={modal === 'round'} onClose={() => setModal(null)} title={`${rounds[roundIdx]?.label || `Round ${roundIdx + 1}`}`}
         footer={<AppButton title="Save round" loading={busy} onPress={saveRound} />}>
         <Field label="Status"><ChipSelect options={ROUND_STATUS} value={form.status} onChange={(v) => upd(setForm, 'status', v)} /></Field>
-        <Field label="Interviewer">
-          <ChipSelect options={interviewerOptions} value={form.interviewer} onChange={(v) => upd(setForm, 'interviewer', v)}
-            getLabel={(p) => (p._id ? fullName(p.user) : 'Unassigned')} getValue={(p) => (p._id ? p.user._id : '')} />
+        <Field label={jobDept && !ivShowAll ? `Interviewer · ${jobDept}` : 'Interviewer'}>
+          <Input value={ivQuery} onChangeText={setIvQuery} placeholder="Search by name or designation…" autoCapitalize="none" />
+          {!!jobDept && (
+            <TouchableOpacity onPress={() => setIvShowAll((s) => !s)} style={{ paddingVertical: spacing(2) }}>
+              <Text style={[font.small, { color: colors.primary, fontWeight: '600' }]}>
+                {ivShowAll ? `Show only ${jobDept}` : 'Show all employees'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {interviewerOptions.length === 1 ? (
+            <Text style={[font.small, { color: colors.textMuted, paddingVertical: spacing(2) }]}>
+              {jobDept && !ivShowAll ? `Nobody in ${jobDept} matches — try "Show all employees".` : 'No matches.'}
+            </Text>
+          ) : (
+            <ChipSelect options={interviewerOptions} value={form.interviewer} onChange={(v) => upd(setForm, 'interviewer', v)}
+              getLabel={(p) => (p._id ? fullName(p.user) : 'Unassigned')} getValue={(p) => (p._id ? p.user._id : '')} />
+          )}
         </Field>
         <View style={{ flexDirection: 'row', gap: spacing(3) }}>
           <View style={{ flex: 1 }}><Field label="Date"><DateField value={form.schedDate} onChange={(v) => upd(setForm, 'schedDate', v)} placeholder="Schedule" /></Field></View>

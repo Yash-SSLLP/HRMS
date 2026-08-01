@@ -95,6 +95,7 @@ The hiring pipeline, from job post to a converted employee.
 - **Public apply:** candidates apply with a résumé (PDF/DOC, ≤5 MB) - no login, one application per email per job, only while the job is Open.
 - **Candidate stages:** **Applied → Shortlisted → Screening → Interview → Offer → Onboarding → New Joinee → Hired** (or Rejected).
 - **Interview rounds:** shortlist first, then schedule rounds - set status (Pending/Scheduled/Cleared/Rejected), assign an **interviewer** (they get it in "My Interviews"), add feedback, times, and a meeting link. You can create a real **Google Meet** link and email a branded invite (résumé attached).
+- ⭐ **Choosing the interviewer:** the picker is **scoped to the job's department** - it lists everyone in that department (managers and team members alike, with their designation) rather than the whole company. **Type to search** by name or designation, and use **"Show all employees"** when the interviewer sits outside the department. A job with no department set simply lists everyone. Anyone already assigned stays visible even if they're from another department, so re-opening a round never silently clears them.
 - **Pre-offer document gate:** when all rounds are **Cleared**, a document-submission link is generated; the candidate uploads docs and **HR must confirm them before an offer can be created**.
 - **Offer → Appointment → Employee:** generate the **Offer Letter** (PDF), move to **Onboarding**, set joining date/notice, release the **Appointment Letter** (PDF), then **Convert to Employee** - this creates the login + employee profile (auto-suggested employee code) and moves the candidate to **Hired**.
 
@@ -149,6 +150,7 @@ Maintain the company holiday calendar (type: Public / Restricted / Company). Hol
 - Payslip **status: Draft → Approved → Paid** (or **On Hold**). One payslip per employee per month; gross/deductions/net auto-compute.
 - Actions: create/edit, **Approve**, **Mark Paid** (stamps payment date/reference), **delete** (Draft only), **PDF**, **share a public link**, and **email** the payslip (with PDF attached) after previewing the message. **Export the whole month to the payroll register (.xlsx).**
 - Earnings include a **Leave Incentive** line; deductions include **LOP / unpaid days** and a **Late coming** line (all explained below). These appear in the payslip editor, the register export, and the PDF.
+- ⭐ **Salary-setup alert.** If any active employee has **no salary structure or no annual CTC**, an amber banner appears on the **Dashboard** and at the top of the **Payroll** page naming them. Payroll cannot compute anything for those people - they come out of a run with a **₹0 payslip**, and even the late-coming penalty is ₹0 because its ₹200/₹400 rate is based on monthly Basic. **Click a name in the banner** to jump straight to **Salary Structures** with the assign modal already open for that person - if they already have a structure it opens that one so you only type the CTC, otherwise it starts a new structure. Save, then re-run the month. The banner disappears once everyone is set up, and only people with the payroll permission ever see it. **You also get a notification** the moment an employee is added without salary details - one per employee from the Add Profile form, and a single combined one for a bulk Excel import, sent to everyone who holds the payroll permission. Opening it lands on **Salary Structures**, on the assign modal for that person when the notification is about a single employee.
 - ⭐ **Basic pay is never reduced.** Every earning is the full monthly amount whatever the attendance — days not worked and late coming are taken off on the **deductions** side instead.
 
 ### The salary slip (PDF)
@@ -156,16 +158,18 @@ The generated slip follows the company's own format: letterhead + GSTIN, an iden
 - The slip's **Other Deductions** line is the total of **LOP + late coming + emergency-leave double cut + any other deduction** — as its printed note says.
 - **Special Allowance** on the slip also absorbs Medical and LTA (the format has no row for those); **TA** is Conveyance; **Incentives** is Leave Incentive + Bonus; **Variable Pay** is Overtime.
 
-### ⭐ Monthly Payroll Run (the heart of payroll)
-This is where each employee's salary is calculated from their **attendance + salary structure + CTC**, with the company pay policy applied automatically.
+### ⭐ Hikes (salary basis & increments)
+This is where an employee's **salary structure** and **annual CTC** are set, and where **increments** are given. The pay policy below is what those figures then drive when payroll runs.
 
 **How you use it:**
-1. Pick an **employee** and **month**. The screen loads that month's **attendance calendar** and a computed-salary preview.
-2. Adjust any day's status right on the calendar (this writes real attendance).
-3. Make sure the employee has a **Salary Structure** and **Annual CTC** assigned.
-4. **Generate Draft → review → Approve** (or put **On Hold**). Approved/Paid payslips can't be regenerated.
+1. Pick an **employee** and **month**.
+2. Set their **Salary Structure** and **Annual CTC**, then **Save**.
+3. **Give hike** to record an increment (percent / amount / set-to), effective from a chosen month. Future-dated hikes only apply from that month onward.
+4. The **CTC revisions** list underneath is the history of who changed what, when, and why.
 
-**What the system computes automatically:**
+⚠️ **Generating, approving and holding payslips is on the Payroll page**, not here — use **▶ Run Payroll** there for everyone at once, or open a payslip to edit it. Per-day attendance is edited on **Attendance → Monthly View**. This screen shows the month's attendance roll-up (paid/LOP days, leave, lateness) purely as context for the increment decision.
+
+**What the system computes automatically when payroll runs:**
 - **Base salary:** each component = its % of (Annual CTC ÷ 12), **at full value** — attendance never shrinks Basic or any other head.
 - **Paid days** = days in month − Absent − ½ × Half-days − **excess leave**. Anything unpaid becomes **LOP days**.
 - ⭐ **LOP deduction:** every unpaid day — LOP plus any day before joining / after exit — is charged back at **one day's pay** (monthly gross ÷ days in month) into the **LOP / unpaid days** deduction. Net pay works out the same as prorating would; it just reads correctly on the slip.
@@ -175,7 +179,7 @@ This is where each employee's salary is calculated from their **attendance + sal
 - ⭐ **Late-arrival penalty:** late days (check-in after **10:00 AM**) beyond **5**/month are deducted at **₹200/day** if the employee's **monthly Basic < ₹25,000**, else **₹400/day** → written to the **Late Penalty** deduction.
 - **Loans:** active **EMIs** are summed into **Loan Recovery**, except **Salary Advance** loans which get their own **Salary Advance** deduction (the slip prints them as separate lines).
 
-**What HR sees:** an **"Attendance policy" panel** (Leave used of 2, Late arrivals of 5, excess late, excess leave, with a plain-language caption), a **working-hours** roll-up (days present, average hours, comp-off earned for worked weekends/holidays), and a **computed-salary breakdown** - Basic/HRA/Special/Conveyance/Medical/LTA, **+ Leave incentive**, Gross (full month), **− LOP / unpaid days**, **− Late coming**, **− Loan EMI**, **− Salary advance EMI**, and **Estimated net**.
+**What HR sees on the Hikes page:** the salary-setup controls and CTC revision history, an **"Attendance policy" panel** (Leave used of 2, Late arrivals of 5, excess late, excess leave, with a plain-language caption) and a **working-hours** roll-up (days present, average hours, comp-off earned for worked weekends/holidays).
 
 **Worked examples of the policy:**
 - Employee takes **0 leaves** → **+2 days' pay** (Leave Incentive).
@@ -314,7 +318,7 @@ Role gating on mobile mirrors the web: the Backend/HR Manager can write, CEO/MD 
 
 ## 15. What changed recently (so you're not surprised)
 
-- ✅ **New pay policy** (auto-applied in the Monthly Payroll Run): **2 paid leaves/month** (unused → **Leave Incentive** pay; excess → **LOP**) and a **late-arrival penalty** (₹200/₹400 per late day beyond 5, by monthly Basic). Employees also see a **"Lateness & leave"** card on their attendance screen.
+- ✅ **New pay policy** (auto-applied when payroll runs): **2 paid leaves/month** (unused → **Leave Incentive** pay; excess → **LOP**) and a **late-arrival penalty** (₹200/₹400 per late day beyond 5, by monthly Basic). Employees also see a **"Lateness & leave"** card on their attendance screen.
 - ✅ **Leave approval now auto-stamps the attendance calendar** (On Leave / Absent for LOP; skips weekends & holidays; reverses on cancel).
 - ✅ **Rewards & Recognition** is a **new HR-curated** monthly program (web + mobile), replacing the old peer kudos feature.
 - ❌ **Removed:** the **Comp-off request** module, the **Knowledge Base**, and the old **peer Recognition/Kudos**. *(The comp-off concept still appears only as a legend on the attendance heatmap and as "comp-off earned" for worked weekends/holidays in payroll - there's no comp-off request workflow anymore.)*

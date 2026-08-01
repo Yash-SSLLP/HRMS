@@ -1,7 +1,11 @@
-// Lightweight dependency-free vertical bar chart — colourful, with hover
-// tooltips, a lift-on-hover effect and a staggered entrance animation.
-// props: data = [{ label, value }].
-const BAR_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#f97316'];
+// Lightweight dependency-free vertical bar chart, with hover tooltips, a
+// lift-on-hover effect and a staggered entrance animation.
+// props: data = [{ label, value, color? }].
+//
+// Bars are filled with a SOLID colour. They used to carry a top-to-bottom
+// gradient, which meant the same bar was two different colours depending on
+// where you looked — the fill has to read as one value, so it is one colour.
+import { seriesColor } from '../theme/chartColors';
 
 export default function BarChart({ data = [], height = 200 }) {
   if (data.length === 0) {
@@ -16,7 +20,9 @@ export default function BarChart({ data = [], height = 200 }) {
       <div className="flex items-end justify-center gap-5 mx-auto w-max px-2" style={{ height }}>
         {data.map((d, i) => {
           const barH = Math.max(3, Math.round(((d.value || 0) / max) * plotH));
-          const color = BAR_COLORS[i % BAR_COLORS.length];
+          // A per-bar colour wins (semantic categories like Present/Absent);
+          // otherwise take the next categorical slot in order.
+          const color = d.color || seriesColor(i);
           return (
             <div
               key={i}
@@ -27,10 +33,7 @@ export default function BarChart({ data = [], height = 200 }) {
               <span className="text-xs font-semibold text-gray-700 mb-1">{d.value}</span>
               <div
                 className="chart-bar w-10"
-                style={{
-                  height: barH,
-                  background: `linear-gradient(180deg, ${color} 0%, color-mix(in srgb, ${color} 62%, #000) 100%)`,
-                }}
+                style={{ height: barH, background: color }}
               />
               <span className="mt-2 text-[11px] text-gray-500 text-center leading-tight w-full break-words">
                 {d.label}

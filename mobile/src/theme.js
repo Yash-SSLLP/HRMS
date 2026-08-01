@@ -48,6 +48,20 @@ const lightColors = {
   info: '#0ea5e9',
   infoSoft: '#e0f2fe',
 
+  // Chart palette — mirrors the web tokens in index.css so a chart reads the
+  // same on both platforms. Solid colours only; no gradient on any data mark.
+  // Categorical slots are assigned in this fixed order and never cycled — the
+  // order is what keeps neighbouring series apart for colour-blind readers.
+  chart: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'],
+  // Reserved for state, never for a series.
+  chartGood: '#0ca30c',
+  chartWarning: '#fab219',
+  chartSerious: '#ec835a',
+  chartCritical: '#d03b3b',
+  // Sequential ramp (one hue, light → dark) for magnitude.
+  chartSeq: ['#9ec5f4', '#5598e7', '#2a78d6', '#184f95'],
+  chartEmpty: '#eef0f3',
+
   white: '#ffffff',
   black: '#000000',
 };
@@ -83,6 +97,16 @@ const darkColors = {
   dangerSoft: '#3a1a1a',
   info: '#38bdf8',
   infoSoft: '#0c2a3a',
+
+  // Same eight hues re-stepped for the dark surface (not an automatic
+  // lightening) — each clears 3:1 against it.
+  chart: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'],
+  chartGood: '#0ca30c',
+  chartWarning: '#fab219',
+  chartSerious: '#ec835a',
+  chartCritical: '#d03b3b',
+  chartSeq: ['#184f95', '#2a78d6', '#5598e7', '#9ec5f4'],
+  chartEmpty: '#23252c',
 
   white: '#ffffff',
   black: '#000000',

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { CHART_STATUS } from '../theme/chartColors';
 
 // Combo chart for the daily attendance report.
 //   • Two lines over a "time of day" Y axis: login (check-in) and logout (check-out).
@@ -28,10 +29,12 @@ const dur = (m) => {
   return mm ? `${h}h ${mm}m` : `${h}h`;
 };
 
-const LOGIN_COLOR = '#16a34a';   // green
-const LOGOUT_COLOR = '#dc2626';  // red
-const BAR_FILL = '#6366f1';      // indigo
-const BAR_LABEL = '#4338ca';
+// Solid colours from the shared palette — arrivals and departures are a
+// good/bad pair, the present-count bars are an ordinary series.
+const LOGIN_COLOR = CHART_STATUS.good;
+const LOGOUT_COLOR = CHART_STATUS.critical;
+const BAR_FILL = 'var(--chart-1)';
+const BAR_LABEL = 'var(--chart-1)';
 
 // White halo behind label text so it stays legible over lines/bars/gridlines.
 const halo = { paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3, strokeLinejoin: 'round' };
@@ -109,7 +112,8 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
 
   return (
     <div className="w-full">
-      <div className={`flex items-center justify-center gap-4 ${compact ? 'mb-1' : 'mb-2'}`} style={{ fontSize: compact ? 11 : 12, color: '#4b5563' }}>
+      {/* Legend text wears the normal muted ink, not the series colour. */}
+      <div className={`flex items-center justify-center gap-4 text-gray-600 dark:text-gray-300 ${compact ? 'mb-1' : 'mb-2'}`} style={{ fontSize: compact ? 11 : 12 }}>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3.5 h-1.5 rounded-full" style={{ background: LOGIN_COLOR }} /> Login</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3.5 h-1.5 rounded-full" style={{ background: LOGOUT_COLOR }} /> Logout</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: BAR_FILL, opacity: 0.35 }} /> Present</span>

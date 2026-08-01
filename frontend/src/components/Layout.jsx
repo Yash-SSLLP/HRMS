@@ -277,16 +277,23 @@ function NotificationBell({ isAdmin, portal }) {
   );
 }
 
-// A premium top-bar shortcut pill (gradient fill, soft tinted glow, white icon +
-// label). Matches the Chats launcher so the quick shortcuts read as one set.
-function NavPill({ to, icon, label, gradient, glow }) {
+// The one colour every top-bar shortcut pill uses. Deliberately a fixed hex and
+// NOT var(--accent): the pills carry white text, and the per-role accents drop
+// to 1.7–2.5:1 against white in dark mode (amber/teal/light-blue), which is
+// unreadable. This blue holds 5.17:1 with white in both themes.
+const PILL_BG = '#2563EB';
+
+// A top-bar shortcut pill: solid fill, soft shadow, white icon + label. Every
+// pill is the same colour so the shortcuts read as one set of quick links
+// rather than as differently-classified actions.
+function NavPill({ to, icon, label }) {
   return (
     <Link
       to={to}
       title={label}
       aria-label={label}
-      className="inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold text-white transition-all duration-150 hover:brightness-105 active:scale-95"
-      style={{ background: gradient, boxShadow: `0 2px 6px ${glow}, inset 0 1px 0 rgba(255,255,255,.28)` }}
+      className="inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold text-white transition-all duration-150 hover:brightness-110 active:scale-95"
+      style={{ background: PILL_BG, boxShadow: '0 2px 6px rgba(37,99,235,.30)' }}
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
@@ -690,22 +697,10 @@ export default function Layout({ navItems = [], sectionTitle }) {
             <span className="text-xl leading-none">☰</span>
           </button>
 
-          {/* Quick shortcuts — available to everyone, in both portals. Premium
-              gradient pills; the label appears from sm up so each is unmistakable. */}
-          <NavPill
-            to={calendarPath}
-            label="Calendar"
-            icon={<FiCalendar size={16} strokeWidth={2.2} />}
-            gradient="linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)"
-            glow="rgba(37,99,235,.35)"
-          />
-          <NavPill
-            to={attendancePath}
-            label="Attendance"
-            icon={<FiClock size={16} strokeWidth={2.2} />}
-            gradient="linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)"
-            glow="rgba(109,40,217,.35)"
-          />
+          {/* Quick shortcuts — available to everyone, in both portals. One solid
+              colour for both; the label appears from sm up so each is unmistakable. */}
+          <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
+          <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
 
           {/* Chat is an org-wide switch a SuperAdmin controls. */}
           {chatEnabled && <ChatLauncher />}

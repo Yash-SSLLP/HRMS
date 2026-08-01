@@ -27,7 +27,7 @@ const EXTRA = {
   '/employee': 'Overview',
   '/admin/approvals': 'Approvals',
   '/admin/leave-approvals': 'Approvals',
-  '/admin/payroll-run': 'Monthly Payroll Run',
+  '/admin/payroll-run': 'Hikes',
 };
 
 // Turn a path segment like "review-cycles" into "Review Cycles" as a last resort.

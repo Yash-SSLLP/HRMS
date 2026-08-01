@@ -155,7 +155,7 @@ const previewStructure = asyncHandler(async (req, res) => {
 /**
  * Assign this salary structure to an employee (optionally set their annual CTC).
  * Payroll's own way to set an employee's salary basis without needing the broader
- * employees.manage permission — mirrors the Monthly Payroll Run salary setup.
+ * employees.manage permission — mirrors the Hikes page salary setup.
  * @route POST /api/salary-structures/:id/assign  (payroll.manage)
  * @param {string} req.params.id - structure id
  * @param {string} req.body.employee - EmployeeProfile id (required)
