@@ -57,7 +57,16 @@ async function getAccessToken() {
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.access_token) {
-    throw new Error(`Google OAuth token refresh failed: ${json.error_description || json.error || res.status}`);
+    const detail = json.error_description || json.error || res.status;
+    const err = new Error(`Google OAuth token refresh failed: ${detail}`);
+    // `invalid_grant` means the refresh token is expired, revoked, or was issued
+    // to different credentials. No amount of retrying fixes it — a human has to
+    // re-authorise (scripts/getGoogleRefreshToken.js). Flag it so callers can
+    // stop burning their retry budget on it. NOTE: if the Google Cloud consent
+    // screen is still in "Testing", refresh tokens expire after 7 days; publish
+    // the app to stop this recurring weekly.
+    if (json.error === 'invalid_grant') err.permanent = true;
+    throw err;
   }
   cached = { token: json.access_token, expiresAt: Date.now() + (json.expires_in || 3600) * 1000 };
   return cached.token;

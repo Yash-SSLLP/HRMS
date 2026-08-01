@@ -70,7 +70,14 @@ async function processOne() {
     row.attempts = (row.attempts || 0) + 1;
     row.lastError = err.message || String(err);
     row.lastAttemptAt = new Date();
-    if (row.attempts >= (row.maxAttempts || 6)) {
+    // A revoked/expired credential will never succeed on retry. Retrying it
+    // walks the whole backoff ladder (1m → 12h) before giving up, and every
+    // later message queues behind it — so fail fast and say what to do.
+    if (err.permanent) {
+      row.status = 'Dead';
+      row.lastError = `${row.lastError} — not retried: re-authorise with `
+        + 'node scripts/getGoogleRefreshToken.js, then restart the server.';
+    } else if (row.attempts >= (row.maxAttempts || 6)) {
       row.status = 'Dead';
     } else {
       const idx = Math.min(row.attempts - 1, BACKOFF_SECONDS.length - 1);
@@ -141,8 +148,52 @@ async function tick() {
  * drain anything queued during downtime. No-op if already running.
  * @returns {void}
  */
+/**
+ * Check the configured mail transport once at boot and say plainly whether mail
+ * can actually go out. Without this, a revoked Google token is invisible until
+ * someone notices that an email never arrived — the failure previously showed up
+ * only as a warn line buried among the retry attempts.
+ * @returns {Promise<void>} Never rejects; this is a diagnostic, not a gate.
+ */
+async function reportTransportHealth() {
+  try {
+    const googleMail = require('./googleMail');
+    if (!googleMail.isConfigured()) {
+      if (!process.env.SMTP_HOST) {
+        console.warn('[emailWorker] No mail transport configured — email is logged to stdout, NOT delivered.');
+      }
+      return;
+    }
+    const { getAccessToken } = require('./googleCalendar');
+    await getAccessToken();
+    console.log(`[emailWorker] Gmail transport OK.${process.env.SMTP_HOST ? ' SMTP backup configured.' : ''}`);
+  } catch (err) {
+    const covered = err.permanent && process.env.SMTP_HOST;
+    console.error(
+      `\n[emailWorker] ******** GMAIL TRANSPORT ${covered ? 'DOWN (SMTP backup active)' : 'NOT WORKING'} ********\n`
+      + `  ${err.message}\n`
+      + (err.permanent
+        ? '  The Google refresh token is expired or revoked. Fix:\n'
+          + '    1) node scripts/getGoogleRefreshToken.js\n'
+          + '    2) put the new GOOGLE_OAUTH_REFRESH_TOKEN in backend/.env\n'
+          + '    3) restart the server\n'
+          + '  If this keeps happening weekly, the Google Cloud OAuth consent screen is\n'
+          + '  still in "Testing" — tokens expire after 7 days until the app is published.\n'
+        : '  Transient error — the worker will keep retrying.\n')
+      + (covered
+        ? `  Mail is still going out via SMTP (${process.env.SMTP_HOST}) until Google is fixed.\n`
+        : err.permanent
+          ? '  No SMTP backup is configured, so NO mail is being delivered.\n'
+            + '  Set SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM in backend/.env to cover this.\n'
+          : '')
+      + '  ***************************************\n'
+    );
+  }
+}
+
 function startWorker() {
   if (intervalHandle) return;
+  reportTransportHealth();
   intervalHandle = setInterval(() => {
     tick().catch((e) => console.error('[emailWorker] tick error:', e.message));
   }, POLL_INTERVAL_MS);

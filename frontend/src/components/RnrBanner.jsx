@@ -9,12 +9,15 @@ function initials(name) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '★';
 }
 
-// A round photo (protected avatar endpoint) with an initials fallback.
-function WinnerPhoto({ w, size = 64, ring = 'ring-amber-300' }) {
+// A round photo (protected avatar endpoint) with an initials fallback. The gold
+// ring is drawn from the brand ramp so it reads on ivory and on near-black
+// alike (Tailwind ring-* colours are literal and don't follow the dark theme).
+function WinnerPhoto({ w, size = 64, ringWidth = 2 }) {
   const dim = { width: size, height: size };
+  const ring = { boxShadow: `0 0 0 ${ringWidth}px var(--gold-500)` };
   const fallback = (
-    <span className={`inline-flex items-center justify-center rounded-full bg-amber-500 text-white font-semibold ring-2 ${ring}`}
-      style={{ ...dim, fontSize: size * 0.36 }}>
+    <span className="inline-flex items-center justify-center rounded-full bg-amber-500 text-white font-semibold"
+      style={{ ...dim, ...ring, fontSize: size * 0.36 }}>
       {initials(w.name)}
     </span>
   );
@@ -23,8 +26,8 @@ function WinnerPhoto({ w, size = 64, ring = 'ring-amber-300' }) {
     <AuthImage
       url={`/auth/users/${w.user}/avatar?p=${encodeURIComponent(w.photo)}`}
       alt={w.name}
-      className={`rounded-full object-cover ring-2 ${ring}`}
-      style={dim}
+      className="rounded-full object-cover"
+      style={{ ...dim, ...ring }}
       fallback={fallback}
     />
   );
@@ -64,23 +67,23 @@ export default function RnrBanner() {
   const keyAchievers = award.winners.filter((w) => w.category === 'KeyAchiever');
 
   return (
-    <div className="relative mb-4 rounded-xl overflow-hidden shadow bg-gradient-to-br from-amber-50 via-white to-amber-50 border border-amber-200">
+    <div className="rnr-banner mb-4">
       <button
         type="button"
         onClick={dismiss}
         disabled={busy}
         aria-label="Dismiss"
         title="Dismiss"
-        className="absolute top-2.5 right-2.5 text-amber-500/80 hover:text-amber-700 disabled:opacity-50 z-10"
+        className="rnr-close absolute top-2.5 right-2.5 disabled:opacity-50 z-10"
       >
         <FiX size={18} />
       </button>
 
       <div className="p-5">
         <div className="flex items-center gap-2 mb-4">
-          <FiAward className="text-amber-500" size={20} />
+          <FiAward className="rnr-ink" size={20} />
           <h2 className="font-semibold text-gray-900">Rewards &amp; Recognition</h2>
-          <span className="text-xs font-medium text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">
+          <span className="rnr-chip text-xs font-medium rounded-full px-2 py-0.5">
             {award.monthName} {award.year}
           </span>
         </div>
@@ -88,10 +91,10 @@ export default function RnrBanner() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Employee of the Month — the hero */}
           {eom && (
-            <div className="lg:col-span-1 rounded-xl bg-white border border-amber-200 p-4 flex items-center gap-4">
-              <WinnerPhoto w={eom} size={72} ring="ring-amber-400" />
+            <div className="rnr-card lg:col-span-1 p-4 flex items-center gap-4">
+              <WinnerPhoto w={eom} size={72} ringWidth={2.5} />
               <div className="min-w-0">
-                <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+                <div className="rnr-ink flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide">
                   <FiStar size={12} /> Employee of the Month
                 </div>
                 <div className="font-semibold text-gray-900 truncate">{eom.name}</div>
@@ -105,14 +108,14 @@ export default function RnrBanner() {
 
           {/* Key Achievers — one per department */}
           {keyAchievers.length > 0 && (
-            <div className={`${eom ? 'lg:col-span-2' : 'lg:col-span-3'} rounded-xl bg-white/70 border border-amber-100 p-4`}>
+            <div className={`rnr-card-soft ${eom ? 'lg:col-span-2' : 'lg:col-span-3'} p-4`}>
               <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-3">
                 Key Achievers by Department
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {keyAchievers.map((w) => (
                   <div key={String(w.user)} className="flex items-center gap-3">
-                    <WinnerPhoto w={w} size={48} ring="ring-amber-200" />
+                    <WinnerPhoto w={w} size={48} ringWidth={1.5} />
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-gray-900 truncate">{w.name}</div>
                       <div className="text-xs text-gray-500 truncate">

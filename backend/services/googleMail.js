@@ -138,7 +138,12 @@ async function send(opts) {
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(`Gmail send failed: ${json.error?.message || res.status}`);
+    const err = new Error(`Gmail send failed: ${json.error?.message || res.status}`);
+    // 401/403 here mean the credential is refused or the gmail.send scope was
+    // never granted — retrying cannot fix either, so mark it permanent and let
+    // the caller fall back to SMTP. (5xx and rate limits stay retryable.)
+    if (res.status === 401 || res.status === 403) err.permanent = true;
+    throw err;
   }
   return { messageId: json.id, response: 'gmail:ok' };
 }

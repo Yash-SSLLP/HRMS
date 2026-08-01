@@ -206,7 +206,7 @@ export default function AdminRnr() {
                 Save Draft
               </button>
               <button onClick={onAnnounce} disabled={busy}
-                className="px-5 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50">
+                className="gold-ink px-5 py-2 text-sm font-semibold bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-50">
                 Announce to Everyone
               </button>
             </div>

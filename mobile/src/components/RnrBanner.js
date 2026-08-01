@@ -7,13 +7,19 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { mediaUrl } from '../api/client';
-import { colors, radius, spacing, font } from '../theme';
+import { colors, radius, spacing, font, isDark } from '../theme';
 import { Avatar, Ionicons } from './ui';
 
 const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-const AMBER = '#f59e0b';
+// Award gold, per theme: the deep amber ink is only legible on the light
+// surface, so dark mode takes the bright end of the ramp (same tint the
+// 'recognition' notification uses). AMBER paints the trophy + avatar rings,
+// INK the small uppercase labels, TINT the hero row's wash.
+const AMBER = isDark ? '#fbbf24' : '#f59e0b';
+const INK = isDark ? '#fcd34d' : '#b45309';
+const TINT = AMBER + (isDark ? '1f' : '12');
 
 // Build the (auth-protected) avatar URI for a winner, or null → Avatar shows initials.
 const winnerUri = (w) =>
@@ -109,9 +115,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(3) },
   title: { ...font.h3, marginLeft: 6, flexShrink: 1 },
   periodPill: { marginLeft: 8, marginRight: 'auto', backgroundColor: AMBER + '1a', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  periodText: { fontSize: 11, fontWeight: '700', color: '#b45309' },
-  eomRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: AMBER + '12', borderRadius: radius.md, padding: spacing(3) },
-  eomKicker: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5, color: '#b45309' },
+  periodText: { fontSize: 11, fontWeight: '700', color: INK },
+  eomRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: TINT, borderRadius: radius.md, padding: spacing(3) },
+  eomKicker: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5, color: INK },
   eomName: { fontSize: 16, fontWeight: '800', color: colors.text, marginTop: 1 },
   kaWrap: { marginTop: spacing(3) },
   kaLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5, color: colors.textFaint, marginBottom: spacing(2) },

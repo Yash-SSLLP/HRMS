@@ -68,8 +68,20 @@ function resolveFrom(rawFrom) {
  */
 async function sendMail(opts) {
   // Preferred transport: Gmail API via the shared Google OAuth credentials.
+  // isConfigured() only means the env vars are PRESENT — the refresh token can
+  // still be revoked or expired. When it is (err.permanent), fall through to
+  // SMTP if one is configured rather than failing outright, so a dead Google
+  // credential doesn't take mail down completely.
   if (googleMail.isConfigured()) {
-    return googleMail.send(opts);
+    try {
+      return await googleMail.send(opts);
+    } catch (err) {
+      if (!err.permanent || !process.env.SMTP_HOST) throw err;
+      console.error(
+        '[email] Google credentials are no longer valid — falling back to SMTP. '
+        + 'Re-authorise with: node scripts/getGoogleRefreshToken.js'
+      );
+    }
   }
 
   const t = getTransporter();
