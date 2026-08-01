@@ -1,24 +1,33 @@
 /**
- * Server-side payslip PDF renderer (pdfkit), styled after the Vertex42 template.
+ * Server-side salary-slip PDF renderer (pdfkit).
  *
- * Produces the PDF entirely in memory and resolves a Buffer — no files are
- * written. External systems: none (pdfkit only).
+ * Reproduces the company's own salary slip: a black-ruled grid with the
+ * letterhead, an identity block (statutory ids + bank), a day-count block, a
+ * side-by-side Earnings / Deductions table, the net amount in figures and
+ * words, and the authorised-signature footer.
  *
- * Config / env read:
- *   PAYSLIP_FONT_PATH / PAYSLIP_FONT_BOLD_PATH  Unicode font for the ₹ glyph
- *                                               (falls back to Helvetica + "Rs ").
- *   ORG_DISPLAY_NAME, ORG_ADDRESS/ORG_LOCATION, ORG_PHONE, ORG_EMAIL, ORG_LOGO_PATH
- *                                               header/footer branding.
+ * The money model this renders: earnings are ALWAYS the full monthly salary —
+ * attendance never reduces Basic — and everything the employee did not earn
+ * (LOP, late-coming, penalties) is recovered on the deductions side. See
+ * `lopDeduction` in models/Payroll.js.
+ *
+ * Produces the PDF entirely in memory and resolves a Buffer — no files written.
+ * Branding comes from config/company.js; fonts from services/pdfFonts.js.
  */
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const COMPANY = require('../config/company');
+const { setupFonts } = require('./pdfFonts');
+const { amountInWords } = require('../utils/amountInWords');
 
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+const MONTHS_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 
+// Labels for the payslip component keys, used outside the fixed slip layout
+// (admin UI, exports). The slip itself groups several keys onto one printed row.
 const COMPONENT_LABELS = {
   basic: 'Basic Pay',
   hra: 'House Rent Allowance',
@@ -35,49 +44,105 @@ const COMPONENT_LABELS = {
   professionalTax: 'Professional Tax',
   tds: 'TDS (Income Tax)',
   loanRecovery: 'Loan Recovery',
+  salaryAdvance: 'Salary Advance Recovery',
+  lopDeduction: 'Loss of Pay',
   latePenalty: 'Late Arrival Penalty',
+  emergencyPenalty: 'Emergency Leave (double cut)',
   otherDeductions: 'Other Deductions',
 };
 
-const labelOf = (k) =>
-  COMPONENT_LABELS[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+const NOTE_TEXT =
+  'Other Pay - Working during holidays or leaves, Other deductions - Late coming & LOP';
 
-const formatINR = (n) =>
-  new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
-
-const formatDate = (d) => {
-  if (!d) return '-';
-  const dt = new Date(d);
-  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
-};
-
-// PDFKit's bundled Helvetica lacks ₹; use a Unicode font if provided, else "Rs ".
-function setupFonts(doc) {
-  const regularPath = process.env.PAYSLIP_FONT_PATH;
-  const boldPath = process.env.PAYSLIP_FONT_BOLD_PATH;
-  if (regularPath && fs.existsSync(regularPath)) {
-    try {
-      doc.registerFont('body', regularPath);
-      doc.registerFont('body-bold', boldPath && fs.existsSync(boldPath) ? boldPath : regularPath);
-      return { regular: 'body', bold: 'body-bold', rupee: '₹' };
-    } catch (_) { /* fall through */ }
-  }
-  return { regular: 'Helvetica', bold: 'Helvetica-Bold', rupee: 'Rs ' };
+/**
+ * Map the payslip's earnings/deductions onto the slip's fixed seven rows a side.
+ *
+ * This is a full PARTITION of both sub-schemas: every schema field lands in
+ * exactly one row, nothing twice. The printed totals come from the payslip's own
+ * grossSalary/totalDeductions, so a field missing here would silently vanish
+ * from the table while still moving the total — `slipRowsBalance` below asserts
+ * that can't happen. ANY new earnings/deductions field must be added to a row.
+ * @param {Object} payslip
+ * @returns {{earningRows: Array<[string, number]>, deductionRows: Array<[string, number]>}}
+ */
+function buildSlipRows(payslip) {
+  const e = payslip.earnings?.toObject?.() || payslip.earnings || {};
+  const d = payslip.deductions?.toObject?.() || payslip.deductions || {};
+  return {
+    earningRows: [
+      ['BASIC', e.basic || 0],
+      ['HRA', e.hra || 0],
+      // Medical and LTA have no row of their own on this format.
+      ['Special Allowance', (e.specialAllowance || 0) + (e.medicalAllowance || 0) + (e.lta || 0)],
+      ['TA', e.conveyanceAllowance || 0],
+      ['Incentives', (e.leaveIncentive || 0) + (e.bonus || 0)],
+      ['Variable Pay', e.overtime || 0],
+      ['Other Pay', e.otherEarnings || 0],
+    ],
+    deductionRows: [
+      ['PF', d.epf || 0],
+      ['ESIC', d.esic || 0],
+      ['LOAN', d.loanRecovery || 0],
+      ['TDS', d.tds || 0],
+      ['Professional Tax', d.professionalTax || 0],
+      ['Salary In Advance', d.salaryAdvance || 0],
+      // Per the note at the foot of the slip: late coming & LOP land here.
+      ['Other Deductions',
+        (d.lopDeduction || 0) + (d.latePenalty || 0) + (d.emergencyPenalty || 0) + (d.otherDeductions || 0)],
+    ],
+  };
 }
 
 /**
- * Render a payslip PDF styled after the Vertex42 template:
- * blue Company Name / PAYSLIP header, employee-information block, a blue/gray
- * info grid, an EARNINGS table (HOURS / RATE / CURRENT / YTD) with GROSS PAY,
- * a DEDUCTIONS table with TOTAL DEDUCTIONS, a NET PAY band, and a footer.
- * @param {Object} payslip - Payslip doc with populated `employee` (and `employee.user`),
- *   `earnings`, `deductions`, `payPeriodMonth`/`payPeriodYear`, totals, paid/LOP days.
- * @param {{earnings:Object, deductions:Object}} [ytd] - Year-to-date component sums;
- *   each per-component value falls back to the current period when absent.
- * @returns {Promise<Buffer>} Resolves with the rendered PDF bytes.
+ * Do the printed rows add up to the totals printed beside them? Exported so the
+ * partition above can be checked against the schema rather than trusted.
+ * @param {Object} payslip
+ * @returns {{earnings: boolean, deductions: boolean}}
+ */
+function slipRowsBalance(payslip) {
+  const { earningRows, deductionRows } = buildSlipRows(payslip);
+  const sum = (rows) => rows.reduce((a, [, v]) => a + (v || 0), 0);
+  return {
+    earnings: sum(earningRows) === Math.round(payslip.grossSalary || 0),
+    deductions: sum(deductionRows) === Math.round(payslip.totalDeductions || 0),
+  };
+}
+
+// Indian grouping, whole rupees. Zero prints as the sheet's em dash placeholder.
+const num = (n) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Math.round(n || 0));
+const numOrDash = (n) => (Math.round(n || 0) === 0 ? '-' : num(n));
+
+// "01-Jan-23", matching the source spreadsheet.
+const shortDate = (d) => {
+  if (!d) return '-';
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return '-';
+  return `${String(dt.getDate()).padStart(2, '0')}-${MONTHS_SHORT[dt.getMonth()]}-${String(dt.getFullYear()).slice(-2)}`;
+};
+
+// Aadhaar is stored as 12 bare digits; print it grouped like the physical card.
+const formatAadhaar = (a) => {
+  const digits = String(a || '').replace(/\D/g, '');
+  return digits.length === 12 ? digits.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3') : (a || 'NA');
+};
+
+// Day counts read better as whole numbers, but half days are genuine halves.
+const days = (n) => {
+  const v = Number(n) || 0;
+  return Number.isInteger(v) ? String(v) : String(+v.toFixed(1));
+};
+
+const plain = (v) => (v === 0 || v ? String(v) : 'NA');
+
+/**
+ * Render the salary slip PDF.
+ * @param {Object} payslip - Payroll doc with `employee` populated (and
+ *   `employee.user`); needs `earnings`, `deductions`, the day counts, the
+ *   monthlySalary/annualCtc snapshot and the computed totals.
+ * @returns {Promise<Buffer>} the rendered PDF bytes.
  * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
-function renderPayslip(payslip, ytd = { earnings: {}, deductions: {} }) {
+function renderPayslip(payslip) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
     const chunks = [];
@@ -86,219 +151,153 @@ function renderPayslip(payslip, ytd = { earnings: {}, deductions: {} }) {
     doc.on('error', reject);
 
     const F = setupFonts(doc);
-    const RUPEE = F.rupee;
-    const money = (n) => `${RUPEE}${formatINR(n)}`;
+    const money = (n) => `${F.rupee}${num(n)}`;
 
-    // ---- palette ----
-    const BLUE = '#5B9BD5';
-    const BLUE_DARK = '#2E74B5';
-    const GRAY_HDR = '#A6A6A6';
-    const GRAY_ROW = '#D9D9D9';
-    const YTD_BG = '#ECECEC';
-    const VAL_BG = '#E8F0FB';
-    const TXT = '#222222';
-    const MUTED = '#666666';
-    const WHITE = '#FFFFFF';
-
+    const INK = '#000000';
+    const LINE = '#000000';
     const PAGE_W = 595.28;
-    const M = 36;
+    const M = 28;
     const x0 = M;
     const x1 = PAGE_W - M;
     const W = x1 - x0;
 
-    // Right-aligned text helper.
-    const rt = (text, rightX, y, w, opts = {}) =>
-      doc.text(String(text), rightX - w, y, { width: w, align: 'right', lineBreak: false, ...opts });
+    // ---- grid primitives -------------------------------------------------
+    // Every visible cell is an outlined box with text inset and vertically
+    // centred, so rows line up whatever their height.
+    const box = (x, y, w, h) => {
+      doc.rect(x, y, w, h).lineWidth(0.8).strokeColor(LINE).stroke();
+    };
+    const text = (s, x, y, w, h, { bold = false, size = 9.5, align = 'left', pad = 5 } = {}) => {
+      doc.font(bold ? F.bold : F.regular).fontSize(size).fillColor(INK)
+        .text(String(s ?? ''), x + pad, y + (h - size) / 2 - 1, {
+          width: w - pad * 2, align, lineBreak: false, ellipsis: true,
+        });
+    };
+    const cell = (s, x, y, w, h, opts) => { box(x, y, w, h); text(s, x, y, w, h, opts); };
 
-    // ===================== HEADER =====================
-    const orgName = process.env.ORG_DISPLAY_NAME || 'Sequence Surface';
-    const orgAddress = process.env.ORG_ADDRESS || process.env.ORG_LOCATION || '';
-    const orgPhone = process.env.ORG_PHONE || '';
-    const orgEmail = process.env.ORG_EMAIL || '';
-    const logoPath = process.env.ORG_LOGO_PATH || path.join(__dirname, '..', 'assets', 'logo.png');
+    // A 4-column label/value/label/value row — the identity and day blocks.
+    const LBL_W = W * 0.235;
+    const VAL_W = W * 0.265;
+    const pairRow = (y, h, l1, v1, l2, v2) => {
+      cell(l1, x0, y, LBL_W, h, { bold: true });
+      cell(v1, x0 + LBL_W, y, VAL_W, h);
+      cell(l2, x0 + LBL_W + VAL_W, y, LBL_W, h, { bold: true });
+      cell(v2, x0 + LBL_W * 2 + VAL_W, y, W - (LBL_W * 2 + VAL_W), h);
+    };
 
-    let logoOk = false;
-    if (logoPath && fs.existsSync(path.resolve(logoPath))) {
-      try { doc.image(path.resolve(logoPath), x0, 36, { fit: [44, 44] }); logoOk = true; } catch (_) { /* ignore */ }
-    }
-    const nameX = logoOk ? x0 + 54 : x0;
-    doc.font(F.bold).fontSize(20).fillColor(BLUE_DARK)
-      .text(orgName, nameX, 40, { width: W - 170, lineBreak: false });
-    doc.font(F.bold).fontSize(24).fillColor(BLUE_DARK)
-      .text('PAYSLIP', x1 - 170, 38, { width: 170, align: 'right' });
-
-    let hy = 66;
-    doc.font(F.regular).fontSize(8.5).fillColor(BLUE_DARK);
-    if (orgAddress) { doc.text(orgAddress, nameX, hy, { width: W - 170, lineBreak: false }); hy += 12; }
-    const contact = [orgPhone && `Phone: ${orgPhone}`, orgEmail && `Email: ${orgEmail}`].filter(Boolean).join(', ');
-    if (contact) { doc.text(contact, nameX, hy, { width: W - 170, lineBreak: false }); hy += 12; }
-
-    // ===================== EMPLOYEE INFO + INFO GRID =====================
-    let y = Math.max(96, hy + 8);
-    const gap = 12;
-    const leftW = Math.round(W * 0.54);
-    const gridX = x0 + leftW + gap;
-    const gridW = x1 - gridX;
-    const colW = gridW / 3;
-
+    // ---- data ------------------------------------------------------------
     const emp = payslip.employee || {};
     const user = emp.user || {};
-    const addr = emp.address?.current || {};
-    const monthLabel = `${MONTHS[payslip.payPeriodMonth - 1]} ${payslip.payPeriodYear}`;
+    const bank = emp.bankDetails || {};
+    const monthLabel = `${MONTHS_SHORT[(payslip.payPeriodMonth || 1) - 1]}-${String(payslip.payPeriodYear || '').slice(-2)}`;
 
-    // Left: blue title bar
-    doc.rect(x0, y, leftW, 20).fill(BLUE);
-    doc.font(F.bold).fontSize(9).fillColor(WHITE).text('EMPLOYEE INFORMATION', x0 + 8, y + 6);
+    const { earningRows, deductionRows } = buildSlipRows(payslip);
 
-    // Left: employee details
-    let ly = y + 28;
-    doc.font(F.bold).fontSize(11).fillColor(TXT)
-      .text(`${user.firstName || ''} ${user.lastName || ''}`.trim() || '-', x0, ly, { width: leftW });
-    ly += 18;
-    doc.font(F.regular).fontSize(9).fillColor(MUTED);
-    const addrLines = [
-      [addr.line1, addr.line2].filter(Boolean).join(', '),
-      [addr.city, addr.state, addr.pincode].filter(Boolean).join(', '),
-    ].filter(Boolean);
-    addrLines.forEach((l) => { doc.text(l, x0, ly, { width: leftW }); ly += 14; });
-    if (user.email) { doc.text(`Email: ${user.email}`, x0, ly, { width: leftW }); ly += 14; }
-    ly += 4;
-    doc.font(F.bold).fontSize(9).fillColor(TXT).text('Payment Method:', x0, ly, { continued: true })
-      .font(F.regular).fillColor(MUTED).text(`  ${payslip.paymentReference ? 'Bank Transfer' : 'Bank Transfer'}`);
-    const leftBottom = ly + 16;
+    let y = M;
 
-    // Right: 3-column info grid (header / value pairs)
-    const cell = (cx, cy, cw, ch, bg, text, color, bold) => {
-      doc.rect(cx, cy, cw - 2, ch).fill(bg);
-      doc.font(bold ? F.bold : F.regular).fontSize(8).fillColor(color)
-        .text(String(text ?? '-'), cx + 5, cy + ch / 2 - 4, { width: cw - 10, align: bold ? 'left' : 'left', lineBreak: false });
+    // ===================== LETTERHEAD =====================
+    const HEAD_H = 62;
+    box(x0, y, W, HEAD_H);
+    const logoPath = COMPANY.logoPath ? path.resolve(COMPANY.logoPath)
+      : path.join(__dirname, '..', 'assets', 'logo.png');
+    if (fs.existsSync(logoPath)) {
+      try { doc.image(logoPath, x0 + 6, y + 6, { fit: [96, 38] }); } catch (_) { /* ignore */ }
+    }
+    if (COMPANY.tagline) {
+      doc.font(F.regular).fontSize(6.5).fillColor(INK)
+        .text(COMPANY.tagline, x0 + 4, y + HEAD_H - 12, { width: 110, align: 'center', lineBreak: false });
+    }
+    doc.font(F.bold).fontSize(19).fillColor(INK)
+      .text(String(COMPANY.name || '').toUpperCase(), x0 + 116, y + HEAD_H / 2 - 12,
+        { width: W - 124, align: 'center', lineBreak: false, ellipsis: true });
+    y += HEAD_H;
+
+    const ADDR_H = 34;
+    box(x0, y, W, ADDR_H);
+    doc.font(F.bold).fontSize(7.5).fillColor(INK)
+      .text(COMPANY.addressLines.join(', ').toUpperCase(), x0 + 8, y + 7,
+        { width: W - 16, align: 'center', lineBreak: false, ellipsis: true });
+    doc.font(F.bold).fontSize(7.5)
+      .text(`GSTIN : ${COMPANY.gstin || 'NA'}`, x0 + 8, y + 19, { width: W - 16, align: 'center', lineBreak: false });
+    y += ADDR_H;
+
+    // ===================== TITLE =====================
+    const TITLE_H = 30;
+    cell('SALARY SLIP', x0, y, W, TITLE_H, { bold: true, size: 17, align: 'center' });
+    y += TITLE_H;
+
+    // ===================== IDENTITY BLOCK =====================
+    const R = 20;
+    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || '-';
+    pairRow(y, R, 'Employee Name', fullName, 'Month/ Year', monthLabel); y += R;
+    pairRow(y, R, 'Employee ID', plain(emp.employeeCode), 'UAN', plain(emp.uan)); y += R;
+    pairRow(y, R, 'Designation', plain(emp.designation), 'PF No.', plain(emp.pfNumber)); y += R;
+    pairRow(y, R, 'DOJ', shortDate(emp.dateOfJoining), 'ESIC No.', plain(emp.esicNumber)); y += R;
+    pairRow(y, R, 'Aadhar No.', formatAadhaar(emp.aadhaar), 'Bank Name', plain(bank.bankName)); y += R;
+    pairRow(y, R, 'PAN No.', plain(emp.pan), 'Account No.', plain(bank.accountNumber)); y += R;
+    pairRow(y, R, 'Salary Per Month', money(payslip.monthlySalary), 'Salary Per Annum', money(payslip.annualCtc)); y += R;
+
+    y += 10; // spacer, as on the source sheet
+
+    // ===================== DAY COUNTS =====================
+    pairRow(y, R, 'Total Working Days', days(payslip.workingDays), 'LOP Days', days(payslip.lopDays)); y += R;
+    pairRow(y, R, 'Payable Days', days(payslip.paidDays), 'Half Days', days(payslip.halfDays)); y += R;
+    pairRow(y, R, 'Additional Paid Days', days(payslip.additionalPaidDays), 'Late Days', days(payslip.lateDays)); y += R;
+
+    y += 10;
+
+    // ===================== EARNINGS | DEDUCTIONS =====================
+    const halfW = W / 2;
+    const amtW = halfW * 0.42;
+    const labW = halfW - amtW;
+    const dedX = x0 + halfW;
+
+    cell('Earnings', x0, y, halfW, R + 2, { bold: true, size: 11, align: 'center' });
+    cell('Deductions', dedX, y, halfW, R + 2, { bold: true, size: 11, align: 'center' });
+    y += R + 2;
+
+    for (let i = 0; i < earningRows.length; i += 1) {
+      const [eLabel, eVal] = earningRows[i];
+      const [dLabel, dVal] = deductionRows[i];
+      cell(eLabel, x0, y, labW, R);
+      cell(numOrDash(eVal), x0 + labW, y, amtW, R, { align: 'right' });
+      cell(dLabel, dedX, y, labW, R);
+      cell(numOrDash(dVal), dedX + labW, y, amtW, R, { align: 'right' });
+      y += R;
+    }
+
+    cell('Total Additions', x0, y, labW, R, { bold: true });
+    cell(num(payslip.grossSalary), x0 + labW, y, amtW, R, { bold: true, align: 'right' });
+    cell('Total Deductions', dedX, y, labW, R, { bold: true });
+    cell(num(payslip.totalDeductions), dedX + labW, y, amtW, R, { bold: true, align: 'right' });
+    y += R;
+
+    y += 12;
+
+    // ===================== NET / WORDS / NOTE =====================
+    const NOTE_LBL_W = W * 0.235;
+    const netRow = (label, value, opts = {}) => {
+      cell(label, x0, y, NOTE_LBL_W, R + 2, { bold: true, align: 'center' });
+      cell(value, x0 + NOTE_LBL_W, y, W - NOTE_LBL_W, R + 2, opts);
+      y += R + 2;
     };
-    const rowH = 18;
-    const headers1 = ['PAY DATE', 'PAY TYPE', 'PERIOD'];
-    const values1 = [formatDate(payslip.paymentDate), 'Monthly', monthLabel];
-    const headers2 = ['PAYROLL #', 'PAN', 'UAN'];
-    const values2 = [emp.employeeCode || '-', emp.pan || '-', emp.uan || '-'];
+    netRow('Net Billing Amount', money(payslip.netPay), { bold: true });
+    netRow('Salary in words', amountInWords(payslip.netPay), { size: 8.5 });
+    netRow('Note', NOTE_TEXT, { size: 8.5 });
 
-    let gy = y;
-    headers1.forEach((h, i) => cell(gridX + i * colW, gy, colW, rowH, BLUE, h, WHITE, true));
-    gy += rowH;
-    values1.forEach((v, i) => cell(gridX + i * colW, gy, colW, rowH, VAL_BG, v, TXT, false));
-    gy += rowH;
-    headers2.forEach((h, i) => cell(gridX + i * colW, gy, colW, rowH, BLUE, h, WHITE, true));
-    gy += rowH;
-    values2.forEach((v, i) => cell(gridX + i * colW, gy, colW, rowH, '#F2F2F2', v, TXT, false));
-    gy += rowH;
-
-    y = Math.max(leftBottom, gy) + 16;
-
-    // ===================== EARNINGS TABLE =====================
-    const ytdLeft = x1 - 96;
-    const ytdR = x1 - 8;
-    const currentR = ytdLeft - 12;
-    const rateR = currentR - 78;
-    const hoursR = rateR - 52;
-    const NUMW = 86;
-    const SMW = 46;
-
-    const earnings = Object.entries(payslip.earnings?.toObject?.() || payslip.earnings || {})
-      .filter(([, v]) => typeof v === 'number' && v > 0);
-    const deductions = Object.entries(payslip.deductions?.toObject?.() || payslip.deductions || {})
-      .filter(([, v]) => typeof v === 'number' && v > 0);
-
-    const rowH2 = 19;
-    const drawHeaderRow = (label, withHoursRate) => {
-      doc.rect(x0, y, W, 22).fill(BLUE);
-      doc.rect(ytdLeft, y, x1 - ytdLeft, 22).fill(GRAY_HDR); // YTD header cell gray
-      doc.font(F.bold).fontSize(8.5).fillColor(WHITE);
-      doc.text(label, x0 + 8, y + 7, { lineBreak: false });
-      if (withHoursRate) {
-        rt('HOURS', hoursR, y + 7, SMW);
-        rt('RATE', rateR, y + 7, SMW);
-      }
-      rt('CURRENT', currentR, y + 7, NUMW);
-      rt('YTD', ytdR, y + 7, NUMW);
-      y += 22;
-    };
-
-    drawHeaderRow('EARNINGS', true);
-    doc.font(F.regular).fontSize(9.5).fillColor(TXT);
-    let grossYtd = 0;
-    earnings.forEach(([k, v]) => {
-      const yv = ytd.earnings?.[k] ?? v;
-      grossYtd += yv;
-      doc.rect(ytdLeft, y, x1 - ytdLeft, rowH2).fill(YTD_BG); // YTD column shading
-      doc.fillColor(TXT).font(F.regular).fontSize(9.5);
-      doc.text(labelOf(k), x0 + 8, y + 5, { width: hoursR - SMW - x0 - 12, lineBreak: false, ellipsis: true });
-      rt('-', hoursR, y + 5, SMW);
-      rt('-', rateR, y + 5, SMW);
-      rt(formatINR(v), currentR, y + 5, NUMW);
-      rt(formatINR(yv), ytdR, y + 5, NUMW);
-      doc.moveTo(x0, y + rowH2).lineTo(x1, y + rowH2).strokeColor('#EAEAEA').lineWidth(0.5).stroke();
-      y += rowH2;
-    });
-
-    // GROSS PAY band
-    doc.rect(x0, y, W, 24).fill(GRAY_ROW);
-    doc.rect(ytdLeft, y, x1 - ytdLeft, 24).fill(GRAY_HDR);
-    doc.font(F.bold).fontSize(10).fillColor(TXT);
-    doc.text('GROSS PAY', x0 + 8, y + 7, { lineBreak: false });
-    rt(money(payslip.grossSalary), currentR, y + 7, NUMW);
-    doc.fillColor(WHITE);
-    rt(money(grossYtd), ytdR, y + 7, NUMW);
-    y += 24 + 16;
-
-    // ===================== DEDUCTIONS TABLE =====================
-    drawHeaderRow('DEDUCTIONS', false);
-    doc.font(F.regular).fontSize(9.5).fillColor(TXT);
-    let dedYtd = 0;
-    deductions.forEach(([k, v]) => {
-      const yv = ytd.deductions?.[k] ?? v;
-      dedYtd += yv;
-      doc.rect(ytdLeft, y, x1 - ytdLeft, rowH2).fill(YTD_BG);
-      doc.fillColor(TXT).font(F.regular).fontSize(9.5);
-      doc.text(labelOf(k), x0 + 8, y + 5, { width: currentR - NUMW - x0 - 12, lineBreak: false, ellipsis: true });
-      rt(formatINR(v), currentR, y + 5, NUMW);
-      rt(formatINR(yv), ytdR, y + 5, NUMW);
-      doc.moveTo(x0, y + rowH2).lineTo(x1, y + rowH2).strokeColor('#EAEAEA').lineWidth(0.5).stroke();
-      y += rowH2;
-    });
-
-    // TOTAL DEDUCTIONS band
-    doc.rect(x0, y, W, 24).fill(GRAY_ROW);
-    doc.rect(ytdLeft, y, x1 - ytdLeft, 24).fill(GRAY_HDR);
-    doc.font(F.bold).fontSize(10).fillColor(TXT);
-    doc.text('TOTAL DEDUCTIONS', x0 + 8, y + 7, { lineBreak: false });
-    rt(money(payslip.totalDeductions), currentR, y + 7, NUMW);
-    doc.fillColor(WHITE);
-    rt(money(dedYtd), ytdR, y + 7, NUMW);
-    y += 24 + 16;
-
-    // ===================== NET PAY band =====================
-    const netYtd = grossYtd - dedYtd;
-    doc.rect(x0, y, W, 26).fill(GRAY_ROW);
-    doc.rect(ytdLeft, y, x1 - ytdLeft, 26).fill(GRAY_HDR);
-    doc.font(F.bold).fontSize(12).fillColor(TXT);
-    doc.text('NET PAY', x0 + 8, y + 7, { lineBreak: false });
-    rt(money(payslip.netPay), currentR, y + 8, NUMW);
-    doc.fillColor(WHITE);
-    rt(money(netYtd), ytdR, y + 8, NUMW);
-    y += 26 + 8;
-
-    doc.font(F.regular).fontSize(8).fillColor(MUTED)
-      .text(`Paid Days: ${payslip.paidDays ?? '-'}    |    LOP Days: ${payslip.lopDays ?? 0}`,
-        x0, y, { width: W, align: 'right' });
-    y += 30;
-
-    // ===================== FOOTER =====================
-    doc.font(F.regular).fontSize(9).fillColor(TXT)
-      .text('If you have any questions about this payslip, please contact:', x0, y, { width: W, align: 'center' });
-    y += 14;
-    const footerContact = [orgName, orgPhone, orgEmail].filter(Boolean).join(', ');
-    doc.font(F.bold).fontSize(9).fillColor(BLUE_DARK)
-      .text(footerContact, x0, y, { width: W, align: 'center' });
+    // ===================== SIGNATURE =====================
+    y += 16;
+    // Optional scanned stamp/signature — printed only when the file is present.
+    const signPath = process.env.ORG_SIGNATURE_PATH
+      || path.join(__dirname, '..', 'assets', 'signature.png');
+    if (fs.existsSync(signPath)) {
+      try { doc.image(signPath, x0, y, { fit: [110, 70] }); y += 74; } catch (_) { /* ignore */ }
+    }
+    doc.font(F.bold).fontSize(11).fillColor(INK)
+      .text('Authorized Signature', x0, y, { width: W * 0.5, lineBreak: false });
 
     doc.end();
   });
 }
 
-module.exports = { renderPayslip };
+module.exports = { renderPayslip, buildSlipRows, slipRowsBalance, COMPONENT_LABELS };

@@ -3,6 +3,7 @@
 // notification) can navigate, plus helpers that translate a backend
 // notification's logical `link`/`type` into a concrete tab/screen destination.
 import { createNavigationContainerRef } from '@react-navigation/native';
+import { useAuth } from '../store/auth';
 
 // Shared ref attached to the NavigationContainer in App.js.
 export const navRef = createNavigationContainerRef();
@@ -25,7 +26,10 @@ export function routeForNotification(data = {}) {
   }
   switch (link) {
     case 'chat':
-      return { tab: 'Chat' };
+      // The Chat tab only exists while the module is switched on. An old push
+      // notification tapped after it was turned off would otherwise navigate to
+      // a route that isn't registered.
+      return useAuth.getState().features?.chatEnabled ? { tab: 'Chat' } : { tab: 'Alerts' };
     case 'calendar':
     case 'event':
     case 'holiday':

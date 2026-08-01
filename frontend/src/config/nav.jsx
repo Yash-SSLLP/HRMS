@@ -21,9 +21,8 @@ import {
 export const adminNav = [
   { group: 'Overview, Reports & Admin Tools', items: [
     { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome },
-    { to: '/admin/how-to-use', label: 'How to Use', icon: FiHelpCircle },
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },
-    { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, perm: 'audit.view' },
+    { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, roles: ['SuperAdmin'] },
     { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'] },
   ] },
   { group: 'Organization Setup', items: [
@@ -99,6 +98,12 @@ export const adminNav = [
   { group: 'Exit', items: [
     { to: '/admin/exits', label: 'Exits', icon: FiLogOut, perm: 'exit.manage' },
   ] },
+  // Last entry in the sidebar. A single-item group renders as a plain top-level
+  // link labelled with the group name (see NavList in Layout.jsx), so this shows
+  // as one "Help" link rather than a dropdown.
+  { group: 'Help', items: [
+    { to: '/admin/how-to-use', label: 'Help', icon: FiHelpCircle },
+  ] },
 ];
 
 // HR L&D (LDManager) is an LMS-only admin: they enter the admin portal but see
@@ -116,7 +121,6 @@ export const accountsNav = [
 export const employeeNav = [
   { group: 'Overview', items: [
     { to: '/employee', label: 'Overview', end: true, icon: FiHome },
-    { to: '/employee/how-to-use', label: 'How to Use', icon: FiHelpCircle },
     { to: '/employee/approvals', label: 'Approvals', icon: FiCheckSquare },
     { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
     { to: '/employee/interviews', label: 'My Interviews', icon: FiUserCheck },
@@ -162,5 +166,9 @@ export const employeeNav = [
   ] },
   { group: 'Exit', items: [
     { to: '/employee/exit', label: 'Resignation', icon: FiLogOut, danger: true },
+  ] },
+  // Last entry in the sidebar — see the note on the admin Help group above.
+  { group: 'Help', items: [
+    { to: '/employee/how-to-use', label: 'Help', icon: FiHelpCircle },
   ] },
 ];

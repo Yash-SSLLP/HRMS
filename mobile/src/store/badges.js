@@ -4,6 +4,7 @@
 // foregrounded and re-run after reading notifications or opening a chat.
 import { create } from 'zustand';
 import api from '../api/client';
+import { useAuth } from './auth';
 
 // Holds unread counts shown on the bottom-tab badges. Refreshed on a poll while
 // the app is foregrounded and after key actions (reading notifications, opening
@@ -18,10 +19,13 @@ export const useBadges = create((set) => ({
 
   refresh: async () => {
     try {
+      // Skip the chat calls entirely when the module is off — they would 403 on
+      // every 30s tick, and there is no Chat tab to badge anyway.
+      const chatOn = !!useAuth.getState().features?.chatEnabled;
       const [notif, conns, groups] = await Promise.all([
         api.get('/notifications').catch(() => ({ data: {} })),
-        api.get('/chat/connections').catch(() => ({ data: {} })),
-        api.get('/chat/groups').catch(() => ({ data: {} })),
+        chatOn ? api.get('/chat/connections').catch(() => ({ data: {} })) : { data: {} },
+        chatOn ? api.get('/chat/groups').catch(() => ({ data: {} })) : { data: {} },
       ]);
       const chatUnread =
         (conns.data?.connections || []).reduce((a, c) => a + (c.unread || 0), 0) +

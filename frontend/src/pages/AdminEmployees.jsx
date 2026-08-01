@@ -5,7 +5,7 @@
  * generates per-employee document-submission links (POST /employees/:id/doc-link),
  * and (SuperAdmin) activates accounts + toggles the include-executives org setting.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
@@ -162,6 +162,54 @@ export default function AdminEmployees() {
     } finally {
       setExecBusy(false);
     }
+  };
+
+  // Reporting-manager candidates, scoped to the department chosen on the form.
+  //
+  // Department lives on the EmployeeProfile, not on User, so the picker is a
+  // client-side join of the profiles already loaded above against the user
+  // directory. Executives are always offered: CEO/MD have no employee profile
+  // (and so no department), and without them the head of a department would have
+  // nobody above them to report to.
+  const EXEC_ROLES = ['CEO', 'MD', 'SuperAdmin'];
+  const managerOptions = useMemo(() => {
+    const selfId = String(form.user?._id || form.user || '');
+    const currentId = String(form.reportingManager?._id || form.reportingManager || '');
+
+    const sameDept = form.department
+      ? profiles
+        .filter((p) => p.department === form.department && p.user && String(p.user._id) !== selfId)
+        .map((p) => p.user)
+      : [];
+    const sameDeptIds = new Set(sameDept.map((u) => String(u._id)));
+
+    const executives = allUsers.filter(
+      (u) => EXEC_ROLES.includes(u.role) && String(u._id) !== selfId && !sameDeptIds.has(String(u._id))
+    );
+
+    // Keep an already-saved manager visible even if they fall outside the rule.
+    const listed = new Set([...sameDeptIds, ...executives.map((u) => String(u._id))]);
+    const current = currentId && !listed.has(currentId)
+      ? allUsers.find((u) => String(u._id) === currentId) || null
+      : null;
+
+    return { sameDept, executives, current };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profiles, allUsers, form.department, form.user, form.reportingManager]);
+
+  // Changing the department can invalidate the chosen manager. Clear it rather
+  // than submitting a stale cross-department value the server would reject.
+  const onDepartmentChange = (department) => {
+    setForm((prev) => {
+      const next = { ...prev, department };
+      const currentId = String(prev.reportingManager?._id || prev.reportingManager || '');
+      if (!currentId) return next;
+      const stillValid = profiles.some(
+        (p) => p.department === department && p.user && String(p.user._id) === currentId
+      ) || allUsers.some((u) => String(u._id) === currentId && EXEC_ROLES.includes(u.role));
+      if (!stillValid) next.reportingManager = '';
+      return next;
+    });
   };
 
   const resetDocLink = () => { setDocToken(''); setDocCopied(false); setDocBusy(false); };
@@ -516,7 +564,7 @@ export default function AdminEmployees() {
                   <label className="block text-sm text-gray-700">Department</label>
                   <DepartmentSelect
                     value={form.department || ''}
-                    onChange={(v) => setForm({ ...form, department: v })}
+                    onChange={onDepartmentChange}
                   />
                 </div>
                 <div>
@@ -536,15 +584,37 @@ export default function AdminEmployees() {
                       value={form.reportingManager || ''}
                       onChange={(e) => setForm({ ...form, reportingManager: e.target.value })}
                       className="mt-1 block w-full border rounded-lg px-3 py-2"
+                      disabled={!form.department}
                     >
                       <option value="">None (top level)</option>
-                      {allUsers
-                        .filter((u) => u._id !== (form.user?._id || form.user))
-                        .map((u) => (
-                          <option key={u._id} value={u._id}>
-                            {u.firstName} {u.lastName} ({u.role}) · {u.email}
+                      {managerOptions.sameDept.length > 0 && (
+                        <optgroup label={form.department}>
+                          {managerOptions.sameDept.map((u) => (
+                            <option key={u._id} value={u._id}>
+                              {u.firstName} {u.lastName} ({u.role}) · {u.email}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {managerOptions.executives.length > 0 && (
+                        <optgroup label="Executive">
+                          {managerOptions.executives.map((u) => (
+                            <option key={u._id} value={u._id}>
+                              {u.firstName} {u.lastName} ({u.role}) · {u.email}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {/* A manager saved before this rule (or from another
+                          department) stays selectable so editing the record
+                          doesn't silently clear it. */}
+                      {managerOptions.current && (
+                        <optgroup label="Currently assigned (outside this department)">
+                          <option value={managerOptions.current._id}>
+                            {managerOptions.current.firstName} {managerOptions.current.lastName} ({managerOptions.current.role})
                           </option>
-                        ))}
+                        </optgroup>
+                      )}
                     </select>
                   ) : (
                     <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700 text-sm">
@@ -555,7 +625,9 @@ export default function AdminEmployees() {
                     </div>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
-                    Sets the reporting hierarchy shown on the Org Chart.
+                    {isSuperAdmin && !form.department
+                      ? 'Pick a department first — managers are chosen from within it.'
+                      : 'Only people in the selected department (plus executives) can be picked. Sets the reporting hierarchy shown on the Org Chart.'}
                   </p>
                 </div>
                 <div className="sm:col-span-2">

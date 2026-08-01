@@ -87,13 +87,23 @@ const login = asyncHandler(async (req, res) => {
 });
 
 /**
- * Return the authenticated user.
+ * Return the authenticated user plus the org-wide feature switches every client
+ * needs to render itself.
+ *
+ * `features` is deliberately here rather than on /admin/org-settings, which is
+ * SuperAdmin-only — every portal has to know whether chat exists, and this is
+ * the call each of them already makes on load.
  * @route GET /api/auth/me  (protected)
- * @returns {{user: Object}}
+ * @returns {{user: Object, features: {chatEnabled: boolean}}}
  */
 // GET /api/auth/me  (protected)
 const me = asyncHandler(async (req, res) => {
-  res.json({ user: req.user.toJSON() });
+  const Setting = require('../models/Setting');
+  const settings = await Setting.getSettings().catch(() => ({}));
+  res.json({
+    user: req.user.toJSON(),
+    features: { chatEnabled: !!settings.chatEnabled },
+  });
 });
 
 /**

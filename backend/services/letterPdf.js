@@ -1,14 +1,15 @@
 /**
  * Offer-letter and appointment-letter PDF renderers (server-side, pdfkit).
  *
- * Mirrors the font-setup approach of services/payslipPdf.js so the ₹ symbol
- * renders when a Unicode font is provided (PAYSLIP_FONT_PATH), else falls back
- * to "Rs ". Layout follows the uploaded Sequence Surfaces LLP offer letter.
+ * Shares services/pdfFonts.js with the salary slip so the ₹ symbol renders from
+ * the same bundled/configured Unicode font, else falls back to "Rs ". Layout
+ * follows the uploaded Sequence Surfaces LLP offer letter.
  */
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const COMPANY = require('../config/company');
+const { setupFonts } = require('./pdfFonts');
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -33,20 +34,6 @@ const longDate = (d) => {
 };
 
 const todayLong = () => longDate(new Date());
-
-// Same trick as payslipPdf — use a Unicode font if configured for the ₹ glyph.
-function setupFonts(doc) {
-  const regularPath = process.env.PAYSLIP_FONT_PATH;
-  const boldPath = process.env.PAYSLIP_FONT_BOLD_PATH;
-  if (regularPath && fs.existsSync(regularPath)) {
-    try {
-      doc.registerFont('body', regularPath);
-      doc.registerFont('body-bold', boldPath && fs.existsSync(boldPath) ? boldPath : regularPath);
-      return { regular: 'body', bold: 'body-bold', rupee: '₹' };
-    } catch (_) { /* fall through */ }
-  }
-  return { regular: 'Helvetica', bold: 'Helvetica-Bold', rupee: 'Rs ' };
-}
 
 const M = 54;
 const PAGE_W = 595.28;

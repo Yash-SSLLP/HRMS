@@ -10,6 +10,7 @@ const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { notify } = require('../services/notify');
 const { startOfDayIST } = require('../utils/dateHelpers');
+const { statusFromHours } = require('../utils/workday');
 
 const EMPLOYEE_FIELDS = 'firstName lastName email';
 
@@ -47,6 +48,11 @@ async function applyToAttendance(item, reviewer) {
   if (inAt) record.checkIn = inAt;
   if (outAt) record.checkOut = outAt;
   if (record.checkIn && record.status === 'Absent') record.status = 'Present';
+  // Re-derive the day from the corrected punches. This is what "half day until
+  // regularization" means: a day auto-halved for short hours (or for a missing
+  // punch-out counted to 7 PM) is restored to Present once the real times show
+  // a full day — and stays a half day if they don't.
+  record.status = statusFromHours(record) || record.status;
   const note = `Regularized (${item.type}) by ${reviewer?.fullName || 'HR'}: ${item.reason}`;
   record.remarks = record.remarks ? `${record.remarks} · ${note}` : note;
   await record.save();

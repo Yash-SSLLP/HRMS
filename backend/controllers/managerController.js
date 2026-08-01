@@ -13,6 +13,7 @@ const { LeaveRequest } = require('../models/Leave');
 const { advanceApproval } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { haversineMeters } = require('../utils/geo');
+const { lateMinutes } = require('../utils/workday');
 const { computeHeatmapWindow, computeDayDetails, runAttendanceExport } = require('./attendanceController');
 
 // EmployeeProfile ids of the caller's direct reports (for team-scoped queries).
@@ -20,8 +21,6 @@ async function myReportIds(userId) {
   const rows = await EmployeeProfile.find({ reportingManager: userId }).select('_id').lean();
   return rows.map((p) => p._id);
 }
-
-const WORKDAY_START_HOUR = 10; // 10:00 AM IST grace cut-off for lateness (matches attendance board)
 
 // EmployeeProfile ids of the people who report directly to the current user.
 async function myReportProfiles(userId) {
@@ -119,7 +118,6 @@ const teamPresence = asyncHandler(async (req, res) => {
   const today = startOfDayIST(new Date());
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
-  const startThreshold = new Date(today.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
 
   const [records, leaves] = await Promise.all([
     Attendance.find({ employee: { $in: ids }, date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
@@ -146,7 +144,6 @@ const teamPresence = asyncHandler(async (req, res) => {
     .map((r) => {
       const p = byId.get(String(r.employee));
       presentIds.add(String(r.employee));
-      const lateMs = new Date(r.checkIn) - startThreshold;
       return {
         ...personCore(p),
         recordId: String(r._id),
@@ -155,7 +152,7 @@ const teamPresence = asyncHandler(async (req, res) => {
         checkOut: r.checkOut || null,
         hoursWorked: r.hoursWorked || 0,
         checkInWfh: !!r.checkInWfh,
-        lateMinutes: lateMs > 0 ? Math.round(lateMs / 60000) : 0,
+        lateMinutes: lateMinutes(r),
         hasCheckInPhoto: !!r.checkInPhoto,
         hasCheckOutPhoto: !!r.checkOutPhoto,
       };

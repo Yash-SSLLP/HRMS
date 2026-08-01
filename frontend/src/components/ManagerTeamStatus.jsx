@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FiUsers } from 'react-icons/fi';
 import api from '../api/client';
+import { formatDuration } from '../utils/time';
 
 // Manager dashboard card: today's status of everyone who reports to the caller
 // (present / late / on leave / absent). Data comes from the same endpoint the
@@ -81,12 +82,12 @@ export default function ManagerTeamStatus() {
       {/* Who's where — exceptions first, then present */}
       <div className="space-y-3">
         <Group title="Late" color="#ec4899" people={late}
-          render={(p) => (p.lateMinutes ? `${p.lateMinutes} min late` : sub(p))} />
+          render={(p) => (p.lateMinutes ? `${formatDuration(p.lateMinutes)} late` : sub(p))} />
         <Group title="On leave" color="#8b5cf6" people={onLeave}
           render={(p) => (p.leaveType ? `${p.leaveType}${p.isHalfDay ? ' · half day' : ''}` : sub(p))} />
         <Group title="Absent" color="#ef4444" people={absent} />
         <Group title="Present" color="#16a34a" people={present}
-          render={(p) => (p.lateMinutes > 0 ? `${p.lateMinutes} min late` : (p.status === 'HalfDay' ? 'half day' : 'on time'))} />
+          render={(p) => (p.lateMinutes > 0 ? `${formatDuration(p.lateMinutes)} late` : (p.status === 'HalfDay' ? 'half day' : 'on time'))} />
       </div>
     </div>
   );

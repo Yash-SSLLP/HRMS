@@ -563,6 +563,8 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const setUser = useAuthStore((s) => s.setUser);
+  const setFeatures = useAuthStore((s) => s.setFeatures);
+  const chatEnabled = useAuthStore((s) => s.features?.chatEnabled);
   // Only used for the portal switcher's track/label colours — the theme toggle
   // itself lives in <ThemeToggle/>.
   const mode = useThemeStore((s) => s.mode);
@@ -571,10 +573,14 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
   // Re-sync the cached user from the server on load so the top-bar profile
   // reflects any changes made since login (e.g. an approved name-change ticket
-  // or an admin edit), instead of showing the stale name until re-login.
+  // or an admin edit), instead of showing the stale name until re-login. The
+  // same call carries the org-wide feature switches (e.g. whether chat is on).
   useEffect(() => {
-    api.get('/auth/me').then(({ data }) => data?.user && setUser(data.user)).catch(() => {});
-  }, [setUser]);
+    api.get('/auth/me').then(({ data }) => {
+      if (data?.user) setUser(data.user);
+      setFeatures(data?.features);
+    }).catch(() => {});
+  }, [setUser, setFeatures]);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   // The auth `user` is a User doc (no designation — that lives on the employee
@@ -701,7 +707,8 @@ export default function Layout({ navItems = [], sectionTitle }) {
             glow="rgba(109,40,217,.35)"
           />
 
-          <ChatLauncher />
+          {/* Chat is an org-wide switch a SuperAdmin controls. */}
+          {chatEnabled && <ChatLauncher />}
 
           <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
 
@@ -800,7 +807,8 @@ export default function Layout({ navItems = [], sectionTitle }) {
         </div>
       )}
 
-      <ChatDock />
+      {/* Not rendering the dock also stops its message/conversation polling. */}
+      {chatEnabled && <ChatDock />}
     </div>
   );
 }

@@ -14,6 +14,11 @@ export const useAuth = create((set, get) => ({
   user: null,
   token: null,
   hydrated: false,
+  // Org-wide feature switches from GET /auth/me. Everything defaults off so a
+  // module never flashes into view before the first sync lands.
+  features: { chatEnabled: false },
+
+  setFeatures: (features) => set({ features: { chatEnabled: false, ...(features || {}) } }),
 
   hydrate: async () => {
     try {
@@ -49,7 +54,7 @@ export const useAuth = create((set, get) => ({
   },
 
   logout: async () => {
-    set({ user: null, token: null });
+    set({ user: null, token: null, features: { chatEnabled: false } });
     try {
       await AsyncStorage.removeItem(STORAGE_KEY);
     } catch {

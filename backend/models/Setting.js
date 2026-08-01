@@ -19,6 +19,10 @@ const settingSchema = new mongoose.Schema(
     // "select an employee" pickers that opt in (?excludeExecutives=true). A
     // SuperAdmin can flip this on to make them selectable everywhere.
     includeExecutivesInLists: { type: Boolean, default: false },
+    // Org-wide switch for the chat module. Off by default: the launcher, dock
+    // and mobile Chat tab are hidden and the chat endpoints refuse writes.
+    // Conversations are never deleted — turning it back on restores everything.
+    chatEnabled: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

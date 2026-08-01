@@ -10,12 +10,16 @@ export const useAuthStore = create(
     (set, get) => ({
       user: null,
       token: null,
+      // Org-wide feature switches from GET /auth/me. Default everything off so a
+      // module never flashes into view before the first sync lands.
+      features: { chatEnabled: false },
 
       setSession: ({ user, token }) => set({ user, token }),
       // Refresh just the cached user (e.g. after a name/email change) without
       // touching the token, so the top-bar profile reflects the latest data.
       setUser: (user) => set({ user }),
-      logout: () => set({ user: null, token: null }),
+      setFeatures: (features) => set({ features: { chatEnabled: false, ...(features || {}) } }),
+      logout: () => set({ user: null, token: null, features: { chatEnabled: false } }),
 
       isAuthenticated: () => Boolean(get().token && get().user),
       hasRole: (...roles) => {

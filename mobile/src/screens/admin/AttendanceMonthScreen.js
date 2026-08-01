@@ -9,6 +9,7 @@ import { colors, radius, spacing, font } from '../../theme';
 import {
   Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher,
   ModalSheet, ChipSelect, Ionicons, SkeletonScreen } from '../../components/ui';
+import { fmtHours, fmtMinutes } from '../../utils/format';
 
 const MONTHS_FULL = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -21,7 +22,7 @@ const toHM = (d) => {
   const t = new Date(d);
   return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
 };
-const hrsLabel = (h) => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} hrs`;
+const hrsLabel = (h) => fmtHours(h);
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
 // Whole-month attendance for one employee (HR/admin): the summary bar with
@@ -247,7 +248,7 @@ export default function AttendanceMonthScreen() {
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
                     <Text style={[font.body, r.lateMinutes > 0 && { color: colors.danger, fontWeight: '700' }]}>
-                      → {fmtTime(r.checkIn)}{r.lateMinutes > 0 ? ` (+${r.lateMinutes}m)` : ''}
+                      → {fmtTime(r.checkIn)}{r.lateMinutes > 0 ? ` (+${fmtMinutes(r.lateMinutes)})` : ''}
                     </Text>
                     {r.noPunchOut ? (
                       <Text style={[font.small, { color: colors.danger, fontWeight: '700' }]}>No punch-out</Text>

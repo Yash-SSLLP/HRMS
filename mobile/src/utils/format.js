@@ -48,13 +48,21 @@ export function rupees(n) {
   return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
+// Duration in MINUTES -> "1h 15m" / "45m" / "2h". Used for "late by" figures,
+// which the API returns in minutes. Units are always spelled so the value can
+// never be misread as a clock time.
+export function fmtMinutes(min) {
+  const m = Math.max(0, Math.round(Number(min) || 0));
+  const hh = Math.floor(m / 60);
+  const mm = m % 60;
+  if (!hh) return `${mm}m`;
+  return mm ? `${hh}h ${mm}m` : `${hh}h`;
+}
+
 // Duration in hours -> "8h 30m" (durations stay 24h-agnostic).
 export function fmtHours(h) {
   if (h == null) return '-';
-  const total = Math.round(Number(h) * 60);
-  const hh = Math.floor(total / 60);
-  const mm = total % 60;
-  return `${hh}h${mm ? ` ${mm}m` : ''}`;
+  return fmtMinutes(Number(h) * 60);
 }
 
 // "09:30" (24h) -> "9:30 AM" for display (durations excepted; this is a clock time).

@@ -2,10 +2,14 @@
  * Payroll controller — payslips (Payroll) and the monthly payroll run. Employees
  * view/download their own Approved/Paid payslips and an attendance-policy summary.
  * HR list/export payslips, run payroll org-wide (Draft seeded from the last slip)
- * or per-employee (salary structure % × CTC, prorated by attendance, with the
- * 2-paid-leaves/month + late-penalty policy and active loan EMIs), then edit /
- * approve / mark Paid, render PDFs (with FY-to-date figures), and share/email via
- * a public no-login link. Status flow: Draft → Approved → Paid.
+ * or per-employee (salary structure % × CTC), then edit / approve / mark Paid,
+ * render the salary-slip PDF, and share/email via a public no-login link.
+ * Status flow: Draft → Approved → Paid.
+ *
+ * Attendance never reduces an earning: Basic and every other component are paid
+ * at their full monthly value, and days not worked are recovered on the
+ * deductions side as `lopDeduction`, alongside the 2-paid-leaves/month policy,
+ * the late-arrival penalty and active loan / salary-advance EMIs.
  */
 const asyncHandler = require('express-async-handler');
 const crypto = require('crypto');
@@ -17,6 +21,7 @@ const Holiday = require('../models/Holiday');
 const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
+const { lateMinutes } = require('../utils/workday');
 const { renderPayslip } = require('../services/payslipPdf');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
@@ -137,7 +142,8 @@ const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
 //   SALARY           full monthly salary = CTC ÷ 12 (independent of attendance)
 //   ARREARS/BONUS    optional, from a saved payslip for the month
 //   GROSS SALARY     = SALARY + ARREARS/BONUS
-//   Old/Weekly/ADVANCE + Interest   left blank for HR to fill in manually
+//   ADVANCE          this month's salary-advance EMI (Loan type 'Salary Advance')
+//   Old/Weekly Advance + Interest   left blank for HR to fill in manually
 //   LATE DEDUCTION   late-arrival penalty (> 5 late/mo rule) — as in the app
 //   ABSENT AMOUNT    per-day salary × ABSENT DAYS  (perDay = SALARY ÷ days-in-month)
 //   PT               professional tax (flat, set by HR)
@@ -169,9 +175,10 @@ const round1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
 
 /**
  * Build one payroll-register row from a computed monthly run. Pure (no I/O) so
- * the column arithmetic is unit-testable. Advances + interest are always blank
- * (HR fills them in), so the GROSS/DEDUCTIONS/NET totals are written as live
- * Excel formulas — the sheet re-totals itself when HR types those in.
+ * the column arithmetic is unit-testable. The old/weekly advance and interest
+ * columns are always blank (HR fills them in), so the GROSS/DEDUCTIONS/NET
+ * totals are written as live Excel formulas — the sheet re-totals itself when
+ * HR types those in.
  * @param {number} sl - 1-based serial number
  * @param {{name,empNo,designation}} meta
  * @param {object} run - a computeEmployeeRun(...) result
@@ -189,6 +196,7 @@ function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
   const absentAmount = Math.round(perDay * unpaidDays);
   const lateDeduction = Math.round((run.policy && run.policy.latePenalty) || run.latePenalty || 0);
   const pt = Math.round((run.statutoryDeductions && run.statutoryDeductions.professionalTax) || 0);
+  const advance = Math.round(run.salaryAdvance || 0);
   const bonusAmt = Math.round(bonus || 0);
   return {
     sl,
@@ -201,15 +209,15 @@ function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
     salary: monthlySalary,
     bonus: bonusAmt || '',      // optional — blank when there's no arrear/bonus
     gross: monthlySalary + bonusAmt,
-    oldAdvance: '',             // ── advances + interest are filled in by HR ──
+    oldAdvance: '',             // ── old/weekly advance + interest filled in by HR ──
     weeklyAdvance: '',
-    advance: '',
+    advance: advance || '',     // this month's salary-advance EMI
     lateDeduction,
     interest: '',
     absentAmount,
     pt,
-    deductions: lateDeduction + absentAmount + pt,
-    netPayable: (monthlySalary + bonusAmt) - (lateDeduction + absentAmount + pt),
+    deductions: advance + lateDeduction + absentAmount + pt,
+    netPayable: (monthlySalary + bonusAmt) - (advance + lateDeduction + absentAmount + pt),
   };
 }
 
@@ -464,8 +472,8 @@ const runPayroll = asyncHandler(async (req, res) => {
     }
 
     // Preferred: derive the payslip from the employee's salary structure × CTC,
-    // prorated by attendance, with the leave/late policy + loan EMIs (same engine
-    // as the per-employee run and the manual editor's "fill from structure").
+    // with attendance, the leave/late policy and loan EMIs applied as deductions
+    // (same engine as the per-employee run and the editor's "fill from structure").
     if (r.hasSalarySetup) {
       const computed = await computeEmployeeRun(r.profile, year, month);
       if (!computed.needsSetup) {
@@ -523,11 +531,12 @@ const runPayroll = asyncHandler(async (req, res) => {
 
 // ===== Per-employee payroll run (calendar view) =====
 // Salary comes from the employee's assigned SalaryStructure percentages ×
-// annual CTC, prorated by paid days derived from their actual punch-in/out
-// attendance for the month, with active loan/advance EMIs as deductions.
+// annual CTC, paid IN FULL — no earning is reduced by attendance. Days not
+// worked (derived from their punch-in/out records) are recovered as the
+// `lopDeduction`, alongside the late penalty and active loan/advance EMIs.
 
-// Attendance policy constants (mirror attendanceController's WORKDAY_START_HOUR).
-const WORKDAY_START_HOUR = 10;   // check-in after 10:00 AM IST counts as late
+// Attendance policy constants. WORKDAY_START_HOUR and the lateness arithmetic
+// come from utils/workday.js, shared with the attendance + manager controllers.
 // Both monthly allowances below are a full month's entitlement and are prorated
 // by the days an employee was actually on the payroll that month (see
 // prorateAllowance in computeEmployeeRun) — a mid-month joiner gets a part quota.
@@ -550,14 +559,17 @@ const ESIC_WAGE_CEILING = 21000;    // ESIC applies only when monthly gross <= t
 const PROFESSIONAL_TAX = 200;       // Flat monthly professional tax
 
 // Derive monthly earnings + standard statutory deductions from a salary
-// structure's component percentages applied to an annual CTC, prorated by paid
-// days. Pure + side-effect-free so it can back both the payroll run and the
-// manual payslip editor's "fill from structure" action.
+// structure's component percentages applied to an annual CTC. Pure +
+// side-effect-free so it can back both the payroll run and the manual payslip
+// editor's "fill from structure" action.
+//
+// Earnings are ALWAYS the full monthly value — attendance never shrinks Basic
+// or any other component. Days not worked are recovered on the deductions side
+// as `lopDeduction`, one day's salary per unpaid day.
 function deriveSalary(components, annualCtc, paidDays, daysInMonth) {
   const c = components || {};
   const dim = Number(daysInMonth) || 30;
-  const factor = dim ? Math.min(1, Math.max(0, (Number(paidDays) ?? dim) / dim)) : 1;
-  const comp = (pct) => Math.round((((Number(pct) || 0) / 100) * (Number(annualCtc) || 0) / 12) * factor);
+  const comp = (pct) => Math.round(((Number(pct) || 0) / 100) * (Number(annualCtc) || 0) / 12);
   const earnings = {
     basic: comp(c.basicPct),
     hra: comp(c.hraPct),
@@ -567,10 +579,12 @@ function deriveSalary(components, annualCtc, paidDays, daysInMonth) {
     lta: comp(c.ltaPct),
   };
   const gross = Object.values(earnings).reduce((a, v) => a + v, 0);
+  const unpaidDays = Math.min(dim, Math.max(0, dim - (Number(paidDays) ?? dim)));
   const deductions = {
     epf: EPF_ENABLED ? Math.round(earnings.basic * EPF_EMP_RATE) : 0,
     esic: ESIC_ENABLED && gross <= ESIC_WAGE_CEILING ? Math.round(gross * ESIC_EMP_RATE) : 0,
     professionalTax: PROFESSIONAL_TAX,
+    lopDeduction: Math.round((gross / dim) * unpaidDays),
   };
   return { earnings, deductions, gross };
 }
@@ -614,7 +628,7 @@ async function computeEmployeeRun(profile, year, month) {
   const exitKey = profile.dateOfExit ? ymdIST(profile.dateOfExit) : null;
 
   // ----- Days this employee was on the payroll this month -----
-  // Salary is prorated over CALENDAR days — Sundays and holidays are paid — so a
+  // Salary is spread over CALENDAR days — Sundays and holidays are paid — so a
   // full month is `daysInMonth` (July = 31). A mid-month joiner (or leaver) is
   // only entitled to the days from their joining date up to their exit date, so
   // their paid days are capped at that count: joined 5 July → 27 of 31 days.
@@ -655,12 +669,10 @@ async function computeEmployeeRun(profile, year, month) {
   const excessLeave = Math.max(0, onLeaveDays - paidLeaveQuota);
   const unusedLeave = Math.max(0, paidLeaveQuota - onLeaveDays);
 
-  // ----- Late arrivals (check-in after WORKDAY_START_HOUR) on worked days -----
-  const lateDays = records.filter((r) => {
-    if (!r.checkIn || !['Present', 'HalfDay'].includes(r.status)) return false;
-    const cutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
-    return new Date(r.checkIn) > cutoff;
-  }).length;
+  // ----- Late arrivals (check-in after the workday start) on worked days -----
+  const lateDays = records.filter(
+    (r) => ['Present', 'HalfDay'].includes(r.status) && lateMinutes(r) > 0
+  ).length;
   const excessLate = Math.max(0, lateDays - lateAllowance);
 
   // Paid days: every day the employee was on the payroll (all calendar days for a
@@ -675,9 +687,13 @@ async function computeEmployeeRun(profile, year, month) {
   const unpaidDays = +(daysInMonth - paidDays).toFixed(1);
 
   // Active loan/advance recovery for this employee (Loan.employee is the User).
+  // Salary advances are split out from other loans because the salary slip
+  // prints "LOAN" and "Salary In Advance" as two separate deduction lines.
   const userId = profile.user?._id || profile.user;
   const loans = await Loan.find({ employee: userId, status: { $in: ['Approved', 'Active'] } });
-  const loanRecovery = Math.round(loans.reduce((a, l) => a + (l.emi || 0), 0));
+  const emiOf = (pred) => Math.round(loans.filter(pred).reduce((a, l) => a + (l.emi || 0), 0));
+  const salaryAdvance = emiOf((l) => l.type === 'Salary Advance');
+  const loanRecovery = emiOf((l) => l.type !== 'Salary Advance');
 
   const st = profile.salaryStructure; // populated
   // CTC effective for THIS pay month (honours future-dated / historical hikes).
@@ -688,8 +704,10 @@ async function computeEmployeeRun(profile, year, month) {
   let perDayPay = 0;      // full monthly gross ÷ days in month — one day's pay
   if (st && ctc > 0) {
     const c = st.components || {};
-    const factor = daysInMonth ? paidDays / daysInMonth : 1;
-    const comp = (pct) => Math.round((((pct || 0) / 100) * ctc / 12) * factor);
+    // Earnings are the FULL monthly value of each component — attendance never
+    // reduces Basic (or any other head). Days not worked are recovered below as
+    // `lopDeduction`, so the slip shows the real salary against a visible cut.
+    const comp = (pct) => Math.round(((pct || 0) / 100) * ctc / 12);
     const compFull = (pct) => ((pct || 0) / 100) * ctc / 12;
     monthlyBasic = compFull(c.basicPct);
     const fullGross = [c.basicPct, c.hraPct, c.specialAllowancePct, c.conveyancePct, c.medicalPct, c.ltaPct]
@@ -705,8 +723,8 @@ async function computeEmployeeRun(profile, year, month) {
       // Unused paid-leave quota paid out at one day's salary each.
       leaveIncentive: Math.round(unusedLeave * perDayPay),
     };
-    // Standard statutory deductions on the same (prorated) component base used by
-    // the manual editor's derive, so all payroll paths fill the same values.
+    // Standard statutory deductions on the same component base used by the
+    // manual editor's derive, so all payroll paths fill the same values.
     const baseGross = earnings.basic + earnings.hra + earnings.specialAllowance
       + earnings.conveyanceAllowance + earnings.medicalAllowance + earnings.lta;
     statutoryDeductions = {
@@ -724,6 +742,14 @@ async function computeEmployeeRun(profile, year, month) {
   // value. When Basic isn't known yet, monthlyBasic is 0 → the lower ₹200 rate.
   const lateRate = monthlyBasic < LATE_THRESHOLD_BASIC ? LATE_RATE_LOW : LATE_RATE_HIGH;
   const latePenalty = excessLate * lateRate;
+
+  // ----- Loss of pay recovered as a deduction -----
+  // Earnings above are the full monthly salary, so everything the employee did
+  // not earn is charged back here at one day's pay: LOP days (absent, no-punch,
+  // half days, leave beyond the quota) plus any days before joining / after exit.
+  // Same basis the payroll register already uses for its ABSENT AMOUNT column, so the
+  // two documents agree. Zero before salary setup, since perDayPay is then 0.
+  const lopDeduction = Math.round(unpaidDays * perDayPay);
 
   // ----- Emergency leave charged at DOUBLE -----
   // Emergency leave is granted without approval, so misuse is controlled after
@@ -780,6 +806,9 @@ async function computeEmployeeRun(profile, year, month) {
       excessLate,           // late days beyond the allowance → penalised
       lateRate,
       latePenalty,
+      // Full monthly salary is paid, then the days not worked are charged back.
+      perDayPay: Math.round(perDayPay),
+      lopDeduction,
       // Emergency leave a manager/HR charged at double pay this month.
       doubleCutLeaves: (doubleCutLeaves || []).length,
       doubleCutDays,
@@ -799,12 +828,16 @@ async function computeEmployeeRun(profile, year, month) {
     statutoryDeductions, // EPF / ESIC / PT derived from the components
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
     loanRecovery,
+    salaryAdvance,
+    lopDeduction,
     latePenalty,
     emergencyPenalty,
     earnings, gross,
     // Take-home estimate only once salary exists; before that gross is 0 and a
     // net would be a meaningless negative (the late penalty is still shown above).
-    estimatedNet: earnings ? gross - loanRecovery - latePenalty - emergencyPenalty : 0,
+    estimatedNet: earnings
+      ? gross - loanRecovery - salaryAdvance - lopDeduction - latePenalty - emergencyPenalty
+      : 0,
     needsSetup: !earnings,
   };
 }
@@ -829,6 +862,13 @@ function buildRunFields(profile, computed, existing = null, { rerun = false } = 
     workingDays: computed.daysInMonth,
     paidDays: computed.paidDays,
     lopDays: computed.lopDays,
+    halfDays: computed.counts.halfDay,
+    lateDays: p.lateDays,
+    additionalPaidDays: p.unusedLeave,
+    // Salary in force for this pay month, frozen so a later hike cannot change
+    // what an already-issued slip reprints.
+    monthlySalary: Math.round((computed.ctc || 0) / 12),
+    annualCtc: computed.ctc || 0,
     earnings: {
       // Keep the manually entered earnings the run cannot derive.
       bonus: prevEarnings.bonus || 0,
@@ -844,12 +884,16 @@ function buildRunFields(profile, computed, existing = null, { rerun = false } = 
       esic: computed.statutoryDeductions.esic,
       professionalTax: computed.statutoryDeductions.professionalTax,
       loanRecovery: computed.loanRecovery,
+      salaryAdvance: computed.salaryAdvance,
+      lopDeduction: computed.lopDeduction,
       latePenalty: computed.latePenalty,
       emergencyPenalty: computed.emergencyPenalty,
     },
     status: 'Draft',
     remarks: `${rerun ? 'Re-run' : 'Payroll run'}: ${profile.salaryStructure.name} @ ₹${(computed.ctc || 0).toLocaleString('en-IN')} CTC · ${computed.paidDays}/${computed.daysInMonth} paid days · loan EMI ₹${computed.loanRecovery}`
+      + (computed.salaryAdvance ? ` · advance EMI ₹${computed.salaryAdvance}` : '')
       + (computed.notEmployedDays ? ` (on payroll ${computed.eligibleDays}/${computed.daysInMonth} days)` : '')
+      + (computed.lopDeduction ? ` · ${computed.unpaidDays}d unpaid recovered (₹${computed.lopDeduction} @ ₹${p.perDayPay}/d)` : '')
       + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
       + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
       + (p.noPunchDays ? ` · no-punch ${p.noPunchDays}d LOP` : '')
@@ -942,6 +986,8 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
  */
 // GET /api/payroll/:id  (HR/Admin)
 const getPayslip = asyncHandler(async (req, res) => {
+  // Deliberately NOT the PDF populate spec — this is a JSON response and must
+  // not carry the employee's Aadhaar number.
   const payslip = await Payroll.findById(req.params.id).populate({
     path: 'employee',
     populate: { path: 'user', select: 'firstName lastName email' },
@@ -1051,18 +1097,26 @@ const markPayslipPaid = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
+// Employee data the salary slip prints. `aadhaar` is select:false on the model,
+// so it has to be asked for explicitly or the slip's Aadhar row comes out blank.
+// Every PDF route (admin download, employee download, email, public link) uses
+// this same spec so all four render an identical slip. NOT used by the JSON
+// endpoints — the Aadhaar number belongs on the slip, not in an API payload.
+const PAYSLIP_PDF_POPULATE = {
+  path: 'employee',
+  select: '+aadhaar',
+  populate: { path: 'user', select: 'firstName lastName email' },
+};
+
 /**
- * Download a payslip PDF (with FY-to-date figures).
+ * Download a payslip PDF.
  * @route GET /api/payroll/:id/pdf  (HR/Admin)
  * @param {string} req.params.id - payslip id
  * @returns {application/pdf}
  */
 // GET /api/payroll/:id/pdf  (HR/Admin)
 const downloadPayslipPdf = asyncHandler(async (req, res) => {
-  const payslip = await Payroll.findById(req.params.id).populate({
-    path: 'employee',
-    populate: { path: 'user', select: 'firstName lastName email' },
-  });
+  const payslip = await Payroll.findById(req.params.id).populate(PAYSLIP_PDF_POPULATE);
   if (!payslip) {
     res.status(404);
     throw new Error('Payslip not found');
@@ -1087,10 +1141,7 @@ const downloadMyPayslipPdf = asyncHandler(async (req, res) => {
     _id: req.params.id,
     employee: profile._id,
     status: { $in: ['Approved', 'Paid'] },
-  }).populate({
-    path: 'employee',
-    populate: { path: 'user', select: 'firstName lastName email' },
-  });
+  }).populate(PAYSLIP_PDF_POPULATE);
   if (!payslip) {
     res.status(404);
     throw new Error('Payslip not found');
@@ -1098,51 +1149,8 @@ const downloadMyPayslipPdf = asyncHandler(async (req, res) => {
   await streamPayslipPdf(payslip, res);
 });
 
-// Indian financial year start: April-to-March
-function fyStartKey(year, month) {
-  return month >= 4 ? year * 100 + 4 : (year - 1) * 100 + 4;
-}
-
-// Sum each earnings/deductions component across this employee's payslips
-// within the same financial year, up to and including the current period.
-async function computeYtd(payslip) {
-  const periodKey = (p) => p.payPeriodYear * 100 + p.payPeriodMonth;
-  const startKey = fyStartKey(payslip.payPeriodYear, payslip.payPeriodMonth);
-  const currentKey = periodKey(payslip);
-
-  const others = await Payroll.find({
-    employee: payslip.employee,
-    status: { $in: ['Approved', 'Paid'] },
-  });
-
-  // Always include the current payslip even if it's Draft so its YTD reflects itself
-  const seen = new Set([String(payslip._id)]);
-  const list = [payslip];
-  for (const p of others) {
-    if (seen.has(String(p._id))) continue;
-    if (periodKey(p) < startKey || periodKey(p) > currentKey) continue;
-    seen.add(String(p._id));
-    list.push(p);
-  }
-
-  const earnings = {};
-  const deductions = {};
-  for (const p of list) {
-    const e = p.earnings?.toObject?.() || p.earnings || {};
-    for (const [k, v] of Object.entries(e)) {
-      if (typeof v === 'number') earnings[k] = (earnings[k] || 0) + v;
-    }
-    const d = p.deductions?.toObject?.() || p.deductions || {};
-    for (const [k, v] of Object.entries(d)) {
-      if (typeof v === 'number') deductions[k] = (deductions[k] || 0) + v;
-    }
-  }
-  return { earnings, deductions };
-}
-
 async function streamPayslipPdf(payslip, res) {
-  const ytd = await computeYtd(payslip);
-  const buffer = await renderPayslip(payslip, ytd);
+  const buffer = await renderPayslip(payslip);
   const monthLabel = `${payslip.payPeriodYear}-${String(payslip.payPeriodMonth).padStart(2, '0')}`;
   const empCode = payslip.employee?.employeeCode || 'employee';
   const fileName = `payslip-${empCode}-${monthLabel}.pdf`;
@@ -1212,10 +1220,7 @@ const markPayslipSent = asyncHandler(async (req, res) => {
 // PDF attached — HR sees and can edit the exact subject + body first. Mirrors
 // the offer/appointment letter flow so every portal email is review-then-send.
 const emailPayslip = asyncHandler(async (req, res) => {
-  const payslip = await Payroll.findById(req.params.id).populate({
-    path: 'employee',
-    populate: { path: 'user', select: 'firstName lastName email' },
-  });
+  const payslip = await Payroll.findById(req.params.id).populate(PAYSLIP_PDF_POPULATE);
   if (!payslip) {
     res.status(404);
     throw new Error('Payslip not found');
@@ -1256,8 +1261,7 @@ const emailPayslip = asyncHandler(async (req, res) => {
 
   const subject = String(req.body.subject || '').trim() || defaults.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
-  const ytd = await computeYtd(payslip);
-  const buffer = await renderPayslip(payslip, ytd);
+  const buffer = await renderPayslip(payslip);
   await enqueueMail(
     {
       to: email,
@@ -1285,16 +1289,12 @@ const downloadPublicPayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findOne({
     publicToken: req.params.token,
     status: { $in: ['Approved', 'Paid'] },
-  }).populate({
-    path: 'employee',
-    populate: { path: 'user', select: 'firstName lastName email' },
-  });
+  }).populate(PAYSLIP_PDF_POPULATE);
   if (!payslip) {
     res.status(404);
     throw new Error('This payslip link is invalid or has expired.');
   }
-  const ytd = await computeYtd(payslip);
-  const buffer = await renderPayslip(payslip, ytd);
+  const buffer = await renderPayslip(payslip);
   const monthLabel = `${payslip.payPeriodYear}-${String(payslip.payPeriodMonth).padStart(2, '0')}`;
   const empCode = payslip.employee?.employeeCode || 'employee';
   res.setHeader('Content-Type', 'application/pdf');
@@ -1326,7 +1326,8 @@ const deletePayslip = asyncHandler(async (req, res) => {
 
 /**
  * Derive a payslip's earnings + standard statutory deductions from the employee's
- * assigned salary structure × CTC (effective for the month), prorated by paid days.
+ * assigned salary structure × CTC (effective for the month). Earnings are the
+ * full monthly value; the unpaid days are returned as a `lopDeduction`.
  * Backs the manual payslip editor's "Fill from salary structure" action.
  * @route GET /api/payroll/derive-salary?employee=&year=&month=&paidDays=&daysInMonth=  (HR/Admin)
  * @returns {{needsSetup, structure, annualCtc, earnings, deductions, monthlyGross}}

@@ -1,9 +1,11 @@
 /**
  * AdminPermissions — SuperAdmin-only access-control page (admin portal). Lists
  * users from GET /admin/users and grants module access: cashbook access for
- * anyone (PATCH /admin/users/:id/cashbook-access) and granular HR capabilities
- * for HR Managers (catalog from GET /admin/permissions/catalog,
- * saved via PATCH /admin/users/:id/permissions).
+ * anyone (PATCH /admin/users/:id/cashbook-access), work-from-home per employee
+ * (PATCH /admin/users/:id/wfh-access) and granular HR capabilities for HR
+ * Managers (catalog from GET /admin/permissions/catalog, saved via
+ * PATCH /admin/users/:id/permissions). Also hosts the org-wide feature switches
+ * from GET/PUT /admin/org-settings.
  */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
@@ -30,15 +32,21 @@ export default function AdminPermissions() {
   const [permSaving, setPermSaving] = useState(false);
   const allKeys = catalog.map((p) => p.key);
 
+  // Org-wide feature switches (currently just chat).
+  const [org, setOrg] = useState({ chatEnabled: false });
+  const [orgBusy, setOrgBusy] = useState(false);
+
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const [u, c] = await Promise.all([
+      const [u, c, o] = await Promise.all([
         api.get('/admin/users'),
         api.get('/admin/permissions/catalog').catch(() => ({ data: { permissions: [] } })),
+        api.get('/admin/org-settings').catch(() => ({ data: {} })),
       ]);
       setUsers(u.data.users || []);
       setCatalog(c.data.permissions || []);
+      setOrg({ chatEnabled: !!o.data.chatEnabled });
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -47,6 +55,22 @@ export default function AdminPermissions() {
   };
   useEffect(() => { load(); }, []);
 
+  // Optimistic toggle that reverts if the save fails.
+  const toggleChat = async () => {
+    const next = !org.chatEnabled;
+    setOrgBusy(true); setError('');
+    setOrg({ chatEnabled: next });
+    try {
+      const { data } = await api.put('/admin/org-settings', { chatEnabled: next });
+      setOrg({ chatEnabled: !!data.chatEnabled });
+    } catch (err) {
+      setOrg({ chatEnabled: !next });
+      setError(err.response?.data?.message || 'Could not update the chat setting');
+    } finally {
+      setOrgBusy(false);
+    }
+  };
+
   const toggleCashbook = async (u) => {
     setBusyId(u._id || u.id); setError('');
     try {
@@ -54,6 +78,18 @@ export default function AdminPermissions() {
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not update cashbook access');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleWfh = async (u) => {
+    setBusyId(u._id || u.id); setError('');
+    try {
+      await api.patch(`/admin/users/${u._id || u.id}/wfh-access`, { enabled: !u.wfhAllowed });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not update work-from-home access');
     } finally {
       setBusyId(null);
     }
@@ -94,10 +130,29 @@ export default function AdminPermissions() {
     <div>
       <PageHeader title="Permissions" />
       <p className="text-sm text-gray-500 mb-4">
-        Grant module access to any user or employee. <strong>Cashbook</strong> access can be given to anyone; <strong>HR permissions</strong> apply to HR Managers.
+        Grant module access to any user or employee. <strong>Cashbook</strong> access can be given to anyone;
+        {' '}<strong>Work from home</strong> is granted per employee; <strong>HR permissions</strong> apply to HR Managers.
       </p>
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+
+      {/* Org-wide feature switches */}
+      <div className="bg-white shadow rounded-lg p-4 mb-5">
+        <h2 className="text-sm font-semibold text-gray-800 mb-3">Modules</h2>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-gray-900">Chat / Messages</div>
+            <p className="text-xs text-gray-500 mt-0.5">
+              When off, the chat dock is hidden from every portal and the mobile Chat tab disappears.
+              Existing conversations are kept and come back untouched if you switch it on again.
+            </p>
+          </div>
+          <button onClick={toggleChat} disabled={orgBusy}
+            className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${org.chatEnabled ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+            {org.chatEnabled ? '✓ Enabled' : 'Disabled'}
+          </button>
+        </div>
+      </div>
 
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, email or role…"
         className="w-full sm:max-w-sm mb-4 border rounded-lg px-3 py-2 text-sm" />
@@ -109,14 +164,15 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Role</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Cashbook</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Work from home</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">HR Permissions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
             ) : filtered.map((u) => (
               <tr key={u._id || u.id}>
                 <td className="px-4 py-3">
@@ -131,6 +187,18 @@ export default function AdminPermissions() {
                     className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.cashbookAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
                     {u.cashbookAccess ? '✓ Granted' : 'Grant access'}
                   </button>
+                </td>
+                <td className="px-4 py-3">
+                  {/* The flag lives on the employee profile, so accounts without
+                      one (CEO/MD) have nothing to grant. */}
+                  {u.hasProfile ? (
+                    <button onClick={() => toggleWfh(u)} disabled={busyId === (u._id || u.id)}
+                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.wfhAllowed ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-indigo-700 border-indigo-300 hover:bg-indigo-50'}`}>
+                      {u.wfhAllowed ? '✓ Allowed' : 'Allow WFH'}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {u.role === 'HRManager' ? (

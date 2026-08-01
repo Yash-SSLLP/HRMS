@@ -64,7 +64,6 @@ const GROUPS = [
     title: 'Workplace',
     items: [
       { key: 'Announcements', label: 'Announcements', icon: 'megaphone', tint: '#4f46e5' },
-      { key: 'HowToUse', label: 'How to Use', icon: 'help-circle', tint: '#0d9488' },
       { key: 'Surveys', label: 'Surveys', icon: 'clipboard', tint: '#db2777' },
       { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
       { key: 'Assets', label: 'My Assets', icon: 'cube', tint: '#64748b' },
@@ -78,6 +77,7 @@ const GROUPS = [
 export default function MenuScreen() {
   const nav = useNavigation();
   const role = useAuth((s) => s.user?.role);
+  const chatEnabled = useAuth((s) => s.features?.chatEnabled);
 
   // tab items live on the parent tab navigator; everything else is a Home-stack push.
   const go = (item) => {
@@ -86,7 +86,10 @@ export default function MenuScreen() {
   };
 
   // Employee self-service groups — hidden for SuperAdmin (admin-only account).
-  const groups = canEmployeeSelf(role) ? [...GROUPS] : [];
+  // Messages drops out entirely while the chat module is switched off.
+  const groups = canEmployeeSelf(role)
+    ? GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => i.key !== 'Chat' || chatEnabled) }))
+    : [];
   if (showsAdminEntry(role)) {
     const adminItems = [{ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: colors.text }];
     if (hasTeam(role)) adminItems.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb' });
@@ -107,6 +110,9 @@ export default function MenuScreen() {
     }
     groups.push({ title: 'Admin & Manager', items: adminItems });
   }
+  // Always last, for every role — and it guarantees `groups` is never empty
+  // (a SuperAdmin gets no self-service groups, so groups[0] below would throw).
+  groups.push({ title: 'Help', items: [{ key: 'HowToUse', label: 'Help', icon: 'help-circle', tint: '#0d9488' }] });
 
   // First section open by default; the rest collapsed (accordion).
   const [open, setOpen] = useState(() => ({ [groups[0].title]: true }));

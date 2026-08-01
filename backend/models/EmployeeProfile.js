@@ -72,6 +72,10 @@ const employeeProfileSchema = new mongoose.Schema(
     // Assigned work site whose geofence a punch is measured against. Unset ⇒
     // falls back to the global office (Setting.office).
     workLocationRef: { type: mongoose.Schema.Types.ObjectId, ref: 'WorkLocation' },
+    // Whether this employee may mark a punch as work-from-home. Granted per
+    // person by a SuperAdmin — a WFH punch is exempt from the geofence check,
+    // so it is a privilege, not a self-service checkbox.
+    wfhAllowed: { type: Boolean, default: false },
     employmentType: {
       type: String,
       enum: ['FullTime', 'PartTime', 'Contract', 'Intern'],

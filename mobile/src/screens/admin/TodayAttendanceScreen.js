@@ -5,7 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import api from '../../api/client';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, Avatar, Loader, refresher, SectionHeader, EmptyState, Ionicons, SkeletonScreen } from '../../components/ui';
-import { fmtTime, fmtHours } from '../../utils/format';
+import { fmtTime, fmtHours, fmtMinutes } from '../../utils/format';
 
 export default function TodayAttendanceScreen() {
   const [data, setData] = useState({ onTime: [], late: [], departments: [] });
@@ -37,7 +37,7 @@ export default function TodayAttendanceScreen() {
       </View>
       <View style={{ alignItems: 'flex-end' }}>
         <Text style={[font.body, { fontWeight: '700' }]}>{fmtTime(r.checkIn)}</Text>
-        {late ? <Text style={[font.small, { color: colors.warning }]}>{r.lateMinutes}m late</Text> : <Text style={[font.small, { color: colors.success }]}>On time</Text>}
+        {late ? <Text style={[font.small, { color: colors.warning }]}>{fmtMinutes(r.lateMinutes)} late</Text> : <Text style={[font.small, { color: colors.success }]}>On time</Text>}
       </View>
     </Card>
   );

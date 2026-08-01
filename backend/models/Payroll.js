@@ -30,7 +30,14 @@ const deductionsSchema = new mongoose.Schema(
     esic: { type: Number, default: 0, min: 0 },                 // ESIC (0.75% of gross, if gross <= 21k)
     professionalTax: { type: Number, default: 0, min: 0 },      // State-specific (e.g. Maharashtra: 200/mo)
     tds: { type: Number, default: 0, min: 0 },                  // Income tax deducted at source
-    loanRecovery: { type: Number, default: 0, min: 0 },
+    loanRecovery: { type: Number, default: 0, min: 0 },         // EMI on loans other than a salary advance
+    // EMI on 'Salary Advance' loans, kept apart from loanRecovery because the
+    // salary slip prints LOAN and Salary In Advance as two separate lines.
+    salaryAdvance: { type: Number, default: 0, min: 0 },
+    // Pay recovered for days not worked. Earnings are ALWAYS the full monthly
+    // value (Basic is never prorated) — every unpaid day, whether LOP or a day
+    // before joining / after exit, is charged back here at one day's salary.
+    lopDeduction: { type: Number, default: 0, min: 0 },
     // Penalty for late arrivals beyond the 5/month allowance. ₹200/day when the
     // employee's monthly Basic < ₹25,000, else ₹400/day.
     latePenalty: { type: Number, default: 0, min: 0 },
@@ -70,6 +77,16 @@ const payrollSchema = new mongoose.Schema(
     workingDays: { type: Number, default: 0, min: 0 },
     paidDays: { type: Number, default: 0, min: 0 },
     lopDays: { type: Number, default: 0, min: 0 }, // Loss of Pay
+    // Day counts printed on the salary slip alongside the three above.
+    halfDays: { type: Number, default: 0, min: 0 },
+    lateDays: { type: Number, default: 0, min: 0 },            // check-ins after 10:00 IST
+    additionalPaidDays: { type: Number, default: 0, min: 0 },  // unused paid-leave quota, paid out
+
+    // Salary in force for THIS pay month, frozen onto the payslip. CTC is
+    // resolved per month from the employee's hike history, so a slip reprinted
+    // after a hike must not pick up the new figure.
+    monthlySalary: { type: Number, default: 0, min: 0 },
+    annualCtc: { type: Number, default: 0, min: 0 },
 
     earnings: { type: earningsSchema, default: () => ({}) },
     deductions: { type: deductionsSchema, default: () => ({}) },
@@ -126,6 +143,8 @@ payrollSchema.pre('save', function computeTotals(next) {
     (d.professionalTax || 0) +
     (d.tds || 0) +
     (d.loanRecovery || 0) +
+    (d.salaryAdvance || 0) +
+    (d.lopDeduction || 0) +
     (d.latePenalty || 0) +
     (d.emergencyPenalty || 0) +
     (d.otherDeductions || 0);

@@ -35,12 +35,48 @@ function hrCannotManage() {
   return false;
 }
 
+// Executives (and the Backend account) can manage anyone: they have no employee
+// profile and therefore no department, so the department rule below can't apply
+// to them — and without this a department head would have nobody to report to.
+const CROSS_DEPARTMENT_MANAGER_ROLES = ['CEO', 'MD', 'SuperAdmin'];
+
+/**
+ * A reporting manager must sit in the same department as the person reporting
+ * to them, unless they are an executive.
+ * @param {string} managerUserId - the proposed manager's User id
+ * @param {string} department - the employee's department
+ * @throws {Error} with .status 400 when the pairing is not allowed
+ */
+async function assertSameDepartment(managerUserId, department) {
+  const manager = await User.findById(managerUserId).select('role firstName lastName');
+  if (!manager) {
+    const err = new Error('Reporting manager not found');
+    err.status = 400;
+    throw err;
+  }
+  if (CROSS_DEPARTMENT_MANAGER_ROLES.includes(manager.role)) return;
+
+  const managerProfile = await EmployeeProfile.findOne({ user: managerUserId }).select('department');
+  const managerDept = managerProfile && managerProfile.department;
+  if (!department || managerDept !== department) {
+    const name = `${manager.firstName || ''} ${manager.lastName || ''}`.trim() || 'That user';
+    const err = new Error(
+      `${name} is in ${managerDept || 'no department'}, so they cannot be the reporting manager for `
+      + `${department ? `the ${department} department` : 'an employee with no department'}. `
+      + 'Pick someone from the same department, or an executive.'
+    );
+    err.status = 400;
+    throw err;
+  }
+}
+
 // Enforce the org hierarchy on a profile payload:
 //  - nobody manages themselves (reportingManager / hrPartner !== own user)
+//  - a reporting manager is in the same department (executives excepted)
 //  - hrPartner must point at an HRManager or SuperAdmin
 //  - an HRManager's own profile must report to / be partnered with a SuperAdmin
 // Throws an Error (with .status) on violation.
-async function validateHierarchy(body, linkedUserId) {
+async function validateHierarchy(body, linkedUserId, existing = null) {
   const linkedId = String(linkedUserId);
 
   for (const field of ['hrPartner', 'reportingManager']) {
@@ -49,6 +85,13 @@ async function validateHierarchy(body, linkedUserId) {
       err.status = 400;
       throw err;
     }
+  }
+
+  if (body.reportingManager) {
+    // On an update the payload may not carry the department — fall back to the
+    // stored one so a manager change is still checked against the real value.
+    const department = body.department !== undefined ? body.department : (existing && existing.department);
+    await assertSameDepartment(body.reportingManager, department);
   }
 
   const linkedUser = await User.findById(linkedUserId).select('role');
@@ -241,6 +284,14 @@ const createEmployee = asyncHandler(async (req, res) => {
     throw new Error('Profile already exists for this user');
   }
 
+  // Same rule as updateEmployee: assigning the HR Partner / reporting manager is
+  // SuperAdmin-only. Without this an HR Manager could set them on create and
+  // simply never edit them again.
+  if (req.user.role !== 'SuperAdmin') {
+    delete req.body.hrPartner;
+    delete req.body.reportingManager;
+  }
+
   await validateHierarchy(req.body, userId);
 
   const profile = await EmployeeProfile.create(req.body);
@@ -275,7 +326,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
     delete req.body.reportingManager;
   }
 
-  await validateHierarchy(req.body, profile.user);
+  await validateHierarchy(req.body, profile.user, profile);
 
   Object.assign(profile, req.body);
   await profile.save();
@@ -498,13 +549,16 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         hrPartnerId = partner._id;
       }
 
-      // Resolve Reporting Manager email -> User._id (any user; optional)
+      // Resolve Reporting Manager email -> User._id (optional). The manager must
+      // be in the same department as the employee (executives excepted) — the
+      // same rule the admin form enforces, so a bulk import can't route around it.
       let reportingManagerId;
       if (p.reportingManagerEmail) {
         const mgr = await User.findOne({ email: p.reportingManagerEmail });
         if (!mgr) {
           throw new Error(`Reporting Manager email "${p.reportingManagerEmail}" does not match any user`);
         }
+        await assertSameDepartment(mgr._id, p.department);
         reportingManagerId = mgr._id;
       }
 
@@ -690,4 +744,7 @@ module.exports = {
   exportEmployeesXlsx,
   downloadImportTemplate,
   importEmployeesXlsx,
+  // exported for unit tests
+  assertSameDepartment,
+  validateHierarchy,
 };

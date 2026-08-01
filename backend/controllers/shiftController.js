@@ -12,6 +12,7 @@ const Connection = require('../models/Connection');
 const Message = require('../models/Message');
 const { notify } = require('../services/notify');
 const { enqueueMail } = require('../services/email');
+const { isChatEnabled } = require('../middleware/chatEnabled');
 
 const USER_FIELDS = 'firstName lastName';
 
@@ -62,8 +63,10 @@ async function notifyShiftAssignment({ employeeId, shiftId, date, note, assigned
 
     // 2) Chat message from the assigning HR/admin, so it lands in the employee's
     // inbox as a real conversation they can reply to. Ensure an accepted
-    // connection exists between the two.
-    if (assignedBy && String(assignedBy._id) !== String(employee._id)) {
+    // connection exists between the two. Skipped while the chat module is off —
+    // the notification and email above already carry the news, and a message
+    // nobody can open is just invisible clutter.
+    if (assignedBy && String(assignedBy._id) !== String(employee._id) && await isChatEnabled()) {
       try {
         const pairKey = Connection.buildPairKey(assignedBy._id, employee._id);
         let conn = await Connection.findOne({ pairKey });

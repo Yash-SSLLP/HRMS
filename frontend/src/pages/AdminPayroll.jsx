@@ -2,7 +2,7 @@
  * AdminPayroll — manual payslip management (admin portal). Lists/filters payslips
  * from GET /payroll (employees from GET /employees), creates/edits drafts via
  * POST/PUT /payroll, transitions status (approve/pay/delete) via
- * PATCH /payroll/:id/:action, exports CSV, downloads the PDF, and emails the
+ * PATCH /payroll/:id/:action, exports the payroll register (.xlsx), downloads the salary-slip PDF, and emails the
  * payslip from the company mailbox (POST /payroll/:id/email). Bulk runs live on AdminPayrollRun.
  */
 import { useEffect, useMemo, useState } from 'react';
@@ -25,6 +25,9 @@ const STATUS_COLORS = {
   OnHold: 'bg-amber-100 text-amber-800',
 };
 
+// Every payslip field the editor round-trips. The save is an Object.assign on
+// the server, so a field missing here is silently zeroed on a manual edit —
+// keep this in step with models/Payroll.js.
 const blankSlip = () => ({
   employee: '',
   payPeriodYear: new Date().getFullYear(),
@@ -32,9 +35,30 @@ const blankSlip = () => ({
   workingDays: 30,
   paidDays: 30,
   lopDays: 0,
+  halfDays: 0,
+  lateDays: 0,
+  additionalPaidDays: 0,
+  monthlySalary: 0,
+  annualCtc: 0,
   earnings: { basic: 0, hra: 0, specialAllowance: 0, conveyanceAllowance: 0, medicalAllowance: 0, lta: 0, bonus: 0, overtime: 0, leaveIncentive: 0, otherEarnings: 0 },
-  deductions: { epf: 0, esic: 0, professionalTax: 0, tds: 0, loanRecovery: 0, latePenalty: 0, otherDeductions: 0 },
+  deductions: { epf: 0, esic: 0, professionalTax: 0, tds: 0, loanRecovery: 0, salaryAdvance: 0, lopDeduction: 0, latePenalty: 0, emergencyPenalty: 0, otherDeductions: 0 },
 });
+
+// Friendlier than the camelCase-to-spaced fallback for the money fields HR reads.
+const FIELD_LABELS = {
+  conveyanceAllowance: 'Conveyance (TA)',
+  lta: 'LTA',
+  otherEarnings: 'Other Pay',
+  epf: 'PF / EPF',
+  esic: 'ESIC',
+  tds: 'TDS',
+  loanRecovery: 'Loan EMI',
+  salaryAdvance: 'Salary Advance EMI',
+  lopDeduction: 'LOP / unpaid days',
+  latePenalty: 'Late coming',
+  emergencyPenalty: 'Emergency leave (2×)',
+};
+const labelOf = (k) => FIELD_LABELS[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
@@ -163,6 +187,11 @@ export default function AdminPayroll() {
       workingDays: p.workingDays,
       paidDays: p.paidDays,
       lopDays: p.lopDays,
+      halfDays: p.halfDays || 0,
+      lateDays: p.lateDays || 0,
+      additionalPaidDays: p.additionalPaidDays || 0,
+      monthlySalary: p.monthlySalary || 0,
+      annualCtc: p.annualCtc || 0,
       earnings: { ...blankSlip().earnings, ...(p.earnings || {}) },
       deductions: { ...blankSlip().deductions, ...(p.deductions || {}) },
     });
@@ -187,7 +216,8 @@ export default function AdminPayroll() {
   };
 
   // Load (and optionally apply) the earnings + statutory deductions derived from
-  // the employee's assigned salary structure × CTC, prorated by paid days.
+  // the employee's assigned salary structure × CTC. Earnings come back at their
+  // full monthly value; the unpaid days arrive as the `lopDeduction`.
   const fetchSalaryInfo = async ({ apply = false, over = {} } = {}) => {
     const f = { ...form, ...over };
     if (!f.employee) { setSalaryInfo(null); return; }
@@ -231,6 +261,12 @@ export default function AdminPayroll() {
         workingDays: c.daysInMonth ?? f.workingDays,
         paidDays: c.paidDays ?? f.paidDays,
         lopDays: c.lopDays ?? f.lopDays,
+        halfDays: c.counts?.halfDay ?? f.halfDays,
+        lateDays: c.policy?.lateDays ?? f.lateDays,
+        additionalPaidDays: c.policy?.unusedLeave ?? f.additionalPaidDays,
+        // Salary-slip header figures, frozen onto the payslip when it is saved.
+        monthlySalary: c.ctc ? Math.round(c.ctc / 12) : f.monthlySalary,
+        annualCtc: c.ctc ?? f.annualCtc,
       };
       setForm((prev) => ({ ...prev, ...days }));
       return days;
@@ -505,9 +541,20 @@ export default function AdminPayroll() {
                     onChange={(e) => setForm({ ...form, lopDays: Number(e.target.value) })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
+                {/* Printed on the salary slip's day block — no effect on the amounts. */}
+                {[['halfDays', 'Half Days'], ['lateDays', 'Late Days'], ['additionalPaidDays', 'Additional Paid Days']].map(([k, label]) => (
+                  <div key={k}>
+                    <label className="block text-sm text-gray-700">{label}</label>
+                    <input type="number" value={form[k]}
+                      onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })}
+                      className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  </div>
+                ))}
               </div>
               <p className="text-[11px] text-gray-400 -mt-1">
                 Auto-filled from attendance (after LOP &amp; leave-quota normalization) · editable.
+                Half/Late/Additional days are printed on the slip only — the LOP amount is the
+                <span className="font-medium"> LOP / unpaid days</span> deduction below.
               </p>
 
               {/* Salary structure → derive earnings + statutory deductions */}
@@ -531,7 +578,9 @@ export default function AdminPayroll() {
                 </div>
                 {salaryInfo && !salaryInfo.needsSetup && (
                   <p className="text-[11px] text-gray-400 mt-1">
-                    Prorated by Paid Days ({form.paidDays}/{form.workingDays}) · PF/EPF &amp; ESI not deducted (₹0), PT ₹200 — all editable below.
+                    Earnings are the full monthly value (Basic is never prorated); the {form.workingDays - form.paidDays} unpaid
+                    day(s) out of {form.workingDays} are recovered as the LOP deduction ·
+                    PF/EPF &amp; ESI not deducted (₹0), PT ₹200 — all editable below.
                   </p>
                 )}
               </div>
@@ -540,7 +589,7 @@ export default function AdminPayroll() {
               <div className="grid grid-cols-3 gap-3">
                 {Object.keys(form.earnings).map((k) => (
                   <div key={k}>
-                    <label className="block text-xs text-gray-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</label>
+                    <label className="block text-xs text-gray-600">{labelOf(k)}</label>
                     <input type="number" value={form.earnings[k]}
                       onChange={(e) => updateNum('earnings', k, e.target.value)}
                       className="mt-1 block w-full border rounded-lg px-2 py-1" />
@@ -570,7 +619,7 @@ export default function AdminPayroll() {
               <div className="grid grid-cols-3 gap-3">
                 {Object.keys(form.deductions).map((k) => (
                   <div key={k}>
-                    <label className="block text-xs text-gray-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</label>
+                    <label className="block text-xs text-gray-600">{labelOf(k)}</label>
                     <input type="number" value={form.deductions[k]}
                       onChange={(e) => updateNum('deductions', k, e.target.value)}
                       className="mt-1 block w-full border rounded-lg px-2 py-1" />

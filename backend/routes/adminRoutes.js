@@ -16,6 +16,7 @@ const {
   getPermissionCatalog,
   updateUserPermissions,
   setCashbookAccess,
+  setWfhAccess,
   getOrgSettings,
   updateOrgSettings,
 } = require('../controllers/adminController');
@@ -43,6 +44,10 @@ router.patch('/users/:id/permissions', restrictTo('SuperAdmin'), updateUserPermi
 // Standalone Cashbook access grant for any user/employee — SuperAdmin only.
 // PATCH /users/:id/cashbook-access — grant/revoke cashbook access; protected, SuperAdmin only.
 router.patch('/users/:id/cashbook-access', restrictTo('SuperAdmin'), setCashbookAccess);
+// Work-from-home grant — SuperAdmin only. A WFH punch skips the office geofence,
+// so it is deliberately not something HR or the employee can switch on.
+// PATCH /users/:id/wfh-access — grant/revoke work-from-home; protected, SuperAdmin only.
+router.patch('/users/:id/wfh-access', restrictTo('SuperAdmin'), setWfhAccess);
 
 // Org-wide preferences — SuperAdmin ONLY (e.g. whether CEO/MD appear in
 // employee-selection pickers).

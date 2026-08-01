@@ -55,7 +55,10 @@ const PERMISSIONS = [
 
   // Reports & insights
   { key: 'analytics.view', label: 'HR analytics', group: 'Reports & Insights' },
-  { key: 'audit.view', label: 'Audit log', group: 'Reports & Insights' },
+  // NOTE: 'audit.view' was retired — the audit log is SuperAdmin-only and is no
+  // longer a grantable capability (see routes/auditRoutes.js). The key may still
+  // sit in old User.permissions arrays; it is inert, since hasPermission only
+  // answers to catalogued keys.
 ];
 
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);

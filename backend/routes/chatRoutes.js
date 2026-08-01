@@ -33,6 +33,7 @@ const {
   leaveGroup,
 } = require('../controllers/chatController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requireChatEnabled } = require('../middleware/chatEnabled');
 
 const router = express.Router();
 
@@ -49,8 +50,20 @@ const photoUpload = multer({
 // Any authenticated, active user may use chat.
 router.use(protect);
 
+// ---- Routes that stay available even when chat is switched off ----
+// The directory is not chat: the Complaints screen (web + mobile) uses it as its
+// people-picker, so gating it would break an unrelated module.
 // GET /directory — searchable directory of chat-eligible users; protected.
 router.get('/directory', directory);
+
+// The transcript export must keep working on archived conversations after chat
+// is switched off — that is precisely when a SuperAdmin needs to read them.
+// Declared before the dynamic message routes so it is never shadowed.
+// GET /admin/transcript — export full chat transcript; protected, SuperAdmin only.
+router.get('/admin/transcript', restrictTo('SuperAdmin'), adminTranscript);
+
+// ---- Everything below is chat proper: 403 while the module is off ----
+router.use(requireChatEnabled);
 
 // GET /requests — list connection requests; POST /requests — send one; protected.
 router.route('/requests')
@@ -61,11 +74,6 @@ router.patch('/requests/:id', respondRequest);
 
 // GET /connections — list the current user's chat connections; protected.
 router.get('/connections', listConnections);
-
-// SuperAdmin-only full transcript export (declared before the dynamic message
-// routes so it is never shadowed).
-// GET /admin/transcript — export full chat transcript; protected, SuperAdmin only.
-router.get('/admin/transcript', restrictTo('SuperAdmin'), adminTranscript);
 
 // Group chats
 // GET /groups — list groups; POST /groups — create a group; protected.

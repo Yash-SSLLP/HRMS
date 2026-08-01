@@ -11,7 +11,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
-import { minutesToHHMM } from '../utils/time';
+import { formatDuration } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -48,8 +48,9 @@ const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 // Monthly Payroll Run — a whole-month calendar of one employee's attendance
 // (from their real punch-ins/outs) with a per-day status dropdown and late /
 // on-time remarks. Salary is computed from the employee's salary structure ×
-// annual CTC, prorated by paid days, minus active loan/advance EMIs; drafts
-// are generated / put on hold / approved from here.
+// annual CTC and paid in full — unpaid days, late coming and active loan /
+// advance EMIs come off as deductions; drafts are generated / put on hold /
+// approved from here.
 export default function AdminPayrollRun() {
   const now = new Date();
   const [employees, setEmployees] = useState([]);
@@ -264,7 +265,7 @@ export default function AdminPayrollRun() {
                     {r?.checkIn && (
                       <div className={`text-[10px] leading-tight ${r.lateMinutes > 0 ? 'text-red-600' : 'text-green-600'}`}
                         title={`${fmtTime(r.checkIn)}${r.checkOut ? ` – ${fmtTime(r.checkOut)}` : ''}`}>
-                        {r.lateMinutes > 0 ? `Late +${minutesToHHMM(r.lateMinutes)}` : 'On time'}
+                        {r.lateMinutes > 0 ? `Late +${formatDuration(r.lateMinutes)}` : 'On time'}
                         {r.noPunchOut ? <span className="text-red-600"> · no out</span> : ''}
                       </div>
                     )}
@@ -344,6 +345,7 @@ export default function AdminPayrollRun() {
                       {c.policy.paidLeaveQuota} paid leaves/month - unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
                       {' '}First {c.policy.lateAllowance} lates free; each extra costs {inr(c.policy.lateRate)}/day (monthly Basic {c.policy.monthlyBasic < 25000 ? '<' : '≥'} ₹25,000).
                       {' '}Working days with no punch-in/out are LOP ({c.policy.noPunchDays ?? 0} this month) unless regularised.
+                      {' '}Basic and every other earning are always paid in full — LOP and late coming come off as deductions.
                       {' '}Salary is spread over all {c.daysInMonth} days of the month (Sundays &amp; holidays are paid)
                       {c.ctc > 0 ? `, so one day costs ${inr(Math.round(c.ctc / 12 / (c.daysInMonth || 1)))}` : ''}.
                       {c.notEmployedDays > 0 && ` This employee was on the payroll for ${c.eligibleDays} of those days (joined/exited mid-month), so pay is ${c.paidDays}/${c.daysInMonth}`
@@ -386,13 +388,34 @@ export default function AdminPayrollRun() {
                         <span>Leave incentive ({c.policy.unusedLeave} unused)</span><span>+ {inr(c.earnings.leaveIncentive)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between font-semibold text-gray-900 border-t pt-1"><span>Gross (prorated)</span><span>{inr(c.gross)}</span></div>
-                    <div className="flex justify-between text-red-600">
-                      <span>Loan / advance EMI{c.loans.length ? ` (${c.loans.length})` : ''}</span><span>− {inr(c.loanRecovery)}</span>
+                    <div className="flex justify-between font-semibold text-gray-900 border-t pt-1">
+                      <span>Gross (full month)</span><span>{inr(c.gross)}</span>
                     </div>
+                    {/* Earnings above are never prorated — days not worked come off here. */}
+                    {c.lopDeduction > 0 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>LOP / unpaid days ({c.unpaidDays} × {inr(c.policy.perDayPay)})</span>
+                        <span>− {inr(c.lopDeduction)}</span>
+                      </div>
+                    )}
                     {c.latePenalty > 0 && (
                       <div className="flex justify-between text-red-600">
-                        <span>Late penalty ({c.policy.excessLate} × {inr(c.policy.lateRate)})</span><span>− {inr(c.latePenalty)}</span>
+                        <span>Late coming ({c.policy.excessLate} × {inr(c.policy.lateRate)})</span><span>− {inr(c.latePenalty)}</span>
+                      </div>
+                    )}
+                    {c.emergencyPenalty > 0 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>Emergency leave double cut ({c.policy.doubleCutDays}d)</span><span>− {inr(c.emergencyPenalty)}</span>
+                      </div>
+                    )}
+                    {c.loanRecovery > 0 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>Loan EMI</span><span>− {inr(c.loanRecovery)}</span>
+                      </div>
+                    )}
+                    {c.salaryAdvance > 0 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>Salary advance EMI</span><span>− {inr(c.salaryAdvance)}</span>
                       </div>
                     )}
                     <div className="flex justify-between font-bold text-green-700 border-t pt-1"><span>Estimated net</span><span>{inr(c.estimatedNet)}</span></div>

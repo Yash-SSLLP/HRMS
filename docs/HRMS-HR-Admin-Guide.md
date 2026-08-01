@@ -36,11 +36,16 @@ The admin home page. Shows org-wide cards: **total employees, present today, on 
 ### Analytics *(permission: analytics.view)*
 Read-only workforce analytics from employee data: headcount by **department** and **employment type**, **gender diversity**, **tenure buckets**, **confirmation** breakdown, **exits by month** and **attrition rate**, and **new hires** trend.
 
-### Audit Log *(permission: audit.view)*
-A history of **status changes** across the system (e.g. payroll approvals, interview-round changes). Filter by entity, person, text, and date. ⚠️ **Backend activity is hidden from all other viewers** - those entries are filtered out.
+### Audit Log *(Backend only)*
+A history of **status changes** across the system (e.g. payroll approvals, interview-round changes). Filter by entity, person, text, and date. ⚠️ **Only the Backend (Super Admin) can open this** - it is not available to HR, and executives cannot view it either.
 
 ### Chat Export *(Backend only)*
-The Backend can export full chat transcripts. (Everyday chat itself is open to all users.)
+The Backend can export full chat transcripts - including after chat has been switched off, since the conversations are kept.
+
+### ⭐ Chat on/off *(Backend only, on the Permissions page)*
+**Chat is an org-wide switch and is OFF by default.** While it is off, the chat button disappears from both web portals, the mobile **Chat** tab disappears, and the chat API refuses requests - so an old link or deep link cannot get back in. Nothing is deleted: switch it on and every conversation returns exactly as it was.
+- The **Complaints** people-picker keeps working either way (it reads the staff directory, not chat).
+- Shift assignments and birthday wishes stop posting their chat copy while it's off; the notification and email still go out.
 
 ---
 
@@ -65,12 +70,20 @@ Login accounts + HR permissions + org settings.
 - **Backend-only:** the **permission catalog** (fine-tune exactly what an HR Manager can do) and **org settings** (e.g. whether CEO/MD appear in people-pickers).
 - You can't deactivate or delete your own account.
 
+### Permissions *(Backend only)*
+One page for every grant the Backend controls:
+- **Modules** - the org-wide **Chat on/off** switch (§2).
+- **Cashbook** - standalone access for anyone, whatever their role.
+- ⭐ **Work from home** - per employee. Granting it makes the WFH tick appear at punch time and exempts those punches from the geofence check. Accounts with no employee profile (CEO/MD) show a dash, since there is nothing to grant.
+- **HR Permissions** - the fine-grained capability list for each HR Manager.
+
 ### Employees *(employees.manage)*
 The master employee records.
 - Create a profile (needs the linked user account, an **employee code**, and **date of joining**), edit details, and (Backend only) delete.
 - **Bulk tools:** export to Excel, download an import template, **import from Excel**, export a ZIP of documents (per employee or all), and a **documents-status** report (verified/complete/missing against the required set).
 - **Document collection link:** generate a **tokenised public upload link** so a person (even without a login) can submit their documents.
 - Reassigning an employee's **HR partner** or **reporting manager** is **Backend-only**.
+- ⭐ **The reporting manager must be in the same department.** Pick the department first; the manager list then offers only people from that department, plus an **Executive** group (CEO / MD / Backend) so a department head still has someone to report to. Changing the department clears a manager who no longer qualifies. This is enforced on the server too, so the **Excel import** rejects a cross-department manager with a readable error rather than importing it silently. An employee whose manager was set before this rule keeps them - they stay listed as "currently assigned" so editing the record doesn't wipe them.
 
 ---
 
@@ -101,13 +114,15 @@ Probation → confirmation lifecycle. The **due date** is the date of joining + 
 
 ## 5. Attendance & Time *(all: attendance.manage; CEO/MD read-only)*
 
-- **Who's In / On Leave (Presence):** one row per active employee, split into **present / on leave / absent** for today, with selfie flags, late minutes, WFH, and hours.
+- **Who's In / On Leave (Presence):** one row per active employee, split into **present / on leave / absent** for today, with selfie flags, how late each person was, WFH, and hours.
 - **Attendance:** view any employee's month (with per-punch geofence distance), **manually add/edit/delete** records, and view punch selfies. **Settings** define the office location and geofence threshold.
-  - Employee punches capture GPS but are **never blocked** - out-of-geofence punches are only **flagged**. WFH is exempt. "Late" = check-in after **10:00 AM**.
+  - Employee punches capture GPS but are **never blocked** - out-of-geofence punches are only **flagged**. WFH is exempt. "Late" = check-in after **10:00 AM**, shown as hours and minutes (e.g. `1h 15m`).
+  - ⭐ **WFH is a per-employee permission** granted by the Backend on the **Permissions** page. Employees without it never see the WFH tick, and the server ignores the flag even if it is sent - so nobody can clear their own geofence violation.
+- ⭐ **Automatic half days.** A day worth **under 6 hours** is recorded as **Half Day**. When someone forgets to punch out, the day is counted from their check-in to **7:00 PM** and the same rule applies (10 AM check-in → full day; 3 PM check-in → half day), with the reason written into the record's remarks. Approving a **Regularization** recalculates the day from the corrected times, so a day that now reaches 6 hours goes back to **Present**. HR setting a status by hand always wins. This flows straight into payroll, where each half day counts as 0.5 paid days.
 - **Attendance Report:** per-day present counts + average hours, and an org-wide attendance heatmap.
-- **Monthly View:** one employee's full month with late minutes, geofence distance, and no-punch-out flags, plus a summary bar (working days, on-time, late, leave, half-day, absent, holiday, etc.). **This is the same data the Payroll Run calendar uses.**
+- **Monthly View:** one employee's full month with lateness, geofence distance, and no-punch-out flags, plus a summary bar (working days, on-time, late, leave, half-day, absent, holiday, etc.). **This is the same data the Payroll Run calendar uses.**
 - **Shifts & Roster:** define shifts and assign them per employee/day.
-- **Regularization:** review employee correction requests; **Approving applies the corrected times to that day's attendance** (creating the record if needed, clearing "no punch-out," flipping Absent→Present). HR can also regularize directly.
+- **Regularization:** review employee correction requests; **Approving applies the corrected times to that day's attendance** (creating the record if needed, clearing "no punch-out," flipping Absent→Present, and re-deriving Present vs Half Day from the hours). HR can also regularize directly.
 
 ---
 
@@ -132,8 +147,14 @@ Maintain the company holiday calendar (type: Public / Restricted / Company). Hol
 
 ### Payroll (payslip records)
 - Payslip **status: Draft → Approved → Paid** (or **On Hold**). One payslip per employee per month; gross/deductions/net auto-compute.
-- Actions: create/edit, **Approve**, **Mark Paid** (stamps payment date/reference), **delete** (Draft only), **PDF**, **share a public link**, and **email** the payslip (with PDF attached) after previewing the message. **Export the whole month to CSV.**
-- Earnings include a **Leave Incentive** line; deductions include a **Late Arrival Penalty** line (both explained below). These appear in the payslip editor, the CSV export, and the PDF.
+- Actions: create/edit, **Approve**, **Mark Paid** (stamps payment date/reference), **delete** (Draft only), **PDF**, **share a public link**, and **email** the payslip (with PDF attached) after previewing the message. **Export the whole month to the payroll register (.xlsx).**
+- Earnings include a **Leave Incentive** line; deductions include **LOP / unpaid days** and a **Late coming** line (all explained below). These appear in the payslip editor, the register export, and the PDF.
+- ⭐ **Basic pay is never reduced.** Every earning is the full monthly amount whatever the attendance — days not worked and late coming are taken off on the **deductions** side instead.
+
+### The salary slip (PDF)
+The generated slip follows the company's own format: letterhead + GSTIN, an identity block (Employee ID, UAN, PF No., ESIC No., DOJ, Aadhar, PAN, bank name & account, Salary Per Month / Per Annum), a day block (Total Working Days, LOP Days, Payable Days, Half Days, Additional Paid Days, Late Days), the Earnings / Deductions tables, **Net Billing Amount**, the amount in words, and the authorised signature.
+- The slip's **Other Deductions** line is the total of **LOP + late coming + emergency-leave double cut + any other deduction** — as its printed note says.
+- **Special Allowance** on the slip also absorbs Medical and LTA (the format has no row for those); **TA** is Conveyance; **Incentives** is Leave Incentive + Bonus; **Variable Pay** is Overtime.
 
 ### ⭐ Monthly Payroll Run (the heart of payroll)
 This is where each employee's salary is calculated from their **attendance + salary structure + CTC**, with the company pay policy applied automatically.
@@ -145,19 +166,20 @@ This is where each employee's salary is calculated from their **attendance + sal
 4. **Generate Draft → review → Approve** (or put **On Hold**). Approved/Paid payslips can't be regenerated.
 
 **What the system computes automatically:**
-- **Base salary:** each component = its % of (Annual CTC ÷ 12), **prorated by paid days** (paid days ÷ days in month).
+- **Base salary:** each component = its % of (Annual CTC ÷ 12), **at full value** — attendance never shrinks Basic or any other head.
 - **Paid days** = days in month − Absent − ½ × Half-days − **excess leave**. Anything unpaid becomes **LOP days**.
+- ⭐ **LOP deduction:** every unpaid day — LOP plus any day before joining / after exit — is charged back at **one day's pay** (monthly gross ÷ days in month) into the **LOP / unpaid days** deduction. Net pay works out the same as prorating would; it just reads correctly on the slip.
 - ⭐ **2-paid-leave policy:**
   - **Excess leave** (On-Leave days beyond **2**/month) → added to **LOP** (unpaid).
   - **Unused leave** (fewer than 2 taken) → paid out as a **Leave Incentive** earning = unused days × one day's pay. **Settled monthly, never carried forward.**
 - ⭐ **Late-arrival penalty:** late days (check-in after **10:00 AM**) beyond **5**/month are deducted at **₹200/day** if the employee's **monthly Basic < ₹25,000**, else **₹400/day** → written to the **Late Penalty** deduction.
-- **Loans:** active loan/advance **EMIs** are summed into **Loan Recovery**.
+- **Loans:** active **EMIs** are summed into **Loan Recovery**, except **Salary Advance** loans which get their own **Salary Advance** deduction (the slip prints them as separate lines).
 
-**What HR sees:** an **"Attendance policy" panel** (Leave used of 2, Late arrivals of 5, excess late, excess leave, with a plain-language caption), a **working-hours** roll-up (days present, average hours, comp-off earned for worked weekends/holidays), and a **computed-salary breakdown** - Basic/HRA/Special/Conveyance/Medical/LTA, **+ Leave incentive**, Gross (prorated), **− Loan EMI**, **− Late penalty**, and **Estimated net**.
+**What HR sees:** an **"Attendance policy" panel** (Leave used of 2, Late arrivals of 5, excess late, excess leave, with a plain-language caption), a **working-hours** roll-up (days present, average hours, comp-off earned for worked weekends/holidays), and a **computed-salary breakdown** - Basic/HRA/Special/Conveyance/Medical/LTA, **+ Leave incentive**, Gross (full month), **− LOP / unpaid days**, **− Late coming**, **− Loan EMI**, **− Salary advance EMI**, and **Estimated net**.
 
 **Worked examples of the policy:**
 - Employee takes **0 leaves** → **+2 days' pay** (Leave Incentive).
-- Takes **3 leaves** → 2 paid, **1 day LOP**.
+- Takes **3 leaves** → 2 paid, **1 day LOP** → that day's pay comes off as the LOP deduction.
 - **8 late days**, Basic ₹20,000 → 3 × ₹200 = **₹600** Late Penalty.
 - **6 late days**, Basic ₹30,000 → 1 × ₹400 = **₹400** Late Penalty.
 

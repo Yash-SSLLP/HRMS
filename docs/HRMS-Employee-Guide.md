@@ -61,11 +61,13 @@ The Dashboard is your landing page. From top to bottom you'll typically see:
 - Tap **Check In** in the morning and **Check Out** when you leave. You get **one check-in and one check-out per day**.
 - Each punch requires a **selfie** (a quick photo from your camera) - this is mandatory.
 - Each punch also captures your **GPS location**. The app waits a few seconds for an accurate fix and shows your coordinates with a map link. If the fix is poor or you're far from the office, it warns you - but it **still lets you punch** (it just records the distance).
-- Tick **Work From Home (WFH)** if you're working remotely - WFH punches are never flagged as "outside office."
+- **Work From Home (WFH)** is a permission, not a checkbox everyone gets. If the Backend has granted it to you, a WFH tick appears at punch time and those punches are never flagged as "outside office." If you don't see it, you haven't been given it - ask the Backend.
 - At checkout you can tick **Mark as Half Day** if it was a half day.
 - After check-in a **live timer** counts your working time; it freezes when you check out.
 
-**Where you see your history:** a month/year filter plus a table of every day - status (Present, Absent, Half Day, Weekly Off, Holiday, **On Leave**), your in/out times with location links, hours worked, and remarks.
+⚠️ **A day under 6 hours is recorded as a Half Day automatically.** If you forget to punch out, the day is counted from your check-in to **7:00 PM** and the same 6-hour rule applies - so checking in at 10 AM and forgetting to punch out still counts as a full day, but checking in at 3 PM does not. If the times are wrong, raise a **Regularization** (§4.3): once it's approved the day is recalculated, and a day that now reaches 6 hours goes back to Present.
+
+**Where you see your history:** a month/year filter plus a table of every day - status (Present, Absent, Half Day, Weekly Off, Holiday, **On Leave**), your in/out times with location links, hours worked, **how late you were**, and remarks.
 
 ⚠️ **"Late" means checking in after 10:00 AM.** This matters for your pay - see §5.
 
@@ -101,6 +103,7 @@ This company has two simple pay rules that directly affect your salary. Learn th
 - **If you take more than 2** → each extra day is **Loss of Pay (LOP)** - that day's salary is deducted.
 - **If you take fewer than 2** → the **unused** days are **converted into extra pay** for that month, called **"Leave Incentive."** It's one day's salary per unused day.
 - This is **settled every month** - unused leave does **not** carry forward to the next month.
+- In the month you **join (or leave)**, the quota is **prorated** to the days you were on the payroll - your Leave page always shows the quota that applies to you this month.
 
 **Worked examples:**
 - 🟢 You take **0 leaves** this month → you earn **+2 days of extra pay** (Leave Incentive).
@@ -114,6 +117,7 @@ This company has two simple pay rules that directly affect your salary. Learn th
 - From the **6th late day onward**, each extra late day costs:
   - **₹200 per day** if your **monthly Basic salary is below ₹25,000**, or
   - **₹400 per day** if your **monthly Basic is ₹25,000 or more**.
+- In the month you **join (or leave)**, the 5 free days are **prorated** to the part of the month you were here - e.g. joining on 5 July gives you 4 free late days instead of 5.
 
 **Worked examples:**
 - 🟢 You were late **4 times** → no penalty.
@@ -122,7 +126,7 @@ This company has two simple pay rules that directly affect your salary. Learn th
 
 ### Where you see all this
 - Live, during the month → the **"Lateness & leave" card** on your Attendance screen (§4.2).
-- Final, in your salary → your **payslip** will show a **"Leave Incentive"** line under earnings and/or a **"Late Arrival Penalty"** line under deductions.
+- Final, in your salary → your **payslip** will show a **"Leave Incentive"** line under earnings and/or a **"Late coming"** line under deductions.
 
 ⚠️ The card's numbers are **estimates** during the month. The **final** amounts are locked when HR runs and approves payroll.
 
@@ -152,8 +156,9 @@ There's no separate holidays page for you - company holidays appear in the **Cal
 
 ### 7.1 Payslips
 - See all your **Approved/Paid** payslips: period, gross, deductions, net, and status.
-- **View** opens a detailed breakdown: working/paid/LOP days, every earning (including **Leave Incentive**), every deduction (including **Late Penalty**), gross/total/net, and payment date/reference.
-- **Download PDF** for any payslip - the PDF also includes your **year-to-date** totals for the financial year.
+- **View** opens a detailed breakdown: working/payable/LOP/half/late days, every earning (including **Leave Incentive**), every deduction (including **Loss of pay** and **Late coming**), gross/total/net, and payment date/reference.
+- **Download PDF** for any payslip - the official salary slip, with your statutory and bank details, the day counts, the earnings/deductions tables, and the net amount in words.
+- ⭐ **Your Basic pay is never cut.** Every earning on the slip is your full monthly amount; days you didn't work and late arrivals are shown as **deductions** instead, so you can always see exactly what was taken and why.
 
 ### 7.2 Loans & Advances
 - Tap **+ Request**, pick a **type** (Salary Advance, Personal Loan, Emergency, Other), enter the **principal** amount and a reason.
@@ -278,9 +283,10 @@ Almost everything above is available in the mobile app, grouped in a **Menu**:
 - **Money:** Payslips, Expenses, Travel, Loans.
 - **Growth:** Tasks, My Interviews, Goals, Reviews, Learning.
 - **Requests & lifecycle:** Change Requests, Complaints, Tax Declaration, Onboarding, Resignation.
-- **Workplace:** Announcements, Surveys, Documents, Assets, plus **Calendar**, **Messages (Chat)**, and **Notifications** as tabs.
+- **Workplace:** Announcements, Surveys, Documents, Assets, plus **Calendar** and **Notifications** as tabs.
+- **Help:** the last entry in the menu - this guide.
 
-💡 **Mobile-only bonus:** the app has built-in **Chat/Messages** for talking to colleagues.
+💡 **Chat/Messages** is switched on or off for the whole company by the Backend. When it's off there is no Chat tab and no chat button in the web portal; when it's turned on, every past conversation is still there.
 The **Rewards & Recognition** banner also appears on the mobile dashboard, with photos, closeable, for the same 2-working-day window.
 
 ---

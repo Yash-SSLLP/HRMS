@@ -42,6 +42,7 @@ export default function AttendanceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [wfh, setWfh] = useState(false);
+  const [wfhAllowed, setWfhAllowed] = useState(false); // granted per employee by the Backend
   const [, setTick] = useState(0); // re-render each second to advance the live clock
 
   // Tick once per second while the user is checked in but not yet checked out,
@@ -57,6 +58,7 @@ export default function AttendanceScreen() {
     const { data } = await api.get('/attendance/me').catch(() => ({ data: {} }));
     setToday(data.today || null);
     setRecords(data.records || []);
+    setWfhAllowed(!!data.wfhAllowed);
     setLoading(false);
   }, []);
 
@@ -191,7 +193,8 @@ export default function AttendanceScreen() {
             </View>
           )}
 
-          {(!checkedIn || !checkedOut) && (
+          {/* Work-from-home is a privilege granted per employee by the Backend. */}
+          {wfhAllowed && (!checkedIn || !checkedOut) && (
             <View style={styles.wfhRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Ionicons name="home" size={16} color={colors.textMuted} />

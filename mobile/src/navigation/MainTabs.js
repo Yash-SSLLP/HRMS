@@ -15,6 +15,8 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors } from '../theme';
+import api from '../api/client';
+import { useAuth } from '../store/auth';
 import { useBadges } from '../store/badges';
 
 import DashboardScreen from '../screens/DashboardScreen';
@@ -91,7 +93,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="Payslips" component={PayslipsScreen} options={{ title: 'Payslips' }} />
       <HomeStackNav.Screen name="Menu" component={MenuScreen} options={{ title: 'All modules' }} />
       <HomeStackNav.Screen name="Search" component={SearchScreen} options={{ title: 'Search' }} />
-      <HomeStackNav.Screen name="HowToUse" component={HowToUseScreen} options={{ title: 'How to Use' }} />
+      <HomeStackNav.Screen name="HowToUse" component={HowToUseScreen} options={{ title: 'Help' }} />
       <HomeStackNav.Screen name="Announcements" component={AnnouncementsScreen} options={{ title: 'Announcements' }} />
       <HomeStackNav.Screen name="Tasks" component={TasksScreen} options={{ title: 'My Tasks' }} />
       <HomeStackNav.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Expenses' }} />
@@ -173,6 +175,15 @@ const ICONS = {
 export default function MainTabs() {
   const { notifications, chat, refresh } = useBadges();
   const appState = useRef(AppState.currentState);
+  const setFeatures = useAuth((s) => s.setFeatures);
+  const chatEnabled = useAuth((s) => s.features?.chatEnabled);
+
+  // Sync the org-wide feature switches (e.g. whether chat exists) once on mount.
+  useEffect(() => {
+    api.get('/auth/me')
+      .then(({ data }) => setFeatures(data?.features))
+      .catch(() => {});
+  }, [setFeatures]);
 
   // Poll unread badges while foregrounded.
   useEffect(() => {
@@ -211,11 +222,14 @@ export default function MainTabs() {
     >
       <Tab.Screen name="Home" component={HomeStack} />
       <Tab.Screen name="Calendar" component={CalendarScreen} />
-      <Tab.Screen
-        name="Chat"
-        component={ChatStack}
-        options={{ tabBarBadge: chat || undefined, tabBarBadgeStyle: { backgroundColor: colors.danger } }}
-      />
+      {/* Chat is an org-wide switch a SuperAdmin controls. */}
+      {chatEnabled && (
+        <Tab.Screen
+          name="Chat"
+          component={ChatStack}
+          options={{ tabBarBadge: chat || undefined, tabBarBadgeStyle: { backgroundColor: colors.danger } }}
+        />
+      )}
       <Tab.Screen
         name="Alerts"
         component={NotificationsScreen}

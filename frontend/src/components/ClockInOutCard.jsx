@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
-import { minutesToHHMM } from '../utils/time';
+import { formatDuration, formatHours } from '../utils/time';
 
 function initials(name = '') {
   const p = name.trim().split(/\s+/);
@@ -14,13 +14,8 @@ function initials(name = '') {
 const fmtTime = (d) =>
   d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
 
-// Decimal hours (e.g. 9.35) -> "09:21 Hrs"
-const fmtHours = (h) => {
-  if (!h || h <= 0) return '-';
-  const hh = Math.floor(h);
-  const mm = Math.round((h - hh) * 60);
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')} Hrs`;
-};
+// Decimal hours (e.g. 9.35) -> "9h 21m"
+const fmtHours = formatHours;
 
 function Avatar({ name }) {
   return (
@@ -40,7 +35,7 @@ function Row({ r, expanded, onToggle }) {
             {r.name}
             {r.lateMinutes > 0 && (
               <span className="inline-flex items-center gap-1 bg-red-500 text-white text-[11px] font-medium rounded-md px-1.5 py-0.5 shrink-0">
-                ⏱ {minutesToHHMM(r.lateMinutes)}
+                ⏱ {formatDuration(r.lateMinutes)} late
               </span>
             )}
           </div>

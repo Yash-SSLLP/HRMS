@@ -16,7 +16,24 @@ const MONTHS = [
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
 
-const labelize = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+// Readable names for the payslip component keys; anything unlisted falls back
+// to a de-camelCased label.
+const LABELS = {
+  hra: 'HRA',
+  lta: 'LTA',
+  conveyanceAllowance: 'Conveyance (TA)',
+  otherEarnings: 'Other pay',
+  epf: 'PF / EPF',
+  esic: 'ESIC',
+  tds: 'TDS',
+  loanRecovery: 'Loan EMI',
+  salaryAdvance: 'Salary advance EMI',
+  lopDeduction: 'Loss of pay (unpaid days)',
+  latePenalty: 'Late coming',
+  emergencyPenalty: 'Emergency leave (double cut)',
+};
+const labelize = (k) =>
+  LABELS[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
 
 // Modal showing one payslip's earnings/deductions/net + PDF download.
 function PayslipDetail({ slip, onClose }) {
@@ -48,8 +65,11 @@ function PayslipDetail({ slip, onClose }) {
 
         <div className="grid grid-cols-3 gap-2 text-sm border-b pb-3 mb-3">
           <div><span className="text-gray-500">Working days:</span> {slip.workingDays}</div>
-          <div><span className="text-gray-500">Paid days:</span> {slip.paidDays}</div>
+          <div><span className="text-gray-500">Payable days:</span> {slip.paidDays}</div>
           <div><span className="text-gray-500">LOP:</span> {slip.lopDays}</div>
+          <div><span className="text-gray-500">Half days:</span> {slip.halfDays || 0}</div>
+          <div><span className="text-gray-500">Late days:</span> {slip.lateDays || 0}</div>
+          <div><span className="text-gray-500">Additional paid:</span> {slip.additionalPaidDays || 0}</div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">

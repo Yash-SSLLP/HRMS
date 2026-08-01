@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { formatDuration, formatHours } from '../utils/time';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -65,6 +66,7 @@ export default function EmployeeAttendance() {
   const [records, setRecords] = useState([]);
   const [today, setToday] = useState(null);
   const [policy, setPolicy] = useState(null); // { year, month, needsSetup, policy }
+  const [wfhAllowed, setWfhAllowed] = useState(false); // WFH granted to this employee?
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -269,6 +271,7 @@ export default function EmployeeAttendance() {
       ]);
       setRecords(attRes.data.records);
       setToday(attRes.data.today);
+      setWfhAllowed(!!attRes.data.wfhAllowed);
       setPolicy(polRes?.data || null);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
@@ -447,18 +450,27 @@ export default function EmployeeAttendance() {
               <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting an accurate location…</div>
             )}
 
-            <label className="flex items-center gap-2 mb-2 text-sm text-gray-700 select-none cursor-pointer">
-              <input type="checkbox" checked={wfh} onChange={(e) => setWfh(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
-              🏠 Working from home (WFH)
-            </label>
+            {/* Work-from-home is a privilege granted per employee by the Backend. */}
+            {wfhAllowed && (
+              <label className="flex items-center gap-2 mb-2 text-sm text-gray-700 select-none cursor-pointer">
+                <input type="checkbox" checked={wfh} onChange={(e) => setWfh(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                🏠 Working from home (WFH)
+              </label>
+            )}
 
             {capture === 'checkout' && (
-              <label className="flex items-center gap-2 mb-3 text-sm text-gray-700 select-none cursor-pointer">
-                <input type="checkbox" checked={halfDay} onChange={(e) => setHalfDay(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
-                Mark as Half Day
-              </label>
+              <>
+                <label className="flex items-center gap-2 mb-1 text-sm text-gray-700 select-none cursor-pointer">
+                  <input type="checkbox" checked={halfDay} onChange={(e) => setHalfDay(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+                  Mark as Half Day
+                </label>
+                <p className="text-[11px] text-gray-500 mb-3">
+                  A day under 6 hours is recorded as a half day automatically — raise a
+                  regularization if the times are wrong.
+                </p>
+              </>
             )}
 
             <div className="flex flex-wrap gap-2 justify-end">
@@ -512,14 +524,15 @@ export default function EmployeeAttendance() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Check-in</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Check-out</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Hours</th>
+              <th className="px-4 py-3 text-right font-medium text-gray-700">Late by</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Remarks</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : records.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No records</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No records</td></tr>
             ) : records.map((r) => (
               <tr key={r._id}>
                 <td className="px-4 py-3">{fmtDate(r.date)}</td>
@@ -534,7 +547,10 @@ export default function EmployeeAttendance() {
                   {fmtTime(r.checkOut)}
                   <PunchLocation loc={r.checkOutLocation} className="mt-0.5 flex" />
                 </td>
-                <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '-'}</td>
+                <td className="px-4 py-3 text-right font-mono">{formatHours(r.hoursWorked)}</td>
+                <td className={`px-4 py-3 text-right font-mono ${r.lateMinutes > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
+                  {r.lateMinutes > 0 ? formatDuration(r.lateMinutes) : '-'}
+                </td>
                 <td className="px-4 py-3 text-gray-500">{r.remarks || '-'}</td>
               </tr>
             ))}

@@ -10,7 +10,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
-import { minutesToHHMM } from '../utils/time';
+import { formatDuration, formatHours } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -253,8 +253,8 @@ export default function AdminAttendanceMonth() {
                     <div className="text-[10px] text-gray-400">{d.toLocaleString([], { month: 'short' })}</div>
                   </div>
                   <div className="flex-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                    <span className={r.lateMinutes > 0 ? 'text-red-600 font-medium' : 'text-gray-700'} title={r.lateMinutes > 0 ? `Late by ${minutesToHHMM(r.lateMinutes)}` : 'On time'}>
-                      → {fmtTime(r.checkIn)}{r.lateMinutes > 0 && <span className="text-[10px] ml-1">+{minutesToHHMM(r.lateMinutes)}</span>}
+                    <span className={r.lateMinutes > 0 ? 'text-red-600 font-medium' : 'text-gray-700'} title={r.lateMinutes > 0 ? `Late by ${formatDuration(r.lateMinutes)}` : 'On time'}>
+                      → {fmtTime(r.checkIn)}{r.lateMinutes > 0 && <span className="text-[10px] ml-1">+{formatDuration(r.lateMinutes)}</span>}
                     </span>
                     {r.noPunchOut ? (
                       <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">No punch-out</span>
@@ -263,7 +263,7 @@ export default function AdminAttendanceMonth() {
                     )}
                     {r.hoursWorked > 0 && (
                       <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${r.hoursWorked >= 8 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        ⏱ {String(Math.floor(r.hoursWorked)).padStart(2, '0')}:{String(Math.round((r.hoursWorked % 1) * 60)).padStart(2, '0')} hrs
+                        ⏱ {formatHours(r.hoursWorked)}
                       </span>
                     )}
                     {r.status !== 'Present' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{r.status}</span>}

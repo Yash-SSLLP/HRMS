@@ -199,11 +199,41 @@ export default function AdminOrgChart() {
             className="border rounded-lg px-2 py-1 max-w-[14rem]"
           >
             <option value="">Top level</option>
-            {everyone
-              .filter((p) => p.id !== selected.id)
-              .map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
+            {/* Same rule as the employee form: managers come from the person's
+                own department, plus executives who sit above all of them. The
+                server enforces this too. */}
+            {(() => {
+              const others = everyone.filter((p) => p.id !== selected.id);
+              const execs = others.filter((p) => ['CEO', 'MD', 'SuperAdmin'].includes(p.role));
+              const execIds = new Set(execs.map((p) => p.id));
+              const sameDept = others.filter(
+                (p) => !execIds.has(p.id) && selected.department && p.department === selected.department
+              );
+              const current = selected.managerId
+                && !execIds.has(selected.managerId)
+                && !sameDept.some((p) => p.id === selected.managerId)
+                ? others.find((p) => p.id === selected.managerId)
+                : null;
+              return (
+                <>
+                  {sameDept.length > 0 && (
+                    <optgroup label={selected.department}>
+                      {sameDept.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </optgroup>
+                  )}
+                  {execs.length > 0 && (
+                    <optgroup label="Executive">
+                      {execs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </optgroup>
+                  )}
+                  {current && (
+                    <optgroup label="Currently assigned (outside this department)">
+                      <option value={current.id}>{current.name}</option>
+                    </optgroup>
+                  )}
+                </>
+              );
+            })()}
           </select>
           <span className="text-gray-700">· role:</span>
           <select

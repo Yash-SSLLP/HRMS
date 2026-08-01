@@ -12,6 +12,7 @@ import { downloadFile } from '../api/download';
 import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import { formatHours } from '../utils/time';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -396,7 +397,7 @@ export default function AdminAttendance() {
                       thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkOutWfh} locationName={r.locationName} />
                   </div>
                 </td>
-                <td className="px-4 py-3 text-right font-mono">{r.hoursWorked || '-'}</td>
+                <td className="px-4 py-3 text-right font-mono">{formatHours(r.hoursWorked)}</td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline">Edit</button>
                   <button onClick={() => onDelete(r)} className="text-red-600 hover:underline">Delete</button>

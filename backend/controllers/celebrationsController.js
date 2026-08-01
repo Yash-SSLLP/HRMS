@@ -12,6 +12,7 @@ const Notification = require('../models/Notification');
 const Connection = require('../models/Connection');
 const Message = require('../models/Message');
 const { enqueueMail } = require('../services/email');
+const { isChatEnabled } = require('../middleware/chatEnabled');
 const { hiddenUserIds } = require('../utils/visibility');
 const { IST_TZ, istParts, istMonthDay, istMonthRange } = require('../utils/istDate');
 
@@ -381,19 +382,22 @@ const sendWish = asyncHandler(async (req, res) => {
 
   // Also drop the wish into the recipient's chat, from the sender. Ensure an
   // accepted connection exists between the two so the message has a thread.
-  // Best-effort — never let a chat hiccup block the wish/email.
-  try {
-    const pairKey = Connection.buildPairKey(req.user._id, profile.user._id);
-    let conn = await Connection.findOne({ pairKey });
-    if (!conn) {
-      conn = await Connection.create({ requester: req.user._id, recipient: profile.user._id, status: 'accepted' });
-    } else if (conn.status !== 'accepted') {
-      conn.status = 'accepted';
-      await conn.save();
+  // Best-effort — never let a chat hiccup block the wish/email. Skipped entirely
+  // while the chat module is switched off (the notification and email still go).
+  if (await isChatEnabled()) {
+    try {
+      const pairKey = Connection.buildPairKey(req.user._id, profile.user._id);
+      let conn = await Connection.findOne({ pairKey });
+      if (!conn) {
+        conn = await Connection.create({ requester: req.user._id, recipient: profile.user._id, status: 'accepted' });
+      } else if (conn.status !== 'accepted') {
+        conn.status = 'accepted';
+        await conn.save();
+      }
+      await Message.create({ connection: conn._id, sender: req.user._id, body: `${emoji} ${wishLine}` });
+    } catch (err) {
+      console.error('Wish chat delivery failed:', err.message);
     }
-    await Message.create({ connection: conn._id, sender: req.user._id, body: `${emoji} ${wishLine}` });
-  } catch (err) {
-    console.error('Wish chat delivery failed:', err.message);
   }
 
   await enqueueMail({

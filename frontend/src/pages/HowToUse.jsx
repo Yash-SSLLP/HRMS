@@ -257,7 +257,7 @@ export default function HowToUse() {
 
   return (
     <div>
-      <PageHeader title="How to Use the App" subtitle="A complete walkthrough of the HRMS - every screen and how to use it." />
+      <PageHeader title="Help" subtitle="A complete walkthrough of the HRMS - every screen and how to use it." />
 
       {/* Controls: guide switch (admin) + edit actions */}
       <div className="flex flex-wrap items-center gap-2 mb-5">

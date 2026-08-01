@@ -17,6 +17,8 @@ const Setting = require('../models/Setting');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
+const { formatDuration } = require('../utils/duration');
+const { WORKDAY_START_HOUR, lateMinutes, statusFromHours } = require('../utils/workday');
 // All attendance "day" logic is anchored to the IST calendar day so it is
 // independent of the server's timezone (the deployed backend runs in UTC).
 // This keeps a punch made from any client (mobile or web) on the same IST day
@@ -148,7 +150,9 @@ const checkIn = asyncHandler(async (req, res) => {
   record.checkInPhotoCloud = photo.cloud;
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkInLocation = loc;
-  record.checkInWfh = req.body.wfh === 'true';
+  // A WFH punch is exempt from the geofence check, so the claim is only honoured
+  // for employees a SuperAdmin has granted it to — never on the client's word.
+  record.checkInWfh = req.body.wfh === 'true' && profile.wfhAllowed === true;
   // Geofence rule: capture (but never block) a punch outside the employee's
   // assigned work location (or the global office if unassigned).
   const settings = await Setting.getSettings();
@@ -191,7 +195,8 @@ const checkOut = asyncHandler(async (req, res) => {
   record.checkOutPhotoCloud = photo.cloud;
   const loc = parsePunchLocation(req.body);
   if (loc) record.checkOutLocation = loc;
-  record.checkOutWfh = req.body.wfh === 'true';
+  // Same grant check as check-in — see the note there.
+  record.checkOutWfh = req.body.wfh === 'true' && profile.wfhAllowed === true;
   // Geofence rule: capture (but never block) a punch outside the employee's
   // assigned work location (or the global office if unassigned).
   const settings = await Setting.getSettings();
@@ -201,9 +206,12 @@ const checkOut = asyncHandler(async (req, res) => {
   if (outside) {
     record.remarks = appendRemark(record.remarks, `Check-out outside ${geo.label} (${distanceM} m).`);
   }
-  // Allow the employee to (re)mark this day as a half day at punch-out.
+  // An employee can always declare a half day at punch-out. Otherwise the hours
+  // decide: under HALF_DAY_MIN_HOURS the day is a half day until regularized.
+  // `halfDay=false` deliberately does NOT force 'Present' — the web app sends it
+  // on every punch-out, so honouring it would override the rule every time.
   if (req.body.halfDay === 'true') record.status = 'HalfDay';
-  else if (req.body.halfDay === 'false') record.status = 'Present';
+  else record.status = statusFromHours(record) || record.status;
   await record.save();
   res.json({ record });
 });
@@ -355,10 +363,7 @@ const myHeatmap = asyncHandler(async (req, res) => {
         // Flag a late arrival on an otherwise full day (checked in after the
         // WORKDAY_START_HOUR grace cut-off). Kept as a flag on category 'full'
         // so clients unaware of "late" still render it as a normal full day.
-        if (category === 'full' && rec.checkIn) {
-          const lateCutoff = new Date(new Date(rec.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
-          if (new Date(rec.checkIn) > lateCutoff) day.late = true;
-        }
+        if (category === 'full' && lateMinutes(rec) > 0) day.late = true;
       }
       if (category === 'leave' && leave) {
         day.leaveType = leave.type;
@@ -422,10 +427,7 @@ const computeHeatmapWindow = async ({ empIds, span }) => {
     const key = `${String(r.employee)}|${ymdLocal(r.date)}`;
     if (r.status === 'Present') {
       cls.set(key, 'full');
-      if (r.checkIn) {
-        const cutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
-        if (new Date(r.checkIn) > cutoff) lateSet.add(key);
-      }
+      if (lateMinutes(r) > 0) lateSet.add(key);
     } else if (r.status === 'HalfDay') cls.set(key, 'half');
     else if (r.status === 'OnLeave') cls.set(key, 'leave');
     else if (r.status === 'Absent') cls.set(key, 'absent');
@@ -652,7 +654,24 @@ const listMine = asyncHandler(async (req, res) => {
   const todayKey = startOfDay(new Date()).getTime();
   const today = records.find((r) => startOfDay(r.date).getTime() === todayKey) || null;
 
-  res.json({ year, month, today, count: records.length, records });
+  // Employees see their own lateness — the penalty comes out of their pay, so
+  // the figure that drives it should not be admin-only.
+  const out = records.map((r) => {
+    const o = r.toJSON();
+    o.lateMinutes = lateMinutes(r);
+    return o;
+  });
+
+  res.json({
+    year,
+    month,
+    today,
+    count: out.length,
+    records: out,
+    // Whether this employee may mark a punch as work-from-home (granted by a
+    // SuperAdmin) — drives whether the WFH control is shown at all.
+    wfhAllowed: !!profile.wfhAllowed,
+  });
 });
 
 // ===== HR/Admin =====
@@ -752,10 +771,7 @@ const monthSummary = asyncHandler(async (req, res) => {
 
   const days = records.map((r) => {
     const o = r.toJSON();
-    // Late = checked in after the standard start (r.date is IST midnight).
-    const lateCutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
-    const lateMs = r.checkIn ? new Date(r.checkIn) - lateCutoff : 0;
-    o.lateMinutes = lateMs > 0 ? Math.round(lateMs / 60000) : 0;
+    o.lateMinutes = lateMinutes(r);
     o.checkInDistanceM = haversineMeters(geo.center, o.checkInLocation);
     o.checkOutDistanceM = haversineMeters(geo.center, o.checkOutLocation);
     o.geofenceRadiusM = geo.radiusM;
@@ -924,7 +940,10 @@ const ATT_EXPORT_COLUMNS = [
   { header: 'Check In', width: 12 },
   { header: 'Check Out', width: 12 },
   { header: 'Hours Worked', width: 13 },
+  // Two columns on purpose: the number stays sortable/summable in Excel, the
+  // text one is what a person reads without decoding minutes in their head.
   { header: 'Late (min)', width: 10 },
+  { header: 'Late By', width: 11 },
   { header: 'No Punch Out', width: 13 },
   { header: 'WFH', width: 7 },
   { header: 'Distant Punch', width: 13 },
@@ -959,10 +978,7 @@ function attendanceExportRows(records, settings) {
         ((inDist != null && inDist > geo.radiusM && !r.checkInWfh) ||
           (outDist != null && outDist > geo.radiusM && !r.checkOutWfh))
     );
-    // Late = checked in after the standard start (r.date is IST midnight).
-    const lateCutoff = new Date(new Date(r.date).getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
-    const lateMs = r.checkIn ? new Date(r.checkIn) - lateCutoff : 0;
-    const lateMin = lateMs > 0 ? Math.round(lateMs / 60000) : 0;
+    const lateMin = lateMinutes(r);
     const noPunchOut = r.noPunchOut || Boolean(r.checkIn && !r.checkOut && startOfDay(r.date) < todayStart);
     const weekday = new Date(r.date).toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'Asia/Kolkata' });
     return [
@@ -974,8 +990,9 @@ function attendanceExportRows(records, settings) {
       r.status || '',
       fmtT(r.checkIn),
       fmtT(r.checkOut),
-      r.hoursWorked || 0, // real number cell
-      lateMin,            // real number cell
+      r.hoursWorked || 0,           // real number cell
+      lateMin,                      // real number cell
+      lateMin ? formatDuration(lateMin) : '',
       noPunchOut ? 'Yes' : '',
       r.checkInWfh || r.checkOutWfh ? 'Yes' : '',
       distant ? 'Yes' : '',
@@ -1173,7 +1190,6 @@ const dailyStats = asyncHandler(async (req, res) => {
 // Compact "Clock-In/Out" board for the admin dashboard: everyone who has
 // punched in today, split into on-time vs late, with their clock in/out and
 // production hours. "Late" = checked in after the standard start time.
-const WORKDAY_START_HOUR = 10; // 10:00 AM grace cut-off for lateness
 const todayBoard = asyncHandler(async (req, res) => {
   const today = startOfDay(new Date());
   const tomorrow = new Date(today);
@@ -1190,15 +1206,10 @@ const todayBoard = asyncHandler(async (req, res) => {
     })
     .lean();
 
-  // `today` is IST midnight; add the grace hours to get 10:00 AM IST exactly,
-  // independent of the server's timezone.
-  const startThreshold = new Date(today.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
-
   let rows = records
     .filter((r) => r.employee && r.employee.user)
     .map((r) => {
       const p = r.employee;
-      const lateMs = new Date(r.checkIn) - startThreshold;
       return {
         id: String(p._id),
         recordId: String(r._id),
@@ -1208,7 +1219,7 @@ const todayBoard = asyncHandler(async (req, res) => {
         checkIn: r.checkIn,
         checkOut: r.checkOut || null,
         hoursWorked: r.hoursWorked || 0,
-        lateMinutes: lateMs > 0 ? Math.round(lateMs / 60000) : 0,
+        lateMinutes: lateMinutes(r),
       };
     });
 
@@ -1242,7 +1253,6 @@ const presenceBoard = asyncHandler(async (req, res) => {
   const today = startOfDay(new Date());
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
-  const startThreshold = new Date(today.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
 
   const { LeaveRequest } = require('../models/Leave');
 
@@ -1281,7 +1291,6 @@ const presenceBoard = asyncHandler(async (req, res) => {
     .map((r) => {
       const p = byId.get(String(r.employee));
       presentIds.add(String(r.employee));
-      const lateMs = new Date(r.checkIn) - startThreshold;
       return {
         ...personCore(p),
         recordId: String(r._id),
@@ -1290,7 +1299,7 @@ const presenceBoard = asyncHandler(async (req, res) => {
         checkOut: r.checkOut || null,
         hoursWorked: r.hoursWorked || 0,
         checkInWfh: !!r.checkInWfh,
-        lateMinutes: lateMs > 0 ? Math.round(lateMs / 60000) : 0,
+        lateMinutes: lateMinutes(r),
         hasCheckInPhoto: !!(r.checkInPhoto || r.checkInPhotoCloud?.publicId),
         hasCheckOutPhoto: !!(r.checkOutPhoto || r.checkOutPhotoCloud?.publicId),
       };
@@ -1402,7 +1411,11 @@ const updateRecord = asyncHandler(async (req, res) => {
   // Don't allow changing employee or date here
   delete req.body.employee;
   delete req.body.date;
+  const statusChosen = req.body.status !== undefined;
   Object.assign(record, req.body);
+  // HR's explicit status choice is final. When they only corrected the punch
+  // times, re-derive from the hours so the half-day rule stays honest.
+  if (!statusChosen) record.status = statusFromHours(record) || record.status;
   await record.save();
   res.json({ record });
 });

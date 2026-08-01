@@ -18,10 +18,10 @@ const emp = (role) => canEmployeeSelf(role);
 const always = () => true;
 
 // Searchable destinations. `tab: true` jumps to a bottom tab; the rest push in
-// the Home stack. `show(role)` gates each row by role (mirrors the Menu + Admin
-// Console gating).
+// the Home stack. `show(role, features)` gates each row by role (mirrors the
+// Menu + Admin Console gating) and, where relevant, by an org feature switch.
 const PAGES = [
-  { label: 'How to Use', screen: 'HowToUse', group: 'Help', icon: 'help-circle', show: always },
+  { label: 'Help', screen: 'HowToUse', group: 'Help', icon: 'help-circle', show: always },
   // Employee self-service
   { label: 'Leave', screen: 'Leave', group: 'Time & Attendance', icon: 'airplane', show: emp },
   { label: 'Attendance', screen: 'Attendance', group: 'Time & Attendance', icon: 'finger-print', show: emp },
@@ -47,7 +47,8 @@ const PAGES = [
   { label: 'Assets', screen: 'Assets', group: 'Workplace', icon: 'cube', show: emp },
   // Tabs (available to everyone)
   { label: 'Calendar', screen: 'Calendar', group: 'Workplace', icon: 'calendar', tab: true, show: always },
-  { label: 'Messages', screen: 'Chat', group: 'Workplace', icon: 'chatbubbles', tab: true, show: always },
+  // Chat is an org-wide switch; `show` also receives the feature flags.
+  { label: 'Messages', screen: 'Chat', group: 'Workplace', icon: 'chatbubbles', tab: true, show: (role, f) => !!f?.chatEnabled },
   { label: 'Notifications', screen: 'Alerts', group: 'Workplace', icon: 'notifications', tab: true, show: always },
   { label: 'Profile', screen: 'Profile', group: 'Account', icon: 'person', tab: true, show: always },
   // Admin & manager
@@ -70,6 +71,7 @@ const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 export default function SearchScreen() {
   const nav = useNavigation();
   const role = useAuth((s) => s.user?.role);
+  const features = useAuth((s) => s.features);
   const canSearchEmployees = canViewAdmin(role); // employee search: HR/Admin (+ execs) only
 
   const [q, setQ] = useState('');
@@ -81,7 +83,7 @@ export default function SearchScreen() {
   useEffect(() => { const t = setTimeout(() => inputRef.current?.focus(), 250); return () => clearTimeout(t); }, []);
 
   // Page results are filtered client-side from the role-permitted subset.
-  const myPages = useMemo(() => PAGES.filter((p) => p.show(role)), [role]);
+  const myPages = useMemo(() => PAGES.filter((p) => p.show(role, features)), [role, features]);
   const term = q.trim().toLowerCase();
   const pageMatches = term ? myPages.filter((p) => p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)) : [];
 

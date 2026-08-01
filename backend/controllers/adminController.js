@@ -8,6 +8,7 @@
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
+const EmployeeProfile = require('../models/EmployeeProfile');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { PERMISSIONS, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
@@ -45,7 +46,22 @@ const listUsers = asyncHandler(async (req, res) => {
     }
   }
   const users = await User.find(filter).sort({ createdAt: -1 });
-  res.json({ count: users.length, users });
+
+  // Attach the work-from-home grant, which lives on the employee profile. One
+  // extra query for the whole page rather than a lookup per row; users without a
+  // profile (CEO/MD) simply come back false.
+  const wfhByUser = new Map(
+    (await EmployeeProfile.find({ user: { $in: users.map((u) => u._id) } })
+      .select('user wfhAllowed').lean())
+      .map((p) => [String(p.user), !!p.wfhAllowed])
+  );
+  const out = users.map((u) => ({
+    ...u.toJSON(),
+    wfhAllowed: wfhByUser.get(String(u._id)) || false,
+    hasProfile: wfhByUser.has(String(u._id)),
+  }));
+
+  res.json({ count: out.length, users: out });
 });
 
 /**
@@ -316,24 +332,53 @@ const setCashbookAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke work-from-home for one employee.
+ * @route PATCH /api/admin/users/:id/wfh-access  (SuperAdmin)
+ * @param {string} req.params.id - user id (resolved to their employee profile)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, wfhAllowed}}
+ */
+// PATCH /api/admin/users/:id/wfh-access  { enabled }  (SuperAdmin)
+// A WFH punch is exempt from the office geofence, so this is a privilege granted
+// per person rather than a checkbox every employee gets. Keyed on the user id to
+// match the cashbook grant above (the Permissions page works in users), then
+// resolved to the EmployeeProfile that actually holds the flag.
+const setWfhAccess = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ user: req.params.id });
+  if (!profile) {
+    res.status(404);
+    throw new Error('No employee profile linked to this account');
+  }
+  profile.wfhAllowed = !!req.body.enabled;
+  await profile.save();
+  res.json({ id: req.params.id, wfhAllowed: profile.wfhAllowed });
+});
+
+// The org-wide preference payload, in one place so GET and PUT can't drift.
+const orgSettingsPayload = (s) => ({
+  includeExecutivesInLists: !!s.includeExecutivesInLists,
+  chatEnabled: !!s.chatEnabled,
+});
+
+/**
  * Read org-wide settings a SuperAdmin controls.
  * @route GET /api/admin/org-settings  (SuperAdmin)
- * @returns {{includeExecutivesInLists: boolean}}
+ * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean}}
  */
 // GET /api/admin/org-settings  (SuperAdmin)
-// Org-wide preferences a SuperAdmin controls. Currently: whether CEO/MD show up
-// in employee-selection pickers.
+// Org-wide preferences a SuperAdmin controls: whether CEO/MD show up in
+// employee-selection pickers, and whether the chat module is switched on.
 const getOrgSettings = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');
-  const s = await Setting.getSettings();
-  res.json({ includeExecutivesInLists: !!s.includeExecutivesInLists });
+  res.json(orgSettingsPayload(await Setting.getSettings()));
 });
 
 /**
  * Update org-wide settings.
  * @route PUT /api/admin/org-settings  (SuperAdmin)
  * @param {boolean} [req.body.includeExecutivesInLists]
- * @returns {{includeExecutivesInLists: boolean}}
+ * @param {boolean} [req.body.chatEnabled]
+ * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean}}
  */
 // PUT /api/admin/org-settings  (SuperAdmin)
 const updateOrgSettings = asyncHandler(async (req, res) => {
@@ -342,8 +387,11 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   if (req.body.includeExecutivesInLists !== undefined) {
     s.includeExecutivesInLists = !!req.body.includeExecutivesInLists;
   }
+  if (req.body.chatEnabled !== undefined) {
+    s.chatEnabled = !!req.body.chatEnabled;
+  }
   await s.save();
-  res.json({ includeExecutivesInLists: !!s.includeExecutivesInLists });
+  res.json(orgSettingsPayload(s));
 });
 
 module.exports = {
@@ -357,6 +405,7 @@ module.exports = {
   getPermissionCatalog,
   updateUserPermissions,
   setCashbookAccess,
+  setWfhAccess,
   getOrgSettings,
   updateOrgSettings,
 };
