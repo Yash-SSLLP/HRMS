@@ -8,12 +8,15 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import BrandLockup from '../components/BrandLockup';
+import FileDropField from '../components/FileDropField';
+import DocSubmitPanel from '../components/DocSubmitPanel';
 
 // Centered card layout wrapper (company logo header) shared by all page states.
 function Shell({ children }) {
   return (
-    <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 px-4 py-10">
-      <div className="w-full max-w-xl bg-white shadow-lg rounded-2xl p-6 sm:p-8 border border-gray-100">
+    <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 px-4 py-10">
+      {/* Narrow (one column) on a phone; wide enough for a real tile grid up. */}
+      <div className="docform-card w-full max-w-xl sm:max-w-3xl p-6 sm:p-8">
         <div className="flex flex-col items-center text-center mb-5">
           <BrandLockup variant="stacked" />
         </div>
@@ -57,8 +60,6 @@ export default function EmployeeDocSubmit() {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [token]);
-
-  const setFile = (type) => (e) => setFiles((f) => ({ ...f, [type]: Array.from(e.target.files || []) }));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -104,63 +105,103 @@ export default function EmployeeDocSubmit() {
     );
   }
 
-  const fileInput = 'block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-900 file:text-white hover:file:bg-gray-700';
+  // Anything HR already holds for a category is shown on its row, so the person
+  // can see they have nothing left to do there (or that HR rejected a file and
+  // wants it again) instead of re-uploading blind.
+  const statusFor = (category) => (info.files || []).find((f) => f.category === category)?.status;
+  const required = (info.docTypes || []).filter((t) => t !== 'Other');
+  const settled = required.filter((t) => (files[t] || []).length || statusFor(t)).length;
+  const pct = required.length ? Math.round((settled / required.length) * 100) : 0;
 
   return (
     <Shell>
       <div className="text-center mb-5">
-        <h1 className="text-2xl font-bold text-gray-900">Submit your documents</h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <h1 className="docform-title text-2xl font-bold">Submit your documents</h1>
+        <p className="docform-sub text-sm font-medium mt-1">
           {info.employee.name}{info.employee.employeeCode ? ` · ${info.employee.employeeCode}` : ''}
         </p>
-        <p className="text-sm text-gray-600 mt-3">Please upload the documents below (PDF, Word, JPG or PNG, up to 10 MB each).</p>
+        <p className="text-sm text-gray-600 mt-3">
+          Attach each document below. You can preview every file before sending it.
+        </p>
       </div>
 
-      {/* Already-submitted documents + status */}
-      {(info.files || []).length > 0 && (
-        <div className="mb-4 border border-gray-100 rounded-lg p-3">
-          <div className="text-xs font-semibold text-gray-500 mb-2">Already submitted</div>
-          <ul className="space-y-1.5">
-            {info.files.map((f, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 text-sm">
-                <span className="truncate"><span className="text-gray-500">{humanize(f.category)}:</span> {f.fileName}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-lg shrink-0 ${STATUS_STYLES[f.status] || 'bg-gray-100 text-gray-700'}`}>{f.status}</span>
-              </li>
-            ))}
-          </ul>
+      {/* Wide screens get the bar above the grid; phones get the panel inside
+          the form instead (checklist + submit before the first slot). */}
+      {required.length > 0 && (
+        <div className="mb-5 hidden sm:block">
+          <div className="flex items-center justify-between text-xs mb-1.5">
+            <span className="docform-sub font-semibold">{settled} of {required.length} covered</span>
+            <span className="text-gray-500">{pct}%</span>
+          </div>
+          <div className="docform-progress h-1.5 rounded-full overflow-hidden">
+            <span style={{ width: `${pct}%` }} />
+          </div>
         </div>
       )}
 
-      <form onSubmit={submit} className="space-y-3">
-        {(info.docTypes || []).filter((t) => t !== 'Other').map((type) => {
-          const multi = MULTI_CATEGORIES.has(type);
-          const count = (files[type] || []).length;
-          return (
-            <div key={type}>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {humanize(type)}
-                {multi && <span className="text-gray-400 font-normal"> (you can add more than one)</span>}
-              </label>
-              <input type="file" multiple={multi} accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={setFile(type)} className={fileInput} />
-              {multi && count > 1 && <p className="mt-1 text-xs text-gray-500">{count} files selected</p>}
-            </div>
-          );
-        })}
+      <form onSubmit={submit}>
+        <DocSubmitPanel
+          name={info.employee.name}
+          subtitle={info.employee.employeeCode}
+          items={required.map((t) => ({ label: humanize(t), done: (files[t] || []).length > 0 || !!statusFor(t) }))}
+          submitting={submitting}
+          note="Sent to HR for verification."
+        />
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Other documents <span className="text-gray-400 font-normal">(optional, multiple)</span></label>
-          <input
-            type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-            onChange={(e) => setOthers(Array.from(e.target.files || []))}
-            className={fileInput}
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 items-start">
+          {required.map((type) => {
+            const multi = MULTI_CATEGORIES.has(type);
+            const status = statusFor(type);
+            return (
+              <FileDropField
+                key={type}
+                label={humanize(type)}
+                hint={multi ? 'add more than one' : undefined}
+                multiple={multi}
+                files={files[type] || []}
+                onChange={(list) => setFiles((f) => ({ ...f, [type]: list }))}
+                badge={status ? (
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATUS_STYLES[status] || 'bg-gray-100 text-gray-700'}`}>{status}</span>
+                ) : null}
+              />
+            );
+          })}
+
+          <div className="sm:col-span-2 lg:col-span-3">
+            <FileDropField label="Other documents" hint="optional, multiple" multiple files={others} onChange={setOthers} />
+          </div>
         </div>
+
+        <div className="mt-2.5 space-y-2.5">
+        {(info.files || []).length > 0 && (
+          <details className="docfield rounded-xl">
+            <summary className="text-sm font-semibold docfield-label cursor-pointer">
+              Already submitted ({info.files.length})
+            </summary>
+            <ul className="mt-2 space-y-1.5">
+              {info.files.map((f, i) => (
+                <li key={i} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="truncate docfield-filename">
+                    <span className="docfield-meta">{humanize(f.category)}:</span> {f.fileName}
+                  </span>
+                  <span className={`text-xs px-2 py-0.5 rounded-lg shrink-0 ${STATUS_STYLES[f.status] || 'bg-gray-100 text-gray-700'}`}>{f.status}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
 
         {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
-        <button type="submit" disabled={submitting} className="w-full bg-gray-900 text-white py-2.5 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60">
-          {submitting ? 'Submitting…' : 'Submit documents'}
-        </button>
+        <div className="hidden sm:block">
+          <button type="submit" disabled={submitting} className="docform-submit w-full py-2.5 font-semibold">
+            {submitting ? 'Submitting…' : 'Submit documents'}
+          </button>
+          <p className="text-[11px] text-center text-gray-500 mt-1.5">
+            Sent straight to our HR team for verification.
+          </p>
+        </div>
+        </div>
       </form>
     </Shell>
   );

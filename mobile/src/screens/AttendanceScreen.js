@@ -1,6 +1,6 @@
 /**
  * AttendanceScreen — self-service check-in/out with a selfie + GPS punch, a live
- * working-time clock, WFH toggle, and this month's attendance history.
+ * working-time clock, WFH and half-day toggles, and this month's attendance history.
  * Route: "Attendance" tab/menu entry. Employee-facing (all roles).
  * Requires camera + foreground-location permissions. Backend: GET /attendance/me,
  * POST /attendance/me/checkin, POST /attendance/me/checkout (multipart photo+coords).
@@ -43,6 +43,7 @@ export default function AttendanceScreen() {
   const [busy, setBusy] = useState(false);
   const [wfh, setWfh] = useState(false);
   const [wfhAllowed, setWfhAllowed] = useState(false); // granted per employee by the Backend
+  const [halfDay, setHalfDay] = useState(false); // declare today a half day at either punch
   const [, setTick] = useState(0); // re-render each second to advance the live clock
 
   // Tick once per second while the user is checked in but not yet checked out,
@@ -59,6 +60,9 @@ export default function AttendanceScreen() {
     setToday(data.today || null);
     setRecords(data.records || []);
     setWfhAllowed(!!data.wfhAllowed);
+    // Reflect a half day already declared at check-in, so the toggle doesn't
+    // read as "off" when punching out of a day the employee already marked.
+    setHalfDay(data.today?.status === 'HalfDay');
     setLoading(false);
   }, []);
 
@@ -129,6 +133,9 @@ export default function AttendanceScreen() {
       const form = new FormData();
       form.append('photo', { uri: asset.uri, name: 'punch.jpg', type: 'image/jpeg' });
       form.append('wfh', wfh ? 'true' : 'false');
+      // Declared at check-in it stands for the whole day; declared at check-out
+      // it overrides the hours rule. Either way the server decides, not us.
+      form.append('halfDay', halfDay ? 'true' : 'false');
       if (coords) {
         form.append('latitude', String(coords.latitude));
         form.append('longitude', String(coords.longitude));
@@ -202,6 +209,25 @@ export default function AttendanceScreen() {
               </View>
               <Switch value={wfh} onValueChange={setWfh} />
             </View>
+          )}
+
+          {/* Half day, declarable at either punch. At check-in it is a plan for
+              the day; at check-out it corrects one. */}
+          {!checkedOut && (
+            <View style={styles.wfhRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="contrast" size={16} color={colors.textMuted} />
+                <Text style={font.body}>Half day</Text>
+              </View>
+              <Switch value={halfDay} onValueChange={setHalfDay} />
+            </View>
+          )}
+          {!checkedOut && halfDay && (
+            <Text style={[font.small, { marginBottom: spacing(3) }]}>
+              {checkedIn
+                ? 'Today will be recorded as a half day.'
+                : 'Today will be recorded as a half day, however long you stay.'}
+            </Text>
           )}
 
           {!checkedIn ? (

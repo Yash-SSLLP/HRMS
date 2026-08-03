@@ -17,7 +17,7 @@ const blank = {
 // Centered card layout wrapper (company logo header) shared by all page states.
 function Shell({ children }) {
   return (
-    <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 px-4 py-10">
+    <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 px-4 py-10">
       <div className="w-full max-w-xl bg-white shadow-lg rounded-2xl p-6 sm:p-8 border border-gray-100">
         <div className="flex flex-col items-center text-center mb-5">
           <BrandLockup variant="stacked" />

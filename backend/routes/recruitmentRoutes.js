@@ -17,7 +17,7 @@ const {
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,
   requestDocuments, getDocumentRequest, submitDocuments,
-  downloadCandidateDocument, confirmDocuments,
+  downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
 } = require('../controllers/recruitmentController');
 const { protect, requirePermission, requireAnyPermission } = require('../middleware/authMiddleware');
 
@@ -114,8 +114,12 @@ router.post('/candidates/:id/round/meet/email', canIntv, sendRoundMeetEmail);
 router.post('/candidates/:id/documents/request', canCand, requestDocuments);
 // POST /candidates/:id/documents/confirm — confirm submitted documents; protected, requires 'recruitment.candidates'.
 router.post('/candidates/:id/documents/confirm', canCand, confirmDocuments);
+// POST /candidates/:id/documents/email — preview/send the submission link by email; protected, requires 'recruitment.candidates'.
+router.post('/candidates/:id/documents/email', canCand, emailDocumentRequest);
 // GET /candidates/:id/documents/:fileId — download a candidate document; protected, requires any recruitment perm.
 router.get('/candidates/:id/documents/:fileId', canView, downloadCandidateDocument);
+// PATCH /candidates/:id/documents/:fileId/status — verify/reject ONE document; protected, requires 'recruitment.candidates'.
+router.patch('/candidates/:id/documents/:fileId/status', canCand, reviewCandidateDocument);
 
 // Offer → Onboarding → Appointment lifecycle
 // POST /candidates/:id/offer — generate offer letter; protected, requires 'recruitment.candidates'.

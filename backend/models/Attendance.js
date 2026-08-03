@@ -54,6 +54,11 @@ const attendanceSchema = new mongoose.Schema(
     // Whether the punch was made while working from home
     checkInWfh: { type: Boolean, default: false },
     checkOutWfh: { type: Boolean, default: false },
+    // The employee declared this a half day at punch time (at check-in or at
+    // check-out). Kept separate from `status` so the hours rule cannot quietly
+    // undo the declaration: someone who says up front they are working half a
+    // day, then happens to punch out 6+ hours later, still gets a half day.
+    halfDayDeclared: { type: Boolean, default: false },
     // Captured at punch time: the punch was made beyond the office geofence and
     // was not a WFH punch. Persisted so the violation is recorded even if the
     // office coordinates / threshold are changed later. WFH punches are exempt.

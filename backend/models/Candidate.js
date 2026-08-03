@@ -50,6 +50,9 @@ function defaultRounds() {
   return Array.from({ length: NUM_ROUNDS }, (_, i) => ({ label: `Round ${i + 1}`, status: 'Pending' }));
 }
 
+// Verdict on a single submitted document (see candidateDocSchema.status).
+const CANDIDATE_DOC_STATUS = ['Pending', 'Verified', 'Rejected'];
+
 // One uploaded document in a candidate's pre-offer submission.
 const candidateDocSchema = new mongoose.Schema(
   {
@@ -65,6 +68,15 @@ const candidateDocSchema = new mongoose.Schema(
     },
     sizeBytes: { type: Number },
     uploadedAt: { type: Date, default: Date.now },
+    // Per-document review. A submission is rarely all-good or all-bad — the PAN
+    // scan is fine and the experience letter is a blurry photo — so each file
+    // carries its own verdict, and only the rejected ones need replacing.
+    // 'Pending' until HR looks at it.
+    status: { type: String, enum: CANDIDATE_DOC_STATUS, default: 'Pending' },
+    reviewNote: { type: String, trim: true },   // why it was rejected
+    reviewedAt: { type: Date },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedByName: { type: String, trim: true },
   },
   { _id: true }
 );
@@ -113,6 +125,11 @@ const candidateSchema = new mongoose.Schema(
       confirmedAt: { type: Date },
       confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       confirmedByName: { type: String, trim: true },
+      // When the submission link was last emailed to the candidate.
+      requestEmailedAt: { type: Date },
+      // When the candidate was last told which documents to send again, so HR
+      // can see the ask went out without digging through the mail outbox.
+      rejectionEmailedAt: { type: Date },
       files: { type: [candidateDocSchema], default: [] },
     },
 
@@ -218,5 +235,6 @@ candidateSchema.plugin(require('./plugins/auditStatus'), { fields: ['stage'], la
 
 module.exports = mongoose.model('Candidate', candidateSchema);
 module.exports.CANDIDATE_STAGES = CANDIDATE_STAGES;
+module.exports.CANDIDATE_DOC_STATUS = CANDIDATE_DOC_STATUS;
 module.exports.ROUND_STATUS = ROUND_STATUS;
 module.exports.defaultRounds = defaultRounds;

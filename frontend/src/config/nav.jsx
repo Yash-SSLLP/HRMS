@@ -37,9 +37,9 @@ export const adminNav = [
   { group: 'Recruitment & Onboarding', items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus, anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'] },
     { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: FiClipboard, perm: 'recruitment.candidates' },
-    { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: FiCheckSquare, perm: 'onboarding.manage' },
     { to: '/admin/new-joinees', label: 'New Joinees', icon: FiUserCheck, perm: 'recruitment.candidates' },
     { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage' },
+    { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: FiCheckSquare, perm: 'onboarding.manage' },
   ] },
   { group: 'Attendance & Time', items: [
     { to: '/admin/presence', label: "Who's In / On Leave", icon: FiUserCheck, perm: 'attendance.manage' },

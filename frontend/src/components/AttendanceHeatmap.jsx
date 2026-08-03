@@ -144,7 +144,9 @@ export default function AttendanceHeatmap({ days = 365, org = false, scope = 'or
 
   return (
     <div>
-      <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-1 mb-3" style={{ fontSize: 11, color: '#4b5563' }}>
+      {/* Ink as a utility, not a literal hex — an inline colour is invisible to
+          the html.dark remap and left this legend at 2.4:1 on the dark card. */}
+      <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-1 mb-3 text-gray-600" style={{ fontSize: 11 }}>
         {!loaded && <span className="text-gray-400">Loading…</span>}
         {org ? (
           <span className="flex items-center gap-1.5">

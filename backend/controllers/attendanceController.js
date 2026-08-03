@@ -129,6 +129,7 @@ function appendRemark(existing, note) {
  * @param {File} req.file - selfie (required)
  * @param {string} [req.body.latitude] / [req.body.longitude] / [req.body.accuracy]
  * @param {string} [req.body.wfh] - 'true' exempts the geofence check
+ * @param {string} [req.body.halfDay] - 'true' declares the day a half day up front
  * @returns {{record: Object}} (201); 400 if already checked in
  */
 // POST /api/attendance/me/checkin   (multipart: photo)
@@ -162,7 +163,11 @@ const checkIn = asyncHandler(async (req, res) => {
   if (outside) {
     record.remarks = appendRemark(record.remarks, `Check-in outside ${geo.label} (${distanceM} m).`);
   }
-  record.status = 'Present';
+  // An employee can declare a half day up front (planned half day, medical
+  // appointment, and so on) instead of waiting until punch-out. The declaration
+  // is remembered on the record so the hours rule at punch-out cannot undo it.
+  record.halfDayDeclared = req.body.halfDay === 'true';
+  record.status = record.halfDayDeclared ? 'HalfDay' : 'Present';
   await record.save();
   res.status(201).json({ record });
 });
@@ -209,8 +214,12 @@ const checkOut = asyncHandler(async (req, res) => {
   // An employee can always declare a half day at punch-out. Otherwise the hours
   // decide: under HALF_DAY_MIN_HOURS the day is a half day until regularized.
   // `halfDay=false` deliberately does NOT force 'Present' — the web app sends it
-  // on every punch-out, so honouring it would override the rule every time.
-  if (req.body.halfDay === 'true') record.status = 'HalfDay';
+  // on every punch-out, so honouring it would override the rule every time. A
+  // declaration made at CHECK-IN stands for the same reason: only a longer form
+  // of the same statement, and the hours rule must not talk the employee out of
+  // it. HR can still correct the day through a regularization.
+  if (req.body.halfDay === 'true') record.halfDayDeclared = true;
+  if (record.halfDayDeclared) record.status = 'HalfDay';
   else record.status = statusFromHours(record) || record.status;
   await record.save();
   res.json({ record });

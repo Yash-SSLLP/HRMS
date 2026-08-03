@@ -1,12 +1,13 @@
 /**
  * DocumentsScreen — employee document vault: highlights still-missing required
- * documents, lets the user pick a category and upload a PDF/image, and lists
- * uploaded documents with HR verification status (Submitted/Verified/Rejected).
+ * documents, lets the user pick a category and upload a PDF/image (previewed
+ * and confirmed before it is sent), and lists uploaded documents with HR
+ * verification status (Submitted/Verified/Rejected).
  * Route: "Documents" (quick action / More list). Employee-facing (all roles).
  * Backend: GET /documents/me, GET /documents/categories, POST /documents/me (multipart).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -40,6 +41,10 @@ export default function DocumentsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [category, setCategory] = useState('PAN');
   const [uploading, setUploading] = useState(false);
+  // The picked file waits here until the user has looked at it and confirmed.
+  // Picking used to upload immediately, so a wrong scan (or the wrong side of
+  // one) only surfaced when HR rejected it.
+  const [pending, setPending] = useState(null);
 
   // Load the user's docs plus the category config (self-uploadable vs required);
   // default the picker to the first self-upload category if the current one is invalid.
@@ -59,20 +64,26 @@ export default function DocumentsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  // Pick a PDF/image from the device and upload it under the selected category.
-  const pickAndUpload = async () => {
+  // Pick a PDF/image from the device — held for review, not sent yet.
+  const pickFile = async () => {
     const res = await DocumentPicker.getDocumentAsync({
       type: ['application/pdf', 'image/*'],
       copyToCacheDirectory: true,
     });
     if (res.canceled) return;
-    const file = res.assets[0];
+    setPending(res.assets[0]);
+  };
+
+  // Send the file the user has reviewed under the selected category.
+  const uploadPending = async () => {
+    if (!pending) return;
     setUploading(true);
     try {
       const form = new FormData();
-      form.append('file', { uri: file.uri, name: file.name || 'document', type: file.mimeType || 'application/octet-stream' });
+      form.append('file', { uri: pending.uri, name: pending.name || 'document', type: pending.mimeType || 'application/octet-stream' });
       form.append('category', category);
       await api.post('/documents/me', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setPending(null);
       await load();
       Alert.alert('Uploaded', `${prettyCat(category)} uploaded. HR will verify it.`);
     } catch (err) {
@@ -129,10 +140,37 @@ export default function DocumentsScreen() {
               </TouchableOpacity>
             ))}
           </View>
-          <TouchableOpacity style={styles.uploadBtn} onPress={pickAndUpload} disabled={uploading} activeOpacity={0.85}>
-            <Ionicons name={uploading ? 'cloud-upload' : 'cloud-upload-outline'} size={20} color={colors.primary} />
-            <Text style={styles.uploadText}>{uploading ? 'Uploading…' : 'Choose PDF or image'}</Text>
+          <TouchableOpacity style={styles.uploadBtn} onPress={pickFile} disabled={uploading} activeOpacity={0.85}>
+            <Ionicons name="cloud-upload-outline" size={20} color={colors.primary} />
+            <Text style={styles.uploadText}>{pending ? 'Choose a different file' : 'Choose PDF or image'}</Text>
           </TouchableOpacity>
+
+          {/* Preview before sending — see the file, then confirm. */}
+          {pending && (
+            <View style={styles.previewBox}>
+              {(pending.mimeType || '').startsWith('image/') ? (
+                <Image source={{ uri: pending.uri }} style={styles.previewImage} resizeMode="cover" />
+              ) : (
+                <View style={[styles.previewImage, styles.previewDoc]}>
+                  <Ionicons name={fileIcon(pending.mimeType)} size={26} color={colors.primary} />
+                </View>
+              )}
+              <View style={{ flex: 1, marginLeft: spacing(3) }}>
+                <Text style={font.body} numberOfLines={1}>{pending.name || 'Selected file'}</Text>
+                <Text style={font.small} numberOfLines={1}>
+                  {prettyCat(category)}{pending.size ? ` · ${sizeLabel(pending.size)}` : ''}
+                </Text>
+                <View style={styles.previewActions}>
+                  <TouchableOpacity onPress={uploadPending} disabled={uploading} style={[styles.previewBtn, styles.previewBtnPrimary, uploading && { opacity: 0.6 }]}>
+                    <Text style={styles.previewBtnPrimaryText}>{uploading ? 'Uploading…' : 'Upload this file'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setPending(null)} disabled={uploading} style={styles.previewBtn}>
+                    <Text style={styles.previewBtnText}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
         </Card>
 
         <SectionHeader title="My documents" />
@@ -165,6 +203,14 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: '700', fontSize: 13, color: colors.textMuted },
   uploadBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: 52, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.primary, borderStyle: 'dashed', backgroundColor: colors.primarySoft },
   uploadText: { color: colors.primary, fontWeight: '700', marginLeft: 8 },
+  previewBox: { flexDirection: 'row', alignItems: 'center', marginTop: spacing(3), padding: spacing(2.5), borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceAlt },
+  previewImage: { width: 64, height: 64, borderRadius: radius.sm, backgroundColor: colors.surface },
+  previewDoc: { alignItems: 'center', justifyContent: 'center' },
+  previewActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: spacing(2) },
+  previewBtn: { paddingHorizontal: 12, height: 34, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  previewBtnText: { color: colors.textMuted, fontWeight: '600', fontSize: 12 },
+  previewBtnPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
+  previewBtnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   docRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(2.5) },
   docIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   missingBox: { backgroundColor: colors.warningSoft, borderWidth: 1, borderColor: colors.warning + '55', borderRadius: radius.md, padding: spacing(3.5), marginBottom: spacing(4) },

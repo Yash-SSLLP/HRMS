@@ -8,11 +8,21 @@ const asyncHandler = require('express-async-handler');
 const Regularization = require('../models/Regularization');
 const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const User = require('../models/User');
 const { notify } = require('../services/notify');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { statusFromHours } = require('../utils/workday');
 
-const EMPLOYEE_FIELDS = 'firstName lastName email';
+// `role` rides along so the review screen can tell an HR's own request apart
+// from an ordinary employee's (see HR_REVIEW_ROLES below).
+const EMPLOYEE_FIELDS = 'firstName lastName email role';
+
+// HR review their own colleagues' attendance, so an HR's OWN regularization
+// cannot be decided by HR — it goes up to an executive or a SuperAdmin. CEO/MD
+// are read-only everywhere else; this route is a deliberate exception, the same
+// shape as their existing role as reporting-chain leave approvers.
+const HR_REVIEW_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+const HR_ROLE = 'HRManager';
 
 // 'HH:mm' (or a full date string) + the request's day → a concrete Date on
 // that IST day. Returns undefined when the value is empty/unparseable.
@@ -154,6 +164,27 @@ const reviewRequest = asyncHandler(async (req, res) => {
     throw new Error('Regularization request not found');
   }
 
+  // Nobody signs off their own attendance correction, whatever their role.
+  if (String(item.employee) === String(req.user._id)) {
+    res.status(403);
+    throw new Error('You cannot review your own regularization request.');
+  }
+
+  // An HR's own request needs an executive or a SuperAdmin — HR reviewing HR
+  // (each other's, or their own via a colleague) would defeat the control.
+  const requester = await User.findById(item.employee).select('role');
+  if (requester?.role === HR_ROLE && !HR_REVIEW_ROLES.includes(req.user.role)) {
+    res.status(403);
+    throw new Error('An HR regularization can only be approved by the CEO, MD or a Super Admin.');
+  }
+  // …and the exception goes no further: an exec's write access here covers HR
+  // requests only. Everyone else's still belongs to HR, so CEO/MD stay
+  // read-only on those, as on every other admin screen.
+  if (['CEO', 'MD'].includes(req.user.role) && requester?.role !== HR_ROLE) {
+    res.status(403);
+    throw new Error('CEO/MD accounts review HR regularizations only; this one is for HR to decide.');
+  }
+
   item.status = status;
   item.reviewNote = reviewNote;
   item.reviewedBy = req.user._id;
@@ -204,6 +235,20 @@ const adminCreate = asyncHandler(async (req, res) => {
   if (!employee || !date || !reason) {
     res.status(400);
     throw new Error('employee, date and reason are required');
+  }
+
+  // A direct regularization is self-approved by definition, so HR must not be
+  // able to aim it at an HR (themselves or a colleague) — that would walk
+  // straight around the review rule in reviewRequest above. They raise a
+  // request instead, and an executive or SuperAdmin decides it.
+  const target = await User.findById(employee).select('role');
+  if (target?.role === HR_ROLE && !HR_REVIEW_ROLES.includes(req.user.role)) {
+    res.status(403);
+    throw new Error(
+      String(employee) === String(req.user._id)
+        ? 'You cannot regularize your own attendance. Raise a request for the CEO, MD or a Super Admin to approve.'
+        : "An HR's attendance can only be regularized by the CEO, MD or a Super Admin.",
+    );
   }
 
   const item = await Regularization.create({

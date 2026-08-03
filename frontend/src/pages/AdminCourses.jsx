@@ -279,7 +279,7 @@ export default function AdminCourses() {
                 {(c.courseType === 'external' || c.isPublic) ? (
                   <span className="bg-emerald-50 text-emerald-700 rounded-md px-2 py-0.5">🌐 External</span>
                 ) : (
-                  <span className="bg-slate-100 text-slate-600 rounded-md px-2 py-0.5">🏢 Internal</span>
+                  <span className="bg-gray-100 text-gray-600 rounded-md px-2 py-0.5">🏢 Internal</span>
                 )}
                 <span className="bg-gray-100 text-gray-700 rounded-md px-2 py-0.5">🎬 {c.videoCount} video{c.videoCount === 1 ? '' : 's'}</span>
                 {c.moduleCount - c.videoCount > 0 && (

@@ -2,7 +2,8 @@
  * AdminRegularizations — attendance-regularization review (admin portal). Lists
  * requests from GET /regularizations and approves/rejects via
  * PATCH /regularizations/:id/status (an approval applies the corrected punch).
- * Read-only CEO/MD see oversight columns (who changed what) but no actions.
+ * CEO/MD see the oversight columns (who changed what); their only action here is
+ * deciding an HR's OWN request, which HR may not decide for themselves.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -21,9 +22,23 @@ const STATUS_STYLES = {
 
 export default function AdminRegularizations() {
   const me = useAuthStore((s) => s.user);
-  // CEO/MD are read-only executives: they see the oversight columns but not the
-  // approve/reject actions (the server would 403 those anyway).
-  const readOnly = ['CEO', 'MD'].includes(me?.role);
+  const myId = me?._id || me?.id;
+  const isExec = ['CEO', 'MD'].includes(me?.role);
+  // CEO/MD are read-only executives everywhere except one row type: an HR's own
+  // regularization, which HR must not decide for themselves. So the actions
+  // column is no longer hidden from them — it is decided per row below.
+  const readOnly = isExec;
+
+  // Who may decide this request, mirroring regularizationController.js. Returns
+  // null when the viewer may act, otherwise the reason they may not.
+  const blockedReason = (r) => {
+    const requesterId = r.employee?._id || r.employee;
+    const requesterIsHr = r.employee?.role === 'HRManager';
+    if (myId && String(requesterId) === String(myId)) return 'Your own request';
+    if (requesterIsHr && !['SuperAdmin', 'CEO', 'MD'].includes(me?.role)) return 'Needs CEO / MD / Super Admin';
+    if (isExec && !requesterIsHr) return 'HR to decide';
+    return null;
+  };
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -63,7 +78,7 @@ export default function AdminRegularizations() {
       <PageHeader
         title="Attendance Regularization"
         subtitle={readOnly
-          ? 'Oversight: who changed which employee’s attendance, on which day, and from what to what.'
+          ? 'Oversight: who changed which employee’s attendance, on which day, and from what to what. You approve HR’s own requests.'
           : undefined}
       >
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
@@ -88,7 +103,7 @@ export default function AdminRegularizations() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Reason</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">By</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
-              {!readOnly && <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>}
+              <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -101,10 +116,17 @@ export default function AdminRegularizations() {
               const toOut = fmt12(r.appliedCheckOut) || fmt12(r.requestedCheckOut) || '-';
               const fromIn = fmt12(r.previousCheckIn) || '-';
               const fromOut = fmt12(r.previousCheckOut) || '-';
+              const blocked = blockedReason(r);
               return (
               <tr key={r._id}>
                 <td className="px-4 py-3">
                   {r.employee ? `${r.employee.firstName} ${r.employee.lastName}` : '-'}
+                  {r.employee?.role === 'HRManager' && (
+                    <span className="ml-1.5 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700"
+                      title="HR's own request — only the CEO, MD or a Super Admin can decide it">
+                      HR
+                    </span>
+                  )}
                   <div className="text-xs text-gray-500">{r.employee?.email}</div>
                 </td>
                 <td className="px-4 py-3 text-gray-700">{new Date(r.date).toLocaleDateString()}</td>
@@ -141,24 +163,26 @@ export default function AdminRegularizations() {
                     {r.status}
                   </span>
                 </td>
-                {!readOnly && (
-                  <td className="px-4 py-3 text-right whitespace-nowrap">
-                    {r.status === 'Pending' ? (
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => review(r, 'Approved')}
-                          className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700">
-                          Approve
-                        </button>
-                        <button onClick={() => review(r, 'Rejected')}
-                          className="px-3 py-1 text-xs border border-red-300 text-red-700 rounded-lg hover:bg-red-50">
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-gray-400">Reviewed</span>
-                    )}
-                  </td>
-                )}
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  {r.status !== 'Pending' ? (
+                    <span className="text-xs text-gray-400">Reviewed</span>
+                  ) : blocked ? (
+                    <span className="text-xs text-gray-500" title="An HR's own attendance correction is decided by the CEO, MD or a Super Admin">
+                      {blocked}
+                    </span>
+                  ) : (
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => review(r, 'Approved')}
+                        className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700">
+                        Approve
+                      </button>
+                      <button onClick={() => review(r, 'Rejected')}
+                        className="px-3 py-1 text-xs border border-red-300 text-red-700 rounded-lg hover:bg-red-50">
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </td>
               </tr>
               );
             })}

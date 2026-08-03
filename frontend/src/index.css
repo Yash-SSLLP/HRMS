@@ -756,6 +756,18 @@ html.dark body { background-color: var(--bg); color: var(--text, #e5e7eb); }
 html.dark .bg-white { background-color: var(--surface) !important; }
 html.dark .bg-gray-50 { background-color: var(--surface-2) !important; }
 html.dark .bg-gray-100 { background-color: var(--surface-3) !important; }
+/* The neutral-badge fill ("Cancelled", "Draft", "Dismissed", "Retired"), thin
+   `w-px` dividers, the exec toggle track and avatar placeholders all sit on the
+   200/300 steps. Left literal they stayed near-white blocks while their
+   `text-gray-600/700` ink was remapped light — a 1.2:1 badge. Continue the same
+   surface ramp one and two steps up. */
+html.dark .bg-gray-200 { background-color: var(--surface-3) !important; }
+html.dark .bg-gray-300 { background-color: var(--border) !important; }
+/* A switch knob is `bg-white`, which the remap above turns into the dark
+   surface — on the now-dark off-track it would sink to 1.6:1. Keep the knob
+   light so it reads against both the off-track and the accent-filled on-track
+   (pages/AdminEmployees.jsx, the "show CEO & MD" toggle). */
+html.dark [role="switch"] > span { background-color: #cbd5e1 !important; }
 
 html.dark .text-gray-900 { color: #f1f5f9 !important; }
 html.dark .text-gray-800 { color: #e2e8f0 !important; }
@@ -836,6 +848,26 @@ html.dark .text-indigo-600, html.dark .text-indigo-700, html.dark .text-indigo-8
 html.dark .text-violet-600, html.dark .text-violet-700, html.dark .text-violet-800 { color: #fb7185 !important; }
 html.dark .text-purple-600, html.dark .text-purple-700, html.dark .text-purple-800 { color: #fb7185 !important; }
 html.dark .text-cyan-600, html.dark .text-cyan-700, html.dark .text-cyan-800 { color: #22d3ee !important; }
+
+/* The -900 step. Headings inside tinted panels reach for it (an exit-feedback
+   card, a payroll hike summary, the active course module, the documents-to-
+   submit callout) and, being outside the 500–800 band above, they stayed
+   near-black ink on a dark wash of their own hue — 1.3:1 to 1.5:1, i.e. gone.
+   Same bright shade as the 800 step: one hue, one legible stop. */
+html.dark .text-green-900 { color: #4ade80 !important; }
+html.dark .text-emerald-900 { color: #34d399 !important; }
+html.dark .text-teal-900 { color: #2dd4bf !important; }
+html.dark .text-red-900 { color: #f87171 !important; }
+html.dark .text-rose-900 { color: #fb7185 !important; }
+html.dark .text-amber-900 { color: #fbbf24 !important; }
+html.dark .text-yellow-900 { color: #facc15 !important; }
+html.dark .text-orange-900 { color: #fb923c !important; }
+html.dark .text-blue-900 { color: #60a5fa !important; }
+html.dark .text-sky-900 { color: #38bdf8 !important; }
+html.dark .text-indigo-900 { color: #818cf8 !important; }
+html.dark .text-cyan-900 { color: #22d3ee !important; }
+/* Violet/purple are banned in dark theme → rose, as with the steps above. */
+html.dark .text-violet-900, html.dark .text-purple-900 { color: #fb7185 !important; }
 
 /* Coloured badge/banner borders → a soft tint of the hue. */
 html.dark .border-green-200,  html.dark .border-green-300  { border-color: color-mix(in srgb, #22c55e 34%, transparent) !important; }
@@ -1594,4 +1626,197 @@ html.dark {
   .salert-row, .salert-chevron { transition: none; }
   .salert-row:hover { transform: none; }
   .salert-row:hover .salert-chevron { transform: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Public document submission form (pages/DocumentSubmitForm.jsx,
+   pages/EmployeeDocSubmit.jsx + components/FileDropField.jsx).
+
+   This page is often the FIRST thing a new hire sees of the company, and it was
+   a stack of raw `<input type="file">` controls. It now gets the brand-gold
+   treatment: a warm panel, a gold hairline, and rows that respond as files are
+   attached. Tokens rather than utilities for the same reason as the R&R banner
+   — gradients and alpha fills are literals the html.dark remap cannot reach.
+--------------------------------------------------------------------------- */
+:root {
+  --docform-panel: linear-gradient(170deg, #fffdf8 0%, #ffffff 42%, #fffaf0 100%);
+  --docform-edge: color-mix(in srgb, var(--gold-500) 40%, transparent);
+  --docform-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 18px 50px rgba(126, 90, 28, .10);
+  --docform-rule: color-mix(in srgb, var(--gold-500) 26%, transparent);
+  --docform-ink: var(--gold-900);
+  --docfield-bg: #ffffff;
+  --docfield-edge: #e6e9ef;
+  --docfield-edge-hover: color-mix(in srgb, var(--gold-500) 62%, transparent);
+  --docfield-zone: #fbfcfe;
+  --docfield-zone-hover: color-mix(in srgb, var(--gold-500) 8%, #ffffff);
+  --docfield-icon-bg: color-mix(in srgb, var(--gold-500) 18%, transparent);
+  --docfield-ink: #0f172a;
+  --docfield-meta: #6b7280;
+  --docfield-ok: #0f7a4a;
+  --docfield-ok-bg: color-mix(in srgb, #10b981 14%, transparent);
+  --docfield-chip: #f7f8fb;
+  --docfield-thumb: #eef1f6;
+  --docfield-preview: #ffffff;
+}
+html.dark {
+  --docform-panel: linear-gradient(170deg,
+    color-mix(in srgb, var(--gold-500) 10%, var(--surface)) 0%,
+    var(--surface) 44%,
+    color-mix(in srgb, var(--gold-700) 13%, var(--surface)) 100%);
+  --docform-edge: color-mix(in srgb, var(--gold-500) 28%, transparent);
+  --docform-shadow: 0 18px 50px rgba(0, 0, 0, .5);
+  --docform-rule: color-mix(in srgb, var(--gold-500) 20%, transparent);
+  --docform-ink: var(--gold-300);
+  --docfield-bg: var(--surface-2);
+  --docfield-edge: var(--border);
+  --docfield-edge-hover: color-mix(in srgb, var(--gold-500) 52%, transparent);
+  --docfield-zone: var(--surface-3);
+  --docfield-zone-hover: color-mix(in srgb, var(--gold-500) 12%, var(--surface-3));
+  --docfield-icon-bg: color-mix(in srgb, var(--gold-500) 22%, transparent);
+  --docfield-ink: #f1f5f9;
+  --docfield-meta: #98a2b3;
+  --docfield-ok: #34d399;
+  --docfield-ok-bg: color-mix(in srgb, #10b981 18%, transparent);
+  --docfield-chip: var(--surface-3);
+  --docfield-thumb: #33373f;
+  --docfield-preview: var(--surface);
+}
+
+/* The card the whole form sits in. */
+.docform-card {
+  position: relative;
+  background-image: var(--docform-panel);
+  border: 1px solid var(--docform-edge);
+  border-radius: 1.1rem;
+  box-shadow: var(--docform-shadow);
+  overflow: hidden;
+}
+/* Gold cap across the top — the brand's signature edge. */
+.docform-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background-image: linear-gradient(90deg, var(--gold-700), var(--gold-300), var(--gold-700));
+}
+.docform-title { color: var(--docfield-ink); letter-spacing: -0.02em; }
+.docform-sub { color: var(--docform-ink); }
+.docform-rule { border-color: var(--docform-rule); }
+/* Progress through the checklist ("3 of 8 attached"). */
+.docform-progress { background-color: color-mix(in srgb, var(--gold-500) 18%, transparent); }
+.docform-progress > span {
+  display: block; height: 100%; border-radius: inherit;
+  background-image: linear-gradient(90deg, var(--gold-700), var(--gold-500));
+  transition: width .3s ease;
+}
+/* Primary submit — gold fill, onyx ink (the .gold-ink pairing). */
+.docform-submit {
+  background-image: linear-gradient(180deg, var(--gold-500), var(--gold-700));
+  color: var(--onyx);
+  border-radius: 0.7rem;
+  box-shadow: 0 2px 6px rgba(126, 90, 28, .28);
+  transition: filter .18s ease, transform .12s ease, box-shadow .22s ease;
+}
+.docform-submit:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+.docform-submit:active:not(:disabled) { transform: translateY(0); }
+.docform-submit:disabled { opacity: .6; cursor: not-allowed; }
+
+/* One document row. */
+.docfield {
+  background-color: var(--docfield-bg);
+  border: 1px solid var(--docfield-edge);
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.85rem 0.85rem;
+  transition: border-color .18s ease, box-shadow .22s ease;
+}
+.docfield:hover, .docfield:focus-within { border-color: var(--docfield-edge-hover); }
+.docfield.is-filled { border-color: color-mix(in srgb, var(--docfield-ok) 42%, transparent); }
+.docfield.is-dragging {
+  border-color: var(--docfield-edge-hover);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold-500) 22%, transparent);
+}
+.docfield-label { color: var(--docfield-ink); }
+.docfield-meta { color: var(--docfield-meta); }
+.docfield-cta { color: var(--docfield-ink); }
+.docfield-filename { color: var(--docfield-ink); }
+
+/* The click/drop target. */
+.docfield-zone {
+  background-color: var(--docfield-zone);
+  border: 1px dashed var(--docfield-edge);
+  transition: background-color .18s ease, border-color .18s ease;
+}
+.docfield-zone:hover { background-color: var(--docfield-zone-hover); border-color: var(--docfield-edge-hover); }
+.docfield-zone:focus-visible {
+  outline: none;
+  border-color: var(--docfield-edge-hover);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold-500) 20%, transparent);
+}
+.docfield-icon { background-color: var(--docfield-icon-bg); color: var(--gold-700); }
+html.dark .docfield-icon { color: var(--gold-300); }
+
+/* The attached document, shown at slot size — a tile face on desktop, a
+   shorter band on a phone. This is the whole point of the tile layout: you can
+   see WHICH scan is on the slot without opening anything. */
+.docfield-face {
+  height: 78px;
+  border-radius: 0.6rem;
+  overflow: hidden;
+  background-color: var(--docfield-thumb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.docfield-face-img { width: 100%; height: 100%; object-fit: cover; }
+.docfield-face-doc { display: flex; flex-direction: column; align-items: center; color: var(--docfield-meta); }
+/* Tiles are taller than the phone band, and an empty slot matches a filled one
+   so the grid stays even as it fills up. */
+@media (min-width: 640px) {
+  .docfield-face { height: 106px; }
+  .docfield-zone { min-height: 106px; }
+}
+
+/* One attached file: name, then View and Cancel. */
+.docfield-filerow {
+  background-color: var(--docfield-chip);
+  border: 1px solid var(--docfield-edge);
+  border-radius: 0.55rem;
+  padding: 0.35rem 0.45rem 0.35rem 0.55rem;
+}
+.docfield-cancel { color: #b91c1c; background-color: color-mix(in srgb, #ef4444 10%, transparent); }
+html.dark .docfield-cancel { color: #fca5a5; }
+.docfield-cancel:hover { background-color: color-mix(in srgb, #ef4444 20%, transparent); }
+.docfield-replace { color: var(--gold-700); }
+html.dark .docfield-replace { color: var(--gold-300); }
+.docfield-replace:hover { text-decoration: underline; }
+
+.docfield-chip { background-color: var(--docfield-chip); border: 1px solid var(--docfield-edge); }
+.docfield-thumb { background-color: var(--docfield-thumb); color: var(--docfield-meta); object-fit: cover; }
+
+/* Phone-only summary panel (the "portal" header): who this is, how far along,
+   what is left, and the submit button — all before the slots begin. */
+.docform-panel {
+  background-color: var(--docfield-bg);
+  border: 1px solid var(--docform-edge);
+  border-radius: 0.9rem;
+  padding: 0.9rem;
+}
+.docform-ring-track { stroke: color-mix(in srgb, var(--gold-500) 24%, transparent); }
+.docform-ring-fill { stroke: var(--gold-700); transition: stroke-dasharray .35s ease; }
+html.dark .docform-ring-fill { stroke: var(--gold-300); }
+.docform-ring-text { fill: var(--docfield-ink); }
+.docform-check { color: var(--docfield-ok); }
+.docform-todo { color: var(--docfield-meta); }
+.docfield-count { color: var(--docfield-ok); background-color: var(--docfield-ok-bg); }
+.docfield-action { color: var(--gold-700); background-color: color-mix(in srgb, var(--gold-500) 14%, transparent); }
+html.dark .docfield-action { color: var(--gold-300); }
+.docfield-action:hover { background-color: color-mix(in srgb, var(--gold-500) 26%, transparent); }
+.docfield-remove { color: var(--docfield-meta); }
+.docfield-remove:hover { color: #dc2626; background-color: color-mix(in srgb, #ef4444 12%, transparent); }
+
+.docfield-preview { background-color: var(--docfield-preview); box-shadow: 0 24px 60px rgba(0, 0, 0, .5); }
+.docfield-preview-bar {
+  color: var(--docfield-ink);
+  border-bottom: 1px solid var(--docfield-edge);
+  background-color: var(--docfield-chip);
 }

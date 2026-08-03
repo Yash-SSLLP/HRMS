@@ -12,7 +12,7 @@ import ChatDock from './ChatDock';
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown } from 'react-icons/fi';
+import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield } from 'react-icons/fi';
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
@@ -701,6 +701,11 @@ export default function Layout({ navItems = [], sectionTitle }) {
               colour for both; the label appears from sm up so each is unmistakable. */}
           <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
           <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
+          {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in
+              config/nav.jsx) and is reached often enough to earn a shortcut. */}
+          {user?.role === 'SuperAdmin' && (
+            <NavPill to="/admin/permissions" label="Permissions" icon={<FiShield size={16} strokeWidth={2.2} />} />
+          )}
 
           {/* Chat is an org-wide switch a SuperAdmin controls. */}
           {chatEnabled && <ChatLauncher />}

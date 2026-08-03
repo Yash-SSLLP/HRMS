@@ -12,10 +12,11 @@ const path = require('path');
 const crypto = require('crypto');
 const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
-const { CANDIDATE_STAGES, ROUND_STATUS, defaultRounds } = require('../models/Candidate');
+const { CANDIDATE_STAGES, ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS } = require('../models/Candidate');
 const User = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
+const EmailOutbox = require('../models/EmailOutbox');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
@@ -1468,6 +1469,95 @@ const DOC_TYPES = [
  * @param {string} req.params.id - candidate id
  * @returns {{candidate, token}}
  */
+/**
+ * Where a candidate's document set stands, per label.
+ *
+ * A rejected document is not a dead end — the candidate uploads a replacement
+ * under the same label, which arrives Pending. So a label is only "unresolved"
+ * when it has a rejection and nothing verified to stand in its place; that (and
+ * anything still awaiting a verdict) is what blocks the whole-set confirmation.
+ *
+ * @param {object} candidate
+ * @returns {{total: number, pending: number, verified: number, rejected: number, unresolved: string[]}}
+ */
+function documentReviewSummary(candidate) {
+  const files = candidate?.documents?.files || [];
+  const byLabel = new Map();
+  let pending = 0, verified = 0, rejected = 0;
+  for (const f of files) {
+    const status = f.status || 'Pending';
+    if (status === 'Pending') pending++;
+    else if (status === 'Verified') verified++;
+    else rejected++;
+    const label = f.label || 'Document';
+    const seen = byLabel.get(label) || { verified: false, rejected: false };
+    if (status === 'Verified') seen.verified = true;
+    if (status === 'Rejected') seen.rejected = true;
+    byLabel.set(label, seen);
+  }
+  const unresolved = [...byLabel.entries()]
+    .filter(([, s]) => s.rejected && !s.verified)
+    .map(([label]) => label);
+  return { total: files.length, pending, verified, rejected, unresolved };
+}
+
+/**
+ * Tell the candidate which documents were sent back, and how to replace them.
+ *
+ * Queued rather than sent inline: a rejection is a decision HR has already made,
+ * and it must not fail because the mail transport is down. The mail lists every
+ * document still outstanding (not just the one just rejected), so any single
+ * message is complete on its own — which is what lets a burst of rejections
+ * collapse into one: an earlier mail for this candidate that has not left the
+ * outbox yet is superseded rather than duplicated.
+ *
+ * @param {object} candidate
+ * @param {object} actor - the HR user rejecting (used for From/Reply-To)
+ * @returns {Promise<boolean>} whether a mail was queued
+ */
+async function emailRejectedDocuments(candidate, actor) {
+  if (!candidate.email || !candidate.documents?.token) return false;
+  const { unresolved } = documentReviewSummary(candidate);
+  if (!unresolved.length) return false;
+
+  // The note to show per label: the most recent rejection for it.
+  const noteFor = (label) => {
+    const rejections = (candidate.documents.files || [])
+      .filter((f) => (f.label || 'Document') === label && f.status === 'Rejected');
+    const last = rejections[rejections.length - 1];
+    return last?.reviewNote ? ` - ${last.reviewNote}` : '';
+  };
+
+  const link = `${APP_BASE_URL()}/submit-documents/${candidate.documents.token}`;
+  const many = unresolved.length > 1;
+  const text =
+    `Dear ${candidate.name},\n\n` +
+    `Thank you for sending your documents to ${COMPANY.name}. ` +
+    `Most of them are in order, but we need ${many ? 'these' : 'this one'} again:\n\n` +
+    unresolved.map((label) => `  - ${label}${noteFor(label)}`).join('\n') +
+    `\n\nYou can upload ${many ? 'them' : 'it'} here - no login needed:\n${link}\n\n` +
+    `Everything else you sent has been accepted, so please re-attach only the ` +
+    `${many ? 'documents' : 'document'} listed above.\n\n` +
+    `Warm regards,\n${actor?.fullName || 'HR Team'}\n${COMPANY.name}`;
+
+  // Supersede an earlier rejection mail for this candidate that is still queued:
+  // this one already says everything that one did.
+  try {
+    await EmailOutbox.deleteMany({ relatedType: 'candidate-docs', relatedId: candidate._id, status: 'Pending' });
+  } catch (err) {
+    console.error('[recruitment] Could not clear queued rejection mail:', err.message);
+  }
+
+  await enqueueMail({
+    to: candidate.email,
+    subject: `Action needed on your documents - ${COMPANY.name}`,
+    text,
+    from: actor?.email ? `${actor.fullName} <${actor.email}>` : undefined,
+    replyTo: actor?.email,
+  }, { type: 'candidate-docs', id: candidate._id });
+  return true;
+}
+
 // POST /api/recruitment/candidates/:id/documents/request — (re)generate the link.
 const requestDocuments = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findById(req.params.id);
@@ -1506,10 +1596,99 @@ const getDocumentRequest = asyncHandler(async (req, res) => {
       jobTitle: candidate.job?.title || '',
       submittedAt: candidate.documents.submittedAt,
       confirmedAt: candidate.documents.confirmedAt,
-      files: (candidate.documents.files || []).map((f) => ({ label: f.label, name: f.name })),
+      // Per-file verdicts go back to the candidate: a rejection is only useful
+      // if they can see WHICH document was refused and why, and re-upload it.
+      files: (candidate.documents.files || []).map((f) => ({
+        label: f.label,
+        name: f.name,
+        status: f.status || 'Pending',
+        reviewNote: f.reviewNote,
+      })),
     },
     docTypes: DOC_TYPES,
   });
+});
+
+/**
+ * Email the document-submission link to the candidate.
+ *
+ * Two-step like the letter emails: `preview: true` returns the default subject
+ * and body for HR to edit, and the real call sends what they approved. Nothing
+ * leaves the mailbox that HR has not read — the link in it opens an upload page
+ * with no login, so it must never go out by accident.
+ *
+ * @route POST /api/recruitment/candidates/:id/documents/email  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {boolean} [req.body.preview] - return the draft instead of sending
+ * @param {string} [req.body.subject] / [req.body.body] / [req.body.cc]
+ * @returns {{to, subject, body, link}} on preview, else {{mailed, cc, messageId}}
+ * @sideeffect on send, stamps documents.requestEmailedAt
+ */
+// POST /api/recruitment/candidates/:id/documents/email  (HR)
+const emailDocumentRequest = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  if (!candidate.email) {
+    res.status(400);
+    throw new Error('This candidate has no email on file.');
+  }
+  if (!candidate.documents?.token) {
+    res.status(400);
+    throw new Error('Generate the submission link first.');
+  }
+
+  const link = `${APP_BASE_URL()}/submit-documents/${candidate.documents.token}`;
+  const wanted = DOC_TYPES.filter((t) => t !== 'Other');
+  const defaults = {
+    subject: `Documents required for your onboarding - ${COMPANY.name}`,
+    body:
+      `Dear ${candidate.name},\n\n` +
+      `Congratulations on clearing your interviews with ${COMPANY.name}.\n\n` +
+      `To take your joining formalities forward, please upload the documents listed ` +
+      `below using the secure link at the end of this email. No login is needed, and ` +
+      `you can preview each file before you send it.\n\n` +
+      wanted.map((t) => `  - ${t}`).join('\n') +
+      `\n\nUpload here:\n${link}\n\n` +
+      `Please keep each file under 10 MB, in PDF, Word, JPG or PNG format. ` +
+      `Write back to this email if any document is not available with you right now.\n\n` +
+      `Warm regards,\n${req.user?.fullName || 'HR Team'}\n${COMPANY.name}`,
+  };
+  if (req.body.preview) {
+    return res.json({ to: candidate.email, subject: defaults.subject, body: defaults.body, link });
+  }
+
+  const subject = String(req.body.subject || '').trim() || defaults.subject;
+  const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
+  // Never Cc the recipient or the sender onto their own mail.
+  const cc = parseCcList(req.body.cc, [candidate.email, req.user?.email]);
+
+  // Sent synchronously (not queued) so HR sees the real outcome while they are
+  // still looking at the candidate — this is the mail the whole step waits on.
+  let info;
+  try {
+    info = await sendMail({
+      to: candidate.email,
+      cc: cc.length ? cc : undefined,
+      subject,
+      text: body,
+      from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,
+      replyTo: req.user?.email,
+    });
+  } catch (err) {
+    res.status(502);
+    throw new Error(`The document request could not be emailed: ${err.message}`);
+  }
+  if (info?.mocked) {
+    res.status(500);
+    throw new Error('Email is not configured on the server (no Gmail/SMTP credentials), so nothing was sent.');
+  }
+
+  candidate.documents.requestEmailedAt = new Date();
+  await candidate.save();
+  res.json({ mailed: [candidate.email], cc, messageId: info?.messageId || null });
 });
 
 /**
@@ -1634,11 +1813,79 @@ const confirmDocuments = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('The candidate has not submitted any documents yet.');
   }
+  // Confirming the whole submission is the gate on the offer letter, so it may
+  // only happen once every document has actually been looked at and nothing is
+  // still waiting to be replaced.
+  const { pending, unresolved } = documentReviewSummary(candidate);
+  if (pending > 0) {
+    res.status(400);
+    throw new Error(`${pending} document${pending === 1 ? ' is' : 's are'} still awaiting your verdict.`);
+  }
+  if (unresolved.length) {
+    res.status(400);
+    throw new Error(`Rejected and not yet replaced: ${unresolved.join(', ')}.`);
+  }
   candidate.documents.confirmedAt = new Date();
   candidate.documents.confirmedBy = req.user._id;
   candidate.documents.confirmedByName = req.user.fullName;
   await candidate.save();
   res.json({ candidate });
+});
+
+/**
+ * Verify or reject ONE submitted document (partial verification).
+ * @route PATCH /api/recruitment/candidates/:id/documents/:fileId/status  (HR)
+ * @param {string} req.params.id - candidate id
+ * @param {string} req.params.fileId - document sub-doc id
+ * @param {string} req.body.status - 'Verified' | 'Rejected' | 'Pending'
+ * @param {string} [req.body.note] - reason, shown to the candidate on a rejection
+ * @returns {{candidate: Object, summary: Object}}
+ * @sideeffect a rejection withdraws any earlier whole-submission confirmation
+ */
+// PATCH /api/recruitment/candidates/:id/documents/:fileId/status  (HR)
+const reviewCandidateDocument = asyncHandler(async (req, res) => {
+  const { status, note } = req.body;
+  if (!CANDIDATE_DOC_STATUS.includes(status)) {
+    res.status(400);
+    throw new Error(`status must be one of ${CANDIDATE_DOC_STATUS.join(', ')}`);
+  }
+  const candidate = await Candidate.findById(req.params.id);
+  const file = candidate?.documents?.files?.id(req.params.fileId);
+  if (!file) {
+    res.status(404);
+    throw new Error('Document not found');
+  }
+
+  file.status = status;
+  file.reviewNote = status === 'Rejected' ? (note || '').trim().slice(0, 500) : undefined;
+  file.reviewedAt = status === 'Pending' ? undefined : new Date();
+  file.reviewedBy = status === 'Pending' ? undefined : req.user._id;
+  file.reviewedByName = status === 'Pending' ? undefined : req.user.fullName;
+
+  // Rejecting something after the set was confirmed re-opens the submission —
+  // otherwise the offer letter would stay unlocked on documents HR has since
+  // said are not good enough, and the candidate's upload link would stay shut.
+  if (status !== 'Verified' && candidate.documents.confirmedAt) {
+    candidate.documents.confirmedAt = undefined;
+    candidate.documents.confirmedBy = undefined;
+    candidate.documents.confirmedByName = undefined;
+  }
+  // Tell the candidate — a rejection they never hear about is a stalled hire.
+  // Queued, so a mail outage can never undo the verdict just recorded.
+  let emailed = false;
+  if (status === 'Rejected') {
+    try {
+      emailed = await emailRejectedDocuments(candidate, req.user);
+      if (emailed) {
+        candidate.documents.rejectionEmailedAt = new Date();
+      }
+    } catch (err) {
+      console.error('[recruitment] Rejection email could not be queued:', err.message);
+    }
+  }
+  await candidate.save();
+
+  res.json({ candidate, summary: documentReviewSummary(candidate), emailed });
 });
 
 module.exports = {
@@ -1651,5 +1898,5 @@ module.exports = {
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,
   requestDocuments, getDocumentRequest, submitDocuments,
-  downloadCandidateDocument, confirmDocuments,
+  downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
 };

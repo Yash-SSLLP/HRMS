@@ -42,6 +42,11 @@ export default function CandidateDetailScreen() {
   const [mailSheet, setMailSheet] = useState(null); // editable email preview payload
   const [ivQuery, setIvQuery] = useState('');       // interviewer search text
   const [ivShowAll, setIvShowAll] = useState(false); // widen beyond the job's department
+  // Confirming documents unlocks the offer letter and can't be undone here, so
+  // it takes a deliberate tick first rather than one tap on a small screen.
+  const [docsVerified, setDocsVerified] = useState(false);
+  const [rejectDoc, setRejectDoc] = useState(null);  // document awaiting a rejection reason
+  const [rejectNote, setRejectNote] = useState('');
 
   const load = useCallback(async () => {
     const [cRes, eRes] = await Promise.all([
@@ -107,6 +112,15 @@ export default function CandidateDetailScreen() {
   const allCleared = rounds.length > 0 && rounds.every((r) => r.status === 'Cleared');
   const docs = cand.documents || {};
   const docsConfirmed = !!docs.confirmedAt;
+  // Same rule as documentReviewSummary() on the server: the whole set can only
+  // be confirmed once nothing is awaiting a verdict and nothing rejected is
+  // still without a replacement.
+  const docSummary = summariseDocs(docs.files);
+  const docsBlocker = docSummary.pending > 0
+    ? `${docSummary.pending} document${docSummary.pending === 1 ? '' : 's'} still need${docSummary.pending === 1 ? 's' : ''} a verdict`
+    : docSummary.unresolved.length
+      ? `${docSummary.unresolved.join(', ')} not replaced yet`
+      : null;
   const offerDone = !!cand.offer?.generatedAt;
   const apptDone = !!cand.appointment?.generatedAt;
   const stage = cand.stage;
@@ -312,8 +326,66 @@ export default function CandidateDetailScreen() {
   };
 
   const onboard = () => run(() => api.post(`/recruitment/candidates/${id}/onboard`));
-  const requestDocs = () => run(() => api.post(`/recruitment/candidates/${id}/documents/request`));
+  // Email the upload link through the editable preview sheet — the link needs
+  // no login, so it never goes out on a single tap.
+  const openDocsMailSheet = async () => {
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${id}/documents/email`, { preview: true });
+      setMailSheet({
+        title: 'Email document request',
+        note: 'Review and edit the message · it goes to the candidate with the upload link included.',
+        to: data.to,
+        subject: data.subject,
+        body: data.body,
+        link: data.link,
+        sendLabel: 'Send request',
+        onSend: async ({ subject, body }) => {
+          await api.post(`/recruitment/candidates/${id}/documents/email`, { subject, body });
+          await load();
+          Alert.alert('Request sent', `Emailed to ${data.to}.`);
+        },
+      });
+    } catch (err) {
+      Alert.alert('Could not prepare the email', errMsg(err));
+    }
+  };
+
+  const requestDocs = () => run(async () => {
+    const { data } = await api.post(`/recruitment/candidates/${id}/documents/request`);
+    // Creating the link is the moment the candidate needs to hear about it.
+    if (data.candidate?.email) await openDocsMailSheet();
+  });
   const confirmDocs = () => run(() => api.post(`/recruitment/candidates/${id}/documents/confirm`));
+
+  // Verify or reject ONE document. Verifying is immediate; rejecting opens a
+  // sheet for the reason, since that text is what the candidate reads on their
+  // upload link. (Alert.prompt is iOS-only, so it is no use to this app.)
+  const reviewDoc = (file, status) => {
+    if (status === 'Rejected') { setRejectDoc(file); setRejectNote(''); return; }
+    run(() => api.patch(`/recruitment/candidates/${id}/documents/${file._id}/status`, { status }));
+  };
+  const submitRejection = async () => {
+    const file = rejectDoc;
+    setRejectDoc(null);
+    setBusy(true);
+    try {
+      const { data } = await api.patch(`/recruitment/candidates/${id}/documents/${file._id}/status`, {
+        status: 'Rejected',
+        note: rejectNote.trim(),
+      });
+      await load();
+      Alert.alert(
+        'Document sent back',
+        data.emailed
+          ? `${cand.name} has been emailed and can upload it again from their link.`
+          : 'No email on file for this candidate — share the upload link with them yourself.',
+      );
+    } catch (err) {
+      Alert.alert('Could not reject the document', errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const shareDocLink = async () => {
     const url = webUrl(`/submit-documents/${docs.token}`);
@@ -448,20 +520,62 @@ export default function CandidateDetailScreen() {
                     tone={docsConfirmed ? 'success' : docs.submittedAt ? 'warning' : 'neutral'}
                   />
                 </View>
-                {(docs.files || []).map((f) => (
-                  <TouchableOpacity key={f._id} style={styles.docFile} onPress={() => downloadAndShare(`/recruitment/candidates/${id}/documents/${f._id}`, f.name || 'document', f._id)}>
-                    <Ionicons name="attach" size={18} color={colors.textMuted} />
-                    <View style={{ flex: 1, marginLeft: 8 }}>
-                      <Text style={font.body} numberOfLines={1}>{f.label || 'Document'}</Text>
-                      <Text style={font.small} numberOfLines={1}>{f.name}</Text>
+                {/* Each document carries its own verdict, so a good scan can be
+                    accepted while a bad one goes back. */}
+                {(docs.files || []).map((f) => {
+                  const status = f.status || 'Pending';
+                  return (
+                    <View key={f._id}>
+                      <TouchableOpacity style={styles.docFile} onPress={() => downloadAndShare(`/recruitment/candidates/${id}/documents/${f._id}`, f.name || 'document', f._id)}>
+                        <Ionicons name="attach" size={18} color={colors.textMuted} />
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <Text style={font.body} numberOfLines={1}>{f.label || 'Document'}</Text>
+                          <Text style={font.small} numberOfLines={1}>{f.name}</Text>
+                          {f.reviewNote ? <Text style={styles.docNote} numberOfLines={2}>Sent back: {f.reviewNote}</Text> : null}
+                        </View>
+                        {downloading === f._id ? <ActivityIndicator color={colors.primary} /> : <Ionicons name="eye-outline" size={18} color={colors.primary} />}
+                      </TouchableOpacity>
+                      <View style={styles.docVerdict}>
+                        <Pill label={status} tone={DOC_TONE[status] || 'neutral'} />
+                        {writable && !docsConfirmed && (
+                          <>
+                            {status !== 'Verified' && (
+                              <TouchableOpacity style={[styles.verdictBtn, styles.verdictOk]} disabled={busy} onPress={() => reviewDoc(f, 'Verified')}>
+                                <Text style={styles.verdictOkText}>Verify</Text>
+                              </TouchableOpacity>
+                            )}
+                            {status !== 'Rejected' && (
+                              <TouchableOpacity style={[styles.verdictBtn, styles.verdictNo]} disabled={busy} onPress={() => reviewDoc(f, 'Rejected')}>
+                                <Text style={styles.verdictNoText}>Reject</Text>
+                              </TouchableOpacity>
+                            )}
+                          </>
+                        )}
+                      </View>
                     </View>
-                    {downloading === f._id ? <ActivityIndicator color={colors.primary} /> : <Ionicons name="eye-outline" size={18} color={colors.primary} />}
-                  </TouchableOpacity>
-                ))}
+                  );
+                })}
+
+                {writable && docs.submittedAt && !docsConfirmed && (
+                  docsBlocker ? (
+                    <Text style={[font.small, { marginTop: spacing(2) }]}>Can’t confirm yet — {docsBlocker}.</Text>
+                  ) : (
+                    <Toggle
+                      label={`I have opened and verified every document for ${cand.name}`}
+                      value={docsVerified}
+                      onToggle={() => setDocsVerified((v) => !v)}
+                    />
+                  )
+                )}
                 {writable && (
-                  <View style={styles.actRow}>
+                  <View style={styles.actRowWrap}>
+                    <AppButton title={docs.requestEmailedAt ? 'Email again' : 'Email link'} icon="mail-outline"
+                      variant="outline" style={styles.actBtn} disabled={!cand.email} onPress={openDocsMailSheet} />
                     <AppButton title="Share link" icon="share-social-outline" variant="ghost" style={styles.actBtn} onPress={shareDocLink} />
-                    {docs.submittedAt && !docsConfirmed && <AppButton title="Confirm" icon="checkmark-done" variant="success" style={styles.actBtn} loading={busy} onPress={confirmDocs} />}
+                    {docs.submittedAt && !docsConfirmed && (
+                      <AppButton title="Confirm" icon="checkmark-done" variant="success" style={styles.actBtn}
+                        loading={busy} disabled={!docsVerified || !!docsBlocker} onPress={confirmDocs} />
+                    )}
                   </View>
                 )}
               </>
@@ -533,6 +647,14 @@ export default function CandidateDetailScreen() {
       </ScrollView>
 
       {/* ===== Modals ===== */}
+      <ModalSheet visible={!!rejectDoc} onClose={() => setRejectDoc(null)} title={`Reject ${rejectDoc?.label || 'document'}`}
+        footer={<AppButton title="Reject document" variant="danger" loading={busy} onPress={submitRejection} />}>
+        <Field label="What should the candidate fix?">
+          <Input value={rejectNote} onChangeText={setRejectNote} placeholder="e.g. the scan is cut off — please send the full page" multiline />
+        </Field>
+        <Text style={font.small}>They will see this on their upload link and can send that document again.</Text>
+      </ModalSheet>
+
       <ModalSheet visible={modal === 'edit'} onClose={() => setModal(null)} title="Edit candidate"
         footer={<AppButton title="Save changes" loading={busy} onPress={saveEdit} />}>
         <Field label="Full name"><Input value={form.name} onChangeText={(v) => upd(setForm, 'name', v)} /></Field>
@@ -688,6 +810,30 @@ function ContactChip({ icon, text, onPress }) {
   );
 }
 
+// Per-document verdict tones, matching the web modal's pills.
+const DOC_TONE = { Pending: 'warning', Verified: 'success', Rejected: 'danger' };
+
+/** Client-side mirror of documentReviewSummary() in recruitmentController.js. */
+function summariseDocs(files = []) {
+  const byLabel = new Map();
+  let pending = 0, verified = 0, rejected = 0;
+  for (const f of files) {
+    const status = f.status || 'Pending';
+    if (status === 'Pending') pending++;
+    else if (status === 'Verified') verified++;
+    else rejected++;
+    const label = f.label || 'Document';
+    const seen = byLabel.get(label) || { verified: false, rejected: false };
+    if (status === 'Verified') seen.verified = true;
+    if (status === 'Rejected') seen.rejected = true;
+    byLabel.set(label, seen);
+  }
+  return {
+    pending, verified, rejected,
+    unresolved: [...byLabel.entries()].filter(([, s]) => s.rejected && !s.verified).map(([l]) => l),
+  };
+}
+
 function Toggle({ label, value, onToggle, disabled }) {
   return (
     <TouchableOpacity style={[styles.toggle, disabled && { opacity: 0.5 }]} onPress={disabled ? undefined : onToggle} activeOpacity={0.7}>
@@ -712,6 +858,13 @@ const styles = StyleSheet.create({
   link: { color: colors.primary, fontWeight: '700', fontSize: 13, marginTop: 4 },
   docStatus: { marginBottom: spacing(2) },
   docFile: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(2.5), borderTopWidth: 1, borderTopColor: colors.border },
+  docNote: { ...font.small, color: colors.danger, marginTop: 2 },
+  docVerdict: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: spacing(2) },
+  verdictBtn: { paddingHorizontal: 12, height: 30, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  verdictOk: { borderColor: colors.success, backgroundColor: 'transparent' },
+  verdictOkText: { color: colors.success, fontWeight: '700', fontSize: 12 },
+  verdictNo: { borderColor: colors.danger, backgroundColor: 'transparent' },
+  verdictNoText: { color: colors.danger, fontWeight: '700', fontSize: 12 },
   subhead: { ...font.label, marginTop: spacing(1), marginBottom: spacing(2) },
   toggle: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(2), marginTop: spacing(1) },
 });

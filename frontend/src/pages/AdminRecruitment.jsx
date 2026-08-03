@@ -32,6 +32,44 @@ const STAGE_STYLES = {
 // Stages at/after onboarding — the offer/onboard actions no longer apply.
 const POST_ONBOARD = ['Onboarding', 'NewJoinee', 'Hired'];
 
+// Per-document verdicts (partial verification) — see candidateDocSchema.status.
+const DOC_STATUS_STYLES = {
+  Pending: 'bg-amber-100 text-amber-800',
+  Verified: 'bg-green-100 text-green-800',
+  Rejected: 'bg-red-100 text-red-800',
+};
+const DOC_ROW_STYLES = {
+  Pending: 'border-gray-100',
+  Verified: 'border-green-200 bg-green-50/40',
+  Rejected: 'border-red-200 bg-red-50/40',
+};
+
+/**
+ * Client-side mirror of documentReviewSummary() in the recruitment controller —
+ * the server is still the authority, this only drives what HR can see and press.
+ * A label is "unresolved" when it was rejected and nothing verified replaced it.
+ */
+function docReviewSummary(candidate) {
+  const files = candidate?.documents?.files || [];
+  const byLabel = new Map();
+  let pending = 0, verified = 0, rejected = 0;
+  for (const f of files) {
+    const status = f.status || 'Pending';
+    if (status === 'Pending') pending++;
+    else if (status === 'Verified') verified++;
+    else rejected++;
+    const label = f.label || 'Document';
+    const seen = byLabel.get(label) || { verified: false, rejected: false };
+    if (status === 'Verified') seen.verified = true;
+    if (status === 'Rejected') seen.rejected = true;
+    byLabel.set(label, seen);
+  }
+  return {
+    total: files.length, pending, verified, rejected,
+    unresolved: [...byLabel.entries()].filter(([, s]) => s.rejected && !s.verified).map(([l]) => l),
+  };
+}
+
 const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '');
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
@@ -74,6 +112,10 @@ export default function AdminRecruitment() {
   const [docsCand, setDocsCand] = useState(null);
   const [docsBusy, setDocsBusy] = useState(false);
   const [docLinkCopied, setDocLinkCopied] = useState(false);
+  // Confirming a candidate's documents unlocks the offer letter and cannot be
+  // undone from this screen, so it takes a deliberate tick first — the button
+  // sits next to Close and was one stray click away.
+  const [docsVerified, setDocsVerified] = useState(false);
 
   // Active people available as interviewers, each {id, name, role, designation,
   // department} — the shape EmployeePicker expects.
@@ -362,12 +404,19 @@ export default function AdminRecruitment() {
 
   // ----- Candidate documents -----
   const docLink = (c) => `${window.location.origin}/submit-documents/${c.documents?.token || ''}`;
-  const openDocs = (c) => { setDocsCand(c); setDocLinkCopied(false); };
+  // The tick is per-opening: never carry one candidate's confirmation into the
+  // next candidate's modal.
+  const openDocs = (c) => { setDocsCand(c); setDocLinkCopied(false); setDocsVerified(false); };
   const generateDocLink = async (c) => {
+    const isFirst = !c.documents?.token;
     setDocsBusy(true);
     try {
       const { data } = await api.post(`/recruitment/candidates/${c._id}/documents/request`);
       setDocsCand(data.candidate); await load();
+      // Creating the link for the first time is the moment the candidate needs
+      // to hear about it, so go straight into the composer. Regenerating is a
+      // deliberate act on an existing link and stays silent.
+      if (isFirst && data.candidate?.email) composeDocsMail(data.candidate);
     } catch (err) { toast.error(err.response?.data?.message || 'Could not generate link'); }
     finally { setDocsBusy(false); }
   };
@@ -385,6 +434,65 @@ export default function AdminRecruitment() {
     } catch (err) { toast.error(err.response?.data?.message || 'Could not confirm submission'); }
     finally { setDocsBusy(false); }
   };
+  // Email the submission link through the editable compose modal — same
+  // two-step as the letters. The link opens an upload page with no login, so it
+  // never goes out on a single click.
+  const composeDocsMail = async (c) => {
+    if (!c.email) { toast.error('This candidate has no email on file.'); return; }
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/documents/email`, { preview: true });
+      setMail({
+        to: data.to,
+        showCc: true,
+        title: 'Email document request',
+        link: data.link,
+        sendLabel: 'Send request',
+        note: "Review and edit the message below · it's emailed from the company mailbox with the upload link included.",
+        defaultSubject: data.subject,
+        defaultBody: data.body,
+        onSend: async ({ subject, body, cc }) => {
+          const { data: r } = await api.post(`/recruitment/candidates/${c._id}/documents/email`, { subject, body, cc });
+          toast.success(`Document request emailed to ${(r.mailed || [c.email]).join(', ')}`);
+          const { data: fresh } = await api.get('/recruitment/candidates');
+          const updated = (fresh.candidates || []).find((x) => x._id === c._id);
+          if (updated) setDocsCand(updated);
+          await load();
+        },
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not prepare the document email');
+    }
+  };
+
+  // Partial verification: each document gets its own verdict, so a good PAN
+  // scan can be accepted while a blurry experience letter is sent back. A
+  // rejection asks for a reason — it is what the candidate sees on their link.
+  const reviewDoc = async (c, file, status) => {
+    let note;
+    if (status === 'Rejected') {
+      note = await promptDialog({
+        title: `Reject ${file.label}`,
+        message: 'What should the candidate fix? (shown to them on their upload link)',
+        confirmText: 'Reject document',
+      });
+      if (note === null) return; // dismissed
+    }
+    setDocsBusy(true);
+    try {
+      const { data } = await api.patch(
+        `/recruitment/candidates/${c._id}/documents/${file._id}/status`,
+        { status, note },
+      );
+      setDocsCand(data.candidate); await load();
+      if (status === 'Rejected') {
+        toast.success(data.emailed
+          ? `${file.label} sent back — ${c.name} has been emailed.`
+          : `${file.label} sent back. No email on file, so tell them yourself.`);
+      }
+    } catch (err) { toast.error(err.response?.data?.message || 'Could not update the document'); }
+    finally { setDocsBusy(false); }
+  };
+
   const viewDoc = async (c, fileId) => {
     try {
       const res = await api.get(`/recruitment/candidates/${c._id}/documents/${fileId}`, { responseType: 'blob' });
@@ -778,7 +886,17 @@ export default function AdminRecruitment() {
                   <input readOnly value={docLink(docsCand)} className="flex-1 border rounded-lg px-3 py-2 text-xs bg-gray-50" onFocus={(e) => e.target.select()} />
                   <button onClick={() => copyDocLink(docsCand)} className="text-xs px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">{docLinkCopied ? 'Copied!' : 'Copy'}</button>
                 </div>
-                <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="text-[11px] text-gray-500 hover:underline mt-1">Regenerate link</button>
+                <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                  <button onClick={() => composeDocsMail(docsCand)} disabled={docsBusy || !docsCand.email}
+                    title={docsCand.email ? undefined : 'This candidate has no email on file'}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed">
+                    ✉ {docsCand.documents?.requestEmailedAt ? 'Email again' : 'Email to candidate'}
+                  </button>
+                  <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="text-[11px] text-gray-500 hover:underline">Regenerate link</button>
+                  {docsCand.documents?.requestEmailedAt && (
+                    <span className="text-[11px] text-gray-500">Sent {fmtDateTime(docsCand.documents.requestEmailedAt)}</span>
+                  )}
+                </div>
               </div>
             ) : (
               <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="mb-4 px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
@@ -797,29 +915,120 @@ export default function AdminRecruitment() {
               )}
             </div>
 
-            {/* Files */}
-            <div className="space-y-1.5 mb-4 max-h-60 overflow-y-auto">
+            {/* Files — each carries its own verdict. */}
+            <div className="space-y-1.5 mb-3 max-h-72 overflow-y-auto">
               {(docsCand.documents?.files || []).length === 0 ? (
                 <div className="text-sm text-gray-400">No documents uploaded yet.</div>
-              ) : docsCand.documents.files.map((f) => (
-                <div key={f._id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-lg px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="text-sm text-gray-800 truncate">{f.label}</div>
-                    <div className="text-[11px] text-gray-400 truncate">{f.name}{f.sizeBytes ? ` · ${Math.max(1, Math.round(f.sizeBytes / 1024))} KB` : ''}</div>
+              ) : docsCand.documents.files.map((f) => {
+                const status = f.status || 'Pending';
+                return (
+                  <div key={f._id} className={`rounded-lg px-3 py-2 border ${DOC_ROW_STYLES[status] || 'border-gray-100'}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm text-gray-800 truncate">
+                          {f.label}
+                          <span className={`ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${DOC_STATUS_STYLES[status]}`}>
+                            {status}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-400 truncate">{f.name}{f.sizeBytes ? ` · ${Math.max(1, Math.round(f.sizeBytes / 1024))} KB` : ''}</div>
+                      </div>
+                      <button onClick={() => viewDoc(docsCand, f._id)} className="text-blue-600 hover:underline text-sm shrink-0">View</button>
+                    </div>
+                    {f.reviewNote && (
+                      <div className="text-[11px] text-red-700 mt-1">Sent back: {f.reviewNote}</div>
+                    )}
+                    <div className="flex items-center gap-2 mt-1.5">
+                      {status !== 'Verified' && (
+                        <button onClick={() => reviewDoc(docsCand, f, 'Verified')} disabled={docsBusy}
+                          className="text-[11px] font-semibold px-2 py-1 rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-60">
+                          ✓ Verify
+                        </button>
+                      )}
+                      {status !== 'Rejected' && (
+                        <button onClick={() => reviewDoc(docsCand, f, 'Rejected')} disabled={docsBusy}
+                          className="text-[11px] font-semibold px-2 py-1 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-60">
+                          ✕ Reject
+                        </button>
+                      )}
+                      {status !== 'Pending' && (
+                        <button onClick={() => reviewDoc(docsCand, f, 'Pending')} disabled={docsBusy}
+                          className="text-[11px] text-gray-500 hover:underline disabled:opacity-60">
+                          Undo
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <button onClick={() => viewDoc(docsCand, f._id)} className="text-blue-600 hover:underline text-sm shrink-0">View</button>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setDocsCand(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
-              {docsCand.documents?.submittedAt && !docsCand.documents?.confirmedAt && (
-                <button onClick={() => confirmDocs(docsCand)} disabled={docsBusy} className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">
-                  {docsBusy ? 'Confirming…' : 'Confirm submission'}
-                </button>
-              )}
-            </div>
+            {/* Where the set stands — mirrors documentReviewSummary() server-side. */}
+            {(docsCand.documents?.files || []).length > 0 && (() => {
+              const s = docReviewSummary(docsCand);
+              return (
+                <div className="text-xs text-gray-600 mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-green-700 font-medium">{s.verified} verified</span>
+                  {s.rejected > 0 && <span className="text-red-700 font-medium">{s.rejected} rejected</span>}
+                  {s.pending > 0 && <span className="text-amber-700 font-medium">{s.pending} awaiting your verdict</span>}
+                  {s.unresolved.length > 0 && (
+                    <span className="w-full text-[11px] text-red-700">
+                      Waiting on a replacement for: {s.unresolved.join(', ')}
+                    </span>
+                  )}
+                  {docsCand.documents?.rejectionEmailedAt && (
+                    <span className="w-full text-[11px] text-gray-500">
+                      Re-upload request emailed {fmtDateTime(docsCand.documents.rejectionEmailedAt)}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Verification gate — the tick must be made before Confirm works. */}
+            {docsCand.documents?.submittedAt && !docsCand.documents?.confirmedAt && (() => {
+              const s = docReviewSummary(docsCand);
+              const blocker = s.pending > 0
+                ? `${s.pending} document${s.pending === 1 ? '' : 's'} still ${s.pending === 1 ? 'needs' : 'need'} a verdict`
+                : s.unresolved.length
+                  ? `${s.unresolved.join(', ')} ${s.unresolved.length === 1 ? 'was' : 'were'} rejected and not replaced yet`
+                  : null;
+              return (
+                <>
+                  {blocker ? (
+                    <div className="mb-3 p-3 rounded-lg bg-gray-50 border border-gray-200 text-sm text-gray-600">
+                      Can’t confirm the whole submission yet — {blocker}.
+                    </div>
+                  ) : (
+                    <label className="flex items-start gap-2 mb-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 select-none cursor-pointer">
+                      <input type="checkbox" checked={docsVerified} onChange={(e) => setDocsVerified(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-amber-300 text-green-600 focus:ring-green-500" />
+                      <span>
+                        I have opened and verified every document above for {docsCand.name}.
+                        <span className="block text-xs text-amber-800/90 mt-0.5">
+                          Confirming unlocks the offer letter and cannot be undone here.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setDocsCand(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+                    <button onClick={() => confirmDocs(docsCand)} disabled={docsBusy || !docsVerified || !!blocker}
+                      title={blocker || (docsVerified ? undefined : 'Tick the verification box first')}
+                      className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-green-600">
+                      {docsBusy ? 'Confirming…' : 'Confirm submission'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {(!docsCand.documents?.submittedAt || docsCand.documents?.confirmedAt) && (
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDocsCand(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+              </div>
+            )}
             {docsCand.documents?.confirmedAt && (
               <p className="text-[11px] text-gray-400 mt-2">Documents confirmed · you can now create the offer letter from the candidate's row.</p>
             )}

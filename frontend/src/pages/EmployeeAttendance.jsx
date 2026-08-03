@@ -245,8 +245,10 @@ export default function EmployeeAttendance() {
         if (geo.accuracy != null) fd.append('accuracy', geo.accuracy);
       }
       fd.append('wfh', wfh ? 'true' : 'false');
-      // Half-day can only be marked at checkout.
-      if (capture === 'checkout') fd.append('halfDay', halfDay ? 'true' : 'false');
+      // Half-day can be declared at either punch: up front at check-in (a
+      // planned half day) or at check-out. A declaration at check-in sticks —
+      // the server will not let the hours rule undo it.
+      fd.append('halfDay', halfDay ? 'true' : 'false');
       await api.post(`/attendance/me/${capture}`, fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
@@ -459,19 +461,16 @@ export default function EmployeeAttendance() {
               </label>
             )}
 
-            {capture === 'checkout' && (
-              <>
-                <label className="flex items-center gap-2 mb-1 text-sm text-gray-700 select-none cursor-pointer">
-                  <input type="checkbox" checked={halfDay} onChange={(e) => setHalfDay(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
-                  Mark as Half Day
-                </label>
-                <p className="text-[11px] text-gray-500 mb-3">
-                  A day under 6 hours is recorded as a half day automatically — raise a
-                  regularization if the times are wrong.
-                </p>
-              </>
-            )}
+            <label className="flex items-center gap-2 mb-1 text-sm text-gray-700 select-none cursor-pointer">
+              <input type="checkbox" checked={halfDay} onChange={(e) => setHalfDay(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+              Mark as Half Day
+            </label>
+            <p className="text-[11px] text-gray-500 mb-3">
+              {capture === 'checkin'
+                ? 'Declaring it now records today as a half day and keeps it that way, however long you stay.'
+                : 'A day under 6 hours is recorded as a half day automatically — raise a regularization if the times are wrong.'}
+            </p>
 
             <div className="flex flex-wrap gap-2 justify-end">
               {!snapshot ? (
