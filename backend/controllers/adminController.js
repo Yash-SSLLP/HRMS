@@ -12,6 +12,38 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { PERMISSIONS, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
+const { enqueueMail } = require('../services/email');
+const COMPANY = require('../config/company');
+
+const APP_BASE_URL = () => (process.env.APP_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '');
+
+/**
+ * Tell someone their sign-in email was changed for them.
+ *
+ * Sent to the NEW address only, and deliberately without naming the old one:
+ * if HR mistypes the address this lands in a stranger's inbox, and it should
+ * not carry the employee's previous address with it. Queued, so a mail outage
+ * can never undo a change HR has already made.
+ *
+ * @param {object} user - the User, already saved with the new address
+ * @param {object} actor - the admin who made the change
+ */
+function notifyEmailChanged(user, actor) {
+  const name = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'there';
+  return enqueueMail({
+    to: user.email,
+    subject: `Your sign-in email has been updated - ${COMPANY.name}`,
+    text:
+      `Dear ${name},\n\n` +
+      `Your ${COMPANY.name} HRMS sign-in email has been updated by HR. From now on, ` +
+      `please sign in with this address:\n\n  ${user.email}\n\n` +
+      `Your password has not changed.\n\n` +
+      `Sign in here:\n${APP_BASE_URL()}\n\n` +
+      `If you were not expecting this, please contact HR straight away.\n\n` +
+      `Regards,\n${actor?.fullName || 'HR Team'}\n${COMPANY.name}`,
+    replyTo: actor?.email,
+  }, { type: 'user-email-change', id: user._id });
+}
 
 /**
  * List user accounts with optional role/active/text filters.
@@ -140,7 +172,8 @@ const createUser = asyncHandler(async (req, res) => {
  * admin roles are SuperAdmin-only).
  * @route PUT /api/admin/users/:id
  * @param {string} req.params.id - user id
- * @param {Object} req.body - firstName/lastName/role/phone/isActive/password
+ * @param {Object} req.body - firstName/lastName/role/phone/isActive/password/email
+ * @throws 409 when the email is already used by another account
  * @returns {{user: Object}}
  * @sideeffect auto-creates an EmployeeProfile when promoted to HR/L&D/Accounts staff
  */
@@ -159,7 +192,7 @@ const updateUser = asyncHandler(async (req, res) => {
     throw new Error('Only SuperAdmin may modify admin accounts');
   }
 
-  const { firstName, lastName, role, phone, isActive, password } = req.body;
+  const { firstName, lastName, role, phone, isActive, password, email } = req.body;
 
   if (role !== undefined) {
     if (!ROLES.includes(role)) {
@@ -173,6 +206,25 @@ const updateUser = asyncHandler(async (req, res) => {
     user.role = role;
   }
 
+  // Email is the login identity, so it is changed deliberately and checked for
+  // a clash first — a duplicate would otherwise surface as a raw index error,
+  // and the account would be left unable to sign in under either address.
+  let emailChanged = false;
+  if (email !== undefined && String(email).toLowerCase().trim() !== user.email) {
+    const next = String(email).toLowerCase().trim();
+    if (!next) {
+      res.status(400);
+      throw new Error('Email cannot be empty');
+    }
+    const clash = await User.findOne({ email: next, _id: { $ne: user._id } });
+    if (clash) {
+      res.status(409);
+      throw new Error('That email is already in use by another account');
+    }
+    user.email = next;
+    emailChanged = true;
+  }
+
   if (firstName !== undefined) user.firstName = firstName;
   if (lastName !== undefined) user.lastName = lastName;
   if (phone !== undefined) user.phone = phone;
@@ -180,6 +232,14 @@ const updateUser = asyncHandler(async (req, res) => {
   if (password) user.password = password; // pre-save hook re-hashes
 
   await user.save();
+
+  // Best-effort: the address is already changed, so a mail failure must not
+  // fail the request or roll anything back.
+  if (emailChanged) {
+    notifyEmailChanged(user, req.user).catch((err) => {
+      console.error('[admin] Could not queue the email-change notice:', err.message);
+    });
+  }
 
   // Promoted to HR / L&D → ensure they have an employee profile. CEO/MD are not
   // employees, so they never get one.

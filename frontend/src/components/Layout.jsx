@@ -67,7 +67,9 @@ function NavLeaf({ item, onNavigate }) {
 // collapsible dropdowns. The group containing the current route auto-opens.
 function NavList({ items, user, onNavigate }) {
   const { pathname } = useLocation();
-  const grouped = items.length > 0 && !!items[0].group;
+  // A grouped nav may also carry bare items (no `group`) pinned at the top —
+  // Dashboard is one — so detect grouping across the list, not just its head.
+  const grouped = items.some((i) => !!i.group);
   const visible = (arr) => arr.filter((i) => {
     if (i.roles && !i.roles.includes(user?.role)) return false;
     if (i.perm && !hasPermission(user, i.perm)) return false;
@@ -75,12 +77,14 @@ function NavList({ items, user, onNavigate }) {
     return true;
   });
   const groupActive = (g) => (g.items || []).some((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
+  // Bare (ungrouped) entries in a grouped nav: a plain link, no dropdown.
+  const isLeaf = (entry) => !entry.group && !!entry.to;
 
   // Multiple groups can be open at once. The active group auto-opens (without
   // closing others).
   const [open, setOpen] = useState(() => {
     const init = {};
-    if (grouped) items.forEach((g) => { init[g.group] = groupActive(g); });
+    if (grouped) items.forEach((g) => { if (g.group) init[g.group] = groupActive(g); });
     return init;
   });
 
@@ -88,7 +92,7 @@ function NavList({ items, user, onNavigate }) {
     if (!grouped) return;
     setOpen((prev) => {
       const next = { ...prev };
-      items.forEach((g) => { if (groupActive(g)) next[g.group] = true; });
+      items.forEach((g) => { if (g.group && groupActive(g)) next[g.group] = true; });
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -99,6 +103,13 @@ function NavList({ items, user, onNavigate }) {
   }
 
   return items.map((g) => {
+    // Pinned top-level link — rendered before, and outside, every category.
+    if (isLeaf(g)) {
+      return visible([g]).length
+        ? <NavLeaf key={g.to} item={g} onNavigate={onNavigate} />
+        : null;
+    }
+
     const children = visible(g.items);
     if (!children.length) return null;
 

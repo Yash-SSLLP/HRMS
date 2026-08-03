@@ -6,7 +6,7 @@
  * and (SuperAdmin) activates accounts + toggles the include-executives org setting.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
@@ -17,6 +17,10 @@ import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
+// Enums mirrored from models/EmployeeProfile.js — a value outside these fails validation.
+const GENDERS = ['Male', 'Female', 'Other'];
+const MARITAL_STATUSES = ['Single', 'Married', 'Other'];
+const blankAddress = { line1: '', line2: '', city: '', state: '', pincode: '', country: 'India' };
 
 const blankProfile = {
   user: '',
@@ -34,6 +38,11 @@ const blankProfile = {
   esicNumber: '',
   reportingManager: '',
   documentsVerified: false,
+  dateOfBirth: '',
+  gender: '',
+  maritalStatus: '',
+  address: { current: {}, permanent: {} },
+  emergencyContact: { name: '', relation: '', phone: '' },
   bankDetails: {
     accountHolderName: '',
     bankName: '',
@@ -67,6 +76,10 @@ export default function AdminEmployees() {
   const [docBusy, setDocBusy] = useState(false);
   const [docCopied, setDocCopied] = useState(false);
   const [editEmail, setEditEmail] = useState('');
+  // Phone lives on the User, not the profile, so it saves separately.
+  const [editPhone, setEditPhone] = useState('');
+  const phoneAtOpen = useRef('');
+  const emailAtOpen = useRef('');
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -139,6 +152,26 @@ export default function AdminEmployees() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // ----- deep link: /admin/employees?edit=<profileId> -----
+  // The employee detail page (a read-only view) sends HR here to edit, rather
+  // than keeping a second copy of this long form in sync. `back=1` means return
+  // to that employee's page once the save lands.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editParam = searchParams.get('edit');
+  const returnToDetail = searchParams.get('back') === '1';
+  const handledEdit = useRef(false);
+
+  useEffect(() => {
+    if (!editParam || handledEdit.current || loading) return;
+    const profile = profiles.find((p) => p._id === editParam);
+    if (!profile) return; // unknown/stale id — leave the page as it is
+    handledEdit.current = true;
+    openEdit(profile);
+    // Keep `back` (the save handler reads it); drop only the trigger.
+    setSearchParams(returnToDetail ? { back: '1' } : {}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editParam, loading, profiles]);
 
   // SuperAdmin-only org preference: whether CEO/MD appear in employee-selection
   // pickers across the app. Off by default.
@@ -220,6 +253,9 @@ export default function AdminEmployees() {
     setEditingId(null);
     setForm(blankProfile);
     setEditEmail('');
+    setEditPhone('');
+    phoneAtOpen.current = '';
+    emailAtOpen.current = '';
     resetDocLink();
     setShowModal(true);
     // Prefill the next employee code (continues the last one, e.g. SSL 8 → SSL 9).
@@ -243,8 +279,19 @@ export default function AdminEmployees() {
       hrPartner: undefined, // HR ownership removed · never send this field
       reportingManager: p.reportingManager?._id || p.reportingManager || '',
       dateOfJoining: p.dateOfJoining ? p.dateOfJoining.slice(0, 10) : '',
+      dateOfBirth: p.dateOfBirth ? p.dateOfBirth.slice(0, 10) : '',
+      gender: p.gender || '',
+      maritalStatus: p.maritalStatus || '',
+      address: {
+        current: { ...blankAddress, ...(p.address?.current || {}) },
+        permanent: { ...blankAddress, ...(p.address?.permanent || {}) },
+      },
+      emergencyContact: { ...blankProfile.emergencyContact, ...(p.emergencyContact || {}) },
       bankDetails: { ...blankProfile.bankDetails, ...(p.bankDetails || {}) },
     });
+    setEditPhone(p.user?.phone || '');
+    phoneAtOpen.current = p.user?.phone || '';
+    emailAtOpen.current = p.user?.email || '';
     setShowModal(true);
   };
 
@@ -267,19 +314,83 @@ export default function AdminEmployees() {
     }
   };
 
+  // Patch one address block without clobbering the other.
+  const setAddress = (which, patch) => setForm((f) => ({
+    ...f,
+    address: { ...f.address, [which]: { ...(f.address?.[which] || {}), ...patch } },
+  }));
+
+  // Who the open edit form belongs to, for messages.
+  const editingName = () => {
+    const p = profiles.find((x) => x._id === editingId);
+    return `${p?.user?.firstName || ''} ${p?.user?.lastName || ''}`.trim()
+      || p?.employeeCode || 'This employee';
+  };
+
   const onSave = async (e) => {
     e.preventDefault();
+
+    // Changing the login email locks the old address out, so it is confirmed
+    // against both values before a single request goes out.
+    const nextEmail = editEmail.trim();
+    if (editingId && nextEmail && nextEmail !== emailAtOpen.current) {
+      const ok = await confirmDialog({
+        title: 'Change sign-in email?',
+        message: `${editingName()} signs in with ${emailAtOpen.current || '(none)'}.
+
+`
+          + `After saving they must use ${nextEmail} instead. The old address will no longer work.`,
+        confirmText: 'Change email',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
+
     setSaving(true);
     setError('');
     try {
       // Empty work-location select must clear the ref (null), not send '' (bad ObjectId).
       const payload = { ...form, workLocationRef: form.workLocationRef || null };
+      // Blank enums must be dropped, not sent as '' — the schema would reject it.
+      if (!payload.gender) delete payload.gender;
+      if (!payload.maritalStatus) delete payload.maritalStatus;
+      if (!payload.dateOfBirth) delete payload.dateOfBirth;
+      let savedId = editingId;
       if (editingId) {
         await api.put(`/employees/${editingId}`, payload);
       } else {
-        await api.post('/employees', payload);
+        const { data } = await api.post('/employees', payload);
+        savedId = data.profile?._id || savedId;
+      }
+
+      // Phone and email belong to the User account, so they are a separate call
+      // — and only when they actually changed. An HR Manager may not edit
+      // another admin's account, so a refusal here is reported without losing
+      // the profile save.
+      const emailChanged = editingId && editEmail.trim() && editEmail.trim() !== emailAtOpen.current;
+      const phoneChanged = editPhone !== phoneAtOpen.current;
+      if (phoneChanged || emailChanged) {
+        const userId = form.user?._id || form.user;
+        const patch = {};
+        if (phoneChanged) patch.phone = editPhone;
+        if (emailChanged) patch.email = editEmail.trim();
+        if (userId && Object.keys(patch).length) {
+          try {
+            await api.put(`/admin/users/${userId}`, patch);
+            phoneAtOpen.current = editPhone;
+            if (emailChanged) {
+              emailAtOpen.current = editEmail.trim();
+              toast.success(`Sign-in email changed to ${editEmail.trim()}`);
+            }
+          } catch (err) {
+            toast.error(err.response?.data?.message
+              || `Profile saved, but the ${emailChanged ? 'email' : 'phone number'} could not be updated`);
+          }
+        }
       }
       setShowModal(false);
+      // Came from the employee's own page — take them back to it, now updated.
+      if (editingId && returnToDetail) { navigate(`/admin/employees/${editingId}`); return; }
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Save failed');
@@ -690,6 +801,97 @@ export default function AdminEmployees() {
                     )}
                   </div>
                 )}
+              </div>
+
+              <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Personal &amp; Contact</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Phone</label>
+                  <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="10 digits" className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="text-[11px] text-gray-400 mt-1">Saved on the login account.</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Email (login)</label>
+                  <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
+                    placeholder="name@company.com" className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="text-[11px] text-amber-700 mt-1">Changing this changes how they sign in.</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Date of Birth</label>
+                  <input type="date" value={form.dateOfBirth || ''}
+                    onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Gender</label>
+                  <select value={form.gender || ''} onChange={(e) => setForm({ ...form, gender: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2">
+                    <option value="">Not set</option>
+                    {GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Marital Status</label>
+                  <select value={form.maritalStatus || ''} onChange={(e) => setForm({ ...form, maritalStatus: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2">
+                    <option value="">Not set</option>
+                    {MARITAL_STATUSES.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {['current', 'permanent'].map((which) => (
+                <div key={which}>
+                  <div className="flex items-center gap-3 mt-1">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{which} address</h4>
+                    {which === 'permanent' && (
+                      // Most people's two addresses are the same; typing it twice
+                      // is the commonest reason this section is left blank.
+                      <button type="button" onClick={() => setAddress('permanent', { ...form.address.current })}
+                        className="text-[11px] text-blue-600 hover:underline">Same as current</button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1">
+                    <input value={form.address?.[which]?.line1 || ''} placeholder="Address line 1"
+                      onChange={(e) => setAddress(which, { line1: e.target.value })}
+                      className="sm:col-span-2 block w-full border rounded-lg px-3 py-2" />
+                    <input value={form.address?.[which]?.line2 || ''} placeholder="Address line 2"
+                      onChange={(e) => setAddress(which, { line2: e.target.value })}
+                      className="block w-full border rounded-lg px-3 py-2" />
+                    <input value={form.address?.[which]?.city || ''} placeholder="City"
+                      onChange={(e) => setAddress(which, { city: e.target.value })}
+                      className="block w-full border rounded-lg px-3 py-2" />
+                    <input value={form.address?.[which]?.state || ''} placeholder="State"
+                      onChange={(e) => setAddress(which, { state: e.target.value })}
+                      className="block w-full border rounded-lg px-3 py-2" />
+                    <input value={form.address?.[which]?.pincode || ''} placeholder="PIN code (6 digits)"
+                      maxLength={6} inputMode="numeric"
+                      onChange={(e) => setAddress(which, { pincode: e.target.value.replace(/\D/g, '') })}
+                      className="block w-full border rounded-lg px-3 py-2" />
+                  </div>
+                </div>
+              ))}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700">Emergency Contact</label>
+                  <input value={form.emergencyContact?.name || ''} placeholder="Name"
+                    onChange={(e) => setForm({ ...form, emergencyContact: { ...form.emergencyContact, name: e.target.value } })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Relation</label>
+                  <input value={form.emergencyContact?.relation || ''} placeholder="e.g. Father"
+                    onChange={(e) => setForm({ ...form, emergencyContact: { ...form.emergencyContact, relation: e.target.value } })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Contact Phone</label>
+                  <input value={form.emergencyContact?.phone || ''} placeholder="10 digits"
+                    onChange={(e) => setForm({ ...form, emergencyContact: { ...form.emergencyContact, phone: e.target.value } })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
               </div>
 
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Statutory IDs (India)</h3>

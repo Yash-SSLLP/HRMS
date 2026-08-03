@@ -19,8 +19,11 @@ import {
 // the user holds ANY of the listed capabilities. Items with neither are visible
 // to every admin-portal role.
 export const adminNav = [
+  // Pinned above every category: the landing page is reached constantly and
+  // shouldn't need a dropdown opened first. An entry with no `group` renders as
+  // a plain top-level link (see NavList in components/Layout.jsx).
+  { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome },
   { group: 'Overview, Reports & Admin Tools', items: [
-    { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome },
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },
     { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, roles: ['SuperAdmin'] },
     { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'] },
@@ -119,8 +122,10 @@ export const accountsNav = [
 ];
 
 export const employeeNav = [
+  // Pinned above every category, as on the admin side: the landing page is
+  // reached constantly and shouldn't need a dropdown opened first.
+  { to: '/employee', label: 'Dashboard', end: true, icon: FiHome },
   { group: 'Overview', items: [
-    { to: '/employee', label: 'Overview', end: true, icon: FiHome },
     { to: '/employee/approvals', label: 'Approvals', icon: FiCheckSquare },
     { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
     { to: '/employee/interviews', label: 'My Interviews', icon: FiUserCheck },

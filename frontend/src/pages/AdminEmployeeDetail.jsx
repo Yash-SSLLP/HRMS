@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { useAuthStore } from '../store/authStore';
+import { hasPermission } from '../config/permissions';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
@@ -56,6 +58,12 @@ const CONFIRM_BADGE = {
 
 export default function AdminEmployeeDetail() {
   const { id } = useParams();
+  const me = useAuthStore((s) => s.user);
+  // Who may change an employee's details: a SuperAdmin, or an HR Manager holding
+  // employees.manage. CEO/MD pass hasPermission but are read-only executives —
+  // the server refuses their writes, so they must not be offered the button.
+  const canEdit = me?.role === 'SuperAdmin'
+    || (!['CEO', 'MD'].includes(me?.role) && hasPermission(me, 'employees.manage'));
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -155,6 +163,14 @@ export default function AdminEmployeeDetail() {
   return (
     <div>
       <PageHeader title={fullName(u) || profile.employeeCode} subtitle={`${profile.designation || '-'} · ${profile.department || '-'}`}>
+        {canEdit && (
+          // Editing reuses the full form on the employees list rather than a
+          // second copy here; `back=1` returns to this page once saved.
+          <Link to={`/admin/employees?edit=${id}&back=1`}
+            className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
+            Edit details
+          </Link>
+        )}
         <Link to="/admin/employees" className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">← All employees</Link>
       </PageHeader>
 
