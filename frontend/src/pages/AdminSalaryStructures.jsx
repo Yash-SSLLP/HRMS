@@ -40,6 +40,9 @@ const PREVIEW_ROWS = [
 const blankComponents = () =>
   PCT_FIELDS.reduce((acc, [key, , def]) => ({ ...acc, [key]: def }), {});
 
+// An employee's display name, used to name a per-person salary structure.
+const fullName = (p) => `${p?.user?.firstName || ''} ${p?.user?.lastName || ''}`.trim();
+
 const blankForm = () => ({
   name: '',
   description: '',
@@ -58,6 +61,9 @@ export default function AdminSalaryStructures() {
   const [form, setForm] = useState(blankForm());
   // Optional "assign this structure to an employee" alongside create/edit.
   const [assign, setAssign] = useState({ employee: '', annualCtc: '' });
+  // How many OTHER employees sit on the structure being edited. Non-zero means
+  // its name is shared, so the modal warns instead of quietly renaming it.
+  const [sharedCount, setSharedCount] = useState(0);
   const [saving, setSaving] = useState(false);
 
   // Preview modal
@@ -99,6 +105,7 @@ export default function AdminSalaryStructures() {
     setEditingId(null);
     setForm(blankForm());
     setAssign({ employee: '', annualCtc: '' });
+    setSharedCount(0);
     setError('');
     setShowModal(true);
   };
@@ -111,6 +118,7 @@ export default function AdminSalaryStructures() {
       components: { ...blankComponents(), ...(s.components || {}) },
     });
     setAssign({ employee: '', annualCtc: '' });
+    setSharedCount(0);
     setError('');
     setShowModal(true);
   };
@@ -137,6 +145,20 @@ export default function AdminSalaryStructures() {
     const existing = profile.salaryStructure
       && structures.find((s) => s._id === (profile.salaryStructure._id || profile.salaryStructure));
     if (existing) openEdit(existing); else openCreate();
+
+    // Name the structure after the person HR just clicked. On a new structure
+    // that is simply the sensible default. On an existing one it is only safe
+    // when nobody else is on it — renaming a shared template would rename it
+    // under everyone assigned to it, so those keep their own name and the modal
+    // says who else is affected instead.
+    const empName = fullName(profile);
+    const sharedWith = existing
+      ? employees.filter((p) => String(p.salaryStructure?._id || p.salaryStructure || '') === String(existing._id))
+      : [];
+    setSharedCount(Math.max(0, sharedWith.length - 1));
+    if (empName && (!existing || sharedWith.length <= 1)) {
+      setForm((f) => ({ ...f, name: empName }));
+    }
 
     setAssign({
       employee: profile._id,
@@ -324,6 +346,12 @@ export default function AdminSalaryStructures() {
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 className="block w-full border rounded-lg px-3 py-2"
               />
+              {sharedCount > 0 && (
+                <p className="mt-1 text-xs text-amber-700">
+                  {sharedCount} other employee{sharedCount === 1 ? ' is' : 's are'} on this structure —
+                  renaming it renames it for them too.
+                </p>
+              )}
               <textarea
                 rows={2}
                 placeholder="Description"
