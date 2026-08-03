@@ -83,9 +83,12 @@ export function toYMD(d) {
   return `${y}-${m}-${day}`;
 }
 
-// Date -> "HH:MM" (24h) string for the API.
+// Date -> "HH:MM" (24h) string for the API. "" when there is no usable value,
+// so a missing punch leaves its time field blank rather than "NaN:NaN".
 export function toHM(d) {
+  if (!d) return '';
   const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) return '';
   return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
 }
 

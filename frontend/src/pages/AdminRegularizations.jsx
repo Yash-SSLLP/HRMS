@@ -9,6 +9,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
 import { promptDialog } from '../components/dialogs';
+import { formatTime12 as fmt12 } from '../utils/time';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected'];
 
@@ -17,20 +18,6 @@ const STATUS_STYLES = {
   Approved: 'bg-green-100 text-green-800',
   Rejected: 'bg-red-100 text-red-800',
 };
-
-// Format a time-of-day for display in 12-hour AM/PM. Accepts a Date/ISO value
-// (applied/previous times) or an "HH:mm" string (the employee's request).
-function fmt12(value) {
-  if (!value) return '';
-  const s = String(value);
-  if (value instanceof Date || s.includes('T') || s.includes('Z')) {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-  }
-  const m = s.match(/^(\d{1,2}):(\d{2})$/);
-  if (m) { let h = +m[1]; const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${ap}`; }
-  return s;
-}
 
 export default function AdminRegularizations() {
   const me = useAuthStore((s) => s.user);

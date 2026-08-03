@@ -949,6 +949,7 @@ html.dark[data-portal="employee"] .on-accent,
 html.dark[data-portal="employee"] .nav-link-active:not(.nav-link-danger) .nav-icon,
 html.dark[data-portal="employee"] .nav-link-highlight:not(.nav-link-danger) .nav-icon,
 html.dark[data-portal="employee"] .cal-cell.is-today .cal-daynum,
+html.dark[data-portal="employee"] .adp-day.is-sel,
 html.dark[data-portal="employee"] .cal-add { color: var(--onyx) !important; }
 
 /* ---------------------------------------------------------------------------
@@ -1365,3 +1366,232 @@ html.dark {
 @keyframes skeleton-sweep { 100% { transform: translateX(100%); } }
 html.dark .skeleton { background-color: #243044; }
 html.dark .skeleton::after { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent); }
+
+/* ---------------------------------------------------------------------------
+   Attendance date picker (components/AttendanceDatePicker.jsx) — a month grid
+   that tints each day by the state of its punches. Green = clean, red = needs
+   a correction, plain = never a work day. Built on the same --cal-* surfaces as
+   the Calendar board and the shared --chart-good/--chart-critical state hues,
+   so one day never reads green here and amber in a chart.
+--------------------------------------------------------------------------- */
+.adp-pop { width: 19.5rem; max-width: 92vw; background-color: var(--surface); transform-origin: top left; }
+.adp-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+
+.adp-dow {
+  text-align: center; font-size: .625rem; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--cal-ink-dim); padding: .35rem 0 .15rem;
+}
+
+.adp-nav {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem; border-radius: 9999px;
+  color: var(--cal-ink-dim); transition: background-color .14s ease, color .14s ease;
+}
+.adp-nav:hover { background-color: var(--cal-cell); color: var(--cal-ink); }
+
+.adp-day {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  height: 2.2rem; border-radius: .6rem;
+  font-size: .8125rem; font-weight: 600; color: var(--cal-ink);
+  transition: background-color .14s ease, color .14s ease, transform .14s ease, box-shadow .14s ease;
+}
+.adp-day.is-out { color: var(--cal-ink-dim); opacity: .35; }
+.adp-day:disabled { color: var(--cal-ink-dim); opacity: .38; cursor: default; }
+.adp-day:not(:disabled):hover { background-color: var(--cal-cell); }
+
+/* The two states the picker exists to show. A tint rather than a solid fill so
+   the day number stays the loudest thing in the cell. */
+.adp-day.is-good {
+  background-color: color-mix(in srgb, var(--chart-good) 18%, transparent);
+  color: color-mix(in srgb, var(--chart-good) 72%, var(--cal-ink));
+}
+.adp-day.is-bad {
+  background-color: color-mix(in srgb, var(--chart-critical) 18%, transparent);
+  color: color-mix(in srgb, var(--chart-critical) 74%, var(--cal-ink));
+}
+/* Sundays, declared holidays and approved leave. Its own hue, not a shade of
+   red — nothing on these days is wrong, they were simply never work days.
+   Violet is already what the shared palette gives leave, so the vocabulary
+   matches the heatmap and the attendance charts. */
+.adp-day.is-off {
+  background-color: color-mix(in srgb, var(--chart-7) 16%, transparent);
+  color: color-mix(in srgb, var(--chart-7) 70%, var(--cal-ink));
+}
+.adp-day.is-good:not(:disabled):hover { background-color: color-mix(in srgb, var(--chart-good) 30%, transparent); }
+.adp-day.is-bad:not(:disabled):hover { background-color: color-mix(in srgb, var(--chart-critical) 30%, transparent); }
+.adp-day.is-off:not(:disabled):hover { background-color: color-mix(in srgb, var(--chart-7) 28%, transparent); }
+
+/* Today gets a dot under the number; the keyboard cursor gets a hairline ring. */
+.adp-day.is-today::after {
+  content: ''; position: absolute; left: 50%; bottom: .28rem; transform: translateX(-50%);
+  width: .25rem; height: .25rem; border-radius: 9999px; background-color: var(--accent);
+}
+.adp-day.is-cursor:not(.is-sel) { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* The selection wins over every tint — one obvious "this is the day". */
+.adp-day.is-sel {
+  background-color: var(--accent); color: #fff;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
+  transform: translateY(-1px);
+}
+.adp-day.is-sel::after { background-color: #fff; }
+.adp-day.is-busy { color: transparent; background-color: var(--cal-cell); }
+
+.adp-legend {
+  display: flex; flex-wrap: wrap; gap: .75rem;
+  padding: .6rem .85rem .5rem; font-size: .6875rem; color: var(--cal-ink-dim);
+}
+.adp-legend span { display: inline-flex; align-items: center; gap: .3rem; }
+.adp-key {
+  width: .6rem; height: .6rem; border-radius: .2rem; background-color: var(--cal-cell);
+}
+.adp-key.is-good { background-color: color-mix(in srgb, var(--chart-good) 45%, transparent); }
+.adp-key.is-bad { background-color: color-mix(in srgb, var(--chart-critical) 45%, transparent); }
+.adp-key.is-off { background-color: color-mix(in srgb, var(--chart-7) 45%, transparent); }
+
+/* The "this was a Sunday/holiday" note under the date field, in the same violet
+   the calendar paints those days with. */
+.adp-offnote {
+  background-color: color-mix(in srgb, var(--chart-7) 10%, transparent);
+  border-color: color-mix(in srgb, var(--chart-7) 28%, transparent);
+  color: color-mix(in srgb, var(--chart-7) 75%, var(--cal-ink));
+}
+
+/* "3 to fix" — how much of this month is worth a regularization. */
+.adp-flag {
+  margin-left: auto; font-weight: 700;
+  color: color-mix(in srgb, var(--chart-critical) 80%, var(--cal-ink));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adp-day, .adp-nav { transition: none; }
+  .adp-day.is-sel { transform: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Salary-setup alert (components/SalarySetupAlert.jsx) — the standing HR
+   warning that some employees would come out of a payroll run with a ₹0
+   payslip.
+
+   Like the R&R banner above it owns its surfaces as tokens instead of Tailwind
+   utilities: the rows used `bg-white/70`, a literal alpha fill the html.dark
+   utility remap cannot reach, so in dark mode they stayed near-white blocks
+   while their `text-gray-900` ink was remapped to near-white — the row text
+   disappeared. The panel ink was `text-amber-900`, outside the 500–800 remap
+   band, so the headline sat dark-brown on a dark surface too.
+
+   These tokens follow html.dark for free and give the panel the same amber
+   warning identity in both themes.
+--------------------------------------------------------------------------- */
+:root {
+  --salert-panel: linear-gradient(135deg, #fffaef 0%, #ffffff 58%, #fff5e2 100%);
+  --salert-edge: color-mix(in srgb, #f59e0b 34%, transparent);
+  --salert-rail: linear-gradient(180deg, #fbbf24 0%, #d97706 100%);
+  --salert-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 8px 24px rgba(180, 83, 9, .08);
+  --salert-ink: #7c4a03;          /* headline / accent ink on the panel */
+  --salert-ink-soft: #96631a;     /* body copy + footnotes */
+  --salert-icon-bg: color-mix(in srgb, #f59e0b 16%, transparent);
+  --salert-row: #ffffff;
+  --salert-row-hover: #fffcf4;
+  --salert-row-edge: color-mix(in srgb, #f59e0b 20%, transparent);
+  --salert-row-edge-hover: color-mix(in srgb, #f59e0b 46%, transparent);
+  --salert-row-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  --salert-row-shadow-hover: 0 4px 14px rgba(180, 83, 9, .12);
+  --salert-name: #0f172a;
+  --salert-meta: #6b7280;
+  --salert-tag-bg: color-mix(in srgb, #f59e0b 13%, transparent);
+  --salert-chip-bg: linear-gradient(180deg, #fbbf24 0%, #e19407 100%);
+}
+html.dark {
+  --salert-panel: linear-gradient(135deg,
+    color-mix(in srgb, #f59e0b 13%, var(--surface)) 0%,
+    var(--surface) 54%,
+    color-mix(in srgb, #b45309 15%, var(--surface)) 100%);
+  --salert-edge: color-mix(in srgb, #f59e0b 30%, transparent);
+  --salert-rail: linear-gradient(180deg, #fcd34d 0%, #b45309 100%);
+  --salert-shadow: 0 8px 26px rgba(0, 0, 0, .45);
+  --salert-ink: #fcd34d;
+  --salert-ink-soft: color-mix(in srgb, #fcd34d 62%, #cbd5e1);
+  --salert-icon-bg: color-mix(in srgb, #f59e0b 20%, transparent);
+  --salert-row: var(--surface-2);
+  --salert-row-hover: color-mix(in srgb, #f59e0b 9%, var(--surface-2));
+  --salert-row-edge: color-mix(in srgb, #f59e0b 18%, transparent);
+  --salert-row-edge-hover: color-mix(in srgb, #f59e0b 42%, transparent);
+  --salert-row-shadow: none;
+  --salert-row-shadow-hover: 0 4px 16px rgba(0, 0, 0, .38);
+  --salert-name: #f1f5f9;
+  --salert-meta: #98a2b3;
+  --salert-tag-bg: color-mix(in srgb, #f59e0b 15%, transparent);
+  --salert-chip-bg: linear-gradient(180deg, #fcd34d 0%, #d99406 100%);
+}
+
+.salert {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.9rem;
+  padding: 1rem 1.1rem 0.9rem 1.25rem;
+  background-image: var(--salert-panel);
+  border: 1px solid var(--salert-edge);
+  box-shadow: var(--salert-shadow);
+}
+/* Amber rail down the leading edge — reads as "attention" without shouting. */
+.salert::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background-image: var(--salert-rail);
+}
+.salert-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem; border-radius: 0.55rem;
+  background-color: var(--salert-icon-bg);
+  color: var(--salert-ink);
+}
+.salert-title { color: var(--salert-ink); }
+.salert-body { color: var(--salert-ink-soft); }
+/* Solid amber pill. White ink on amber is ~2.1:1 in both themes; the near-black
+   brand onyx clears 9:1 — same pairing as .gold-ink on the R&R button. */
+.salert-chip {
+  background-image: var(--salert-chip-bg);
+  color: var(--onyx);
+  box-shadow: 0 1px 2px rgba(180, 83, 9, .28);
+}
+
+.salert-row {
+  background-color: var(--salert-row);
+  border: 1px solid var(--salert-row-edge);
+  border-radius: 0.65rem;
+  box-shadow: var(--salert-row-shadow);
+  transition: background-color .18s ease, border-color .18s ease,
+              box-shadow .22s ease, transform .12s ease;
+}
+.salert-row:hover {
+  background-color: var(--salert-row-hover);
+  border-color: var(--salert-row-edge-hover);
+  box-shadow: var(--salert-row-shadow-hover);
+  transform: translateY(-1px);
+}
+.salert-row:focus-visible {
+  outline: none;
+  border-color: var(--salert-row-edge-hover);
+  box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 26%, transparent);
+}
+.salert-name { color: var(--salert-name); }
+.salert-meta { color: var(--salert-meta); }
+/* What is missing, as a quiet tag rather than loose text. */
+.salert-tag {
+  background-color: var(--salert-tag-bg);
+  color: var(--salert-ink);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+.salert-chevron { color: var(--salert-ink); opacity: .55; transition: opacity .18s ease, transform .18s ease; }
+.salert-row:hover .salert-chevron { opacity: 1; transform: translateX(2px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .salert-row, .salert-chevron { transition: none; }
+  .salert-row:hover { transform: none; }
+  .salert-row:hover .salert-chevron { transform: none; }
+}

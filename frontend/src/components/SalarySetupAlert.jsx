@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FiAlertTriangle } from 'react-icons/fi';
+import { FiAlertTriangle, FiChevronRight } from 'react-icons/fi';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import { hasPermission } from '../config/permissions';
@@ -42,39 +42,42 @@ export default function SalarySetupAlert() {
   const rest = employees.length - listed.length;
 
   return (
-    <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm">
-      <div className="flex items-center gap-2 flex-wrap mb-2.5">
-        <FiAlertTriangle className="text-amber-600 shrink-0" size={18} />
-        <span className="font-semibold text-amber-900">
+    <div className="salert mb-4">
+      <div className="flex items-center gap-2.5 flex-wrap mb-2">
+        <span className="salert-icon shrink-0"><FiAlertTriangle size={16} /></span>
+        <span className="salert-title font-semibold tracking-tight">
           {employees.length} employee{employees.length === 1 ? '' : 's'} {employees.length === 1 ? 'has' : 'have'} no salary set up
         </span>
-        <span className="text-[10px] font-semibold uppercase tracking-wide bg-amber-600 text-white rounded-full px-2 py-0.5">
+        <span className="salert-chip text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5">
           Payroll will be ₹0
         </span>
       </div>
-      <p className="text-xs text-amber-800 mb-2.5">
+      <p className="salert-body text-xs mb-3 max-w-3xl">
         Payroll can&apos;t be calculated without a salary structure <em>and</em> an annual CTC.
         Pick a name below to assign both, then re-run the month.
       </p>
       <div className="space-y-1.5">
         {listed.map((e) => (
           <Link key={e.id} to={fixLink(e.id)}
-            className="flex items-baseline justify-between gap-3 bg-white/70 hover:bg-white rounded-lg px-3 py-2 border border-amber-100">
-            <span className="min-w-0">
-              <span className="text-sm font-medium text-gray-900">{e.name}</span>
-              <span className="text-xs text-gray-500">
+            className="salert-row flex items-center justify-between gap-3 px-3 py-2">
+            <span className="min-w-0 truncate">
+              <span className="salert-name text-sm font-medium">{e.name}</span>
+              <span className="salert-meta text-xs">
                 {e.employeeCode ? ` · ${e.employeeCode}` : ''}
                 {e.designation ? ` · ${e.designation}` : ''}
                 {e.department ? ` · ${e.department}` : ''}
               </span>
             </span>
-            <span className="text-xs text-amber-800 font-medium shrink-0">{missingLabel(e.missing)}</span>
+            <span className="flex items-center gap-1.5 shrink-0">
+              <span className="salert-tag text-[11px] font-semibold">{missingLabel(e.missing)}</span>
+              <FiChevronRight className="salert-chevron" size={14} />
+            </span>
           </Link>
         ))}
       </div>
-      <div className="flex items-center justify-between mt-2">
-        <span className="text-xs text-amber-700">{rest > 0 ? `+ ${rest} more` : ''}</span>
-        <Link to="/admin/salary-structures" className="text-xs text-amber-800 font-medium hover:underline">
+      <div className="flex items-center justify-between gap-3 mt-2.5">
+        <span className="salert-body text-xs">{rest > 0 ? `+ ${rest} more` : ''}</span>
+        <Link to="/admin/salary-structures" className="salert-title text-xs font-semibold hover:underline">
           Open Salary Structures →
         </Link>
       </div>
