@@ -13,6 +13,7 @@ import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
+import stageToast, { useCandidateArrival, arrivalRing } from '../components/stageToast';
 
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '-');
@@ -45,6 +46,9 @@ export default function AdminNewJoinees() {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  // `?candidate=<id>` — how Onboarding hands a released appointment letter over.
+  const highlighted = useCandidateArrival('nj', rows, loading);
 
   const downloadOffer = (c) =>
     downloadFile(`/recruitment/candidates/${c._id}/offer/pdf`, c.offer?.letterName || 'offer-letter.pdf')
@@ -110,10 +114,22 @@ export default function AdminNewJoinees() {
     e.preventDefault(); setSaving(true); setError('');
     try {
       const { data } = await api.post(`/recruitment/candidates/${cand._id}/convert-to-employee`, form);
+      const converted = cand;
       setCand(null); setForm(null);
-      setInfo(`${cand.name} is now an employee (code ${data.employeeCode}).` +
+      // The credentials stay in the banner — they are needed for longer than a
+      // toast lives, and must not disappear while HR is copying them.
+      setInfo(`${converted.name} is now an employee (code ${data.employeeCode}).` +
         (data.initialPassword ? ` Initial login: ${data.user.email} / ${data.initialPassword} · ask them to change it on first login.` : ''));
       await load();
+      // Last stop of the hiring pipeline: they leave this list for the employee
+      // directory, so point at the record that now exists.
+      const profileId = data.candidate?.employee?.profile;
+      stageToast({
+        title: `${converted.name} is now an employee`,
+        detail: `Employee code ${data.employeeCode}. Their login and profile are ready.`,
+        to: profileId ? `/admin/employees/${profileId}` : '/admin/employees',
+        linkLabel: 'Open employee record',
+      });
     } catch (err) { setError(err.response?.data?.message || 'Could not convert to employee'); }
     finally { setSaving(false); }
   };
@@ -133,7 +149,9 @@ export default function AdminNewJoinees() {
       ) : (
         <div className="space-y-4">
           {rows.map((c) => (
-            <div key={c._id} className="bg-white shadow rounded-lg p-4 flex flex-wrap items-start justify-between gap-3">
+            <div key={c._id} id={`nj-${c._id}`}
+              className={`bg-white shadow rounded-lg p-4 flex flex-wrap items-start justify-between gap-3 transition-shadow ${
+                highlighted === c._id ? arrivalRing : ''}`}>
               <div>
                 <div className="font-semibold text-gray-900">{c.name}</div>
                 <div className="text-xs text-gray-500">{c.job?.title || '-'}{c.email ? ` · ${c.email}` : ' · no email on file'}</div>

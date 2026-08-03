@@ -17,10 +17,11 @@ const User = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
 const EmailOutbox = require('../models/EmailOutbox');
+const { copyCandidateDocuments } = require('../services/candidateDocuments');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
-const { renderOfferLetter, renderAppointmentLetter } = require('../services/letterPdf');
+const { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults } = require('../services/letterPdf');
 const { enqueueMail, sendMail } = require('../services/email');
 const { notify } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
@@ -1104,6 +1105,8 @@ const generateOffer = asyncHandler(async (req, res) => {
     acceptanceDeadline: date(b.acceptanceDeadline),
     signatoryName: b.signatoryName || COMPANY.defaultSignatoryName,
     signatoryTitle: b.signatoryTitle || COMPANY.defaultSignatoryTitle,
+    // The wording HR approved in the letter editor, if they changed anything.
+    body: cleanLetterBody(b.body),
   };
 
   const buffer = await renderOfferLetter({ ...data, candidateName: candidate.name });
@@ -1231,6 +1234,8 @@ const generateAppointment = asyncHandler(async (req, res) => {
     employerPf: num(b.employerPf),
     gratuity: num(b.gratuity),
     otherAllowances: num(b.otherAllowances),
+    // The wording HR approved in the letter editor, if they changed anything.
+    body: cleanLetterBody(b.body),
   };
 
   const buffer = await renderAppointmentLetter({
@@ -1435,6 +1440,18 @@ const convertToEmployee = asyncHandler(async (req, res) => {
     throw err;
   }
 
+  // Everything the candidate already sent during hiring becomes their employee
+  // documents. Without this the new joiner's record opens empty and HR asks for
+  // the same PAN and Aadhaar a second time — the commonest complaint about the
+  // hand-off. Best-effort: a copy failure must not undo an employee who exists.
+  let documentsCopied = 0;
+  try {
+    const outcome = await copyCandidateDocuments(candidate, profile._id, req.user._id);
+    documentsCopied = outcome.copied;
+  } catch (err) {
+    console.error('[recruitment] Could not carry documents over to the employee:', err.message);
+  }
+
   candidate.employee = {
     user: user._id,
     profile: profile._id,
@@ -1442,6 +1459,7 @@ const convertToEmployee = asyncHandler(async (req, res) => {
     convertedAt: new Date(),
     convertedBy: req.user._id,
     convertedByName: req.user.fullName,
+    documentsCopied,
   };
   candidate.stage = 'Hired';
   await candidate.save();
@@ -1607,6 +1625,97 @@ const getDocumentRequest = asyncHandler(async (req, res) => {
     },
     docTypes: DOC_TYPES,
   });
+});
+
+/**
+ * Normalise an edited letter body from the client.
+ *
+ * The blocks come back from a browser form, so trust nothing: keep only the
+ * two known shapes, cap the text so one letter can't be turned into a novel,
+ * and drop empties — an emptied box is how HR deletes a block. Returns
+ * undefined when nothing usable is left, which means "use the standard text".
+ *
+ * @param {unknown} body
+ * @returns {{type: string, head?: string, text: string, bold?: boolean}[]|undefined}
+ */
+function cleanLetterBody(body) {
+  if (!Array.isArray(body)) return undefined;
+  const blocks = body
+    .filter((b) => b && typeof b === 'object')
+    .map((b) => ({
+      type: b.type === 'term' ? 'term' : 'para',
+      head: b.type === 'term' ? String(b.head || '').trim().slice(0, 120) : undefined,
+      text: String(b.text || '').trim().slice(0, 4000),
+      bold: b.bold ? true : undefined,
+    }))
+    .filter((b) => b.text);
+  return blocks.length ? blocks.slice(0, 60) : undefined;
+}
+
+// The letter kinds that can be drafted, previewed and emailed.
+const LETTER_KINDS = ['offer', 'appointment'];
+
+// Merge what the client is editing right now over what is already stored, so a
+// draft/preview reflects the unsaved form rather than the last saved letter.
+function letterDataFor(kind, candidate, body = {}) {
+  const stored = (kind === 'offer' ? candidate.offer?.data : candidate.appointment?.data);
+  const base = stored?.toObject?.() || stored || {};
+  const merged = { ...base };
+  for (const [k, v] of Object.entries(body || {})) {
+    if (v !== undefined && v !== '' && k !== 'body' && k !== 'preview') merged[k] = v;
+  }
+  merged.candidateName = candidate.name;
+  merged.signatoryName = merged.signatoryName || COMPANY.defaultSignatoryName;
+  merged.signatoryTitle = merged.signatoryTitle || COMPANY.defaultSignatoryTitle;
+  return merged;
+}
+
+/**
+ * The letter's wording for the editor: the saved custom text if HR has already
+ * edited this letter, otherwise the standard text built from the current form.
+ *
+ * @route POST /api/recruitment/candidates/:id/letters/:kind/draft  (HR)
+ * @param {string} req.params.kind - 'offer' | 'appointment'
+ * @param {Object} req.body - the in-progress form values
+ * @returns {{blocks: Object[], customised: boolean}}
+ */
+// POST /candidates/:id/letters/:kind/draft — default (or saved) letter wording.
+const letterDraft = asyncHandler(async (req, res) => {
+  const kind = LETTER_KINDS.includes(req.params.kind) ? req.params.kind : null;
+  if (!kind) { res.status(400); throw new Error('Unknown letter type'); }
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) { res.status(404); throw new Error('Candidate not found'); }
+
+  const data = letterDataFor(kind, candidate, req.body);
+  const saved = cleanLetterBody(data.body);
+  const defaults = letterBodyDefaults(kind, data);
+  res.json({ blocks: saved || defaults, customised: !!saved, defaults });
+});
+
+/**
+ * Render the letter from the values on screen WITHOUT saving anything, so HR
+ * can look at the real PDF before committing to it.
+ *
+ * @route POST /api/recruitment/candidates/:id/letters/:kind/preview  (HR)
+ * @param {Object} req.body - in-progress form values, optionally with `body` blocks
+ * @returns {binary} the PDF, inline
+ */
+// POST /candidates/:id/letters/:kind/preview — render, don't save.
+const previewLetter = asyncHandler(async (req, res) => {
+  const kind = LETTER_KINDS.includes(req.params.kind) ? req.params.kind : null;
+  if (!kind) { res.status(400); throw new Error('Unknown letter type'); }
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) { res.status(404); throw new Error('Candidate not found'); }
+
+  const data = letterDataFor(kind, candidate, req.body);
+  data.body = cleanLetterBody(req.body.body) || cleanLetterBody(data.body);
+  const buffer = kind === 'offer'
+    ? await renderOfferLetter(data)
+    : await renderAppointmentLetter(data);
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${kind}-preview.pdf"`);
+  res.send(buffer);
 });
 
 /**
@@ -1899,4 +2008,7 @@ module.exports = {
   markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,
   requestDocuments, getDocumentRequest, submitDocuments,
   downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
+  letterDraft, previewLetter,
+  // Internals exercised directly by the scratch tests; not routed.
+  __test: { documentReviewSummary, cleanLetterBody },
 };

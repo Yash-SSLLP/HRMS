@@ -15,6 +15,8 @@ import DepartmentSelect from '../components/DepartmentSelect';
 import MailComposeModal from '../components/MailComposeModal';
 import EmployeePicker from '../components/EmployeePicker';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import stageToast from '../components/stageToast';
+import LetterEditor from '../components/LetterEditor';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -31,6 +33,30 @@ const STAGE_STYLES = {
 };
 // Stages at/after onboarding — the offer/onboard actions no longer apply.
 const POST_ONBOARD = ['Onboarding', 'NewJoinee', 'Hired'];
+
+// Stage names as people say them, for messages.
+const STAGE_LABELS = { NewJoinee: 'New Joinee' };
+
+// The stages that move a candidate onto a different page, and where that is.
+// Everything up to Offer (and Rejected) stays in this pipeline, so it has no
+// entry here and produces no hand-off.
+const STAGE_HANDOFF = {
+  Onboarding: {
+    to: (c) => `/admin/hiring-onboarding?candidate=${c._id}`,
+    linkLabel: 'Open Onboarding',
+    detail: 'Set their joining date, then release the appointment letter there.',
+  },
+  NewJoinee: {
+    to: (c) => `/admin/new-joinees?candidate=${c._id}`,
+    linkLabel: 'Open New Joinees',
+    detail: 'Convert them into an employee with a login there.',
+  },
+  Hired: {
+    to: (c) => (c.employee?.profile ? `/admin/employees/${c.employee.profile}` : '/admin/employees'),
+    linkLabel: 'Open Employees',
+    detail: 'They are part of the employee directory now.',
+  },
+};
 
 // Per-document verdicts (partial verification) — see candidateDocSchema.status.
 const DOC_STATUS_STYLES = {
@@ -72,6 +98,25 @@ function docReviewSummary(candidate) {
 
 const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '');
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+
+/**
+ * The interview the offer letter refers back to ("further to your interview
+ * on …"). That is the LAST round the candidate actually cleared, so take the
+ * latest date among cleared rounds — when it was decided if HR recorded a
+ * decision, otherwise when it was scheduled. Falls back to the latest dated
+ * round of any status, so a candidate offered without every round marked still
+ * gets a sensible date instead of an empty field.
+ * @returns {string} yyyy-mm-dd for a date input, or '' when nothing is dated
+ */
+const lastInterviewDate = (candidate) => {
+  const dated = (candidate?.rounds || [])
+    .map((r) => ({ status: r.status, at: r.decidedAt || r.scheduledAt }))
+    .filter((r) => r.at);
+  if (!dated.length) return '';
+  const cleared = dated.filter((r) => r.status === 'Cleared');
+  const pool = cleared.length ? cleared : dated;
+  return toDateInput(pool.reduce((a, b) => (new Date(b.at) > new Date(a.at) ? b : a)).at);
+};
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const ROUND_STYLES = {
   Pending: 'bg-gray-100 text-gray-600',
@@ -107,6 +152,8 @@ export default function AdminRecruitment() {
   const [offerCand, setOfferCand] = useState(null);
   const [offerForm, setOfferForm] = useState(null);
   const [offerEmail, setOfferEmail] = useState(true);
+  // Edited letter wording, or null while it follows the standard template.
+  const [offerBody, setOfferBody] = useState(null);
 
   // Documents review modal
   const [docsCand, setDocsCand] = useState(null);
@@ -218,9 +265,23 @@ export default function AdminRecruitment() {
     catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 
+  // Moving the stage by hand from the pipeline dropdown lands the candidate on
+  // another team's screen just as the buttons do, so it hands over the same way.
+  // Stages that stay inside this page (Applied…Offer, Rejected) say nothing.
   const setStage = async (c, stage) => {
-    try { await api.put(`/recruitment/candidates/${c._id}`, { stage }); await load(); }
-    catch (err) { toast.error(err.response?.data?.message || 'Update failed'); }
+    try {
+      await api.put(`/recruitment/candidates/${c._id}`, { stage });
+      await load();
+      const handoff = STAGE_HANDOFF[stage];
+      if (handoff) {
+        stageToast({
+          title: `${c.name} moved to ${STAGE_LABELS[stage] || stage}`,
+          detail: handoff.detail,
+          to: handoff.to(c),
+          linkLabel: handoff.linkLabel,
+        });
+      }
+    } catch (err) { toast.error(err.response?.data?.message || 'Update failed'); }
   };
 
   // ----- Shortlist / reject a job's applicants from a modal -----
@@ -341,12 +402,16 @@ export default function AdminRecruitment() {
   const openOffer = (c) => {
     setOfferCand(c);
     setOfferEmail(!!c.email);
+    // Carry a previously edited wording back into the editor.
+    setOfferBody(c.offer?.data?.body?.length ? c.offer.data.body : null);
     const d = c.offer?.data || {};
     setOfferForm({
       position: d.position || c.job?.title || '',
       department: d.department || c.job?.department || '',
       address: d.address || '',
-      refInterviewDate: toDateInput(d.refInterviewDate),
+      // Prefilled from the cleared interview, still editable. A saved offer's
+      // own value wins — HR may have deliberately changed it.
+      refInterviewDate: toDateInput(d.refInterviewDate) || lastInterviewDate(c),
       salaryMonthly: d.salaryMonthly || '',
       salaryAnnual: d.salaryAnnual || '',
       probationMonths: d.probationMonths ?? 3,
@@ -386,17 +451,27 @@ export default function AdminRecruitment() {
   const saveOffer = async (e) => {
     e.preventDefault(); setSaving(true); setError('');
     try {
-      const { data } = await api.post(`/recruitment/candidates/${offerCand._id}/offer`, { ...offerForm });
+      const { data } = await api.post(`/recruitment/candidates/${offerCand._id}/offer`, { ...offerForm, body: offerBody || undefined });
       const wantEmail = offerEmail;
-      setOfferCand(null); setOfferForm(null); await load();
+      setOfferCand(null); setOfferForm(null); setOfferBody(null); await load();
       // Emailing goes through the editable compose modal, never silently.
       if (wantEmail && data.candidate?.email && data.candidate?.offer?.token) composeOfferMail(data.candidate);
     } catch (err) { setError(err.response?.data?.message || 'Could not generate offer letter'); }
     finally { setSaving(false); }
   };
+  // Onboarding moves the candidate off this screen onto the Onboarding page,
+  // which looked like the row simply vanishing — so confirm it and hand over.
   const onboard = async (c) => {
-    try { await api.post(`/recruitment/candidates/${c._id}/onboard`); await load(); }
-    catch (err) { toast.error(err.response?.data?.message || 'Could not onboard'); }
+    try {
+      await api.post(`/recruitment/candidates/${c._id}/onboard`);
+      await load();
+      stageToast({
+        title: `${c.name} moved to Onboarding`,
+        detail: 'Set their joining date, then release the appointment letter there.',
+        to: `/admin/hiring-onboarding?candidate=${c._id}`,
+        linkLabel: 'Open Onboarding',
+      });
+    } catch (err) { toast.error(err.response?.data?.message || 'Could not onboard'); }
   };
   const downloadOffer = (c) =>
     downloadFile(`/recruitment/candidates/${c._id}/offer/pdf`, c.offer?.letterName || 'offer-letter.pdf')
@@ -1093,6 +1168,16 @@ export default function AdminRecruitment() {
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Signatory title</label>
                 <input value={offerForm.signatoryTitle} onChange={(e) => setOfferForm({ ...offerForm, signatoryTitle: e.target.value })} placeholder="e.g. HR Business Partner" className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+
+              <div className="sm:col-span-2">
+                <LetterEditor
+                  candidateId={offerCand._id}
+                  kind="offer"
+                  form={offerForm}
+                  value={offerBody}
+                  onChange={setOfferBody}
+                />
               </div>
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${offerCand.email ? 'text-gray-700' : 'text-gray-400'}`}>

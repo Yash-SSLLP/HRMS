@@ -7,6 +7,8 @@
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
+import stageToast, { useCandidateArrival, arrivalRing } from '../components/stageToast';
+import LetterEditor from '../components/LetterEditor';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
@@ -41,6 +43,8 @@ export default function AdminHiringOnboarding() {
   const [apptCand, setApptCand] = useState(null);
   const [apptForm, setApptForm] = useState(null);
   const [apptEmail, setApptEmail] = useState(true);
+  // Edited letter wording, or null while it follows the standard template.
+  const [apptBody, setApptBody] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -62,6 +66,9 @@ export default function AdminHiringOnboarding() {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  // `?candidate=<id>` — how Recruitment hands a just-onboarded candidate over.
+  const highlighted = useCandidateArrival('onb', rows, loading);
 
   const setDraft = (id, patch) => setDrafts((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
 
@@ -114,6 +121,8 @@ export default function AdminHiringOnboarding() {
   const openAppt = (c) => {
     setApptCand(c);
     setApptEmail(!!c.email);
+    // Carry a previously edited wording back into the editor.
+    setApptBody(c.appointment?.data?.body?.length ? c.appointment.data.body : null);
     const a = c.appointment?.data || {};
     const o = c.offer?.data || {};
     setApptForm({
@@ -131,7 +140,10 @@ export default function AdminHiringOnboarding() {
       specialAllowance: a.specialAllowance ?? '',
       conveyance: a.conveyance ?? '',
       otherAllowances: a.otherAllowances ?? '',
-      employerPf: a.employerPf ?? '',
+      // The company does not deduct PF, so this starts at 0 rather than blank —
+      // a zero is dropped from Annexure A, so the letter stays clean while the
+      // field still says plainly that the contribution is nil.
+      employerPf: a.employerPf ?? 0,
       gratuity: a.gratuity ?? '',
       signatoryName: a.signatoryName || '',
       signatoryTitle: a.signatoryTitle || '',
@@ -140,9 +152,18 @@ export default function AdminHiringOnboarding() {
   const saveAppt = async (e) => {
     e.preventDefault(); setSaving(true); setError('');
     try {
-      const { data } = await api.post(`/recruitment/candidates/${apptCand._id}/appointment`, { ...apptForm });
+      const { data } = await api.post(`/recruitment/candidates/${apptCand._id}/appointment`, { ...apptForm, body: apptBody || undefined });
       const wantEmail = apptEmail;
-      setApptCand(null); setApptForm(null); await load();
+      const moved = apptCand;
+      setApptCand(null); setApptForm(null); setApptBody(null); await load();
+      // Releasing the appointment letter completes onboarding — the candidate
+      // becomes a New Joinee and drops off this list, so say where they went.
+      stageToast({
+        title: `${moved.name} is now a New Joinee`,
+        detail: 'Appointment letter released. Convert them into an employee with a login next.',
+        to: `/admin/new-joinees?candidate=${moved._id}`,
+        linkLabel: 'Open New Joinees',
+      });
       // Emailing goes through the editable compose modal, never silently.
       if (wantEmail && data.candidate?.email && data.candidate?.appointment?.token) sendLetter(data.candidate, 'appointment');
     } catch (err) { setError(err.response?.data?.message || 'Could not generate appointment letter'); }
@@ -164,7 +185,9 @@ export default function AdminHiringOnboarding() {
       ) : (
         <div className="space-y-4">
           {rows.map((c) => (
-            <div key={c._id} className="bg-white shadow rounded-lg p-4">
+            <div key={c._id} id={`onb-${c._id}`}
+              className={`bg-white shadow rounded-lg p-4 transition-shadow ${
+                highlighted === c._id ? arrivalRing : ''}`}>
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
                   <div className="font-semibold text-gray-900">{c.name}</div>
@@ -295,6 +318,16 @@ export default function AdminHiringOnboarding() {
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Signatory title</label>
                 <input value={apptForm.signatoryTitle} onChange={(e) => setApptForm({ ...apptForm, signatoryTitle: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+
+              <div className="sm:col-span-2">
+                <LetterEditor
+                  candidateId={apptCand._id}
+                  kind="appointment"
+                  form={apptForm}
+                  value={apptBody}
+                  onChange={setApptBody}
+                />
               </div>
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${apptCand.email ? 'text-gray-700' : 'text-gray-400'}`}>

@@ -11,6 +11,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import DocPreviewModal from '../components/DocPreviewModal';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -30,6 +31,8 @@ const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
 
 export default function AdminDocuments() {
   const [employees, setEmployees] = useState([]);
+  // The document open in the preview modal (see the View action).
+  const [previewDoc, setPreviewDoc] = useState(null);
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [docs, setDocs] = useState([]);
   const [allCategories, setAllCategories] = useState([]);
@@ -240,6 +243,7 @@ export default function AdminDocuments() {
                   {d.status !== 'Rejected' && (
                     <button onClick={() => setDocStatus(d, 'Rejected')} className="text-amber-700 hover:underline">Reject</button>
                   )}
+                  <button onClick={() => setPreviewDoc(d)} className="text-blue-600 hover:underline">View</button>
                   <button onClick={() => onDownload(d)} className="text-blue-600 hover:underline">Download</button>
                   <button onClick={() => onDelete(d)} className="text-red-600 hover:underline">Delete</button>
                 </td>
@@ -248,6 +252,8 @@ export default function AdminDocuments() {
           </tbody>
         </table>
       </div>
+
+      {previewDoc && <DocPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />}
     </div>
   );
 }

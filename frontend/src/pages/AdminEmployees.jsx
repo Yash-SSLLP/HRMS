@@ -6,6 +6,7 @@
  * and (SuperAdmin) activates accounts + toggles the include-executives org setting.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
@@ -44,6 +45,7 @@ const blankProfile = {
 };
 
 export default function AdminEmployees() {
+  const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
   const myId = String(currentUser?._id || currentUser?.id || '');
@@ -452,14 +454,21 @@ export default function AdminEmployees() {
             ) : profiles.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No profiles yet</td></tr>
             ) : profiles.map((p) => (
-              <tr key={p._id}>
+              // The whole row opens the employee — the record was previously
+              // only reachable through global search. The action buttons stop
+              // the click so Edit/Delete still do their own thing.
+              <tr key={p._id} onClick={() => navigate(`/admin/employees/${p._id}`)}
+                className="cursor-pointer hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3 font-mono text-xs">{p.employeeCode}</td>
-                <td className="px-4 py-3">{p.user?.firstName} {p.user?.lastName}<div className="text-xs text-gray-500">{p.user?.email}</div></td>
+                <td className="px-4 py-3">
+                  <span className="text-gray-900 hover:underline">{p.user?.firstName} {p.user?.lastName}</span>
+                  <div className="text-xs text-gray-500">{p.user?.email}</div>
+                </td>
                 <td className="px-4 py-3">{p.designation || '-'}<div className="text-xs text-gray-500">{p.department || ''}</div></td>
                 <td className="px-4 py-3 font-mono text-xs">{p.pan || '-'}</td>
                 <td className="px-4 py-3">{docBadge(p)}</td>
                 <td className="px-4 py-3">{statusBadge(p)}</td>
-                <td className="px-4 py-3 text-right space-x-2">{rowActions(p)}</td>
+                <td className="px-4 py-3 text-right space-x-2" onClick={(e) => e.stopPropagation()}>{rowActions(p)}</td>
               </tr>
             ))}
           </tbody>
@@ -475,8 +484,10 @@ export default function AdminEmployees() {
         ) : profiles.map((p) => (
           <div key={p._id} className="bg-white shadow rounded-xl p-4">
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="font-semibold text-gray-900 truncate">{p.user?.firstName} {p.user?.lastName}</div>
+              {/* Same target as the desktop row: tapping the name opens the
+                  record; the action buttons below keep their own handlers. */}
+              <div className="min-w-0 cursor-pointer" onClick={() => navigate(`/admin/employees/${p._id}`)}>
+                <div className="font-semibold text-gray-900 truncate hover:underline">{p.user?.firstName} {p.user?.lastName}</div>
                 <div className="text-xs text-gray-500 truncate">{p.user?.email}</div>
               </div>
               <span className="shrink-0 font-mono text-[11px] text-gray-500 mt-0.5">{p.employeeCode}</span>

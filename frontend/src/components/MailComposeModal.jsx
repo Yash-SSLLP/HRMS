@@ -149,6 +149,14 @@ export default function MailComposeModal({
             <div className="flex items-center gap-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
               <span className="text-gray-500 shrink-0">📎 Attached:</span>
               <span className="truncate text-gray-700 flex-1">{attachedNames.join(', ')}</span>
+              {/* Read the actual document before it goes out — the attachment
+                  is named here, but naming it is not the same as seeing it. */}
+              {link && (
+                <a href={link} target="_blank" rel="noreferrer"
+                  className="shrink-0 px-2 py-0.5 rounded border border-gray-300 hover:bg-white font-semibold text-gray-700">
+                  Preview
+                </a>
+              )}
             </div>
           )}
 

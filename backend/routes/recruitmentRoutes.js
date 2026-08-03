@@ -16,6 +16,7 @@ const {
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,
+  letterDraft, previewLetter,
   requestDocuments, getDocumentRequest, submitDocuments,
   downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
 } = require('../controllers/recruitmentController');
@@ -130,6 +131,10 @@ router.get('/candidates/:id/offer/pdf', canView, downloadOffer);
 router.post('/candidates/:id/offer/mark-sent', canCand, markOfferSent);
 // POST /candidates/:id/letters/:kind/email — email an offer/appointment letter; protected, requires 'recruitment.candidates'.
 router.post('/candidates/:id/letters/:kind/email', canCand, sendLetterEmail);
+// POST /candidates/:id/letters/:kind/draft — the letter's editable wording; protected, requires 'recruitment.candidates'.
+router.post('/candidates/:id/letters/:kind/draft', canCand, letterDraft);
+// POST /candidates/:id/letters/:kind/preview — render the letter without saving; protected, requires 'recruitment.candidates'.
+router.post('/candidates/:id/letters/:kind/preview', canCand, previewLetter);
 // POST /candidates/:id/appointment/mark-sent — mark appointment as sent; protected, requires 'recruitment.candidates'.
 router.post('/candidates/:id/appointment/mark-sent', canCand, markAppointmentSent);
 // POST /candidates/:id/onboard — start onboarding; protected, requires 'recruitment.candidates'.

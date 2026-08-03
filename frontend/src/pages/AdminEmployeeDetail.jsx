@@ -9,9 +9,9 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
-import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
+import DocPreviewModal from '../components/DocPreviewModal';
 
 const DOC_STATUS_STYLES = {
   Submitted: 'bg-amber-100 text-amber-800',
@@ -63,6 +63,9 @@ export default function AdminEmployeeDetail() {
   const [token, setToken] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
+  // The document open in the preview modal, so a set can be verified
+  // without downloading every file first.
+  const [previewDoc, setPreviewDoc] = useState(null);
 
   const loadDocs = async () => {
     try {
@@ -217,7 +220,7 @@ export default function AdminEmployeeDetail() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className={`text-xs px-2 py-0.5 rounded-lg ${DOC_STATUS_STYLES[d.status || 'Submitted']}`}>{d.status || 'Submitted'}</span>
-                  <button onClick={() => downloadFile(`/documents/${d._id}/download`, d.fileName)} className="text-xs text-blue-600 hover:underline">View</button>
+                  <button onClick={() => setPreviewDoc(d)} className="text-xs text-blue-600 hover:underline">View</button>
                   {d.status !== 'Verified' && (
                     <button onClick={() => setDocStatus(d._id, 'Verified')} className="text-xs text-green-700 hover:underline">Verify</button>
                   )}
@@ -279,6 +282,8 @@ export default function AdminEmployeeDetail() {
           <Field label="Account type" value={bank.accountType} />
         </Card>
       </div>
+
+      {previewDoc && <DocPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />}
     </div>
   );
 }

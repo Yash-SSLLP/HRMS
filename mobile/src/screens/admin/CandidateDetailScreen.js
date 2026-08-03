@@ -155,7 +155,9 @@ export default function CandidateDetailScreen() {
       position: d.position || cand.job?.title || '', department: d.department || cand.job?.department || '',
       address: d.address || '', salaryMonthly: numStr(d.salaryMonthly), salaryAnnual: numStr(d.salaryAnnual),
       probationMonths: numStr(d.probationMonths ?? 3), noticePeriodDays: numStr(d.noticePeriodDays ?? 30),
-      refInterviewDate: d.refInterviewDate ? toYMD(d.refInterviewDate) : '',
+      // Prefilled from the cleared interview, still editable. A saved offer's
+      // own value wins — HR may have deliberately changed it.
+      refInterviewDate: d.refInterviewDate ? toYMD(d.refInterviewDate) : lastInterviewDate(cand),
       joiningDate: d.joiningDate ? toYMD(d.joiningDate) : '',
       acceptanceDeadline: d.acceptanceDeadline ? toYMD(d.acceptanceDeadline) : '',
       signatoryName: d.signatoryName || '', signatoryTitle: d.signatoryTitle || '', email: false,
@@ -172,7 +174,9 @@ export default function CandidateDetailScreen() {
       joiningDate: (d.joiningDate || cand.onboarding?.joiningDate) ? toYMD(d.joiningDate || cand.onboarding.joiningDate) : '',
       probationMonths: numStr(d.probationMonths ?? 3), noticePeriodDays: numStr(d.noticePeriodDays ?? 30),
       ctcAnnual: numStr(d.ctcAnnual), basic: numStr(d.basic), hra: numStr(d.hra), specialAllowance: numStr(d.specialAllowance),
-      conveyance: numStr(d.conveyance), employerPf: numStr(d.employerPf), gratuity: numStr(d.gratuity), otherAllowances: numStr(d.otherAllowances),
+      // employerPf starts at 0 (not blank): the company does not deduct PF, and
+      // a zero is dropped from Annexure A so the letter is unaffected.
+      conveyance: numStr(d.conveyance), employerPf: numStr(d.employerPf ?? 0), gratuity: numStr(d.gratuity), otherAllowances: numStr(d.otherAllowances),
       signatoryName: '', signatoryTitle: '', email: false,
     });
     setModal('appointment');
@@ -325,7 +329,34 @@ export default function CandidateDetailScreen() {
     }
   };
 
-  const onboard = () => run(() => api.post(`/recruitment/candidates/${id}/onboard`));
+  // Confirm the move and offer the next step. There is no separate hiring-
+  // onboarding screen on mobile — joining details live in this screen's
+  // onboarding sheet, so that is what the follow-on button opens.
+  const onboard = () => run(async () => {
+    const { data } = await api.post(`/recruitment/candidates/${id}/onboard`);
+    const fresh = data?.candidate || cand;
+    const o = fresh.onboarding || {};
+    Alert.alert(
+      'Moved to onboarding',
+      `${fresh.name || cand.name} is now at the Onboarding stage. Add their joining details next.`,
+      [
+        { text: 'Later', style: 'cancel' },
+        {
+          text: 'Add joining details',
+          // Seeded from the response rather than through openOnboarding(), whose
+          // closure still holds the pre-onboard candidate at this point.
+          onPress: () => {
+            setForm({
+              joiningDate: o.joiningDate ? toYMD(o.joiningDate) : '',
+              noticePeriod: o.noticePeriod || '',
+              notes: o.notes || '',
+            });
+            setModal('onboarding');
+          },
+        },
+      ],
+    );
+  });
   // Email the upload link through the editable preview sheet — the link needs
   // no login, so it never goes out on a single tap.
   const openDocsMailSheet = async () => {
@@ -788,6 +819,23 @@ export default function CandidateDetailScreen() {
 }
 
 // ---- small helpers ----
+/**
+ * The interview the offer letter refers back to ("further to your interview
+ * on …"): the latest CLEARED round, dated by its decision if HR recorded one,
+ * otherwise by when it was scheduled. Falls back to the latest dated round of
+ * any status so the field is rarely empty. Mirrors the web helper in
+ * pages/AdminRecruitment.jsx.
+ */
+const lastInterviewDate = (candidate) => {
+  const dated = (candidate?.rounds || [])
+    .map((r) => ({ status: r.status, at: r.decidedAt || r.scheduledAt }))
+    .filter((r) => r.at);
+  if (!dated.length) return '';
+  const cleared = dated.filter((r) => r.status === 'Cleared');
+  const pool = cleared.length ? cleared : dated;
+  return toYMD(pool.reduce((a, b) => (new Date(b.at) > new Date(a.at) ? b : a)).at);
+};
+
 const numStr = (n) => (n === undefined || n === null ? '' : String(n));
 const upd = (setForm, k, v) => setForm((p) => ({ ...p, [k]: v }));
 const updNum = (setForm, k, v) => setForm((p) => ({ ...p, [k]: v.replace(/[^0-9.]/g, '') }));

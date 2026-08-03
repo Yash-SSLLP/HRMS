@@ -50,6 +50,18 @@ function defaultRounds() {
   return Array.from({ length: NUM_ROUNDS }, (_, i) => ({ label: `Round ${i + 1}`, status: 'Pending' }));
 }
 
+// One editable block of a generated letter's body: a flowing paragraph, or a
+// numbered term with a heading (see services/letterPdf.js).
+const letterBlockSchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ['para', 'term'], default: 'para' },
+    head: { type: String, trim: true },
+    text: { type: String, trim: true },
+    bold: { type: Boolean },
+  },
+  { _id: false }
+);
+
 // Verdict on a single submitted document (see candidateDocSchema.status).
 const CANDIDATE_DOC_STATUS = ['Pending', 'Verified', 'Rejected'];
 
@@ -155,6 +167,10 @@ const candidateSchema = new mongoose.Schema(
         acceptanceDeadline: Date,
         signatoryName: String,
         signatoryTitle: String,
+        // The letter's wording, as HR approved it in the editor. Empty means
+        // "use the standard text", so untouched letters keep following any
+        // future change to the template (services/letterPdf.js).
+        body: { type: [letterBlockSchema], default: undefined },
       },
     },
 
@@ -184,6 +200,8 @@ const candidateSchema = new mongoose.Schema(
         employerPf: Number,
         gratuity: Number,
         otherAllowances: Number,
+        // See the note on offer.data.body.
+        body: { type: [letterBlockSchema], default: undefined },
       },
     },
 
@@ -205,6 +223,8 @@ const candidateSchema = new mongoose.Schema(
       convertedAt: { type: Date },
       convertedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       convertedByName: { type: String, trim: true },
+      // How many hiring documents were carried into the employee's record.
+      documentsCopied: { type: Number },
     },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

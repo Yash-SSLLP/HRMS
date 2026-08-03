@@ -107,6 +107,71 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance) {
  * @returns {Promise<Buffer>} Resolves with the rendered PDF bytes.
  * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
+/**
+ * The offer letter's body, as editable blocks.
+ *
+ * The wording used to be inlined in the renderer, which meant HR could change
+ * the numbers but never a sentence. Composing it as data instead lets the same
+ * text be handed to the client for editing and handed back to be printed —
+ * `renderOfferLetter` prints `data.body` when it is given one, and otherwise
+ * builds this default from the current field values.
+ *
+ * @param {Object} data - the offer fields
+ * @param {string} R - the rupee glyph for the active font
+ * @returns {{type: 'para', text: string, bold?: boolean}[]}
+ */
+function offerBody(data = {}, R = '₹') {
+  const ref = data.refInterviewDate ? `held on ${longDate(data.refInterviewDate)}` : 'we recently held with you';
+  const monthly = data.salaryMonthly ? `${R}${formatINR(data.salaryMonthly)}` : '__________';
+  const annual = data.salaryAnnual ? `${R}${formatINR(data.salaryAnnual)}` : '__________';
+  const probation = data.probationMonths || 3;
+  const notice = data.noticePeriodDays || 30;
+  return [
+    { type: 'para', text:
+      `This is with reference to the interview ${ref}. We are pleased to inform you that you have been selected ` +
+      `for the position of ${data.position || '__________'}${data.department ? ` in the ${data.department} department` : ''} ` +
+      `at ${COMPANY.name} on the terms and conditions discussed during the interview.` },
+    { type: 'para', bold: true, text:
+      `"Your in-hand salary will be ${monthly} per month which is ${annual} per annum".` },
+    { type: 'para', text:
+      `The probation period shall be for ${probation} months during which the company holds the right to assess your ` +
+      `performance, citing any shortfalls against desirable performance; the organization holds the right to end your ` +
+      `employment with a notice period of ${notice} days or immediately.` },
+    { type: 'para', bold: true, text: `Your official joining date is from ${longDate(data.joiningDate)}.` },
+    { type: 'para', text:
+      `Please confirm your acceptance by replying to this email or digitally signing the attached document by ` +
+      `${longDate(data.acceptanceDeadline)}. On joining of duty, you will be issued a letter of appointment with all ` +
+      `terms and conditions.` },
+    { type: 'para', text: 'In case you don’t join us by the stipulated date, the offer stands Cancelled / Withdrawn.' },
+    { type: 'para', bold: true, text: 'We congratulate you on this offer and appreciate if you join us on the given date.' },
+  ];
+}
+
+// Print a block list. Paragraphs flow; terms are numbered with a bold heading,
+// numbered in the order they appear so removing one doesn't leave a gap.
+function drawBlocks(doc, F, blocks) {
+  let termNo = 0;
+  blocks.forEach((b, i) => {
+    const last = i === blocks.length - 1;
+    if (b.type === 'term') {
+      termNo += 1;
+      doc.font(F.bold).fontSize(10.5).fillColor(INK)
+        .text(`${termNo}. ${b.head}: `, X0, doc.y, { continued: true })
+        .font(F.regular).text(b.text, { width: CW, lineGap: 1.5 });
+      doc.moveDown(0.45);
+    } else {
+      para(doc, F, b.text, { bold: !!b.bold, gap: last ? 1 : undefined });
+    }
+  });
+}
+
+// Blocks the caller supplied (edited by HR), else the freshly built default.
+// Anything without text is dropped so an emptied box removes the block.
+const bodyOrDefault = (data, fallback) => {
+  const custom = Array.isArray(data.body) ? data.body.filter((b) => b && String(b.text || '').trim()) : [];
+  return custom.length ? custom : fallback;
+};
+
 function renderOfferLetter(data = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
@@ -125,36 +190,9 @@ function renderOfferLetter(data = {}) {
     if (data.address) para(doc, F, `Address: ${data.address}`, { gap: 1 });
 
     para(doc, F, 'Sub: Offer Letter', { bold: true, align: 'center', gap: 1 });
-
     para(doc, F, `Dear ${data.candidateName || 'Candidate'},`, { gap: 0.8 });
 
-    const ref = data.refInterviewDate ? `held on ${longDate(data.refInterviewDate)}` : 'we recently held with you';
-    para(doc, F,
-      `This is with reference to the interview ${ref}. We are pleased to inform you that you have been selected ` +
-      `for the position of ${data.position || '__________'}${data.department ? ` in the ${data.department} department` : ''} ` +
-      `at ${COMPANY.name} on the terms and conditions discussed during the interview.`);
-
-    const monthly = data.salaryMonthly ? `${R}${formatINR(data.salaryMonthly)}` : '__________';
-    const annual = data.salaryAnnual ? `${R}${formatINR(data.salaryAnnual)}` : '__________';
-    para(doc, F, `"Your in-hand salary will be ${monthly} per month which is ${annual} per annum".`, { bold: true });
-
-    const probation = data.probationMonths || 3;
-    const notice = data.noticePeriodDays || 30;
-    para(doc, F,
-      `The probation period shall be for ${probation} months during which the company holds the right to assess your ` +
-      `performance, citing any shortfalls against desirable performance; the organization holds the right to end your ` +
-      `employment with a notice period of ${notice} days or immediately.`);
-
-    para(doc, F, `Your official joining date is from ${longDate(data.joiningDate)}.`, { bold: true });
-
-    para(doc, F,
-      `Please confirm your acceptance by replying to this email or digitally signing the attached document by ` +
-      `${longDate(data.acceptanceDeadline)}. On joining of duty, you will be issued a letter of appointment with all ` +
-      `terms and conditions.`);
-
-    para(doc, F, 'In case you don’t join us by the stipulated date, the offer stands Cancelled / Withdrawn.');
-
-    para(doc, F, 'We congratulate you on this offer and appreciate if you join us on the given date.', { bold: true, gap: 1 });
+    drawBlocks(doc, F, bodyOrDefault(data, offerBody(data, R)));
 
     signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true);
 
@@ -172,6 +210,52 @@ function renderOfferLetter(data = {}) {
  * @returns {Promise<Buffer>} Resolves with the rendered PDF bytes.
  * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
+/**
+ * The appointment letter's body, as editable blocks: an opening paragraph, the
+ * numbered terms, and a closing line. Same contract as offerBody() — this is
+ * the default HR sees in the editor and what prints when they change nothing.
+ *
+ * @param {Object} data - the appointment fields
+ * @param {string} R - the rupee glyph for the active font
+ * @returns {{type: 'para'|'term', head?: string, text: string, bold?: boolean}[]}
+ */
+function appointmentBody(data = {}, R = '₹') {
+  const probation = data.probationMonths || 3;
+  const notice = data.noticePeriodDays || 30;
+  return [
+    { type: 'para', text:
+      `With reference to your application and the subsequent interview, we are pleased to appoint you as ` +
+      `${data.designation || '__________'}${data.department ? ` in the ${data.department} department` : ''} at ${COMPANY.name}, ` +
+      `with effect from ${longDate(data.joiningDate)}, on the following terms and conditions.` },
+    { type: 'term', head: 'Designation & Department', text: `You will be designated as ${data.designation || '__________'}${data.department ? `, ${data.department} department` : ''}.` },
+    { type: 'term', head: 'Place of Posting', text: `Your place of posting will be ${data.location || COMPANY.addressLines[COMPANY.addressLines.length - 1] || '__________'}. You may be transferred to any other location or department as per business needs.` },
+    { type: 'term', head: 'Reporting', text: `You will report to ${data.reportingManager || 'your reporting manager'} or any other person designated by the management.` },
+    { type: 'term', head: 'Compensation', text: `Your annual cost to company (CTC) will be ${data.ctcAnnual ? `${R}${formatINR(data.ctcAnnual)}` : '__________'}. A detailed break-up is provided in Annexure A.` },
+    { type: 'term', head: 'Working Hours', text: `Standard working hours are ${data.workingHours || '9:30 AM to 6:30 PM, Monday to Saturday'}, subject to shift requirements communicated from time to time.` },
+    { type: 'term', head: 'Probation', text: `You will be on probation for ${probation} months from your date of joining, extendable at the discretion of the management. Confirmation is subject to satisfactory performance.` },
+    { type: 'term', head: 'Notice Period', text: `Either party may terminate this employment by giving ${notice} days’ written notice or salary in lieu thereof. During probation, services may be terminated with immediate effect.` },
+    // No "Statutory Benefits" term: the company does not currently deduct PF or
+    // ESI, and promising them in an appointment letter would commit us to
+    // something payroll does not do. Add it back here (or through the letter
+    // editor on a single letter) if that changes.
+    { type: 'term', head: 'Confidentiality', text: 'You shall maintain strict confidentiality of all proprietary and business information and shall not disclose it to any third party during or after your employment.' },
+    { type: 'term', head: 'Code of Conduct', text: 'You shall abide by the rules, regulations and policies of the company as amended from time to time.' },
+    { type: 'term', head: 'Governing Law', text: `This appointment is governed by the laws of India and the Shops & Establishments Act of ${COMPANY.governingState}.` },
+    { type: 'para', text: 'We welcome you to the team and look forward to a long and mutually rewarding association.' },
+  ];
+}
+
+/**
+ * The default body for a letter kind, for the editor to prefill with. The rupee
+ * glyph differs per embedded font, so use the plain sign here — this text is for
+ * a browser textarea, not the PDF.
+ * @param {'offer'|'appointment'} kind
+ * @param {Object} data
+ */
+function letterBodyDefaults(kind, data = {}) {
+  return kind === 'appointment' ? appointmentBody(data, '₹') : offerBody(data, '₹');
+}
+
 function renderAppointmentLetter(data = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
@@ -189,39 +273,9 @@ function renderAppointmentLetter(data = {}) {
     para(doc, F, data.candidateName || '', { bold: true, gap: 1 });
 
     para(doc, F, 'Sub: Letter of Appointment', { bold: true, align: 'center', gap: 1 });
-
     para(doc, F, `Dear ${data.candidateName || 'Candidate'},`, { gap: 0.8 });
 
-    const probation = data.probationMonths || 3;
-    const notice = data.noticePeriodDays || 30;
-    para(doc, F,
-      `With reference to your application and the subsequent interview, we are pleased to appoint you as ` +
-      `${data.designation || '__________'}${data.department ? ` in the ${data.department} department` : ''} at ${COMPANY.name}, ` +
-      `with effect from ${longDate(data.joiningDate)}, on the following terms and conditions.`);
-
-    // Numbered terms.
-    const terms = [
-      ['Designation & Department', `You will be designated as ${data.designation || '__________'}${data.department ? `, ${data.department} department` : ''}.`],
-      ['Place of Posting', `Your place of posting will be ${data.location || COMPANY.addressLines[COMPANY.addressLines.length - 1] || '__________'}. You may be transferred to any other location or department as per business needs.`],
-      ['Reporting', `You will report to ${data.reportingManager || 'your reporting manager'} or any other person designated by the management.`],
-      ['Compensation', `Your annual cost to company (CTC) will be ${data.ctcAnnual ? `${R}${formatINR(data.ctcAnnual)}` : '__________'}. A detailed break-up is provided in Annexure A.`],
-      ['Working Hours', `Standard working hours are ${data.workingHours || '9:30 AM to 6:30 PM, Monday to Saturday'}, subject to shift requirements communicated from time to time.`],
-      ['Probation', `You will be on probation for ${probation} months from your date of joining, extendable at the discretion of the management. Confirmation is subject to satisfactory performance.`],
-      ['Notice Period', `Either party may terminate this employment by giving ${notice} days’ written notice or salary in lieu thereof. During probation, services may be terminated with immediate effect.`],
-      ['Statutory Benefits', 'You will be covered under the applicable statutory benefits including Provident Fund, Gratuity and ESI/Insurance as per prevailing law and company policy.'],
-      ['Confidentiality', 'You shall maintain strict confidentiality of all proprietary and business information and shall not disclose it to any third party during or after your employment.'],
-      ['Code of Conduct', 'You shall abide by the rules, regulations and policies of the company as amended from time to time.'],
-      ['Governing Law', `This appointment is governed by the laws of India and the Shops & Establishments Act of ${COMPANY.governingState}.`],
-    ];
-    terms.forEach(([head, bodyText], i) => {
-      doc.font(F.bold).fontSize(10.5).fillColor(INK)
-        .text(`${i + 1}. ${head}: `, X0, doc.y, { continued: true })
-        .font(F.regular).text(bodyText, { width: CW, lineGap: 1.5 });
-      doc.moveDown(0.45);
-    });
-
-    para(doc, F,
-      'We welcome you to the team and look forward to a long and mutually rewarding association.', { gap: 1 });
+    drawBlocks(doc, F, bodyOrDefault(data, appointmentBody(data, R)));
 
     signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true);
 
@@ -284,4 +338,4 @@ function renderAppointmentLetter(data = {}) {
   });
 }
 
-module.exports = { renderOfferLetter, renderAppointmentLetter };
+module.exports = { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults };
