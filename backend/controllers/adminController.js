@@ -392,6 +392,35 @@ const setCashbookAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Switch a CEO/MD account between view-only and edit mode.
+ * @route PATCH /api/admin/users/:id/exec-edit-access  (SuperAdmin)
+ * @param {string} req.params.id - user id (must be a CEO or MD account)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, execEditAccess}}
+ */
+// PATCH /api/admin/users/:id/exec-edit-access  { enabled }  (SuperAdmin)
+// CEO/MD are read-only executives by default. Switching this on gives that one
+// account write access equivalent to an HR Manager with every capability —
+// SuperAdmin-only areas (permissions, org settings, audit log) stay closed. The
+// gate itself lives in middleware/authMiddleware.js.
+const setExecEditAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  // Meaningless on any other role — the flag is only ever read for CEO/MD, so
+  // refuse rather than silently store a value that does nothing.
+  if (!EXECUTIVE_ROLES.includes(user.role)) {
+    res.status(400);
+    throw new Error('Edit mode applies to CEO and MD accounts only.');
+  }
+  user.execEditAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, execEditAccess: user.execEditAccess });
+});
+
+/**
  * Grant or revoke work-from-home for one employee.
  * @route PATCH /api/admin/users/:id/wfh-access  (SuperAdmin)
  * @param {string} req.params.id - user id (resolved to their employee profile)
@@ -465,6 +494,7 @@ module.exports = {
   getPermissionCatalog,
   updateUserPermissions,
   setCashbookAccess,
+  setExecEditAccess,
   setWfhAccess,
   getOrgSettings,
   updateOrgSettings,

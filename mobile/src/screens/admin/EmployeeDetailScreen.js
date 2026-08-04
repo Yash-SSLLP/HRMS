@@ -26,7 +26,7 @@ function Detail({ icon, label, value, last }) {
 
 export default function EmployeeDetailScreen({ route }) {
   const { id } = route.params || {};
-  const writable = canApprove(useAuth((s) => s.user?.role));
+  const writable = canApprove(useAuth((s) => s.user));
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);

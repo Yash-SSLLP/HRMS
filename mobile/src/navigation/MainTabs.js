@@ -176,14 +176,21 @@ export default function MainTabs() {
   const { notifications, chat, refresh } = useBadges();
   const appState = useRef(AppState.currentState);
   const setFeatures = useAuth((s) => s.setFeatures);
+  const setUser = useAuth((s) => s.setUser);
   const chatEnabled = useAuth((s) => s.features?.chatEnabled);
 
-  // Sync the org-wide feature switches (e.g. whether chat exists) once on mount.
+  // Sync the org-wide feature switches (e.g. whether chat exists) once on mount,
+  // and re-cache the user with them: access grants an admin changes server-side
+  // (e.g. a CEO/MD switched into edit mode) would otherwise stay invisible to
+  // this app until the next login.
   useEffect(() => {
     api.get('/auth/me')
-      .then(({ data }) => setFeatures(data?.features))
+      .then(({ data }) => {
+        if (data?.user) setUser(data.user);
+        setFeatures(data?.features);
+      })
       .catch(() => {});
-  }, [setFeatures]);
+  }, [setUser, setFeatures]);
 
   // Poll unread badges while foregrounded.
   useEffect(() => {

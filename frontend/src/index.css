@@ -683,10 +683,17 @@ html.dark .nav-link-highlight {
 .nav-group-header:hover .nav-group-pm { opacity: 1; color: var(--nav-accent); }
 .nav-group-header.is-open .nav-group-pm { opacity: .85; }
 
-/* Single-item categories render as a plain section link (no dropdown). */
+/* Single-item categories render as a plain section link (no dropdown). Same
+   uppercase label as a group header, but with the item's icon chip so it looks
+   clickable instead of reading as an inert section heading. */
 .nav-section-link {
-  display: block;
-  padding: 0.72rem 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  /* Tighter than a group header's 0.72rem: the icon chip supplies the height,
+     so this keeps the row on the same rhythm as .nav-link (~43px). */
+  padding: 0.55rem 0.5rem;
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -695,9 +702,24 @@ html.dark .nav-link-highlight {
   border-top: 1px solid #ececf0;
   transition: color .15s ease;
 }
+.nav-section-link .nav-icon {
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background-color: color-mix(in srgb, var(--nav-accent) 10%, transparent);
+  flex-shrink: 0;
+  letter-spacing: normal;
+}
 .nav-section-link:hover { color: var(--nav-accent); }
+.nav-section-link:hover .nav-icon { background-color: color-mix(in srgb, var(--nav-accent) 18%, transparent); }
 .nav-section-link.is-active { color: var(--nav-accent); }
+.nav-section-link.is-active .nav-icon { background-color: var(--nav-accent); color: #fff; }
 .nav-section-link.nav-link-danger { color: #dc2626; background: transparent; }
+.nav-section-link.nav-link-danger .nav-icon { background-color: color-mix(in srgb, #dc2626 12%, transparent); }
+.nav-section-link.nav-link-danger.is-active .nav-icon { background-color: #dc2626; color: #fff; }
 
 /* Accent tint on a collapsed group that contains a highlighted item. */
 .nav-group-header-highlight { color: var(--nav-accent); }

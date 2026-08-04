@@ -27,9 +27,9 @@ const CARD_PAD = spacing(5);
 // In-app user guide. Employees see the employee guide; HR/Admins default to the
 // HR guide, can switch views, and (HR/Admin only) can EDIT either guide.
 export default function HowToUseScreen() {
-  const role = useAuth((s) => s.user?.role);
-  const isAdmin = canViewAdmin(role); // execs may view both; only canApprove may edit
-  const canEdit = canApprove(role);
+  const me = useAuth((s) => s.user);
+  const isAdmin = canViewAdmin(me); // execs may view both; only canApprove may edit
+  const canEdit = canApprove(me);
 
   const [tab, setTab] = useState(isAdmin ? 'hr' : 'employee');
   const [remote, setRemote] = useState({}); // { key: {content, updatedAt, updatedByName} }

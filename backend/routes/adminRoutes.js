@@ -16,6 +16,7 @@ const {
   getPermissionCatalog,
   updateUserPermissions,
   setCashbookAccess,
+  setExecEditAccess,
   setWfhAccess,
   getOrgSettings,
   updateOrgSettings,
@@ -44,6 +45,11 @@ router.patch('/users/:id/permissions', restrictTo('SuperAdmin'), updateUserPermi
 // Standalone Cashbook access grant for any user/employee — SuperAdmin only.
 // PATCH /users/:id/cashbook-access — grant/revoke cashbook access; protected, SuperAdmin only.
 router.patch('/users/:id/cashbook-access', restrictTo('SuperAdmin'), setCashbookAccess);
+// CEO/MD view-only ↔ edit mode — SuperAdmin only. Lifting the executive
+// read-only restriction is exactly the kind of decision that stays with the one
+// role that administers the system.
+// PATCH /users/:id/exec-edit-access — switch a CEO/MD into edit mode; protected, SuperAdmin only.
+router.patch('/users/:id/exec-edit-access', restrictTo('SuperAdmin'), setExecEditAccess);
 // Work-from-home grant — SuperAdmin only. A WFH punch skips the office geofence,
 // so it is deliberately not something HR or the employee can switch on.
 // PATCH /users/:id/wfh-access — grant/revoke work-from-home; protected, SuperAdmin only.

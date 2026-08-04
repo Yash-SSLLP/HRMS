@@ -16,7 +16,7 @@ import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock,
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
-import { hasPermission, hasAnyPermission } from '../config/permissions';
+import { hasPermission, hasAnyPermission, isReadOnlyExec, isEditingExec } from '../config/permissions';
 import { pageNameForPath } from '../config/pageNames';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
@@ -118,9 +118,12 @@ function NavList({ items, user, onNavigate }) {
     if (!children.length) return null;
 
     // A category with a single (visible) item isn't worth a dropdown — render
-    // it as a plain section link straight to that item.
+    // it as a plain section link straight to that item. It still carries an
+    // icon (the group's own, else the item's) so it reads as a clickable row
+    // rather than an inert section heading.
     if (children.length === 1) {
       const only = children[0];
+      const Icon = g.icon || only.icon;
       return (
         <NavLink
           key={g.group}
@@ -130,7 +133,8 @@ function NavList({ items, user, onNavigate }) {
           className={({ isActive }) =>
             `nav-section-link ${only.danger ? 'nav-link-danger' : ''} ${isActive ? 'is-active' : ''}`}
         >
-          {g.group}
+          <span className="nav-icon" aria-hidden="true">{Icon ? <Icon size={15} /> : null}</span>
+          <span className="truncate min-w-0">{g.group}</span>
         </NavLink>
       );
     }
@@ -630,8 +634,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
   };
 
   const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager');
-  // CEO/MD: read-only executives who can browse the whole admin portal.
-  const isExecViewer = user && (user.role === 'CEO' || user.role === 'MD');
+  // CEO/MD: executives who can browse the whole admin portal, read-only unless a
+  // SuperAdmin has switched this account into edit mode.
+  const viewOnlyExec = isReadOnlyExec(user);
   // SuperAdmin is not an employee, so they have no "My Portal". Only roles with
   // employee-portal access (Employee, HRManager) get the portal switcher.
   const canEmployeePortal = user && user.role !== 'SuperAdmin';
@@ -732,10 +737,17 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
           <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
 
-          {isExecViewer && (
+          {viewOnlyExec && (
             <span className="hidden sm:inline-flex items-center gap-1 ml-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200"
-              title="CEO/MD accounts can view everything but cannot make changes">
+              title="CEO/MD accounts can view everything but cannot make changes. A Super Admin can switch this account to edit mode.">
               👁 View only
+            </span>
+          )}
+          {/* The counterpart: an exec whose writes are live should know it. */}
+          {isEditingExec(user) && (
+            <span className="hidden sm:inline-flex items-center gap-1 ml-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200"
+              title="A Super Admin has switched this account to edit mode: your changes here are saved. Super Admin areas (permissions, org settings, audit log) stay read-only.">
+              ✎ Edit mode
             </span>
           )}
 

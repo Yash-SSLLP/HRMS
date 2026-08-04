@@ -27,7 +27,7 @@ export default function CandidateDetailScreen() {
   const { id } = route.params || {};
   const token = useAuth((s) => s.token);
   const me = useAuth((s) => s.user);
-  const writable = canApprove(me?.role);
+  const writable = canApprove(me);
 
   const [cand, setCand] = useState(null);
   const [employees, setEmployees] = useState([]);

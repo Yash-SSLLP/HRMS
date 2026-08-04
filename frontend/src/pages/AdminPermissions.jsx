@@ -83,6 +83,19 @@ export default function AdminPermissions() {
     }
   };
 
+  // CEO/MD only: flip the account between view-only (the default) and edit mode.
+  const toggleExecEdit = async (u) => {
+    setBusyId(u._id || u.id); setError('');
+    try {
+      await api.patch(`/admin/users/${u._id || u.id}/exec-edit-access`, { enabled: !u.execEditAccess });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not update executive access');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const toggleWfh = async (u) => {
     setBusyId(u._id || u.id); setError('');
     try {
@@ -132,6 +145,9 @@ export default function AdminPermissions() {
       <p className="text-sm text-gray-500 mb-4">
         Grant module access to any user or employee. <strong>Cashbook</strong> access can be given to anyone;
         {' '}<strong>Work from home</strong> is granted per employee; <strong>HR permissions</strong> apply to HR Managers.
+        {' '}<strong>CEO / MD access</strong> switches an executive account between view-only (the default) and edit
+        mode — in edit mode they can change data anywhere an HR Manager can, but this page, org settings and the
+        audit log stay with Super Admins.
       </p>
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -165,14 +181,15 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Role</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Cashbook</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Work from home</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">CEO / MD access</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">HR Permissions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
             ) : filtered.map((u) => (
               <tr key={u._id || u.id}>
                 <td className="px-4 py-3">
@@ -195,6 +212,21 @@ export default function AdminPermissions() {
                     <button onClick={() => toggleWfh(u)} disabled={busyId === (u._id || u.id)}
                       className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.wfhAllowed ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-indigo-700 border-indigo-300 hover:bg-indigo-50'}`}>
                       {u.wfhAllowed ? '✓ Allowed' : 'Allow WFH'}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {/* Executives are read-only by default; this switches one
+                      account into edit mode (HR-Manager-equivalent writes). */}
+                  {['CEO', 'MD'].includes(u.role) ? (
+                    <button onClick={() => toggleExecEdit(u)} disabled={busyId === (u._id || u.id)}
+                      title={u.execEditAccess
+                        ? 'Can change data across the admin portal. Click to return to view only.'
+                        : 'Can view everything but change nothing. Click to allow edits.'}
+                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.execEditAccess ? 'bg-amber-600 text-white border-amber-600 hover:bg-amber-700' : 'text-amber-700 border-amber-300 hover:bg-amber-50'}`}>
+                      {u.execEditAccess ? '✓ Edit mode' : 'View only'}
                     </button>
                   ) : (
                     <span className="text-xs text-gray-400">—</span>

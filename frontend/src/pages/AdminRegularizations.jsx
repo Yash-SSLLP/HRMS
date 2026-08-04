@@ -11,6 +11,7 @@ import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
 import { promptDialog } from '../components/dialogs';
 import { formatTime12 as fmt12 } from '../utils/time';
+import { isReadOnlyExec } from '../config/permissions';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected'];
 
@@ -23,10 +24,11 @@ const STATUS_STYLES = {
 export default function AdminRegularizations() {
   const me = useAuthStore((s) => s.user);
   const myId = me?._id || me?.id;
-  const isExec = ['CEO', 'MD'].includes(me?.role);
-  // CEO/MD are read-only executives everywhere except one row type: an HR's own
+  // A view-only CEO/MD is read-only everywhere except one row type: an HR's own
   // regularization, which HR must not decide for themselves. So the actions
-  // column is no longer hidden from them — it is decided per row below.
+  // column is no longer hidden from them — it is decided per row below. An exec
+  // a SuperAdmin has put in edit mode decides any row, like HR.
+  const isExec = isReadOnlyExec(me);
   const readOnly = isExec;
 
   // Who may decide this request, mirroring regularizationController.js. Returns

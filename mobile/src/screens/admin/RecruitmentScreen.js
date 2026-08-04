@@ -27,7 +27,7 @@ const emptyCandidate = { name: '', email: '', phone: '', job: '', stage: 'Applie
 
 export default function RecruitmentScreen() {
   const nav = useNavigation();
-  const writable = canApprove(useAuth((s) => s.user?.role));
+  const writable = canApprove(useAuth((s) => s.user));
 
   const [tab, setTab] = useState('jobs');
   const [jobs, setJobs] = useState([]);

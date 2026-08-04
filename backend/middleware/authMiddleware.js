@@ -104,10 +104,24 @@ const protectMedia = asyncHandler(async (req, res, next) => {
   next();
 });
 
-// CEO / MD are read-only executives: they may VIEW anything an admin can, but
-// cannot change anything.
+// CEO / MD are read-only executives by default: they may VIEW anything an admin
+// can, but cannot change anything.
+//
+// A SuperAdmin can lift that per account (User.execEditAccess — see the
+// Permissions page / PATCH /admin/users/:id/exec-edit-access). In edit mode the
+// exec writes like an HR Manager holding every capability. It deliberately stops
+// short of SuperAdmin: routes gated on SuperAdmin ALONE (permissions, org
+// settings, audit log, chat export) stay closed, so administering the system
+// remains with the role that administers the system.
 const EXEC_VIEWERS = ['CEO', 'MD'];
 const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+/** Is this account a CEO/MD (in either mode)? */
+const isExecViewer = (user) => EXEC_VIEWERS.includes(user?.role);
+/** A CEO/MD a SuperAdmin has switched into edit mode. */
+const isEditingExec = (user) => isExecViewer(user) && user?.execEditAccess === true;
+/** A CEO/MD still in the default view-only mode. */
+const isReadOnlyExec = (user) => isExecViewer(user) && user?.execEditAccess !== true;
 
 /**
  * Role gate factory. Allows the listed roles through; on admin-gated routes
@@ -126,10 +140,17 @@ const restrictTo = (...roles) => (req, res, next) => {
   if (roles.includes(req.user.role)) return next();
 
   // On any admin-gated route, CEO/MD get read-only access: safe (GET) methods
-  // pass through; writes are rejected with a clear message.
+  // pass through; writes are rejected with a clear message. An exec in edit mode
+  // writes too — but only where an HR Manager could, never on a SuperAdmin-only
+  // route (roles === ['SuperAdmin']).
   const adminGated = roles.includes('SuperAdmin') || roles.includes('HRManager');
-  if (adminGated && EXEC_VIEWERS.includes(req.user.role)) {
+  if (adminGated && isExecViewer(req.user)) {
     if (SAFE_METHODS.includes(req.method)) return next();
+    if (isEditingExec(req.user)) {
+      if (roles.includes('HRManager')) return next();
+      res.status(403);
+      return next(new Error('This action is restricted to Super Admins.'));
+    }
     res.status(403);
     return next(new Error('CEO/MD accounts have read-only access and cannot make changes.'));
   }
@@ -151,6 +172,10 @@ const restrictTo = (...roles) => (req, res, next) => {
 function hasPermission(user, cap) {
   if (!user) return false;
   if (user.role === 'SuperAdmin') return true;
+  // A CEO/MD switched into edit mode holds every capability (an HR Manager with
+  // the full set). A read-only exec holds none — their access comes from the
+  // safe-method exemption in the guards below, not from this catalog.
+  if (isEditingExec(user)) return true;
   // Cashbook access can be granted to ANY user/employee via a standalone flag,
   // independent of role — so no separate finance login is needed.
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
@@ -182,9 +207,10 @@ function makePermissionGuard(caps) {
       res.status(403);
       return next(new Error('You do not have permission to perform this action'));
     }
-    // CEO/MD keep read-only access to admin-gated areas.
-    if (EXEC_VIEWERS.includes(req.user.role)) {
-      if (SAFE_METHODS.includes(req.method)) return next();
+    // CEO/MD keep read-only access to admin-gated areas; in edit mode they write
+    // here too (capability routes are never SuperAdmin-only).
+    if (isExecViewer(req.user)) {
+      if (SAFE_METHODS.includes(req.method) || isEditingExec(req.user)) return next();
       res.status(403);
       return next(new Error('CEO/MD accounts have read-only access and cannot make changes.'));
     }
@@ -204,6 +230,9 @@ module.exports = {
   protectMedia,
   restrictTo,
   EXEC_VIEWERS,
+  isExecViewer,
+  isEditingExec,
+  isReadOnlyExec,
   hasPermission,
   requirePermission,
   requireAnyPermission,

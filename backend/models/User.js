@@ -67,6 +67,12 @@ const userSchema = new mongoose.Schema(
     // `permissions` array: an admin can switch it on for ANY user or employee and
     // they get the Cashbook module in their own portal — no separate finance login.
     cashbookAccess: { type: Boolean, default: false },
+    // CEO/MD only. Off (the default) = the read-only executive described above.
+    // On = a SuperAdmin has switched that account into edit mode, giving it write
+    // access equivalent to an HR Manager holding every capability. It never
+    // confers SuperAdmin-only powers (permissions, org settings, audit log).
+    // Ignored for every other role. See middleware/authMiddleware.js.
+    execEditAccess: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

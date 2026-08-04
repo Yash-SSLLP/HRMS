@@ -23,3 +23,12 @@ export function hasPermission(user, cap) {
 export function hasAnyPermission(user, caps = []) {
   return caps.some((c) => hasPermission(user, c));
 }
+
+// CEO / MD. Read-only by default; a SuperAdmin can switch an individual account
+// into edit mode (User.execEditAccess), after which it writes like an HR Manager
+// holding every capability. Mirrors isExecViewer/isReadOnlyExec in the backend's
+// authMiddleware — use isReadOnlyExec to decide whether to offer an action, so a
+// button is never shown that the server will refuse.
+export const isExecViewer = (user) => user?.role === 'CEO' || user?.role === 'MD';
+export const isReadOnlyExec = (user) => isExecViewer(user) && user?.execEditAccess !== true;
+export const isEditingExec = (user) => isExecViewer(user) && user?.execEditAccess === true;

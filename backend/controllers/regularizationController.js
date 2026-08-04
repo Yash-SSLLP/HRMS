@@ -10,6 +10,7 @@ const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { notify } = require('../services/notify');
+const { isReadOnlyExec } = require('../middleware/authMiddleware');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { statusFromHours } = require('../utils/workday');
 
@@ -177,10 +178,11 @@ const reviewRequest = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('An HR regularization can only be approved by the CEO, MD or a Super Admin.');
   }
-  // …and the exception goes no further: an exec's write access here covers HR
-  // requests only. Everyone else's still belongs to HR, so CEO/MD stay
-  // read-only on those, as on every other admin screen.
-  if (['CEO', 'MD'].includes(req.user.role) && requester?.role !== HR_ROLE) {
+  // …and the exception goes no further: a VIEW-ONLY exec's write access here
+  // covers HR requests only. Everyone else's still belongs to HR, so they stay
+  // read-only on those, as on every other admin screen. (An exec a SuperAdmin
+  // has put in edit mode decides any request, like HR.)
+  if (isReadOnlyExec(req.user) && requester?.role !== HR_ROLE) {
     res.status(403);
     throw new Error('CEO/MD accounts review HR regularizations only; this one is for HR to decide.');
   }

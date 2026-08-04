@@ -10,7 +10,7 @@ import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
-import { hasPermission } from '../config/permissions';
+import { hasPermission, isReadOnlyExec } from '../config/permissions';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
@@ -62,8 +62,9 @@ export default function AdminEmployeeDetail() {
   // Who may change an employee's details: a SuperAdmin, or an HR Manager holding
   // employees.manage. CEO/MD pass hasPermission but are read-only executives —
   // the server refuses their writes, so they must not be offered the button.
+  // Unless a SuperAdmin has switched that exec account into edit mode.
   const canEdit = me?.role === 'SuperAdmin'
-    || (!['CEO', 'MD'].includes(me?.role) && hasPermission(me, 'employees.manage'));
+    || (!isReadOnlyExec(me) && hasPermission(me, 'employees.manage'));
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);

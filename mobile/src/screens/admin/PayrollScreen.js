@@ -20,7 +20,7 @@ const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
 export default function PayrollScreen() {
   const token = useAuth((s) => s.token);
-  const writable = canApprove(useAuth((s) => s.user?.role));
+  const writable = canApprove(useAuth((s) => s.user));
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());

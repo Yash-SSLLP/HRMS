@@ -20,12 +20,16 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 // Grouped module directory. `tab` items jump to a bottom tab; the rest push
 // within the Home stack.
+//
+// Order matches the web sidebar's rule — most-used first, both for the groups
+// and within each group — because only the first group is expanded by default,
+// so anything below it costs a tap to reveal.
 const GROUPS = [
   {
     title: 'Time & Attendance',
     items: [
-      { key: 'Leave', label: 'Leave', icon: 'airplane', tint: '#0ea5e9' },
       { key: 'Attendance', label: 'Attendance', icon: 'finger-print', tint: '#16a34a' },
+      { key: 'Leave', label: 'Leave', icon: 'airplane', tint: '#0ea5e9' },
       { key: 'Regularization', label: 'Regularize', icon: 'construct', tint: '#ea580c' },
       { key: 'Roster', label: 'My Roster', icon: 'calendar-number', tint: '#7c3aed' },
     ],
@@ -35,19 +39,34 @@ const GROUPS = [
     items: [
       { key: 'Payslips', label: 'Payslips', icon: 'cash', tint: '#9333ea' },
       { key: 'Expenses', label: 'Expenses', icon: 'bag-handle', tint: '#ef4444' },
-      { key: 'Cashbook', label: 'Cash Vouchers', icon: 'book', tint: '#0891b2' },
-      { key: 'Travel', label: 'Travel', icon: 'map', tint: '#0ea5e9' },
+      // 'book' read as a library/reading module; a voucher is a receipt.
+      { key: 'Cashbook', label: 'Cash Vouchers', icon: 'receipt', tint: '#0891b2' },
       { key: 'Loans', label: 'Loans', icon: 'wallet', tint: '#16a34a' },
+      // Sits with the rest of the pay modules, as on the web ("Payroll & Expenses").
+      { key: 'Declaration', label: 'Tax Declaration', icon: 'calculator', tint: '#0d9488' },
+      { key: 'Travel', label: 'Travel', icon: 'map', tint: '#0ea5e9' },
+    ],
+  },
+  {
+    title: 'Workplace',
+    items: [
+      { key: 'Calendar', label: 'Calendar', icon: 'calendar', tint: '#db2777', tab: true },
+      { key: 'Chat', label: 'Messages', icon: 'chatbubbles', tint: '#0ea5e9', tab: true },
+      { key: 'Alerts', label: 'Notifications', icon: 'notifications', tint: '#6366f1', tab: true },
+      { key: 'Announcements', label: 'Announcements', icon: 'megaphone', tint: '#4f46e5' },
+      { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
+      { key: 'Surveys', label: 'Surveys', icon: 'clipboard', tint: '#db2777' },
+      { key: 'Assets', label: 'My Assets', icon: 'cube', tint: '#64748b' },
     ],
   },
   {
     title: 'Growth',
     items: [
       { key: 'Tasks', label: 'My Tasks', icon: 'checkbox', tint: '#2563eb' },
-      { key: 'MyInterviews', label: 'My Interviews', icon: 'videocam', tint: '#7c3aed' },
       { key: 'Goals', label: 'Goals', icon: 'flag', tint: '#dc2626' },
       { key: 'Reviews', label: 'Reviews', icon: 'clipboard', tint: '#9333ea' },
       { key: 'Learning', label: 'Learning', icon: 'school', tint: '#0d9488' },
+      { key: 'MyInterviews', label: 'My Interviews', icon: 'videocam', tint: '#7c3aed' },
     ],
   },
   {
@@ -55,28 +74,16 @@ const GROUPS = [
     items: [
       { key: 'ChangeRequest', label: 'Change Requests', icon: 'create', tint: '#4f46e5' },
       { key: 'Complaints', label: 'Complaints', icon: 'alert-circle', tint: '#ef4444' },
-      { key: 'Declaration', label: 'Tax Declaration', icon: 'calculator', tint: '#0d9488' },
       { key: 'Onboarding', label: 'Onboarding', icon: 'rocket', tint: '#2563eb' },
-      { key: 'Resignation', label: 'Resignation', icon: 'exit', tint: '#64748b' },
-    ],
-  },
-  {
-    title: 'Workplace',
-    items: [
-      { key: 'Announcements', label: 'Announcements', icon: 'megaphone', tint: '#4f46e5' },
-      { key: 'Surveys', label: 'Surveys', icon: 'clipboard', tint: '#db2777' },
-      { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
-      { key: 'Assets', label: 'My Assets', icon: 'cube', tint: '#64748b' },
-      { key: 'Calendar', label: 'Calendar', icon: 'calendar', tint: '#db2777', tab: true },
-      { key: 'Chat', label: 'Messages', icon: 'chatbubbles', tint: '#0ea5e9', tab: true },
-      { key: 'Alerts', label: 'Notifications', icon: 'notifications', tint: '#6366f1', tab: true },
+      // Red chip, matching the web sidebar's danger styling for Resignation.
+      { key: 'Resignation', label: 'Resignation', icon: 'exit', tint: '#dc2626' },
     ],
   },
 ];
 
 export default function MenuScreen() {
   const nav = useNavigation();
-  const role = useAuth((s) => s.user?.role);
+  const me = useAuth((s) => s.user);
   const chatEnabled = useAuth((s) => s.features?.chatEnabled);
 
   // tab items live on the parent tab navigator; everything else is a Home-stack push.
@@ -87,28 +94,40 @@ export default function MenuScreen() {
 
   // Employee self-service groups — hidden for SuperAdmin (admin-only account).
   // Messages drops out entirely while the chat module is switched off.
-  const groups = canEmployeeSelf(role)
+  const groups = canEmployeeSelf(me)
     ? GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => i.key !== 'Chat' || chatEnabled) }))
     : [];
-  if (showsAdminEntry(role)) {
-    const adminItems = [{ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: colors.text }];
-    if (hasTeam(role)) adminItems.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb' });
-    if (canViewAdmin(role)) {
+  if (showsAdminEntry(me)) {
+    // Daily actions (approvals, today's attendance) lead; the console and the
+    // reference screens follow.
+    const adminItems = [];
+    if (canViewAdmin(me)) {
       adminItems.push(
         { key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a' },
-        { key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9' },
+        { key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9' }
+      );
+    }
+    adminItems.push({ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: colors.text });
+    if (hasTeam(me)) adminItems.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb' });
+    if (canViewAdmin(me)) {
+      adminItems.push(
         { key: 'AttendanceMonth', label: 'Monthly Attendance', icon: 'calendar', tint: '#ea580c' },
         { key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea' },
         { key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' }
       );
     }
-    if (canApprove(role)) {
+    if (canApprove(me)) {
       adminItems.push(
         { key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' },
         { key: 'RnrAdmin', label: 'Rewards & Recognition', icon: 'trophy', tint: '#f59e0b' }
       );
     }
-    groups.push({ title: 'Admin & Manager', items: adminItems });
+    const adminGroup = { title: 'Admin & Manager', items: adminItems };
+    // Admins and execs live in this group, so it leads and opens by default (the
+    // first group is the expanded one). A plain Manager is an employee first —
+    // their two admin rows stay below the self-service groups.
+    if (canViewAdmin(me)) groups.unshift(adminGroup);
+    else groups.push(adminGroup);
   }
   // Always last, for every role — and it guarantees `groups` is never empty
   // (a SuperAdmin gets no self-service groups, so groups[0] below would throw).

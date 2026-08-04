@@ -18,7 +18,7 @@ import { useAuth } from '../store/auth';
 import { colors, radius, spacing, shadow, font, roleAccent, notifStyle } from '../theme';
 import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, refresher, Ionicons } from '../components/ui';
 import { greeting, fmtTime, fmtDate, timeAgo, rupees } from '../utils/format';
-import { showsAdminEntry, isExec, canEmployeeSelf } from '../utils/roles';
+import { showsAdminEntry, isExec, canApprove, canEmployeeSelf } from '../utils/roles';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import RnrBanner from '../components/RnrBanner';
 
@@ -71,7 +71,7 @@ export default function DashboardScreen() {
   // Fetch all dashboard data in parallel; every request is fault-tolerant so a
   // partial outage still renders. Employee-only calls are appended conditionally.
   const load = useCallback(async () => {
-    const isEmp = canEmployeeSelf(user?.role);
+    const isEmp = canEmployeeSelf(user);
     const base = [
       api.get('/celebrations/today').catch(() => null),
       api.get('/celebrations/upcoming?days=14').catch(() => null),
@@ -122,7 +122,7 @@ export default function DashboardScreen() {
   };
 
   const att = data.todayAtt;
-  const employeeSelf = canEmployeeSelf(user?.role);
+  const employeeSelf = canEmployeeSelf(user);
   const avatarUri = user?.photo ? `${mediaUrl(`/auth/users/${user._id}/avatar`)}?p=${encodeURIComponent(user.photo)}` : null;
   const celebs = [
     ...(data.celebToday?.birthdays || []).map((b) => ({ ...b, kind: 'birthday' })),
@@ -156,12 +156,12 @@ export default function DashboardScreen() {
         </View>
 
         {/* Admin / manager entry (privileged roles only) */}
-        {showsAdminEntry(user?.role) && (
+        {showsAdminEntry(user) && (
           <TouchableOpacity activeOpacity={0.9} style={styles.adminCard} onPress={() => nav.navigate('AdminHub')}>
             <View style={styles.adminIcon}><Ionicons name="shield-checkmark" size={22} color="#fff" /></View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.adminTitle}>Admin Console</Text>
-              <Text style={styles.adminSub}>{isExec(user?.role) ? 'View team, approvals & attendance' : 'Approvals, team & attendance'}</Text>
+              <Text style={styles.adminSub}>{isExec(user) && !canApprove(user) ? 'View team, approvals & attendance' : 'Approvals, team & attendance'}</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>

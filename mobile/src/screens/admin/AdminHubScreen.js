@@ -13,8 +13,9 @@ import AttendanceHeatmap from '../../components/AttendanceHeatmap';
 
 export default function AdminHubScreen() {
   const nav = useNavigation();
-  const role = useAuth((s) => s.user?.role);
-  const viewAdmin = canViewAdmin(role);
+  const me = useAuth((s) => s.user);
+  const role = me?.role;
+  const viewAdmin = canViewAdmin(me);
 
   // Seed from cache for an instant paint, then refresh (stale-while-revalidate).
   const [data, setData] = useState(() => readCacheSync('adminHub'));
@@ -53,15 +54,15 @@ export default function AdminHubScreen() {
   // Build the tile list per role.
   const tiles = [];
   tiles.push({ key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a', show: viewAdmin });
-  tiles.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb', show: hasTeam(role) });
+  tiles.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb', show: hasTeam(me) });
   tiles.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9', show: viewAdmin });
   tiles.push({ key: 'PunchMap', label: 'Punch Map', icon: 'map', tint: '#0891b2', show: viewAdmin });
   tiles.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea', show: viewAdmin });
-  tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canApprove(role) });
-  tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canApprove(role) });
-  tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: canApprove(role) });
+  tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canApprove(me) });
+  tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canApprove(me) });
+  tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: canApprove(me) });
   tiles.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a', show: viewAdmin });
-  tiles.push({ key: 'RnrAdmin', label: 'Recognition', icon: 'trophy', tint: '#f59e0b', show: canApprove(role) });
+  tiles.push({ key: 'RnrAdmin', label: 'Recognition', icon: 'trophy', tint: '#f59e0b', show: canApprove(me) });
   const visibleTiles = tiles.filter((t) => t.show);
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
@@ -74,9 +75,9 @@ export default function AdminHubScreen() {
           <View style={styles.bannerIcon}><Ionicons name="shield-checkmark" size={22} color="#fff" /></View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.bannerTitle}>Admin Console</Text>
-            <Text style={styles.bannerSub}>{role}{isExec(role) ? ' · read-only' : ''}</Text>
+            <Text style={styles.bannerSub}>{role}{isExec(me) && !canApprove(me) ? ' · read-only' : ''}</Text>
           </View>
-          {!canApprove(role) && viewAdmin ? <Pill label="View only" tone="warning" /> : null}
+          {!canApprove(me) && viewAdmin ? <Pill label="View only" tone="warning" /> : null}
         </View>
 
         {/* Overview stats */}

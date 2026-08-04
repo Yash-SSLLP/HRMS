@@ -10,6 +10,7 @@ const { COMPLAINT_STATUSES } = require('../models/Complaint');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { notifyMany } = require('../services/notify');
+const { isEditingExec } = require('../middleware/authMiddleware');
 
 const USER_FIELDS = 'firstName lastName email role';
 
@@ -153,8 +154,10 @@ const updateComplaint = asyncHandler(async (req, res) => {
   }
 
   // HR and SuperAdmin can action any complaint (except one against themselves);
-  // the CEO has read-only visibility, so they can view but not update.
-  const canManage = ['SuperAdmin', 'HRManager'].includes(req.user.role) && !complaint.against.equals(req.user._id);
+  // the CEO has read-only visibility, so they can view but not update — unless a
+  // SuperAdmin has switched that exec account into edit mode.
+  const canManage = (['SuperAdmin', 'HRManager'].includes(req.user.role) || isEditingExec(req.user))
+    && !complaint.against.equals(req.user._id);
   const isAssignee = complaint.assignedTo && complaint.assignedTo.equals(req.user._id);
   if (!canManage && !isAssignee) {
     res.status(403);

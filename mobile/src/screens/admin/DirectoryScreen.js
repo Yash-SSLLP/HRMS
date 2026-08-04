@@ -12,7 +12,7 @@ const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
 export default function DirectoryScreen() {
   const nav = useNavigation();
-  const writable = canApprove(useAuth((s) => s.user?.role));
+  const writable = canApprove(useAuth((s) => s.user));
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);

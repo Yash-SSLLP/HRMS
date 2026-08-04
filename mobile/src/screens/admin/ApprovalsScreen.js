@@ -81,8 +81,8 @@ const CATEGORIES = [
 ];
 
 export default function ApprovalsScreen() {
-  const role = useAuth((s) => s.user?.role);
-  const writable = canApprove(role);
+  const me = useAuth((s) => s.user);
+  const writable = canApprove(me);
 
   const [tab, setTab] = useState(0);
   const [items, setItems] = useState([]);

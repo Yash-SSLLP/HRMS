@@ -18,7 +18,7 @@ const personUri = (p) => (p?.photo ? `${mediaUrl(`/auth/users/${p.user}/avatar`)
 // Achiever per department; the selection is a secret Draft until Announced, when
 // all employees are notified and see the dashboard banner for 2 working days.
 export default function RnrScreen() {
-  const writable = canApprove(useAuth((s) => s.user?.role));
+  const writable = canApprove(useAuth((s) => s.user));
   const now = new Date();
 
   const [year, setYear] = useState(now.getFullYear());
