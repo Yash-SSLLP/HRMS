@@ -18,17 +18,20 @@ import {
 // CEO/MD and, for courses, LDManager pass via hasPermission). `anyPerm` = show if
 // the user holds ANY of the listed capabilities. Items with neither are visible
 // to every admin-portal role.
+// `feature: 'chat'` = hide unless the org-wide chat switch is on, so the whole
+// module disappears together (top-bar launcher, dock and this) rather than
+// leaving a stray chat page behind.
 export const adminNav = [
   // Pinned above every category: the landing page is reached constantly and
   // shouldn't need a dropdown opened first. An entry with no `group` renders as
   // a plain top-level link (see NavList in components/Layout.jsx).
   { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome },
-  { group: 'Overview, Reports & Admin Tools', items: [
+  { group: 'Reports & Audit', items: [
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },
     { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, roles: ['SuperAdmin'] },
-    { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'] },
+    { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'], feature: 'chat' },
   ] },
-  { group: 'Organization Setup', items: [
+  { group: 'People & Organization', items: [
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },
     { to: '/admin/departments', label: 'Departments', icon: FiGrid, perm: 'org.manage' },
     { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap, perm: 'org.manage' },
@@ -37,14 +40,14 @@ export const adminNav = [
     { to: '/admin/permissions', label: 'Permissions', icon: FiShield, roles: ['SuperAdmin'] },
     { to: '/admin/employees', label: 'Employees', icon: FiBriefcase, perm: 'employees.manage' },
   ] },
-  { group: 'Recruitment & Onboarding', items: [
+  { group: 'Hiring & Onboarding', items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus, anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'] },
     { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: FiClipboard, perm: 'recruitment.candidates' },
     { to: '/admin/new-joinees', label: 'New Joinees', icon: FiUserCheck, perm: 'recruitment.candidates' },
     { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage' },
     { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: FiCheckSquare, perm: 'onboarding.manage' },
   ] },
-  { group: 'Attendance & Time', items: [
+  { group: 'Attendance & Shifts', items: [
     { to: '/admin/presence', label: "Who's In / On Leave", icon: FiUserCheck, perm: 'attendance.manage' },
     { to: '/admin/attendance', label: 'Attendance', icon: FiClock, perm: 'attendance.manage' },
     { to: '/admin/attendance-report', label: 'Attendance Report', icon: FiActivity, perm: 'attendance.manage' },
@@ -58,7 +61,7 @@ export const adminNav = [
     { to: '/admin/approvals', label: 'Approvals', icon: FiCheckSquare },
     { to: '/admin/holidays', label: 'Holidays', icon: FiSun, perm: 'leave.manage' },
   ] },
-  { group: 'Payroll & Compensation', items: [
+  { group: 'Payroll & Salary', items: [
     { to: '/admin/payroll', label: 'Payroll', icon: FiDollarSign, perm: 'payroll.manage' },
     { to: '/admin/payroll-run', label: 'Hikes', icon: FiRepeat, perm: 'payroll.manage' },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders, perm: 'payroll.manage' },
@@ -66,7 +69,7 @@ export const adminNav = [
     { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent, perm: 'declarations.manage' },
     { to: '/admin/compliance', label: 'Compliance', icon: FiCheckCircle, perm: 'compliance.view' },
   ] },
-  { group: 'Expense & Travel', items: [
+  { group: 'Expenses & Travel', items: [
     { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage' },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
@@ -79,26 +82,26 @@ export const adminNav = [
     { to: '/admin/training', label: 'Training', icon: FiBookOpen, perm: 'training.manage' },
     { to: '/admin/courses', label: 'Courses (LMS)', icon: FiBook, perm: 'courses.manage', ld: true },
   ] },
-  { group: 'Work Management', items: [
+  { group: 'Projects & Resources', items: [
     { to: '/admin/projects', label: 'Projects', icon: FiFolder, perm: 'projects.manage' },
     { to: '/admin/tasks', label: 'Tasks', icon: FiList, perm: 'tasks.manage' },
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage' },
     { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage' },
   ] },
-  { group: 'Engagement & Communication', items: [
+  { group: 'Communication & Culture', items: [
     { to: '/admin/announcements', label: 'Announcements', icon: FiVolume2, perm: 'announcements.manage' },
     { to: '/admin/surveys', label: 'Surveys', icon: FiPieChart, perm: 'surveys.manage' },
     { to: '/admin/events', label: 'Events', icon: FiFlag, perm: 'events.manage' },
     { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
     { to: '/admin/rnr', label: 'Rewards & Recognition', icon: FiAward, perm: 'announcements.manage' },
   ] },
-  { group: 'Employee Self-Service / Requests', items: [
+  { group: 'My Account & Requests', items: [
     { to: '/admin/account', label: 'My Account', icon: FiKey },
     { to: '/admin/complaints', label: 'Complaints', icon: FiAlertTriangle },
     { to: '/admin/change-requests', label: 'Change Requests', icon: FiEdit3 },
     { to: '/admin/password-resets', label: 'Password Resets', icon: FiKey, perm: 'users.manage' },
   ] },
-  { group: 'Exit', items: [
+  { group: 'Exits', items: [
     { to: '/admin/exits', label: 'Exits', icon: FiLogOut, perm: 'exit.manage' },
   ] },
   // Last entry in the sidebar. A single-item group renders as a plain top-level
@@ -132,7 +135,7 @@ export const employeeNav = [
     { to: '/employee/org-chart', label: 'Org Chart', icon: FiGitBranch },
     { to: '/employee/onboarding', label: 'Onboarding', icon: FiClipboard },
   ] },
-  { group: 'Attendance & Time', items: [
+  { group: 'Attendance & Shifts', items: [
     { to: '/employee/attendance', label: 'Attendance', icon: FiClock, highlight: true },
     { to: '/employee/shifts', label: 'My Shifts', icon: FiCalendar },
     { to: '/employee/regularizations', label: 'Regularization', icon: FiTool },
@@ -154,22 +157,22 @@ export const employeeNav = [
     { to: '/employee/reviews', label: 'My Reviews', icon: FiEdit },
     { to: '/employee/learning', label: 'Learning', icon: FiBookOpen },
   ] },
-  { group: 'Work Management', items: [
+  { group: 'Projects & Resources', items: [
     { to: '/employee/tasks', label: 'Tasks', icon: FiList },
     { to: '/employee/assets', label: 'Assets', icon: FiPackage },
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
   ] },
-  { group: 'Engagement & Communication', items: [
+  { group: 'Communication & Culture', items: [
     { to: '/employee/announcements', label: 'Announcements', icon: FiVolume2 },
     { to: '/employee/surveys', label: 'Surveys', icon: FiPieChart },
     { to: '/employee/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
   ] },
-  { group: 'Employee Self-Service / Requests', items: [
+  { group: 'My Requests', items: [
     { to: '/employee/profile', label: 'Profile', icon: FiUser },
     { to: '/employee/account', label: 'Account & Requests', icon: FiKey },
     { to: '/employee/complaints', label: 'Complaints', icon: FiAlertTriangle },
   ] },
-  { group: 'Exit', items: [
+  { group: 'Exits', items: [
     { to: '/employee/exit', label: 'Resignation', icon: FiLogOut, danger: true },
   ] },
   // Last entry in the sidebar — see the note on the admin Help group above.

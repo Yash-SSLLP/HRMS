@@ -28,7 +28,7 @@ The HRMS has **two portals**:
 
 ---
 
-## 2. Overview & reporting tools
+## 2. Reports & Audit
 
 ### Dashboard
 The admin home page. Shows org-wide cards: **total employees, present today, on leave today, absent today, pending leaves, open complaints, departments, documents incomplete**, plus **headcount by department**, the latest **pending leave requests**, and the **next holidays**. (The Rewards & Recognition banner shows here too.)
@@ -49,7 +49,7 @@ The Backend can export full chat transcripts - including after chat has been swi
 
 ---
 
-## 3. Organization Setup
+## 3. People & Organization
 
 ### Org Masters *(org.manage)*
 Reference lists for **Designations, Grades, and Locations** used across forms. Adding one auto-generates a short unique **code**.
@@ -87,7 +87,7 @@ The master employee records.
 
 ---
 
-## 4. Recruitment & Onboarding
+## 4. Hiring & Onboarding
 
 ### Recruitment *(recruitment.jobs / .candidates / .interviews)*
 The hiring pipeline, from job post to a converted employee.
@@ -113,7 +113,7 @@ Probation → confirmation lifecycle. The **due date** is the date of joining + 
 
 ---
 
-## 5. Attendance & Time *(all: attendance.manage; CEO/MD read-only)*
+## 5. Attendance & Shifts *(all: attendance.manage; CEO/MD read-only)*
 
 - **Who's In / On Leave (Presence):** one row per active employee, split into **present / on leave / absent** for today, with selfie flags, how late each person was, WFH, and hours.
 - **Attendance:** view any employee's month (with per-punch geofence distance), **manually add/edit/delete** records, and view punch selfies. **Settings** define the office location and geofence threshold.
@@ -144,7 +144,7 @@ Maintain the company holiday calendar (type: Public / Restricted / Company). Hol
 
 ---
 
-## 7. ⭐ Payroll & Compensation *(payroll.manage unless noted)*
+## 7. ⭐ Payroll & Salary *(payroll.manage unless noted)*
 
 ### Payroll (payslip records)
 - Payslip **status: Draft → Approved → Paid** (or **On Hold**). One payslip per employee per month; gross/deductions/net auto-compute.
@@ -201,7 +201,7 @@ Summary reports built from processed payslips: **PF, ESI, Professional Tax, TDS*
 
 ---
 
-## 8. Expense & Travel
+## 8. Expenses & Travel
 
 ### Expenses *(expenses.manage)*
 Review claims (category, amount, date, receipt): set **Approved / Rejected / Reimbursed**, or delete.
@@ -227,7 +227,7 @@ The learning platform. Create internal/external courses (video via Cloudinary or
 
 ---
 
-## 10. Work Management
+## 10. Projects & Resources
 
 ### Projects *(projects.manage)*
 Maintain projects (Planning/Active/On Hold/Completed/Cancelled).
@@ -243,7 +243,7 @@ Manage employee documents: view, **upload on behalf**, and set status **Submitte
 
 ---
 
-## 11. Engagement & Communication
+## 11. Communication & Culture
 
 ### Announcements *(announcements.manage)*
 Post company notices (category, pinned, start/end window). Publishing **notifies all active users**. Employees can dismiss each from their banner.
@@ -274,7 +274,7 @@ The monthly recognition program. **This replaced the old peer "kudos" feature** 
 
 ---
 
-## 12. Requests & governance
+## 12. My Account & Requests
 
 ### Complaints *(leadership inbox - no permission gate)*
 - The **assigned inbox** is visible to the **Backend, HR Manager, and CEO** (each sees all complaints except ones against themselves).

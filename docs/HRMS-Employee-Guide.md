@@ -52,7 +52,7 @@ The Dashboard is your landing page. From top to bottom you'll typically see:
 
 ---
 
-## 4. Attendance & Time
+## 4. Attendance & Shifts
 
 ### 4.1 Attendance - punching in and out
 **What it's for:** recording that you were at work each day.
@@ -199,7 +199,7 @@ There's no separate holidays page for you - company holidays appear in the **Cal
 
 ---
 
-## 9. Work Management
+## 9. Projects & Resources
 
 ### 9.1 Tasks
 - Your assigned tasks with title/description, project, **priority** (Low/Medium/High/Urgent), and due date.
@@ -216,7 +216,7 @@ There's no separate holidays page for you - company holidays appear in the **Cal
 
 ---
 
-## 10. Engagement & Communication
+## 10. Communication & Culture
 
 ### 10.1 Announcements
 Company notices with a category badge (General, Policy, Event, Holiday, Benefits, Urgent), pinned markers, the author, and date. You can **dismiss** each from your dashboard banner.
@@ -251,7 +251,7 @@ These appear for you when they're relevant:
 
 ---
 
-## 12. Self-service & requests
+## 12. My Requests
 
 ### 12.1 Profile
 - View your full profile: personal details, employment info, statutory IDs (PAN, UAN, etc. - sensitive ones are hidden), and bank details.

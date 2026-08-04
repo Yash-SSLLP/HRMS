@@ -67,6 +67,8 @@ function NavLeaf({ item, onNavigate }) {
 // collapsible dropdowns. The group containing the current route auto-opens.
 function NavList({ items, user, onNavigate }) {
   const { pathname } = useLocation();
+  // Org-wide chat switch — feature-gated items disappear with the module.
+  const chatEnabled = useAuthStore((s) => s.features?.chatEnabled);
   // A grouped nav may also carry bare items (no `group`) pinned at the top —
   // Dashboard is one — so detect grouping across the list, not just its head.
   const grouped = items.some((i) => !!i.group);
@@ -74,6 +76,8 @@ function NavList({ items, user, onNavigate }) {
     if (i.roles && !i.roles.includes(user?.role)) return false;
     if (i.perm && !hasPermission(user, i.perm)) return false;
     if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
+    // Feature-switched items (chat) go when the module is off.
+    if (i.feature === 'chat' && !chatEnabled) return false;
     return true;
   });
   const groupActive = (g) => (g.items || []).some((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
@@ -355,6 +359,7 @@ function ChatLauncher() {
 // access to (type "attendance" → go straight there). HR/Admins additionally get
 // live employee results (name / code / email) that open the employee record.
 function GlobalSearch({ navItems = [], user, isAdmin }) {
+  const chatEnabled = useAuthStore((s) => s.features?.chatEnabled);
   const [q, setQ] = useState('');
   const [employees, setEmployees] = useState([]);
   const [open, setOpen] = useState(false);
@@ -368,6 +373,8 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
       if (i.roles && !i.roles.includes(user?.role)) return false;
       if (i.perm && !hasPermission(user, i.perm)) return false;
       if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
+      // …and out of search too, or the page it hides is still one keystroke away.
+      if (i.feature === 'chat' && !chatEnabled) return false;
       return true;
     };
     const out = [];
@@ -378,7 +385,9 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
       });
     });
     return out;
-  }, [navItems, user]);
+    // chatEnabled matters here too: without it this list would keep serving
+    // chat pages after the switch is turned off (and vice versa).
+  }, [navItems, user, chatEnabled]);
 
   const term = q.trim().toLowerCase();
   const pageMatches = term
