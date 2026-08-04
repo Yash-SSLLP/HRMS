@@ -87,10 +87,12 @@ export default function AdminDashboard() {
     return acc;
   }, {});
 
-  // CEO/MD are executives, not managed as regular accounts here — hide them from
-  // the Users list. (They remain in the API so they can still be picked as an
-  // interviewer or as someone's reporting manager.)
-  const visibleUsers = users.filter((u) => !['CEO', 'MD'].includes(u.role));
+  // CEO/MD are executives, not managed as regular accounts here — hidden from the
+  // Users list for HR. A SuperAdmin DOES administer those accounts (role, edit
+  // mode, deactivation), so they see them like any other. (They stay in the API
+  // for everyone, so they can still be picked as an interviewer or as someone's
+  // reporting manager.)
+  const visibleUsers = isSuperAdmin ? users : users.filter((u) => !['CEO', 'MD'].includes(u.role));
 
   const load = async () => {
     setLoading(true);

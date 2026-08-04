@@ -9,6 +9,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const CYCLE_STATUS = ['Draft', 'Active', 'Closed'];
 const STATUS_STYLES = {
@@ -261,14 +262,14 @@ export default function AdminReviewCycles() {
             <form onSubmit={doAssign} className="bg-gray-50 border rounded-lg p-4 mb-4">
               <div className="text-sm font-medium text-gray-800 mb-3">Assign a review</div>
               <div className="grid gap-3 sm:grid-cols-3">
-                <select value={assignForm.employee} onChange={(e) => setAssignForm({ ...assignForm, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                <SearchableSelect value={assignForm.employee} onChange={(e) => setAssignForm({ ...assignForm, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   <option value="">Employee being reviewed…</option>
                   {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
-                </select>
-                <select value={assignForm.reviewer} onChange={(e) => setAssignForm({ ...assignForm, reviewer: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                </SearchableSelect>
+                <SearchableSelect value={assignForm.reviewer} onChange={(e) => setAssignForm({ ...assignForm, reviewer: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   <option value="">Reviewer…</option>
                   {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
-                </select>
+                </SearchableSelect>
                 <select value={assignForm.relationship} onChange={(e) => setAssignForm({ ...assignForm, relationship: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   {RELATIONSHIPS.map((r) => <option key={r} value={r}>{REL_LABELS[r]}</option>)}
                 </select>

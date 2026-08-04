@@ -15,6 +15,7 @@ import PageHeader from '../components/PageHeader';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 // Enums mirrored from models/EmployeeProfile.js — a value outside these fails validation.
@@ -628,7 +629,7 @@ export default function AdminEmployees() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">User account *</label>
-                  <select
+                  <SearchableSelect
                     required
                     disabled={!!editingId}
                     value={form.user}
@@ -644,7 +645,7 @@ export default function AdminEmployees() {
                         {u.firstName} {u.lastName} · {u.email}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Employee Code *</label>
@@ -691,18 +692,18 @@ export default function AdminEmployees() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Work location <span className="text-gray-400 font-normal">(check-in geofence)</span></label>
-                  <select value={form.workLocationRef || ''} onChange={(e) => setForm({ ...form, workLocationRef: e.target.value })}
+                  <SearchableSelect value={form.workLocationRef || ''} onChange={(e) => setForm({ ...form, workLocationRef: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Default (office)</option>
                     {workLocations.filter((l) => l.active).map((l) => (
                       <option key={l._id} value={l._id}>{l.name}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">Reporting Manager</label>
                   {isSuperAdmin ? (
-                    <select
+                    <SearchableSelect
                       value={form.reportingManager || ''}
                       onChange={(e) => setForm({ ...form, reportingManager: e.target.value })}
                       className="mt-1 block w-full border rounded-lg px-3 py-2"
@@ -737,7 +738,7 @@ export default function AdminEmployees() {
                           </option>
                         </optgroup>
                       )}
-                    </select>
+                    </SearchableSelect>
                   ) : (
                     <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700 text-sm">
                       {(() => {

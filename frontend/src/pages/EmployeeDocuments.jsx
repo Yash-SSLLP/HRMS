@@ -11,6 +11,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -160,10 +161,10 @@ export default function EmployeeDocuments() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="block text-sm text-gray-700">Category</label>
-              <select value={category} onChange={(e) => setCategory(e.target.value)}
+              <SearchableSelect value={category} onChange={(e) => setCategory(e.target.value)}
                 className="mt-1 block w-full border rounded-lg px-3 py-2">
                 {categories.map((c) => <option key={c} value={c}>{humanize(c)}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="md:col-span-2">
               <label className="block text-sm text-gray-700">File (PDF / JPG / PNG / DOCX, max 5 MB) - you can select several</label>

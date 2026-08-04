@@ -9,6 +9,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STATUS = ['Draft', 'Active', 'Completed', 'Cancelled'];
 const STATUS_STYLES = {
@@ -112,10 +113,10 @@ export default function AdminPerformance() {
             <form onSubmit={save} className="space-y-3">
               <div>
                 <label className="block text-sm text-gray-700">Employee *</label>
-                <select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="mt-1 block w-full border rounded-lg px-3 py-2">
+                <SearchableSelect required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="mt-1 block w-full border rounded-lg px-3 py-2">
                   <option value="">Select…</option>
                   {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
-                </select>
+                </SearchableSelect>
               </div>
               <input required placeholder="Goal title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <textarea rows={2} placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />

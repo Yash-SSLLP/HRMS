@@ -10,6 +10,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import ReceiptView from '../components/ReceiptView';
 import { promptDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STATUS = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
 
@@ -178,7 +179,7 @@ export default function AdminExpenses() {
             ) : (
               <div>
                 <label className="block text-sm text-gray-700">Pay from account *</label>
-                <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+                <SearchableSelect value={accountId} onChange={(e) => setAccountId(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   <option value="">Select an account…</option>
                   {accounts.map((a) => (
@@ -186,7 +187,7 @@ export default function AdminExpenses() {
                       {a.name} — {inr2.format(a.currentBalance || 0)}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             )}
             <div className="flex justify-end gap-2 pt-5">

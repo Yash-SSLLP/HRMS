@@ -21,6 +21,11 @@ import { pageNameForPath } from '../config/pageNames';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
 
+// Roles that never get an EmployeeProfile (see services/ensureProfile.js), so
+// they can never appear in employee search results. GlobalSearch looks these up
+// in the user directory instead, for a SuperAdmin.
+const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin'];
+
 const NOTIF_POLL_MS = 20000;
 
 function initials(user) {
@@ -366,6 +371,11 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
   const chatEnabled = useAuthStore((s) => s.features?.chatEnabled);
   const [q, setQ] = useState('');
   const [employees, setEmployees] = useState([]);
+  // Accounts with no employee profile (CEO, MD, SuperAdmin) can never turn up in
+  // the employee results below, so a SuperAdmin — who administers exactly those
+  // accounts — gets them from the user directory as a separate group.
+  const [accounts, setAccounts] = useState([]);
+  const isSuperAdmin = user?.role === 'SuperAdmin';
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const wrapRef = useRef(null);
@@ -398,22 +408,32 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
     ? pages.filter((p) => p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)).slice(0, 6)
     : [];
 
-  // Employee lookup (HR/Admin only), debounced.
+  // Employee lookup (HR/Admin only), debounced. For a SuperAdmin the same pass
+  // also searches the user directory for the profile-less admin/executive
+  // accounts, so "everyone" really is reachable from here.
   useEffect(() => {
-    if (!isAdmin || !term) { setEmployees([]); setLoading(false); return undefined; }
+    if (!isAdmin || !term) { setEmployees([]); setAccounts([]); setLoading(false); return undefined; }
     setLoading(true);
     const t = setTimeout(async () => {
+      const query = q.trim();
       try {
-        const { data } = await api.get('/employees', { params: { q: q.trim() } });
-        setEmployees((data.profiles || []).slice(0, 6));
+        const [emp, usr] = await Promise.all([
+          api.get('/employees', { params: { q: query } }),
+          isSuperAdmin
+            ? api.get('/admin/users', { params: { q: query } }).catch(() => ({ data: { users: [] } }))
+            : Promise.resolve({ data: { users: [] } }),
+        ]);
+        setEmployees((emp.data.profiles || []).slice(0, 6));
+        setAccounts((usr.data.users || []).filter((u) => ACCOUNT_ONLY_ROLES.includes(u.role)).slice(0, 6));
       } catch {
         setEmployees([]);
+        setAccounts([]);
       } finally {
         setLoading(false);
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [q, isAdmin]);
+  }, [q, isAdmin, isSuperAdmin]);
 
   useEffect(() => {
     const onClick = (e) => {
@@ -423,14 +443,19 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  const reset = () => { setOpen(false); setQ(''); setEmployees([]); };
+  const reset = () => { setOpen(false); setQ(''); setEmployees([]); setAccounts([]); };
   const goPage = (to) => { reset(); navigate(to); };
   const goEmp = (p) => { reset(); navigate(`/admin/employees/${p._id}`); };
+  // These accounts have no employee record to open, so land on the Users page,
+  // which is where a SuperAdmin actually administers them.
+  const goAccount = () => { reset(); navigate('/admin/users'); };
 
   const init = (p) =>
     ((p.user?.firstName?.[0] || '') + (p.user?.lastName?.[0] || '')).toUpperCase() || 'E';
+  const initUser = (u) =>
+    ((u.firstName?.[0] || '') + (u.lastName?.[0] || '')).toUpperCase() || 'U';
 
-  const nothing = term && !loading && pageMatches.length === 0 && employees.length === 0;
+  const nothing = term && !loading && pageMatches.length === 0 && employees.length === 0 && accounts.length === 0;
 
   return (
     <div className="hidden md:flex items-center flex-1 max-w-md relative" ref={wrapRef}>
@@ -441,7 +466,7 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
           value={q}
           onChange={(e) => { setQ(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          placeholder={isAdmin ? 'Search pages or employees…' : 'Search pages…'}
+          placeholder={isSuperAdmin ? 'Search pages, employees or accounts…' : (isAdmin ? 'Search pages or employees…' : 'Search pages…')}
           className="w-full pl-9 pr-3 py-2 text-sm bg-gray-100 border border-transparent rounded-lg focus:bg-white focus:border-gray-300 focus:outline-none"
         />
       </div>
@@ -499,6 +524,31 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
                   </button>
                 ))
               )}
+            </>
+          )}
+
+          {/* Executive / admin accounts (SuperAdmin only) — no employee record,
+              so they'd otherwise be unfindable from here. */}
+          {isSuperAdmin && accounts.length > 0 && (
+            <>
+              <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Accounts</div>
+              {accounts.map((u) => (
+                <button
+                  key={u._id || u.id}
+                  onClick={goAccount}
+                  className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-gray-50 border-b border-gray-50 last:border-0"
+                >
+                  <span className="avatar-circle accent-bg text-white">{initUser(u)}</span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-gray-900 truncate">
+                      {`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email}
+                    </span>
+                    <span className="block text-xs text-gray-500 truncate">
+                      {ROLE_LABELS[u.role] || u.role} · {u.email}
+                    </span>
+                  </span>
+                </button>
+              ))}
             </>
           )}
 

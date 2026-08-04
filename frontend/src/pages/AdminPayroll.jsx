@@ -13,6 +13,7 @@ import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog } from '../components/dialogs';
 import SalarySetupAlert from '../components/SalarySetupAlert';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -505,7 +506,7 @@ export default function AdminPayroll() {
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-1">
                   <label className="block text-sm text-gray-700">Employee *</label>
-                  <select
+                  <SearchableSelect
                     required disabled={!!editingId}
                     value={form.employee}
                     onChange={(e) => {
@@ -522,7 +523,7 @@ export default function AdminPayroll() {
                         {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Year *</label>

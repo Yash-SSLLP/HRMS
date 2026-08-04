@@ -8,6 +8,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STATUS = ['Todo', 'InProgress', 'Review', 'Done'];
 const PRIORITY = ['Low', 'Medium', 'High', 'Urgent'];
@@ -150,19 +151,19 @@ export default function AdminTasks() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Project</label>
-                  <select value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })}
+                  <SearchableSelect value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">-</option>
                     {projects.map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Assignee</label>
-                  <select value={form.assignedTo} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}
+                  <SearchableSelect value={form.assignedTo} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">-</option>
                     {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Priority</label>

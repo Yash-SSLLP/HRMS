@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AttendanceDayChart from '../components/AttendanceDayChart';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -113,13 +114,13 @@ export default function AdminAttendanceReport() {
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-3 items-end flex-wrap">
         <div>
           <label className="block text-xs text-gray-600">Employee</label>
-          <select value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
+          <SearchableSelect value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
             className="border rounded-lg px-2 py-1 min-w-[14rem]">
             <option value="">Select employee…</option>
             {employees.map((e) => (
               <option key={e._id} value={e._id}>{e.employeeCode} · {e.user?.firstName} {e.user?.lastName}</option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <label className="block text-xs text-gray-600">Year</label>

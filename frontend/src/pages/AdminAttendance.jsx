@@ -13,6 +13,7 @@ import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import { formatHours } from '../utils/time';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -294,7 +295,7 @@ export default function AdminAttendance() {
         </div>
         <div>
           <label className="block text-xs text-gray-600">Employee</label>
-          <select value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
+          <SearchableSelect value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
             className="border rounded-lg px-2 py-1">
             <option value="">All</option>
             {employees.map((e) => (
@@ -302,7 +303,7 @@ export default function AdminAttendance() {
                 {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
       </div>
 
@@ -487,7 +488,7 @@ export default function AdminAttendance() {
             <form onSubmit={onSave} className="space-y-3">
               <div>
                 <label className="block text-sm text-gray-700">Employee *</label>
-                <select required disabled={!!editingId}
+                <SearchableSelect required disabled={!!editingId}
                   value={form.employee}
                   onChange={(e) => setForm({ ...form, employee: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100">
@@ -497,7 +498,7 @@ export default function AdminAttendance() {
                       {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Date *</label>

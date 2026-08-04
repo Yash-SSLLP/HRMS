@@ -10,6 +10,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -403,7 +404,7 @@ export default function AdminSalaryStructures() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label className="text-sm text-gray-700">
                     <span className="block mb-1 text-xs">Employee</span>
-                    <select
+                    <SearchableSelect
                       value={assign.employee}
                       onChange={(e) => setAssign({ ...assign, employee: e.target.value })}
                       className="block w-full border rounded-lg px-3 py-2 bg-white"
@@ -414,7 +415,7 @@ export default function AdminSalaryStructures() {
                           {p.employeeCode} · {p.user?.firstName} {p.user?.lastName}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </label>
                   <label className="text-sm text-gray-700">
                     <span className="block mb-1 text-xs">Annual CTC (₹)</span>

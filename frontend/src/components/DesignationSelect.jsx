@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PromptDialog from './PromptDialog';
+import SearchableSelect from '../components/SearchableSelect';
 
 // Designation picker backed by the OrgMaster 'Designation' list. HR can pick an
 // existing designation or add a new one inline (which is saved to the master so
@@ -35,7 +36,7 @@ export default function DesignationSelect({ value = '', onChange, required = fal
 
   return (
     <>
-      <select
+      <SearchableSelect
         value={value || ''}
         onChange={handle}
         required={required}
@@ -46,7 +47,7 @@ export default function DesignationSelect({ value = '', onChange, required = fal
         {/* Preserve a legacy/free-text value not in the managed list */}
         {value && !options.includes(value) && <option value={value}>{value}</option>}
         <option value="__add__">＋ Add new designation…</option>
-      </select>
+      </SearchableSelect>
       {adding && (
         <PromptDialog
           title="Add designation"

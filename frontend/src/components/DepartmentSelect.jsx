@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PromptDialog from './PromptDialog';
+import SearchableSelect from '../components/SearchableSelect';
 
 // Department picker backed by the managed Department list. HR/SuperAdmin can pick
 // an existing department or add a new one inline (saved to the list so it's
@@ -35,7 +36,7 @@ export default function DepartmentSelect({ value = '', onChange, required = fals
 
   return (
     <>
-      <select
+      <SearchableSelect
         value={value || ''}
         onChange={handle}
         required={required}
@@ -46,7 +47,7 @@ export default function DepartmentSelect({ value = '', onChange, required = fals
         {/* Preserve a legacy/free-text value not in the managed list */}
         {value && !options.includes(value) && <option value={value}>{value}</option>}
         <option value="__add__">＋ Add new department…</option>
-      </select>
+      </SearchableSelect>
       {adding && (
         <PromptDialog
           title="Add department"

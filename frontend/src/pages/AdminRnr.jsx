@@ -10,6 +10,7 @@ import { FiAward, FiStar, FiLock } from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -148,7 +149,7 @@ export default function AdminRnr() {
             <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
               <FiStar className="text-amber-500" /> Employee of the Month
             </h3>
-            <select
+            <SearchableSelect
               value={eom}
               disabled={announced}
               onChange={(e) => setEom(e.target.value)}
@@ -160,7 +161,7 @@ export default function AdminRnr() {
                   {p.name}{p.department ? ` · ${p.department}` : ''}{p.designation ? ` · ${p.designation}` : ''}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           {/* Key Achievers by department */}
@@ -175,7 +176,7 @@ export default function AdminRnr() {
                 {departments.map((dept) => (
                   <div key={dept} className="border border-gray-100 rounded-lg p-3">
                     <div className="text-xs font-semibold text-gray-500 mb-1.5">{dept}</div>
-                    <select
+                    <SearchableSelect
                       value={keyByDept[dept] || ''}
                       disabled={announced}
                       onChange={(e) => setKeyByDept((m) => ({ ...m, [dept]: e.target.value }))}
@@ -187,7 +188,7 @@ export default function AdminRnr() {
                           {p.name}{p.designation ? ` · ${p.designation}` : ''}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </div>
                 ))}
               </div>

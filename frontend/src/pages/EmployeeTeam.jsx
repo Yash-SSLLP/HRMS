@@ -12,6 +12,7 @@ import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import PresenceBoardView from '../components/PresenceBoardView';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -142,13 +143,13 @@ export default function EmployeeTeam() {
               <div className="flex flex-wrap items-end gap-2">
                 <div>
                   <label className="block text-xs text-gray-600">Member</label>
-                  <select value={exEmployee} onChange={(e) => setExEmployee(e.target.value)}
+                  <SearchableSelect value={exEmployee} onChange={(e) => setExEmployee(e.target.value)}
                     className="border rounded-lg px-2 py-1.5 text-sm bg-white min-w-[200px]">
                     <option value="">Whole team</option>
                     {team.map((m) => (
                       <option key={m.profileId} value={m.profileId}>{m.name} ({m.employeeCode || '-'})</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-600">Year</label>

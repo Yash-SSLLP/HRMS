@@ -12,6 +12,7 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
+import SearchableSelect from '../components/SearchableSelect';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -141,7 +142,7 @@ export default function AdminDocuments() {
       <div className="bg-white shadow rounded-lg p-4 mb-4 flex gap-3 items-end flex-wrap">
         <div className="flex-1 min-w-[240px]">
           <label className="block text-xs text-gray-600">Employee</label>
-          <select value={selectedEmployee}
+          <SearchableSelect value={selectedEmployee}
             onChange={(e) => setSelectedEmployee(e.target.value)}
             className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">All employees</option>
@@ -150,7 +151,7 @@ export default function AdminDocuments() {
                 {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
       </div>
 
@@ -165,10 +166,10 @@ export default function AdminDocuments() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="block text-sm text-gray-700">Category</label>
-                <select value={category} onChange={(e) => setCategory(e.target.value)}
+                <SearchableSelect value={category} onChange={(e) => setCategory(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   {allCategories.map((c) => <option key={c} value={c}>{humanize(c)}</option>)}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm text-gray-700">File - you can select several</label>

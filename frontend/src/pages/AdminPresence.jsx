@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import PresenceBoardView from '../components/PresenceBoardView';
+import SearchableSelect from '../components/SearchableSelect';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
@@ -43,14 +44,14 @@ export default function AdminPresence() {
         title="Who's In & On Leave"
         subtitle={board ? `Today · ${fmtDate(board.date)} · ${counts.present} present of ${counts.total}` : 'Live attendance snapshot'}
       >
-        <select
+        <SearchableSelect
           value={dept}
           onChange={(e) => setDept(e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
         >
           <option value="all">All departments</option>
           {departments.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
+        </SearchableSelect>
         <button
           onClick={load}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white hover:bg-gray-50"

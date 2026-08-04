@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STATUS_LABELS = {
   open: 'Open',
@@ -134,14 +135,14 @@ export default function EmployeeComplaints() {
             <form onSubmit={submit} className="space-y-3">
               <div>
                 <label className="block text-sm text-gray-700">Against *</label>
-                <select required value={form.againstUserId}
+                <SearchableSelect required value={form.againstUserId}
                   onChange={(e) => setForm({ ...form, againstUserId: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   <option value="">Select a person…</option>
                   {people.map((p) => (
                     <option key={p._id} value={p._id}>{p.fullName} ({p.role})</option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Subject *</label>

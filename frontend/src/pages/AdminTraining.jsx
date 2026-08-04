@@ -9,6 +9,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STATUS = ['Planned', 'Ongoing', 'Completed', 'Cancelled'];
 const STATUS_STYLES = {
@@ -122,12 +123,13 @@ export default function AdminTraining() {
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Participants</label>
-                <select multiple value={form.participants}
+                <SearchableSelect multiple value={form.participants}
                   onChange={(e) => setForm({ ...form, participants: Array.from(e.target.selectedOptions, (o) => o.value) })}
-                  className="mt-1 block w-full border rounded-lg px-3 py-2 h-28">
+                  placeholder="Select participants…"
+                  className="mt-1 block w-full border rounded-lg px-3 py-2">
                   {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
-                </select>
-                <p className="text-xs text-gray-400 mt-1">Ctrl/Cmd-click to select multiple.</p>
+                </SearchableSelect>
+                <p className="text-xs text-gray-400 mt-1">Search and tick everyone attending.</p>
               </div>
               {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
               <div className="flex justify-end gap-2 pt-2">

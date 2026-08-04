@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -141,9 +142,9 @@ export default function AdminPayrollRun() {
 
       {/* Filters + OK */}
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
-        <select value={employee} onChange={(e) => { setEmployee(e.target.value); load(e.target.value); }} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[210px]">
+        <SearchableSelect value={employee} onChange={(e) => { setEmployee(e.target.value); load(e.target.value); }} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[210px]">
           {employees.map((p) => <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '-'})</option>)}
-        </select>
+        </SearchableSelect>
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
           {Array.from({ length: 4 }, (_, i) => now.getFullYear() + 1 - i).map((y) => <option key={y}>{y}</option>)}
         </select>
@@ -171,11 +172,11 @@ export default function AdminPayrollRun() {
               <div className="bg-white shadow rounded-xl p-5">
                 <h3 className="font-semibold text-gray-800 mb-3">Salary setup · {fullName(run.employee.user)}</h3>
                 <div className="flex flex-wrap gap-2 items-center mb-4">
-                  <select value={setup.salaryStructure} onChange={(e) => setSetup({ ...setup, salaryStructure: e.target.value })}
+                  <SearchableSelect value={setup.salaryStructure} onChange={(e) => setSetup({ ...setup, salaryStructure: e.target.value })}
                     className="border rounded-lg px-3 py-2 text-sm bg-white flex-1 min-w-[160px]">
                     <option value="">Salary structure</option>
                     {structures.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
-                  </select>
+                  </SearchableSelect>
                   <input type="number" min="0" placeholder="Annual CTC (₹)" value={setup.annualCtc}
                     onChange={(e) => setSetup({ ...setup, annualCtc: e.target.value })}
                     className="border rounded-lg px-3 py-2 text-sm w-40" />
@@ -298,11 +299,11 @@ export default function AdminPayrollRun() {
 
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Switch salary structure (optional)</label>
-                <select value={hike.newStructure} onChange={(e) => setHike({ ...hike, newStructure: e.target.value })}
+                <SearchableSelect value={hike.newStructure} onChange={(e) => setHike({ ...hike, newStructure: e.target.value })}
                   className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
                   <option value="">Keep current structure</option>
                   {structures.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
-                </select>
+                </SearchableSelect>
               </div>
 
               <div>

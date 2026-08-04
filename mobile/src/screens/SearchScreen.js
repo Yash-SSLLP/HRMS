@@ -10,12 +10,16 @@ import { useNavigation } from '@react-navigation/native';
 
 import api, { mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
-import { canEmployeeSelf, canViewAdmin, canApprove, hasTeam, showsAdminEntry } from '../utils/roles';
+import { canEmployeeSelf, canViewAdmin, canApprove, hasTeam, showsAdminEntry, isSuperAdmin } from '../utils/roles';
 import { Screen, Avatar, Ionicons } from '../components/ui';
 import { colors, radius, spacing, font } from '../theme';
 
 const emp = (u) => canEmployeeSelf(u);
 const always = () => true;
+
+// Roles that never get an EmployeeProfile (services/ensureProfile.js), so they
+// are unreachable through the employee search and are looked up separately.
+const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin'];
 
 // Searchable destinations. `tab: true` jumps to a bottom tab; the rest push in
 // the Home stack. `show(user, features)` gates each row by role (mirrors the
@@ -75,9 +79,11 @@ export default function SearchScreen() {
   const me = useAuth((s) => s.user);
   const features = useAuth((s) => s.features);
   const canSearchEmployees = canViewAdmin(me); // employee search: HR/Admin (+ execs) only
+  const superAdmin = isSuperAdmin(me); // …plus the profile-less accounts below
 
   const [q, setQ] = useState('');
   const [employees, setEmployees] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
 
@@ -90,25 +96,36 @@ export default function SearchScreen() {
   const pageMatches = term ? myPages.filter((p) => p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)) : [];
 
   // Debounced employee search (HR/Admin only); cancels the pending request on
-  // each keystroke so only the last query fires.
+  // each keystroke so only the last query fires. For a SuperAdmin the same pass
+  // also searches the user directory: CEO/MD/SuperAdmin accounts have no
+  // EmployeeProfile, so they can never appear in the employee results.
   useEffect(() => {
-    if (!canSearchEmployees || !term) { setEmployees([]); setLoading(false); return undefined; }
+    if (!canSearchEmployees || !term) { setEmployees([]); setAccounts([]); setLoading(false); return undefined; }
     setLoading(true);
     const t = setTimeout(async () => {
+      const query = q.trim();
       try {
-        const { data } = await api.get('/employees', { params: { q: q.trim() } });
-        setEmployees((data.profiles || []).slice(0, 12));
-      } catch { setEmployees([]); }
+        const [empRes, usrRes] = await Promise.all([
+          api.get('/employees', { params: { q: query } }),
+          superAdmin
+            ? api.get('/admin/users', { params: { q: query } }).catch(() => ({ data: { users: [] } }))
+            : Promise.resolve({ data: { users: [] } }),
+        ]);
+        setEmployees((empRes.data.profiles || []).slice(0, 12));
+        setAccounts((usrRes.data.users || []).filter((u) => ACCOUNT_ONLY_ROLES.includes(u.role)).slice(0, 8));
+      } catch { setEmployees([]); setAccounts([]); }
       finally { setLoading(false); }
     }, 300);
     return () => clearTimeout(t);
-  }, [q, canSearchEmployees]);
+  }, [q, canSearchEmployees, superAdmin]);
 
   const goPage = (p) => {
     if (p.tab) nav.getParent()?.navigate(p.screen);
     else nav.navigate(p.screen);
   };
   const goEmployee = (p) => nav.navigate('EmployeeDetail', { id: p._id, title: fullName(p.user) });
+  // Profile-less accounts have no employee record to open — they get the account page.
+  const goAccount = (u) => nav.navigate('AccountDetail', { id: u._id, title: fullName(u) || u.email });
 
   return (
     <Screen edges={[]}>
@@ -118,7 +135,7 @@ export default function SearchScreen() {
           ref={inputRef}
           value={q}
           onChangeText={setQ}
-          placeholder={canSearchEmployees ? 'Search pages or employees…' : 'Search pages…'}
+          placeholder={superAdmin ? 'Search pages, employees or accounts…' : (canSearchEmployees ? 'Search pages or employees…' : 'Search pages…')}
           placeholderTextColor={colors.textFaint}
           style={styles.input}
           autoCorrect={false}
@@ -173,6 +190,24 @@ export default function SearchScreen() {
                     </TouchableOpacity>
                   ))
                 )}
+              </>
+            )}
+
+            {/* Executive / admin accounts (SuperAdmin only) — no employee record,
+                so they'd otherwise be unfindable from here. */}
+            {superAdmin && accounts.length > 0 && (
+              <>
+                <Text style={[styles.sectionLabel, { marginTop: spacing(4) }]}>ACCOUNTS</Text>
+                {accounts.map((u) => (
+                  <TouchableOpacity key={u._id} style={styles.row} activeOpacity={0.7} onPress={() => goAccount(u)}>
+                    <Avatar name={fullName(u)} uri={u.photo ? `${mediaUrl(`/auth/users/${u._id}/avatar`)}?p=${encodeURIComponent(u.photo)}` : null} size={40} color={colors.primary} />
+                    <View style={{ flex: 1, marginLeft: 2 }}>
+                      <Text style={styles.rowTitle}>{fullName(u) || u.email}</Text>
+                      <Text style={styles.rowSub}>{u.role} · {u.email}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+                  </TouchableOpacity>
+                ))}
               </>
             )}
 

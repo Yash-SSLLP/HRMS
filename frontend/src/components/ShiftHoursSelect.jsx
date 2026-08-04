@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { promptDialog } from './dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STANDARD_SHIFTS = [
   '9:30 AM to 6:30 PM, Monday to Saturday',
@@ -69,7 +70,7 @@ export default function ShiftHoursSelect({ value, onChange, className = '' }) {
   };
 
   return (
-    <select
+    <SearchableSelect
       value={value || ''}
       onChange={(e) => (e.target.value === ADD_SENTINEL ? addCustom() : onChange?.(e.target.value))}
       className={className}
@@ -78,6 +79,6 @@ export default function ShiftHoursSelect({ value, onChange, className = '' }) {
         <option key={opt} value={opt}>{opt}</option>
       ))}
       <option value={ADD_SENTINEL}>＋ Add another shift…</option>
-    </select>
+    </SearchableSelect>
   );
 }

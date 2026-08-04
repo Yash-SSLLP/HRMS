@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import SearchableSelect from '../components/SearchableSelect';
 
 const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '-');
 
@@ -50,10 +51,10 @@ export default function AdminAuditLog() {
       <div className="bg-white shadow rounded-lg p-3 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div>
           <label className="block text-xs text-gray-600 mb-1">Module</label>
-          <select value={filters.entity} onChange={set('entity')} className="block w-full border rounded-lg px-3 py-2 text-sm">
+          <SearchableSelect value={filters.entity} onChange={set('entity')} className="block w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">All modules</option>
             {entities.map((e) => <option key={e} value={e}>{e}</option>)}
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Search (record or person)</label>

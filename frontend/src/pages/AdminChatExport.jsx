@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import SearchableSelect from '../components/SearchableSelect';
 
 const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '');
 
@@ -84,17 +85,17 @@ export default function AdminChatExport() {
       <div className="bg-white shadow rounded-lg p-4 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
         <div>
           <label className="block text-xs text-gray-600 mb-1">Person A</label>
-          <select value={a} onChange={(e) => setA(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
+          <SearchableSelect value={a} onChange={(e) => setA(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">Select…</option>
             {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Person B</label>
-          <select value={b} onChange={(e) => setB(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
+          <SearchableSelect value={b} onChange={(e) => setB(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">Select…</option>
             {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
-          </select>
+          </SearchableSelect>
         </div>
         <button onClick={load} disabled={loading} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
           {loading ? 'Loading…' : 'Load transcript'}

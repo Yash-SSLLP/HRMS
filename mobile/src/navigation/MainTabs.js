@@ -61,6 +61,7 @@ import TeamScreen from '../screens/admin/TeamScreen';
 import TodayAttendanceScreen from '../screens/admin/TodayAttendanceScreen';
 import DirectoryScreen from '../screens/admin/DirectoryScreen';
 import EmployeeDetailScreen from '../screens/admin/EmployeeDetailScreen';
+import AccountDetailScreen from '../screens/admin/AccountDetailScreen';
 import AddEmployeeScreen from '../screens/admin/AddEmployeeScreen';
 import WorkLocationsScreen from '../screens/admin/WorkLocationsScreen';
 import PayrollScreen from '../screens/admin/PayrollScreen';
@@ -122,6 +123,9 @@ function HomeStack() {
       <HomeStackNav.Screen name="TodayAttendance" component={TodayAttendanceScreen} options={{ title: "Today's Attendance" }} />
       <HomeStackNav.Screen name="Directory" component={DirectoryScreen} options={{ title: 'Directory' }} />
       <HomeStackNav.Screen name="EmployeeDetail" component={EmployeeDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Employee' })} />
+      {/* CEO/MD/SuperAdmin have no employee profile, so they get an account page
+          instead of EmployeeDetail (reached from Search + Directory). */}
+      <HomeStackNav.Screen name="AccountDetail" component={AccountDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Account' })} />
       <HomeStackNav.Screen name="AddEmployee" component={AddEmployeeScreen} options={{ title: 'Add Employee' }} />
       <HomeStackNav.Screen name="WorkLocations" component={WorkLocationsScreen} options={{ title: 'Work Locations' }} />
       <HomeStackNav.Screen name="PayrollAdmin" component={PayrollScreen} options={{ title: 'Payroll' }} />

@@ -9,6 +9,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const CATEGORIES = ['Documentation', 'IT Setup', 'HR', 'Finance', 'Training', 'Introduction', 'Other'];
 const STATUS = ['Pending', 'InProgress', 'Done'];
@@ -82,10 +83,10 @@ export default function AdminOnboarding() {
   return (
     <div>
       <PageHeader title="Onboarding">
-        <select value={filterEmployee} onChange={(e) => setFilterEmployee(e.target.value)} className="px-3 py-2 text-sm border rounded-lg">
+        <SearchableSelect value={filterEmployee} onChange={(e) => setFilterEmployee(e.target.value)} className="px-3 py-2 text-sm border rounded-lg">
           <option value="">All employees</option>
           {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
-        </select>
+        </SearchableSelect>
         <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Task</button>
       </PageHeader>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -130,10 +131,10 @@ export default function AdminOnboarding() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
             <h2 className="card-title mb-4">{editingId ? 'Edit Task' : 'New Task'}</h2>
             <form onSubmit={save} className="space-y-3">
-              <select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+              <SearchableSelect required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 <option value="">Select employee *</option>
                 {users.map((u) => <option key={u._id} value={u._id}>{userLabel(u)}</option>)}
-              </select>
+              </SearchableSelect>
               <input required placeholder="Title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="block w-full border rounded-lg px-3 py-2">{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>

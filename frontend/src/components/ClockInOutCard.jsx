@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { formatDuration, formatHours } from '../utils/time';
+import SearchableSelect from '../components/SearchableSelect';
 
 function initials(name = '') {
   const p = name.trim().split(/\s+/);
@@ -96,14 +97,14 @@ export default function ClockInOutCard() {
       <div className="flex items-center justify-between gap-2 mb-4">
         <h2 className="card-title">Clock-In/Out</h2>
         <div className="flex items-center gap-2">
-          <select
+          <SearchableSelect
             value={dept}
             onChange={(e) => { setDept(e.target.value); setExpandedId(null); }}
             className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 max-w-[10rem]"
           >
             <option value="all">All Departments</option>
             {board.departments.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+          </SearchableSelect>
           <span className="text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 text-gray-600 whitespace-nowrap">📅 Today</span>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import AttendanceDayChart from './AttendanceDayChart';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -66,7 +67,7 @@ export default function AttendanceReportWidget({ compact = false, height }) {
   return (
     <div>
       <div className={`flex flex-wrap items-end gap-2 ${compact ? 'mb-2' : 'mb-3'}`}>
-        <select
+        <SearchableSelect
           value={filter.employee}
           onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
           className="border rounded-lg px-2 py-1 text-sm min-w-[10rem] max-w-full"
@@ -75,7 +76,7 @@ export default function AttendanceReportWidget({ compact = false, height }) {
           {employees.map((e) => (
             <option key={e._id} value={e._id}>{e.employeeCode} · {e.user?.firstName} {e.user?.lastName}</option>
           ))}
-        </select>
+        </SearchableSelect>
         <select
           value={filter.month}
           onChange={(e) => setFilter({ ...filter, month: Number(e.target.value) })}

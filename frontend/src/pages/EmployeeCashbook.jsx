@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STATUS_STYLES = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -152,12 +153,12 @@ export default function EmployeeCashbook() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Category</label>
-                  <select value={form.category}
+                  <SearchableSelect value={form.category}
                     onChange={(e) => setForm({ ...form, category: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Select…</option>
                     {categories.map((c) => <option key={c._id} value={c.name}>{c.name}</option>)}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Payment Mode</label>

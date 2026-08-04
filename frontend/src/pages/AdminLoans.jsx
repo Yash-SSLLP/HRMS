@@ -9,6 +9,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const TYPES = ['Salary Advance', 'Personal Loan', 'Emergency', 'Other'];
 const STATUS = ['Pending', 'Approved', 'Active', 'Closed', 'Rejected'];
@@ -146,10 +147,10 @@ export default function AdminLoans() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
             <h2 className="card-title mb-4">New Loan / Advance</h2>
             <form onSubmit={save} className="space-y-3">
-              <select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+              <SearchableSelect required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 <option value="">Select employee *</option>
                 {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.email})</option>)}
-              </select>
+              </SearchableSelect>
               <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 {TYPES.map((t) => <option key={t}>{t}</option>)}
               </select>

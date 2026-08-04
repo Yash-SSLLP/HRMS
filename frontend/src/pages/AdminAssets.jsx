@@ -11,6 +11,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import PromptDialog from '../components/PromptDialog';
 import { confirmDialog } from '../components/dialogs';
+import SearchableSelect from '../components/SearchableSelect';
 
 const CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Phone', 'SIM', 'Furniture', 'Vehicle', 'Other'];
 const STATUS = ['Available', 'Assigned', 'InRepair', 'Retired'];
@@ -252,7 +253,7 @@ export default function AdminAssets() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
             <h2 className="card-title mb-4">{editingId ? 'Edit Asset' : 'New Asset'}</h2>
             <form onSubmit={save} className="space-y-3">
-              <select
+              <SearchableSelect
                 required
                 value={form.name || ''}
                 onChange={(e) => { if (e.target.value === '__new__') setAddingName(true); else setForm({ ...form, name: e.target.value }); }}
@@ -262,7 +263,7 @@ export default function AdminAssets() {
                 {assetNames.map((n) => <option key={n} value={n}>{n}</option>)}
                 {form.name && !assetNames.includes(form.name) && <option value={form.name}>{form.name}</option>}
                 <option value="__new__">＋ Add new name…</option>
-              </select>
+              </SearchableSelect>
               <input required placeholder="Asset Tag *" value={form.assetTag} onChange={(e) => setForm({ ...form, assetTag: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 font-mono" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="block w-full border rounded-lg px-3 py-2">{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>
@@ -301,20 +302,20 @@ export default function AdminAssets() {
               {!assignFor._id && (
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Asset</label>
-                  <select required value={assignAssetId} onChange={(e) => setAssignAssetId(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
+                  <SearchableSelect required value={assignAssetId} onChange={(e) => setAssignAssetId(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
                     <option value="">Select an asset…</option>
                     {assignableAssets.map((a) => (
                       <option key={a._id} value={a._id}>{a.name} · {a.assetTag}{a.assignedTo ? ` (with ${personName(a.assignedTo)})` : ''}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
               )}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Employee</label>
-                <select required value={assignUser} onChange={(e) => setAssignUser(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
+                <SearchableSelect required value={assignUser} onChange={(e) => setAssignUser(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
                   <option value="">Select an employee…</option>
                   {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Assigned date</label>

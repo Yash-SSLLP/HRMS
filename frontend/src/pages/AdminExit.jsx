@@ -14,6 +14,7 @@ import PageHeader from '../components/PageHeader';
 import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
+import SearchableSelect from '../components/SearchableSelect';
 
 // ---- Notice period ↔ last working day sync (calendar days) ----
 // The notice period is always the calendar-day gap from an anchor date (the
@@ -394,7 +395,7 @@ export default function AdminExit() {
             <form onSubmit={submitCreate} className="space-y-3">
               <div>
                 <label className="block text-sm text-gray-700">Employee *</label>
-                <select required value={newForm.employee}
+                <SearchableSelect required value={newForm.employee}
                   onChange={(e) => onPickEmployee(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   <option value="">Select…</option>
@@ -404,7 +405,7 @@ export default function AdminExit() {
                       {p.hrPartner ? ` · HR: ${p.hrPartner.firstName} ${p.hrPartner.lastName}` : ''}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
                 {newForm.employee && (() => {
                   const sel = employees.find((p) => p._id === newForm.employee);
                   return sel?.hrPartner
@@ -445,7 +446,7 @@ export default function AdminExit() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Handled By (HR)</label>
-                  <select value={newForm.handledBy}
+                  <SearchableSelect value={newForm.handledBy}
                     onChange={(e) => setNewForm({ ...newForm, handledBy: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Select…</option>
@@ -454,7 +455,7 @@ export default function AdminExit() {
                         {u.firstName} {u.lastName} ({u.role})
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
               </div>
               <div>
@@ -542,7 +543,7 @@ export default function AdminExit() {
               </div>
               <div className="col-span-2">
                 <label className="block text-xs text-gray-500">Handled By (HR)</label>
-                <select disabled={isFinal}
+                <SearchableSelect disabled={isFinal}
                   value={detail.handledBy?._id || detail.handledBy || ''}
                   onChange={(e) => setDetail({ ...detail, handledBy: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100">
@@ -552,7 +553,7 @@ export default function AdminExit() {
                       {u.firstName} {u.lastName} ({u.role}) · {u.email}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
                 <p className="text-xs text-gray-500 mt-1">This person's name signs the exit email; replies route to their address.</p>
               </div>
               <div className="col-span-2">
@@ -604,14 +605,14 @@ export default function AdminExit() {
                               ? <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Cleared</span>
                               : <span className="text-xs text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">Pending</span>}
                           </div>
-                          <select disabled={isFinal} value={assignedId}
+                          <SearchableSelect disabled={isFinal} value={assignedId}
                             onChange={(e) => assignApprover(s.key, e.target.value)}
                             className="text-xs border rounded-lg px-2 py-1 max-w-[14rem] disabled:bg-gray-100">
                             <option value="">Assign manager…</option>
                             {allUsers.map((u) => (
                               <option key={u._id} value={u._id}>{assigneeName(u)}{u.role ? ` (${u.role})` : ''}</option>
                             ))}
-                          </select>
+                          </SearchableSelect>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                           {s.items.map((it, idx) => (

@@ -10,6 +10,7 @@ import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import { useAuthStore } from '../store/authStore';
 import { roleLabel } from '../config/roles';
+import SearchableSelect from '../components/SearchableSelect';
 
 const ROOT_TITLE = 'Sequence Surfaces';
 
@@ -192,7 +193,7 @@ export default function AdminOrgChart() {
           <span className="text-gray-700">
             <span className="font-semibold">{selected.name}</span> reports to:
           </span>
-          <select
+          <SearchableSelect
             value={selected.managerId || ''}
             disabled={savingId === selected.profileId}
             onChange={(e) => onSetManager(selected, e.target.value)}
@@ -234,7 +235,7 @@ export default function AdminOrgChart() {
                 </>
               );
             })()}
-          </select>
+          </SearchableSelect>
           <span className="text-gray-700">· role:</span>
           <select
             value={selected.role || 'Employee'}

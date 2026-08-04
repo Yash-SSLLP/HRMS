@@ -17,6 +17,7 @@ import EmployeePicker from '../components/EmployeePicker';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import stageToast from '../components/stageToast';
 import LetterEditor from '../components/LetterEditor';
+import SearchableSelect from '../components/SearchableSelect';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -922,10 +923,10 @@ export default function AdminRecruitment() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input placeholder="Email" value={candForm.email} onChange={(e) => setCandForm({ ...candForm, email: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <input placeholder="Phone" value={candForm.phone} onChange={(e) => setCandForm({ ...candForm, phone: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-                <select value={candForm.job} onChange={(e) => setCandForm({ ...candForm, job: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                <SearchableSelect value={candForm.job} onChange={(e) => setCandForm({ ...candForm, job: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   <option value="">Job</option>
                   {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
-                </select>
+                </SearchableSelect>
                 <select value={candForm.stage} onChange={(e) => setCandForm({ ...candForm, stage: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   {STAGES.map((s) => <option key={s}>{s}</option>)}
                 </select>

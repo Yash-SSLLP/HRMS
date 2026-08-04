@@ -17,6 +17,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
 import { COMPANY_NAME } from '../config/company';
+import SearchableSelect from '../components/SearchableSelect';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -676,14 +677,14 @@ export default function Calendar() {
               {canBroadcast && form.scope === 'department' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
-                  <select
+                  <SearchableSelect
                     value={form.department}
                     onChange={(ev) => setForm({ ...form, department: ev.target.value })}
                     className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   >
                     <option value="">Select a department…</option>
                     {departments.map((d) => <option key={d._id || d.name} value={d.name}>{d.name}</option>)}
-                  </select>
+                  </SearchableSelect>
                 </div>
               )}
 

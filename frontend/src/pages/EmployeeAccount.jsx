@@ -9,6 +9,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import ProfilePhotoCard from '../components/ProfilePhotoCard';
 import { useAuthStore } from '../store/authStore';
+import SearchableSelect from '../components/SearchableSelect';
 
 const STATUS_BADGE = {
   pending: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -168,7 +169,7 @@ export default function EmployeeAccount() {
           <form onSubmit={submitRequest} className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">What do you want to change?</label>
-              <select
+              <SearchableSelect
                 value={field}
                 onChange={(e) => { setField(e.target.value); setRequestedValue(''); setMsg(''); }}
                 className="block w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
@@ -177,7 +178,7 @@ export default function EmployeeAccount() {
                 {fields.map((f) => (
                   <option key={f.key} value={f.key}>{f.label}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
 
             {selected && !selected.secret && (
