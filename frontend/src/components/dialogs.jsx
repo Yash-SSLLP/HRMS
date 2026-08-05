@@ -73,13 +73,16 @@ export function DialogHost() {
     confirmText, cancelText = 'Cancel', placeholder, inputLabel,
   } = req;
   const isDanger = tone === 'danger';
+  // 'warning' sits between default and danger: the action is allowed and
+  // reversible, but the operator should see what they are about to do.
+  const isWarning = tone === 'warning';
   const isPrompt = type === 'prompt';
   const isAlert = type === 'alert';
 
   const cancel = () => settle(isPrompt ? null : false);
   const ok = () => settle(isPrompt ? (value ?? '') : true);
 
-  const Icon = isDanger ? FiAlertTriangle : isAlert ? FiInfo : FiHelpCircle;
+  const Icon = isDanger || isWarning ? FiAlertTriangle : isAlert ? FiInfo : FiHelpCircle;
   const defaultTitle = isAlert ? 'Notice' : isPrompt ? 'Enter a value' : 'Are you sure?';
   const confirmLabel = confirmText || (isDanger ? 'Delete' : isAlert ? 'OK' : 'Confirm');
 
@@ -91,7 +94,10 @@ export function DialogHost() {
         onMouseDown={(e) => e.stopPropagation()}>
         <div className="p-5">
           <div className="flex items-start gap-3">
-            <span className={`shrink-0 grid place-items-center w-10 h-10 rounded-full ${isDanger ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
+            <span className={`shrink-0 grid place-items-center w-10 h-10 rounded-full ${
+              isDanger ? 'bg-red-50 text-red-600'
+                : isWarning ? 'bg-amber-50 text-amber-600'
+                  : 'bg-gray-100 text-gray-600'}`}>
               <Icon size={20} />
             </span>
             <div className="min-w-0 flex-1">
@@ -129,7 +135,10 @@ export function DialogHost() {
               </button>
             )}
             <button ref={okRef} type="button" onClick={ok}
-              className={`px-4 py-2 text-sm rounded-lg font-medium text-white shadow-sm ${isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-900 hover:bg-gray-800'}`}>
+              className={`px-4 py-2 text-sm rounded-lg font-medium text-white shadow-sm ${
+                isDanger ? 'bg-red-600 hover:bg-red-700'
+                  : isWarning ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-gray-900 hover:bg-gray-800'}`}>
               {confirmLabel}
             </button>
           </div>

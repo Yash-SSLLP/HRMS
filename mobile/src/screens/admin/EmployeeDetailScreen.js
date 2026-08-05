@@ -117,7 +117,7 @@ export default function EmployeeDetailScreen({ route }) {
               <Ionicons name="create-outline" size={20} color={colors.onPrimary} />
             </TouchableOpacity>
           )}
-          <Avatar name={fullName(u)} uri={u?.photo ? mediaUrl(`/auth/users/${u._id}/avatar`) : null} size={86} color={colors.onPrimary} />
+          <Avatar name={fullName(u)} uri={u?.photo ? `${mediaUrl(`/auth/users/${u._id}/avatar`)}?p=${encodeURIComponent(u.photo)}` : null} size={86} color={colors.onPrimary} />
           <Text style={styles.name}>{fullName(u)}</Text>
           <Text style={styles.sub}>{profile.designation || '-'}{profile.department ? ` · ${profile.department}` : ''}</Text>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>

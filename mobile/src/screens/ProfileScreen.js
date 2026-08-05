@@ -16,6 +16,7 @@ import { unregisterPush } from '../services/push';
 import { colors, radius, spacing, font, roleAccent } from '../theme';
 import { Screen, Card, Avatar, Pill, Loader, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
+import { compressImage, AVATAR_MAX_PX, BANNER_MAX_PX } from '../utils/image';
 
 export default function ProfileScreen() {
   const nav = useNavigation();
@@ -28,8 +29,6 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [avatarBust, setAvatarBust] = useState(0);
-  const [bannerBust, setBannerBust] = useState(0);
 
   const load = useCallback(async () => {
     const { data } = await api.get('/employees/me').catch(() => ({ data: {} }));
@@ -41,19 +40,19 @@ export default function ProfileScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  // Pick a square image from the library and upload it as the new avatar; bump the
-  // cache-buster so the <Image> reloads. Needs media-library permission.
+  // Pick a square image from the library and upload it as the new avatar.
+  // Needs media-library permission.
   const changeAvatar = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert('Permission needed', 'Allow photo access to update your picture.'); return; }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, allowsEditing: true, aspect: [1, 1] });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, allowsEditing: true, aspect: [1, 1] });
     if (res.canceled) return;
     try {
+      const file = await compressImage(res.assets[0], AVATAR_MAX_PX);
       const form = new FormData();
-      form.append('photo', { uri: res.assets[0].uri, name: 'avatar.jpg', type: 'image/jpeg' });
+      form.append('photo', { uri: file.uri, name: 'avatar.jpg', type: 'image/jpeg' });
       const { data } = await api.post('/auth/me/avatar', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await setUser(data.user);
-      setAvatarBust(Date.now());
     } catch (err) {
       Alert.alert('Upload failed', errMsg(err));
     }
@@ -63,14 +62,14 @@ export default function ProfileScreen() {
   const changeBanner = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert('Permission needed', 'Allow photo access to update your banner.'); return; }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, allowsEditing: true, aspect: [16, 9] });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, allowsEditing: true, aspect: [16, 9] });
     if (res.canceled) return;
     try {
+      const file = await compressImage(res.assets[0], BANNER_MAX_PX);
       const form = new FormData();
-      form.append('photo', { uri: res.assets[0].uri, name: 'banner.jpg', type: 'image/jpeg' });
+      form.append('photo', { uri: file.uri, name: 'banner.jpg', type: 'image/jpeg' });
       const { data } = await api.post('/auth/me/banner', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await setUser(data.user);
-      setBannerBust(Date.now());
     } catch (err) {
       Alert.alert('Upload failed', errMsg(err));
     }
@@ -89,9 +88,12 @@ export default function ProfileScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
-  // Cache-buster query param forces a fresh fetch after each upload.
-  const avatarUri = user?.photo ? mediaUrl(`/auth/users/${user._id}/avatar`) + `?b=${avatarBust}` : null;
-  const bannerUri = user?.banner ? mediaUrl(`/auth/users/${user._id}/banner`) + `?b=${bannerBust}` : null;
+  // The stored PATH is the cache key, not a local counter: the server sends
+  // Cache-Control: max-age=86400, and a counter only changes when THIS device
+  // uploads — so a photo changed on the web stayed stale here for a day. The
+  // path gets a fresh random prefix on every upload, wherever it happened.
+  const avatarUri = user?.photo ? `${mediaUrl(`/auth/users/${user._id}/avatar`)}?p=${encodeURIComponent(user.photo)}` : null;
+  const bannerUri = user?.banner ? `${mediaUrl(`/auth/users/${user._id}/banner`)}?p=${encodeURIComponent(user.banner)}` : null;
 
   // Header ink depends on what is actually behind it. With a banner there is a
   // dark rgba(15,23,42,.38) scrim over the photo, so white is right; without

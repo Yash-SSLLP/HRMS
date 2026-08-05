@@ -80,7 +80,7 @@ export default function DirectoryScreen() {
               <>
                 {first && <Text style={[font.label, styles.groupLabel]}>ACCOUNTS · no employee record</Text>}
                 <TouchableOpacity activeOpacity={0.7} style={styles.row} onPress={() => nav.navigate('AccountDetail', { id: u._id, title: fullName(u) || u.email })}>
-                  <Avatar name={fullName(u)} uri={u.photo ? mediaUrl(`/auth/users/${u._id}/avatar`) : null} size={46} />
+                  <Avatar name={fullName(u)} uri={u.photo ? `${mediaUrl(`/auth/users/${u._id}/avatar`)}?p=${encodeURIComponent(u.photo)}` : null} size={46} />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={font.h3}>{fullName(u) || u.email}</Text>
                     <Text style={font.label}>{u.role}</Text>
@@ -95,7 +95,7 @@ export default function DirectoryScreen() {
           const item = row.item;
           return (
             <TouchableOpacity activeOpacity={0.7} style={styles.row} onPress={() => nav.navigate('EmployeeDetail', { id: item._id, title: fullName(item.user) })}>
-              <Avatar name={fullName(item.user)} uri={item.user?.photo ? mediaUrl(`/auth/users/${item.user._id}/avatar`) : null} size={46} />
+              <Avatar name={fullName(item.user)} uri={item.user?.photo ? `${mediaUrl(`/auth/users/${item.user._id}/avatar`)}?p=${encodeURIComponent(item.user.photo)}` : null} size={46} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={font.h3}>{fullName(item.user)}</Text>
                 <Text style={font.label}>{item.designation || '-'}{item.department ? ` · ${item.department}` : ''}</Text>

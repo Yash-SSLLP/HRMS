@@ -9,13 +9,16 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import { useAuthStore } from '../store/authStore';
-import { roleLabel } from '../config/roles';
+import { roleLabel, ROLES } from '../config/roles';
 import SearchableSelect from '../components/SearchableSelect';
+import { confirmDialog } from '../components/dialogs';
 
 const ROOT_TITLE = 'Sequence Surfaces';
 
-// Roles SuperAdmin can assign from the org chart.
-const ASSIGNABLE_ROLES = ['Employee', 'Manager', 'CEO', 'MD', 'HRManager', 'LDManager', 'SuperAdmin'];
+// Every role the backend accepts (models/User.js ROLES), taken from the shared
+// config rather than re-listed here — a hand-copied list had silently dropped
+// AccountsManager, so that role could not be assigned from this page at all.
+const ASSIGNABLE_ROLES = ROLES;
 
 // Node colours, decision-tree style: black root, orange branches, blue leaves.
 const ROOT_COLOR = '#111827';
@@ -30,10 +33,14 @@ function initials(name) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Flatten the tree into a list of { id, name } for the manager picker.
+// Flatten the tree into a flat list for the manager picker. It MUST carry role
+// and department: the picker groups candidates into "same department" and
+// "executive", and this used to return only { id, name } — so both filters
+// compared against undefined, every group came out empty, and the reports-to
+// dropdown offered nothing but "Top level".
 function flatten(nodes, acc = []) {
   for (const n of nodes) {
-    acc.push({ id: n.id, name: n.name });
+    acc.push({ id: n.id, name: n.name, role: n.role, department: n.department });
     if (n.reports?.length) flatten(n.reports, acc);
   }
   return acc;
@@ -63,8 +70,12 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
   const isCeo = node.role === 'CEO';
   const isExec = node.role === 'CEO' || node.role === 'MD';
   const isMe = myId && String(node.id) === String(myId);
-  // CEO/MD have no employee profile, so their node can't be reassigned a manager.
-  const canEdit = editable && !!node.profileId;
+  // Every node is selectable for a SuperAdmin. It used to require a profileId,
+  // which meant CEO/MD (and anyone else without an employee profile) could not
+  // be clicked at all — and since selection is what opens the editor, their
+  // ROLE could not be changed either. Only the reports-to picker actually needs
+  // a profile; the panel disables just that control when there isn't one.
+  const canEdit = editable;
 
   // Highlight the viewer's own node: a green ring on the avatar (coexists with
   // the selection outline) plus a "You" badge.
@@ -75,7 +86,10 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
       <div
         className={`org-node ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
         onClick={() => canEdit && onSelect(node)}
-        title={isMe ? 'This is you' : isExec ? `${node.name} (executive - top of the hierarchy)` : canEdit ? 'Click to set who this person reports to' : node.name}
+        title={isMe ? 'This is you'
+          : canEdit && !node.profileId ? `${node.name} — click to change role (no employee profile, so no manager)`
+            : canEdit ? 'Click to set who this person reports to, or change their role'
+              : isExec ? `${node.name} (executive - top of the hierarchy)` : node.name}
       >
         <span
           className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}
@@ -149,10 +163,35 @@ export default function AdminOrgChart() {
   const sortedRoots = sortTree(roots);
 
   const onSetManager = async (node, managerUserId) => {
-    setSavingId(node.profileId);
+    // Reporting across departments is allowed, but never silently: the server
+    // rejects the pairing unless the request carries an explicit acknowledgement,
+    // so the operator sees both departments before it is applied.
+    const manager = managerUserId ? everyone.find((p) => p.id === managerUserId) : null;
+    const isExec = manager && ['CEO', 'MD', 'SuperAdmin'].includes(manager.role);
+    const crossDept = !!manager && !isExec && !!node.department
+      && !!manager.department && manager.department !== node.department;
+
+    if (crossDept) {
+      const ok = await confirmDialog({
+        tone: 'warning',
+        title: 'Different department',
+        message: `${manager.name} is not in ${node.name}'s department. Reporting lines normally stay within a department — confirm only if this is a deliberate cross-department (dotted-line) report.`,
+        details: [
+          `${node.name} — ${node.department}`,
+          `${manager.name} — ${manager.department}`,
+        ],
+        confirmText: 'Assign anyway',
+      });
+      if (!ok) return;
+    }
+
+    setSavingId(node.id);
     setError('');
     try {
-      await api.put(`/employees/${node.profileId}`, { reportingManager: managerUserId || null });
+      await api.put(`/employees/${node.profileId}`, {
+        reportingManager: managerUserId || null,
+        ...(crossDept ? { allowCrossDepartment: true } : {}),
+      });
       setSelected(null);
       await load();
     } catch (err) {
@@ -164,7 +203,7 @@ export default function AdminOrgChart() {
 
   // Change the person's system role (Employee / Manager / CEO / MD / …).
   const onSetRole = async (node, role) => {
-    setSavingId(node.profileId);
+    setSavingId(node.id);
     setError('');
     try {
       await api.put(`/admin/users/${node.id}`, { role });
@@ -195,14 +234,15 @@ export default function AdminOrgChart() {
           </span>
           <SearchableSelect
             value={selected.managerId || ''}
-            disabled={savingId === selected.profileId}
+            disabled={savingId === selected.id || !selected.profileId}
             onChange={(e) => onSetManager(selected, e.target.value)}
             className="border rounded-lg px-2 py-1 max-w-[14rem]"
           >
             <option value="">Top level</option>
-            {/* Same rule as the employee form: managers come from the person's
-                own department, plus executives who sit above all of them. The
-                server enforces this too. */}
+            {/* The person's own department and the executives lead, because
+                those are the normal choices. Everyone else is still offered
+                under "Other departments" — picking one is allowed but asks for
+                confirmation first (and the server demands the same). */}
             {(() => {
               const others = everyone.filter((p) => p.id !== selected.id);
               const execs = others.filter((p) => ['CEO', 'MD', 'SuperAdmin'].includes(p.role));
@@ -210,11 +250,13 @@ export default function AdminOrgChart() {
               const sameDept = others.filter(
                 (p) => !execIds.has(p.id) && selected.department && p.department === selected.department
               );
-              const current = selected.managerId
-                && !execIds.has(selected.managerId)
-                && !sameDept.some((p) => p.id === selected.managerId)
-                ? others.find((p) => p.id === selected.managerId)
-                : null;
+              const sameIds = new Set(sameDept.map((p) => p.id));
+              const otherDept = others.filter((p) => !execIds.has(p.id) && !sameIds.has(p.id));
+              const byDept = otherDept.reduce((acc, p) => {
+                const key = p.department || 'No department';
+                (acc[key] = acc[key] || []).push(p);
+                return acc;
+              }, {});
               return (
                 <>
                   {sameDept.length > 0 && (
@@ -227,19 +269,25 @@ export default function AdminOrgChart() {
                       {execs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </optgroup>
                   )}
-                  {current && (
-                    <optgroup label="Currently assigned (outside this department)">
-                      <option value={current.id}>{current.name}</option>
+                  {/* searchOnly: other departments are reachable by typing a
+                      name, but they do not pad out the default list — the
+                      normal choice is nearly always same-department. */}
+                  {Object.keys(byDept).sort().map((dept) => (
+                    <optgroup key={dept} label={`Other department · ${dept}`} searchOnly>
+                      {byDept[dept].map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </optgroup>
-                  )}
+                  ))}
                 </>
               );
             })()}
           </SearchableSelect>
+          {!selected.profileId && (
+            <span className="text-xs text-gray-400 italic">(no employee profile — role only)</span>
+          )}
           <span className="text-gray-700">· role:</span>
           <select
             value={selected.role || 'Employee'}
-            disabled={savingId === selected.profileId}
+            disabled={savingId === selected.id}
             onChange={(e) => onSetRole(selected, e.target.value)}
             className="border rounded-lg px-2 py-1"
           >

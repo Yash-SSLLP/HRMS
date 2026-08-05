@@ -106,7 +106,7 @@ const CROSS_DEPARTMENT_MANAGER_ROLES = ['CEO', 'MD', 'SuperAdmin'];
  * @param {string} department - the employee's department
  * @throws {Error} with .status 400 when the pairing is not allowed
  */
-async function assertSameDepartment(managerUserId, department) {
+async function assertSameDepartment(managerUserId, department, allowCrossDepartment = false) {
   const manager = await User.findById(managerUserId).select('role firstName lastName');
   if (!manager) {
     const err = new Error('Reporting manager not found');
@@ -114,6 +114,11 @@ async function assertSameDepartment(managerUserId, department) {
     throw err;
   }
   if (CROSS_DEPARTMENT_MANAGER_ROLES.includes(manager.role)) return;
+  // A SuperAdmin may deliberately cross departments (a matrix/dotted line), but
+  // only by acknowledging it: the caller sends allowCrossDepartment after being
+  // warned. Without that flag the pairing is still rejected, so an accidental
+  // API call or a stale form cannot quietly reshape the hierarchy.
+  if (allowCrossDepartment) return;
 
   const managerProfile = await EmployeeProfile.findOne({ user: managerUserId }).select('department');
   const managerDept = managerProfile && managerProfile.department;
@@ -122,7 +127,8 @@ async function assertSameDepartment(managerUserId, department) {
     const err = new Error(
       `${name} is in ${managerDept || 'no department'}, so they cannot be the reporting manager for `
       + `${department ? `the ${department} department` : 'an employee with no department'}. `
-      + 'Pick someone from the same department, or an executive.'
+      + 'Pick someone from the same department or an executive — or confirm the '
+      + 'cross-department assignment when prompted.'
     );
     err.status = 400;
     throw err;
@@ -135,7 +141,7 @@ async function assertSameDepartment(managerUserId, department) {
 //  - hrPartner must point at an HRManager or SuperAdmin
 //  - an HRManager's own profile must report to / be partnered with a SuperAdmin
 // Throws an Error (with .status) on violation.
-async function validateHierarchy(body, linkedUserId, existing = null) {
+async function validateHierarchy(body, linkedUserId, existing = null, allowCrossDepartment = false) {
   const linkedId = String(linkedUserId);
 
   for (const field of ['hrPartner', 'reportingManager']) {
@@ -150,7 +156,7 @@ async function validateHierarchy(body, linkedUserId, existing = null) {
     // On an update the payload may not carry the department — fall back to the
     // stored one so a manager change is still checked against the real value.
     const department = body.department !== undefined ? body.department : (existing && existing.department);
-    await assertSameDepartment(body.reportingManager, department);
+    await assertSameDepartment(body.reportingManager, department, allowCrossDepartment);
   }
 
   const linkedUser = await User.findById(linkedUserId).select('role');
@@ -351,7 +357,12 @@ const createEmployee = asyncHandler(async (req, res) => {
     delete req.body.reportingManager;
   }
 
-  await validateHierarchy(req.body, userId);
+  // Consent flag, not profile data: pull it off the body so it is never stored,
+  // and honour it only for the role that is allowed to set a manager at all.
+  const allowCrossDept = req.body.allowCrossDepartment === true && req.user.role === 'SuperAdmin';
+  delete req.body.allowCrossDepartment;
+
+  await validateHierarchy(req.body, userId, null, allowCrossDept);
 
   const profile = await EmployeeProfile.create(req.body);
 
@@ -397,7 +408,11 @@ const updateEmployee = asyncHandler(async (req, res) => {
     delete req.body.reportingManager;
   }
 
-  await validateHierarchy(req.body, profile.user, profile);
+  // See createEmployee: consent flag, stripped before the payload is persisted.
+  const allowCrossDept = req.body.allowCrossDepartment === true && req.user.role === 'SuperAdmin';
+  delete req.body.allowCrossDepartment;
+
+  await validateHierarchy(req.body, profile.user, profile, allowCrossDept);
 
   Object.assign(profile, req.body);
   await profile.save();

@@ -7,6 +7,7 @@
 // group management, and a resigned-user send block. Light/dark themed.
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import { compressImage, AVATAR_MAX_PX } from '../utils/image';
 import AuthImage from './AuthImage';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
@@ -390,7 +391,8 @@ export default function ChatDock() {
     if (!file || !info) return;
     setError('');
     const form = new FormData();
-    form.append('photo', file);
+    // Same downscale as the profile photo — a group avatar renders even smaller.
+    form.append('photo', await compressImage(file, AVATAR_MAX_PX));
     try {
       await api.post(`/chat/groups/${info.groupId}/photo`, form);
       const next = bust + 1; setBust(next);

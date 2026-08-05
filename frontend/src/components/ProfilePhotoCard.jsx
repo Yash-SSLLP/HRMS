@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import api from '../api/client';
 import AuthImage from './AuthImage';
 import { useAuthStore } from '../store/authStore';
+import { compressImage, AVATAR_MAX_PX } from '../utils/image';
 
 function initials(user) {
   const a = (user?.firstName || '').trim()[0] || '';
@@ -33,8 +34,11 @@ export default function ProfilePhotoCard() {
     if (!file) return;
     setBusy(true); setError('');
     try {
+      // Downscale on the client: the original is often several MB and is only
+      // ever displayed at ~96 px.
+      const compressed = await compressImage(file, AVATAR_MAX_PX);
       const form = new FormData();
-      form.append('photo', file);
+      form.append('photo', compressed);
       const { data } = await api.post('/auth/me/avatar', form);
       setUser(data.user);
     } catch (err) {

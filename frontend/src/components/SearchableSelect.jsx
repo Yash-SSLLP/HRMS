@@ -33,6 +33,10 @@ import { FiChevronDown, FiSearch, FiCheck } from 'react-icons/fi';
 // Below this many options a search box is more noise than help.
 const SEARCH_THRESHOLD = 7;
 
+// Minimum menu width (px). Wide enough for a full name plus its group, so the
+// menu stays readable even when the trigger itself is a narrow filter chip.
+const MENU_MIN_WIDTH = 320;
+
 // An <option>'s label is its text; nested elements are flattened so a label
 // built from several expressions ({first} {last}) still reads as one string.
 function textOf(node) {
@@ -45,13 +49,17 @@ function textOf(node) {
 
 // Flatten children into a flat option list, keeping <optgroup> labels as
 // group markers so the rendered menu can show the same structure.
+//
+// An <optgroup searchOnly> is hidden until the user types. Use it for the long
+// tail of a picker — a people list where the handful of expected choices should
+// be visible immediately and the other few hundred are reachable by name.
 function readOptions(children) {
   const out = [];
-  const visit = (node, group) => {
+  const visit = (node, group, searchOnly) => {
     Children.toArray(node).forEach((child) => {
       if (!isValidElement(child)) return;
       if (child.type === 'optgroup') {
-        visit(child.props.children, child.props.label || '');
+        visit(child.props.children, child.props.label || '', !!child.props.searchOnly);
         return;
       }
       if (child.type === 'option') {
@@ -61,14 +69,15 @@ function readOptions(children) {
           label,
           disabled: !!child.props.disabled,
           group,
+          searchOnly,
         });
         return;
       }
       // Fragments / arrays from a .map() land here.
-      visit(child.props?.children, group);
+      visit(child.props?.children, group, searchOnly);
     });
   };
-  visit(children, '');
+  visit(children, '', false);
   return out;
 }
 
@@ -118,22 +127,43 @@ export default function SearchableSelect({
 
   const filtered = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (!terms.length) return options;
+    // Nothing typed → the searchOnly groups stay out of the way.
+    if (!terms.length) return options.filter((o) => !o.searchOnly);
     return options.filter((o) => {
       const hay = `${o.group} ${o.label}`.toLowerCase();
       return terms.every((t) => hay.includes(t));
     });
   }, [options, query]);
 
+  // How many options the searchOnly groups are holding back right now — shown
+  // as a hint so the list never looks like it is simply missing people.
+  const hiddenCount = useMemo(
+    () => (query.trim() ? 0 : options.filter((o) => o.searchOnly).length),
+    [options, query]
+  );
+
   const place = useCallback(() => {
     const el = triggerRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     const below = window.innerHeight - r.bottom;
-    const menuH = Math.min(320, Math.max(180, filtered.length * 36 + 56));
+    const menuH = Math.min(360, Math.max(180, filtered.length * 40 + 56));
     // Flip above when the field sits too low to show a usable menu.
     const up = below < menuH && r.top > below;
-    setRect({ left: r.left, width: r.width, top: up ? undefined : r.bottom + 4, bottom: up ? window.innerHeight - r.top + 4 : undefined, maxHeight: Math.max(160, (up ? r.top : below) - 12) });
+    // The menu is NOT tied to the trigger's width. A compact filter control
+    // (e.g. `max-w-[14rem]`) would otherwise force every name to ellipsis —
+    // the whole point of the list is reading who you are picking. Widen to a
+    // legible minimum, never past the viewport, and pull back from the right
+    // edge if that would overflow.
+    const width = Math.min(Math.max(r.width, MENU_MIN_WIDTH), window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - 8 - width));
+    setRect({
+      left,
+      width,
+      top: up ? undefined : r.bottom + 6,
+      bottom: up ? window.innerHeight - r.top + 6 : undefined,
+      maxHeight: Math.max(180, (up ? r.top : below) - 16),
+    });
   }, [filtered.length]);
 
   useLayoutEffect(() => { if (open) place(); }, [open, place]);
@@ -257,22 +287,24 @@ export default function SearchableSelect({
         <div
           ref={listRef}
           role="listbox"
-          className="z-[100] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden flex flex-col"
+          className="ss-menu z-[100] bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden flex flex-col"
           style={{ position: 'fixed', left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width, maxHeight: rect.maxHeight }}
         >
           {showSearch && (
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 shrink-0">
-              <FiSearch size={14} className="text-gray-400 shrink-0" aria-hidden="true" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => { setQuery(e.target.value); setActive(0); }}
-                placeholder={searchPlaceholder}
-                className="w-full text-sm outline-none bg-transparent"
-              />
+            <div className="p-2 border-b border-gray-100 shrink-0">
+              <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-50 border border-gray-200 focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-gray-200/70">
+                <FiSearch size={14} className="text-gray-400 shrink-0" aria-hidden="true" />
+                <input
+                  ref={inputRef}
+                  value={query}
+                  onChange={(e) => { setQuery(e.target.value); setActive(0); }}
+                  placeholder={searchPlaceholder}
+                  className="w-full text-sm outline-none bg-transparent"
+                />
+              </div>
             </div>
           )}
-          <div className="overflow-y-auto py-1">
+          <div className="overflow-y-auto py-1 px-1">
             {filtered.length === 0 ? (
               <div className="px-3 py-3 text-sm text-gray-500">No matches</div>
             ) : filtered.map((o, i) => {
@@ -281,7 +313,7 @@ export default function SearchableSelect({
               return (
                 <div key={`${o.group}|${o.value}|${o.label}`}>
                   {o.group && o.group !== prev?.group && (
-                    <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">{o.group}</div>
+                    <div className="px-3 pt-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400 break-words leading-snug">{o.group}</div>
                   )}
                   <button
                     type="button"
@@ -291,19 +323,25 @@ export default function SearchableSelect({
                     disabled={o.disabled}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => pick(o)}
-                    className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 disabled:opacity-40 ${i === active ? 'bg-gray-100' : ''} ${on ? 'font-semibold text-gray-900' : 'text-gray-700'}`}
+                    className={`ss-option w-full text-left px-3 py-2 text-sm flex items-start gap-2 rounded-lg disabled:opacity-40 ${i === active ? 'is-active' : ''} ${on ? 'font-semibold text-gray-900' : 'text-gray-700'}`}
                   >
                     {multiple && (
                       <span className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center ${on ? 'accent-bg border-transparent text-white' : 'border-gray-300'}`} aria-hidden="true">
                         {on && <FiCheck size={11} />}
                       </span>
                     )}
-                    <span className="flex-1 truncate">{o.label}</span>
-                    {!multiple && on && <FiCheck size={14} className="shrink-0 text-gray-500" aria-hidden="true" />}
+                    <span className="flex-1 break-words leading-snug">{o.label}</span>
+                    {!multiple && on && <FiCheck size={14} className="shrink-0 mt-0.5 accent-text" aria-hidden="true" />}
                   </button>
                 </div>
               );
             })}
+            {hiddenCount > 0 && (
+              <div className="px-3 pt-2 pb-1.5 text-[11px] text-gray-400 flex items-center gap-1.5 border-t border-gray-100 mt-1">
+                <FiSearch size={11} className="shrink-0" aria-hidden="true" />
+                <span>{hiddenCount} more — type a name to search</span>
+              </div>
+            )}
           </div>
           {multiple && (
             <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-gray-100 shrink-0 text-xs">

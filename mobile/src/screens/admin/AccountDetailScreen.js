@@ -115,7 +115,7 @@ export default function AccountDetailScreen({ route }) {
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
         <View style={[styles.header, { backgroundColor: accent }]}>
-          <Avatar name={fullName(user)} uri={user.photo ? mediaUrl(`/auth/users/${user._id}/avatar`) : null} size={86} color={colors.onPrimary} />
+          <Avatar name={fullName(user)} uri={user.photo ? `${mediaUrl(`/auth/users/${user._id}/avatar`)}?p=${encodeURIComponent(user.photo)}` : null} size={86} color={colors.onPrimary} />
           <Text style={styles.name}>{fullName(user)}</Text>
           <Text style={styles.sub}>{user.email}</Text>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>

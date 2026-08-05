@@ -681,6 +681,28 @@ input:focus, textarea:focus, select:focus {
 .bell-badge { animation: bell-pulse 1.9s ease-out infinite; }
 .chat-badge { animation: chat-pulse 1.9s ease-out infinite; }
 
+/* ---------------------------------------------------------------------------
+   SearchableSelect menu (components/SearchableSelect.jsx). The rows carry the
+   accent rather than a flat grey so the highlighted person reads as selected
+   ink, not a disabled block — and the option keeps a soft rounded hit area
+   inside the menu's own radius.
+--------------------------------------------------------------------------- */
+.ss-menu { backdrop-filter: saturate(1.05); }
+.ss-option { transition: background-color .12s ease, color .12s ease; }
+.ss-option:hover,
+.ss-option.is-active {
+  background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+html.dark .ss-option:hover,
+html.dark .ss-option.is-active {
+  background-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: #fff;
+}
+/* Gold portal: the wash is light, so keep the ink dark rather than white. */
+html.dark[data-portal="employee"] .ss-option:hover,
+html.dark[data-portal="employee"] .ss-option.is-active { color: #f1f5f9; }
+
 /* Dashboard greeting-banner actions (components/WelcomeBanner.jsx). The glyphs
    are stroke icons in the button's own ink; this adds the same 1px lift the
    compact link→buttons get, and sits the icon a touch lighter than the label so

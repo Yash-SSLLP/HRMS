@@ -229,7 +229,16 @@ export default function AdminEmployees() {
       ? allUsers.find((u) => String(u._id) === currentId) || null
       : null;
 
-    return { sameDept, executives, current };
+    // Everyone else: reachable by typing a name (rendered in a searchOnly
+    // group), so a cross-department report is possible without the default
+    // list turning into the whole company.
+    const others = allUsers.filter(
+      (u) => String(u._id) !== selfId
+        && !listed.has(String(u._id))
+        && String(u._id) !== currentId
+    );
+
+    return { sameDept, executives, current, others };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profiles, allUsers, form.department, form.user, form.reportingManager]);
 
@@ -347,11 +356,37 @@ export default function AdminEmployees() {
       if (!ok) return;
     }
 
+    // Same rule the Org Chart applies: a manager from another department is
+    // allowed, but only once the operator has seen which two departments they
+    // are joining. The server rejects the pairing without this acknowledgement.
+    const mgrId = String(form.reportingManager?._id || form.reportingManager || '');
+    const mgr = mgrId ? allUsers.find((u) => String(u._id) === mgrId) : null;
+    const mgrIsExec = mgr && EXEC_ROLES.includes(mgr.role);
+    const mgrDept = mgrId
+      ? (profiles.find((pr) => pr.user && String(pr.user._id) === mgrId)?.department || '')
+      : '';
+    const crossDept = !!mgr && !mgrIsExec && !!form.department && !!mgrDept && mgrDept !== form.department;
+
+    if (crossDept) {
+      const ok = await confirmDialog({
+        tone: 'warning',
+        title: 'Different department',
+        message: `${mgr.firstName} ${mgr.lastName} is not in this employee's department. Reporting lines normally stay within a department — confirm only if this is a deliberate cross-department (dotted-line) report.`,
+        details: [
+          `${editingId ? editingName() : 'This employee'} — ${form.department}`,
+          `${mgr.firstName} ${mgr.lastName} — ${mgrDept}`,
+        ],
+        confirmText: 'Save anyway',
+      });
+      if (!ok) return;
+    }
+
     setSaving(true);
     setError('');
     try {
       // Empty work-location select must clear the ref (null), not send '' (bad ObjectId).
       const payload = { ...form, workLocationRef: form.workLocationRef || null };
+      if (crossDept) payload.allowCrossDepartment = true;
       // Blank enums must be dropped, not sent as '' — the schema would reject it.
       if (!payload.gender) delete payload.gender;
       if (!payload.maritalStatus) delete payload.maritalStatus;
@@ -728,6 +763,17 @@ export default function AdminEmployees() {
                           ))}
                         </optgroup>
                       )}
+                      {/* Hidden until the operator types — see SearchableSelect's
+                          searchOnly. Picking one is allowed but asks first. */}
+                      {managerOptions.others.length > 0 && (
+                        <optgroup label="Other departments · search by name" searchOnly>
+                          {managerOptions.others.map((u) => (
+                            <option key={u._id} value={u._id}>
+                              {u.firstName} {u.lastName} ({u.role}) · {u.email}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
                       {/* A manager saved before this rule (or from another
                           department) stays selectable so editing the record
                           doesn't silently clear it. */}
@@ -750,7 +796,7 @@ export default function AdminEmployees() {
                   <p className="text-xs text-gray-500 mt-1">
                     {isSuperAdmin && !form.department
                       ? 'Pick a department first — managers are chosen from within it.'
-                      : 'Only people in the selected department (plus executives) can be picked. Sets the reporting hierarchy shown on the Org Chart.'}
+                      : 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'}
                   </p>
                 </div>
                 <div className="sm:col-span-2">
