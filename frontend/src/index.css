@@ -674,6 +674,21 @@ input:focus, textarea:focus, select:focus {
 .bell-badge { animation: bell-pulse 1.9s ease-out infinite; }
 .chat-badge { animation: chat-pulse 1.9s ease-out infinite; }
 
+/* Dashboard greeting-banner actions (components/WelcomeBanner.jsx). The glyphs
+   are stroke icons in the button's own ink; this adds the same 1px lift the
+   compact link→buttons get, and sits the icon a touch lighter than the label so
+   it reads as a lead-in rather than a competing mark. */
+.welcome-action {
+  transition: transform .12s ease, box-shadow .15s ease, opacity .15s ease, background-color .15s ease;
+}
+.welcome-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -8px rgba(15, 23, 42, .45);
+}
+.welcome-action:active { transform: translateY(0); }
+.welcome-action svg { opacity: .92; }
+html.dark .welcome-action:hover { box-shadow: 0 6px 18px -8px rgba(0, 0, 0, .75); }
+
 /* ---------------------------------------------------------------------------
    Sidebar nav buttons (My Portal / Admin)
 --------------------------------------------------------------------------- */

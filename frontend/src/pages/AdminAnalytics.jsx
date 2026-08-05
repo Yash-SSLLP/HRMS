@@ -11,16 +11,17 @@ import PieChart from '../components/PieChart';
 import BarChart from '../components/BarChart';
 import LineChart from '../components/LineChart';
 import { CHART_SERIES, CHART_STATUS } from '../theme/chartColors';
+import { FiUsers, FiUserPlus, FiTrendingDown, FiLogOut } from 'react-icons/fi';
 
 // Slice colours for the pie charts.
 // Series colours come from the shared chart palette (theme/chartColors), so the
 // analytics charts match every other chart in the portal.
 const PIE_COLORS = CHART_SERIES;
 
-function StatCard({ icon, tint, value, label }) {
+function StatCard({ icon, tint, iconColor, value, label }) {
   return (
     <div className="bg-white shadow rounded-lg p-5 h-full flex items-center gap-4">
-      <span className={`stat-icon ${tint}`}>{icon}</span>
+      <span className={`stat-icon ${tint} ${iconColor || ''}`}>{icon}</span>
       <div className="min-w-0">
         <div className="text-2xl font-semibold text-gray-900">{value}</div>
         <div className="text-sm text-gray-500">{label}</div>
@@ -129,10 +130,10 @@ export default function AdminAnalytics() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <StatCard icon="🧑‍💼" tint="bg-indigo-100" value={d.totalActive ?? '-'} label="Total Active" />
-        <StatCard icon="🌱" tint="bg-emerald-100" value={d.newHiresLast12mo ?? '-'} label="New Hires (12mo)" />
-        <StatCard icon="📉" tint="bg-rose-100" value={`${d.attritionRate ?? 0}%`} label="Attrition Rate" />
-        <StatCard icon="🚪" tint="bg-amber-100" value={d.exitsLast12mo ?? '-'} label="Exits (12mo)" />
+        <StatCard icon={<FiUsers />} tint="bg-indigo-100" iconColor="text-indigo-600" value={d.totalActive ?? '-'} label="Total Active" />
+        <StatCard icon={<FiUserPlus />} tint="bg-emerald-100" iconColor="text-emerald-600" value={d.newHiresLast12mo ?? '-'} label="New Hires (12mo)" />
+        <StatCard icon={<FiTrendingDown />} tint="bg-rose-100" iconColor="text-rose-600" value={`${d.attritionRate ?? 0}%`} label="Attrition Rate" />
+        <StatCard icon={<FiLogOut />} tint="bg-amber-100" iconColor="text-amber-600" value={d.exitsLast12mo ?? '-'} label="Exits (12mo)" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

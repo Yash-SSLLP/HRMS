@@ -23,6 +23,7 @@ import { ATTENDANCE_COLORS } from '../theme/chartColors';
 import { hasPermission } from '../config/permissions';
 import {
   FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiFileText,
+  FiCalendar, FiUserPlus,
 } from 'react-icons/fi';
 import { TbSitemap } from 'react-icons/tb';
 
@@ -92,8 +93,8 @@ export default function AdminOverview() {
           { value: c.openComplaints, label: 'Open Complaints', to: '/admin/complaints' },
         ]}
         actions={[
-          { label: 'Add Schedule', to: '/admin/roster', icon: '📅' },
-          { label: 'Add Employee', to: '/admin/employees', icon: '＋', primary: true },
+          { label: 'Add Schedule', to: '/admin/roster', icon: FiCalendar },
+          { label: 'Add Employee', to: '/admin/employees', icon: FiUserPlus, primary: true },
         ]}
       />
       <p className="text-sm text-gray-500 -mt-2 mb-4">

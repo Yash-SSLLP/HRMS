@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { FiAward, FiCheck } from 'react-icons/fi';
+import { TbCake, TbBalloon } from 'react-icons/tb';
 
 // SmartHR-style "Birthdays & Celebrations" widget with a Send-a-wish action.
 // Self-contained: fetches today + the next 7 days of birthdays / work
 // anniversaries and lets the viewer send an in-app + email greeting.
+//
+// The cake / award pair carries the same birthday-vs-anniversary distinction the
+// 🎂/🎊 emoji used to, but as stroke icons they inherit the ink of whatever they
+// sit on (a dark button, an amber heading) instead of fighting it.
 
 function ordinal(n) {
   const s = ['th', 'st', 'nd', 'rd'];
@@ -19,7 +25,7 @@ function whenLabel(daysAway) {
 
 function initials(name) {
   const parts = (name || '').trim().split(/\s+/);
-  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '🎉';
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
 }
 
 export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
@@ -76,7 +82,8 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
     <div className="bg-white shadow rounded-lg p-5">
       <div className="flex items-center justify-between mb-4">
         <h2 className="card-title flex items-center gap-2">
-          <span>🎂</span> Birthdays &amp; Celebrations
+          <TbCake className="text-amber-500 shrink-0" aria-hidden="true" />
+          Birthdays &amp; Celebrations
         </h2>
         <span className="text-xs text-gray-500">{events.length} upcoming</span>
       </div>
@@ -85,7 +92,7 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
         <p className="text-sm text-gray-400 italic">Loading…</p>
       ) : events.length === 0 ? (
         <div className="text-center py-6">
-          <div className="text-3xl mb-1">🎈</div>
+          <TbBalloon size={30} className="mx-auto mb-1.5 text-gray-300" aria-hidden="true" />
           <p className="text-sm text-gray-400 italic">No birthdays or anniversaries in the next {days} days.</p>
         </div>
       ) : (
@@ -116,15 +123,20 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
                   </div>
                   <span className="text-xs text-gray-500 shrink-0">{whenLabel(e.daysAway)}</span>
                   {isSelf ? (
-                    <span className="text-xs text-gray-400 italic shrink-0">That's you 🎉</span>
+                    <span className="text-xs text-gray-400 italic shrink-0">That&apos;s you</span>
                   ) : wished ? (
-                    <span className="text-xs text-green-600 font-medium shrink-0">Wish sent ✓</span>
+                    <span className="text-xs text-green-600 font-medium shrink-0 inline-flex items-center gap-1">
+                      <FiCheck aria-hidden="true" /> Wish sent
+                    </span>
                   ) : (
                     <button
                       onClick={() => (openKey === k ? setOpenKey(null) : openComposer(e))}
-                      className="shrink-0 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg hover:bg-gray-700"
+                      className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg hover:bg-gray-700"
                     >
-                      {isBirthday ? 'Wish 🎉' : 'Wish 🎊'}
+                      {isBirthday
+                        ? <TbCake size={14} aria-hidden="true" />
+                        : <FiAward size={14} aria-hidden="true" />}
+                      Wish
                     </button>
                   )}
                 </div>

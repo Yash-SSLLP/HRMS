@@ -6,6 +6,9 @@ import { useAuthStore } from '../store/authStore';
 // edit-profile pencil, a subtitle of highlighted stat links, and action buttons.
 //   stats:   [{ value, label, to }]
 //   actions: [{ label, to, icon, primary }]
+// `icon` is a react-icons component ref (as in config/nav.jsx) — emoji glyphs
+// render at whatever weight/colour the font ships and never match the button's
+// ink, so they're not used here. A plain node is still accepted as a fallback.
 function initials(user) {
   const a = (user?.firstName || '').trim()[0] || '';
   const b = (user?.lastName || '').trim()[0] || '';
@@ -59,20 +62,28 @@ export default function WelcomeBanner({ stats = [], actions = [], editTo = '/emp
 
       {actions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {actions.map((a) => (
-            <Link
-              key={a.label}
-              to={a.to}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
-                a.primary
-                  ? 'accent-bg text-white hover:opacity-90'
-                  : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              {a.icon && <span aria-hidden="true">{a.icon}</span>}
-              {a.label}
-            </Link>
-          ))}
+          {actions.map((a) => {
+            const Icon = typeof a.icon === 'function' ? a.icon : null;
+            return (
+              <Link
+                key={a.label}
+                to={a.to}
+                className={`welcome-action inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${
+                  a.primary
+                    ? 'accent-bg text-white hover:opacity-90'
+                    : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {/* Stroke icons inherit the button's own ink (white on the
+                    primary, slate on the outline one), so the pair reads as one
+                    set instead of two unrelated glyphs. */}
+                {Icon
+                  ? <Icon size={16} aria-hidden="true" />
+                  : a.icon && <span aria-hidden="true">{a.icon}</span>}
+                {a.label}
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
