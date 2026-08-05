@@ -12,6 +12,9 @@ import { CHART_STATUS } from '../theme/chartColors';
 //   since midnight (or null) and present is total worked minutes (or null).
 // props.compact: shrink everything (height, bands, fonts) and drop the dense
 //   value labels — for embedding in a small dashboard card (values stay on hover).
+// props.showAverages: dashed mean-login / mean-logout reference lines across the
+//   plot, so a day reads as early/late at a glance instead of by eye. Defaults
+//   on in full mode, off in compact (a small card has no room for them).
 
 const pad = (n) => String(n).padStart(2, '0');
 // minutes since midnight → 12-hour clock time, e.g. 540 → "9:00 AM"
@@ -39,7 +42,7 @@ const BAR_LABEL = 'var(--chart-1)';
 // White halo behind label text so it stays legible over lines/bars/gridlines.
 const halo = { paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3, strokeLinejoin: 'round' };
 
-export default function AttendanceDayChart({ days = [], height, compact = false }) {
+export default function AttendanceDayChart({ days = [], height, compact = false, showAverages }) {
   // Measure the wrapper so the chart can fill the full card width. Keeping the
   // viewBox width equal to the rendered width means scale stays 1:1, so labels
   // never balloon. Falls back to a sane default before the first measurement.
@@ -106,6 +109,18 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
     return segs;
   };
 
+  // Means over the days that actually have a value — a missing punch must not
+  // drag the average toward midnight.
+  const mean = (key) => {
+    const vals = days.map((d) => d[key]).filter((v) => v != null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  };
+  const withAverages = showAverages === undefined ? !compact : showAverages;
+  const avgLogin = withAverages ? mean('login') : null;
+  const avgLogout = withAverages ? mean('logout') : null;
+  // Only draw a mean that falls inside the visible Y domain.
+  const inRange = (v) => v != null && v >= yMin && v <= yMax;
+
   const axisFont = compact ? 9 : 10;
   const ptR = compact ? 2.5 : 3.5;
   const bw = compact ? 9 : 16;
@@ -117,6 +132,16 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
         <span className="flex items-center gap-1.5"><span className="inline-block w-3.5 h-1.5 rounded-full" style={{ background: LOGIN_COLOR }} /> Login</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3.5 h-1.5 rounded-full" style={{ background: LOGOUT_COLOR }} /> Logout</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: BAR_FILL, opacity: 0.35 }} /> Present</span>
+        {(inRange(avgLogin) || inRange(avgLogout)) && (
+          <span className="flex items-center gap-1.5">
+            <span
+              className="inline-block w-3.5"
+              style={{ borderTop: '2px dashed currentColor', opacity: 0.6 }}
+              aria-hidden="true"
+            />
+            Average
+          </span>
+        )}
       </div>
 
       <div ref={measureRef} className={compact ? '' : 'overflow-x-auto'}>
@@ -138,6 +163,27 @@ export default function AttendanceDayChart({ days = [], height, compact = false 
             <text x={12} y={padT + plotH / 2} transform={`rotate(-90 12 ${padT + plotH / 2})`} textAnchor="middle" className="fill-gray-500" style={{ fontSize: 11, fontWeight: 600 }}>
               Time of day
             </text>
+          )}
+
+          {/* Average reference lines. Dashed and half-opacity: they are a
+              backdrop for reading the real series, not a series themselves. */}
+          {[[avgLogin, LOGIN_COLOR, 'Avg in'], [avgLogout, LOGOUT_COLOR, 'Avg out']].map(
+            ([v, color, label]) => (inRange(v) ? (
+              <g key={label}>
+                <line
+                  x1={padL} y1={y(v)} x2={padL + plotW} y2={y(v)}
+                  stroke={color} strokeWidth="1.5" strokeDasharray="6 5" strokeOpacity="0.55"
+                >
+                  <title>{`${label} ${hhmm(v)}`}</title>
+                </line>
+                <text
+                  x={padL + plotW - 4} y={y(v) - 5} textAnchor="end"
+                  style={{ fontSize: 9, fontWeight: 700, fill: color, opacity: 0.9, ...halo }}
+                >
+                  {`${label} ${hhmm(v)}`}
+                </text>
+              </g>
+            ) : null)
           )}
 
           {/* present-time bars (login → logout) */}

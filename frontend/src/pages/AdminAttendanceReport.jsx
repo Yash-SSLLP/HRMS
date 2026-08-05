@@ -1,8 +1,9 @@
 /**
  * AdminAttendanceReport — per-employee daily login/logout report (admin portal).
  * Loads a month's attendance for one employee from GET /attendance and renders a
- * combo chart (AttendanceDayChart) plus average login/logout and total-hours
- * summary cards. Employee list from GET /employees.
+ * combo chart (AttendanceDayChart, which draws dashed mean login/logout lines)
+ * plus summary cards: average login, average logout, average hours per present
+ * day, total present and days present. Employee list from GET /employees.
  */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
@@ -95,12 +96,21 @@ export default function AdminAttendanceReport() {
       });
   }, [records]);
 
-  const stats = useMemo(() => ({
-    avgLogin: avg(days.filter((d) => d.login != null).map((d) => d.login)),
-    avgLogout: avg(days.filter((d) => d.logout != null).map((d) => d.logout)),
-    totalPresent: days.reduce((s, d) => s + (d.present || 0), 0),
-    daysPresent: days.filter((d) => d.present).length,
-  }), [days]);
+  const stats = useMemo(() => {
+    const totalPresent = days.reduce((s, d) => s + (d.present || 0), 0);
+    const daysPresent = days.filter((d) => d.present).length;
+    return {
+      avgLogin: avg(days.filter((d) => d.login != null).map((d) => d.login)),
+      avgLogout: avg(days.filter((d) => d.logout != null).map((d) => d.logout)),
+      totalPresent,
+      daysPresent,
+      // Averaged over days actually present, not calendar days — otherwise a
+      // month with leave in it reads as chronically short hours.
+      // Rounded to whole minutes: dur() would otherwise render a fractional
+      // remainder as "4h 60m" right below a rounding boundary.
+      avgPresent: daysPresent ? Math.round(totalPresent / daysPresent) : null,
+    };
+  }, [days]);
 
   const selectedEmp = employees.find((e) => e._id === filter.employee);
 
@@ -140,10 +150,11 @@ export default function AdminAttendanceReport() {
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
         {[
           { label: 'Avg. login', value: hhmm(stats.avgLogin), color: 'text-green-700' },
           { label: 'Avg. logout', value: hhmm(stats.avgLogout), color: 'text-red-700' },
+          { label: 'Avg. hours / day', value: stats.avgPresent == null ? '-' : dur(stats.avgPresent), color: 'text-amber-700' },
           { label: 'Total present', value: dur(stats.totalPresent), color: 'text-indigo-700' },
           { label: 'Days present', value: stats.daysPresent || 0, color: 'text-gray-800' },
         ].map((s) => (
