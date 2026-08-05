@@ -50,8 +50,22 @@ app.use(express.json());
 // the audit plugin can attribute status changes to the acting user.
 app.use(requestContext);
 
+// Liveness probe. `status`/`service` are the original contract (the web client
+// probes this to decide between the local and deployed backend), and the rest
+// makes a deploy verifiable from outside: without it there is no way to tell
+// which commit Railway is actually running. Railway injects the git metadata;
+// locally those are simply absent.
+const BOOTED_AT = new Date();
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'sequence-hrms-backend' });
+  res.json({
+    status: 'ok',
+    service: 'sequence-hrms-backend',
+    commit: (process.env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 7) || null,
+    branch: process.env.RAILWAY_GIT_BRANCH || null,
+    fileStore: 'gridfs',
+    startedAt: BOOTED_AT.toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+  });
 });
 
 app.use('/api/auth', require('./routes/authRoutes'));
