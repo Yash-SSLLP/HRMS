@@ -7,6 +7,25 @@
 const asyncHandler = require('express-async-handler');
 const ReviewCycle = require('../models/Review');
 const { Review } = require('../models/Review');
+const User = require('../models/User');
+
+// A rating row carries a score only once the reviewer has actually rated it.
+// The UI's "Rate…" placeholder submits 0, and old drafts may hold 0 too, so
+// anything outside 1-5 is normalised back to "not rated" rather than being
+// pushed at the schema (which rejects it and fails the whole save).
+const cleanScore = (raw) => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 && n <= 5 ? n : undefined;
+};
+
+const cleanRatings = (list) => (Array.isArray(list) ? list : []).map((r) => {
+  const score = cleanScore(r?.score);
+  return {
+    competency: r?.competency,
+    ...(score === undefined ? {} : { score }),
+    comment: r?.comment || '',
+  };
+});
 
 // ===== Employee self-service =====
 
@@ -75,9 +94,17 @@ const submitReview = asyncHandler(async (req, res) => {
     throw new Error('You are not the assigned reviewer for this review');
   }
 
+  // Feedback can't be added once the round is over.
+  const cycle = await ReviewCycle.findById(review.cycle).select('status');
+  if (cycle?.status === 'Closed') {
+    res.status(400);
+    throw new Error('This review cycle is closed and no longer accepts submissions.');
+  }
+
   const { ratings, overallRating, strengths, improvements } = req.body;
-  if (ratings !== undefined) review.ratings = ratings;
-  if (overallRating !== undefined) review.overallRating = overallRating;
+  if (ratings !== undefined) review.ratings = cleanRatings(ratings);
+  // An unrated overall stays empty rather than being stored as a bogus 0.
+  if (overallRating !== undefined) review.overallRating = cleanScore(overallRating);
   if (strengths !== undefined) review.strengths = strengths;
   if (improvements !== undefined) review.improvements = improvements;
   review.status = 'Submitted';
@@ -186,10 +213,40 @@ const assignReview = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('employee and reviewer are required');
   }
+  if (cycle.status === 'Closed') {
+    res.status(400);
+    throw new Error('This cycle is closed. Reopen it before assigning reviews.');
+  }
 
+  const [emp, rev] = await Promise.all([
+    User.findById(employee).select('_id isActive'),
+    User.findById(reviewer).select('_id isActive'),
+  ]);
+  if (!emp || !rev) {
+    res.status(400);
+    throw new Error('The selected employee or reviewer no longer exists.');
+  }
+  if (rev.isActive === false) {
+    res.status(400);
+    throw new Error('That reviewer’s account is deactivated and cannot be assigned.');
+  }
+
+  // One reviewer gives one verdict per employee per cycle; assigning twice would
+  // silently double-count them in the 360.
+  const existing = await Review.findOne({ cycle: cycle._id, employee, reviewer });
+  if (existing) {
+    res.status(409);
+    throw new Error('That reviewer is already assigned to review this employee in this cycle.');
+  }
+
+  // Reviewing yourself is a self-review whatever the dropdown said.
+  const rel = String(employee) === String(reviewer) ? 'self' : (relationship || 'peer');
+
+  // One score-less row per competency: the reviewer fills the scores in later.
+  // Seeding `score: 0` here is what raised "score (0) is less than minimum
+  // allowed value (1)" and made every assignment fail (see models/Review.js).
   const ratings = (cycle.competencies || []).map((competency) => ({
     competency,
-    score: 0,
     comment: '',
   }));
 
@@ -197,7 +254,7 @@ const assignReview = asyncHandler(async (req, res) => {
     cycle: cycle._id,
     employee,
     reviewer,
-    relationship: relationship || 'peer',
+    relationship: rel,
     ratings,
   });
 

@@ -148,6 +148,16 @@ export default function AdminReviewCycles() {
     loadCycleReviews(c._id);
   };
 
+  // Picking the same person on both sides is a self-review, so lock the
+  // relationship to match (the server applies the same rule).
+  const isSelfPair = !!assignForm.employee && assignForm.employee === assignForm.reviewer;
+  const effectiveRelationship = isSelfPair ? 'self' : assignForm.relationship;
+  // Already assigned in this cycle? Say so before the round-trip.
+  const alreadyAssigned = cycleReviews.some((r) => (
+    String(r.employee?._id || r.employee) === assignForm.employee
+    && String(r.reviewer?._id || r.reviewer) === assignForm.reviewer
+  ));
+
   // Assign one reviewer to review one employee (with their relationship).
   const doAssign = async (e) => {
     e.preventDefault();
@@ -155,10 +165,18 @@ export default function AdminReviewCycles() {
       setManageError('Select both an employee and a reviewer.');
       return;
     }
+    if (alreadyAssigned) {
+      setManageError('That reviewer is already assigned to review this employee in this cycle.');
+      return;
+    }
+    if (manageCycle.status === 'Closed') {
+      setManageError('This cycle is closed. Reopen it before assigning reviews.');
+      return;
+    }
     setAssigning(true);
     setManageError('');
     try {
-      await api.post(`/reviews/cycles/${manageCycle._id}/assign`, assignForm);
+      await api.post(`/reviews/cycles/${manageCycle._id}/assign`, { ...assignForm, relationship: effectiveRelationship });
       setAssignForm({ employee: '', reviewer: '', relationship: 'peer' });
       await loadCycleReviews(manageCycle._id);
       await load();
@@ -270,12 +288,21 @@ export default function AdminReviewCycles() {
                   <option value="">Reviewer…</option>
                   {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
                 </SearchableSelect>
-                <select value={assignForm.relationship} onChange={(e) => setAssignForm({ ...assignForm, relationship: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                <select value={effectiveRelationship} disabled={isSelfPair}
+                  title={isSelfPair ? 'Reviewing yourself is always a self-review' : undefined}
+                  onChange={(e) => setAssignForm({ ...assignForm, relationship: e.target.value })}
+                  className="block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100 disabled:text-gray-500">
                   {RELATIONSHIPS.map((r) => <option key={r} value={r}>{REL_LABELS[r]}</option>)}
                 </select>
               </div>
-              <div className="flex justify-end mt-3">
-                <button type="submit" disabled={assigning} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{assigning ? 'Assigning…' : 'Assign review'}</button>
+              <div className="flex items-center justify-end gap-3 mt-3">
+                {alreadyAssigned && (
+                  <span className="text-xs text-amber-700 mr-auto">Already assigned in this cycle.</span>
+                )}
+                {manageCycle.status === 'Closed' && (
+                  <span className="text-xs text-amber-700 mr-auto">This cycle is closed — reopen it to assign reviews.</span>
+                )}
+                <button type="submit" disabled={assigning || alreadyAssigned || manageCycle.status === 'Closed'} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{assigning ? 'Assigning…' : 'Assign review'}</button>
               </div>
             </form>
 

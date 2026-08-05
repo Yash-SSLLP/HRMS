@@ -2,6 +2,10 @@
  * EmployeePayslips — the logged-in employee's payslip history (employee portal).
  * Lists finalized payslips from GET /payroll/me, opens a detail modal with the
  * earnings/deductions breakdown, and downloads the PDF via GET /payroll/me/:id/pdf.
+ *
+ * The latest net pay summary sits at the top of this page (and nowhere else in
+ * the portal) — it used to be a dashboard stat card, which risked exposing pay
+ * to anyone glancing at the landing page.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -145,9 +149,40 @@ export default function EmployeePayslips() {
     })();
   }, []);
 
+  // API returns newest first, but pick the max period explicitly so the summary
+  // can't be thrown off by ordering changes.
+  const latest = payslips.reduce((best, p) => {
+    if (!best) return p;
+    const key = (s) => s.payPeriodYear * 12 + s.payPeriodMonth;
+    return key(p) > key(best) ? p : best;
+  }, null);
+
   return (
     <div>
       <PageHeader title="My Payslips" />
+
+      {/* Latest net pay — moved here from the employee dashboard. */}
+      <div className="bg-white shadow rounded-lg p-5 mb-4 flex items-center gap-4">
+        <span className="stat-icon bg-blue-100">💰</span>
+        <div className="min-w-0">
+          {loading ? (
+            <div className="space-y-2">
+              <div className="skeleton h-7 w-32 rounded" />
+              <div className="skeleton h-3 w-24 rounded" />
+            </div>
+          ) : (
+            <>
+              <div className="text-2xl font-semibold text-gray-900 truncate">
+                {latest ? inr(latest.netPay) : '-'}
+              </div>
+              <div className="text-sm text-gray-500">Latest net pay</div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                {latest ? `${MONTHS[latest.payPeriodMonth - 1]} ${latest.payPeriodYear}` : 'No payslips yet'}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

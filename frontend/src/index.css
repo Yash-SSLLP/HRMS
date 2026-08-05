@@ -429,6 +429,84 @@ a.plain-link:hover { text-decoration: underline; }
 /* Section header inside a card */
 .card-title { font-size: 1rem; font-weight: 600; color: #0f172a; }
 
+/* ---------------------------------------------------------------------------
+   Review fill-in sheet (pages/EmployeeReviews.jsx)
+   Accent-tinted rating cards + star buttons. Written with color-mix against
+   --accent so it follows the role palette and both themes automatically.
+--------------------------------------------------------------------------- */
+.review-head {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Thin completion bar under the header. */
+.review-progress {
+  height: 5px;
+  border-radius: 9999px;
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  overflow: hidden;
+}
+.review-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+  background-color: var(--accent);
+  transition: width .25s ease;
+}
+
+/* One competency. Lifts on hover; tints once it carries a score, so remaining
+   work is visible at a glance while scrolling. */
+.rating-card {
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background-color: var(--surface);
+  transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+}
+.rating-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 6px 16px rgba(15, 23, 42, .06);
+}
+.rating-card.is-rated {
+  background-color: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+}
+.rating-card-overall {
+  background-color: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+/* Star buttons — a small lift on hover/focus, and a visible focus ring since
+   these replaced a native <select>. The two star colours are set here rather
+   than with text-* utilities: the dark-mode block below remaps those utilities
+   globally, which is right for body copy but would repaint a gold star. */
+.star-btn {
+  color: #cbd5e1;
+  transition: color .12s ease;
+  /* No 300ms tap delay / double-tap zoom when rating on a phone. */
+  touch-action: manipulation;
+}
+.star-btn.is-on { color: #f59e0b; }
+html.dark .star-btn { color: #414652; }
+html.dark .star-btn.is-on { color: #fbbf24; }
+
+/* The hover lift scales the ICON, never the button.
+   Scaling the button itself changed its hit box: the enlarged star overlapped
+   its neighbour, the neighbour stole the hover, that unscaled the first — and
+   with the box mid-transition, hit-testing changed every frame, so the row
+   oscillated between ratings while the cursor sat still. The button's geometry
+   is now fixed, and the icon is pointer-transparent so it can never take a hit
+   away from its own button. */
+.star-btn > svg {
+  pointer-events: none;
+  transition: transform .12s ease;
+}
+.star-btn:hover > svg { transform: scale(1.18); }
+.star-btn:active > svg { transform: scale(.92); }
+.star-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
 /* Top-bar round icon buttons (theme toggle, bell, hamburger) */
 .topbar-icon-btn {
   position: relative;
@@ -604,15 +682,24 @@ input:focus, textarea:focus, select:focus {
   align-items: center;
   gap: 0.625rem;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.6rem;
+  border-radius: 0.65rem;
   font-size: 0.875rem;
   font-weight: 500;
   color: #475569;
   position: relative;
-  transition: background-color .15s ease, color .15s ease, transform .08s ease;
+  background-color: transparent;
+  transition: background-image .15s ease, color .15s ease, box-shadow .15s ease, transform .08s ease;
 }
+/* Every row state is painted with a fade-to-the-right gradient rather than a
+   flat wash. A solid accent block reads muddy — mustard against the dark gold
+   portal, heavy against the light one — while a gradient lets the sidebar
+   surface show through and keeps the row feeling like a highlight, not a slab. */
 .nav-link:hover {
-  background-color: color-mix(in srgb, var(--nav-accent) 10%, transparent);
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 12%, transparent),
+    transparent 72%
+  );
   color: var(--nav-accent);
 }
 .nav-link:active { transform: scale(.99); }
@@ -627,34 +714,64 @@ input:focus, textarea:focus, select:focus {
   background-color: color-mix(in srgb, var(--nav-accent) 10%, transparent);
   font-size: 0.85rem;
   flex-shrink: 0;
+  transition: background-color .15s ease, box-shadow .15s ease;
 }
 
 .nav-link-active {
-  background-color: color-mix(in srgb, var(--nav-accent) 16%, transparent);
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 15%, transparent),
+    color-mix(in srgb, var(--nav-accent) 4%, transparent) 78%,
+    transparent
+  );
   color: var(--nav-accent);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--nav-accent);
+  /* Hairline ring instead of a full-bleed fill — the edge does the work. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nav-accent) 20%, transparent);
+}
+.nav-link-active:hover {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 19%, transparent),
+    color-mix(in srgb, var(--nav-accent) 5%, transparent) 78%,
+    transparent
+  );
+}
+/* The rail: a short rounded pill centred on the row, not a full-height bar
+   squared off against the row's own rounded corners. */
+.nav-link-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 1.15rem;
+  border-radius: 0 3px 3px 0;
+  background-color: var(--nav-accent);
 }
 .nav-link-active .nav-icon {
   background-color: var(--nav-accent);
-  filter: saturate(1.1);
+  box-shadow: 0 2px 10px -3px color-mix(in srgb, var(--nav-accent) 85%, transparent);
 }
 
-/* Highlighted nav item (e.g. Attendance) — draws the eye with an accent tint
-   and a gently pulsing dot, so employees spot it quickly. */
+/* Highlighted nav item (e.g. Attendance) — draws the eye with a solid accent
+   icon chip, but only the faintest wash behind it: the *active* row has to stay
+   the loudest thing in the sidebar, so the two states can't both be filled. */
 .nav-link-highlight {
-  background-color: color-mix(in srgb, var(--nav-accent) 14%, transparent);
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 9%, transparent),
+    transparent 70%
+  );
   color: var(--nav-accent);
   font-weight: 600;
 }
 .nav-link-highlight .nav-icon {
   background-color: var(--nav-accent);
-  filter: saturate(1.1);
 }
-html.dark .nav-link-highlight {
-  color: #fff;
-  background-color: color-mix(in srgb, var(--nav-accent) 26%, transparent);
-}
+/* (the dark variant lives with the other dark nav rules below, so it isn't
+   overridden by the generic `html.dark .nav-link` colour that follows it) */
 
 /* Collapsible sidebar category groups — minimal, separator-led accordion
    (matches the reference design): a hairline between sections, an uppercase
@@ -666,7 +783,9 @@ html.dark .nav-link-highlight {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.72rem 0.5rem;
+  /* Matches .nav-link's 0.75rem inline padding — every row in the sidebar
+     starts and ends on the same two vertical lines. */
+  padding: 0.72rem 0.75rem;
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -677,11 +796,25 @@ html.dark .nav-link-highlight {
 .nav-group-header:hover { color: var(--nav-accent); }
 .nav-group-header.is-open { color: #111827; }
 
-/* The +/− toggle. */
+/* The +/− toggle. The glyph sits in its own rounded chip that tints on hover,
+   so the whole header row reads as a control rather than a bare label. */
 .nav-group-toggle { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
-.nav-group-pm { width: 16px; height: 16px; flex-shrink: 0; opacity: .5; transition: opacity .15s ease; }
-.nav-group-header:hover .nav-group-pm { opacity: 1; color: var(--nav-accent); }
-.nav-group-header.is-open .nav-group-pm { opacity: .85; }
+.nav-group-pm {
+  width: 16px;
+  height: 16px;
+  box-sizing: content-box;
+  padding: 3px;
+  border-radius: 0.4rem;
+  flex-shrink: 0;
+  opacity: .5;
+  transition: opacity .15s ease, background-color .15s ease, color .15s ease;
+}
+.nav-group-header:hover .nav-group-pm {
+  opacity: 1;
+  color: var(--nav-accent);
+  background-color: color-mix(in srgb, var(--nav-accent) 12%, transparent);
+}
+.nav-group-header.is-open .nav-group-pm { opacity: .85; color: var(--nav-accent); }
 
 /* Single-item categories render as a plain section link (no dropdown). Same
    uppercase label as a group header, but with the item's icon chip so it looks
@@ -692,8 +825,10 @@ html.dark .nav-link-highlight {
   gap: 0.5rem;
   min-width: 0;
   /* Tighter than a group header's 0.72rem: the icon chip supplies the height,
-     so this keeps the row on the same rhythm as .nav-link (~43px). */
-  padding: 0.55rem 0.5rem;
+     so this keeps the row on the same rhythm as .nav-link (~43px). The inline
+     0.75rem is shared with .nav-link / .nav-group-header so the icon chips of
+     every row type land in one column. */
+  padding: 0.55rem 0.75rem;
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -716,7 +851,11 @@ html.dark .nav-link-highlight {
 .nav-section-link:hover { color: var(--nav-accent); }
 .nav-section-link:hover .nav-icon { background-color: color-mix(in srgb, var(--nav-accent) 18%, transparent); }
 .nav-section-link.is-active { color: var(--nav-accent); }
-.nav-section-link.is-active .nav-icon { background-color: var(--nav-accent); color: #fff; }
+.nav-section-link.is-active .nav-icon {
+  background-color: var(--nav-accent);
+  color: #fff;
+  box-shadow: 0 2px 10px -3px color-mix(in srgb, var(--nav-accent) 85%, transparent);
+}
 .nav-section-link.nav-link-danger { color: #dc2626; background: transparent; }
 .nav-section-link.nav-link-danger .nav-icon { background-color: color-mix(in srgb, #dc2626 12%, transparent); }
 .nav-section-link.nav-link-danger.is-active .nav-icon { background-color: #dc2626; color: #fff; }
@@ -736,12 +875,43 @@ html.dark .nav-link-highlight {
   transition: max-height .28s ease, opacity .22s ease;
 }
 .nav-group-body.is-open { max-height: 600px; opacity: 1; }
-.nav-group-inner { min-width: 0; padding: 0.1rem 0 0.35rem 0.25rem; }
+/* No left inset: a group's children are the SAME width as a top-level row, so
+   the sidebar has one left edge and one right edge rather than a 4px stagger.
+   The uppercase header + hairline above them carries the hierarchy instead. */
+.nav-group-inner { min-width: 0; padding: 0.1rem 0 0.35rem 0; }
 .nav-link { min-width: 0; }
 .nav-link > .truncate { min-width: 0; }
 
+/* The sidebar's own scroller. The platform default (a wide grey trough with
+   arrow buttons) is the least premium thing on the screen, so it's replaced
+   with a hairline thumb that only appears while the sidebar is hovered. */
+.sidebar-nav {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  /* Reserve the track ALWAYS. Without this the gutter only appears once the
+     nav overflows (open a few groups and it does), which yanks every row ~10px
+     to the left mid-interaction. The nav's own padding-right is trimmed to 2px
+     in Layout.jsx so track (10px, `thin`) + padding == the 12px on the left,
+     keeping the rows optically centred in the sidebar. */
+  scrollbar-gutter: stable;
+}
+.sidebar-nav:hover { scrollbar-color: rgba(148, 163, 184, .45) transparent; }
+.sidebar-nav::-webkit-scrollbar { width: 6px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 999px;
+  transition: background-color .2s ease;
+}
+.sidebar-nav:hover::-webkit-scrollbar-thumb { background-color: rgba(148, 163, 184, .45); }
+.sidebar-nav::-webkit-scrollbar-thumb:hover { background-color: rgba(100, 116, 139, .65); }
+html.dark .sidebar-nav { scrollbar-color: transparent transparent; }
+html.dark .sidebar-nav:hover { scrollbar-color: rgba(255, 255, 255, .18) transparent; }
+html.dark .sidebar-nav:hover::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, .18); }
+html.dark .sidebar-nav::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, .3); }
+
 /* Dark mode — hairlines + label colours. */
-html.dark .nav-group, html.dark .nav-section-link { border-top-color: rgba(255, 255, 255, 0.08); }
+html.dark .nav-group, html.dark .nav-section-link { border-top-color: rgba(255, 255, 255, 0.07); }
 html.dark .nav-group-header { color: #aebacd; }
 html.dark .nav-group-header:hover, html.dark .nav-group-header.is-open { color: #fff; }
 html.dark .nav-section-link { color: #aebacd; }
@@ -750,24 +920,82 @@ html.dark .nav-section-link:hover, html.dark .nav-section-link.is-active { color
 html.dark .nav-link { color: #aebacd; }
 html.dark .nav-link:hover,
 html.dark .nav-link-active { color: #fff; }
-html.dark .nav-link:hover { background-color: color-mix(in srgb, var(--nav-accent) 22%, transparent); }
-html.dark .nav-link-active { background-color: color-mix(in srgb, var(--nav-accent) 28%, transparent); }
+html.dark .nav-link:hover {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 16%, transparent),
+    transparent 72%
+  );
+}
+html.dark .nav-link-active {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 20%, transparent),
+    color-mix(in srgb, var(--nav-accent) 5%, transparent) 75%,
+    transparent
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nav-accent) 26%, transparent);
+}
+html.dark .nav-link-active:hover {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 25%, transparent),
+    color-mix(in srgb, var(--nav-accent) 6%, transparent) 75%,
+    transparent
+  );
+}
+/* Highlighted-but-not-current row: brighter ink than a resting row, dimmer
+   than the active one, so the sidebar has three legible tiers. */
+html.dark .nav-link-highlight {
+  color: #e8edf5;
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--nav-accent) 13%, transparent),
+    transparent 70%
+  );
+}
 
-/* Danger nav item (e.g. Resignation) — always red, regardless of role accent */
+/* Danger nav item (e.g. Resignation) — always red, regardless of role accent.
+   Each state re-declares its own gradient: the accent rules above set
+   background-IMAGE, so a red background-colour alone would be painted over. */
 .nav-link-danger { color: #dc2626; }
 .nav-link-danger .nav-icon { background-color: color-mix(in srgb, #dc2626 12%, transparent); }
-.nav-link-danger:hover { background-color: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
-.nav-link-danger.nav-link-active {
-  background-color: color-mix(in srgb, #dc2626 16%, transparent);
+.nav-link-danger:hover {
+  background-image: linear-gradient(90deg, color-mix(in srgb, #dc2626 12%, transparent), transparent 72%);
   color: #dc2626;
-  box-shadow: inset 3px 0 0 #dc2626;
 }
-.nav-link-danger.nav-link-active .nav-icon { background-color: #dc2626; }
+.nav-link-danger.nav-link-active,
+.nav-link-danger.nav-link-active:hover {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, #dc2626 15%, transparent),
+    color-mix(in srgb, #dc2626 4%, transparent) 78%,
+    transparent
+  );
+  color: #dc2626;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #dc2626 22%, transparent);
+}
+.nav-link-danger.nav-link-active::before { background-color: #dc2626; }
+.nav-link-danger.nav-link-active .nav-icon {
+  background-color: #dc2626;
+  box-shadow: 0 2px 10px -3px color-mix(in srgb, #dc2626 85%, transparent);
+}
 html.dark .nav-link-danger { color: #f87171; }
 html.dark .nav-link-danger:hover,
 html.dark .nav-link-danger.nav-link-active { color: #fecaca; }
-html.dark .nav-link-danger:hover { background-color: color-mix(in srgb, #ef4444 25%, transparent); }
-html.dark .nav-link-danger.nav-link-active { background-color: color-mix(in srgb, #ef4444 32%, transparent); }
+html.dark .nav-link-danger:hover {
+  background-image: linear-gradient(90deg, color-mix(in srgb, #ef4444 18%, transparent), transparent 72%);
+}
+html.dark .nav-link-danger.nav-link-active,
+html.dark .nav-link-danger.nav-link-active:hover {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, #ef4444 22%, transparent),
+    color-mix(in srgb, #ef4444 5%, transparent) 75%,
+    transparent
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #ef4444 28%, transparent);
+}
 
 /* ---------------------------------------------------------------------------
    Dark mode — remap the small utility vocabulary used across the app.
@@ -1002,6 +1230,7 @@ html.dark[data-portal="employee"] .accent-bg *,
 html.dark[data-portal="employee"] .on-accent,
 html.dark[data-portal="employee"] .nav-link-active:not(.nav-link-danger) .nav-icon,
 html.dark[data-portal="employee"] .nav-link-highlight:not(.nav-link-danger) .nav-icon,
+html.dark[data-portal="employee"] .nav-section-link.is-active:not(.nav-link-danger) .nav-icon,
 html.dark[data-portal="employee"] .cal-cell.is-today .cal-daynum,
 html.dark[data-portal="employee"] .adp-day.is-sel,
 html.dark[data-portal="employee"] .cal-add { color: var(--onyx) !important; }

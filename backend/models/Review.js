@@ -23,6 +23,9 @@ const reviewCycleSchema = new mongoose.Schema(
 );
 
 // Sub-doc: one competency score (1-5) with an optional comment; embedded in a Review.
+// `score` is LEFT UNSET until the reviewer rates that competency — a pending
+// review carries one score-less row per competency. Do not seed it with 0: the
+// min below rejects that, which is what made assignment impossible.
 const ratingSchema = new mongoose.Schema(
   {
     competency: { type: String },

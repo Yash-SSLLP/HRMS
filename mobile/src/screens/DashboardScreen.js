@@ -1,12 +1,15 @@
 /**
  * DashboardScreen — the home tab: greeting, role-aware admin entry, announcements,
  * R&R banner, today's attendance punch, leave balances, attendance heatmap, quick
- * actions, latest payslip, profile, celebrations, upcoming events and alerts.
+ * actions, profile, celebrations, upcoming events and alerts.
  * Route: "Home"/Dashboard tab. Used by every role; content varies by role
  * (employee self-service vs SuperAdmin/exec admin shortcuts).
  * Backend: /celebrations/today, /celebrations/upcoming, /notifications,
- * /announcements, and (employees) /leave/me/balance, /attendance/me, /payroll/me,
+ * /announcements, and (employees) /leave/me/balance, /attendance/me,
  * /employees/me. Uses a local cache for instant paint.
+ *
+ * Salary figures are deliberately NOT shown here — home is the first screen up
+ * and is easily seen by someone nearby. Net pay lives on the Payslips screen.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
@@ -17,7 +20,7 @@ import { readCacheSync, hydrate, writeCache } from '../api/cache';
 import { useAuth } from '../store/auth';
 import { colors, radius, spacing, shadow, font, roleAccent, notifStyle } from '../theme';
 import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, refresher, Ionicons } from '../components/ui';
-import { greeting, fmtTime, fmtDate, timeAgo, rupees } from '../utils/format';
+import { greeting, fmtTime, fmtDate, timeAgo } from '../utils/format';
 import { showsAdminEntry, isExec, canApprove, canEmployeeSelf } from '../utils/roles';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import RnrBanner from '../components/RnrBanner';
@@ -82,10 +85,9 @@ export default function DashboardScreen() {
     const emp = isEmp ? [
       api.get('/leave/me/balance').catch(() => null),
       api.get('/attendance/me').catch(() => null),
-      api.get('/payroll/me').catch(() => null),
       api.get('/employees/me').catch(() => null),
     ] : [];
-    const [today, upcoming, notif, ann, bal, att, pay, me] = await Promise.all([...base, ...emp]);
+    const [today, upcoming, notif, ann, bal, att, me] = await Promise.all([...base, ...emp]);
     const next = {
       balances: bal?.data?.balance?.balances || null,
       // This month's paid-leave quota {quota, used, remaining, prorated, …}.
@@ -95,7 +97,6 @@ export default function DashboardScreen() {
       upcoming: upcoming?.data?.events || [],
       notifs: notif?.data?.notifications || [],
       announcements: ann?.data?.announcements || [],
-      payslips: pay?.data?.payslips || [],
       profile: me?.data?.profile || me?.data || null,
     };
     setData(next);
@@ -130,7 +131,6 @@ export default function DashboardScreen() {
   ];
   const monthly = data.monthly;
   const ml = data.balances?.ML;
-  const latestPay = Array.isArray(data.payslips) && data.payslips.length ? data.payslips[0] : null;
   const quickActions = employeeSelf ? QUICK_ACTIONS : ADMIN_ACTIONS;
   const announcements = (data.announcements || []).filter((a) => !a.dismissed && !dismissed.has(a._id));
 
@@ -282,20 +282,6 @@ export default function DashboardScreen() {
           ))}
         </View>
 
-        {/* Latest payslip */}
-        {latestPay && (
-          <>
-            <SectionHeader title="Latest payslip" action="All" onAction={() => nav.navigate('Payslips')} />
-            <Card style={[styles.payCard, { marginBottom: spacing(4) }]} onPress={() => nav.navigate('Payslips')}>
-              <View style={{ flex: 1 }}>
-                <Text style={font.label}>{MONTHS[latestPay.payPeriodMonth] || ''} {latestPay.payPeriodYear} · Net pay</Text>
-                <Text style={styles.payValue}>{rupees(latestPay.netPay)}</Text>
-              </View>
-              <Pill label={latestPay.status} tone={latestPay.status === 'Paid' ? 'success' : 'info'} />
-            </Card>
-          </>
-        )}
-
         {/* My profile */}
         {data.profile && (
           <>
@@ -390,8 +376,6 @@ const styles = StyleSheet.create({
   leaveRowDivider: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: spacing(3), paddingTop: spacing(3) },
   leaveHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   leaveBal: { fontSize: 16, fontWeight: '800' },
-  payCard: { flexDirection: 'row', alignItems: 'center' },
-  payValue: { fontSize: 24, fontWeight: '800', color: colors.text, marginTop: 2 },
   profileRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
   greeting: { ...font.label, fontSize: 14 },
   name: { fontSize: 24, fontWeight: '800', color: colors.text, marginTop: 2 },

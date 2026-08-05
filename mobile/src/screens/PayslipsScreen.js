@@ -3,6 +3,10 @@
  * gross/deductions/net breakdown and a PDF download/share action. Home stack
  * route "Payslips" (Menu > Money). Any employee role.
  * Backend: GET /payroll/me (list), GET /payroll/me/:id/pdf (payslip PDF download).
+ *
+ * The latest net pay summary sits at the top of this screen (and nowhere else in
+ * the app) — it used to be a home-screen card, which risked exposing pay to
+ * anyone glancing at the phone.
  */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
@@ -60,6 +64,14 @@ export default function PayslipsScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
+  // API returns newest first, but pick the max period explicitly so the summary
+  // can't be thrown off by ordering changes.
+  const latest = payslips.reduce((best, p) => {
+    if (!best) return p;
+    const key = (s) => s.payPeriodYear * 12 + s.payPeriodMonth;
+    return key(p) > key(best) ? p : best;
+  }, null);
+
   return (
     <Screen edges={[]}>
       <ScrollView
@@ -69,7 +81,22 @@ export default function PayslipsScreen() {
         {payslips.length === 0 ? (
           <EmptyState icon="cash-outline" title="No payslips yet" subtitle="Approved payslips will appear here each month." />
         ) : (
-          payslips.map((p) => {
+          <>
+          {/* Latest net pay — moved here from the home screen. */}
+          {latest && (
+            <Card style={[styles.summary, { marginBottom: spacing(3) }]}>
+              <View style={styles.summaryIcon}>
+                <Ionicons name="wallet" size={22} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={styles.summaryValue}>{rupees(latest.netPay)}</Text>
+                <Text style={font.label}>
+                  Latest net pay · {MONTHS[latest.payPeriodMonth] || ''} {latest.payPeriodYear}
+                </Text>
+              </View>
+            </Card>
+          )}
+          {payslips.map((p) => {
             const open = expanded === p._id;
             return (
               <Card key={p._id} style={{ marginBottom: spacing(3) }} onPress={() => setExpanded(open ? null : p._id)}>
@@ -106,7 +133,8 @@ export default function PayslipsScreen() {
                 )}
               </Card>
             );
-          })
+          })}
+          </>
         )}
       </ScrollView>
     </Screen>
@@ -124,6 +152,9 @@ function Row({ label, value, tint, bold }) {
 
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center' },
+  summary: { flexDirection: 'row', alignItems: 'center' },
+  summaryIcon: { width: 52, height: 52, borderRadius: 14, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  summaryValue: { fontSize: 26, fontWeight: '800', color: colors.text },
   calIcon: { width: 52, height: 52, borderRadius: 14, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   calMonth: { fontWeight: '800', color: colors.primary, fontSize: 14 },
   calYear: { fontSize: 11, color: colors.primary },

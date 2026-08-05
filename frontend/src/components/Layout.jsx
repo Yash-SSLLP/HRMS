@@ -724,7 +724,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
           <BrandLockup />
         </Link>
       </div>
-      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 space-y-0.5">
+      {/* pr-[3px]: the scrollbar track is always reserved (see .sidebar-nav in
+          index.css), so the right padding only has to make up the difference. */}
+      <nav className="sidebar-nav flex-1 overflow-y-auto overflow-x-hidden pl-3 pr-[2px] py-4 space-y-0.5">
         {sectionTitle && (
           <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold px-3 pb-2">
             {sectionTitle}

@@ -1,9 +1,13 @@
 /**
  * EmployeeDashboard — landing page of the employee portal (route /employee).
- * Aggregates the user's profile, latest payslip, leave balance & pending leave,
- * and received wishes from /employees/me, /payroll/me, /leave/me/* and
- * /celebrations/wishes/received, plus banner widgets (announcements, R&R,
- * surveys, interviews, manager team status). Uses a stale-while-revalidate cache.
+ * Aggregates the user's profile, leave balance & pending leave, and received
+ * wishes from /employees/me, /leave/me/* and /celebrations/wishes/received,
+ * plus banner widgets (announcements, R&R, surveys, interviews, manager team
+ * status). Uses a stale-while-revalidate cache.
+ *
+ * Salary figures are deliberately NOT shown here — the dashboard is the first
+ * thing on screen and is easily seen over an employee's shoulder. Net pay lives
+ * on My Payslips (/employee/payslips) instead.
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -18,14 +22,6 @@ import RnrBanner from '../components/RnrBanner';
 import SurveysBanner from '../components/SurveysBanner';
 import InterviewsBanner from '../components/InterviewsBanner';
 import ManagerTeamStatus from '../components/ManagerTeamStatus';
-
-const inr = (n) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
-
-const MONTHS = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
-];
 
 function bucketStats(b) {
   if (!b) return { total: 0, used: 0, remaining: 0 };
@@ -52,7 +48,6 @@ export default function EmployeeDashboard() {
   // Seed from the last cached snapshot so the dashboard paints instantly, then
   // refresh in the background (stale-while-revalidate).
   const [profile, setProfile] = useState(() => readCache('emp:profile'));
-  const [latestPayslip, setLatestPayslip] = useState(() => readCache('emp:payslip'));
   const [balance, setBalance] = useState(() => readCache('emp:balance'));
   const [pendingLeaves, setPendingLeaves] = useState(() => readCache('emp:pendingLeaves') ?? 0);
   const [wishes, setWishes] = useState(() => readCache('emp:wishes') || []);
@@ -67,13 +62,6 @@ export default function EmployeeDashboard() {
         setProfile(data.profile); writeCache('emp:profile', data.profile);
       } catch (err) {
         setErrors((e) => ({ ...e, profile: err.response?.data?.message }));
-      }
-      try {
-        const { data } = await api.get('/payroll/me');
-        const p = data.payslips?.[0] || null;
-        setLatestPayslip(p); writeCache('emp:payslip', p);
-      } catch (err) {
-        setErrors((e) => ({ ...e, payroll: err.response?.data?.message }));
       }
       try {
         const { data } = await api.get('/leave/me/balance');
@@ -164,16 +152,12 @@ export default function EmployeeDashboard() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+      {/* No salary figures here by design — see the file header. */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
         <StatCard icon="🏖️" tint="bg-emerald-100" value={balance ? monthly.remaining : '-'}
           label="Paid leave left" sub="of 2 / month · extra = LOP" to="/employee/leave" />
         <StatCard icon="⏳" tint="bg-amber-100" value={pendingLeaves}
           label="Pending requests" sub="awaiting approval" to="/employee/leave" />
-        <StatCard icon="💰" tint="bg-blue-100"
-          value={latestPayslip ? inr(latestPayslip.netPay) : '-'}
-          label="Latest net pay"
-          sub={latestPayslip ? `${MONTHS[latestPayslip.payPeriodMonth - 1]} ${latestPayslip.payPeriodYear}` : 'No payslips yet'}
-          to="/employee/payslips" />
         <StatCard icon="🪪" tint="bg-purple-100"
           value={profile?.employeeCode || '-'}
           label={profile?.designation || 'Employee'}
@@ -270,24 +254,18 @@ export default function EmployeeDashboard() {
           )}
         </div>
 
-        {/* Latest payslip */}
+        {/* Payslips — amounts intentionally live on the Payslips page only. */}
         <div className="lg:col-span-2 bg-white shadow rounded-lg p-5">
-          <h2 className="card-title mb-3">Latest Payslip</h2>
-          {errors.payroll ? (
-            <p className="text-sm text-gray-400 italic">{errors.payroll}</p>
-          ) : latestPayslip ? (
-            <div className="flex items-end justify-between">
-              <div>
-                <p className="text-3xl font-semibold text-gray-900">{inr(latestPayslip.netPay)}</p>
-                <p className="text-sm text-gray-500">
-                  Net pay · {MONTHS[latestPayslip.payPeriodMonth - 1]} {latestPayslip.payPeriodYear}
-                </p>
-              </div>
-              <Link to="/employee/payslips" className="text-sm text-blue-600 hover:underline">View all →</Link>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 italic">No payslips yet</p>
-          )}
+          <h2 className="card-title mb-3">My Payslips</h2>
+          <div className="flex items-end justify-between">
+            <p className="text-sm text-gray-500">
+              Salary details are kept off the dashboard — open My Payslips to view
+              and download them.
+            </p>
+            <Link to="/employee/payslips" className="text-sm text-blue-600 hover:underline whitespace-nowrap ml-4">
+              View payslips →
+            </Link>
+          </div>
         </div>
       </div>
     </div>

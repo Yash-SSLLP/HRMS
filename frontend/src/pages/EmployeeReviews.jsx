@@ -4,7 +4,8 @@
  * (GET /reviews/me/about, shown anonymised), and submits filled-in reviews via
  * PATCH /reviews/me/:id (per-competency scores + overall + strengths/improvements).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
+import { FiStar, FiX, FiCheck } from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 
@@ -19,6 +20,88 @@ const STATUS_STYLES = {
   Submitted: 'bg-green-100 text-green-800',
 };
 const SCORES = [1, 2, 3, 4, 5];
+// Naming the scores turns "3 stars" into a judgement the reviewer can stand
+// behind, and keeps two reviewers closer to meaning the same thing by it.
+const SCORE_LABELS = {
+  1: 'Needs improvement',
+  2: 'Developing',
+  3: 'Meets expectations',
+  4: 'Exceeds expectations',
+  5: 'Outstanding',
+};
+
+/**
+ * Star picker used for both the per-competency and the overall score. Clicking
+ * the current value clears it back to unrated — the server stores "no score"
+ * rather than a fake 0, so a half-finished review stays honest.
+ */
+function StarRating({ value = 0, onChange, size = 'md', label }) {
+  // `hover` is a TRANSIENT preview only. The chosen value is the source of
+  // truth for what's drawn, and the preview is dropped the moment the value
+  // changes — otherwise clicking a star to clear it leaves the pointer sitting
+  // on that star, previewing the rating you just removed (it looked like the
+  // click did nothing until you moved the mouse away, and on touch, where no
+  // mouseleave ever fires, it never recovered at all).
+  const [hover, setHover] = useState(0);
+  const chosen = Number(value) || 0;
+
+  // Commit and preview move together in one batched render, so the frame drawn
+  // straight after a click already shows the new value. (Clearing the preview
+  // from an effect instead would paint one stale frame first — the flicker.)
+  const pick = (s) => {
+    const next = s === chosen ? 0 : s;
+    setHover(next);
+    onChange(next);
+  };
+  // Safety net for a value changed from outside (re-opening the form): drop a
+  // stale preview BEFORE paint, never after.
+  useLayoutEffect(() => { setHover((h) => (h === chosen ? h : 0)); }, [chosen]);
+
+  const shown = hover || chosen;
+  const px = size === 'lg' ? 24 : 20;
+  return (
+    <div className="flex items-center gap-2.5">
+      <div
+        // No gap: the buttons' hit areas touch, so sweeping across the row never
+        // crosses a dead zone. The visual spacing comes from padding inside each
+        // button instead.
+        className="flex items-center select-none"
+        // Pointer events cover mouse, pen and touch; mouseleave alone never
+        // fires for a tap.
+        onPointerLeave={() => setHover(0)}
+        role="group"
+        aria-label={label || 'Rating'}
+      >
+        {SCORES.map((s) => {
+          const on = s <= shown;
+          return (
+            <button
+              key={s}
+              type="button"
+              // Preview on hover only. Focus deliberately does NOT preview:
+              // tabbing through must not look like it is changing the score.
+              onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHover(s); }}
+              onClick={() => pick(s)}
+              aria-label={`${s} of 5 — ${SCORE_LABELS[s]}`}
+              aria-pressed={chosen === s}
+              title={SCORE_LABELS[s]}
+              className={`star-btn px-1 py-0.5 rounded ${on ? 'is-on' : ''}`}
+            >
+              <FiStar size={px} className={on ? 'fill-current' : ''} aria-hidden="true" />
+            </button>
+          );
+        })}
+      </div>
+      {/* Fixed width on purpose. This label changes as you hover, and it sits in
+          the same flex row as the stars — letting it resize would shift the
+          stars out from under the cursor, flipping the hover to another star and
+          then back, forever. Reserving the widest label's space pins the row. */}
+      <span className={`text-xs whitespace-nowrap w-36 shrink-0 ${chosen ? 'text-gray-600 font-medium' : 'text-gray-400'}`}>
+        {shown ? SCORE_LABELS[shown] : 'Not rated'}
+      </span>
+    </div>
+  );
+}
 
 function RelBadge({ relationship }) {
   return (
@@ -114,6 +197,14 @@ export default function EmployeeReviews() {
 
   const empName = (r) =>
     r.employee ? `${r.employee.firstName} ${r.employee.lastName}` : 'Employee';
+  const initials = (name) => name.split(' ').filter(Boolean).slice(0, 2).map((s) => s[0]?.toUpperCase()).join('') || 'E';
+
+  // Live progress for the fill-in modal header. Unrated competencies are left
+  // out of the average rather than counted as zero.
+  const scored = (form?.ratings || []).map((r) => Number(r.score)).filter((n) => n >= 1 && n <= 5);
+  const ratedCount = scored.length;
+  const avgScore = ratedCount ? (scored.reduce((a, b) => a + b, 0) / ratedCount).toFixed(1) : null;
+  const progressPct = form?.ratings?.length ? Math.round((ratedCount / form.ratings.length) * 100) : 0;
 
   return (
     <div>
@@ -214,72 +305,116 @@ export default function EmployeeReviews() {
 
       {/* Fill-in modal */}
       {active && form && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-            <h2 className="card-title mb-1">Review: {empName(active)}</h2>
-            <p className="text-xs text-gray-500 mb-4">{active.cycle?.name} · <RelBadge relationship={active.relationship} /></p>
-            <form onSubmit={submit} className="space-y-4">
-              <div className="space-y-3">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
+            {/* Header — who, which cycle, and how far along the reviewer is. */}
+            <div className="review-head px-6 pt-5 pb-4">
+              <div className="flex items-start gap-3">
+                <span className="avatar-circle accent-bg text-white shrink-0">{initials(empName(active))}</span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-semibold text-gray-900 truncate">{empName(active)}</h2>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <RelBadge relationship={active.relationship} />
+                    <span className="text-xs text-gray-500 truncate">{active.cycle?.name}</span>
+                  </div>
+                </div>
+                <button type="button" onClick={() => { setActive(null); setForm(null); }}
+                  className="text-gray-400 hover:text-gray-700 shrink-0 p-1 rounded-lg" aria-label="Close">
+                  <FiX size={18} />
+                </button>
+              </div>
+
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span className="text-gray-500">{ratedCount} of {form.ratings.length} competencies rated</span>
+                  {avgScore ? <span className="font-semibold text-gray-700">Average {avgScore}</span> : null}
+                </div>
+                <div className="review-progress"><span style={{ width: `${progressPct}%` }} /></div>
+              </div>
+            </div>
+
+            <form onSubmit={submit}>
+              <div className="px-6 py-5 space-y-3">
                 {form.ratings.map((rt, idx) => (
-                  <div key={rt.competency || idx} className="border rounded-lg p-3">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <span className="text-sm font-medium text-gray-800">{rt.competency}</span>
-                      <select
+                  <div key={rt.competency || idx} className={`rating-card p-4 ${Number(rt.score) ? 'is-rated' : ''}`}>
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      {/* The tick occupies a reserved slot rather than appearing
+                          and disappearing, so rating a row never re-flows it. */}
+                      <span className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                        <FiCheck size={14} aria-hidden="true"
+                          className={`accent-text shrink-0 ${Number(rt.score) ? '' : 'invisible'}`} />
+                        {rt.competency}
+                      </span>
+                      <StarRating
                         value={rt.score}
-                        onChange={(e) => setRating(idx, 'score', e.target.value)}
-                        className="border rounded-lg px-2 py-1 text-sm"
-                      >
-                        <option value={0}>Rate…</option>
-                        {SCORES.map((s) => (
-                          <option key={s} value={s}>{'★'.repeat(s)} ({s})</option>
-                        ))}
-                      </select>
+                        label={rt.competency}
+                        onChange={(s) => setRating(idx, 'score', s)}
+                      />
                     </div>
                     <input
-                      placeholder="Comment (optional)"
+                      placeholder="Add a comment (optional)"
                       value={rt.comment}
                       onChange={(e) => setRating(idx, 'comment', e.target.value)}
-                      className="block w-full border rounded-lg px-3 py-2 text-sm"
+                      className="block w-full bg-transparent border-0 border-b border-gray-200 focus:border-gray-400 px-0 py-2 mt-2 text-sm focus:outline-none focus:ring-0"
                     />
                   </div>
                 ))}
+
+                {/* Overall — deliberately heavier than a competency row. */}
+                <div className="rating-card rating-card-overall p-4">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">Overall rating</div>
+                      <p className="text-xs text-gray-500 mt-0.5">Your single summary judgement for this cycle.</p>
+                    </div>
+                    <StarRating
+                      size="lg"
+                      value={form.overallRating}
+                      label="Overall rating"
+                      onChange={(s) => setForm({ ...form, overallRating: s })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 pt-1">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">Strengths</label>
+                    <textarea
+                      rows={3}
+                      placeholder="What are they doing well?"
+                      value={form.strengths}
+                      onChange={(e) => setForm({ ...form, strengths: e.target.value })}
+                      className="block w-full border rounded-xl px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">Areas to improve</label>
+                    <textarea
+                      rows={3}
+                      placeholder="Where could they grow?"
+                      value={form.improvements}
+                      onChange={(e) => setForm({ ...form, improvements: e.target.value })}
+                      className="block w-full border rounded-xl px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+
+                {modalError && (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{modalError}</div>
+                )}
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Overall rating</label>
-                <select
-                  value={form.overallRating}
-                  onChange={(e) => setForm({ ...form, overallRating: e.target.value })}
-                  className="border rounded-lg px-2 py-1 text-sm"
-                >
-                  <option value={0}>Rate…</option>
-                  {SCORES.map((s) => (
-                    <option key={s} value={s}>{'★'.repeat(s)} ({s})</option>
-                  ))}
-                </select>
-              </div>
-
-              <textarea
-                rows={2}
-                placeholder="Strengths"
-                value={form.strengths}
-                onChange={(e) => setForm({ ...form, strengths: e.target.value })}
-                className="block w-full border rounded-lg px-3 py-2 text-sm"
-              />
-              <textarea
-                rows={2}
-                placeholder="Areas to improve"
-                value={form.improvements}
-                onChange={(e) => setForm({ ...form, improvements: e.target.value })}
-                className="block w-full border rounded-lg px-3 py-2 text-sm"
-              />
-
-              {modalError && (
-                <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{modalError}</div>
-              )}
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => { setActive(null); setForm(null); }} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Submitting…' : 'Submit review'}</button>
+              {/* Footer stays in view while the body scrolls. */}
+              <div className="sticky bottom-0 flex items-center justify-between gap-3 px-6 py-4 bg-gray-50 border-t border-gray-200">
+                <span className="text-xs text-gray-500 hidden sm:block">
+                  {ratedCount === form.ratings.length && form.overallRating
+                    ? 'All set — this feedback is final once submitted.'
+                    : 'You can leave scores blank; submitting is final.'}
+                </span>
+                <span className="flex items-center gap-2 ml-auto">
+                  <button type="button" onClick={() => { setActive(null); setForm(null); }} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                  <button type="submit" disabled={saving} className="px-5 py-2 text-sm font-semibold bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Submitting…' : 'Submit review'}</button>
+                </span>
               </div>
             </form>
           </div>
