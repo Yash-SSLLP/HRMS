@@ -42,6 +42,7 @@ const blankProfile = {
   dateOfBirth: '',
   gender: '',
   maritalStatus: '',
+  dateOfMarriage: '',
   address: { current: {}, permanent: {} },
   emergencyContact: { name: '', relation: '', phone: '' },
   bankDetails: {
@@ -292,6 +293,7 @@ export default function AdminEmployees() {
       dateOfBirth: p.dateOfBirth ? p.dateOfBirth.slice(0, 10) : '',
       gender: p.gender || '',
       maritalStatus: p.maritalStatus || '',
+      dateOfMarriage: p.dateOfMarriage ? p.dateOfMarriage.slice(0, 10) : '',
       address: {
         current: { ...blankAddress, ...(p.address?.current || {}) },
         permanent: { ...blankAddress, ...(p.address?.permanent || {}) },
@@ -390,6 +392,8 @@ export default function AdminEmployees() {
       // Blank enums must be dropped, not sent as '' — the schema would reject it.
       if (!payload.gender) delete payload.gender;
       if (!payload.maritalStatus) delete payload.maritalStatus;
+      // An empty date string is not a castable Date — drop it rather than send ''.
+      if (!payload.dateOfMarriage) delete payload.dateOfMarriage;
       if (!payload.dateOfBirth) delete payload.dateOfBirth;
       let savedId = editingId;
       if (editingId) {
@@ -885,6 +889,13 @@ export default function AdminEmployees() {
                     <option value="">Not set</option>
                     {MARITAL_STATUSES.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Marriage Anniversary</label>
+                  <input type="date" value={form.dateOfMarriage || ''}
+                    onChange={(e) => setForm({ ...form, dateOfMarriage: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  <p className="text-xs text-gray-500 mt-1">Optional — shows on the celebrations widget each year.</p>
                 </div>
               </div>
 

@@ -6,6 +6,7 @@
  * via PUT /attendance/settings. Employee list from GET /employees.
  */
 import { useEffect, useState } from 'react';
+import { useDateSort, DateSortButton } from '../components/DateSort';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
@@ -106,6 +107,7 @@ export default function AdminAttendance() {
     employee: '',
   });
   const [records, setRecords] = useState([]);
+  const [sortedRecords, dateSort, toggleDateSort] = useDateSort(records);
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -337,7 +339,9 @@ export default function AdminAttendance() {
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">
+                <DateSortButton dir={dateSort} onToggle={toggleDateSort} />
+              </th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">In</th>
@@ -353,7 +357,7 @@ export default function AdminAttendance() {
               <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : records.length === 0 ? (
               <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No records for this period</td></tr>
-            ) : records.map((r) => (
+            ) : sortedRecords.map((r) => (
               <tr key={r._id} className={isRecordFlagged(r, settings.geofenceThresholdM) ? 'bg-amber-50' : ''}>
                 <td className="px-4 py-3">
                   {fmtDate(r.date)}

@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { formatDuration, formatHours } from '../utils/time';
+import { useDateSort, DateSortButton } from '../components/DateSort';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -299,6 +300,8 @@ export default function EmployeeAttendance() {
     ? (today.checkOut ? new Date(today.checkOut) : new Date()) - new Date(today.checkIn)
     : null;
 
+  const [sortedRecords, dateSort, toggleDateSort] = useDateSort(records);
+
   return (
     <div>
       <PageHeader title="Attendance" />
@@ -518,7 +521,9 @@ export default function EmployeeAttendance() {
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">
+                <DateSortButton dir={dateSort} onToggle={toggleDateSort} />
+              </th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Check-in</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Check-out</th>
@@ -530,9 +535,9 @@ export default function EmployeeAttendance() {
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : records.length === 0 ? (
+            ) : sortedRecords.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No records</td></tr>
-            ) : records.map((r) => (
+            ) : sortedRecords.map((r) => (
               <tr key={r._id}>
                 <td className="px-4 py-3">{fmtDate(r.date)}</td>
                 <td className="px-4 py-3">

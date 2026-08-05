@@ -187,6 +187,7 @@ function build(s) {
     holiday: { icon: 'sunny', tint: colors.warning },
     birthday: { icon: 'gift', tint: isDark ? '#f472b6' : '#db2777' },
     anniversary: { icon: 'ribbon', tint: isDark ? '#fb7185' : '#9333ea' },
+    marriage: { icon: 'heart', tint: isDark ? '#fb7185' : '#e11d48' },
     celebration: { icon: 'sparkles', tint: isDark ? '#f472b6' : '#db2777' },
     recognition: { icon: 'trophy', tint: isDark ? '#fbbf24' : '#f59e0b' },
     leave: { icon: 'airplane', tint: colors.info },

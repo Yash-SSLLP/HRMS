@@ -6,6 +6,7 @@
  * (this month / trailing N months / all employees) from GET /attendance/export.
  */
 import { useEffect, useState } from 'react';
+import { useDateSort, DateSortButton } from '../components/DateSort';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
@@ -16,6 +17,7 @@ import SearchableSelect from '../components/SearchableSelect';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const REG_TYPES = ['Missing Punch', 'Wrong Time', 'Forgot Check-in', 'Forgot Check-out', 'On Duty', 'Other'];
+const EMPTY = [];
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
@@ -36,6 +38,8 @@ export default function AdminAttendanceMonth() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [data, setData] = useState(null);
+  // `data` is null until the month loads — the hook always gets an array.
+  const [sortedRecords, dateSort, toggleDateSort] = useDateSort(data?.records || EMPTY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -239,13 +243,16 @@ export default function AdminAttendanceMonth() {
           <div className="bg-white shadow rounded-xl p-5">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-semibold text-gray-800">History</h3>
-              <button onClick={() => openReg(null)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
-                + Regularize a day
-              </button>
+              <div className="flex items-center gap-2">
+                <DateSortButton dir={dateSort} onToggle={toggleDateSort} compact />
+                <button onClick={() => openReg(null)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
+                  + Regularize a day
+                </button>
+              </div>
             </div>
-            {data.records.length === 0 ? (
+            {sortedRecords.length === 0 ? (
               <div className="text-sm text-gray-500 py-6 text-center">No attendance records this month.</div>
-            ) : data.records.map((r) => {
+            ) : sortedRecords.map((r) => {
               const d = new Date(r.date);
               return (
                 <div key={r._id} className="flex items-center gap-3 py-2.5 border-t border-gray-100">

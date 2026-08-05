@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
-import { FiAward, FiCheck } from 'react-icons/fi';
+import { FiAward, FiCheck, FiHeart } from 'react-icons/fi';
 import { TbCake, TbBalloon } from 'react-icons/tb';
 
 // SmartHR-style "Birthdays & Celebrations" widget with a Send-a-wish action.
@@ -28,7 +28,16 @@ function initials(name) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
 }
 
-export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
+// Everything that differs per occasion, in one place — adding a fourth type is
+// then a single entry rather than another ternary in five spots.
+const OCCASION = {
+  birthday: { avatar: 'bg-amber-500', chip: 'bg-amber-100 text-amber-800', Icon: TbCake, noun: 'birthday', label: () => 'Birthday' },
+  anniversary: { avatar: 'bg-blue-500', chip: 'bg-blue-100 text-blue-800', Icon: FiAward, noun: 'work anniversary', label: (e) => `${ordinal(e.years)} Work Anniversary` },
+  marriage: { avatar: 'bg-rose-500', chip: 'bg-rose-100 text-rose-800', Icon: FiHeart, noun: 'wedding anniversary', label: (e) => `${ordinal(e.years)} Wedding Anniversary` },
+};
+const occasionOf = (e) => OCCASION[e.type] || OCCASION.birthday;
+
+export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openKey, setOpenKey] = useState(null);
@@ -40,8 +49,11 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
   useEffect(() => {
     (async () => {
       try {
-        // /upcoming includes daysAway 0 (today) through `days`.
-        const { data } = await api.get(`/celebrations/upcoming?days=${days}`);
+        // Calendar window by default: the rest of this month plus all of next,
+        // so a birthday late in the month doesn't pop into view only days before.
+        // `days` (rolling) still works for callers that want a short list.
+        const q = days ? `days=${days}` : `months=${months}`;
+        const { data } = await api.get(`/celebrations/upcoming?${q}`);
         setEvents(data.events || []);
       } catch {
         // Quietly degrade — widget just shows empty.
@@ -49,7 +61,7 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
         setLoading(false);
       }
     })();
-  }, [days]);
+  }, [days, months]);
 
   const keyOf = (e) => `${e.employeeId}-${e.type}`;
 
@@ -93,28 +105,30 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
       ) : events.length === 0 ? (
         <div className="text-center py-6">
           <TbBalloon size={30} className="mx-auto mb-1.5 text-gray-300" aria-hidden="true" />
-          <p className="text-sm text-gray-400 italic">No birthdays or anniversaries in the next {days} days.</p>
+          <p className="text-sm text-gray-400 italic">
+            {days
+              ? `No celebrations in the next ${days} days.`
+              : 'No birthdays or anniversaries this month or next.'}
+          </p>
         </div>
       ) : (
         <ul className="space-y-2">
           {events.map((e) => {
             const k = keyOf(e);
-            const isBirthday = e.type === 'birthday';
+            const occ = occasionOf(e);
             const isSelf = myEmployeeId && String(e.employeeId) === String(myEmployeeId);
             const wished = sent[k];
             return (
               <li key={k} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
                 <div className="flex items-center gap-3">
-                  <span className={`avatar-circle text-white ${isBirthday ? 'bg-amber-500' : 'bg-blue-500'}`}>
+                  <span className={`avatar-circle text-white ${occ.avatar}`}>
                     {initials(e.fullName)}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-gray-900 truncate">
                       {e.fullName}
-                      <span className={`ml-2 inline-block px-2 py-0.5 text-[11px] rounded-full ${
-                        isBirthday ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
-                      }`}>
-                        {isBirthday ? 'Birthday' : `${ordinal(e.years)} Anniversary`}
+                      <span className={`ml-2 inline-block px-2 py-0.5 text-[11px] rounded-full ${occ.chip}`}>
+                        {occ.label(e)}
                       </span>
                     </div>
                     <div className="text-xs text-gray-500 truncate">
@@ -133,9 +147,7 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
                       onClick={() => (openKey === k ? setOpenKey(null) : openComposer(e))}
                       className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg hover:bg-gray-700"
                     >
-                      {isBirthday
-                        ? <TbCake size={14} aria-hidden="true" />
-                        : <FiAward size={14} aria-hidden="true" />}
+                      <occ.Icon size={14} aria-hidden="true" />
                       Wish
                     </button>
                   )}
@@ -148,9 +160,7 @@ export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
                       value={message}
                       onChange={(ev) => setMessage(ev.target.value)}
                       maxLength={280}
-                      placeholder={isBirthday
-                        ? `Write a birthday message for ${e.firstName || e.fullName}… (optional)`
-                        : `Write an anniversary note for ${e.firstName || e.fullName}… (optional)`}
+                      placeholder={`Write a ${occ.noun} note for ${e.firstName || e.fullName}… (optional)`}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     />
                     {error && <div className="text-xs text-red-600 mt-1">{error}</div>}

@@ -7,7 +7,7 @@ const mongoose = require('mongoose');
 const digestLogSchema = new mongoose.Schema(
   {
     date: { type: String, required: true }, // 'YYYY-MM-DD' in IST
-    kind: { type: String, required: true }, // 'birthday' | 'anniversary' | 'holiday'
+    kind: { type: String, required: true }, // 'birthday' | 'anniversary' | 'marriage' | 'holiday' | …
     count: { type: Number, default: 0 },
   },
   { timestamps: true }

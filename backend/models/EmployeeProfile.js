@@ -64,6 +64,9 @@ const employeeProfileSchema = new mongoose.Schema(
     dateOfBirth: Date,
     gender: { type: String, enum: ['Male', 'Female', 'Other'] },
     maritalStatus: { type: String, enum: ['Single', 'Married', 'Other'] },
+    // Wedding date — drives the marriage-anniversary celebration. Optional and
+    // independent of maritalStatus, which is often left unset on older records.
+    dateOfMarriage: Date,
     dateOfJoining: { type: Date, required: true },
     dateOfExit: Date,
     designation: { type: String, trim: true },

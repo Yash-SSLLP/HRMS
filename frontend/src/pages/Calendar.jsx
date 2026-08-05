@@ -35,6 +35,7 @@ const TYPE_META = {
   event:       { label: 'Company event',        color: '#3b82f6', fg: '#ffffff' },
   birthday:    { label: 'Birthday',             color: '#ec4899', fg: '#ffffff' },
   anniversary: { label: 'Work anniversary',     color: '#6366f1', fg: '#ffffff' },
+  marriage:    { label: 'Wedding anniversary', color: '#e11d48', fg: '#ffffff' },
   interview:   { label: 'Interview',            color: '#eab308', fg: '#1f2937' },
   hrReminder:  { label: 'HR / Admin reminder',  color: '#f97316', fg: '#ffffff' },
   reminder:    { label: 'My reminder',          color: '#10b981', fg: '#06281f' },
@@ -193,7 +194,7 @@ export default function Calendar() {
       const role = [m.designation, m.department].filter(Boolean).join(' · ');
       if (role) rows.push(['Role', role]);
       if (m.employeeCode) rows.push(['Code', m.employeeCode]);
-      if (e.type === 'anniversary' && m.years) rows.push(['Years', `${m.years}`]);
+      if (['anniversary', 'marriage'].includes(e.type) && m.years) rows.push(['Years', `${m.years}`]);
     }
     return rows;
   };

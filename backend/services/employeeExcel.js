@@ -22,6 +22,7 @@ const COLUMNS = [
   { key: 'dateOfBirth',     header: 'Date of Birth',     width: 14, type: 'date' },
   { key: 'gender',          header: 'Gender',            width: 10 },
   { key: 'maritalStatus',   header: 'Marital Status',    width: 14 },
+  { key: 'dateOfMarriage',  header: 'Marriage Date',     width: 14, type: 'date' },
 
   // Job
   { key: 'dateOfJoining',   header: 'Date of Joining',   width: 14, required: true, type: 'date' },

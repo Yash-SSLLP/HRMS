@@ -3,6 +3,7 @@
  * SEND_HOUR_IST (8 AM IST). One pass per kind:
  *   - birthdays today          → notify everyone + the birthday person
  *   - work anniversaries today → notify everyone + the celebrant
+ *   - wedding anniversaries today → notify everyone + the celebrant
  *   - holidays today           → notify everyone
  *   - company events today     → notify everyone
  *   - reminders dated today     → notify the reminder's own audience (+ its creator)
@@ -125,6 +126,40 @@ async function runAnniversaries(dateStr, today, profiles, everyone) {
     });
   }
   console.log(`Morning digest: ${people.length} anniversary(ies) notified.`);
+}
+
+// Wedding anniversaries. Same shape and the same >= 1 year rule as the work
+// anniversary above (the wedding day itself is not an anniversary), but its own
+// DigestLog kind so one of the two failing never suppresses the other.
+async function runMarriageAnniversaries(dateStr, today, profiles, everyone) {
+  const year = istParts(new Date()).y;
+  const people = profiles
+    .filter((p) => p.dateOfMarriage
+      && monthDay(p.dateOfMarriage).m === today.m
+      && monthDay(p.dateOfMarriage).d === today.d)
+    .map((p) => ({ p, years: year - istParts(p.dateOfMarriage).y }))
+    .filter((x) => x.years >= 1);
+  if (!people.length) return;
+  if (!(await claim('marriage', dateStr))) return;
+
+  for (const { p, years } of people) {
+    const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim();
+    const others = everyone.filter((id) => String(id) !== String(p.user._id));
+    await notifyMany(others, {
+      type: 'marriage',
+      title: `💍 ${name} celebrates ${years} year${years > 1 ? 's' : ''} of marriage today!`,
+      body: 'Send them your wishes.',
+      link: 'celebrations',
+    });
+    await notify({
+      recipient: p.user._id,
+      type: 'marriage',
+      title: `💍 Happy ${years}-year Wedding Anniversary, ${p.user.firstName || 'there'}!`,
+      body: 'Wishing you both many more happy years.',
+      link: 'celebrations',
+    });
+  }
+  console.log(`Morning digest: ${people.length} wedding anniversary(ies) notified.`);
 }
 
 async function runHolidays(dateStr, everyone) {
@@ -297,6 +332,7 @@ async function tick() {
     const passes = [
       ['birthday', () => runBirthdays(dateStr, today, profiles, everyone)],
       ['anniversary', () => runAnniversaries(dateStr, today, profiles, everyone)],
+      ['marriage', () => runMarriageAnniversaries(dateStr, today, profiles, everyone)],
       ['holiday', () => runHolidays(dateStr, everyone)],
       ['event', () => runEvents(dateStr, everyone)],
       ['reminder', () => runReminders(dateStr, everyone)],

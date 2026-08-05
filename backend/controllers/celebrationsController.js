@@ -37,6 +37,30 @@ function nextNDays(n) {
   return out;
 }
 
+// Every IST calendar day from today through the end of the (months-1)th month
+// after this one, as {m, d, daysAway}. `months: 2` → the rest of this month plus
+// all of next month, which is what the celebrations widget asks for; a rolling
+// "next 60 days" would instead stop mid-month and look arbitrary.
+function nextNMonths(months) {
+  const out = [];
+  const now = Date.now();
+  const { y: y0, m: m0 } = istParts(new Date());
+  // Last day to include: end of the (months-1)th month ahead.
+  const endMonth = m0 + (months - 1);
+  const endYear = y0 + Math.floor((endMonth - 1) / 12);
+  const endMonthNorm = ((endMonth - 1) % 12) + 1;
+  const lastDay = new Date(Date.UTC(endYear, endMonthNorm, 0)).getUTCDate();
+
+  for (let i = 0; i <= 400; i += 1) {
+    const at = now + i * 24 * 60 * 60 * 1000;
+    const { m, d } = istMonthDay(at);
+    const { y } = istParts(new Date(at));
+    out.push({ m, d, daysAway: i });
+    if (y === endYear && m === endMonthNorm && d === lastDay) break;
+  }
+  return out;
+}
+
 function personPayload(p) {
   return {
     employeeId: p._id,
@@ -72,6 +96,7 @@ const todayCelebrations = asyncHandler(async (req, res) => {
 
   const birthdays = [];
   const anniversaries = [];
+  const marriages = [];
 
   for (const p of profiles) {
     if (p.dateOfBirth && sameMonthDay(md(p.dateOfBirth), t)) {
@@ -83,12 +108,19 @@ const todayCelebrations = asyncHandler(async (req, res) => {
         anniversaries.push({ ...personPayload(p), date: p.dateOfJoining, years });
       }
     }
+    if (p.dateOfMarriage) {
+      const years = currentYear - istParts(p.dateOfMarriage).y;
+      if (years >= 1 && sameMonthDay(md(p.dateOfMarriage), t)) {
+        marriages.push({ ...personPayload(p), date: p.dateOfMarriage, years });
+      }
+    }
   }
 
   res.json({
     today: new Date().toISOString().slice(0, 10),
     birthdays,
     anniversaries,
+    marriages,
   });
 });
 
@@ -100,9 +132,13 @@ const todayCelebrations = asyncHandler(async (req, res) => {
  */
 // GET /api/celebrations/upcoming?days=7
 const upcomingCelebrations = asyncHandler(async (req, res) => {
+  // Two windows: `days` (rolling, the original contract) or `months` (calendar,
+  // e.g. months=2 → the rest of this month plus all of next). `months` wins when
+  // both are sent.
+  const months = req.query.months ? Math.min(Math.max(Number(req.query.months) || 1, 1), 6) : null;
   const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
   const profiles = await loadActiveProfiles(req.user);
-  const range = nextNDays(days);
+  const range = months ? nextNMonths(months) : nextNDays(days);
   const currentYear = istParts(new Date()).y;
 
   const events = [];
@@ -134,10 +170,26 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
         });
       }
     }
+    if (p.dateOfMarriage) {
+      const x = md(p.dateOfMarriage);
+      const hit = range.find((r) => sameMonthDay(x, r));
+      // Same >= 1 year rule as the work anniversary: the wedding day itself is
+      // not an anniversary.
+      const years = currentYear - istParts(p.dateOfMarriage).y;
+      if (hit && years >= 1) {
+        events.push({
+          type: 'marriage',
+          daysAway: hit.daysAway,
+          date: p.dateOfMarriage,
+          years,
+          ...personPayload(p),
+        });
+      }
+    }
   }
 
   events.sort((a, b) => a.daysAway - b.daysAway);
-  res.json({ days, count: events.length, events });
+  res.json({ days: months ? null : days, months, count: events.length, events });
 });
 
 /**
@@ -148,7 +200,7 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
  * @returns {{year, month, count, events: Object[]}} each {day, type, label, meta}, sorted by day
  */
 // GET /api/celebrations/calendar?month=YYYY-MM
-// Returns every event (holiday / birthday / anniversary) falling in the given
+// Returns every event (holiday / birthday / work + wedding anniversary) in the given
 // month, each normalized to { day, type, label, meta }. Birthdays & anniversaries
 // match on month+day in any year; holidays match the exact month.
 const monthCalendar = asyncHandler(async (req, res) => {
@@ -217,6 +269,18 @@ const monthCalendar = asyncHandler(async (req, res) => {
         events.push({
           day: joined.d,
           type: 'anniversary',
+          label: `${personPayload(p).fullName} (${years} yr)`,
+          meta: { ...personPayload(p), years },
+        });
+      }
+    }
+    if (p.dateOfMarriage) {
+      const wed = istParts(p.dateOfMarriage);
+      const years = year - wed.y;
+      if (wed.m === month && years >= 1) {
+        events.push({
+          day: wed.d,
+          type: 'marriage',
           label: `${personPayload(p).fullName} (${years} yr)`,
           meta: { ...personPayload(p), years },
         });
@@ -329,7 +393,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
  * Send a birthday/anniversary wish to a colleague.
  * @route POST /api/celebrations/wish
  * @param {string} req.body.employeeId - recipient's profile id (required)
- * @param {string} [req.body.type='birthday'] - 'birthday' or 'anniversary'
+ * @param {string} [req.body.type='birthday'] - 'birthday' | 'anniversary' | 'marriage'
  * @param {string} [req.body.message] - custom note, truncated to 280 chars
  * @returns {{ok: boolean}} (201); 400 if wishing yourself
  * @sideeffect creates a notification, posts a chat message (auto-connecting), and enqueues an email
@@ -344,7 +408,7 @@ const sendWish = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('employeeId is required');
   }
-  const kind = type === 'anniversary' ? 'anniversary' : 'birthday';
+  const kind = ['anniversary', 'marriage'].includes(type) ? type : 'birthday';
 
   const profile = await EmployeeProfile.findById(employeeId).populate({
     path: 'user',
@@ -365,12 +429,14 @@ const sendWish = asyncHandler(async (req, res) => {
   const toFirst = profile.user.firstName || 'there';
   const clean = (message || '').toString().trim().slice(0, 280);
 
-  const occasion = kind === 'anniversary' ? 'Work Anniversary' : 'Birthday';
-  const emoji = kind === 'anniversary' ? '🎊' : '🎂';
-  const defaultLine =
-    kind === 'anniversary'
-      ? `Happy work anniversary, ${toFirst}! Thank you for everything you do. 🎊`
-      : `Happy birthday, ${toFirst}! Wishing you a wonderful day. 🎂`;
+  const OCCASIONS = {
+    birthday: { label: 'Birthday', emoji: '🎂', line: `Happy birthday, ${toFirst}! Wishing you a wonderful day. 🎂` },
+    anniversary: { label: 'Work Anniversary', emoji: '🎊', line: `Happy work anniversary, ${toFirst}! Thank you for everything you do. 🎊` },
+    marriage: { label: 'Wedding Anniversary', emoji: '💍', line: `Happy wedding anniversary, ${toFirst}! Wishing you both many more happy years. 💍` },
+  };
+  const occasion = OCCASIONS[kind].label;
+  const emoji = OCCASIONS[kind].emoji;
+  const defaultLine = OCCASIONS[kind].line;
   const wishLine = clean || defaultLine;
 
   await Notification.create({
