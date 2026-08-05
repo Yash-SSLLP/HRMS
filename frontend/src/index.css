@@ -28,6 +28,13 @@ html {
      everywhere by default; a portal can point it somewhere else without moving
      the rest of the UI — see My Portal's gold sidebar in dark mode below. */
   --nav-accent: var(--accent);
+  /* Top-bar shortcut pills (Layout's NavPill). The pill is a SOLID accent fill
+     with a label on it, so the two tokens move together: a portal whose accent
+     is too light to carry white re-points --accent-ink at the onyx instead of
+     abandoning the accent. Every combination is kept at >= 4.5:1 — see the
+     per-portal overrides at the bottom of this file. */
+  --pill-bg: var(--accent);
+  --pill-ink: #fff;
   --bg: #f3f5f9;
   --surface: #ffffff;
   --surface-2: #f8fafc;
@@ -1198,6 +1205,8 @@ html[data-portal="admin"] {
 html.dark[data-portal="admin"] {
   --accent: #818cf8;
   --accent-700: #6366f1;
+  /* Light indigo: white on it is 2.98:1, the onyx 5.6:1. */
+  --pill-ink: var(--onyx);
   --bg: #0b1024;
   --surface: #161c34;
   --surface-2: #1f2747;
@@ -1209,6 +1218,9 @@ html.dark[data-portal="admin"] {
 html[data-portal="employee"] {
   --accent: #0d9488;
   --accent-700: #0f766e;
+  /* Teal-600 carries neither ink at 4.5:1 (white 3.74, onyx 4.46), so the pill
+     fills with teal-700 instead — same hue, and white clears at 5.47:1. */
+  --pill-bg: var(--accent-700);
   --bg: #ecf5f2;
   --surface-3: #e3f1ec;
 }
@@ -1225,6 +1237,12 @@ html.dark[data-portal="employee"] {
      use the brand gold in dark mode, so nothing is left teal against it. */
   --accent: #fbbf24;
   --accent-700: #f59e0b;
+  /* Brand gold: white on it is 1.67:1, the onyx 10:1 — same ink-on-gold rule
+     the accent FILLS below already follow. --pill-bg is re-stated because the
+     LIGHT employee block above points it at --accent-700, and that would
+     otherwise cascade in and dull the pill to amber-500. */
+  --pill-bg: var(--accent);
+  --pill-ink: var(--onyx);
   --bg: #0b0d11;                     /* one step under the board, so cards lift off it */
   --surface: var(--cal-panel);       /* #13151a — the calendar panel */
   --surface-2: var(--cal-cell-out);  /* #191c22 — its outside-the-month cell */

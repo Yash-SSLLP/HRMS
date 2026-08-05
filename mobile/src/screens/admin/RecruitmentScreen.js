@@ -211,7 +211,7 @@ export default function RecruitmentScreen() {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: spacing(4) }}>
               {['', ...STAGES].map((s) => (
                 <TouchableOpacity key={s || 'all'} onPress={() => setStageFilter(s)} style={[styles.fchip, stageFilter === s && styles.fchipActive]}>
-                  <Text style={[styles.fchipText, stageFilter === s && { color: '#fff' }]}>{s || 'All'}</Text>
+                  <Text style={[styles.fchipText, stageFilter === s && { color: colors.onPrimary }]}>{s || 'All'}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -247,7 +247,7 @@ export default function RecruitmentScreen() {
 
       {writable && (
         <TouchableOpacity style={styles.fab} activeOpacity={0.85} onPress={tab === 'jobs' ? openNewJob : openNewCandidate}>
-          <Ionicons name="add" size={26} color="#fff" />
+          <Ionicons name="add" size={26} color={colors.onPrimary} />
         </TouchableOpacity>
       )}
 

@@ -792,7 +792,7 @@ const uploadGroupPhoto = asyncHandler(async (req, res) => {
     throw new Error('A photo is required');
   }
   const group = await loadGroupForManager(req.params.id, meId);
-  const { storagePath } = storage.saveBuffer({
+  const { storagePath } = await storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'groups',
     ownerId: group._id,
@@ -802,7 +802,7 @@ const uploadGroupPhoto = asyncHandler(async (req, res) => {
   group.photo = storagePath;
   await group.save();
   if (previous && previous !== storagePath) {
-    try { storage.remove(previous); } catch { /* best effort */ }
+    try { await storage.remove(previous); } catch { /* best effort */ }
   }
   res.json({ ok: true });
 });
@@ -818,7 +818,7 @@ const deleteGroupPhoto = asyncHandler(async (req, res) => {
   const meId = req.user._id;
   const group = await loadGroupForManager(req.params.id, meId);
   if (group.photo) {
-    try { storage.remove(group.photo); } catch { /* best effort */ }
+    try { await storage.remove(group.photo); } catch { /* best effort */ }
     group.photo = null;
     await group.save();
   }
@@ -848,7 +848,7 @@ const getGroupPhoto = asyncHandler(async (req, res) => {
   const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  if (!storage.streamTo(group.photo, res)) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(group.photo, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 /**
@@ -989,7 +989,7 @@ const leaveGroup = asyncHandler(async (req, res) => {
   if (remaining.length === 0) {
     // Nobody left — delete the group, its messages and photo.
     await Message.deleteMany({ group: group._id });
-    if (group.photo) { try { storage.remove(group.photo); } catch { /* best effort */ } }
+    if (group.photo) { try { await storage.remove(group.photo); } catch { /* best effort */ } }
     await group.deleteOne();
     return res.json({ ok: true, groupDeleted: true });
   }

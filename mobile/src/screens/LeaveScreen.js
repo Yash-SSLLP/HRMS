@@ -154,7 +154,7 @@ export default function LeaveScreen() {
               <View style={styles.chips}>
                 {TYPES.map((t) => (
                   <TouchableOpacity key={t.key} onPress={() => setType(t.key)} style={[styles.chip, type === t.key && styles.chipActive]}>
-                    <Text style={[styles.chipText, type === t.key && { color: '#fff' }]}>{t.label}</Text>
+                    <Text style={[styles.chipText, type === t.key && { color: colors.onPrimary }]}>{t.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

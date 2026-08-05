@@ -174,7 +174,7 @@ const uploadMyAvatar = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('User not found');
   }
-  const { storagePath } = storage.saveBuffer({
+  const { storagePath } = await storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'avatars',
     ownerId: user._id,
@@ -184,7 +184,7 @@ const uploadMyAvatar = asyncHandler(async (req, res) => {
   user.photo = storagePath;
   await user.save();
   if (previous && previous !== storagePath) {
-    try { storage.remove(previous); } catch { /* best effort */ }
+    try { await storage.remove(previous); } catch { /* best effort */ }
   }
   res.json({ user: user.toJSON() });
 });
@@ -202,7 +202,7 @@ const deleteMyAvatar = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
   if (user.photo) {
-    try { storage.remove(user.photo); } catch { /* best effort */ }
+    try { await storage.remove(user.photo); } catch { /* best effort */ }
     user.photo = null;
     await user.save();
   }
@@ -229,7 +229,7 @@ const getUserAvatar = asyncHandler(async (req, res) => {
   res.setHeader('Cache-Control', 'private, max-age=86400');
   // The DB row can point at a file that no longer exists on disk — stream
   // safely and 404 rather than crashing the server on an ENOENT stream error.
-  if (!storage.streamTo(user.photo, res)) {
+  if (!(await storage.streamTo(user.photo, res))) {
     res.status(404);
     throw new Error('No photo for this user');
   }
@@ -253,7 +253,7 @@ const uploadMyBanner = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('User not found');
   }
-  const { storagePath } = storage.saveBuffer({
+  const { storagePath } = await storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'banners',
     ownerId: user._id,
@@ -263,7 +263,7 @@ const uploadMyBanner = asyncHandler(async (req, res) => {
   user.banner = storagePath;
   await user.save();
   if (previous && previous !== storagePath) {
-    try { storage.remove(previous); } catch { /* best effort */ }
+    try { await storage.remove(previous); } catch { /* best effort */ }
   }
   res.json({ user: user.toJSON() });
 });
@@ -281,7 +281,7 @@ const deleteMyBanner = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
   if (user.banner) {
-    try { storage.remove(user.banner); } catch { /* best effort */ }
+    try { await storage.remove(user.banner); } catch { /* best effort */ }
     user.banner = null;
     await user.save();
   }
@@ -305,7 +305,7 @@ const getUserBanner = asyncHandler(async (req, res) => {
   const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  if (!storage.streamTo(user.banner, res)) {
+  if (!(await storage.streamTo(user.banner, res))) {
     res.status(404);
     throw new Error('No banner for this user');
   }

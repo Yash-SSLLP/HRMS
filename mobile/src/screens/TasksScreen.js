@@ -79,7 +79,7 @@ export default function TasksScreen() {
                 const active = item.status === s;
                 return (
                   <TouchableOpacity key={s} onPress={() => setStatus(item, s)} style={[styles.statusChip, active && styles.statusActive]}>
-                    <Text style={[styles.statusText, active && { color: '#fff' }]}>{STATUS_LABEL[s]}</Text>
+                    <Text style={[styles.statusText, active && { color: colors.onPrimary }]}>{STATUS_LABEL[s]}</Text>
                   </TouchableOpacity>
                 );
               })}

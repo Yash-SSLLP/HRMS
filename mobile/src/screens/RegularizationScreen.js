@@ -183,7 +183,7 @@ export default function RegularizationScreen() {
               <View style={styles.chips}>
                 {TYPES.map((t) => (
                   <TouchableOpacity key={t} onPress={() => pickType(t)} style={[styles.chip, type === t && styles.chipActive]}>
-                    <Text style={[styles.chipText, type === t && { color: '#fff' }]}>{t}</Text>
+                    <Text style={[styles.chipText, type === t && { color: colors.onPrimary }]}>{t}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

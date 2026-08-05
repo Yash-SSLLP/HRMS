@@ -301,11 +301,12 @@ function NotificationBell({ isAdmin, portal }) {
   );
 }
 
-// The one colour every top-bar shortcut pill uses. Deliberately a fixed hex and
-// NOT var(--accent): the pills carry white text, and the per-role accents drop
-// to 1.7–2.5:1 against white in dark mode (amber/teal/light-blue), which is
-// unreadable. This blue holds 5.17:1 with white in both themes.
-const PILL_BG = '#2563EB';
+// The pills follow the portal accent (indigo in Admin, teal/gold in My Portal)
+// via --pill-bg / --pill-ink in index.css. They used to be a fixed blue because
+// white text on the lighter accents falls to 1.7–3:1 — but the answer to that is
+// to move the INK with the fill, not to opt out of theming: each portal declares
+// whichever of white/onyx clears 4.5:1, and the two light-teal/gold cases fill
+// with the darker -700 step or take the onyx. See the per-portal blocks.
 
 // A top-bar shortcut pill: solid fill, soft shadow, white icon + label. Every
 // pill is the same colour so the shortcuts read as one set of quick links
@@ -316,8 +317,12 @@ function NavPill({ to, icon, label }) {
       to={to}
       title={label}
       aria-label={label}
-      className="inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold text-white transition-all duration-150 hover:brightness-110 active:scale-95"
-      style={{ background: PILL_BG, boxShadow: '0 2px 6px rgba(37,99,235,.30)' }}
+      className="inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold transition-all duration-150 hover:brightness-110 active:scale-95"
+      style={{
+        background: 'var(--pill-bg)',
+        color: 'var(--pill-ink)',
+        boxShadow: '0 2px 6px color-mix(in srgb, var(--pill-bg) 32%, transparent)',
+      }}
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
@@ -718,7 +723,11 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const closeMobile = () => setMobileOpen(false);
 
   const sidebar = (
-    <div className="flex flex-col h-full">
+    // w-full is load-bearing: the desktop <aside> is `lg:flex`, so without an
+    // explicit width this wrapper is a flex item sized to its CONTENT — the nav
+    // rows came out ~240px in a 320px sidebar, leaving a 67px dead strip on the
+    // right. (The mobile drawer's <aside> is a block, so it was unaffected.)
+    <div className="flex flex-col h-full w-full min-w-0">
       <div className="brand-bar h-16 flex items-center gap-2 px-5 shrink-0">
         <Link to={isAdmin ? '/admin' : '/employee'} onClick={closeMobile} aria-label={COMPANY_NAME} className="min-w-0">
           <BrandLockup />

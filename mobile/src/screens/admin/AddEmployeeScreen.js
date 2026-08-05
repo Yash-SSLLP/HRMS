@@ -94,7 +94,7 @@ export default function AddEmployeeScreen() {
                 <View style={styles.chips}>
                   {roleOptions.map((r) => (
                     <TouchableOpacity key={r} onPress={() => set('role', r)} style={[styles.chip, f.role === r && styles.chipActive]}>
-                      <Text style={[styles.chipText, f.role === r && { color: '#fff' }]}>{r}</Text>
+                      <Text style={[styles.chipText, f.role === r && { color: colors.onPrimary }]}>{r}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>

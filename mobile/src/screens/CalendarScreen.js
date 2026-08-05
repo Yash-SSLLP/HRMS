@@ -174,7 +174,7 @@ export default function CalendarScreen() {
                     </Text>
                     <View style={styles.dots}>
                       {types.map((t) => (
-                        <View key={t} style={[styles.dot, { backgroundColor: todayCell ? '#fff' : metaFor(t).tint }]} />
+                        <View key={t} style={[styles.dot, { backgroundColor: todayCell ? colors.onPrimary : metaFor(t).tint }]} />
                       ))}
                     </View>
                   </TouchableOpacity>
@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
   cellToday: { backgroundColor: colors.primary },
   cellNum: { fontSize: 13, color: colors.text, fontWeight: '600' },
   cellNumOut: { color: colors.textFaint, fontWeight: '400' },
-  cellNumToday: { color: '#fff', fontWeight: '800' },
+  cellNumToday: { color: colors.onPrimary, fontWeight: '800' },
   dots: { flexDirection: 'row', gap: 2, height: 5, marginTop: 3 },
   dot: { width: 5, height: 5, borderRadius: 3 },
 

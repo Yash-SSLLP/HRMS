@@ -103,7 +103,7 @@ export default function ExpensesScreen() {
               <View style={styles.chips}>
                 {CATEGORIES.map((c) => (
                   <TouchableOpacity key={c} onPress={() => setCategory(c)} style={[styles.chip, category === c && styles.chipActive]}>
-                    <Text style={[styles.chipText, category === c && { color: '#fff' }]}>{c}</Text>
+                    <Text style={[styles.chipText, category === c && { color: colors.onPrimary }]}>{c}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

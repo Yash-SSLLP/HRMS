@@ -62,7 +62,7 @@ export default function LoansScreen() {
               <View style={styles.chips}>
                 {TYPES.map((t) => (
                   <TouchableOpacity key={t} onPress={() => setType(t)} style={[styles.chip, type === t && styles.chipActive]}>
-                    <Text style={[styles.chipText, type === t && { color: '#fff' }]}>{t}</Text>
+                    <Text style={[styles.chipText, type === t && { color: colors.onPrimary }]}>{t}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

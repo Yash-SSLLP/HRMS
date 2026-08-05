@@ -64,7 +64,7 @@ async function savePunchPhoto(req, profileId) {
       console.error('[attendance] Cloudinary selfie upload failed, using local disk:', err.message);
     }
   }
-  const { storagePath } = storage.saveBuffer({
+  const { storagePath } = await storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'attendance',
     ownerId: profileId,
@@ -287,7 +287,7 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
   const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  if (!storage.streamTo(relPath, res)) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(relPath, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 /**

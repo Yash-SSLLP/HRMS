@@ -200,14 +200,14 @@ const uploadReceipt = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('You can only attach a receipt to your own request');
   }
-  const { storagePath } = storage.saveBuffer({
+  const { storagePath } = await storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'travel-receipts',
     ownerId: item._id,
     originalName: req.file.originalname || 'receipt',
   });
   if (item.reimbursementReceiptPath && item.reimbursementReceiptPath !== storagePath) {
-    try { storage.remove(item.reimbursementReceiptPath); } catch { /* best effort */ }
+    try { await storage.remove(item.reimbursementReceiptPath); } catch { /* best effort */ }
   }
   item.reimbursementReceiptPath = storagePath;
   item.reimbursementReceiptName = req.file.originalname || 'receipt';
@@ -240,7 +240,7 @@ const getReceipt = asyncHandler(async (req, res) => {
         : 'image/jpeg';
   res.setHeader('Content-Type', type);
   res.setHeader('Content-Disposition', `inline; filename="${item.reimbursementReceiptName || 'receipt'}"`);
-  if (!storage.streamTo(item.reimbursementReceiptPath, res)) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(item.reimbursementReceiptPath, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 module.exports = { listMine, createRequest, listAll, reviewRequest, reviewReimbursement, uploadReceipt, getReceipt };

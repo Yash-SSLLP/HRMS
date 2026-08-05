@@ -259,7 +259,7 @@ export default function AttendanceDatePicker({ value, onChange, max = toYMD(new 
                     ]}>
                       {c.day}
                     </Text>
-                    {c.ymd === today && <View style={[styles.todayDot, selected && { backgroundColor: '#fff' }]} />}
+                    {c.ymd === today && <View style={[styles.todayDot, selected && { backgroundColor: colors.onPrimary }]} />}
                   </TouchableOpacity>
                 );
               })}
@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
   cell: { flex: 1, height: 40, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
   cellText: { fontSize: 13, fontWeight: '600', color: colors.text },
   cellSel: { backgroundColor: colors.primary },
-  cellTextSel: { color: '#fff' },
+  cellTextSel: { color: colors.onPrimary },
   todayDot: { position: 'absolute', bottom: 5, width: 4, height: 4, borderRadius: 2, backgroundColor: colors.primary },
 
   legend: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing(3), marginTop: spacing(3) },

@@ -43,7 +43,7 @@ async function recomputeBalance(accountId) {
 // Persist a receipt file (image/PDF) for an entry and stamp its attachment.
 async function attachReceipt(entry, file) {
   if (!file) return;
-  const saved = storage.saveBuffer({
+  const saved = await storage.saveBuffer({
     buffer: file.buffer,
     ownerType: 'cashbook',
     ownerId: entry._id,
@@ -430,7 +430,7 @@ const deleteEntry = asyncHandler(async (req, res) => {
   }
   for (const e of toDelete) {
     if (e.account) affected.add(String(e.account));
-    if (e.attachment?.storagePath) { try { storage.remove(e.attachment.storagePath); } catch { /* ignore */ } }
+    if (e.attachment?.storagePath) { try { await storage.remove(e.attachment.storagePath); } catch { /* ignore */ } }
     await e.deleteOne();
   }
   for (const a of affected) await recomputeBalance(a);
@@ -729,7 +729,7 @@ const getReceipt = asyncHandler(async (req, res) => {
     || ['CEO', 'MD'].includes(req.user.role);
   if (!isOwner && !isManager) { res.status(403); throw new Error('Not allowed'); }
   if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
-  if (!storage.streamTo(entry.attachment.storagePath, res)) { res.status(404); throw new Error('Receipt file missing'); }
+  if (!(await storage.streamTo(entry.attachment.storagePath, res))) { res.status(404); throw new Error('Receipt file missing'); }
 });
 
 module.exports = {

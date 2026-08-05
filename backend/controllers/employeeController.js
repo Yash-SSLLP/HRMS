@@ -778,7 +778,7 @@ const submitPublicDocs = asyncHandler(async (req, res) => {
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
     const category = SELF_UPLOAD_CATEGORIES.includes(labels[i]) ? labels[i] : 'Other';
-    const { storagePath, sha256, sizeBytes } = storage.saveBuffer({
+    const { storagePath, sha256, sizeBytes } = await storage.saveBuffer({
       buffer: file.buffer,
       ownerType: 'employee',
       ownerId: profile._id,

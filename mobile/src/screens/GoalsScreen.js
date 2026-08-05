@@ -68,7 +68,7 @@ export default function GoalsScreen() {
                 const active = (item.progress || 0) === s;
                 return (
                   <TouchableOpacity key={s} onPress={() => setProgress(item, s)} style={[styles.step, active && styles.stepActive]}>
-                    <Text style={[styles.stepText, active && { color: '#fff' }]}>{s}%</Text>
+                    <Text style={[styles.stepText, active && { color: colors.onPrimary }]}>{s}%</Text>
                   </TouchableOpacity>
                 );
               })}

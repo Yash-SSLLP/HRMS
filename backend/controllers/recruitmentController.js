@@ -291,7 +291,7 @@ const deleteCandidate = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Candidate not found');
   }
-  if (candidate.resumePath) storage.remove(candidate.resumePath);
+  if (candidate.resumePath) await storage.remove(candidate.resumePath);
   await candidate.deleteOne();
   res.json({ id: req.params.id, deleted: true });
 });
@@ -579,7 +579,7 @@ const downloadMyInterviewResume = asyncHandler(async (req, res) => {
     return res.send(candidate.resumeData);
   }
   res.setHeader('Content-Disposition', `inline; filename="${name}"`);
-  if (!storage.streamTo(candidate.resumePath, res)) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(candidate.resumePath, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 // Default invite email (subject + plain-text body) for a round's meeting link.
@@ -873,7 +873,7 @@ const downloadResume = asyncHandler(async (req, res) => {
   const ext = path.extname(candidate.resumePath).toLowerCase();
   res.setHeader('Content-Type', typeForExt(ext));
   res.setHeader('Content-Disposition', `inline; filename="${candidate.resumeName || 'resume' + ext}"`);
-  if (!storage.streamTo(candidate.resumePath, res)) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(candidate.resumePath, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 /**
@@ -897,7 +897,7 @@ const uploadResume = asyncHandler(async (req, res) => {
   }
   // Drop any legacy on-disk copy now that the bytes live in the DB.
   if (candidate.resumePath) {
-    try { storage.remove(candidate.resumePath); } catch { /* best effort */ }
+    try { await storage.remove(candidate.resumePath); } catch { /* best effort */ }
     candidate.resumePath = undefined;
   }
   candidate.resumeData = req.file.buffer;
@@ -963,7 +963,7 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
 // cause). Returns a storage path that is guaranteed to exist right now.
 async function ensureLetterFile(candidate, kind) {
   const letter = candidate[kind];
-  if (letter?.letterPath && storage.exists(letter.letterPath)) return letter.letterPath;
+  if (letter?.letterPath && await storage.exists(letter.letterPath)) return letter.letterPath;
 
   const data = letter?.data ? (letter.data.toObject?.() || letter.data) : {};
   const buffer = kind === 'offer'
@@ -976,7 +976,7 @@ async function ensureLetterFile(candidate, kind) {
     });
   const originalName = letter?.letterName
     || `${kind === 'offer' ? 'Offer-Letter' : 'Appointment-Letter'}-${safeName(candidate.name)}.pdf`;
-  const { storagePath } = storage.saveBuffer({ buffer, ownerType: kind, ownerId: candidate._id, originalName });
+  const { storagePath } = await storage.saveBuffer({ buffer, ownerType: kind, ownerId: candidate._id, originalName });
   letter.letterPath = storagePath;
   letter.letterName = originalName;
   await candidate.save();
@@ -1064,10 +1064,10 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
 });
 
 // Stream a stored letter PDF inline.
-function streamLetter(res, relPath, filename) {
+async function streamLetter(res, relPath, filename) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-  if (!storage.streamTo(relPath, res)) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(relPath, res))) return res.status(404).json({ message: 'File not found' });
 }
 
 /**
@@ -1111,10 +1111,10 @@ const generateOffer = asyncHandler(async (req, res) => {
 
   const buffer = await renderOfferLetter({ ...data, candidateName: candidate.name });
   const letterName = `Offer-Letter-${safeName(candidate.name)}.pdf`;
-  if (candidate.offer?.letterPath) storage.remove(candidate.offer.letterPath);
+  if (candidate.offer?.letterPath) await storage.remove(candidate.offer.letterPath);
   // Keep the same shareable token across re-generations so old links still work.
   const offerToken = candidate.offer?.token || crypto.randomBytes(16).toString('hex');
-  const { storagePath } = storage.saveBuffer({
+  const { storagePath } = await storage.saveBuffer({
     buffer, ownerType: 'offer', ownerId: candidate._id, originalName: letterName,
   });
 
@@ -1149,7 +1149,7 @@ const downloadOffer = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('No offer letter on file for this candidate');
   }
-  streamLetter(res, candidate.offer.letterPath, candidate.offer.letterName || 'offer-letter.pdf');
+  await streamLetter(res, candidate.offer.letterPath, candidate.offer.letterName || 'offer-letter.pdf');
 });
 
 /**
@@ -1245,9 +1245,9 @@ const generateAppointment = asyncHandler(async (req, res) => {
     signatoryTitle: b.signatoryTitle || COMPANY.defaultSignatoryTitle,
   });
   const letterName = `Appointment-Letter-${safeName(candidate.name)}.pdf`;
-  if (candidate.appointment?.letterPath) storage.remove(candidate.appointment.letterPath);
+  if (candidate.appointment?.letterPath) await storage.remove(candidate.appointment.letterPath);
   const apptToken = candidate.appointment?.token || crypto.randomBytes(16).toString('hex');
-  const { storagePath } = storage.saveBuffer({
+  const { storagePath } = await storage.saveBuffer({
     buffer, ownerType: 'appointment', ownerId: candidate._id, originalName: letterName,
   });
 
@@ -1284,7 +1284,7 @@ const downloadAppointment = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('No appointment letter on file for this candidate');
   }
-  streamLetter(res, candidate.appointment.letterPath, candidate.appointment.letterName || 'appointment-letter.pdf');
+  await streamLetter(res, candidate.appointment.letterPath, candidate.appointment.letterName || 'appointment-letter.pdf');
 });
 
 /**
@@ -1306,7 +1306,7 @@ const downloadLetterByToken = asyncHandler(async (req, res) => {
   }
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${letter.letterName || 'letter.pdf'}"`);
-  if (!storage.streamTo(letter.letterPath, res)) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(letter.letterPath, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 // Record that HR has sent a stored letter. Actual delivery happens from the HR's
@@ -1833,7 +1833,7 @@ const submitDocuments = asyncHandler(async (req, res) => {
   const saved = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const { storagePath, sizeBytes } = storage.saveBuffer({
+    const { storagePath, sizeBytes } = await storage.saveBuffer({
       buffer: file.buffer,
       ownerType: 'candidate-docs',
       ownerId: candidate._id,
@@ -1893,7 +1893,7 @@ const downloadCandidateDocument = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', type);
   res.setHeader('Content-Disposition', `inline; filename="${file.name || 'document' + ext}"`);
   // Primary local disk, with a fallback to the durable Cloudinary backup.
-  if (storage.exists(file.storagePath) && storage.streamTo(file.storagePath, res)) return;
+  if (await storage.exists(file.storagePath) && await storage.streamTo(file.storagePath, res)) return;
   if (file.cloud && file.cloud.publicId && cloudinary.enabled()) {
     try {
       const upstream = await fetch(cloudinary.fileDeliveryUrl(file.cloud));

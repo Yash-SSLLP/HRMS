@@ -176,7 +176,7 @@ export default function ChatListScreen() {
       />
       {convos.length > 0 && (
         <TouchableOpacity style={styles.fab} onPress={() => nav.navigate('NewChat')} activeOpacity={0.85}>
-          <Ionicons name="create" size={24} color="#fff" />
+          <Ionicons name="create" size={24} color={colors.onPrimary} />
         </TouchableOpacity>
       )}
     </Screen>
@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
   rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   groupAv: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   badge: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  badgeText: { color: colors.onPrimary, fontSize: 11, fontWeight: '700' },
   resignedTag: { fontSize: 9, fontWeight: '800', color: colors.danger, backgroundColor: colors.dangerSoft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
   invite: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing(3), marginBottom: spacing(2), borderWidth: 1, borderColor: colors.border },
   iBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },

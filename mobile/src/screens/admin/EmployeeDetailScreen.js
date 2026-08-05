@@ -114,10 +114,10 @@ export default function EmployeeDetailScreen({ route }) {
         <View style={[styles.header, { backgroundColor: accent }]}>
           {writable && (
             <TouchableOpacity style={styles.editBtn} onPress={openEdit} hitSlop={10}>
-              <Ionicons name="create-outline" size={20} color="#fff" />
+              <Ionicons name="create-outline" size={20} color={colors.onPrimary} />
             </TouchableOpacity>
           )}
-          <Avatar name={fullName(u)} uri={u?.photo ? mediaUrl(`/auth/users/${u._id}/avatar`) : null} size={86} color="#fff" />
+          <Avatar name={fullName(u)} uri={u?.photo ? mediaUrl(`/auth/users/${u._id}/avatar`) : null} size={86} color={colors.onPrimary} />
           <Text style={styles.name}>{fullName(u)}</Text>
           <Text style={styles.sub}>{profile.designation || '-'}{profile.department ? ` · ${profile.department}` : ''}</Text>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
@@ -228,8 +228,8 @@ const styles = StyleSheet.create({
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing(5), paddingBottom: spacing(8) },
   sheetHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing(4) },
-  name: { fontSize: 22, fontWeight: '800', color: '#fff', marginTop: 12 },
-  sub: { fontSize: 14, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+  name: { fontSize: 22, fontWeight: '800', color: colors.onPrimary, marginTop: 12 },
+  sub: { fontSize: 14, color: 'rgba(27,30,36,0.78)', marginTop: 2 },
   contactRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
   contactBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   card: { marginBottom: spacing(3) },

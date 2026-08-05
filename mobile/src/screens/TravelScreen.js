@@ -73,7 +73,7 @@ export default function TravelScreen() {
               <View style={styles.chips}>
                 {MODES.map((m) => (
                   <TouchableOpacity key={m} onPress={() => set('modeOfTravel', m)} style={[styles.chip, f.modeOfTravel === m && styles.chipActive]}>
-                    <Text style={[styles.chipText, f.modeOfTravel === m && { color: '#fff' }]}>{m}</Text>
+                    <Text style={[styles.chipText, f.modeOfTravel === m && { color: colors.onPrimary }]}>{m}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

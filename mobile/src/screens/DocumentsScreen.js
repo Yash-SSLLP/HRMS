@@ -115,8 +115,11 @@ export default function DocumentsScreen() {
             <View style={styles.chips}>
               {missingSelf.map((c) => (
                 <TouchableOpacity key={c} onPress={() => setCategory(c)} style={[styles.missingChip, category === c && styles.missingChipActive]}>
-                  <Text style={[styles.missingChipText, category === c && { color: '#fff' }]}>{prettyCat(c)}</Text>
-                  <Ionicons name="add" size={14} color={category === c ? '#fff' : colors.warning} />
+                  {/* This chip fills with colors.warning, not the gold — but the
+                      same near-black ink applies: white on the dark theme's
+                      amber is 1.67:1, near-black is 10.4:1. */}
+                  <Text style={[styles.missingChipText, category === c && { color: colors.onPrimary }]}>{prettyCat(c)}</Text>
+                  <Ionicons name="add" size={14} color={category === c ? colors.onPrimary : colors.warning} />
                 </TouchableOpacity>
               ))}
               {missingHr.map((c) => (
@@ -136,7 +139,7 @@ export default function DocumentsScreen() {
           <View style={styles.chips}>
             {categories.map((c) => (
               <TouchableOpacity key={c} onPress={() => setCategory(c)} style={[styles.chip, category === c && styles.chipActive]}>
-                <Text style={[styles.chipText, category === c && { color: '#fff' }]}>{prettyCat(c)}</Text>
+                <Text style={[styles.chipText, category === c && { color: colors.onPrimary }]}>{prettyCat(c)}</Text>
               </TouchableOpacity>
             ))}
           </View>

@@ -55,7 +55,7 @@ export default function TodayAttendanceScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filters} contentContainerStyle={{ paddingHorizontal: spacing(4), gap: 8 }}>
         {filters.map((d) => (
           <TouchableOpacity key={d} onPress={() => setDept(d)} style={[styles.chip, dept === d && styles.chipActive]}>
-            <Text style={[styles.chipText, dept === d && { color: '#fff' }]}>{d === 'all' ? 'All' : d}</Text>
+            <Text style={[styles.chipText, dept === d && { color: colors.onPrimary }]}>{d === 'all' ? 'All' : d}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>

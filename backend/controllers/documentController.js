@@ -83,7 +83,7 @@ const uploadMine = asyncHandler(async (req, res) => {
   }
   const profile = await getMyProfileOrFail(req.user._id, res);
 
-  const { storagePath, sha256, sizeBytes } = storage.saveBuffer({
+  const { storagePath, sha256, sizeBytes } = await storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'employee',
     ownerId: profile._id,
@@ -159,7 +159,7 @@ const uploadForEmployee = asyncHandler(async (req, res) => {
     throw new Error('Employee profile not found');
   }
 
-  const { storagePath, sha256, sizeBytes } = storage.saveBuffer({
+  const { storagePath, sha256, sizeBytes } = await storage.saveBuffer({
     buffer: req.file.buffer,
     ownerType: 'employee',
     ownerId: profile._id,
@@ -213,9 +213,9 @@ const download = asyncHandler(async (req, res) => {
 
   // Primary: local disk. If the file is missing (e.g. ephemeral disk wiped on a
   // redeploy), fall back to the durable Cloudinary backup.
-  if (storage.exists(doc.storagePath)) {
+  if (await storage.exists(doc.storagePath)) {
     res.setHeader('Content-Length', doc.sizeBytes);
-    if (storage.streamTo(doc.storagePath, res)) return;
+    if (await storage.streamTo(doc.storagePath, res)) return;
   }
   if (doc.cloud && doc.cloud.publicId && cloudinary.enabled()) {
     try {
@@ -253,7 +253,7 @@ const remove = asyncHandler(async (req, res) => {
   }
 
   try {
-    storage.remove(doc.storagePath);
+    await storage.remove(doc.storagePath);
   } catch (err) {
     // Log but don't fail the request — DB cleanup still proceeds
     console.error('Storage remove failed:', err.message);

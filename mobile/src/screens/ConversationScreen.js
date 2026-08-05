@@ -34,14 +34,14 @@ const URL_RE = /(https?:\/\/[^\s]+)/g;
 function MessageBody({ text, mine }) {
   const parts = String(text || '').split(URL_RE);
   return (
-    <Text style={[styles.bubbleText, mine && { color: '#fff' }]}>
+    <Text style={[styles.bubbleText, mine && { color: colors.onPrimary }]}>
       {parts.map((p, i) => {
         if (i % 2 === 0) return p;
         const isCall = /meet\.jit\.si|meet\.google\.com/.test(p);
         return (
           <Text
             key={i}
-            style={{ textDecorationLine: 'underline', fontWeight: isCall ? '700' : '400', color: mine ? '#fff' : colors.primary }}
+            style={{ textDecorationLine: 'underline', fontWeight: isCall ? '700' : '400', color: mine ? colors.onPrimary : colors.primary }}
             onPress={() => Linking.openURL(p).catch(() => {})}
           >
             {isCall ? '📹 Join video call' : p}

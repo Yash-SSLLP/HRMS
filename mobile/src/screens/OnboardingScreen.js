@@ -74,7 +74,7 @@ export default function OnboardingScreen() {
                     const active = t.status === s;
                     return (
                       <TouchableOpacity key={s} onPress={() => setStatus(t, s)} style={[styles.chip, active && styles.chipActive]}>
-                        <Text style={[styles.chipText, active && { color: '#fff' }]}>{LABEL[s]}</Text>
+                        <Text style={[styles.chipText, active && { color: C.onPrimary }]}>{LABEL[s]}</Text>
                       </TouchableOpacity>
                     );
                   })}

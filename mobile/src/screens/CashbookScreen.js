@@ -91,7 +91,7 @@ export default function CashbookScreen() {
               <View style={styles.chips}>
                 {cats.map((c) => (
                   <TouchableOpacity key={c} onPress={() => setCategory(c)} style={[styles.chip, category === c && styles.chipActive]}>
-                    <Text style={[styles.chipText, category === c && { color: '#fff' }]}>{c}</Text>
+                    <Text style={[styles.chipText, category === c && { color: colors.onPrimary }]}>{c}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -104,7 +104,7 @@ export default function CashbookScreen() {
               <View style={styles.chips}>
                 {PAYMENT_MODES.map((m) => (
                   <TouchableOpacity key={m} onPress={() => setPaymentMode(m)} style={[styles.chip, paymentMode === m && styles.chipActive]}>
-                    <Text style={[styles.chipText, paymentMode === m && { color: '#fff' }]}>{m}</Text>
+                    <Text style={[styles.chipText, paymentMode === m && { color: colors.onPrimary }]}>{m}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

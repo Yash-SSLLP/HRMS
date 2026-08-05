@@ -148,7 +148,7 @@ export default function PayrollScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filters} contentContainerStyle={{ paddingHorizontal: spacing(4), gap: 8 }}>
         {STATUSES.map((s) => (
           <TouchableOpacity key={s} onPress={() => setStatus(s)} style={[styles.chip, status === s && styles.chipActive]}>
-            <Text style={[styles.chipText, status === s && { color: '#fff' }]}>{s}</Text>
+            <Text style={[styles.chipText, status === s && { color: colors.onPrimary }]}>{s}</Text>
           </TouchableOpacity>
         ))}
         <TouchableOpacity onPress={exportExcel} disabled={busyId === 'export'} style={[styles.chip, { flexDirection: 'row', alignItems: 'center', gap: 5 }]}>

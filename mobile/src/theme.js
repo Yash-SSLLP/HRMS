@@ -23,6 +23,12 @@ const lightColors = {
   primary: '#C7A24C',
   primaryDark: '#A9863A',
   primarySoft: '#F7F0DA',
+  // Ink for anything SITTING ON a `primary` fill — and on any other light fill,
+  // e.g. `warning`. The gold is light in both themes, so white on it is only
+  // ~2:1 — never readable. This is ~7:1 and is what AppButton's `primary`
+  // variant has always used. Use it for the label or glyph of every gold-filled
+  // chip, tab, button, badge or cell.
+  onPrimary: '#1a1a1a',
 
   bg: '#f5f6fa',
   surface: '#ffffff',
@@ -73,6 +79,8 @@ const darkColors = {
   primary: '#D6B25A',
   primaryDark: '#B8973C',
   primarySoft: '#2B2411',
+  // See lightColors.onPrimary — the dark gold is lighter still (white ~2:1).
+  onPrimary: '#1a1a1a',
 
   bg: '#0e0f13',
   surface: '#17181d',

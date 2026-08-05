@@ -93,6 +93,12 @@ export default function ProfileScreen() {
   const avatarUri = user?.photo ? mediaUrl(`/auth/users/${user._id}/avatar`) + `?b=${avatarBust}` : null;
   const bannerUri = user?.banner ? mediaUrl(`/auth/users/${user._id}/banner`) + `?b=${bannerBust}` : null;
 
+  // Header ink depends on what is actually behind it. With a banner there is a
+  // dark rgba(15,23,42,.38) scrim over the photo, so white is right; without
+  // one the header is the bare gold accent, where white falls to ~2:1.
+  const headerInk = bannerUri ? '#fff' : colors.onPrimary;
+  const headerInkSoft = bannerUri ? 'rgba(255,255,255,0.85)' : 'rgba(27,30,36,0.78)';
+
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }} refreshControl={refresher(refreshing, onRefresh)}>
@@ -109,20 +115,20 @@ export default function ProfileScreen() {
             </>
           )}
           <TouchableOpacity style={styles.bannerBtn} onPress={changeBanner} activeOpacity={0.8} hitSlop={10}>
-            <Ionicons name="image-outline" size={18} color="#fff" />
-            <Text style={styles.bannerBtnText}>Banner</Text>
+            <Ionicons name="image-outline" size={18} color={headerInk} />
+            <Text style={[styles.bannerBtnText, { color: headerInk }]}>Banner</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.settingsBtn} onPress={() => nav.navigate('Settings')} activeOpacity={0.8} hitSlop={10}>
-            <Ionicons name="settings-outline" size={22} color="#fff" />
+            <Ionicons name="settings-outline" size={22} color={headerInk} />
           </TouchableOpacity>
           <TouchableOpacity onPress={changeAvatar} activeOpacity={0.85}>
-            <Avatar name={`${user?.firstName} ${user?.lastName}`} uri={avatarUri} size={92} color="#fff" />
+            <Avatar name={`${user?.firstName} ${user?.lastName}`} uri={avatarUri} size={92} color={headerInk} />
             <View style={styles.camBadge}>
               <Ionicons name="camera" size={15} color={accent} />
             </View>
           </TouchableOpacity>
-          <Text style={styles.name}>{user?.firstName} {user?.lastName}</Text>
-          <Text style={styles.email}>{user?.email}</Text>
+          <Text style={[styles.name, { color: headerInk }]}>{user?.firstName} {user?.lastName}</Text>
+          <Text style={[styles.email, { color: headerInkSoft }]}>{user?.email}</Text>
           <View style={{ marginTop: 8 }}>
             <Pill label={profile?.designation || user?.role} tone="primary" />
           </View>

@@ -409,7 +409,9 @@ export function ChipSelect({ options, value, onChange, getLabel = (o) => o, getV
         const active = v === value;
         return (
           <TouchableOpacity key={String(v)} onPress={() => onChange(v)} style={[styles.chip, active && styles.chipActive]}>
-            <Text style={[styles.chipText, active && { color: '#fff' }]}>{getLabel(o)}</Text>
+            {/* chipActive fills with the brand gold, which white text cannot
+                carry (~2:1). Same ink as buttonVariants.primary. */}
+            <Text style={[styles.chipText, active && styles.chipTextActive]}>{getLabel(o)}</Text>
           </TouchableOpacity>
         );
       })}
@@ -566,6 +568,7 @@ const styles = StyleSheet.create({
   chip: { paddingHorizontal: 14, height: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontWeight: '700', fontSize: 13, color: colors.textMuted },
+  chipTextActive: { color: colors.onPrimary },
 });
 
 export { Ionicons };

@@ -75,7 +75,7 @@ export default function ChangeRequestScreen() {
               <View style={styles.chips}>
                 {fields.map((f) => (
                   <TouchableOpacity key={f.key} onPress={() => { setField(f); setValue(''); }} style={[styles.chip, field?.key === f.key && styles.chipActive]}>
-                    <Text style={[styles.chipText, field?.key === f.key && { color: '#fff' }]}>{f.label}</Text>
+                    <Text style={[styles.chipText, field?.key === f.key && { color: colors.onPrimary }]}>{f.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

@@ -119,7 +119,7 @@ export default function DeclarationScreen() {
           <View style={styles.chips}>
             {['Old', 'New'].map((r) => (
               <TouchableOpacity key={r} disabled={!editable} onPress={() => setRegime(r)} style={[styles.chip, regime === r && styles.chipActive, !editable && { opacity: 0.6 }]}>
-                <Text style={[styles.chipText, regime === r && { color: '#fff' }]}>{r} regime</Text>
+                <Text style={[styles.chipText, regime === r && { color: colors.onPrimary }]}>{r} regime</Text>
               </TouchableOpacity>
             ))}
           </View>

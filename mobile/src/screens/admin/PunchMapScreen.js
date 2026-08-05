@@ -135,7 +135,7 @@ export default function PunchMapScreen() {
         </TouchableOpacity>
         {['all', 'in', 'out'].map((k) => (
           <TouchableOpacity key={k} onPress={() => setKind(k)} style={[styles.kindChip, kind === k && styles.kindChipOn]}>
-            <Text style={[styles.kindChipText, kind === k && { color: '#fff' }]}>{k === 'all' ? 'In & Out' : k === 'in' ? 'In' : 'Out'}</Text>
+            <Text style={[styles.kindChipText, kind === k && { color: colors.onPrimary }]}>{k === 'all' ? 'In & Out' : k === 'in' ? 'In' : 'Out'}</Text>
           </TouchableOpacity>
         ))}
       </View>

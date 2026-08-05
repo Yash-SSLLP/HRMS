@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
   punchIcon: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   punchStatus: { fontSize: 16, fontWeight: '700', color: colors.text, marginVertical: 2 },
   punchBtn: { paddingHorizontal: 16, height: 40, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  punchBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  punchBtnText: { color: colors.onPrimary, fontWeight: '700', fontSize: 13 },
   statRow: { flexDirection: 'row', marginBottom: spacing(2) },
   actionGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   action: {

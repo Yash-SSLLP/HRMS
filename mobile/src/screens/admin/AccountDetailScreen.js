@@ -115,7 +115,7 @@ export default function AccountDetailScreen({ route }) {
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
         <View style={[styles.header, { backgroundColor: accent }]}>
-          <Avatar name={fullName(user)} uri={user.photo ? mediaUrl(`/auth/users/${user._id}/avatar`) : null} size={86} color="#fff" />
+          <Avatar name={fullName(user)} uri={user.photo ? mediaUrl(`/auth/users/${user._id}/avatar`) : null} size={86} color={colors.onPrimary} />
           <Text style={styles.name}>{fullName(user)}</Text>
           <Text style={styles.sub}>{user.email}</Text>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
@@ -196,8 +196,8 @@ export default function AccountDetailScreen({ route }) {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { alignItems: 'center', paddingTop: spacing(6), paddingBottom: spacing(6), borderBottomLeftRadius: 28, borderBottomRightRadius: 28 },
-  name: { fontSize: 21, fontWeight: '800', color: '#fff', marginTop: 10 },
-  sub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+  name: { fontSize: 21, fontWeight: '800', color: colors.onPrimary, marginTop: 10 },
+  sub: { fontSize: 13, color: 'rgba(27,30,36,0.78)', marginTop: 2 },
   contactRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
   contactBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   card: { marginBottom: spacing(4) },

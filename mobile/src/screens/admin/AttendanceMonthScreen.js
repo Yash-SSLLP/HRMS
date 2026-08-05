@@ -337,8 +337,8 @@ function ExportChip({ label, onPress, busy, disabled, primary }) {
       disabled={disabled}
       activeOpacity={0.7}
       style={[styles.exportChip, primary && styles.exportChipPrimary, disabled && { opacity: 0.5 }]}>
-      <Ionicons name="download-outline" size={13} color={primary ? '#fff' : colors.primary} />
-      <Text style={[styles.exportChipText, primary && { color: '#fff' }]}>{busy ? 'Exporting…' : label}</Text>
+      <Ionicons name="download-outline" size={13} color={primary ? colors.onPrimary : colors.primary} />
+      <Text style={[styles.exportChipText, primary && { color: colors.onPrimary }]}>{busy ? 'Exporting…' : label}</Text>
     </TouchableOpacity>
   );
 }

@@ -152,7 +152,9 @@ export default function MenuScreen() {
               <TouchableOpacity style={styles.header} activeOpacity={0.6} onPress={() => toggle(g.title)}>
                 <Text style={styles.headerText}>{g.title.toUpperCase()}</Text>
                 <View style={[styles.plus, isOpen && styles.plusOpen]}>
-                  <Ionicons name={isOpen ? 'remove' : 'add'} size={20} color={isOpen ? '#fff' : colors.text} />
+                  {/* Near-black on the open (gold) chip, not white: colors.primary
+                      is the brand gold, and white on it is only ~2:1. */}
+                  <Ionicons name={isOpen ? 'remove' : 'add'} size={20} color={isOpen ? colors.onPrimary : colors.text} />
                 </View>
               </TouchableOpacity>
               {isOpen && (

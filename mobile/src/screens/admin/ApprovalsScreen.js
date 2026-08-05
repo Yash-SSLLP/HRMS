@@ -157,11 +157,11 @@ export default function ApprovalsScreen() {
             const active = i === tab;
             return (
               <TouchableOpacity key={c.key} onPress={() => setTab(i)} style={[styles.tab, active && styles.tabActive]}>
-                <Ionicons name={c.icon} size={15} color={active ? '#fff' : colors.textMuted} />
-                <Text style={[styles.tabText, active && { color: '#fff' }]}>{c.label}</Text>
+                <Ionicons name={c.icon} size={15} color={active ? colors.onPrimary : colors.textMuted} />
+                <Text style={[styles.tabText, active && { color: colors.onPrimary }]}>{c.label}</Text>
                 {counts[c.key] ? (
                   <View style={[styles.tabBadge, active && { backgroundColor: 'rgba(255,255,255,0.3)' }]}>
-                    <Text style={[styles.tabBadgeText, active && { color: '#fff' }]}>{counts[c.key]}</Text>
+                    <Text style={[styles.tabBadgeText, active && { color: colors.onPrimary }]}>{counts[c.key]}</Text>
                   </View>
                 ) : null}
               </TouchableOpacity>

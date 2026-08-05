@@ -17,8 +17,8 @@ const { notify } = require('../services/notify');
 const USER_FIELDS = 'firstName lastName email role';
 
 // Persist a receipt file (image/PDF) for an expense and stamp its receipt sub-doc.
-function attachReceipt(expense, file) {
-  const saved = storage.saveBuffer({
+async function attachReceipt(expense, file) {
+  const saved = await storage.saveBuffer({
     buffer: file.buffer,
     ownerType: 'expense',
     ownerId: expense._id,
@@ -78,7 +78,7 @@ const createExpense = asyncHandler(async (req, res) => {
     merchant,
     status: 'Pending',
   });
-  attachReceipt(expense, req.file);
+  await attachReceipt(expense, req.file);
   await expense.save();
   res.status(201).json({ expense });
 });
@@ -102,7 +102,7 @@ const downloadReceipt = asyncHandler(async (req, res) => {
     throw new Error('Not allowed');
   }
   if (expense.receipt.mime) res.setHeader('Content-Type', expense.receipt.mime);
-  if (!storage.streamTo(expense.receipt.storagePath, res)) {
+  if (!(await storage.streamTo(expense.receipt.storagePath, res))) {
     res.status(404);
     throw new Error('Receipt file missing');
   }
@@ -172,8 +172,8 @@ async function postReimbursementToCashbook(expense, accountId, actor) {
   // can verify the payment via the existing /cashbook/entries/:id/receipt view.
   if (expense.receipt?.storagePath) {
     try {
-      const buffer = storage.readBuffer(expense.receipt.storagePath);
-      const saved = storage.saveBuffer({
+      const buffer = await storage.readBuffer(expense.receipt.storagePath);
+      const saved = await storage.saveBuffer({
         buffer,
         ownerType: 'cashbook',
         ownerId: entry._id,
@@ -260,7 +260,7 @@ const deleteExpense = asyncHandler(async (req, res) => {
     throw new Error('Expense not found');
   }
   if (expense.receipt?.storagePath) {
-    try { storage.remove(expense.receipt.storagePath); } catch { /* ignore */ }
+    try { await storage.remove(expense.receipt.storagePath); } catch { /* ignore */ }
   }
   await expense.deleteOne();
   res.json({ id: req.params.id, deleted: true });

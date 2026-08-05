@@ -45,7 +45,7 @@ export default function LockScreen() {
   return (
     <View style={styles.root}>
       <View style={styles.logo}>
-        <Ionicons name="lock-closed" size={40} color="#fff" />
+        <Ionicons name="lock-closed" size={40} color={colors.onPrimary} />
       </View>
       <Text style={styles.title}>App locked</Text>
       <Text style={styles.sub}>Unlock with your fingerprint or face to continue.</Text>
@@ -58,8 +58,8 @@ export default function LockScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', padding: spacing(8) },
   logo: { width: 84, height: 84, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
-  title: { fontSize: 24, fontWeight: '800', color: '#fff' },
-  sub: { fontSize: 14, color: 'rgba(255,255,255,0.85)', marginTop: 8, textAlign: 'center' },
-  error: { color: '#fecaca', marginTop: 14, fontWeight: '600' },
+  title: { fontSize: 24, fontWeight: '800', color: colors.onPrimary },
+  sub: { fontSize: 14, color: 'rgba(27,30,36,0.78)', marginTop: 8, textAlign: 'center' },
+  error: { color: '#7f1d1d', marginTop: 14, fontWeight: '600' },
   btn: { marginTop: 28, alignSelf: 'stretch' },
 });
