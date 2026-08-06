@@ -14,11 +14,12 @@ import AuthImage from '../components/AuthImage';
 import PresenceBoardView from '../components/PresenceBoardView';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import SearchableSelect from '../components/SearchableSelect';
+import { formatTime12 } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
+const fmtTime = (d) => formatTime12(d) || '-';
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 // Small line under a punch time: WFH tag, or distance from the geofence

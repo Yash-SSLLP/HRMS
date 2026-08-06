@@ -14,6 +14,10 @@
 const WORKDAY_START_HOUR = 10;   // check-in after 10:00 AM IST counts as late
 const WORKDAY_END_HOUR = 19;     // 7:00 PM IST — assumed close for a missing punch-out
 const HALF_DAY_MIN_HOURS = 6;    // a day under this is a half day until regularized
+// Latest check-in that can still earn a half day. Arriving after this has missed
+// the whole first half, so a half-day declaration is refused and the day is
+// unpaid (Absent) rather than paid at 0.5 — see halfDayCutoffPassed().
+const HALF_DAY_CUTOFF_HOUR = 12; // 12:00 PM IST
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -55,6 +59,27 @@ function effectiveHours(record) {
 }
 
 /**
+ * Whether the check-in landed after the half-day cut-off (12:00 PM IST).
+ *
+ * A half day is one of the two halves of the working day actually worked. An
+ * employee who ticks "half day" but only arrives in the afternoon has missed the
+ * entire first half, so the declaration is refused and the day is recorded as
+ * Absent (full LOP) instead of HalfDay (0.5 LOP). HR can still restore it with a
+ * regularization. Returns false when there is no check-in to judge.
+ *
+ * `date` is IST midnight (startOfDayIST), so the hour offset applies directly —
+ * the same arithmetic lateMinutes() uses.
+ *
+ * @param {{date: Date, checkIn?: Date}} record
+ * @returns {boolean}
+ */
+function halfDayCutoffPassed(record) {
+  if (!record || !record.checkIn) return false;
+  const cutoff = new Date(record.date).getTime() + HALF_DAY_CUTOFF_HOUR * HOUR_MS;
+  return new Date(record.checkIn).getTime() > cutoff;
+}
+
+/**
  * The status a worked day should carry, given the hours it is worth.
  *
  * Only ever returns 'Present' or 'HalfDay' — and only for days that are already
@@ -76,8 +101,10 @@ module.exports = {
   WORKDAY_START_HOUR,
   WORKDAY_END_HOUR,
   HALF_DAY_MIN_HOURS,
+  HALF_DAY_CUTOFF_HOUR,
   NON_WORKING_STATUSES,
   lateMinutes,
   effectiveHours,
+  halfDayCutoffPassed,
   statusFromHours,
 };

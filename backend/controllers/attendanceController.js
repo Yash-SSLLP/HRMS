@@ -18,7 +18,10 @@ const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
 const { formatDuration } = require('../utils/duration');
-const { WORKDAY_START_HOUR, lateMinutes, statusFromHours, effectiveHours } = require('../utils/workday');
+const {
+  WORKDAY_START_HOUR, HALF_DAY_CUTOFF_HOUR,
+  lateMinutes, statusFromHours, effectiveHours, halfDayCutoffPassed,
+} = require('../utils/workday');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../utils/restDay');
 const { notify } = require('../services/notify');
@@ -126,6 +129,20 @@ function appendRemark(existing, note) {
   return `${base} ${note}`;
 }
 
+// A punch instant as 12-hour IST, e.g. "12:41 PM" — remarks are read by HR and
+// the employee, and the portal shows every time of day in 12-hour form.
+// Node's en-IN emits a lowercase "pm" where the browser emits "PM"; upper-case it
+// so a server-written remark reads like every other time in the UI.
+const to12hIst = (d, tz) => new Date(d)
+  .toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz })
+  .replace(/\b([ap])\.?m\.?\b/i, (_, p) => `${p.toUpperCase()}M`);
+
+const fmtIstTime = (d) => (d ? to12hIst(d, 'Asia/Kolkata') : '');
+
+// The cut-off itself, written the same way (e.g. "12:00 PM"), so the remark
+// stays correct if HALF_DAY_CUTOFF_HOUR is ever changed.
+const HALF_DAY_CUTOFF_LABEL = to12hIst(Date.UTC(2000, 0, 1, HALF_DAY_CUTOFF_HOUR, 0), 'UTC');
+
 /**
  * Punch in for today with a selfie and optional GPS (geofence captured, not blocked).
  * @route POST /api/attendance/me/checkin  (multipart field: photo)
@@ -169,8 +186,23 @@ const checkIn = asyncHandler(async (req, res) => {
   // An employee can declare a half day up front (planned half day, medical
   // appointment, and so on) instead of waiting until punch-out. The declaration
   // is remembered on the record so the hours rule at punch-out cannot undo it.
-  record.halfDayDeclared = req.body.halfDay === 'true';
-  record.status = record.halfDayDeclared ? 'HalfDay' : 'Present';
+  //
+  // Except when they arrive too late to have worked a half day at all: a
+  // check-in after 12:00 PM IST has missed the whole first half, so the
+  // declaration is refused and the day is unpaid (Absent) rather than paid at
+  // 0.5. HR can restore it through a regularization.
+  const declaredHalf = req.body.halfDay === 'true';
+  const tooLateForHalf = declaredHalf && halfDayCutoffPassed(record);
+  record.halfDayDeclared = declaredHalf && !tooLateForHalf;
+  if (tooLateForHalf) {
+    record.status = 'Absent';
+    record.remarks = appendRemark(
+      record.remarks,
+      `Half day declined: checked in at ${fmtIstTime(record.checkIn)}, after the ${HALF_DAY_CUTOFF_LABEL} cut-off. Day marked Absent.`
+    );
+  } else {
+    record.status = record.halfDayDeclared ? 'HalfDay' : 'Present';
+  }
   await record.save();
   res.status(201).json({ record });
 });
@@ -221,8 +253,13 @@ const checkOut = asyncHandler(async (req, res) => {
   // declaration made at CHECK-IN stands for the same reason: only a longer form
   // of the same statement, and the hours rule must not talk the employee out of
   // it. HR can still correct the day through a regularization.
-  if (req.body.halfDay === 'true') record.halfDayDeclared = true;
+  //
+  // The 12:00 PM check-in cut-off applies here too, or an employee refused the
+  // half day at punch-in could simply tick it again at punch-out to get it back.
+  if (req.body.halfDay === 'true' && !halfDayCutoffPassed(record)) record.halfDayDeclared = true;
   if (record.halfDayDeclared) record.status = 'HalfDay';
+  // statusFromHours leaves Absent alone (NON_WORKING_STATUSES), so a day already
+  // marked Absent by the cut-off at check-in stays Absent however long they stay.
   else record.status = statusFromHours(record) || record.status;
   await record.save();
   res.json({ record });

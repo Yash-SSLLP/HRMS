@@ -5,12 +5,12 @@ import MapView, { Marker, Callout, Circle, PROVIDER_GOOGLE } from 'react-native-
 import api, { errMsg } from '../../api/client';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Input, Ionicons, ModalSheet, Loader } from '../../components/ui';
+import { fmtTime as fmtTime12 } from '../../utils/format';
 
 const MONTHS_FULL = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+const fmtTime = (d) => fmtTime12(d) || '—';
 const fmtDist = (m) => (m == null ? '' : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
 const daysInMonth = (y, m) => new Date(y, m, 0).getDate();
 

@@ -13,7 +13,7 @@ import { downloadFile } from '../api/download';
 import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
-import { formatHours } from '../utils/time';
+import { formatHours, formatTime12 } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = [
@@ -33,8 +33,7 @@ const STATUS_COLORS = {
 };
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
-const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+const fmtTime = (d) => formatTime12(d) || '-';
 
 // Distance of a punch from the office: metres under 1 km, else km.
 const fmtDist = (m) => (m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);

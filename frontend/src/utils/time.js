@@ -34,8 +34,16 @@ export function formatHours(hours) {
 }
 
 /**
- * A time of day in 12-hour AM/PM. Accepts a Date/ISO value (a stored punch) or
- * an "HH:mm" string (what the time inputs and regularization requests carry).
+ * A time of day in 12-hour AM/PM — "9:33 AM", "12:48 PM". THE one clock-time
+ * formatter for the whole portal; every screen should route through it rather
+ * than calling toLocaleTimeString itself, so times can't drift apart again.
+ *
+ * Accepts a Date/ISO value (a stored punch) or an "HH:mm" string (what the time
+ * inputs and regularization requests carry). Both inputs now produce byte-identical
+ * output: this used to hand-build "9:33 AM" for "HH:mm" but delegate Date values to
+ * toLocaleTimeString with hour:'2-digit', which renders "09:33 am" — so the same
+ * helper printed a different time format depending on what it was handed.
+ *
  * @param {Date|string} value
  * @returns {string} '' when there is nothing to show
  */
@@ -44,11 +52,41 @@ export function formatTime12(value) {
   const s = String(value);
   if (value instanceof Date || s.includes('T') || s.includes('Z')) {
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    if (Number.isNaN(d.getTime())) return '';
+    return upperMeridiem(
+      d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })
+    );
   }
   const m = s.match(/^(\d{1,2}):(\d{2})$/);
   if (m) { let h = +m[1]; const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${ap}`; }
   return s;
+}
+
+// en-IN renders the meridiem lower-case ("am"/"pm") in some engines and
+// upper-case in others — Node and the browser disagree, which is how server-written
+// remarks came out "12:41 PM" next to a table reading "12:48 pm". Force one casing.
+function upperMeridiem(str) {
+  return str.replace(/\b([ap])\.?\s?m\.?\b/i, (_, p) => `${p.toUpperCase()}M`);
+}
+
+/**
+ * A date + time of day: "06 Aug 2026, 1:18 PM". Composes the portal's date
+ * convention with formatTime12, so a combined stamp can't drift from a bare one.
+ *
+ * Pass `{ year: false }` for the compact "06 Aug, 1:18 PM" used in narrow tables.
+ *
+ * @param {Date|string} value
+ * @param {{year?: boolean}} [opts]
+ * @returns {string} '' when there is nothing to show
+ */
+export function formatDateTime12(value, { year = true } = {}) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const date = d.toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'short', ...(year ? { year: 'numeric' } : {}),
+  });
+  return `${date}, ${formatTime12(d)}`;
 }
 
 /**

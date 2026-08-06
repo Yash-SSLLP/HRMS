@@ -10,6 +10,7 @@ import PageHeader from '../components/PageHeader';
 import ProfilePhotoCard from '../components/ProfilePhotoCard';
 import { useAuthStore } from '../store/authStore';
 import SearchableSelect from '../components/SearchableSelect';
+import { formatDateTime12 } from '../utils/time';
 
 const STATUS_BADGE = {
   pending: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -18,7 +19,7 @@ const STATUS_BADGE = {
 };
 
 function fmt(d) {
-  return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+  return formatDateTime12(d, { year: false });
 }
 
 export default function EmployeeAccount() {

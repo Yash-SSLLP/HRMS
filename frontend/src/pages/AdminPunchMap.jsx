@@ -9,12 +9,12 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { formatTime12 } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+const fmtTime = (d) => formatTime12(d) || '—';
 const fmtDist = (m) => (m == null ? '' : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
 
 // Dot colour by punch nature. Outside-the-geofence wins (that's what HR is

@@ -13,6 +13,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { confirmDialog } from './dialogs';
+import { formatTime12 } from '../utils/time';
 
 const POLL_MS = 4000;        // conversation-list poll
 const MSG_POLL_MS = 2500;    // active-thread poll (cheap now — incremental)
@@ -460,7 +461,7 @@ export default function ChatDock() {
     p.fullName.toLowerCase().includes(dirSearch.toLowerCase()) ||
     (p.email || '').toLowerCase().includes(dirSearch.toLowerCase()));
 
-  const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+  const fmtTime = (d) => formatTime12(d);
 
   // Closed: the dock is hidden entirely — the top-bar launcher (in Layout) opens
   // it. This removes the old always-on bottom-right bar / floating button that

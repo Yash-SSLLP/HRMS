@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { ATTENDANCE_COLORS, CHART_SEQUENTIAL, CHART_EMPTY } from '../theme/chartColors';
+import { formatTime12 } from '../utils/time';
 
 // Attendance heatmap of the trailing ~12 months, split into month blocks.
 //   • Personal mode (default): each day coloured by the caller's classification.
@@ -140,7 +141,7 @@ export default function AttendanceHeatmap({ days = 365, org = false, scope = 'or
 
   const dateLabel = (d) => d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
   // Time-of-day displays are 12-hour AM/PM across the portal.
-  const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '-');
+  const fmtTime = (iso) => formatTime12(iso) || '-';
 
   return (
     <div>
@@ -303,7 +304,7 @@ function DayDetailsModal({ date, endpoint, onClose }) {
     return () => { active = false; };
   }, [date, endpoint]);
 
-  const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : null);
+  const fmtTime = (iso) => formatTime12(iso) || null;
   const dateLabel = new Date(`${date}T00:00:00+05:30`).toLocaleDateString('en-IN', {
     weekday: 'long', day: 'numeric', month: 'short', year: 'numeric',
   });

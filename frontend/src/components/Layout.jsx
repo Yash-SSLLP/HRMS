@@ -18,6 +18,7 @@ import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
 import { hasPermission, hasAnyPermission, isReadOnlyExec, isEditingExec } from '../config/permissions';
 import { pageNameForPath } from '../config/pageNames';
+import { formatDateTime12 } from '../utils/time';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
 
@@ -290,7 +291,7 @@ function NotificationBell({ isAdmin, portal }) {
                 <span className="min-w-0 flex-1">
                   <span className={`block text-sm break-words ${n.readAt ? 'text-gray-600 font-normal' : 'text-gray-900 font-semibold'}`}>{n.title}</span>
                   {n.body && <span className="block text-xs text-gray-500 mt-0.5 break-words line-clamp-3">{n.body}</span>}
-                  <span className="block text-[10px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString([], { hour12: true })}</span>
+                  <span className="block text-[10px] text-gray-400 mt-1">{formatDateTime12(n.createdAt, { year: false })}</span>
                 </span>
               </button>
             ))}

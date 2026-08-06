@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
-import { formatDuration, formatHours } from '../utils/time';
+import { formatDuration, formatHours, formatTime12 } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 
 function initials(name = '') {
@@ -12,8 +12,7 @@ function initials(name = '') {
   return ((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase() || '?';
 }
 
-const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+const fmtTime = (d) => formatTime12(d) || '-';
 
 // Decimal hours (e.g. 9.35) -> "9h 21m"
 const fmtHours = formatHours;

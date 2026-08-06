@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
-import { formatDuration, formatHours } from '../utils/time';
+import { formatDuration, formatHours, formatTime12 } from '../utils/time';
 import { useDateSort, DateSortButton } from '../components/DateSort';
 
 const MONTHS = [
@@ -32,10 +32,29 @@ const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting th
 // which never blocks a punch) isn't nagged — only genuinely poor fixes are.
 const GPS_POOR_M = 200;
 
+// Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day has to
+// start before this; the server refuses a later declaration and records the day
+// as Absent instead. Kept in IST (not the browser's zone) so a laptop set to
+// another timezone still sees the same answer the server will give.
+const HALF_DAY_CUTOFF_HOUR = 12;
+const HALF_DAY_CUTOFF_LABEL = '12:00 PM';
+
+/** Seconds past IST midnight for an instant (defaults to now). */
+const istSeconds = (d = new Date()) => {
+  const [h, m, s] = new Date(d)
+    .toLocaleTimeString('en-GB', {
+      timeZone: 'Asia/Kolkata', hour12: false,
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+    .split(':')
+    .map(Number);
+  return h * 3600 + m * 60 + s;
+};
+const pastHalfDayCutoffAt = (d) => istSeconds(d) > HALF_DAY_CUTOFF_HOUR * 3600;
+
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
-const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+const fmtTime = (d) => formatTime12(d) || '-';
 
 // Milliseconds → HH:MM:SS for the live working-time clock.
 const fmtElapsed = (ms) => {
@@ -76,6 +95,13 @@ export default function EmployeeAttendance() {
   // Camera capture modal state
   const [capture, setCapture] = useState(null); // 'checkin' | 'checkout' | null
   const [halfDay, setHalfDay] = useState(false); // mark this day as a half day
+  // Whether a half-day declaration would be refused. At check-in that is "is it
+  // past 12 PM now"; at check-out the server judges the ORIGINAL check-in, so
+  // this reads that instead of the clock. A 1s tick (below) keeps it live while
+  // the check-in camera is open.
+  const pastHalfDayCutoff = capture === 'checkout'
+    ? Boolean(today?.checkIn) && pastHalfDayCutoffAt(today.checkIn)
+    : pastHalfDayCutoffAt();
   const [wfh, setWfh] = useState(false); // mark this punch as work-from-home
   const [snapshot, setSnapshot] = useState(null); // { blob, url }
   const [camError, setCamError] = useState('');
@@ -290,11 +316,14 @@ export default function EmployeeAttendance() {
 
   // Live working-time clock: runs once checked in, freezes at check-out.
   const running = Boolean(today?.checkIn && !today.checkOut);
+  // Also tick while the check-in camera is open, so the half-day cut-off warning
+  // appears the moment 12 PM passes rather than only on the next render.
+  const ticking = running || capture === 'checkin';
   useEffect(() => {
-    if (!running) return undefined;
+    if (!ticking) return undefined;
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [running]);
+  }, [ticking]);
 
   const elapsedMs = today?.checkIn
     ? (today.checkOut ? new Date(today.checkOut) : new Date()) - new Date(today.checkIn)
@@ -483,6 +512,15 @@ export default function EmployeeAttendance() {
                 ? 'Declaring it now records today as a half day and keeps it that way, however long you stay.'
                 : 'A day under 6 hours is recorded as a half day automatically — raise a regularization if the times are wrong.'}
             </p>
+            {/* Past the cut-off the server refuses the declaration and marks the
+                day Absent — say so before they punch, not in next month's payslip. */}
+            {halfDay && pastHalfDayCutoff && (
+              <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 -mt-1 mb-3">
+                It is past {HALF_DAY_CUTOFF_LABEL}. A half day has to start before then, so this
+                will be recorded as <strong>Absent</strong> (a full unpaid day), not a half day.
+                Ask HR for a regularization if that is wrong.
+              </p>
+            )}
 
             <div className="flex flex-wrap gap-2 justify-end">
               {!snapshot ? (

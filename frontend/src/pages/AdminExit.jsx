@@ -15,6 +15,7 @@ import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import SearchableSelect from '../components/SearchableSelect';
+import { formatDateTime12 } from '../utils/time';
 
 // ---- Notice period ↔ last working day sync (calendar days) ----
 // The notice period is always the calendar-day gap from an anchor date (the
@@ -46,7 +47,7 @@ const CLEARANCE_LABELS = {
 };
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
-const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
+const fmtDateTime = (d) => formatDateTime12(d) || '-';
 
 const blankNew = {
   employee: '',

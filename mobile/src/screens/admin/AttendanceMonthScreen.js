@@ -9,14 +9,17 @@ import { colors, radius, spacing, font } from '../../theme';
 import {
   Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher,
   ModalSheet, ChipSelect, Ionicons, SkeletonScreen } from '../../components/ui';
-import { fmtHours, fmtMinutes } from '../../utils/format';
+import { fmtHours, fmtMinutes, fmtTime as fmtTime12 } from '../../utils/format';
+
+// Shared clock-time formatter, keeping this screen's em-dash placeholder for a
+// punch that never happened.
+const fmtTime = (d) => fmtTime12(d) || '-';
 
 const MONTHS_FULL = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const REG_TYPES = ['Missing Punch', 'Wrong Time', 'Forgot Check-in', 'Forgot Check-out', 'On Duty', 'Other'];
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
 const toHM = (d) => {
   if (!d) return '';
   const t = new Date(d);

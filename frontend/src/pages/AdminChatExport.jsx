@@ -9,8 +9,9 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+import { formatDateTime12 } from '../utils/time';
 
-const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '');
+const fmt = (d) => formatDateTime12(d);
 
 export default function AdminChatExport() {
   const me = useAuthStore((s) => s.user);
@@ -63,7 +64,7 @@ export default function AdminChatExport() {
     } else {
       const lines = [
         `Chat transcript: ${nameOf(a)} ↔ ${nameOf(b)}`,
-        `Exported: ${new Date().toLocaleString([], { hour12: true })}`,
+        `Exported: ${formatDateTime12(new Date())}`,
         '----------------------------------------',
         ...result.messages.map((m) =>
           `[${fmt(m.createdAt)}] ${m.sender?.fullName || 'Unknown'}: ${m.body}` +

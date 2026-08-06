@@ -18,6 +18,7 @@ import { confirmDialog, promptDialog } from '../components/dialogs';
 import stageToast from '../components/stageToast';
 import LetterEditor from '../components/LetterEditor';
 import SearchableSelect from '../components/SearchableSelect';
+import { formatDateTime12 } from '../utils/time';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -97,7 +98,7 @@ function docReviewSummary(candidate) {
   };
 }
 
-const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '');
+const fmtDateTime = (d) => formatDateTime12(d);
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 
 /**

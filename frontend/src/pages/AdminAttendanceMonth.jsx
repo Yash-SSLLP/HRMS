@@ -11,7 +11,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
-import { formatDuration, formatHours } from '../utils/time';
+import { formatDuration, formatHours, formatTime12 } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -20,7 +20,7 @@ const REG_TYPES = ['Missing Punch', 'Wrong Time', 'Forgot Check-in', 'Forgot Che
 const EMPTY = [];
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
-const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-');
+const fmtTime = (d) => formatTime12(d) || '-';
 const toHM = (d) => {
   if (!d) return '';
   const t = new Date(d);

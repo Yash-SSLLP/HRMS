@@ -9,6 +9,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { formatDateTime12 } from '../utils/time';
 
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const STATUS_STYLES = {
@@ -17,7 +18,7 @@ const STATUS_STYLES = {
   Cleared: 'bg-green-100 text-green-700',
   Rejected: 'bg-red-100 text-red-700',
 };
-const fmtDateTime = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '');
+const fmtDateTime = (d) => formatDateTime12(d);
 
 // Interview rounds assigned to the signed-in employee: join the meeting,
 // record feedback and set the round result. HR sees the same status/feedback

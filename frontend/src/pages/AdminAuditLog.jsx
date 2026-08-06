@@ -8,8 +8,9 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { useAuthStore } from '../store/authStore';
+import { formatDateTime12 } from '../utils/time';
 
-const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '-');
+const fmt = (d) => formatDateTime12(d) || '-';
 
 const ROLE_STYLES = {
   SuperAdmin: 'bg-violet-100 text-violet-800',

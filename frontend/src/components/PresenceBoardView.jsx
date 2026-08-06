@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import AuthImage from './AuthImage';
-import { formatDuration } from '../utils/time';
+import { formatDuration, formatTime12 } from '../utils/time';
 
 // Shared, read-only presentation of a presence board (present / on-leave /
 // absent for "today"), used by both the admin org-wide page and the manager
 // team-scoped view. The parent fetches the `board` and owns the page header;
 // this component owns only the tab + photo-modal UI state.
 
-const fmtTime = (d) =>
-  d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+const fmtTime = (d) => formatTime12(d) || '-';
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 const LEAVE_LABEL = {

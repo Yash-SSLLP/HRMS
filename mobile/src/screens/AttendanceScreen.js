@@ -28,6 +28,26 @@ const DOUBLE_PAY_TONE = { Approved: 'success', Rejected: 'neutral', Pending: 'wa
 const GPS_GOOD_ENOUGH_M = 25;   // resolve early once a fix is at least this accurate
 const GPS_MAX_WAIT_MS = 12000;  // otherwise accept the best fix within this window
 
+// Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day has to
+// start before this; the server refuses a later declaration and records the day
+// as Absent (a full unpaid day) instead. Evaluated in IST, not the phone's zone,
+// so a device set to another timezone still sees the answer the server will give.
+const HALF_DAY_CUTOFF_HOUR = 12;
+const HALF_DAY_CUTOFF_LABEL = '12:00 PM';
+
+/** Seconds past IST midnight for an instant (defaults to now). */
+const istSeconds = (d = new Date()) => {
+  const [h, m, s] = new Date(d)
+    .toLocaleTimeString('en-GB', {
+      timeZone: 'Asia/Kolkata', hour12: false,
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+    .split(':')
+    .map(Number);
+  return h * 3600 + m * 60 + s;
+};
+const pastHalfDayCutoffAt = (d) => istSeconds(d) > HALF_DAY_CUTOFF_HOUR * 3600;
+
 // Milliseconds → HH:MM:SS for the live working-time clock.
 const fmtElapsed = (ms) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -53,11 +73,20 @@ export default function AttendanceScreen() {
   // Tick once per second while the user is checked in but not yet checked out,
   // so the working-time clock counts up live. Frozen otherwise.
   const isRunning = Boolean(today?.checkIn && !today?.checkOut);
+  // Also tick while the half-day switch is on before check-in, so the cut-off
+  // warning appears the moment 12 PM passes instead of on the next re-render.
+  const ticking = isRunning || (halfDay && !today?.checkIn);
   useEffect(() => {
-    if (!isRunning) return undefined;
+    if (!ticking) return undefined;
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [isRunning]);
+  }, [ticking]);
+
+  // Would the server refuse this half-day declaration? Before check-in that is
+  // "is it past 12 PM now"; afterwards the server judges the original check-in.
+  const halfDayRefused = halfDay && (today?.checkIn
+    ? pastHalfDayCutoffAt(today.checkIn)
+    : pastHalfDayCutoffAt());
 
   const load = useCallback(async () => {
     const now = new Date();
@@ -237,11 +266,27 @@ export default function AttendanceScreen() {
             </View>
           )}
           {!checkedOut && halfDay && (
-            <Text style={[font.small, { marginBottom: spacing(3) }]}>
-              {checkedIn
-                ? 'Today will be recorded as a half day.'
-                : 'Today will be recorded as a half day, however long you stay.'}
-            </Text>
+            halfDayRefused ? (
+              // Past the cut-off the server declines the declaration and marks
+              // the day Absent — say so before they punch, not in the payslip.
+              <View style={styles.halfWarn}>
+                <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                <Text style={styles.halfWarnText}>
+                  {checkedIn
+                    ? `You checked in at ${fmtTime(today.checkIn)}, after the ${HALF_DAY_CUTOFF_LABEL} cut-off.`
+                    : `It is past ${HALF_DAY_CUTOFF_LABEL}.`}
+                  {' '}A half day has to start before then, so today will be recorded as{' '}
+                  <Text style={{ fontWeight: '800' }}>Absent</Text> (a full unpaid day), not a half
+                  day. Ask HR for a regularization if that is wrong.
+                </Text>
+              </View>
+            ) : (
+              <Text style={[font.small, { marginBottom: spacing(3) }]}>
+                {checkedIn
+                  ? 'Today will be recorded as a half day.'
+                  : 'Today will be recorded as a half day, however long you stay.'}
+              </Text>
+            )
           )}
 
           {!checkedIn ? (
@@ -370,6 +415,13 @@ function Metric({ label, value, sub, tone = 'plain' }) {
 }
 
 const styles = StyleSheet.create({
+  halfWarn: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: colors.dangerSoft, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.danger,
+    padding: spacing(3), marginBottom: spacing(3),
+  },
+  halfWarnText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.danger, fontWeight: '600' },
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   metric: { width: '48.5%', backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), marginBottom: spacing(2.5) },
   metricLabel: { fontSize: 11, color: colors.textMuted },

@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { formatDateTime12 } from '../utils/time';
 
 const STATUS_BADGE = {
   Open: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -14,7 +15,7 @@ const STATUS_BADGE = {
 };
 
 function fmt(d) {
-  return d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+  return formatDateTime12(d, { year: false });
 }
 
 function Field({ label, value }) {

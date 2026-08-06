@@ -11,11 +11,23 @@ export function fmtDate(d, opts = { day: 'numeric', month: 'short', year: 'numer
   }
 }
 
-/** Format a time as 12-hour "9:30 AM" (en-IN); "" for empty/invalid input. */
+// en-IN renders the meridiem lower-case ("9:30 am") on some engines and
+// upper-case on others, so the same time could print differently on two devices
+// — and differently again from to12h() below, which builds "9:30 AM" by hand.
+// Force one casing so every clock time in the app matches.
+const upperMeridiem = (s) => s.replace(/\b([ap])\.?\s?m\.?\b/i, (_, p) => `${p.toUpperCase()}M`);
+
+/**
+ * Format a time as 12-hour "9:30 AM" (en-IN); "" for empty/invalid input.
+ * THE clock-time formatter for the app — screens should call this rather than
+ * toLocaleTimeString directly, so times can't drift apart again.
+ */
 export function fmtTime(d) {
   if (!d) return '';
   try {
-    return new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return upperMeridiem(
+      new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })
+    );
   } catch {
     return '';
   }

@@ -26,6 +26,7 @@ import ManagerTeamStatus from '../components/ManagerTeamStatus';
 // FiUmbrella is Leave — the banner buttons point at exactly those pages.
 import { FiTool, FiUmbrella, FiClock, FiGift, FiInfo } from 'react-icons/fi';
 import { TbId } from 'react-icons/tb';
+import { formatDateTime12 } from '../utils/time';
 
 function bucketStats(b) {
   if (!b) return { total: 0, used: 0, remaining: 0 };
@@ -147,7 +148,7 @@ export default function EmployeeDashboard() {
                 <span className="font-medium text-gray-800">{w.title}</span>
                 {w.body && <span className="text-gray-600"> · {w.body}</span>}
                 <span className="block text-[11px] text-gray-400">
-                  {new Date(w.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}
+                  {formatDateTime12(w.createdAt, { year: false })}
                 </span>
               </li>
             ))}
