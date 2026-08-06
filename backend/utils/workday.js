@@ -27,11 +27,24 @@ const NON_WORKING_STATUSES = new Set(['Absent', 'OnLeave', 'Holiday', 'WeeklyOff
 
 /**
  * How many minutes past the 10:00 AM cut-off the employee checked in.
- * @param {{date: Date, checkIn?: Date}} record
- * @returns {number} 0 when on time or not checked in
+ *
+ * A day that isn't a worked day cannot be a late arrival, so anything carrying a
+ * NON_WORKING status reports 0 even when a punch exists. That covers the half-day
+ * declaration refused for arriving after 12 PM (recorded Absent — see
+ * halfDayCutoffPassed): the day already costs a full day's pay, and charging a
+ * late penalty on top would be a second punishment for the same act.
+ *
+ * Payroll's late count already filtered on Present/HalfDay, so this only brings
+ * the displayed "Late by" figures into line with the money that was already
+ * being charged. Sunday / comp-off duty is unaffected — those records are
+ * status 'Present', a rest day being a property of the DATE, not the status.
+ *
+ * @param {{status?: string, date: Date, checkIn?: Date}} record
+ * @returns {number} 0 when on time, not checked in, or not a worked day
  */
 function lateMinutes(record) {
   if (!record || !record.checkIn) return 0;
+  if (NON_WORKING_STATUSES.has(record.status)) return 0;
   const cutoff = new Date(record.date).getTime() + WORKDAY_START_HOUR * HOUR_MS;
   const ms = new Date(record.checkIn).getTime() - cutoff;
   return ms > 0 ? Math.round(ms / 60000) : 0;
