@@ -187,21 +187,16 @@ const checkIn = asyncHandler(async (req, res) => {
   // appointment, and so on) instead of waiting until punch-out. The declaration
   // is remembered on the record so the hours rule at punch-out cannot undo it.
   //
-  // Except when they arrive too late to have worked a half day at all: a
-  // check-in after 12:00 PM IST has missed the whole first half, so the
-  // declaration is refused and the day is unpaid (Absent) rather than paid at
-  // 0.5. HR can restore it through a regularization.
-  const declaredHalf = req.body.halfDay === 'true';
-  const tooLateForHalf = declaredHalf && halfDayCutoffPassed(record);
-  record.halfDayDeclared = declaredHalf && !tooLateForHalf;
-  if (tooLateForHalf) {
-    record.status = 'Absent';
+  // A half day may be either half of the day, so declaring one after 12:00 PM is
+  // a normal afternoon half day and is always honoured. It only changes lateness:
+  // the second half doesn't start at 10:00 AM, so lateMinutes() reports 0 for it.
+  record.halfDayDeclared = req.body.halfDay === 'true';
+  record.status = record.halfDayDeclared ? 'HalfDay' : 'Present';
+  if (record.halfDayDeclared && halfDayCutoffPassed(record)) {
     record.remarks = appendRemark(
       record.remarks,
-      `Half day declined: checked in at ${fmtIstTime(record.checkIn)}, after the ${HALF_DAY_CUTOFF_LABEL} cut-off. Day marked Absent.`
+      `Afternoon half day: checked in at ${fmtIstTime(record.checkIn)}, after ${HALF_DAY_CUTOFF_LABEL} — not counted as a late arrival.`
     );
-  } else {
-    record.status = record.halfDayDeclared ? 'HalfDay' : 'Present';
   }
   await record.save();
   res.status(201).json({ record });
@@ -253,13 +248,8 @@ const checkOut = asyncHandler(async (req, res) => {
   // declaration made at CHECK-IN stands for the same reason: only a longer form
   // of the same statement, and the hours rule must not talk the employee out of
   // it. HR can still correct the day through a regularization.
-  //
-  // The 12:00 PM check-in cut-off applies here too, or an employee refused the
-  // half day at punch-in could simply tick it again at punch-out to get it back.
-  if (req.body.halfDay === 'true' && !halfDayCutoffPassed(record)) record.halfDayDeclared = true;
+  if (req.body.halfDay === 'true') record.halfDayDeclared = true;
   if (record.halfDayDeclared) record.status = 'HalfDay';
-  // statusFromHours leaves Absent alone (NON_WORKING_STATUSES), so a day already
-  // marked Absent by the cut-off at check-in stays Absent however long they stay.
   else record.status = statusFromHours(record) || record.status;
   await record.save();
   res.json({ record });

@@ -28,10 +28,10 @@ const DOUBLE_PAY_TONE = { Approved: 'success', Rejected: 'neutral', Pending: 'wa
 const GPS_GOOD_ENOUGH_M = 25;   // resolve early once a fix is at least this accurate
 const GPS_MAX_WAIT_MS = 12000;  // otherwise accept the best fix within this window
 
-// Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day has to
-// start before this; the server refuses a later declaration and records the day
-// as Absent (a full unpaid day) instead. Evaluated in IST, not the phone's zone,
-// so a device set to another timezone still sees the answer the server will give.
+// Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day started
+// after this is the AFTERNOON half — always allowed, and never a late arrival.
+// Evaluated in IST, not the phone's zone, so a device set to another timezone
+// still sees the answer the server will give.
 const HALF_DAY_CUTOFF_HOUR = 12;
 const HALF_DAY_CUTOFF_LABEL = '12:00 PM';
 
@@ -82,9 +82,9 @@ export default function AttendanceScreen() {
     return () => clearInterval(t);
   }, [ticking]);
 
-  // Would the server refuse this half-day declaration? Before check-in that is
+  // Is this the afternoon half (started after 12 PM)? Before check-in that is
   // "is it past 12 PM now"; afterwards the server judges the original check-in.
-  const halfDayRefused = halfDay && (today?.checkIn
+  const afternoonHalfDay = halfDay && (today?.checkIn
     ? pastHalfDayCutoffAt(today.checkIn)
     : pastHalfDayCutoffAt());
 
@@ -266,18 +266,17 @@ export default function AttendanceScreen() {
             </View>
           )}
           {!checkedOut && halfDay && (
-            halfDayRefused ? (
-              // Past the cut-off the server declines the declaration and marks
-              // the day Absent — say so before they punch, not in the payslip.
-              <View style={styles.halfWarn}>
-                <Ionicons name="alert-circle" size={16} color={colors.danger} />
-                <Text style={styles.halfWarnText}>
+            afternoonHalfDay ? (
+              // Starting after the cut-off is the afternoon half — a normal half
+              // day, and not a late arrival.
+              <View style={styles.halfNote}>
+                <Ionicons name="information-circle" size={16} color={colors.success} />
+                <Text style={styles.halfNoteText}>
                   {checkedIn
-                    ? `You checked in at ${fmtTime(today.checkIn)}, after the ${HALF_DAY_CUTOFF_LABEL} cut-off.`
-                    : `It is past ${HALF_DAY_CUTOFF_LABEL}.`}
-                  {' '}A half day has to start before then, so today will be recorded as{' '}
-                  <Text style={{ fontWeight: '800' }}>Absent</Text> (a full unpaid day), not a half
-                  day. Ask HR for a regularization if that is wrong.
+                    ? `Checked in at ${fmtTime(today.checkIn)}, after ${HALF_DAY_CUTOFF_LABEL}.`
+                    : `Starting after ${HALF_DAY_CUTOFF_LABEL}.`}
+                  {' '}This is an <Text style={{ fontWeight: '800' }}>afternoon half day</Text> — it
+                  will not count as a late arrival.
                 </Text>
               </View>
             ) : (
@@ -415,13 +414,13 @@ function Metric({ label, value, sub, tone = 'plain' }) {
 }
 
 const styles = StyleSheet.create({
-  halfWarn: {
+  halfNote: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    backgroundColor: colors.dangerSoft, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colors.danger,
+    backgroundColor: colors.successSoft, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.success,
     padding: spacing(3), marginBottom: spacing(3),
   },
-  halfWarnText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.danger, fontWeight: '600' },
+  halfNoteText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.success, fontWeight: '600' },
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   metric: { width: '48.5%', backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), marginBottom: spacing(2.5) },
   metricLabel: { fontSize: 11, color: colors.textMuted },

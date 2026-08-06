@@ -14,9 +14,10 @@
 const WORKDAY_START_HOUR = 10;   // check-in after 10:00 AM IST counts as late
 const WORKDAY_END_HOUR = 19;     // 7:00 PM IST — assumed close for a missing punch-out
 const HALF_DAY_MIN_HOURS = 6;    // a day under this is a half day until regularized
-// Latest check-in that can still earn a half day. Arriving after this has missed
-// the whole first half, so a half-day declaration is refused and the day is
-// unpaid (Absent) rather than paid at 0.5 — see halfDayCutoffPassed().
+// Divides a half day into its morning and afternoon halves. A half day may be
+// taken either way round; checking in after this means the AFTERNOON half, which
+// does not start at WORKDAY_START_HOUR and so is never a late arrival — see
+// halfDayCutoffPassed() and lateMinutes().
 const HALF_DAY_CUTOFF_HOUR = 12; // 12:00 PM IST
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -28,23 +29,28 @@ const NON_WORKING_STATUSES = new Set(['Absent', 'OnLeave', 'Holiday', 'WeeklyOff
 /**
  * How many minutes past the 10:00 AM cut-off the employee checked in.
  *
- * A day that isn't a worked day cannot be a late arrival, so anything carrying a
- * NON_WORKING status reports 0 even when a punch exists. That covers the half-day
- * declaration refused for arriving after 12 PM (recorded Absent — see
- * halfDayCutoffPassed): the day already costs a full day's pay, and charging a
- * late penalty on top would be a second punishment for the same act.
+ * Two kinds of day report 0 regardless of the clock:
  *
- * Payroll's late count already filtered on Present/HalfDay, so this only brings
- * the displayed "Late by" figures into line with the money that was already
- * being charged. Sunday / comp-off duty is unaffected — those records are
- * status 'Present', a rest day being a property of the DATE, not the status.
+ *  - A day that isn't a worked day at all (NON_WORKING status) — you cannot be
+ *    late for a day you were not working. Payroll's late count already filtered
+ *    on Present/HalfDay, so this only brings the displayed "Late by" figures
+ *    into line with the money that was already being charged.
+ *  - An AFTERNOON half day: a declared half day whose check-in is after the
+ *    12:00 PM cut-off. The second half does not begin at the 10:00 AM whistle,
+ *    so arriving for it is not a late arrival. A declared half day starting
+ *    BEFORE the cut-off is the morning half and is still judged against 10:00 AM.
  *
- * @param {{status?: string, date: Date, checkIn?: Date}} record
- * @returns {number} 0 when on time, not checked in, or not a worked day
+ * Sunday / comp-off duty is unaffected — those records are status 'Present', a
+ * rest day being a property of the DATE, not the status.
+ *
+ * @param {{status?: string, halfDayDeclared?: boolean, date: Date, checkIn?: Date}} record
+ * @returns {number} 0 when on time, not checked in, not a worked day, or an
+ *                   afternoon half day
  */
 function lateMinutes(record) {
   if (!record || !record.checkIn) return 0;
   if (NON_WORKING_STATUSES.has(record.status)) return 0;
+  if (record.halfDayDeclared && halfDayCutoffPassed(record)) return 0;
   const cutoff = new Date(record.date).getTime() + WORKDAY_START_HOUR * HOUR_MS;
   const ms = new Date(record.checkIn).getTime() - cutoff;
   return ms > 0 ? Math.round(ms / 60000) : 0;
@@ -72,13 +78,14 @@ function effectiveHours(record) {
 }
 
 /**
- * Whether the check-in landed after the half-day cut-off (12:00 PM IST).
+ * Whether the check-in landed after the half-day cut-off (12:00 PM IST) — i.e.
+ * whether a declared half day is the AFTERNOON (second) half rather than the
+ * morning one.
  *
- * A half day is one of the two halves of the working day actually worked. An
- * employee who ticks "half day" but only arrives in the afternoon has missed the
- * entire first half, so the declaration is refused and the day is recorded as
- * Absent (full LOP) instead of HalfDay (0.5 LOP). HR can still restore it with a
- * regularization. Returns false when there is no check-in to judge.
+ * A half day may be taken either way round, so arriving after noon is a normal
+ * way to work one and is never refused. What it changes is lateness: the second
+ * half doesn't begin at the 10:00 AM whistle, so such a day is not a late
+ * arrival — see lateMinutes(). Returns false when there is no check-in to judge.
  *
  * `date` is IST midnight (startOfDayIST), so the hour offset applies directly —
  * the same arithmetic lateMinutes() uses.

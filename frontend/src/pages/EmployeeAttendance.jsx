@@ -32,10 +32,10 @@ const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting th
 // which never blocks a punch) isn't nagged — only genuinely poor fixes are.
 const GPS_POOR_M = 200;
 
-// Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day has to
-// start before this; the server refuses a later declaration and records the day
-// as Absent instead. Kept in IST (not the browser's zone) so a laptop set to
-// another timezone still sees the same answer the server will give.
+// Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day started
+// after this is the AFTERNOON half — always allowed, and never a late arrival.
+// Kept in IST (not the browser's zone) so a laptop set to another timezone still
+// sees the same answer the server will give.
 const HALF_DAY_CUTOFF_HOUR = 12;
 const HALF_DAY_CUTOFF_LABEL = '12:00 PM';
 
@@ -512,13 +512,12 @@ export default function EmployeeAttendance() {
                 ? 'Declaring it now records today as a half day and keeps it that way, however long you stay.'
                 : 'A day under 6 hours is recorded as a half day automatically — raise a regularization if the times are wrong.'}
             </p>
-            {/* Past the cut-off the server refuses the declaration and marks the
-                day Absent — say so before they punch, not in next month's payslip. */}
+            {/* Starting a half day after the cut-off is the afternoon half — it
+                is a normal half day, and not a late arrival. */}
             {halfDay && pastHalfDayCutoff && (
-              <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 -mt-1 mb-3">
-                It is past {HALF_DAY_CUTOFF_LABEL}. A half day has to start before then, so this
-                will be recorded as <strong>Absent</strong> (a full unpaid day), not a half day.
-                Ask HR for a regularization if that is wrong.
+              <p className="text-[11px] text-green-800 bg-green-50 border border-green-200 rounded-lg px-2 py-1.5 -mt-1 mb-3">
+                Starting after {HALF_DAY_CUTOFF_LABEL}, so this is an <strong>afternoon half day</strong>
+                {' '}— it will <strong>not</strong> count as a late arrival.
               </p>
             )}
 
