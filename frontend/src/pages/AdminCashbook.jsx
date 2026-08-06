@@ -14,7 +14,7 @@ import SearchableSelect from '../components/SearchableSelect';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const today = () => new Date().toISOString().slice(0, 10);
 
 const PAYMENT_MODES = ['Cash', 'Bank', 'UPI', 'Cheque', 'Card', 'Other'];

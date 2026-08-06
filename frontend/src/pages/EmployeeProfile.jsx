@@ -130,7 +130,7 @@ export default function EmployeeProfile() {
             <Field label="Email" value={u.email} />
             <Field label="Phone" value={u.phone} />
             <Field label="Date of Birth" value={profile.dateOfBirth && new Date(profile.dateOfBirth).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} />
-            <Field label="Date of Joining" value={profile.dateOfJoining && new Date(profile.dateOfJoining).toLocaleDateString('en-IN')} />
+            <Field label="Date of Joining" value={profile.dateOfJoining && new Date(profile.dateOfJoining).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} />
             <Field label="Employment Type" value={profile.employmentType} />
             <Field label="Designation" value={profile.designation} />
             <Field label="Department" value={profile.department} />

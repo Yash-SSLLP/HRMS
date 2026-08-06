@@ -2,7 +2,9 @@
  * ReviewsScreen — performance reviews assigned to the signed-in user (self or as
  * a reviewer): star-rate each competency and add strengths/improvements. Home
  * stack route "Reviews" (Menu > Growth). Any employee role.
- * Backend: GET /reviews/me/assigned (list), PATCH /reviews/me/:id (submit ratings).
+ * Also shows the anonymised feedback others submitted ABOUT me.
+ * Backend: GET /reviews/me/assigned (list), GET /reviews/me/about (feedback about me),
+ * PATCH /reviews/me/:id (submit ratings).
  */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
@@ -10,13 +12,18 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, Pill, AppButton, Input, Field, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
+import { Screen, Card, Pill, AppButton, Input, Field, EmptyState, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
 
 const STATUS_TONE = { Pending: 'warning', Submitted: 'success', Draft: 'neutral' };
+// Who wrote the feedback, relative to me — the only thing disclosed, since
+// reviewer identities stay hidden.
+const REL_LABEL = { self: 'Self', manager: 'Manager', peer: 'Peer' };
+const REL_TONE = { self: 'primary', manager: 'info', peer: 'neutral' };
 
 export default function ReviewsScreen() {
   const [reviews, setReviews] = useState([]);
+  const [about, setAbout] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -27,8 +34,12 @@ export default function ReviewsScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await api.get('/reviews/me/assigned').catch(() => ({ data: {} }));
-    setReviews(data.reviews || []);
+    const [assigned, mine] = await Promise.all([
+      api.get('/reviews/me/assigned').catch(() => ({ data: {} })),
+      api.get('/reviews/me/about').catch(() => ({ data: {} })),
+    ]);
+    setReviews(assigned.data?.reviews || []);
+    setAbout(mine.data?.reviews || []);
     setLoading(false);
   }, []);
 
@@ -74,8 +85,55 @@ export default function ReviewsScreen() {
       <FlatList
         data={reviews}
         keyExtractor={(r) => r._id}
-        contentContainerStyle={reviews.length ? { padding: spacing(4) } : { flex: 1 }}
+        // Only stretch for the empty state when there is nothing below it either —
+        // otherwise the "about me" footer gets squeezed off-screen.
+        contentContainerStyle={reviews.length || about.length ? { padding: spacing(4) } : { flex: 1 }}
         refreshControl={refresher(refreshing, onRefresh)}
+        ListHeaderComponent={reviews.length ? <SectionHeader title="Assigned to me" /> : null}
+        ListFooterComponent={
+          <View style={{ marginTop: reviews.length ? spacing(4) : 0 }}>
+            <SectionHeader title="Feedback about me" />
+            <Text style={[font.small, { marginBottom: spacing(3) }]}>
+              Shown anonymously · reviewer identities are hidden.
+            </Text>
+            {about.length === 0 ? (
+              <Card><Text style={font.label}>No feedback has been submitted about you yet.</Text></Card>
+            ) : (
+              about.map((r) => (
+                <Card key={r._id} style={{ marginBottom: spacing(3) }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={[font.h3, { flex: 1 }]} numberOfLines={1}>{r.cycle?.name}</Text>
+                    <Pill label={REL_LABEL[r.relationship] || r.relationship} tone={REL_TONE[r.relationship] || 'neutral'} />
+                  </View>
+                  {r.overallRating ? (
+                    <Text style={[font.label, { marginTop: 4 }]}>Overall {r.overallRating}/5</Text>
+                  ) : null}
+                  {(r.ratings || []).map((rt, i) => (
+                    <View key={i} style={[styles.ratingRow, i > 0 && styles.ratingDivider]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={font.body}>{rt.competency}</Text>
+                        {rt.comment ? <Text style={font.small}>{rt.comment}</Text> : null}
+                      </View>
+                      <Text style={[font.body, { fontWeight: '700' }]}>{rt.score ? `${rt.score}/5` : '-'}</Text>
+                    </View>
+                  ))}
+                  {r.strengths ? (
+                    <View style={{ marginTop: spacing(2.5) }}>
+                      <Text style={font.label}>Strengths</Text>
+                      <Text style={font.body}>{r.strengths}</Text>
+                    </View>
+                  ) : null}
+                  {r.improvements ? (
+                    <View style={{ marginTop: spacing(2) }}>
+                      <Text style={font.label}>Areas to improve</Text>
+                      <Text style={font.body}>{r.improvements}</Text>
+                    </View>
+                  ) : null}
+                </Card>
+              ))
+            )}
+          </View>
+        }
         renderItem={({ item }) => (
           <Card style={{ marginBottom: spacing(3) }} onPress={() => item.status === 'Pending' && open(item)}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -90,7 +148,11 @@ export default function ReviewsScreen() {
             )}
           </Card>
         )}
-        ListEmptyComponent={<EmptyState icon="clipboard-outline" title="No reviews assigned" subtitle="Performance reviews assigned to you will appear here." />}
+        ListEmptyComponent={
+          about.length
+            ? null
+            : <EmptyState icon="clipboard-outline" title="No reviews assigned" subtitle="Performance reviews assigned to you will appear here." />
+        }
       />
 
       <Modal visible={!!active} animationType="slide" onRequestClose={() => setActive(null)}>
@@ -130,4 +192,6 @@ export default function ReviewsScreen() {
 
 const styles = StyleSheet.create({
   modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: spacing(4) },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: spacing(2), marginTop: spacing(1) },
+  ratingDivider: { borderTopWidth: 1, borderTopColor: colors.border },
 });

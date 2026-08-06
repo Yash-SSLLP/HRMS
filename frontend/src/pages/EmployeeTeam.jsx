@@ -2,7 +2,8 @@
  * EmployeeTeam — "My Team" manager view (employee portal), for anyone who is a
  * reporting manager in the org chart. Loads direct reports and today's presence
  * from GET /manager/team and GET /manager/presence, shows a presence board +
- * attendance heatmap, and exports team attendance CSV via GET /manager/attendance/export.
+ * attendance heatmap, and exports team attendance as an Excel workbook via
+ * GET /manager/attendance/export (the endpoint streams .xlsx, not CSV).
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -73,7 +74,7 @@ export default function EmployeeTeam() {
   const [exDay, setExDay] = useState(new Date().toISOString().slice(0, 10));
   const [exporting, setExporting] = useState('');
 
-  // Export team attendance as an Excel-compatible CSV. The manager endpoint
+  // Export team attendance as an Excel workbook. The manager endpoint
   // limits it to the caller's reports; picking a member exports just that person.
   const exportCsv = async (kind) => {
     setExporting(kind);
@@ -207,12 +208,12 @@ export default function EmployeeTeam() {
             </div>
           )}
 
-          {/* Export team attendance to Excel (CSV). Scoped to my reports. */}
+          {/* Export team attendance to Excel (.xlsx). Scoped to my reports. */}
           {team.length > 0 && (
             <div className="bg-white shadow rounded-lg p-5 mb-4">
               <h2 className="card-title mb-1">Export Attendance</h2>
               <p className="text-xs text-gray-500 mb-3">
-                Excel-compatible. Choose a member for one person, or leave it on “Whole team”.
+                Downloads an Excel workbook. Choose a member for one person, or leave it on “Whole team”.
               </p>
               <div className="flex flex-wrap items-end gap-2">
                 <div>

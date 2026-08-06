@@ -33,7 +33,7 @@ const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting th
 const GPS_POOR_M = 200;
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const fmtTime = (d) =>
   d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
 

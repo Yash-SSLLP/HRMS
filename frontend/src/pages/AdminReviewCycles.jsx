@@ -33,7 +33,7 @@ const blankCycle = {
   competencies: 'Communication, Ownership, Technical, Teamwork',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 const userName = (u) => (u ? `${u.firstName} ${u.lastName}` : '-');
 
 export default function AdminReviewCycles() {

@@ -123,7 +123,7 @@ function PayslipDetail({ slip, onClose }) {
 
         {slip.paymentDate && (
           <p className="text-xs text-gray-500 mt-2">
-            Paid on {new Date(slip.paymentDate).toLocaleDateString('en-IN')}
+            Paid on {new Date(slip.paymentDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
             {slip.paymentReference ? ` · Ref: ${slip.paymentReference}` : ''}
           </p>
         )}

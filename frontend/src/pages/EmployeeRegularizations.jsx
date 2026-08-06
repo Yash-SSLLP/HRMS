@@ -254,7 +254,7 @@ export default function EmployeeRegularizations() {
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No regularization requests</td></tr>
             ) : items.map((r) => (
               <tr key={r._id}>
-                <td className="px-4 py-3 text-gray-700">{new Date(r.date).toLocaleDateString()}</td>
+                <td className="px-4 py-3 text-gray-700">{new Date(r.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                 <td className="px-4 py-3">{r.type}</td>
                 <td className="px-4 py-3 text-gray-700">
                   {formatTime12(r.requestedCheckIn) || '-'} – {formatTime12(r.requestedCheckOut) || '-'}

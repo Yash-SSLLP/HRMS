@@ -31,7 +31,7 @@ const parseDriveId = (input) => {
 
 const blankModule = () => ({ type: 'video', videoSource: 'cloudinary', title: '', driveUrl: '', cloudinaryPublicId: '', content: '' });
 const blank = () => ({ title: '', description: '', category: 'Other', courseType: 'internal', durationHours: 0, deadlineDays: 0, active: true, modules: [] });
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 
 // Direct browser → Cloudinary signed upload. Uses a raw XHR (not the api axios
 // instance, which would attach our JWT + baseURL). Resolves with the parsed

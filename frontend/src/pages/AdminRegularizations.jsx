@@ -131,7 +131,7 @@ export default function AdminRegularizations() {
                   )}
                   <div className="text-xs text-gray-500">{r.employee?.email}</div>
                 </td>
-                <td className="px-4 py-3 text-gray-700">{new Date(r.date).toLocaleDateString()}</td>
+                <td className="px-4 py-3 text-gray-700">{new Date(r.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                 <td className="px-4 py-3">{r.type}</td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <div className="text-xs text-gray-700">
@@ -155,7 +155,7 @@ export default function AdminRegularizations() {
                     <>
                       <div className="text-gray-800">{r.reviewedBy.firstName} {r.reviewedBy.lastName}</div>
                       <div className="text-xs text-gray-500">
-                        {r.reviewedBy.role}{r.reviewedAt ? ` · ${new Date(r.reviewedAt).toLocaleDateString()}` : ''}
+                        {r.reviewedBy.role}{r.reviewedAt ? ` · ${new Date(r.reviewedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}` : ''}
                       </div>
                     </>
                   ) : <span className="text-gray-400">-</span>}

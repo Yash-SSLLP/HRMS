@@ -147,7 +147,7 @@ export default function EmployeeTravel() {
                 <td className="px-4 py-3">{t.purpose}</td>
                 <td className="px-4 py-3">{t.origin} → {t.destination}</td>
                 <td className="px-4 py-3 text-gray-500">
-                  {new Date(t.fromDate).toLocaleDateString()} – {new Date(t.toDate).toLocaleDateString()}
+                  {new Date(t.fromDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} – {new Date(t.toDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                 </td>
                 <td className="px-4 py-3">{t.modeOfTravel}</td>
                 <td className="px-4 py-3 text-right">{inr.format(t.estimatedCost || 0)}</td>

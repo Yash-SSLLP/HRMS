@@ -139,7 +139,7 @@ export default function AdminTravel() {
                 <td className="px-4 py-3">{t.purpose}</td>
                 <td className="px-4 py-3">{t.origin} → {t.destination}</td>
                 <td className="px-4 py-3 text-gray-500">
-                  {new Date(t.fromDate).toLocaleDateString()} – {new Date(t.toDate).toLocaleDateString()}
+                  {new Date(t.fromDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} – {new Date(t.toDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                 </td>
                 <td className="px-4 py-3">{t.modeOfTravel}</td>
                 <td className="px-4 py-3 text-right">{inr.format(t.estimatedCost || 0)}</td>
@@ -154,7 +154,7 @@ export default function AdminTravel() {
                           {t.reimbursementStatus}
                         </span>
                       </div>
-                      {t.reimbursementPaidOn && <div className="text-xs text-gray-400 mt-0.5">Paid on {new Date(t.reimbursementPaidOn).toLocaleDateString()}</div>}
+                      {t.reimbursementPaidOn && <div className="text-xs text-gray-400 mt-0.5">Paid on {new Date(t.reimbursementPaidOn).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>}
                       {t.reimbursementNote && <div className="text-xs text-gray-500 mt-0.5">{t.reimbursementNote}</div>}
                       {t.reimbursementReceiptName && (
                         <button onClick={() => openReceipt(t._id)} className="text-xs text-blue-600 hover:underline mt-0.5">View receipt</button>

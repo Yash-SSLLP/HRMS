@@ -245,7 +245,7 @@ export default function EmployeeReviews() {
                     </button>
                   ) : (
                     <span className="text-sm text-gray-500">
-                      Submitted{r.submittedAt ? ` · ${new Date(r.submittedAt).toLocaleDateString()}` : ''}
+                      Submitted{r.submittedAt ? ` · ${new Date(r.submittedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}` : ''}
                     </span>
                   )}
                 </div>

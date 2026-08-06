@@ -86,9 +86,12 @@ export default function DashboardScreen() {
       api.get('/leave/me/balance').catch(() => null),
       api.get('/attendance/me').catch(() => null),
       api.get('/employees/me').catch(() => null),
+      // Birthday/anniversary wishes colleagues sent ME.
+      api.get('/celebrations/wishes/received').catch(() => null),
     ] : [];
-    const [today, upcoming, notif, ann, bal, att, me] = await Promise.all([...base, ...emp]);
+    const [today, upcoming, notif, ann, bal, att, me, wish] = await Promise.all([...base, ...emp]);
     const next = {
+      wishes: wish?.data?.wishes || [],
       balances: bal?.data?.balance?.balances || null,
       // This month's paid-leave quota {quota, used, remaining, prorated, …}.
       monthly: bal?.data?.monthly || null,
@@ -187,6 +190,27 @@ export default function DashboardScreen() {
         {/* Monthly Rewards & Recognition winners — shows for 2 working days after
             HR announces; closeable per-user. */}
         <RnrBanner />
+
+        {/* Birthday / anniversary wishes colleagues sent me. */}
+        {(data.wishes || []).length > 0 && (
+          <Card style={styles.wishCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing(2) }}>
+              <Ionicons name="gift" size={16} color="#9333ea" style={{ marginRight: 6 }} />
+              <Text style={font.h3}>Wishes for you</Text>
+            </View>
+            {data.wishes.map((w, i) => (
+              <View key={w._id} style={i > 0 ? { marginTop: spacing(2.5) } : null}>
+                <Text style={font.body}>
+                  {w.title}
+                  {w.body ? <Text style={font.small}> · {w.body}</Text> : null}
+                </Text>
+                <Text style={[font.small, { marginTop: 1 }]}>
+                  {fmtDate(w.createdAt, { day: '2-digit', month: 'short' })} · {fmtTime(w.createdAt)}
+                </Text>
+              </View>
+            ))}
+          </Card>
+        )}
 
         {/* Attendance punch card — employees only (SuperAdmin has no attendance) */}
         {employeeSelf && (
@@ -384,6 +408,7 @@ const styles = StyleSheet.create({
   adminTitle: { color: '#fff', fontSize: 16, fontWeight: '800' },
   adminSub: { color: 'rgba(255,255,255,0.7)', fontSize: 12.5, marginTop: 2 },
   punchCard: { marginBottom: spacing(4) },
+  wishCard: { marginBottom: spacing(4), borderLeftWidth: 4, borderLeftColor: '#9333ea' },
   punchIcon: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   punchStatus: { fontSize: 16, fontWeight: '700', color: colors.text, marginVertical: 2 },
   punchBtn: { paddingHorizontal: 16, height: 40, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },

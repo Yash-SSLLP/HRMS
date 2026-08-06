@@ -114,7 +114,7 @@ export default function EmployeeCashbook() {
               <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No vouchers submitted</td></tr>
             ) : vouchers.map((x) => (
               <tr key={x._id}>
-                <td className="px-4 py-3 text-gray-600">{new Date(x.date).toLocaleDateString('en-IN')}</td>
+                <td className="px-4 py-3 text-gray-600">{new Date(x.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                 <td className="px-4 py-3 text-gray-600">{x.category}</td>
                 <td className="px-4 py-3">
                   {x.party || '-'}

@@ -33,7 +33,7 @@ const STATUS_COLORS = {
   Cancelled: 'bg-gray-200 text-gray-700',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 const ordinal = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th');
 
 // A leave can be cancelled only while it hasn't started yet. Once its start date

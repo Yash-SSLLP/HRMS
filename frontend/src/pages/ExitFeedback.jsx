@@ -19,7 +19,7 @@ const REASONS = [
   { value: 'Other', label: 'Other' },
 ];
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 
 export default function ExitFeedback() {
   const { token } = useParams();

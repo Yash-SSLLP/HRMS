@@ -121,7 +121,7 @@ export default function EmployeeComplaints() {
                     {STATUS_LABELS[c.status]}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-gray-500">{new Date(c.createdAt).toLocaleDateString()}</td>
+                <td className="px-4 py-3 text-gray-500">{new Date(c.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
               </tr>
             ))}
           </tbody>

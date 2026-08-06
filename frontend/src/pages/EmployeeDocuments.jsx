@@ -19,7 +19,7 @@ const fmtSize = (n) => {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 
 const STATUS_STYLES = {
   Submitted: 'bg-amber-100 text-amber-800',

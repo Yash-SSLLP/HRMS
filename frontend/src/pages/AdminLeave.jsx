@@ -20,7 +20,7 @@ const STATUS_COLORS = {
   Cancelled: 'bg-gray-200 text-gray-700',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 
 // ============ Requests tab ============
 

@@ -21,7 +21,7 @@ const fmtDate = (d) => {
   if (!d) return '-';
   const date = new Date(d);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleDateString();
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;

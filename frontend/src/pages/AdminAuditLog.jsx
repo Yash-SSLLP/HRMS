@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+import { useAuthStore } from '../store/authStore';
 
 const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', hour12: true }) : '-');
 
@@ -17,6 +18,13 @@ const ROLE_STYLES = {
 };
 
 export default function AdminAuditLog() {
+  // SuperAdmin-only (the backend 403s everyone else). Without this gate the page
+  // rendered its whole filter UI and surfaced the raw "Not authorised" error to
+  // HR Managers — the sidebar already hides it, so show the same clean gate the
+  // other SuperAdmin-only tools use (Chat Export, Permissions).
+  const me = useAuthStore((s) => s.user);
+  const isSuperAdmin = me?.role === 'SuperAdmin';
+
   const [items, setItems] = useState([]);
   const [entities, setEntities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,6 +32,7 @@ export default function AdminAuditLog() {
   const [filters, setFilters] = useState({ entity: '', q: '', from: '', to: '' });
 
   const load = async () => {
+    if (!isSuperAdmin) { setLoading(false); return; }
     setLoading(true); setError('');
     try {
       const params = {};
@@ -43,6 +52,17 @@ export default function AdminAuditLog() {
   }, [filters]);
 
   const set = (k) => (e) => setFilters((f) => ({ ...f, [k]: e.target.value }));
+
+  if (!isSuperAdmin) {
+    return (
+      <div>
+        <PageHeader title="Audit Log" subtitle="Every status change across the portal · who changed what, and when" />
+        <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
+          This tool isn&apos;t available for your account.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

@@ -32,7 +32,7 @@ const STATUS_COLORS = {
   OnLeave: 'bg-purple-100 text-purple-800',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const fmtTime = (d) =>
   d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
 

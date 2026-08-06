@@ -14,7 +14,7 @@ import * as Location from 'expo-location';
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, AppButton, Pill, Loader, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
-import { fmtDate, fmtTime, fmtHours } from '../utils/format';
+import { fmtDate, fmtTime, fmtHours, rupees } from '../utils/format';
 
 const STATUS_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info', Holiday: 'neutral', WeekOff: 'neutral' };
 // Rest-day duty (a Sunday / company comp-off day that was worked): paid double
@@ -47,6 +47,7 @@ export default function AttendanceScreen() {
   const [wfh, setWfh] = useState(false);
   const [wfhAllowed, setWfhAllowed] = useState(false); // granted per employee by the Backend
   const [halfDay, setHalfDay] = useState(false); // declare today a half day at either punch
+  const [policy, setPolicy] = useState(null); // { year, month, needsSetup, policy }
   const [, setTick] = useState(0); // re-render each second to advance the live clock
 
   // Tick once per second while the user is checked in but not yet checked out,
@@ -59,7 +60,17 @@ export default function AttendanceScreen() {
   }, [isRunning]);
 
   const load = useCallback(async () => {
-    const { data } = await api.get('/attendance/me').catch(() => ({ data: {} }));
+    const now = new Date();
+    const [att, pol] = await Promise.all([
+      api.get('/attendance/me').catch(() => ({ data: {} })),
+      // Pay-policy summary for this month (late allowance, leave quota, 2× duty).
+      // Optional — swallowed if the endpoint isn't available.
+      api
+        .get(`/payroll/me/attendance-summary?year=${now.getFullYear()}&month=${now.getMonth() + 1}`)
+        .catch(() => null),
+    ]);
+    const data = att.data || {};
+    setPolicy(pol?.data || null);
     setToday(data.today || null);
     setRecords(data.records || []);
     setWfhAllowed(!!data.wfhAllowed);
@@ -245,6 +256,71 @@ export default function AttendanceScreen() {
           )}
         </Card>
 
+        {/* Lateness & leave — how this month's punches are landing against the
+            late allowance and the monthly paid-leave quota, and what that costs
+            or earns. Same card the web attendance page shows. */}
+        {policy?.policy ? (() => {
+          const p = policy.policy;
+          return (
+            <>
+              <SectionHeader title="Lateness & leave" />
+              <Card style={{ marginBottom: spacing(4) }}>
+                <View style={styles.metricGrid}>
+                  <Metric
+                    label="Late arrivals"
+                    value={`${p.lateDays} / ${p.lateAllowance}`}
+                    tone={p.excessLate > 0 ? 'bad' : 'good'}
+                    sub={p.excessLate > 0 ? `${p.excessLate} over the limit` : 'within limit'}
+                  />
+                  <Metric
+                    label="Expected late deduction"
+                    value={rupees(p.latePenalty)}
+                    tone={p.latePenalty > 0 ? 'bad' : 'plain'}
+                    sub={p.excessLate > 0 ? `${p.excessLate} × ${rupees(p.lateRate)}/day` : '-'}
+                  />
+                  <Metric
+                    label="Paid leave used"
+                    value={`${p.leaveTaken} / ${p.paidLeaveQuota}`}
+                    tone={p.excessLeave > 0 ? 'bad' : 'plain'}
+                    sub={p.excessLeave > 0 ? `${p.excessLeave} day(s) LOP` : 'of monthly quota'}
+                  />
+                  <Metric
+                    label="Leave incentive"
+                    value={rupees(p.leaveIncentive)}
+                    tone={p.leaveIncentive > 0 ? 'good' : 'plain'}
+                    sub={p.unusedLeave > 0 ? `${p.unusedLeave} unused day(s)` : '-'}
+                  />
+                  <Metric
+                    label="No-punch days"
+                    value={String(p.noPunchDays ?? 0)}
+                    tone={p.noPunchDays > 0 ? 'bad' : 'plain'}
+                    sub={p.noPunchDays > 0 ? 'LOP — regularise to recover' : 'all days punched'}
+                  />
+                  {((p.doublePayDays ?? 0) > 0 || (p.pendingDoublePayDays ?? 0) > 0) && (
+                    <Metric
+                      label="Sunday / comp-off duty"
+                      value={`${p.doublePayDays ?? 0} day(s) at 2×`}
+                      tone={(p.doublePayDays ?? 0) > 0 ? 'good' : 'plain'}
+                      sub={(p.pendingDoublePayDays ?? 0) > 0
+                        ? `${p.pendingDoublePayDays} awaiting approval`
+                        : (p.doubleDayPay ? `${rupees(p.doubleDayPay)} extra` : '-')}
+                    />
+                  )}
+                </View>
+                <Text style={[font.small, { marginTop: spacing(3) }]}>
+                  First {p.lateAllowance} late arrivals each month are free; beyond that every late day is
+                  deducted at {rupees(p.lateRate)}/day. {p.paidLeaveQuota} paid leaves each month — unused
+                  days are added to your pay, extra days are unpaid (LOP). A working day with no punch-in
+                  and no punch-out is unpaid unless you get it regularised. Working a Sunday or a company
+                  comp-off day is paid double once HR or your manager approves it.
+                  {p.prorated ? ` You were on the payroll for ${p.eligibleDays} of this month's ${p.daysInMonth} days, so the usual ${p.fullPaidLeaveQuota} paid leaves and ${p.fullLateAllowance} free lates are prorated.` : ''}
+                  {policy.needsSetup ? ' Amounts finalise once your salary is set up by HR.' : ''}
+                </Text>
+              </Card>
+            </>
+          );
+        })() : null}
+
         {/* This month */}
         <SectionHeader title="This month" />
         {records.length === 0 ? (
@@ -281,7 +357,24 @@ export default function AttendanceScreen() {
   );
 }
 
+/** Small labelled stat tile used in the lateness/leave policy card. */
+function Metric({ label, value, sub, tone = 'plain' }) {
+  const valueColor = tone === 'bad' ? colors.danger : tone === 'good' ? colors.success : colors.text;
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel} numberOfLines={2}>{label}</Text>
+      <Text style={[styles.metricValue, { color: valueColor }]}>{value}</Text>
+      {sub ? <Text style={styles.metricSub} numberOfLines={2}>{sub}</Text> : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  metric: { width: '48.5%', backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), marginBottom: spacing(2.5) },
+  metricLabel: { fontSize: 11, color: colors.textMuted },
+  metricValue: { fontSize: 18, fontWeight: '800', marginTop: 2 },
+  metricSub: { fontSize: 11, color: colors.textFaint, marginTop: 2 },
   hero: { marginBottom: spacing(4) },
   timeRow: { flexDirection: 'row', alignItems: 'center', marginVertical: spacing(4) },
   timeBox: { flex: 1, alignItems: 'center' },

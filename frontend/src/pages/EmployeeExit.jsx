@@ -24,7 +24,7 @@ const STATUS_LABELS = {
   Cancelled: 'Cancelled',
 };
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '-');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 
 // ---- Notice period ↔ last working day sync (anchored to today, calendar days) ----
 const pad = (n) => String(n).padStart(2, '0');

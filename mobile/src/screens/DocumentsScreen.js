@@ -4,14 +4,18 @@
  * and confirmed before it is sent), and lists uploaded documents with HR
  * verification status (Submitted/Verified/Rejected).
  * Route: "Documents" (quick action / More list). Employee-facing (all roles).
- * Backend: GET /documents/me, GET /documents/categories, POST /documents/me (multipart).
+ * Backend: GET /documents/me, GET /documents/categories, POST /documents/me (multipart),
+ * GET /documents/:id/download, DELETE /documents/:id.
  */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
-import api, { errMsg } from '../api/client';
+import api, { errMsg, API_BASE } from '../api/client';
+import { useAuth } from '../store/auth';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, Pill, Loader, refresher, SectionHeader, EmptyState, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
@@ -34,9 +38,14 @@ function fileIcon(mime = '') {
 }
 
 export default function DocumentsScreen() {
+  const token = useAuth((s) => s.token);
   const [docs, setDocs] = useState([]);
   const [categories, setCategories] = useState([]);
+  // Categories only HR may add — those documents can be viewed but not deleted
+  // by the employee, matching the web's `canDelete` rule.
+  const [hrOnly, setHrOnly] = useState([]);
   const [required, setRequired] = useState([]);
+  const [busyId, setBusyId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [category, setCategory] = useState('PAN');
@@ -56,6 +65,7 @@ export default function DocumentsScreen() {
     setDocs(list.data?.documents || []);
     const self = cats.data?.selfUpload || [];
     setCategories(self);
+    setHrOnly(cats.data?.hrOnly || []);
     setRequired(cats.data?.required || []);
     if (self.length && !self.includes(category)) setCategory(self[0]);
     setLoading(false);
@@ -63,6 +73,51 @@ export default function DocumentsScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  // Fetch the stored file (auth header carried by FileSystem) and hand it to the
+  // OS share sheet so it can be opened, saved or forwarded.
+  const openDoc = async (d) => {
+    setBusyId(d._id);
+    try {
+      const safe = (d.fileName || 'document').replace(/[^\w.\-]+/g, '_');
+      const res = await FileSystem.downloadAsync(
+        `${API_BASE}/documents/${d._id}/download`,
+        `${FileSystem.cacheDirectory}${safe}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.status !== 200) throw new Error('Document not available');
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(res.uri, { mimeType: d.mime || undefined, dialogTitle: d.fileName });
+      } else {
+        Alert.alert('Downloaded', 'Saved to the app cache.');
+      }
+    } catch (err) {
+      Alert.alert('Could not open', err.message || 'Download failed.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeDoc = (d) => {
+    Alert.alert(`Delete "${d.fileName}"?`, 'This cannot be undone.', [
+      { text: 'Cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setBusyId(d._id);
+          try {
+            await api.delete(`/documents/${d._id}`);
+            await load();
+          } catch (err) {
+            Alert.alert('Delete failed', errMsg(err));
+          } finally {
+            setBusyId(null);
+          }
+        },
+      },
+    ]);
+  };
 
   // Pick a PDF/image from the device — held for review, not sent yet.
   const pickFile = async () => {
@@ -181,16 +236,33 @@ export default function DocumentsScreen() {
           <EmptyState icon="folder-open-outline" title="No documents yet" subtitle="Upload your PAN, Aadhaar and other documents for HR." />
         ) : (
           docs.map((d) => (
-            <Card key={d._id} style={styles.docRow}>
-              <View style={[styles.docIcon, { backgroundColor: colors.primarySoft }]}>
-                <Ionicons name={fileIcon(d.mime)} size={20} color={colors.primary} />
+            <Card key={d._id} style={styles.docCard}>
+              <View style={styles.docRow}>
+                <View style={[styles.docIcon, { backgroundColor: colors.primarySoft }]}>
+                  <Ionicons name={fileIcon(d.mime)} size={20} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={font.body} numberOfLines={1}>{prettyCat(d.category)}</Text>
+                  <Text style={font.small} numberOfLines={1}>{d.fileName} · {sizeLabel(d.sizeBytes)} · {fmtDate(d.createdAt)}</Text>
+                  {d.reviewNote ? <Text style={[font.small, { color: colors.danger, marginTop: 2 }]}>{d.reviewNote}</Text> : null}
+                </View>
+                <Pill label={d.status} tone={STATUS_TONE[d.status] || 'neutral'} />
               </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={font.body} numberOfLines={1}>{prettyCat(d.category)}</Text>
-                <Text style={font.small} numberOfLines={1}>{d.fileName} · {sizeLabel(d.sizeBytes)} · {fmtDate(d.createdAt)}</Text>
-                {d.reviewNote ? <Text style={[font.small, { color: colors.danger, marginTop: 2 }]}>{d.reviewNote}</Text> : null}
+              <View style={styles.docActions}>
+                <TouchableOpacity style={styles.docBtn} disabled={busyId === d._id} onPress={() => openDoc(d)}>
+                  <Ionicons name="download-outline" size={16} color={colors.primary} />
+                  <Text style={[styles.docBtnText, { color: colors.primary }]}>
+                    {busyId === d._id ? 'Opening…' : 'View / download'}
+                  </Text>
+                </TouchableOpacity>
+                {/* HR-managed categories are read-only for the employee. */}
+                {!hrOnly.includes(d.category) && (
+                  <TouchableOpacity style={styles.docBtn} disabled={busyId === d._id} onPress={() => removeDoc(d)}>
+                    <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                    <Text style={[styles.docBtnText, { color: colors.danger }]}>Delete</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              <Pill label={d.status} tone={STATUS_TONE[d.status] || 'neutral'} />
             </Card>
           ))
         )}
@@ -214,7 +286,11 @@ const styles = StyleSheet.create({
   previewBtnText: { color: colors.textMuted, fontWeight: '600', fontSize: 12 },
   previewBtnPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
   previewBtnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  docRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(2.5) },
+  docCard: { marginBottom: spacing(2.5) },
+  docRow: { flexDirection: 'row', alignItems: 'center' },
+  docActions: { flexDirection: 'row', gap: spacing(4), marginTop: spacing(2.5), paddingTop: spacing(2.5), borderTopWidth: 1, borderTopColor: colors.border },
+  docBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  docBtnText: { fontWeight: '700', fontSize: 12.5 },
   docIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   missingBox: { backgroundColor: colors.warningSoft, borderWidth: 1, borderColor: colors.warning + '55', borderRadius: radius.md, padding: spacing(3.5), marginBottom: spacing(4) },
   missingTitle: { fontSize: 14, fontWeight: '800', color: colors.warning },

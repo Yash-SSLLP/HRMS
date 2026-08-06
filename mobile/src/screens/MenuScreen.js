@@ -55,6 +55,7 @@ const GROUPS = [
       { key: 'Alerts', label: 'Notifications', icon: 'notifications', tint: '#6366f1', tab: true },
       { key: 'Announcements', label: 'Announcements', icon: 'megaphone', tint: '#4f46e5' },
       { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
+      { key: 'OrgChart', label: 'Org Chart', icon: 'git-branch', tint: '#0d9488' },
       { key: 'Surveys', label: 'Surveys', icon: 'clipboard', tint: '#db2777' },
       { key: 'Assets', label: 'My Assets', icon: 'cube', tint: '#64748b' },
     ],
@@ -72,6 +73,10 @@ const GROUPS = [
   {
     title: 'Requests & lifecycle',
     items: [
+      // Not role-gated on purpose — ANY employee can be someone's reporting
+      // manager in the org chart, so leave/resignation/no-dues requests can climb
+      // to a plain Employee. Same rule as the web's /employee/approvals.
+      { key: 'MyApprovals', label: 'My Approvals', icon: 'checkmark-done', tint: '#16a34a' },
       { key: 'ChangeRequest', label: 'Change Requests', icon: 'create', tint: '#4f46e5' },
       { key: 'Complaints', label: 'Complaints', icon: 'alert-circle', tint: '#ef4444' },
       { key: 'Onboarding', label: 'Onboarding', icon: 'rocket', tint: '#2563eb' },
@@ -103,8 +108,16 @@ export default function MenuScreen() {
     const adminItems = [];
     if (canViewAdmin(me)) {
       adminItems.push(
-        { key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a' },
+        { key: 'Approvals', label: 'Approvals (HR)', icon: 'checkmark-done', tint: '#16a34a' },
         { key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9' }
+      );
+    }
+    // CEO/MD get no self-service groups, so the reporting-chain inbox they DO
+    // sit in (as approvers) — and the org chart — would otherwise be unreachable.
+    if (!canEmployeeSelf(me)) {
+      adminItems.push(
+        { key: 'MyApprovals', label: 'My Approvals', icon: 'git-merge', tint: '#0d9488' },
+        { key: 'OrgChart', label: 'Org Chart', icon: 'git-branch', tint: '#0d9488' }
       );
     }
     adminItems.push({ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: colors.text });

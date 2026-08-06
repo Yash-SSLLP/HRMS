@@ -6,8 +6,8 @@
  * Backend: GET /leave/me/balance, GET /leave/me/requests, POST /leave/me/requests,
  * PATCH /leave/me/requests/:id/cancel.
  */
-import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Switch } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -49,7 +49,28 @@ export default function LeaveScreen() {
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [reason, setReason] = useState('');
+  const [isHalfDay, setIsHalfDay] = useState(false);
+  const [halfDaySession, setHalfDaySession] = useState('FirstHalf');
   const [submitting, setSubmitting] = useState(false);
+
+  // Live paid-vs-LOP preview for the dates/type currently in the form, so the
+  // pay impact of the 2-days-a-month quota is visible before submitting.
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (!start || !end) { setPreview(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/leave/me/leave-preview', {
+          params: { leaveType: type, startDate: start, endDate: end, isHalfDay },
+        });
+        if (!cancelled) setPreview(data);
+      } catch {
+        if (!cancelled) setPreview(null);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [type, start, end, isHalfDay]);
 
   // Load leave balances and request history together; both fault-tolerant.
   const load = useCallback(async () => {
@@ -69,19 +90,27 @@ export default function LeaveScreen() {
 
   // Validate the date range, then POST the leave request for approval.
   const apply = async () => {
-    if (!start || !end) {
-      Alert.alert('Pick dates', 'Choose a start and end date.');
+    if (!start || (!isHalfDay && !end)) {
+      Alert.alert('Pick dates', isHalfDay ? 'Choose the date.' : 'Choose a start and end date.');
       return;
     }
-    if (end < start) {
+    if (!isHalfDay && end < start) {
       Alert.alert('Invalid dates', 'The end date must be on or after the start date.');
       return;
     }
     setSubmitting(true);
     try {
-      const { data } = await api.post('/leave/me/requests', { leaveType: type, startDate: start, endDate: end, reason });
+      const { data } = await api.post('/leave/me/requests', {
+        leaveType: type,
+        startDate: start,
+        // A half day is a single date — the backend rejects a range.
+        endDate: isHalfDay ? start : end,
+        isHalfDay,
+        halfDaySession: isHalfDay ? halfDaySession : undefined,
+        reason,
+      });
       setShowForm(false);
-      setStart(''); setEnd(''); setReason('');
+      setStart(''); setEnd(''); setReason(''); setIsHalfDay(false); setPreview(null);
       await load();
       // Emergency leave is granted on submission — never tell the employee to
       // wait for an approval that will not come.
@@ -166,14 +195,62 @@ export default function LeaveScreen() {
                 can then charge that day at double pay.
               </Text>
             )}
-            <View style={{ flexDirection: 'row', gap: spacing(3) }}>
+            {/* Half day collapses the range to a single date, as on the web. */}
+            <View style={styles.halfRow}>
               <View style={{ flex: 1 }}>
-                <Field label="From"><DateField value={start} onChange={setStart} /></Field>
+                <Text style={[font.body, { fontWeight: '600' }]}>Half day</Text>
+                <Text style={font.small}>Counts as 0.5 of a day</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Field label="To"><DateField value={end} onChange={setEnd} minimumDate={start ? new Date(`${start}T00:00:00`) : undefined} /></Field>
-              </View>
+              <Switch
+                value={isHalfDay}
+                onValueChange={(v) => { setIsHalfDay(v); if (v) setEnd(start); }}
+                trackColor={{ true: colors.primary, false: colors.borderStrong }}
+                thumbColor="#fff"
+              />
             </View>
+
+            {isHalfDay ? (
+              <>
+                <Field label="Date">
+                  <DateField value={start} onChange={(v) => { setStart(v); setEnd(v); }} />
+                </Field>
+                <Field label="Session">
+                  <View style={styles.chips}>
+                    {[['FirstHalf', 'First half'], ['SecondHalf', 'Second half']].map(([k, label]) => (
+                      <TouchableOpacity key={k} onPress={() => setHalfDaySession(k)} style={[styles.chip, halfDaySession === k && styles.chipActive]}>
+                        <Text style={[styles.chipText, halfDaySession === k && { color: colors.onPrimary }]}>{label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </Field>
+              </>
+            ) : (
+              <View style={{ flexDirection: 'row', gap: spacing(3) }}>
+                <View style={{ flex: 1 }}>
+                  <Field label="From"><DateField value={start} onChange={setStart} /></Field>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Field label="To"><DateField value={end} onChange={setEnd} minimumDate={start ? new Date(`${start}T00:00:00`) : undefined} /></Field>
+                </View>
+              </View>
+            )}
+
+            {/* How the requested days land against the monthly paid quota. */}
+            {preview && (preview.paidDays > 0 || preview.lopDays > 0) ? (
+              <View style={[styles.preview, preview.lopDays > 0 ? styles.previewBad : styles.previewGood]}>
+                <Text style={[styles.previewText, { color: preview.lopDays > 0 ? colors.danger : colors.success }]}>
+                  {preview.paidDays} paid day{preview.paidDays === 1 ? '' : 's'}
+                  {preview.lopDays > 0 ? ` · ${preview.lopDays} LOP (unpaid)` : ''}
+                </Text>
+                {preview.lopDays > 0 ? (
+                  <Text style={[font.small, { marginTop: 4, color: colors.danger }]}>
+                    You have used up the {preview.quota}-day monthly paid quota for the covered month(s),
+                    so {preview.lopDays} day{preview.lopDays === 1 ? '' : 's'} will be Loss of Pay.
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+
             <Field label="Reason (optional)"><Input value={reason} onChangeText={setReason} placeholder="Reason for leave" multiline /></Field>
             <AppButton title="Submit request" icon="send" onPress={apply} loading={submitting} />
           </Card>
@@ -187,7 +264,9 @@ export default function LeaveScreen() {
           requests.map((r) => (
             <Card key={r._id} style={styles.reqCard}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={font.h3}>{r.leaveType} · {r.totalDays}d</Text>
+                <Text style={font.h3}>
+                  {r.leaveType} · {r.totalDays}d{r.isHalfDay ? ' (half)' : ''}
+                </Text>
                 <Pill label={r.status} tone={STATUS_TONE[r.status] || 'neutral'} />
               </View>
               {r.emergencyFlagged && (
@@ -226,6 +305,11 @@ const styles = StyleSheet.create({
   chip: { paddingHorizontal: 14, height: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontWeight: '700', fontSize: 13, color: colors.textMuted },
+  halfRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(3) },
+  preview: { borderRadius: radius.md, borderWidth: 1, padding: spacing(3), marginBottom: spacing(3) },
+  previewGood: { backgroundColor: colors.successSoft, borderColor: colors.success },
+  previewBad: { backgroundColor: colors.dangerSoft, borderColor: colors.danger },
+  previewText: { fontSize: 13, fontWeight: '700' },
   reqCard: { marginBottom: spacing(2.5) },
   cancelBtn: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
   cancelText: { color: colors.danger, fontWeight: '700', marginLeft: 6, fontSize: 13 },

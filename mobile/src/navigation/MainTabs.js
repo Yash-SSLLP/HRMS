@@ -53,6 +53,8 @@ import ChangeRequestScreen from '../screens/ChangeRequestScreen';
 import DeclarationScreen from '../screens/DeclarationScreen';
 import ResignationScreen from '../screens/ResignationScreen';
 import MyInterviewsScreen from '../screens/MyInterviewsScreen';
+import MyApprovalsScreen from '../screens/MyApprovalsScreen';
+import OrgChartScreen from '../screens/OrgChartScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import PrivacyScreen from '../screens/PrivacyScreen';
 import AdminHubScreen from '../screens/admin/AdminHubScreen';
@@ -116,6 +118,10 @@ function HomeStack() {
       <HomeStackNav.Screen name="Declaration" component={DeclarationScreen} options={{ title: 'Investment Declaration' }} />
       <HomeStackNav.Screen name="Resignation" component={ResignationScreen} options={{ title: 'Resignation' }} />
       <HomeStackNav.Screen name="MyInterviews" component={MyInterviewsScreen} options={{ title: 'My Interviews' }} />
+      {/* Reporting-chain approver inbox — every role, since any employee can be
+          someone's reporting manager in the org chart. */}
+      <HomeStackNav.Screen name="MyApprovals" component={MyApprovalsScreen} options={{ title: 'My Approvals' }} />
+      <HomeStackNav.Screen name="OrgChart" component={OrgChartScreen} options={{ title: 'Org Chart' }} />
       {/* Admin / manager surface (screens self-gate by role) */}
       <HomeStackNav.Screen name="AdminHub" component={AdminHubScreen} options={{ title: 'Admin Console' }} />
       <HomeStackNav.Screen name="Approvals" component={ApprovalsScreen} options={{ title: 'Approvals' }} />

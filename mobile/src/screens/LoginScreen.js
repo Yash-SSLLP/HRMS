@@ -21,8 +21,21 @@ import { StatusBar } from 'expo-status-bar';
 import api, { errMsg } from '../api/client';
 import { useAuth } from '../store/auth';
 import { registerForPush } from '../services/push';
-import { colors, radius, spacing, shadow } from '../theme';
-import { AppButton, Input, Field, Ionicons } from '../components/ui';
+import { colors, radius, spacing, shadow, font } from '../theme';
+import { AppButton, Input, Field, Ionicons, ModalSheet } from '../components/ui';
+
+// Identity fields the public reset endpoint requires (all of them), mirroring
+// the web login page's "Forgot password?" form. There is no self-service reset
+// link — HR resets the password by hand and gets back to the employee.
+const RESET_FIELDS = [
+  { key: 'name', label: 'Full name' },
+  { key: 'employeeCode', label: 'Employee ID' },
+  { key: 'email', label: 'Work email', keyboardType: 'email-address' },
+  { key: 'phone', label: 'Phone', keyboardType: 'phone-pad' },
+  { key: 'designation', label: 'Designation' },
+  { key: 'department', label: 'Department' },
+];
+const BLANK_RESET = { name: '', employeeCode: '', email: '', phone: '', designation: '', department: '', reason: '' };
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
@@ -32,6 +45,39 @@ export default function LoginScreen() {
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // "Forgot password?" — files a request to HR (no email client needed).
+  const [showReset, setShowReset] = useState(false);
+  const [reset, setReset] = useState(BLANK_RESET);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetMsg, setResetMsg] = useState('');
+  const [resetErr, setResetErr] = useState('');
+
+  const openReset = () => {
+    setReset({ ...BLANK_RESET, email: email.trim() });
+    setResetMsg('');
+    setResetErr('');
+    setShowReset(true);
+  };
+
+  const submitReset = async () => {
+    const missing = RESET_FIELDS.find((f) => !reset[f.key].trim());
+    if (missing) {
+      setResetErr(`${missing.label} is required.`);
+      return;
+    }
+    setResetBusy(true);
+    setResetErr('');
+    try {
+      await api.post('/password-reset-requests', reset);
+      setReset(BLANK_RESET);
+      setResetMsg('Request sent. HR will reset your password and get back to you.');
+    } catch (err) {
+      setResetErr(errMsg(err, 'Could not send your request. Please try again.'));
+    } finally {
+      setResetBusy(false);
+    }
+  };
 
   // Authenticate, persist the session, then kick off push registration.
   const submit = async () => {
@@ -106,11 +152,61 @@ export default function LoginScreen() {
             ) : null}
 
             <AppButton title="Sign in" onPress={submit} loading={loading} icon="log-in" style={{ marginTop: 8 }} />
+
+            <TouchableOpacity onPress={openReset} style={styles.forgot} hitSlop={8}>
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
           </View>
 
           <Text style={styles.footer}>Sequence Surface LLP · Secure employee portal</Text>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <ModalSheet
+        visible={showReset}
+        onClose={() => setShowReset(false)}
+        title="Password reset request"
+        footer={resetMsg ? null : (
+          <AppButton title="Send request" onPress={submitReset} loading={resetBusy} icon="send" />
+        )}
+      >
+        {resetMsg ? (
+          <View style={styles.successBox}>
+            <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+            <Text style={styles.successText}>{resetMsg}</Text>
+          </View>
+        ) : (
+          <>
+            <Text style={[font.small, { marginBottom: spacing(3) }]}>
+              Fill in your details and HR will reset your password for you.
+            </Text>
+            {resetErr ? (
+              <View style={styles.errorBox}>
+                <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                <Text style={styles.errorText}>{resetErr}</Text>
+              </View>
+            ) : null}
+            {RESET_FIELDS.map((f) => (
+              <Field key={f.key} label={f.label}>
+                <Input
+                  value={reset[f.key]}
+                  onChangeText={(v) => setReset((r) => ({ ...r, [f.key]: v }))}
+                  keyboardType={f.keyboardType}
+                  autoCapitalize={f.keyboardType === 'email-address' ? 'none' : 'words'}
+                />
+              </Field>
+            ))}
+            <Field label="Reason (optional)">
+              <Input
+                value={reset.reason}
+                onChangeText={(v) => setReset((r) => ({ ...r, reason: v }))}
+                placeholder="Anything HR should know"
+                multiline
+              />
+            </Field>
+          </>
+        )}
+      </ModalSheet>
     </View>
   );
 }
@@ -140,4 +236,14 @@ const styles = StyleSheet.create({
   },
   errorText: { color: colors.danger, marginLeft: 8, flex: 1, fontSize: 13, fontWeight: '600' },
   footer: { textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 28, marginBottom: 12 },
+  forgot: { alignSelf: 'center', marginTop: 16, paddingVertical: 4 },
+  forgotText: { color: colors.primaryDark, fontSize: 13, fontWeight: '700' },
+  successBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.successSoft,
+    borderRadius: radius.md,
+    padding: 12,
+  },
+  successText: { color: colors.success, marginLeft: 8, flex: 1, fontSize: 13, fontWeight: '600' },
 });

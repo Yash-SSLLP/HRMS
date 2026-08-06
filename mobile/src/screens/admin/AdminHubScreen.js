@@ -53,7 +53,10 @@ export default function AdminHubScreen() {
 
   // Build the tile list per role.
   const tiles = [];
-  tiles.push({ key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a', show: viewAdmin });
+  tiles.push({ key: 'Approvals', label: 'Approvals (HR)', icon: 'checkmark-done', tint: '#16a34a', show: viewAdmin });
+  // Reporting-chain inbox — distinct from the HR-wide queue above, and the only
+  // way an exec (who has no self-service menu) reaches the requests they approve.
+  tiles.push({ key: 'MyApprovals', label: 'My Approvals', icon: 'git-merge', tint: '#0d9488', show: true });
   tiles.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb', show: hasTeam(me) });
   tiles.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9', show: viewAdmin });
   tiles.push({ key: 'PunchMap', label: 'Punch Map', icon: 'map', tint: '#0891b2', show: viewAdmin });
