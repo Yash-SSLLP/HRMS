@@ -324,11 +324,20 @@ export default function EmployeeAttendance() {
               <Metric label="Paid leave used" value={`${p.leaveTaken} / ${p.paidLeaveQuota}`} tone={p.excessLeave > 0 ? 'red' : 'gray'} sub={p.excessLeave > 0 ? `${p.excessLeave} day(s) LOP` : 'of monthly quota'} />
               <Metric label="Leave incentive" value={inr(p.leaveIncentive)} tone={p.leaveIncentive > 0 ? 'green' : 'gray'} sub={p.unusedLeave > 0 ? `${p.unusedLeave} unused day(s)` : '-'} />
               <Metric label="No-punch days" value={p.noPunchDays ?? 0} tone={p.noPunchDays > 0 ? 'red' : 'gray'} sub={p.noPunchDays > 0 ? 'LOP - regularise to recover' : 'all days punched'} />
+              {((p.doublePayDays ?? 0) > 0 || (p.pendingDoublePayDays ?? 0) > 0) && (
+                <Metric label="Sunday / comp-off duty"
+                  value={`${p.doublePayDays ?? 0} day(s) at 2×`}
+                  tone={(p.doublePayDays ?? 0) > 0 ? 'green' : 'gray'}
+                  sub={(p.pendingDoublePayDays ?? 0) > 0
+                    ? `${p.pendingDoublePayDays} awaiting approval`
+                    : (p.doubleDayPay ? `${inr(p.doubleDayPay)} extra` : '-')} />
+              )}
             </div>
             <p className="text-[11px] text-gray-400 mt-3">
               First {p.lateAllowance} late arrivals each month are free; beyond that, every late day is deducted at {inr(p.lateRate)}/day.
               {' '}{p.paidLeaveQuota} paid leaves each month - unused days are added to your pay, extra days are unpaid (LOP).
               {' '}A working day with no punch-in and no punch-out is unpaid (LOP) unless you get it regularised.
+              {' '}Working a Sunday or a company comp-off day is paid double for that day, once HR or your manager approves it.
               {p.prorated ? ` You were on the payroll for ${p.eligibleDays} of this month's ${p.daysInMonth} days, so the usual ${p.fullPaidLeaveQuota} paid leaves and ${p.fullLateAllowance} free lates are prorated for this month.` : ''}
               {policy.needsSetup ? ' Amounts finalise once your salary is set up by HR.' : ''}
             </p>
@@ -542,6 +551,17 @@ export default function EmployeeAttendance() {
                 <td className="px-4 py-3">{fmtDate(r.date)}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
+                  {/* A Sunday / comp-off day you worked: double pay once approved. */}
+                  {r.doublePayState && (
+                    <span title="Working a Sunday or company comp-off day is paid double, once approved"
+                      className={`ml-1 inline-block px-2 py-0.5 text-xs rounded-lg ${
+                        r.doublePayState === 'Approved' ? 'bg-green-100 text-green-800'
+                          : r.doublePayState === 'Rejected' ? 'bg-gray-100 text-gray-600'
+                            : 'bg-amber-100 text-amber-800'}`}>
+                      {r.doublePayState === 'Approved' ? '2× approved'
+                        : r.doublePayState === 'Rejected' ? '2× rejected' : '2× pending'}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 font-mono">
                   {fmtTime(r.checkIn)}

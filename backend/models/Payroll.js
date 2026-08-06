@@ -18,6 +18,11 @@ const earningsSchema = new mongoose.Schema(
     // Unused portion of the monthly paid-leave quota (max 2 days), converted to
     // extra pay at one day's salary each. Settled every month — never carried forward.
     leaveIncentive: { type: Number, default: 0, min: 0 },
+    // Working a Sunday or an org-wide comp-off day pays double. The day is
+    // already paid once inside the monthly salary, so this line is the ONE extra
+    // day's pay that doubles it — and only for days HR or the reporting manager
+    // approved (see utils/restDay.js).
+    doubleDayPay: { type: Number, default: 0, min: 0 },
     otherEarnings: { type: Number, default: 0, min: 0 },
   },
   { _id: false }

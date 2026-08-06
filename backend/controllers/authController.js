@@ -1,5 +1,5 @@
 /**
- * Auth controller — signup/login (issuing JWTs), the current-user endpoint,
+ * Auth controller — signup/login/logout (issuing JWTs), the current-user endpoint,
  * SuperAdmin self-service credential changes, and self-service avatar/banner photo
  * upload/delete plus streaming any user's avatar/banner. Manages User accounts.
  */
@@ -80,10 +80,25 @@ const login = asyncHandler(async (req, res) => {
   user.lastLoginAt = new Date();
   await user.save();
 
+  // Session trace on the server console — one line in, one line out (see logout).
+  console.log(`${user.firstName} : Logged in`);
+
   res.json({
     user: user.toJSON(),
     token: generateToken(user._id, user.role, user.tokenVersion),
   });
+});
+
+/**
+ * Sign-out ping. The JWT is stateless — the client discards it and that ends the
+ * session — so this exists purely to close the console trace that login opens.
+ * @route POST /api/auth/logout  (protected)
+ * @returns {{ok: true}}
+ */
+// POST /api/auth/logout  (protected)
+const logout = asyncHandler(async (req, res) => {
+  console.log(`${req.user.firstName} : Logged out`);
+  res.json({ ok: true });
 });
 
 /**
@@ -312,7 +327,7 @@ const getUserBanner = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  signup, login, me, updateMyCredentials,
+  signup, login, logout, me, updateMyCredentials,
   uploadMyAvatar, deleteMyAvatar, getUserAvatar,
   uploadMyBanner, deleteMyBanner, getUserBanner,
 };

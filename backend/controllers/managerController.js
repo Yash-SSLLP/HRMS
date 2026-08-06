@@ -14,7 +14,10 @@ const { advanceApproval } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { haversineMeters } = require('../utils/geo');
 const { lateMinutes } = require('../utils/workday');
-const { computeHeatmapWindow, computeDayDetails, runAttendanceExport } = require('./attendanceController');
+const {
+  computeHeatmapWindow, computeDayDetails, runAttendanceExport,
+  buildRestDayClaims, applyRestDayDecision,
+} = require('./attendanceController');
 
 // EmployeeProfile ids of the caller's direct reports (for team-scoped queries).
 async function myReportIds(userId) {
@@ -309,6 +312,61 @@ const exportTeamAttendance = asyncHandler(async (req, res) => {
   await runAttendanceExport(req, res, { scopeIds, bulkLabel: 'team' });
 });
 
+/**
+ * Rest-day duty claims from the caller's direct reports — Sundays and org-wide
+ * comp-off days they actually worked, which pay double once approved.
+ * @route GET /api/manager/rest-day-work?year=&month=&state=
+ * @returns {{year, month, counts, claims}} (empty for a non-manager)
+ */
+// GET /api/manager/rest-day-work
+const listTeamRestDayWork = asyncHandler(async (req, res) => {
+  const ids = await myReportIds(req.user._id);
+  const now = new Date();
+  if (!ids.length) {
+    res.json({ year: now.getFullYear(), month: now.getMonth() + 1, counts: { pending: 0, approved: 0, rejected: 0 }, claims: [] });
+    return;
+  }
+  res.json(await buildRestDayClaims({
+    empIds: ids,
+    year: Number(req.query.year) || now.getFullYear(),
+    month: Number(req.query.month) || now.getMonth() + 1,
+    state: req.query.state || 'all',
+  }));
+});
+
+/**
+ * Approve or reject one of the caller's reports' rest-day duty claims.
+ * @route PATCH /api/manager/rest-day-work/:id
+ * @param {'Approved'|'Rejected'} req.body.decision
+ * @param {string} [req.body.note]
+ * @returns {{record: Object}}; 403 when the record isn't a direct report's
+ */
+// PATCH /api/manager/rest-day-work/:id
+const decideTeamRestDayWork = asyncHandler(async (req, res) => {
+  const decision = req.body.decision;
+  if (!['Approved', 'Rejected'].includes(decision)) {
+    res.status(400);
+    throw new Error('decision must be Approved or Rejected');
+  }
+  const record = await Attendance.findById(req.params.id);
+  if (!record) {
+    res.status(404);
+    throw new Error('Attendance record not found');
+  }
+  const ids = await myReportIds(req.user._id);
+  if (!ids.some((id) => String(id) === String(record.employee))) {
+    res.status(403);
+    throw new Error('That day belongs to someone who does not report to you');
+  }
+  try {
+    await applyRestDayDecision(record, { decision, note: req.body.note, by: req.user });
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
+  res.json({ record });
+});
+
 module.exports = {
   listTeam,
   teamPresence,
@@ -318,4 +376,6 @@ module.exports = {
   teamHeatmap,
   teamDayDetails,
   exportTeamAttendance,
+  listTeamRestDayWork,
+  decideTeamRestDayWork,
 };

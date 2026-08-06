@@ -6,6 +6,23 @@ const mongoose = require('mongoose');
 // Present/Absent/HalfDay = worked state; WeeklyOff/Holiday = non-working day; OnLeave = on an approved leave.
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
+// HR's / the manager's decision on a rest day that was actually worked.
+//
+// Working a Sunday or an org-wide Comp Off day is paid DOUBLE, but only once
+// it is approved — so the decision lives on the day it describes. No decision
+// (the field absent) means the claim is still pending, which is also what every
+// historic record correctly reads as. See utils/restDay.js.
+const doublePaySchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: ['Approved', 'Rejected'] },
+    days: Number,          // extra days earned: 1 for a full day, 0.5 for a half day
+    decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    decidedAt: Date,
+    note: String,
+  },
+  { _id: false }
+);
+
 // GPS location captured by the client at the moment of a punch photo.
 const locationSchema = new mongoose.Schema(
   {
@@ -69,6 +86,9 @@ const attendanceSchema = new mongoose.Schema(
     // but no check-out ("forgot to punch out"). Cleared automatically if a
     // check-out is later filled in (HR edit / regularization).
     noPunchOut: { type: Boolean, default: false },
+    // Only ever set on a Sunday / Comp Off day that was worked — the approval
+    // that turns that day into double pay in the payroll run.
+    doublePay: doublePaySchema,
     remarks: String,
   },
   { timestamps: true }

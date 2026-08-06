@@ -2,7 +2,8 @@
 // Resolves the API base URL at startup (local backend if reachable in dev,
 // otherwise the deployed Railway backend) and wires two interceptors:
 // a request interceptor that attaches the Bearer auth token, and a response
-// interceptor that logs the user out on any 401. Exported as the default `api`.
+// interceptor that logs the user out on any 401. Exported as the default `api`,
+// alongside `signOut()` for a deliberate sign-out.
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 
@@ -75,5 +76,19 @@ api.interceptors.response.use(
     return Promise.reject(err);
   }
 );
+
+/**
+ * User-initiated sign-out. Pings the backend first — that call is what closes
+ * the session line on the server console the login opened — and then clears the
+ * local session. A failed ping never blocks the sign-out.
+ */
+export async function signOut() {
+  try {
+    await api.post('/auth/logout');
+  } catch {
+    /* best effort — the session is being discarded either way */
+  }
+  useAuthStore.getState().logout();
+}
 
 export default api;

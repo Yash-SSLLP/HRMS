@@ -38,6 +38,7 @@ const COMPONENT_LABELS = {
   bonus: 'Bonus',
   overtime: 'Overtime Pay',
   leaveIncentive: 'Leave Incentive',
+  doubleDayPay: 'Sunday / Comp-off Duty (2×)',
   otherEarnings: 'Other Earnings',
   epf: 'Provident Fund (EPF)',
   esic: 'ESIC',
@@ -77,7 +78,9 @@ function buildSlipRows(payslip) {
       ['TA', e.conveyanceAllowance || 0],
       ['Incentives', (e.leaveIncentive || 0) + (e.bonus || 0)],
       ['Variable Pay', e.overtime || 0],
-      ['Other Pay', e.otherEarnings || 0],
+      // The slip's own note calls this row "working during holidays or leaves",
+      // so the extra day paid for an approved Sunday / comp-off duty belongs here.
+      ['Other Pay', (e.otherEarnings || 0) + (e.doubleDayPay || 0)],
     ],
     deductionRows: [
       ['PF', d.epf || 0],

@@ -10,7 +10,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } fr
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 
-import api, { errMsg, mediaUrl } from '../api/client';
+import api, { errMsg, mediaUrl, signOut } from '../api/client';
 import { useAuth } from '../store/auth';
 import { unregisterPush } from '../services/push';
 import { colors, radius, spacing, font, roleAccent } from '../theme';
@@ -22,7 +22,6 @@ export default function ProfileScreen() {
   const nav = useNavigation();
   const user = useAuth((s) => s.user);
   const setUser = useAuth((s) => s.setUser);
-  const logout = useAuth((s) => s.logout);
   const token = useAuth((s) => s.token);
   const accent = roleAccent[user?.role] || colors.primary;
 
@@ -81,7 +80,7 @@ export default function ProfileScreen() {
       {
         text: 'Log out',
         style: 'destructive',
-        onPress: async () => { await unregisterPush(); await logout(); },
+        onPress: async () => { await unregisterPush(); await signOut(); },
       },
     ]);
   };

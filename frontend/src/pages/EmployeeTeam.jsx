@@ -98,6 +98,32 @@ export default function EmployeeTeam() {
     }
   };
 
+  // Sunday / comp-off days my reports worked — each pays double once approved.
+  const [duty, setDuty] = useState({ claims: [], counts: { pending: 0, approved: 0, rejected: 0 } });
+  const [dutyBusy, setDutyBusy] = useState('');
+
+  const loadDuty = async () => {
+    try {
+      const { data } = await api.get(`/manager/rest-day-work?year=${exYear}&month=${exMonth}`);
+      setDuty(data);
+    } catch {
+      setDuty({ claims: [], counts: { pending: 0, approved: 0, rejected: 0 } });
+    }
+  };
+
+  const decideDuty = async (claim, decision) => {
+    setDutyBusy(claim._id);
+    try {
+      await api.patch(`/manager/rest-day-work/${claim._id}`, { decision });
+      toast.success(decision === 'Approved' ? 'Approved — that day will pay double' : 'Rejected — that day pays normally');
+      await loadDuty();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save the decision');
+    } finally {
+      setDutyBusy('');
+    }
+  };
+
   const load = async () => {
     setLoading(true); setError('');
     try {
@@ -107,6 +133,7 @@ export default function EmployeeTeam() {
       ]);
       setTeam(t.data.team || []);
       setBoard(b.data);
+      await loadDuty();
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load your team');
     } finally {
@@ -130,6 +157,53 @@ export default function EmployeeTeam() {
           {board && (team.length > 0) && (
             <div className="mb-5">
               <PresenceBoardView board={board} />
+            </div>
+          )}
+
+          {/* Sunday / comp-off duty from my reports. Approving pays that day 2×. */}
+          {duty.claims.length > 0 && (
+            <div className="bg-white shadow rounded-lg p-5 mb-4">
+              <h2 className="card-title mb-1">
+                Sunday &amp; comp-off duty
+                {duty.counts.pending > 0 && (
+                  <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold align-middle">
+                    {duty.counts.pending} to approve
+                  </span>
+                )}
+              </h2>
+              <p className="text-xs text-gray-500 mb-3">
+                Days off your reports actually worked ({MONTHS[exMonth - 1]} {exYear}). Approving one pays that
+                day at 2× — one extra day&apos;s salary on top of the day their monthly pay already covers.
+              </p>
+              <div className="divide-y divide-gray-100">
+                {duty.claims.map((c) => (
+                  <div key={c._id} className="py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="flex items-center gap-2">
+                      <span className="font-medium text-gray-800">{c.employee?.name || '-'}</span>
+                      <span className="text-gray-500">{fmtDate(c.date)}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        c.dayType === 'Sunday' ? 'bg-rose-100 text-rose-800' : 'bg-violet-100 text-violet-800'}`}>
+                        {c.dayType}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {fmtTime(c.checkIn)} – {c.checkOut ? fmtTime(c.checkOut) : '—'}
+                      </span>
+                    </span>
+                    {c.state === 'Pending' ? (
+                      <span className="space-x-3">
+                        <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Approved')}
+                          className="text-green-700 hover:underline disabled:opacity-50">Approve 2×</button>
+                        <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Rejected')}
+                          className="text-red-600 hover:underline disabled:opacity-50">Reject</button>
+                      </span>
+                    ) : (
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[c.state] || 'bg-gray-100 text-gray-600'}`}>
+                        {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

@@ -221,11 +221,19 @@ export default function AdminPayrollRun() {
                       <Stat label="Excess late" value={c.policy.excessLate} warn={c.policy.excessLate > 0} />
                       <Stat label="Excess leave" value={c.policy.excessLeave} warn={c.policy.excessLeave > 0} />
                       <Stat label="No-punch days" value={c.policy.noPunchDays ?? 0} warn={(c.policy.noPunchDays ?? 0) > 0} />
+                      <Stat label="Duty days (2×)" value={c.policy.doublePayDays ?? 0} />
+                      {(c.policy.pendingDoublePayDays ?? 0) > 0 && (
+                        <Stat label="Duty awaiting approval" value={c.policy.pendingDoublePayDays} warn />
+                      )}
                     </div>
                     <p className="text-[11px] text-gray-400 mt-2">
                       {c.policy.paidLeaveQuota} paid leaves/month - unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
                       {' '}First {c.policy.lateAllowance} lates free; each extra costs {inr(c.policy.lateRate)}/day (monthly Basic {c.policy.monthlyBasic < 25000 ? '<' : '≥'} ₹25,000).
                       {' '}Working days with no punch-in/out are LOP ({c.policy.noPunchDays ?? 0} this month) unless regularised.
+                      {' '}Sundays &amp; comp-off days that were worked pay 2× once approved
+                      ({c.policy.doublePayDays ?? 0} approved{(c.policy.pendingDoublePayDays ?? 0) > 0
+                        ? `, ${c.policy.pendingDoublePayDays} still awaiting a decision` : ''}
+                      {(c.policy.doubleDayPay ?? 0) > 0 ? ` — ${inr(c.policy.doubleDayPay)} extra` : ''}).
                       {' '}Basic and every other earning are always paid in full — LOP and late coming come off as deductions.
                       {' '}Salary is spread over all {c.daysInMonth} days of the month (Sundays &amp; holidays are paid)
                       {c.ctc > 0 ? `, so one day costs ${inr(Math.round(c.ctc / 12 / (c.daysInMonth || 1)))}` : ''}.

@@ -1,6 +1,6 @@
 /**
  * Auth router — mounted at /api/auth.
- * Signup/login, current-user profile & credentials, plus self-service
+ * Signup/login/logout, current-user profile & credentials, plus self-service
  * avatar and banner upload/removal (and viewing any user's images).
  */
 const express = require('express');
@@ -8,6 +8,7 @@ const multer = require('multer');
 const {
   signup,
   login,
+  logout,
   me,
   updateMyCredentials,
   uploadMyAvatar,
@@ -35,6 +36,8 @@ const avatarUpload = multer({
 router.post('/signup', signup);
 // POST /login — authenticate and issue a token; public.
 router.post('/login', login);
+// POST /logout — end the session (logs the sign-out); protected.
+router.post('/logout', protect, logout);
 // GET /me — current user's profile; protected.
 router.get('/me', protect, me);
 // PATCH /me/credentials — update own username/password; protected.

@@ -140,7 +140,15 @@ Probation → confirmation lifecycle. The **due date** is the date of joining + 
 - Everyone relevant is **notified** - the current approver at their turn, the applicant on decision, and HR/Backend on the final outcome.
 
 ### Holidays *(leave.manage)*
-Maintain the company holiday calendar (type: Public / Restricted / Company). Holidays are respected by attendance, payroll, and the Rewards & Recognition banner window.
+Maintain the company holiday calendar (type: Public / Restricted / Company / **Comp Off**). Holidays are respected by attendance, payroll, and the Rewards & Recognition banner window.
+- **Comp Off** is a company-wide day off (e.g. the office closes on a Friday because everyone worked the Saturday). It is non-working like any holiday, and it is one of the two days that pay **double** when actually worked - see *Sunday & comp-off duty* below.
+- **Bulk upload:** *Template* downloads one workbook with three sheets - **Holidays**, **Comp Offs** and **Celebrations** - and *Import Excel* uploads it back. Fill in only the sheets you need; the example row in each sheet is ignored, and entries already on the calendar (same name, same day) are skipped, so a corrected file can be re-uploaded safely. Celebrations become company events and need the events permission. The whole upload sends **one** notification, not one per row.
+
+### Sunday & comp-off duty *(attendance.manage)*
+Pay is spread over calendar days, so Sundays and holidays are already paid inside the monthly salary. When someone **works** a Sunday or a **Comp Off** day, that day can be paid **double** - but only after it is approved.
+- Attendance shows a **Sunday & comp-off duty** panel listing every such day that was worked, with Approve 2x / Reject. A reporting manager sees their own team's under **My Team**.
+- Approving adds **one extra day's salary** for that day (half a day for a half day), which is what makes it 2x. It shows on the payslip under **Other Pay** and in the payroll register's own **DUTY PAY** column (with the day count in LNT + EXTRA DAYS).
+- A day left pending, or rejected, pays exactly as normal. Working an ordinary Public/Restricted/Company holiday also pays normally - file the day as **Comp Off** if it should pay double.
 
 ---
 

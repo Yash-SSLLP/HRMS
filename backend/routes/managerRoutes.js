@@ -5,7 +5,11 @@
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
-const { listTeam, teamPresence, listTeamLeave, approveTeamLeave, rejectTeamLeave, teamHeatmap, teamDayDetails, exportTeamAttendance } = require('../controllers/managerController');
+const {
+  listTeam, teamPresence, listTeamLeave, approveTeamLeave, rejectTeamLeave,
+  teamHeatmap, teamDayDetails, exportTeamAttendance,
+  listTeamRestDayWork, decideTeamRestDayWork,
+} = require('../controllers/managerController');
 const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -31,5 +35,9 @@ router.get('/leave-requests', listTeamLeave);
 router.patch('/leave-requests/:id/approve', approveTeamLeave);
 // PATCH /leave-requests/:id/reject — reject a team member's leave; protected (team-scoped).
 router.patch('/leave-requests/:id/reject', rejectTeamLeave);
+// GET /rest-day-work — Sundays / comp-off days my reports worked; protected (team-scoped).
+router.get('/rest-day-work', listTeamRestDayWork);
+// PATCH /rest-day-work/:id — approve/reject a report's double-pay claim; protected (team-scoped).
+router.patch('/rest-day-work/:id', decideTeamRestDayWork);
 
 module.exports = router;

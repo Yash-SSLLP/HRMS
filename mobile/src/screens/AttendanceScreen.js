@@ -17,6 +17,9 @@ import { Screen, Card, AppButton, Pill, Loader, refresher, SectionHeader, Ionico
 import { fmtDate, fmtTime, fmtHours } from '../utils/format';
 
 const STATUS_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info', Holiday: 'neutral', WeekOff: 'neutral' };
+// Rest-day duty (a Sunday / company comp-off day that was worked): paid double
+// once HR or the reporting manager approves it, so the day carries its state.
+const DOUBLE_PAY_TONE = { Approved: 'success', Rejected: 'neutral', Pending: 'warning' };
 
 // GPS accuracy tuning for the punch location. The first fix a device returns is
 // usually coarse (network based); a real GPS fix converges over a few seconds,
@@ -259,7 +262,17 @@ export default function AttendanceScreen() {
                 </Text>
                 {workedHours(r) != null ? <Text style={font.small}>{fmtHours(workedHours(r))} worked</Text> : null}
               </View>
-              <Pill label={r.status} tone={STATUS_TONE[r.status] || 'neutral'} />
+              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                <Pill label={r.status} tone={STATUS_TONE[r.status] || 'neutral'} />
+                {/* A Sunday / company comp-off day you worked pays double once approved. */}
+                {r.doublePayState ? (
+                  <Pill
+                    label={r.doublePayState === 'Approved' ? '2x approved'
+                      : r.doublePayState === 'Rejected' ? '2x rejected' : '2x pending'}
+                    tone={DOUBLE_PAY_TONE[r.doublePayState] || 'neutral'}
+                  />
+                ) : null}
+              </View>
             </Card>
           ))
         )}

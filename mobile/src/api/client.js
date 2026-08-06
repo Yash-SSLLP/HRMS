@@ -56,6 +56,20 @@ api.interceptors.response.use(
 );
 
 /**
+ * User-initiated sign-out. Pings the backend first — that call is what closes
+ * the session line on the server console the login opened — and then clears the
+ * local session. A failed ping never blocks the sign-out.
+ */
+export async function signOut() {
+  try {
+    await api.post('/auth/logout');
+  } catch {
+    /* best effort — the session is being discarded either way */
+  }
+  await useAuth.getState().logout();
+}
+
+/**
  * Extract a user-friendly message from an axios error.
  * @param {*} err Caught error.
  * @param {string} [fallback] Message when none is present on the error.

@@ -78,6 +78,7 @@ Right on your Attendance screen there's a card that shows, for the current month
 - **Expected late deduction** - the rupee amount you'd lose this month for extra late days, with the maths (e.g. `3 × ₹200/day`).
 - **Paid leave used** - e.g. `1 / 2` of your monthly paid-leave quota, and "N day(s) LOP" if you've gone over.
 - **Leave incentive** - extra pay you'll earn for **unused** paid leave this month.
+- **Sunday / comp-off duty** - days off you actually worked. Each one is paid **double** once HR or your manager approves it (until then the day shows `2x pending` next to its status in the table below).
 
 💡 If HR hasn't set up your salary yet, the card shows the counts but notes that the *amounts* will finalise once your salary is configured.
 

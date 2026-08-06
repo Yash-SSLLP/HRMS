@@ -13,7 +13,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNRestart from 'react-native-restart';
 
-import { API_BASE } from '../api/client';
+import { API_BASE, signOut } from '../api/client';
 import { useAuth } from '../store/auth';
 import { useSecurity } from '../store/security';
 import { registerForPush, unregisterPush } from '../services/push';
@@ -42,7 +42,6 @@ function Row({ icon, label, value, onPress, danger, last, tint }) {
 
 export default function SettingsScreen() {
   const user = useAuth((s) => s.user);
-  const logout = useAuth((s) => s.logout);
   const lockEnabled = useSecurity((s) => s.enabled);
   const setLockEnabled = useSecurity((s) => s.setEnabled);
   const [working, setWorking] = useState(false);
@@ -119,7 +118,7 @@ export default function SettingsScreen() {
   const doLogout = () => {
     Alert.alert('Log out?', 'You will need to sign in again.', [
       { text: 'Cancel' },
-      { text: 'Log out', style: 'destructive', onPress: async () => { await unregisterPush(); await logout(); } },
+      { text: 'Log out', style: 'destructive', onPress: async () => { await unregisterPush(); await signOut(); } },
     ]);
   };
 

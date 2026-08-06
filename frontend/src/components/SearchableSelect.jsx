@@ -28,7 +28,7 @@
  */
 import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiChevronDown, FiSearch, FiCheck } from 'react-icons/fi';
+import { FiChevronDown, FiSearch, FiCheck, FiX } from 'react-icons/fi';
 
 // Below this many options a search box is more noise than help.
 const SEARCH_THRESHOLD = 7;
@@ -81,6 +81,18 @@ function readOptions(children) {
   return out;
 }
 
+// Marks the typed fragments inside an option label. In a picker of near-identical
+// rows ("SSL120 · …", "SSL121 · …") the highlight is what tells you *why* a row
+// matched, so the eye lands on the right one without re-reading the whole list.
+function highlight(label, terms) {
+  if (!terms.length) return label;
+  const re = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'ig');
+  // split() with one capture group puts the matched fragments at the odd indices.
+  return label.split(re).map((part, i) => (
+    i % 2 ? <mark key={i} className="ss-hl">{part}</mark> : part
+  ));
+}
+
 export default function SearchableSelect({
   value,
   onChange,
@@ -125,21 +137,25 @@ export default function SearchableSelect({
     : (current?.label || placeholder);
   const isPlaceholder = multiple ? chosen.length === 0 : (!current || current.value === '');
 
+  const terms = useMemo(
+    () => query.trim().toLowerCase().split(/\s+/).filter(Boolean),
+    [query]
+  );
+
   const filtered = useMemo(() => {
-    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     // Nothing typed → the searchOnly groups stay out of the way.
     if (!terms.length) return options.filter((o) => !o.searchOnly);
     return options.filter((o) => {
       const hay = `${o.group} ${o.label}`.toLowerCase();
       return terms.every((t) => hay.includes(t));
     });
-  }, [options, query]);
+  }, [options, terms]);
 
   // How many options the searchOnly groups are holding back right now — shown
   // as a hint so the list never looks like it is simply missing people.
   const hiddenCount = useMemo(
-    () => (query.trim() ? 0 : options.filter((o) => o.searchOnly).length),
-    [options, query]
+    () => (terms.length ? 0 : options.filter((o) => o.searchOnly).length),
+    [options, terms]
   );
 
   const place = useCallback(() => {
@@ -287,26 +303,43 @@ export default function SearchableSelect({
         <div
           ref={listRef}
           role="listbox"
-          className="ss-menu z-[100] bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden flex flex-col"
+          className="ss-menu z-[100] bg-white border border-gray-200 rounded-2xl overflow-hidden flex flex-col"
           style={{ position: 'fixed', left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width, maxHeight: rect.maxHeight }}
         >
           {showSearch && (
-            <div className="p-2 border-b border-gray-100 shrink-0">
-              <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-50 border border-gray-200 focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-gray-200/70">
-                <FiSearch size={14} className="text-gray-400 shrink-0" aria-hidden="true" />
+            <div className="ss-search-wrap shrink-0">
+              <div className="ss-search-field">
+                <FiSearch size={15} className="ss-search-icon shrink-0" aria-hidden="true" />
                 <input
                   ref={inputRef}
                   value={query}
                   onChange={(e) => { setQuery(e.target.value); setActive(0); }}
                   placeholder={searchPlaceholder}
-                  className="w-full text-sm outline-none bg-transparent"
+                  className="ss-search-input"
                 />
+                {/* Live tally, so a long list never feels like it swallowed the query. */}
+                <span className="ss-search-count" aria-live="polite">
+                  {terms.length ? filtered.length : options.length}
+                </span>
+                {terms.length > 0 && (
+                  <button
+                    type="button"
+                    className="ss-search-clear"
+                    aria-label="Clear search"
+                    onClick={() => { setQuery(''); setActive(0); inputRef.current?.focus(); }}
+                  >
+                    <FiX size={13} aria-hidden="true" />
+                  </button>
+                )}
               </div>
             </div>
           )}
           <div className="overflow-y-auto py-1 px-1">
             {filtered.length === 0 ? (
-              <div className="px-3 py-3 text-sm text-gray-500">No matches</div>
+              <div className="ss-empty">
+                <FiSearch size={16} aria-hidden="true" />
+                <span>No matches for <span className="ss-empty-q">“{query.trim()}”</span></span>
+              </div>
             ) : filtered.map((o, i) => {
               const on = isSelected(o.value);
               const prev = filtered[i - 1];
@@ -330,7 +363,7 @@ export default function SearchableSelect({
                         {on && <FiCheck size={11} />}
                       </span>
                     )}
-                    <span className="flex-1 break-words leading-snug">{o.label}</span>
+                    <span className="flex-1 break-words leading-snug">{highlight(o.label, terms)}</span>
                     {!multiple && on && <FiCheck size={14} className="shrink-0 mt-0.5 accent-text" aria-hidden="true" />}
                   </button>
                 </div>

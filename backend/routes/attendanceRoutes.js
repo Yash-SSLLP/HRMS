@@ -24,6 +24,8 @@ const {
   createRecord,
   updateRecord,
   deleteRecord,
+  listRestDayWork,
+  decideRestDayWork,
   getSettings,
   updateSettings,
 } = require('../controllers/attendanceController');
@@ -75,6 +77,13 @@ router.get('/daily-stats', dailyStats);
 router.get('/today-board', todayBoard);
 // GET /presence-board — live presence board; protected, requires 'attendance.manage'.
 router.get('/presence-board', presenceBoard);
+
+// Rest-day duty: Sundays / comp-off days that were worked, and the approval that
+// makes them double pay. Declared before '/:id' so the path isn't read as an id.
+// GET /rest-day-work — the month's claims; protected, requires 'attendance.manage'.
+router.get('/rest-day-work', listRestDayWork);
+// PATCH /rest-day-work/:id — approve/reject one claim; protected, requires 'attendance.manage'.
+router.patch('/rest-day-work/:id', decideRestDayWork);
 
 // GET/PUT /settings — read/update attendance settings; protected, requires 'attendance.manage'.
 router.route('/settings')

@@ -22,6 +22,7 @@ const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
 const { lateMinutes } = require('../utils/workday');
+const { compOffKeysFor, isRestDayRecord, approvedDoublePayDays, doublePayState } = require('../utils/restDay');
 const { renderPayslip } = require('../services/payslipPdf');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
@@ -159,6 +160,8 @@ const PAYROLL_SHEET_COLUMNS = [
   { header: 'LNT + EXTRA DAYS', key: 'lnt', width: 15 },
   { header: 'SALARY', key: 'salary', width: 12 },
   { header: 'ARREARS/BONUS', key: 'bonus', width: 14 },
+  // Approved Sunday / comp-off duty, paid at one extra day per day worked.
+  { header: 'DUTY PAY', key: 'dutyPay', width: 11 },
   { header: 'GROSS SALARY', key: 'gross', width: 13 },
   { header: 'Old Advance', key: 'oldAdvance', width: 12 },
   { header: 'Weekly Advance', key: 'weeklyAdvance', width: 14 },
@@ -197,6 +200,10 @@ function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
   const lateDeduction = Math.round((run.policy && run.policy.latePenalty) || run.latePenalty || 0);
   const pt = Math.round((run.statutoryDeductions && run.statutoryDeductions.professionalTax) || 0);
   const advance = Math.round(run.salaryAdvance || 0);
+  // Approved Sunday / comp-off duty gets its own money column, with the day
+  // count alongside the unused-leave days in "LNT + EXTRA DAYS".
+  const dutyPay = Math.round((run.policy && run.policy.doubleDayPay) || run.doubleDayPay || 0);
+  const dutyDays = round1((run.policy && run.policy.doublePayDays) || run.doublePayDays || 0);
   const bonusAmt = Math.round(bonus || 0);
   return {
     sl,
@@ -205,10 +212,11 @@ function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
     designation: meta.designation || '',
     netDays,
     absentDays: unpaidDays,
-    lnt: run.policy ? (run.policy.unusedLeave || 0) : 0,
+    lnt: round1((run.policy ? (run.policy.unusedLeave || 0) : 0) + dutyDays),
     salary: monthlySalary,
     bonus: bonusAmt || '',      // optional — blank when there's no arrear/bonus
-    gross: monthlySalary + bonusAmt,
+    dutyPay: dutyPay || '',     // blank unless a rest day was worked and approved
+    gross: monthlySalary + bonusAmt + dutyPay,
     oldAdvance: '',             // ── old/weekly advance + interest filled in by HR ──
     weeklyAdvance: '',
     advance: advance || '',     // this month's salary-advance EMI
@@ -217,9 +225,33 @@ function buildPayrollSheetRow(sl, meta, run, bonus = 0) {
     absentAmount,
     pt,
     deductions: advance + lateDeduction + absentAmount + pt,
-    netPayable: (monthlySalary + bonusAmt) - (advance + lateDeduction + absentAmount + pt),
+    netPayable: (monthlySalary + bonusAmt + dutyPay) - (advance + lateDeduction + absentAmount + pt),
   };
 }
+
+// Spreadsheet column letter for a 1-based index (1 → A, 27 → AA).
+function columnLetter(index) {
+  let n = index;
+  let out = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    n = Math.floor((n - 1) / 26);
+  }
+  return out;
+}
+
+// key -> column letter, derived from PAYROLL_SHEET_COLUMNS so the formulas below
+// follow the layout. They used to be written as literal letters, which silently
+// pointed at the wrong columns the moment one was inserted.
+const COL = Object.fromEntries(
+  PAYROLL_SHEET_COLUMNS.map((c, i) => [c.key, columnLetter(i + 1)])
+);
+// Column groups by meaning: day counts vs money (everything from SALARY right).
+const DAY_COLS = ['netDays', 'absentDays', 'lnt'].map((k) => COL[k]);
+const MONEY_COLS = PAYROLL_SHEET_COLUMNS
+  .slice(PAYROLL_SHEET_COLUMNS.findIndex((c) => c.key === 'salary'))
+  .map((c) => COL[c.key]);
 
 // Assemble the workbook from pre-built rows. GROSS/DEDUCTIONS/NET are set as
 // formulas so the file recalculates if HR edits salary, bonus or the advances.
@@ -246,12 +278,16 @@ function buildPayrollWorkbook(rows, year, month) {
     const excelRow = ws.addRow(r);
     const n = excelRow.number; // 1-based sheet row (header is row 1)
     // Live totals so the sheet stays correct when HR fills advances/interest.
-    ws.getCell(`J${n}`).value = { formula: `H${n}+I${n}` };            // GROSS = SALARY + BONUS
-    ws.getCell(`R${n}`).value = { formula: `SUM(K${n}:Q${n})` };       // DEDUCTIONS = advances+late+interest+absent+PT
-    ws.getCell(`S${n}`).value = { formula: `J${n}-R${n}` };            // NET = GROSS − DEDUCTIONS
+    // GROSS = SALARY + ARREARS/BONUS + DUTY PAY
+    ws.getCell(`${COL.gross}${n}`).value = { formula: `${COL.salary}${n}+${COL.bonus}${n}+${COL.dutyPay}${n}` };
+    // DEDUCTIONS = every column between GROSS and the deductions total
+    // (advances + late + interest + absent + PT)
+    ws.getCell(`${COL.deductions}${n}`).value = { formula: `SUM(${COL.oldAdvance}${n}:${COL.pt}${n})` };
+    // NET = GROSS − DEDUCTIONS
+    ws.getCell(`${COL.netPayable}${n}`).value = { formula: `${COL.gross}${n}-${COL.deductions}${n}` };
     // Number formats.
-    ['E', 'F', 'G'].forEach((c) => { ws.getCell(`${c}${n}`).numFmt = DAYS; });
-    ['H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S'].forEach((c) => { ws.getCell(`${c}${n}`).numFmt = MONEY; });
+    DAY_COLS.forEach((c) => { ws.getCell(`${c}${n}`).numFmt = DAYS; });
+    MONEY_COLS.forEach((c) => { ws.getCell(`${c}${n}`).numFmt = MONEY; });
   });
 
   // Totals row (sum of every money column) so HR sees the payout at a glance.
@@ -260,7 +296,7 @@ function buildPayrollWorkbook(rows, year, month) {
     const last = rows.length + 1;
     const totals = ws.addRow({ designation: 'TOTAL' });
     const n = totals.number;
-    ['H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S'].forEach((c) => {
+    MONEY_COLS.forEach((c) => {
       ws.getCell(`${c}${n}`).value = { formula: `SUM(${c}${first}:${c}${last})` };
       ws.getCell(`${c}${n}`).numFmt = MONEY;
     });
@@ -619,8 +655,11 @@ async function computeEmployeeRun(profile, year, month) {
   // is treated as Loss of Pay. Regularising the day writes a check-in (or a
   // Present/Leave status), which credits it back. These days usually have no
   // attendance record at all, so they aren't caught by the `absent` count above.
-  const holidays = await Holiday.find({ date: { $gte: start, $lt: end } }).select('date').lean().catch(() => []);
+  const holidays = await Holiday.find({ date: { $gte: start, $lt: end } }).select('date type').lean().catch(() => []);
   const holidayKeys = new Set((holidays || []).map((h) => ymdIST(h.date)));
+  // Org-wide comp-off days — the subset of holidays that, like a Sunday, pays
+  // double when it is actually worked (once approved). See utils/restDay.js.
+  const compOffKeys = compOffKeysFor(holidays);
   const recByKey = new Map(records.map((r) => [ymdIST(r.date), r]));
   const CREDITED = new Set(['Present', 'HalfDay', 'OnLeave', 'Holiday', 'WeeklyOff']);
   const todayKey = ymdIST(new Date());
@@ -668,6 +707,18 @@ async function computeEmployeeRun(profile, year, month) {
   // (leave incentive) at one day's salary each. Settled monthly, never carried.
   const excessLeave = Math.max(0, onLeaveDays - paidLeaveQuota);
   const unusedLeave = Math.max(0, paidLeaveQuota - onLeaveDays);
+
+  // ----- Rest-day duty paid at DOUBLE -----
+  // A Sunday or an org-wide Comp Off day is already paid inside the monthly
+  // salary (pay is spread over calendar days), so working one is settled by
+  // paying ONE more day — that is what makes the day 2×. Only days HR or the
+  // reporting manager approved count; an unapproved or rejected rest day is paid
+  // normally, and so is any rest day nobody worked. The rest-day test is
+  // re-applied here rather than trusted from approval time, so un-declaring a
+  // comp-off day can't leave paid-out days behind.
+  const doublePayDays = approvedDoublePayDays(records, compOffKeys);
+  const pendingDoublePayDays = +records
+    .reduce((a, r) => a + (doublePayState(r, compOffKeys) === 'Pending' ? 1 : 0), 0).toFixed(1);
 
   // ----- Late arrivals (check-in after the workday start) on worked days -----
   const lateDays = records.filter(
@@ -722,6 +773,9 @@ async function computeEmployeeRun(profile, year, month) {
       lta: comp(c.ltaPct),
       // Unused paid-leave quota paid out at one day's salary each.
       leaveIncentive: Math.round(unusedLeave * perDayPay),
+      // One extra day's pay per approved Sunday / comp-off day worked — the day
+      // is already paid once in the salary above, so this is what doubles it.
+      doubleDayPay: Math.round(doublePayDays * perDayPay),
     };
     // Standard statutory deductions on the same component base used by the
     // manual editor's derive, so all payroll paths fill the same values.
@@ -734,6 +788,7 @@ async function computeEmployeeRun(profile, year, month) {
     };
   }
   const leaveIncentive = earnings ? earnings.leaveIncentive : 0;
+  const doubleDayPay = earnings ? earnings.doubleDayPay : 0;
   const gross = earnings ? Object.values(earnings).reduce((a, v) => a + v, 0) : 0;
 
   // Late-arrival penalty for days beyond the monthly allowance. This is a flat
@@ -775,7 +830,7 @@ async function computeEmployeeRun(profile, year, month) {
   // actually worked that day, in which case its hours count and the day is
   // earned back as a compensatory off (comp-off).
   const isRestDay = (r) =>
-    new Date(r.date).getDay() === 0 || r.status === 'Holiday' || r.status === 'WeeklyOff';
+    isRestDayRecord(r, compOffKeys) || r.status === 'Holiday' || r.status === 'WeeklyOff';
   const workedRecords = records.filter((r) => (r.hoursWorked || 0) > 0);
   const totalHours = +workedRecords.reduce((a, r) => a + (r.hoursWorked || 0), 0).toFixed(2);
   const daysPresent = workedRecords.length;
@@ -800,6 +855,11 @@ async function computeEmployeeRun(profile, year, month) {
       unusedLeave,          // quota not used → paid out as leaveIncentive
       leaveIncentive,
       noPunchDays,          // past working days with no punch (LOP unless regularised)
+      // Sunday / comp-off days worked. Only the approved ones are paid; the
+      // pending count is surfaced so HR can see money still waiting on a decision.
+      doublePayDays,
+      pendingDoublePayDays,
+      doubleDayPay,
       lateAllowance,        // prorated for a mid-month joiner / leaver
       fullLateAllowance: LATE_ALLOWANCE,
       lateDays,
@@ -824,6 +884,7 @@ async function computeEmployeeRun(profile, year, month) {
     // Proration base: eligibleDays are the days on the payroll this month (mid-month
     // joiners/leavers get fewer), while daysInMonth stays the per-day divisor.
     eligibleDays, notEmployedDays, unpaidDays,
+    doublePayDays, doubleDayPay,
     ctc, // CTC effective for this pay month (post hike resolution)
     statutoryDeductions, // EPF / ESIC / PT derived from the components
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
@@ -897,6 +958,7 @@ function buildRunFields(profile, computed, existing = null, { rerun = false } = 
       + ` · leave ${p.leaveTaken}/${p.paidLeaveQuota}`
       + (p.excessLeave ? ` (${p.excessLeave}d LOP)` : p.unusedLeave ? ` (₹${p.leaveIncentive} incentive)` : '')
       + (p.noPunchDays ? ` · no-punch ${p.noPunchDays}d LOP` : '')
+      + (p.doublePayDays ? ` · rest-day duty ${p.doublePayDays}d at 2× (₹${p.doubleDayPay})` : '')
       + ` · late ${p.lateDays}/${p.lateAllowance}` + (p.excessLate ? ` (₹${p.latePenalty} penalty @ ₹${p.lateRate}/d)` : '')
       + (p.emergencyPenalty ? ` · emergency double-cut ${p.doubleCutLeaves}× (₹${p.emergencyPenalty})` : '')
       // Amount edits are not covered by the status audit log, so record the
@@ -1490,6 +1552,7 @@ module.exports = {
   salarySetupStatus,
   exportPayrollSheet,
   // exported for unit tests
+  computeEmployeeRun,
   deriveSalary,
   resolveCtcForMonth,
   buildRunFields,

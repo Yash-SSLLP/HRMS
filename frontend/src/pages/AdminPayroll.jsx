@@ -47,7 +47,7 @@ const blankSlip = () => ({
   additionalPaidDays: 0,
   monthlySalary: 0,
   annualCtc: 0,
-  earnings: { basic: 0, hra: 0, specialAllowance: 0, conveyanceAllowance: 0, medicalAllowance: 0, lta: 0, bonus: 0, overtime: 0, leaveIncentive: 0, otherEarnings: 0 },
+  earnings: { basic: 0, hra: 0, specialAllowance: 0, conveyanceAllowance: 0, medicalAllowance: 0, lta: 0, bonus: 0, overtime: 0, leaveIncentive: 0, doubleDayPay: 0, otherEarnings: 0 },
   deductions: { epf: 0, esic: 0, professionalTax: 0, tds: 0, loanRecovery: 0, salaryAdvance: 0, lopDeduction: 0, latePenalty: 0, emergencyPenalty: 0, otherDeductions: 0 },
 });
 
@@ -55,6 +55,8 @@ const blankSlip = () => ({
 const FIELD_LABELS = {
   conveyanceAllowance: 'Conveyance (TA)',
   lta: 'LTA',
+  leaveIncentive: 'Leave incentive',
+  doubleDayPay: 'Sunday / comp-off duty (2×)',
   otherEarnings: 'Other Pay',
   epf: 'PF / EPF',
   esic: 'ESIC',

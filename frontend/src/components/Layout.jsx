@@ -7,7 +7,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
-import api from '../api/client';
+import api, { signOut } from '../api/client';
 import ChatDock from './ChatDock';
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
@@ -647,7 +647,6 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
  */
 export default function Layout({ navItems = [], sectionTitle }) {
   const user = useAuthStore((s) => s.user);
-  const logout = useAuthStore((s) => s.logout);
   const setUser = useAuthStore((s) => s.setUser);
   const setFeatures = useAuthStore((s) => s.setFeatures);
   const chatEnabled = useAuthStore((s) => s.features?.chatEnabled);
@@ -682,9 +681,11 @@ export default function Layout({ navItems = [], sectionTitle }) {
       .catch(() => { setDesignation(''); setEmployeeCode(''); });
   }, [user?._id]);
 
-  const handleLogout = () => {
+  // signOut() tells the backend before clearing the session, so the server
+  // console logs the sign-out; it clears the local session either way.
+  const handleLogout = async () => {
     setConfirmLogout(false);
-    logout();
+    await signOut();
     navigate('/login', { replace: true });
   };
 

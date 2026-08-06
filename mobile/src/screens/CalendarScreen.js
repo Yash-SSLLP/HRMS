@@ -30,6 +30,7 @@ const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 // `chip` is the filter label; this order is the order the chips appear in.
 const TYPE_META = {
   holiday: { icon: 'sunny', tint: '#d97706', label: 'Holiday', chip: 'Holidays' },
+  compoff: { icon: 'swap-horizontal', tint: '#8b5cf6', label: 'Comp off (company)', chip: 'Comp offs' },
   event: { icon: 'megaphone', tint: '#4f46e5', label: 'Event', chip: 'Events' },
   birthday: { icon: 'gift', tint: '#db2777', label: 'Birthday', chip: 'Birthdays' },
   anniversary: { icon: 'ribbon', tint: '#9333ea', label: 'Work anniversary', chip: 'Anniversaries' },
@@ -58,7 +59,11 @@ export default function CalendarScreen() {
   const load = useCallback(async (y, m) => {
     const mm = String(m).padStart(2, '0');
     const { data } = await api.get(`/celebrations/calendar?month=${y}-${mm}`).catch(() => ({ data: {} }));
-    setEvents(data.events || []);
+    // An org-wide comp-off day comes through as a holiday carrying its type; it
+    // gets its own chip because working one is paid double (once approved).
+    setEvents((data.events || []).map((e) => (
+      e.type === 'holiday' && e.meta?.holidayType === 'Comp Off' ? { ...e, type: 'compoff' } : e
+    )));
     setLoading(false);
   }, []);
 

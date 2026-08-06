@@ -126,6 +126,42 @@ export default function AdminAttendance() {
   const [settingsForm, setSettingsForm] = useState(null); // non-null while the editor is open
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Sunday / comp-off days that were worked. Each is a claim for double pay
+  // until HR (or the reporting manager) approves or rejects it.
+  const [duty, setDuty] = useState({ claims: [], counts: { pending: 0, approved: 0, rejected: 0 } });
+  const [dutyBusy, setDutyBusy] = useState('');   // id being decided
+  const [dutyOpen, setDutyOpen] = useState(true);
+
+  const loadDuty = async (f = filter) => {
+    try {
+      const params = new URLSearchParams({ year: f.year, month: f.month });
+      if (f.employee) params.set('employee', f.employee);
+      const { data } = await api.get(`/attendance/rest-day-work?${params}`);
+      setDuty(data);
+    } catch {
+      setDuty({ claims: [], counts: { pending: 0, approved: 0, rejected: 0 } });
+    }
+  };
+
+  const decideDuty = async (claim, decision) => {
+    if (decision === 'Rejected'
+      && !(await confirmDialog({
+        message: `Reject double pay for ${claim.employee?.name || 'this employee'} on ${fmtDate(claim.date)}?`,
+        tone: 'danger',
+        confirmText: 'Reject',
+      }))) return;
+    setDutyBusy(claim._id);
+    try {
+      await api.patch(`/attendance/rest-day-work/${claim._id}`, { decision });
+      toast.success(decision === 'Approved' ? 'Approved — this day will pay double' : 'Rejected — the day pays normally');
+      await loadDuty();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save the decision');
+    } finally {
+      setDutyBusy('');
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     setError('');
@@ -141,6 +177,7 @@ export default function AdminAttendance() {
       setRecords(recRes.data.records);
       setEmployees(empRes.data.profiles);
       if (recRes.data.settings) setSettings(recRes.data.settings);
+      await loadDuty();
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -333,6 +370,95 @@ export default function AdminAttendance() {
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+      )}
+
+      {/* Sunday & comp-off duty. Working a company day off is paid double — but
+          only for the days approved here, so an unauthorised weekend punch never
+          quietly turns into money. */}
+      {duty.claims.length > 0 && (
+        <div className="bg-white shadow rounded-lg mb-4 overflow-hidden">
+          <button type="button" onClick={() => setDutyOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50">
+            <span className="flex items-center gap-2">
+              <span className="font-semibold text-gray-800">Sunday &amp; comp-off duty</span>
+              {duty.counts.pending > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">
+                  {duty.counts.pending} awaiting approval
+                </span>
+              )}
+              {duty.counts.approved > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-medium">
+                  {duty.counts.approved} approved
+                </span>
+              )}
+            </span>
+            <span className="text-gray-400 text-sm">{dutyOpen ? '▲' : '▼'}</span>
+          </button>
+
+          {dutyOpen && (
+            <div className="border-t border-gray-100">
+              <p className="px-4 py-2 text-xs text-gray-500">
+                Days off that were worked. Approving one pays that day at <strong>2×</strong> (one extra day&apos;s
+                salary on top of the day already covered by the monthly pay). A day left pending or rejected pays normally.
+              </p>
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Date</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Employee</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Day</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Worked</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Extra pay</th>
+                    <th className="px-4 py-2 text-right font-medium text-gray-700">Decision</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {duty.claims.map((c) => (
+                    <tr key={c._id} className={c.state === 'Pending' ? 'bg-amber-50/40' : ''}>
+                      <td className="px-4 py-2 whitespace-nowrap">{fmtDate(c.date)}</td>
+                      <td className="px-4 py-2">
+                        {c.employee?.name || '-'}
+                        <span className="text-xs text-gray-400"> · {c.employee?.employeeCode || ''}</span>
+                      </td>
+                      <td className="px-4 py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                          c.dayType === 'Sunday' ? 'bg-rose-100 text-rose-800' : 'bg-violet-100 text-violet-800'}`}>
+                          {c.dayType}
+                        </span>
+                        {c.dayName && <span className="ml-1 text-xs text-gray-500">{c.dayName}</span>}
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap text-gray-600">
+                        {fmtTime(c.checkIn)} – {c.checkOut ? fmtTime(c.checkOut) : '—'}
+                        <span className="text-xs text-gray-400"> ({formatHours(c.hoursWorked)})</span>
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap">{c.extraDays} day</td>
+                      <td className="px-4 py-2 text-right whitespace-nowrap">
+                        {c.state === 'Pending' ? (
+                          <span className="space-x-2">
+                            <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Approved')}
+                              className="text-green-700 hover:underline disabled:opacity-50">Approve 2×</button>
+                            <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Rejected')}
+                              className="text-red-600 hover:underline disabled:opacity-50">Reject</button>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                              c.state === 'Approved' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+                              {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
+                            </span>
+                            <button disabled={dutyBusy === c._id}
+                              onClick={() => decideDuty(c, c.state === 'Approved' ? 'Rejected' : 'Approved')}
+                              className="text-blue-600 hover:underline disabled:opacity-50 text-xs">Change</button>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="bg-white shadow rounded-lg overflow-hidden">

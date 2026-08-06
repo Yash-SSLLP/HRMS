@@ -32,6 +32,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // the calendar, whereas reminders/tasks/interviews also arrive as notifications.
 const TYPE_META = {
   holiday:     { label: 'Holiday',              color: '#f43f5e', fg: '#ffffff' },
+  compoff:     { label: 'Comp off (company)',   color: '#8b5cf6', fg: '#ffffff' },
   event:       { label: 'Company event',        color: '#3b82f6', fg: '#ffffff' },
   birthday:    { label: 'Birthday',             color: '#ec4899', fg: '#ffffff' },
   anniversary: { label: 'Work anniversary',     color: '#6366f1', fg: '#ffffff' },
@@ -95,7 +96,12 @@ export default function Calendar() {
     setEvents([]);
     try {
       const { data } = await api.get(`/celebrations/calendar?month=${iso(year, month, 1).slice(0, 7)}`);
-      setEvents(data.events);
+      // An org-wide comp-off day arrives as a holiday carrying its type. It gets
+      // its own chip here — it is the one calendar day that also means "work it
+      // and, once approved, you are paid double".
+      setEvents((data.events || []).map((e) => (
+        e.type === 'holiday' && e.meta?.holidayType === 'Comp Off' ? { ...e, type: 'compoff' } : e
+      )));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load calendar');
     } finally {
@@ -166,9 +172,10 @@ export default function Calendar() {
   const detailRows = (e) => {
     const m = e.meta || {};
     const rows = [];
-    if (e.type === 'holiday') {
+    if (e.type === 'holiday' || e.type === 'compoff') {
       if (m.holidayType) rows.push(['Type', m.holidayType]);
       if (m.description) rows.push(['Details', m.description]);
+      if (e.type === 'compoff') rows.push(['Pay', 'Company-wide day off — working it is paid double, once approved']);
     } else if (e.type === 'event') {
       if (m.time) rows.push(['Time', m.time]);
       if (m.location) rows.push(['Location', m.location]);

@@ -18,7 +18,10 @@ const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
 const { formatDuration } = require('../utils/duration');
-const { WORKDAY_START_HOUR, lateMinutes, statusFromHours } = require('../utils/workday');
+const { WORKDAY_START_HOUR, lateMinutes, statusFromHours, effectiveHours } = require('../utils/workday');
+// Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
+const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../utils/restDay');
+const { notify } = require('../services/notify');
 // All attendance "day" logic is anchored to the IST calendar day so it is
 // independent of the server's timezone (the deployed backend runs in UTC).
 // This keeps a punch made from any client (mobile or web) on the same IST day
@@ -655,19 +658,26 @@ const listMine = asyncHandler(async (req, res) => {
   const month = Number(req.query.month) || now.getMonth() + 1;
   const { start, end } = monthRange(year, month);
 
-  const records = await Attendance.find({
-    employee: profile._id,
-    date: { $gte: start, $lt: end },
-  }).sort({ date: 1 });
+  const [records, holidays] = await Promise.all([
+    Attendance.find({
+      employee: profile._id,
+      date: { $gte: start, $lt: end },
+    }).sort({ date: 1 }),
+    require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date type').lean().catch(() => []),
+  ]);
 
   const todayKey = startOfDay(new Date()).getTime();
   const today = records.find((r) => startOfDay(r.date).getTime() === todayKey) || null;
 
   // Employees see their own lateness — the penalty comes out of their pay, so
-  // the figure that drives it should not be admin-only.
+  // the figure that drives it should not be admin-only. Same reasoning for the
+  // rest-day duty state: a Sunday / comp-off day they worked is worth double
+  // once approved, so they should see whether it still needs a decision.
+  const compOffKeys = compOffKeysFor(holidays);
   const out = records.map((r) => {
     const o = r.toJSON();
     o.lateMinutes = lateMinutes(r);
+    o.doublePayState = doublePayState(r, compOffKeys);   // Pending | Approved | Rejected | null
     return o;
   });
 
@@ -1480,6 +1490,164 @@ const deleteRecord = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+// ===== Rest-day duty (Sunday / Comp Off worked → double pay) =====
+
+/**
+ * Collect a month's rest-day duty claims — days that are a Sunday or an org-wide
+ * Comp Off day AND were actually worked. Shared with the manager controller so
+ * HR and a reporting manager see exactly the same list for their people.
+ * @param {{empIds?: string[]|null, year: number, month: number, state?: string, employee?: string}} opts
+ *   empIds scopes to a set of EmployeeProfile ids (a manager's reports); null = whole org.
+ *   state ∈ pending|approved|rejected|all (default all).
+ * @returns {Promise<{year, month, counts: {pending,approved,rejected}, claims: Object[]}>}
+ */
+async function buildRestDayClaims({ empIds = null, year, month, state = 'all', employee = null }) {
+  const { start, end } = monthRange(year, month);
+
+  const attFilter = { date: { $gte: start, $lt: end }, checkIn: { $ne: null } };
+  if (employee) attFilter.employee = employee;
+  else if (empIds) attFilter.employee = { $in: empIds };
+
+  const [records, holidays] = await Promise.all([
+    Attendance.find(attFilter)
+      .select('employee date status checkIn checkOut hoursWorked doublePay remarks')
+      .populate({ path: 'employee', select: 'employeeCode designation user', populate: { path: 'user', select: 'firstName lastName' } })
+      .sort({ date: 1 })
+      .lean(),
+    require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date name type').lean().catch(() => []),
+  ]);
+
+  const compOffKeys = compOffKeysFor(holidays);
+  const compOffNames = new Map(
+    (holidays || []).filter((h) => h.type === COMP_OFF).map((h) => [ymdLocal(h.date), h.name])
+  );
+
+  const counts = { pending: 0, approved: 0, rejected: 0 };
+  const claims = [];
+  for (const r of records) {
+    const st = doublePayState(r, compOffKeys);
+    if (!st) continue;                       // ordinary working day, or nothing worked
+    counts[st.toLowerCase()] += 1;
+    if (state !== 'all' && st.toLowerCase() !== String(state).toLowerCase()) continue;
+    const key = ymdLocal(r.date);
+    claims.push({
+      _id: r._id,
+      date: r.date,
+      status: r.status,
+      checkIn: r.checkIn,
+      checkOut: r.checkOut,
+      hoursWorked: r.hoursWorked || 0,
+      effectiveHours: effectiveHours(r),
+      // What made the day a rest day, so the approver can see why it's claimable.
+      dayType: compOffKeys.has(key) ? COMP_OFF : 'Sunday',
+      dayName: compOffNames.get(key) || null,
+      extraDays: restDayCredit(r),           // 1 or 0.5 — what approval would pay
+      state: st,
+      doublePay: r.doublePay || null,
+      employee: r.employee
+        ? {
+          _id: r.employee._id,
+          employeeCode: r.employee.employeeCode,
+          designation: r.employee.designation,
+          name: [r.employee.user?.firstName, r.employee.user?.lastName].filter(Boolean).join(' '),
+        }
+        : null,
+    });
+  }
+
+  return { year, month, counts, claims };
+}
+
+/**
+ * Record an approve/reject decision on one rest-day duty claim and tell the
+ * employee. Shared by the HR and manager routes; the caller does the scoping.
+ * @param {Object} record Attendance document (not lean)
+ * @param {{decision: string, note?: string, by: Object}} input
+ * @returns {Promise<Object>} the saved record
+ * @sideeffect notifies the employee (employee-portal audience)
+ */
+async function applyRestDayDecision(record, { decision, note, by }) {
+  const holidays = await require('../models/Holiday')
+    .find({ date: { $gte: startOfDay(record.date), $lt: new Date(startOfDay(record.date).getTime() + 86400000) } })
+    .select('date type').lean().catch(() => []);
+  const state = doublePayState(record, compOffKeysFor(holidays));
+  if (!state) {
+    const err = new Error('That day is not a Sunday or comp-off day that was worked');
+    err.status = 400;
+    throw err;
+  }
+
+  record.doublePay = {
+    status: decision,
+    days: decision === 'Approved' ? restDayCredit(record) : 0,
+    decidedBy: by._id,
+    decidedAt: new Date(),
+    note: note || undefined,
+  };
+  await record.save();
+
+  const profile = await EmployeeProfile.findById(record.employee).select('user').lean();
+  if (profile?.user) {
+    const day = new Date(record.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    await notify({
+      recipient: profile.user,
+      type: 'attendance',
+      audience: 'employee',
+      title: decision === 'Approved' ? 'Double pay approved' : 'Double pay not approved',
+      body: decision === 'Approved'
+        ? `${day} — your rest-day working is approved for double pay.`
+        : `${day} — your rest-day working was not approved for double pay.${note ? ` ${note}` : ''}`,
+      link: 'attendance',
+    }).catch(() => {});
+  }
+
+  return record;
+}
+
+/**
+ * List rest-day duty claims for a month, org-wide.
+ * @route GET /api/attendance/rest-day-work?year=&month=&state=&employee=  (HR/Admin)
+ * @returns {{year, month, counts, claims}}
+ */
+// GET /api/attendance/rest-day-work
+const listRestDayWork = asyncHandler(async (req, res) => {
+  const now = new Date();
+  res.json(await buildRestDayClaims({
+    year: Number(req.query.year) || now.getFullYear(),
+    month: Number(req.query.month) || now.getMonth() + 1,
+    state: req.query.state || 'all',
+    employee: req.query.employee || null,
+  }));
+});
+
+/**
+ * Approve or reject one rest-day duty claim.
+ * @route PATCH /api/attendance/rest-day-work/:id  (HR/Admin)
+ * @param {'Approved'|'Rejected'} req.body.decision
+ * @param {string} [req.body.note]
+ * @returns {{record: Object}}
+ */
+// PATCH /api/attendance/rest-day-work/:id
+const decideRestDayWork = asyncHandler(async (req, res) => {
+  const decision = req.body.decision;
+  if (!['Approved', 'Rejected'].includes(decision)) {
+    res.status(400);
+    throw new Error('decision must be Approved or Rejected');
+  }
+  const record = await Attendance.findById(req.params.id);
+  if (!record) {
+    res.status(404);
+    throw new Error('Attendance record not found');
+  }
+  try {
+    await applyRestDayDecision(record, { decision, note: req.body.note, by: req.user });
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
+  res.json({ record });
+});
+
 module.exports = {
   checkIn,
   checkOut,
@@ -1501,6 +1669,10 @@ module.exports = {
   createRecord,
   updateRecord,
   deleteRecord,
+  listRestDayWork,
+  decideRestDayWork,
+  buildRestDayClaims,
+  applyRestDayDecision,
   getSettings,
   updateSettings,
 };
