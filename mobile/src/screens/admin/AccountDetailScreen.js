@@ -157,7 +157,8 @@ export default function AccountDetailScreen({ route }) {
                 value={user.execEditAccess ? 'Edit mode (can change data)' : 'View only (read-only)'}
               />
             ) : null}
-            <Detail icon="cash" label="Cashbook" value={user.cashbookAccess ? 'Granted' : 'Not granted'} last />
+            <Detail icon="cash" label="Cashbook" value={user.cashbookAccess ? 'Granted' : 'Not granted'} />
+            <Detail icon="receipt" label="Expenses" value={user.expensesAccess ? 'Granted' : 'Not granted'} last />
           </Card>
 
           {/* This account has no employee record, which is why it isn't in the

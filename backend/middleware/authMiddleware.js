@@ -161,7 +161,7 @@ const restrictTo = (...roles) => (req, res, next) => {
 
 /**
  * Whether a user holds a granular capability key. See inline rules below.
- * @param {object|null} user - The User doc (needs role, and optionally permissions/cashbookAccess).
+ * @param {object|null} user - The User doc (needs role, and optionally permissions/cashbookAccess/expensesAccess).
  * @param {string} cap - Capability key (e.g. 'payroll.manage'), from config/permissions.js.
  * @returns {boolean} True if the user is allowed the capability.
  */
@@ -176,11 +176,14 @@ function hasPermission(user, cap) {
   // the full set). A read-only exec holds none — their access comes from the
   // safe-method exemption in the guards below, not from this catalog.
   if (isEditingExec(user)) return true;
-  // Cashbook access can be granted to ANY user/employee via a standalone flag,
-  // independent of role — so no separate finance login is needed.
+  // Cashbook and expense access can each be granted to ANY user/employee via a
+  // standalone flag, independent of role — so no separate finance login is needed.
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
+  if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
-  if (user.role === 'AccountsManager') return cap === 'cashbook.manage';
+  // Account Managers settle reimbursements out of the cashbook, so they hold the
+  // expense capability alongside it.
+  if (user.role === 'AccountsManager') return cap === 'cashbook.manage' || cap === 'expenses.manage';
   if (user.role === 'HRManager') {
     const perms = user.permissions;
     if (perms === undefined || perms === null) return true; // not configured → all

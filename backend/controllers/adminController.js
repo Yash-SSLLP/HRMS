@@ -392,6 +392,28 @@ const setCashbookAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke standalone Expenses access for any user (role-independent flag).
+ * @route PATCH /api/admin/users/:id/expenses-access  (SuperAdmin)
+ * @param {string} req.params.id - user id
+ * @param {boolean} req.body.enabled
+ * @returns {{id, expensesAccess}}
+ */
+// PATCH /api/admin/users/:id/expenses-access  { enabled }  (SuperAdmin)
+// Grant or revoke expense-claim review for ANY user/employee — the standalone
+// twin of cashbook-access above, so reimbursements can be settled by whoever
+// actually handles them, regardless of role.
+const setExpensesAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.expensesAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, expensesAccess: user.expensesAccess });
+});
+
+/**
  * Switch a CEO/MD account between view-only and edit mode.
  * @route PATCH /api/admin/users/:id/exec-edit-access  (SuperAdmin)
  * @param {string} req.params.id - user id (must be a CEO or MD account)
@@ -494,6 +516,7 @@ module.exports = {
   getPermissionCatalog,
   updateUserPermissions,
   setCashbookAccess,
+  setExpensesAccess,
   setExecEditAccess,
   setWfhAccess,
   getOrgSettings,

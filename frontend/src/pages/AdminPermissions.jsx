@@ -71,17 +71,27 @@ export default function AdminPermissions() {
     }
   };
 
-  const toggleCashbook = async (u) => {
+  // Cashbook and Expenses are standalone, role-independent grants — same call
+  // shape either way, so they share one handler.
+  const toggleAccess = async (u, { path, enabled, errorText }) => {
     setBusyId(u._id || u.id); setError('');
     try {
-      await api.patch(`/admin/users/${u._id || u.id}/cashbook-access`, { enabled: !u.cashbookAccess });
+      await api.patch(`/admin/users/${u._id || u.id}/${path}`, { enabled });
       await load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not update cashbook access');
+      setError(err.response?.data?.message || errorText);
     } finally {
       setBusyId(null);
     }
   };
+
+  const toggleCashbook = (u) => toggleAccess(u, {
+    path: 'cashbook-access', enabled: !u.cashbookAccess, errorText: 'Could not update cashbook access',
+  });
+
+  const toggleExpenses = (u) => toggleAccess(u, {
+    path: 'expenses-access', enabled: !u.expensesAccess, errorText: 'Could not update expenses access',
+  });
 
   // CEO/MD only: flip the account between view-only (the default) and edit mode.
   const toggleExecEdit = async (u) => {
@@ -143,8 +153,9 @@ export default function AdminPermissions() {
     <div>
       <PageHeader title="Permissions" />
       <p className="text-sm text-gray-500 mb-4">
-        Grant module access to any user or employee. <strong>Cashbook</strong> access can be given to anyone;
-        {' '}<strong>Work from home</strong> is granted per employee; <strong>HR permissions</strong> apply to HR Managers.
+        Grant module access to any user or employee. <strong>Cashbook</strong> and <strong>Expenses</strong> access can
+        be given to anyone, whatever their role; <strong>Work from home</strong> is granted per employee;
+        {' '}<strong>HR permissions</strong> apply to HR Managers.
         {' '}<strong>CEO / MD access</strong> switches an executive account between view-only (the default) and edit
         mode — in edit mode they can change data anywhere an HR Manager can, but this page, org settings and the
         audit log stay with Super Admins.
@@ -180,6 +191,7 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Role</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Cashbook</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Work from home</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">CEO / MD access</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">HR Permissions</th>
@@ -187,9 +199,9 @@ export default function AdminPermissions() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
             ) : filtered.map((u) => (
               <tr key={u._id || u.id}>
                 <td className="px-4 py-3">
@@ -203,6 +215,12 @@ export default function AdminPermissions() {
                   <button onClick={() => toggleCashbook(u)} disabled={busyId === (u._id || u.id)}
                     className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.cashbookAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
                     {u.cashbookAccess ? '✓ Granted' : 'Grant access'}
+                  </button>
+                </td>
+                <td className="px-4 py-3">
+                  <button onClick={() => toggleExpenses(u)} disabled={busyId === (u._id || u.id)}
+                    className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.expensesAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
+                    {u.expensesAccess ? '✓ Granted' : 'Grant access'}
                   </button>
                 </td>
                 <td className="px-4 py-3">

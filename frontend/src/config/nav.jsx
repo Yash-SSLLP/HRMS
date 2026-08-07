@@ -135,6 +135,8 @@ export const ldNav = [
 // admin portal but see only the Cashbook page. Same flat-nav pattern as ldNav.
 export const accountsNav = [
   { to: '/admin/cashbook', label: 'Cashbook', end: true, icon: TbCashBanknote },
+  // Account Managers settle reimbursements, so they get the expense queue too.
+  { to: '/admin/expenses', label: 'Expenses', end: true, icon: FiShoppingBag },
 ];
 
 export const employeeNav = [
@@ -166,6 +168,9 @@ export const employeeNav = [
     { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
     { to: '/employee/travel', label: 'Travel', icon: FiMap },
     { to: '/employee/cashbook-manage', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage' },
+    // The review queue, for standalone-grant holders with no admin portal. Named
+    // apart from the self-service "Expenses" row above, which lists only my own.
+    { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },
   ] },
   { group: 'Performance & Learning', icon: FiTrendingUp, items: [
     { to: '/employee/goals', label: 'Goals', icon: FiTarget },

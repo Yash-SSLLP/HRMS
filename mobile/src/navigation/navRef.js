@@ -24,6 +24,11 @@ export function routeForNotification(data = {}) {
     if (m) return { tab: 'Home', screen: 'CoursePlayer', params: { courseId: m[1] } };
     return { tab: 'Home', screen: 'Learning' };
   }
+  // Expense links are stored as web paths ('/employee/expenses', '/admin/expenses').
+  // The app is employee-facing, so both land on the claimant's own Expenses screen.
+  if (typeof link === 'string' && link.endsWith('/expenses')) {
+    return { tab: 'Home', screen: 'Expenses' };
+  }
   switch (link) {
     case 'chat':
       // The Chat tab only exists while the module is switched on. An old push

@@ -17,7 +17,6 @@ import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
 import { hasPermission, hasAnyPermission, isReadOnlyExec, isEditingExec } from '../config/permissions';
-import { pageNameForPath } from '../config/pageNames';
 import { formatDateTime12 } from '../utils/time';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
@@ -214,6 +213,13 @@ function NotificationBell({ isAdmin, portal }) {
     // Legacy course links were stored as "/learning"; the actual route lives
     // under the employee portal. Normalise so older notifications still land.
     if (n.link === '/learning' || n.link.startsWith('/learning/')) return `/employee${n.link}`;
+    // Review links are stored as the admin path, but cashbook/expenses access can
+    // be granted to someone who has no admin portal at all. In My Portal, point
+    // them at the mirrored *-manage route instead of a page they can't open.
+    if (portal === 'employee') {
+      if (n.link === '/admin/expenses') return '/employee/expenses-manage';
+      if (n.link === '/admin/cashbook') return '/employee/cashbook-manage';
+    }
     return n.link;
   };
 
@@ -708,18 +714,6 @@ export default function Layout({ navItems = [], sectionTitle }) {
   useEffect(() => {
     document.documentElement.setAttribute('data-portal', portal);
   }, [portal]);
-
-  // Report each in-app page view to the server so its console shows human-
-  // readable navigation, e.g.  "Yash : My Shifts". Users who hold BOTH portals
-  // (e.g. an HR Manager with an admin + employee profile) also get the portal
-  // qualifier, so the console reads "Yash as employee : ..." vs "Yash as admin
-  // : ...". Best-effort telemetry — fire once per route change, never block nav.
-  const dualPortal = isAdmin && canEmployeePortal;
-  useEffect(() => {
-    api
-      .post('/page-view', { page: pageNameForPath(pathname), portal: dualPortal ? portal : undefined })
-      .catch(() => {});
-  }, [pathname, portal, dualPortal]);
 
   // Close the mobile drawer whenever the route changes.
   const closeMobile = () => setMobileOpen(false);

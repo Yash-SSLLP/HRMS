@@ -17,7 +17,7 @@
  * dashboard, projects/tasks, recruitment, assets, performance/training,
  * expenses, onboarding, announcements, rnr, guides, org masters/org/lifecycle,
  * salary-structures/loans/cashbook/declarations/compliance, surveys, travel,
- * courses (+ public), reviews, analytics, audit, and page-view.
+ * courses (+ public), reviews, analytics, and audit.
  *
  * Startup (after connectDB): email, celebration, attendance, and exit workers;
  * a one-off HR-profile backfill; then app.listen on PORT (default 5000).
@@ -120,7 +120,6 @@ app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/audit', require('./routes/auditRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
-app.use('/api/page-view', require('./routes/pageViewRoutes'));
 
 app.use(notFound);
 app.use(errorHandler);

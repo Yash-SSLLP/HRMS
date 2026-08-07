@@ -261,6 +261,10 @@ export default function App() {
         <Route path="declaration" element={<EmployeeInvestmentDeclaration />} />
         <Route path="leave" element={<EmployeeLeave />} />
         <Route path="expenses" element={<EmployeeExpenses />} />
+        {/* Review queue for holders of the standalone Expenses grant who have no
+            admin portal — the same page /admin/expenses serves, mounted here.
+            The backend's expenses.manage gate is the real check. */}
+        <Route path="expenses-manage" element={<AdminExpenses />} />
         <Route path="cashbook" element={<EmployeeCashbook />} />
         <Route path="cashbook-manage" element={<AdminCashbook />} />
         <Route path="travel" element={<EmployeeTravel />} />

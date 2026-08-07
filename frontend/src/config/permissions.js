@@ -8,10 +8,14 @@ export function hasPermission(user, cap) {
   if (!user) return false;
   if (user.role === 'SuperAdmin') return true;
   if (user.role === 'CEO' || user.role === 'MD') return true;
-  // Cashbook access is a standalone grant an admin can give to any user/employee.
+  // Cashbook and expense access are standalone grants an admin can give to any
+  // user/employee, whatever their role.
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
+  if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
-  if (user.role === 'AccountsManager') return cap === 'cashbook.manage';
+  // Account Managers settle reimbursements out of the cashbook, so they hold the
+  // expense capability alongside it.
+  if (user.role === 'AccountsManager') return cap === 'cashbook.manage' || cap === 'expenses.manage';
   if (user.role === 'HRManager') {
     const p = user.permissions;
     if (p == null) return true; // undefined/null → all

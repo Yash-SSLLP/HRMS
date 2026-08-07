@@ -1,8 +1,9 @@
 /**
  * Expense controller — employee expense/reimbursement claims (Expense) with a
- * mandatory receipt. Employees submit and list claims; HR review and, on payout,
- * post a matching cash-out entry into the cashbook (copying the receipt) and
- * notify the employee. Reimbursement posting is idempotent via cashbookEntry link.
+ * mandatory receipt. Employees submit and list claims; submitting notifies the
+ * cashbook/expense reviewers. Reviewers act on them and, on payout, post a
+ * matching cash-out entry into the cashbook (copying the receipt) and notify the
+ * employee. Reimbursement posting is idempotent via the cashbookEntry link.
  */
 const asyncHandler = require('express-async-handler');
 const Expense = require('../models/Expense');
@@ -12,9 +13,24 @@ const CashbookEntry = require('../models/CashbookEntry');
 const { recomputeBalance } = require('./cashbookController');
 const storage = require('../services/storage');
 const { hasPermission } = require('../middleware/authMiddleware');
-const { notify } = require('../services/notify');
+const { notify, notifyMany } = require('../services/notify');
+const { usersHoldingAny } = require('../services/audience');
 
 const USER_FIELDS = 'firstName lastName email role';
+
+// Tell the people who settle claims that a new one landed. Reimbursement is paid
+// out of the cashbook, so cashbook-access holders are notified alongside the
+// expense reviewers themselves.
+async function notifyClaimReviewers(expense, submitter) {
+  const who = `${submitter.firstName || ''} ${submitter.lastName || ''}`.trim() || 'An employee';
+  await notifyMany(await usersHoldingAny('cashbook.manage', 'expenses.manage'), {
+    type: 'expense',
+    audience: 'admin',
+    title: 'New expense claim to review',
+    body: `${who} submitted a ₹${expense.amount} ${expense.category} claim.`,
+    link: '/admin/expenses',
+  });
+}
 
 // Persist a receipt file (image/PDF) for an expense and stamp its receipt sub-doc.
 async function attachReceipt(expense, file) {
@@ -53,6 +69,7 @@ const listMyExpenses = asyncHandler(async (req, res) => {
  * @param {string} [req.body.description]
  * @param {string} [req.body.merchant]
  * @returns {{expense: Object}} (201)
+ * @sideeffect notifies cashbook-access holders and expense reviewers
  */
 const createExpense = asyncHandler(async (req, res) => {
   const { amount, expenseDate } = req.body;
@@ -80,6 +97,11 @@ const createExpense = asyncHandler(async (req, res) => {
   });
   await attachReceipt(expense, req.file);
   await expense.save();
+
+  // Best-effort: a notification failure must never fail the claim itself.
+  notifyClaimReviewers(expense, req.user)
+    .catch((err) => console.error('expense claim notify failed:', err.message));
+
   res.status(201).json({ expense });
 });
 
@@ -198,7 +220,7 @@ async function postReimbursementToCashbook(expense, accountId, actor) {
 
 /**
  * Review an expense; a 'Reimbursed' status posts a cashbook cash-out entry once.
- * @route PATCH /api/expenses/:id/review  (expenses.manage)
+ * @route PATCH /api/expenses/:id/status  (expenses.manage)
  * @param {string} req.params.id - expense id
  * @param {string} req.body.status - one of EXPENSE_STATUS
  * @param {string} [req.body.reviewNote]
@@ -218,6 +240,11 @@ const reviewExpense = asyncHandler(async (req, res) => {
     throw new Error('Expense not found');
   }
 
+  const wasReimbursed = expense.status === 'Reimbursed';
+  // Grab the claimant's id up front: the cashbook post below populates
+  // expense.employee into a full User doc, which is not a usable recipient.
+  const employeeId = expense.employee;
+
   // On payout, post a cash-out entry to the cashbook (once — the link guards
   // against a second post on repeated "Mark Reimbursed" clicks).
   if (status === 'Reimbursed' && !expense.cashbookEntry) {
@@ -227,16 +254,6 @@ const reviewExpense = asyncHandler(async (req, res) => {
     }
     const entry = await postReimbursementToCashbook(expense, account, req.user);
     expense.cashbookEntry = entry._id;
-    if (expense.employee) {
-      notify({
-        recipient: expense.employee,
-        type: 'expense',
-        audience: 'employee',
-        title: 'Expense reimbursed',
-        body: `Your ₹${expense.amount} expense claim was reimbursed.`,
-        link: '/employee/expenses',
-      }).catch((err) => console.error('expense reimburse notify failed:', err.message));
-    }
   }
 
   expense.status = status;
@@ -244,6 +261,21 @@ const reviewExpense = asyncHandler(async (req, res) => {
   expense.reviewedBy = req.user._id;
   expense.reviewedAt = new Date();
   await expense.save();
+
+  // Tell the employee once the payout is actually persisted. Keyed off the
+  // status TRANSITION rather than the cashbook post, so re-saving an already
+  // reimbursed claim doesn't notify them twice.
+  if (status === 'Reimbursed' && !wasReimbursed && employeeId) {
+    notify({
+      recipient: employeeId,
+      type: 'expense',
+      audience: 'employee',
+      title: 'Expense reimbursed',
+      body: `Your ₹${expense.amount} expense claim was reimbursed.`,
+      link: '/employee/expenses',
+    }).catch((err) => console.error('expense reimburse notify failed:', err.message));
+  }
+
   res.json({ expense });
 });
 
