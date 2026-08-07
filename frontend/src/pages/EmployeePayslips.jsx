@@ -22,111 +22,160 @@ const MONTHS = [
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
 
-// Readable names for the payslip component keys; anything unlisted falls back
-// to a de-camelCased label.
-const LABELS = {
-  hra: 'HRA',
-  lta: 'LTA',
-  conveyanceAllowance: 'Conveyance (TA)',
-  otherEarnings: 'Other pay',
-  epf: 'PF / EPF',
-  esic: 'ESIC',
-  tds: 'TDS',
-  loanRecovery: 'Loan EMI',
-  salaryAdvance: 'Salary advance EMI',
-  lopDeduction: 'Loss of pay (unpaid days)',
-  latePenalty: 'Late coming',
-  emergencyPenalty: 'Emergency leave (double cut)',
-};
-const labelize = (k) =>
-  LABELS[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+// The server sends the printable breakdown as `lines`, built from the same
+// component list the PDF renders (backend/services/payslipLines.js) so the two
+// can't drift. This only covers a response that predates that field.
+const fallbackLines = (values = {}) =>
+  Object.entries(values).map(([key, amount]) => ({
+    key,
+    label: key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()),
+    amount,
+    hint: null,
+  }));
 
-// Modal showing one payslip's earnings/deductions/net + PDF download.
+const linesFor = (slip, side) =>
+  slip.lines?.[side] || fallbackLines(side === 'earnings' ? slip.earnings : slip.deductions);
+
+const shortDate = (d) =>
+  new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+// One side of the breakdown. A component is dropped only when it is empty both
+// this month AND for the year — a head paid in an earlier month still belongs in
+// the cumulative column. Totals come from the payslip itself.
+function Breakdown({ title, lines, total, totalLabel, ytd, ytdTotal }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{title}</h3>
+        {ytd && <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{ytd.label}</span>}
+      </div>
+      <table className="w-full text-sm">
+        <tbody>
+          {lines.filter((l) => l.amount > 0 || l.ytd > 0).map((l) => (
+            <tr key={l.key} className="border-b border-gray-100">
+              <td className="py-1.5 text-gray-700">
+                {l.label}
+                {l.hint && <span className="text-gray-400 text-xs ml-1.5">{l.hint}</span>}
+              </td>
+              <td className="py-1.5 text-right tabular-nums">{inr(l.amount)}</td>
+              {ytd && <td className="py-1.5 text-right tabular-nums text-gray-500">{inr(l.ytd)}</td>}
+            </tr>
+          ))}
+          <tr className="font-semibold border-t-2 border-gray-900">
+            <td className="pt-2">{totalLabel}</td>
+            <td className="pt-2 text-right tabular-nums">{inr(total)}</td>
+            {ytd && <td className="pt-2 text-right tabular-nums text-gray-500">{inr(ytdTotal)}</td>}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Modal showing one payslip: the same statement layout as the PDF.
 function PayslipDetail({ slip, onClose }) {
   if (!slip) return null;
-  const earnings = slip.earnings || {};
-  const deductions = slip.deductions || {};
   const onDownloadPdf = () => downloadFile(
     `/payroll/me/${slip._id}/pdf`,
     `payslip-${slip.payPeriodYear}-${String(slip.payPeriodMonth).padStart(2, '0')}.pdf`
   );
+  const counts = [
+    ['Working days', slip.workingDays],
+    ['Payable', slip.paidDays],
+    ['Loss of pay', slip.lopDays || 0],
+    ['Half days', slip.halfDays || 0],
+    ['Extra paid', slip.additionalPaidDays || 0],
+    ['Late', slip.lateDays || 0],
+  ];
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
       <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-        <div className="flex justify-between items-start mb-4">
+        <div className="flex justify-between items-start gap-4 pb-3 border-b-2 border-amber-600">
           <div>
-            <h2 className="card-title">Payslip</h2>
-            <p className="text-sm text-gray-500">
-              {MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear}
-            </p>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Salary Slip</p>
+            <h2 className="card-title">{MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear}</h2>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={onDownloadPdf}
               className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
               Download PDF
             </button>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-700">✕</button>
+            <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700">✕</button>
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 text-sm border-b pb-3 mb-3">
-          <div><span className="text-gray-500">Working days:</span> {slip.workingDays}</div>
-          <div><span className="text-gray-500">Payable days:</span> {slip.paidDays}</div>
-          <div><span className="text-gray-500">LOP:</span> {slip.lopDays}</div>
-          <div><span className="text-gray-500">Half days:</span> {slip.halfDays || 0}</div>
-          <div><span className="text-gray-500">Late days:</span> {slip.lateDays || 0}</div>
-          <div><span className="text-gray-500">Additional paid:</span> {slip.additionalPaidDays || 0}</div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          <div>
-            <h3 className="text-sm font-semibold mb-2">Earnings</h3>
-            <table className="w-full text-sm">
-              <tbody>
-                {Object.entries(earnings).filter(([, v]) => v > 0).map(([k, v]) => (
-                  <tr key={k} className="border-b border-gray-100">
-                    <td className="py-1 text-gray-700">{labelize(k)}</td>
-                    <td className="py-1 text-right">{inr(v)}</td>
-                  </tr>
-                ))}
-                <tr className="font-semibold">
-                  <td className="py-2">Gross</td>
-                  <td className="py-2 text-right">{inr(slip.grossSalary)}</td>
-                </tr>
-              </tbody>
-            </table>
+        <div className="flex justify-between items-end gap-6 py-5 border-b border-gray-200">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Net pay</p>
+            <div className="text-3xl font-semibold tabular-nums">{inr(slip.netPay)}</div>
+            {slip.paymentDate && (
+              <p className="text-xs text-gray-500 mt-1">
+                Credited on {shortDate(slip.paymentDate)}
+                {slip.paymentReference ? ` · Ref ${slip.paymentReference}` : ''}
+              </p>
+            )}
+            {slip.ytd && (
+              <p className="text-xs text-gray-500 mt-1">
+                {slip.ytd.label} to date: <span className="tabular-nums">{inr(slip.ytd.netPay)}</span> net
+                over {slip.ytd.months} month{slip.ytd.months === 1 ? '' : 's'}
+              </p>
+            )}
           </div>
-
-          <div>
-            <h3 className="text-sm font-semibold mb-2">Deductions</h3>
-            <table className="w-full text-sm">
-              <tbody>
-                {Object.entries(deductions).filter(([, v]) => v > 0).map(([k, v]) => (
-                  <tr key={k} className="border-b border-gray-100">
-                    <td className="py-1 text-gray-700">{labelize(k)}</td>
-                    <td className="py-1 text-right">{inr(v)}</td>
-                  </tr>
-                ))}
-                <tr className="font-semibold">
-                  <td className="py-2">Total</td>
-                  <td className="py-2 text-right">{inr(slip.totalDeductions)}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="text-right shrink-0">
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Gross</p>
+            <div className="font-semibold tabular-nums">{inr(slip.grossSalary)}</div>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400 mt-2">Deductions</p>
+            <div className="font-semibold tabular-nums">−{inr(slip.totalDeductions)}</div>
           </div>
         </div>
 
-        <div className="mt-4 p-3 bg-gray-50 rounded flex justify-between items-center">
-          <span className="text-sm text-gray-600">Net pay</span>
-          <span className="text-xl font-semibold">{inr(slip.netPay)}</span>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 py-5">
+          <Breakdown title="Earnings" lines={linesFor(slip, 'earnings')}
+            total={slip.grossSalary} totalLabel="Gross Earnings"
+            ytd={slip.ytd} ytdTotal={slip.ytd?.grossSalary} />
+          <Breakdown title="Deductions" lines={linesFor(slip, 'deductions')}
+            total={slip.totalDeductions} totalLabel="Total Deductions"
+            ytd={slip.ytd} ytdTotal={slip.ytd?.totalDeductions} />
         </div>
 
-        {slip.paymentDate && (
-          <p className="text-xs text-gray-500 mt-2">
-            Paid on {new Date(slip.paymentDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-            {slip.paymentReference ? ` · Ref: ${slip.paymentReference}` : ''}
-          </p>
-        )}
+        <div className="flex flex-wrap gap-x-8 gap-y-3 pt-4 border-t border-gray-200">
+          {counts.map(([label, value]) => (
+            <div key={label}>
+              <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{label}</p>
+              <div className="font-semibold tabular-nums">{value}</div>
+            </div>
+          ))}
+        </div>
+
+        <EmployerContributions slip={slip} />
+      </div>
+    </div>
+  );
+}
+
+// Kept out of the earnings/deductions block on purpose: none of this is taken
+// from the employee, and showing it beside their deductions would read as if it
+// were. Renders nothing when the company contributes nothing.
+function EmployerContributions({ slip }) {
+  const lines = (slip.lines?.employer || []).filter((l) => l.amount > 0 || l.ytd > 0);
+  if (!lines.length) return null;
+  const total = lines.reduce((a, l) => a + l.amount, 0);
+  const cells = lines.concat([{ key: '__total', label: 'Total', amount: total, ytd: slip.ytd?.employerTotal }]);
+  return (
+    <div className="pt-4 mt-4 border-t border-gray-200">
+      <h3 className="text-[11px] font-semibold tracking-widest uppercase text-amber-700 mb-3">
+        Paid by the company on top of your salary — not deducted from you
+      </h3>
+      <div className="flex flex-wrap gap-x-8 gap-y-3">
+        {cells.map((l) => (
+          <div key={l.key}>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{l.label}</p>
+            <div className={`tabular-nums ${l.key === '__total' ? 'font-semibold' : ''}`}>{inr(l.amount)}</div>
+            {l.ytd != null && (
+              <p className="text-[11px] text-gray-400 tabular-nums">{slip.ytd?.label} {inr(l.ytd)}</p>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );

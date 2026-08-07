@@ -24,9 +24,22 @@ const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
 const { lateMinutes } = require('../utils/workday');
 const { compOffKeysFor, isRestDayRecord, approvedDoublePayDays, doublePayState } = require('../utils/restDay');
 const { renderPayslip } = require('../services/payslipPdf');
+const { buildPayslipLines } = require('../services/payslipLines');
+const { buildYtd, computeYtdFrom } = require('../services/payslipYtd');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
 // exportPayrollSheet builds the company payroll register (.xlsx) via ExcelJS — see below.
+
+// Serialize a payslip with its printable breakdown attached, so the web and
+// mobile screens render the same components the PDF does instead of each
+// keeping its own list of labels. See services/payslipLines.js. `ytd` is
+// optional — the admin list omits it, since a table of totals has no use for
+// per-employee cumulative figures and it would cost a query per row.
+const withLines = (payslip, ytd) => ({
+  ...payslip.toJSON(),
+  lines: buildPayslipLines(payslip, ytd),
+  ytd: ytd || null,
+});
 
 async function getMyProfileOrFail(userId, res) {
   const profile = await EmployeeProfile.findOne({ user: userId });
@@ -49,7 +62,12 @@ const listMyPayslips = asyncHandler(async (req, res) => {
     employee: profile._id,
     status: { $in: ['Approved', 'Paid'] },
   }).sort({ payPeriodYear: -1, payPeriodMonth: -1 });
-  res.json({ count: payslips.length, payslips });
+  // Every slip this employee has is already in hand, so each one's year-to-date
+  // is accumulated in memory rather than costing a query per row.
+  res.json({
+    count: payslips.length,
+    payslips: payslips.map((p) => withLines(p, computeYtdFrom(payslips, p))),
+  });
 });
 
 /**
@@ -71,7 +89,7 @@ const getMyPayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
-  res.json({ payslip });
+  res.json({ payslip: withLines(payslip, await buildYtd(payslip)) });
 });
 
 /**
@@ -122,7 +140,7 @@ const listPayslips = asyncHandler(async (req, res) => {
       populate: { path: 'user', select: 'firstName lastName email' },
     })
     .sort({ payPeriodYear: -1, payPeriodMonth: -1, createdAt: -1 });
-  res.json({ count: payslips.length, payslips });
+  res.json({ count: payslips.length, payslips: payslips.map(withLines) });
 });
 
 const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -594,6 +612,42 @@ const ESIC_EMP_RATE = 0.0075;       // Employee ESIC: 0.75% of gross
 const ESIC_WAGE_CEILING = 21000;    // ESIC applies only when monthly gross <= this
 const PROFESSIONAL_TAX = 200;       // Flat monthly professional tax
 
+// Employer-side contributions. These are a cost to the company and are NEVER
+// deducted from the employee — the payslip prints them so the full cost of
+// employment is visible. PF and ESI follow the same switches as the employee
+// side above: a company that does not run PF has no employer PF share either.
+const EPF_ER_RATE = 0.12;         // Employer PF share: 12% of Basic, same as the employee's
+const EPS_RATE = 0.0833;          // The pension slice carved out of that 12%
+const EPS_WAGE_CEILING = 15000;   // Pension is computed on Basic capped here
+const ESIC_ER_RATE = 0.0325;      // Employer ESIC: 3.25% of gross
+// Gratuity is a provision rather than a deduction, and is payable under the
+// Payment of Gratuity Act after five years' service — so it applies whether or
+// not PF does, and has its own switch. 4.81% ≈ 15 days' Basic a year over 12
+// months. Set PAYROLL_GRATUITY_ENABLED=false if the company does not provision it.
+const GRATUITY_RATE = 0.0481;
+const GRATUITY_ENABLED = !['0', 'false', 'no', 'off']
+  .includes(String(process.env.PAYROLL_GRATUITY_ENABLED ?? 'true').toLowerCase());
+
+/**
+ * Employer contributions for one month, from the same component base the
+ * employee-side deductions use.
+ * @param {number} basic - monthly Basic
+ * @param {number} gross - monthly gross of the structure components
+ * @returns {{epf: number, eps: number, esic: number, gratuity: number}}
+ */
+function employerContributionsFor(basic, gross) {
+  const b = Number(basic) || 0;
+  const g = Number(gross) || 0;
+  // The pension slice comes out of the 12% first; whatever remains goes to EPF.
+  const eps = EPF_ENABLED ? Math.round(Math.min(b, EPS_WAGE_CEILING) * EPS_RATE) : 0;
+  return {
+    epf: EPF_ENABLED ? Math.max(0, Math.round(b * EPF_ER_RATE) - eps) : 0,
+    eps,
+    esic: ESIC_ENABLED && g <= ESIC_WAGE_CEILING ? Math.round(g * ESIC_ER_RATE) : 0,
+    gratuity: GRATUITY_ENABLED ? Math.round(b * GRATUITY_RATE) : 0,
+  };
+}
+
 // Derive monthly earnings + standard statutory deductions from a salary
 // structure's component percentages applied to an annual CTC. Pure +
 // side-effect-free so it can back both the payroll run and the manual payslip
@@ -622,7 +676,12 @@ function deriveSalary(components, annualCtc, paidDays, daysInMonth) {
     professionalTax: PROFESSIONAL_TAX,
     lopDeduction: Math.round((gross / dim) * unpaidDays),
   };
-  return { earnings, deductions, gross };
+  return {
+    earnings,
+    deductions,
+    gross,
+    employerContributions: employerContributionsFor(earnings.basic, gross),
+  };
 }
 
 // The CTC in force for a given pay month, resolved from the employee's hike
@@ -751,6 +810,7 @@ async function computeEmployeeRun(profile, year, month) {
   const ctc = resolveCtcForMonth(profile, year, month);
   let earnings = null;
   let statutoryDeductions = { epf: 0, esic: 0, professionalTax: 0 };
+  let employerContributions = { epf: 0, eps: 0, esic: 0, gratuity: 0 };
   let monthlyBasic = 0;   // full (unprorated) Basic — drives the late-penalty rate
   let perDayPay = 0;      // full monthly gross ÷ days in month — one day's pay
   if (st && ctc > 0) {
@@ -786,6 +846,7 @@ async function computeEmployeeRun(profile, year, month) {
       esic: ESIC_ENABLED && baseGross <= ESIC_WAGE_CEILING ? Math.round(baseGross * ESIC_EMP_RATE) : 0,
       professionalTax: PROFESSIONAL_TAX,
     };
+    employerContributions = employerContributionsFor(earnings.basic, baseGross);
   }
   const leaveIncentive = earnings ? earnings.leaveIncentive : 0;
   const doubleDayPay = earnings ? earnings.doubleDayPay : 0;
@@ -887,6 +948,7 @@ async function computeEmployeeRun(profile, year, month) {
     doublePayDays, doubleDayPay,
     ctc, // CTC effective for this pay month (post hike resolution)
     statutoryDeductions, // EPF / ESIC / PT derived from the components
+    employerContributions, // company-side PF/EPS/ESI/gratuity, not deducted from pay
     loans: loans.map((l) => ({ _id: l._id, type: l.type, emi: l.emi, balance: l.balance, status: l.status })),
     loanRecovery,
     salaryAdvance,
@@ -937,6 +999,9 @@ function buildRunFields(profile, computed, existing = null, { rerun = false } = 
       otherEarnings: prevEarnings.otherEarnings || 0,
       ...computed.earnings,
     },
+    // Company-side cost, fully derived — nothing here is ever hand-entered, so
+    // it is recomputed outright rather than merged with what was there before.
+    employerContributions: computed.employerContributions,
     deductions: {
       // Preserve HR-entered non-derivable deductions (TDS, other), (re)compute
       // the deterministic ones from the structure/attendance.
@@ -1159,14 +1224,13 @@ const markPayslipPaid = asyncHandler(async (req, res) => {
   res.json({ payslip });
 });
 
-// Employee data the salary slip prints. `aadhaar` is select:false on the model,
-// so it has to be asked for explicitly or the slip's Aadhar row comes out blank.
-// Every PDF route (admin download, employee download, email, public link) uses
-// this same spec so all four render an identical slip. NOT used by the JSON
-// endpoints — the Aadhaar number belongs on the slip, not in an API payload.
+// Employee data the salary slip prints. Every PDF route (admin download,
+// employee download, email, public link) uses this same spec so all four render
+// an identical slip. Aadhaar is deliberately NOT requested: it is select:false on
+// the model and the slip no longer prints it, so there is no reason to pull a
+// government id into memory — the payslip is a shareable document.
 const PAYSLIP_PDF_POPULATE = {
   path: 'employee',
-  select: '+aadhaar',
   populate: { path: 'user', select: 'firstName lastName email' },
 };
 
@@ -1212,7 +1276,7 @@ const downloadMyPayslipPdf = asyncHandler(async (req, res) => {
 });
 
 async function streamPayslipPdf(payslip, res) {
-  const buffer = await renderPayslip(payslip);
+  const buffer = await renderPayslip(payslip, await buildYtd(payslip));
   const monthLabel = `${payslip.payPeriodYear}-${String(payslip.payPeriodMonth).padStart(2, '0')}`;
   const empCode = payslip.employee?.employeeCode || 'employee';
   const fileName = `payslip-${empCode}-${monthLabel}.pdf`;
@@ -1323,7 +1387,7 @@ const emailPayslip = asyncHandler(async (req, res) => {
 
   const subject = String(req.body.subject || '').trim() || defaults.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
-  const buffer = await renderPayslip(payslip);
+  const buffer = await renderPayslip(payslip, await buildYtd(payslip));
   await enqueueMail(
     {
       to: email,
@@ -1356,7 +1420,7 @@ const downloadPublicPayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('This payslip link is invalid or has expired.');
   }
-  const buffer = await renderPayslip(payslip);
+  const buffer = await renderPayslip(payslip, await buildYtd(payslip));
   const monthLabel = `${payslip.payPeriodYear}-${String(payslip.payPeriodMonth).padStart(2, '0')}`;
   const empCode = payslip.employee?.employeeCode || 'employee';
   res.setHeader('Content-Type', 'application/pdf');

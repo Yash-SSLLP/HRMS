@@ -117,10 +117,18 @@ export default function PayslipsScreen() {
 
                 {open && (
                   <View style={styles.breakdown}>
+                    <Section title="Earnings" lines={p.lines?.earnings} ytdLabel={p.ytd?.label} />
+                    <Section title="Deductions" lines={p.lines?.deductions} tint={colors.danger} ytdLabel={p.ytd?.label} />
                     <Row label="Gross salary" value={rupees(p.grossSalary)} />
                     <Row label="Total deductions" value={`- ${rupees(p.totalDeductions)}`} tint={colors.danger} />
                     <View style={styles.sep} />
                     <Row label="Net pay" value={rupees(p.netPay)} bold />
+                    {p.ytd && (
+                      <Text style={styles.ytdSummary}>
+                        {`${p.ytd.label} to date: ${rupees(p.ytd.netPay)} net over ${p.ytd.months} month${p.ytd.months === 1 ? '' : 's'}`}
+                      </Text>
+                    )}
+                    <Employer slip={p} />
                     <AppButton
                       title="Download / Share PDF"
                       icon="download"
@@ -150,6 +158,61 @@ function Row({ label, value, tint, bold }) {
   );
 }
 
+// One side of the component breakdown, from the `lines` the server builds for
+// the PDF (backend/services/payslipLines.js). Renders nothing when the response
+// predates that field, leaving the gross/deductions/net totals below it.
+//
+// Year-to-date sits under each figure rather than in a second column — two
+// money columns do not fit a phone width without truncating the labels.
+function Section({ title, lines, tint, ytdLabel }) {
+  const shown = (lines || []).filter((l) => l.amount > 0 || l.ytd > 0);
+  if (!shown.length) return null;
+  return (
+    <View style={{ marginBottom: spacing(3) }}>
+      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
+      {shown.map((l) => (
+        <View key={l.key} style={styles.row}>
+          <Text style={[font.body, { flex: 1, paddingRight: 12 }]} numberOfLines={1}>
+            {l.label}
+            {l.hint ? <Text style={styles.hint}>{`  ${l.hint}`}</Text> : null}
+          </Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={[font.body, { color: tint || colors.text }]}>{rupees(l.amount)}</Text>
+            {l.ytd != null && (
+              <Text style={styles.ytd}>{`${ytdLabel || 'YTD'} ${rupees(l.ytd)}`}</Text>
+            )}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Separated from the deductions above on purpose: none of this is taken from the
+// employee, and listing it alongside their deductions would read as if it were.
+function Employer({ slip }) {
+  const lines = (slip.lines?.employer || []).filter((l) => l.amount > 0 || l.ytd > 0);
+  if (!lines.length) return null;
+  const total = lines.reduce((a, l) => a + l.amount, 0);
+  return (
+    <View style={styles.employer}>
+      <Text style={styles.employerTitle}>PAID BY THE COMPANY — NOT DEDUCTED FROM YOU</Text>
+      {lines.map((l) => (
+        <View key={l.key} style={styles.row}>
+          <Text style={[font.body, { flex: 1, paddingRight: 12 }]} numberOfLines={1}>{l.label}</Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={font.body}>{rupees(l.amount)}</Text>
+            {l.ytd != null && (
+              <Text style={styles.ytd}>{`${slip.ytd?.label || 'YTD'} ${rupees(l.ytd)}`}</Text>
+            )}
+          </View>
+        </View>
+      ))}
+      <Row label="Total" value={rupees(total)} bold />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center' },
   summary: { flexDirection: 'row', alignItems: 'center' },
@@ -162,4 +225,10 @@ const styles = StyleSheet.create({
   breakdown: { marginTop: spacing(3), borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing(3) },
   row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   sep: { height: 1, backgroundColor: colors.border, marginVertical: 4 },
+  sectionTitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1.1, color: colors.textFaint, marginBottom: 8 },
+  hint: { color: colors.textFaint, fontSize: 12 },
+  ytd: { color: colors.textFaint, fontSize: 11, marginTop: 1 },
+  ytdSummary: { color: colors.textFaint, fontSize: 12, marginTop: 6 },
+  employer: { marginTop: spacing(3), paddingTop: spacing(3), borderTopWidth: 1, borderTopColor: colors.border },
+  employerTitle: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8, color: colors.primary, marginBottom: 10 },
 });

@@ -1,15 +1,18 @@
 /**
  * Server-side salary-slip PDF renderer (pdfkit).
  *
- * Reproduces the company's own salary slip: a black-ruled grid with the
- * letterhead, an identity block (statutory ids + bank), a day-count block, a
- * side-by-side Earnings / Deductions table, the net amount in figures and
- * words, and the authorised-signature footer.
+ * A statement rather than a form: the letterhead sits over a gold rule, net pay
+ * is the headline figure with the account it was credited to, and the earnings /
+ * deductions breakdown runs in two columns of hairline-ruled lines instead of a
+ * boxed grid. One A4 page.
  *
  * The money model this renders: earnings are ALWAYS the full monthly salary —
  * attendance never reduces Basic — and everything the employee did not earn
  * (LOP, late-coming, penalties) is recovered on the deductions side. See
  * `lopDeduction` in models/Payroll.js.
+ *
+ * What is printed comes from services/payslipLines.js, the same component list
+ * the web and mobile breakdowns render, so the three cannot drift apart.
  *
  * Produces the PDF entirely in memory and resolves a Buffer — no files written.
  * Branding comes from config/company.js; fonts from services/pdfFonts.js.
@@ -20,132 +23,56 @@ const path = require('path');
 const COMPANY = require('../config/company');
 const { setupFonts } = require('./pdfFonts');
 const { amountInWords } = require('../utils/amountInWords');
+const { buildPayslipLines, employerTotal, linesBalance, days } = require('./payslipLines');
 
-const MONTHS_SHORT = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-// Labels for the payslip component keys, used outside the fixed slip layout
-// (admin UI, exports). The slip itself groups several keys onto one printed row.
-const COMPONENT_LABELS = {
-  basic: 'Basic Pay',
-  hra: 'House Rent Allowance',
-  specialAllowance: 'Special Allowance',
-  conveyanceAllowance: 'Conveyance Allowance',
-  medicalAllowance: 'Medical Allowance',
-  lta: 'Leave Travel Allowance',
-  bonus: 'Bonus',
-  overtime: 'Overtime Pay',
-  leaveIncentive: 'Leave Incentive',
-  doubleDayPay: 'Sunday / Comp-off Duty (2×)',
-  otherEarnings: 'Other Earnings',
-  epf: 'Provident Fund (EPF)',
-  esic: 'ESIC',
-  professionalTax: 'Professional Tax',
-  tds: 'TDS (Income Tax)',
-  loanRecovery: 'Loan Recovery',
-  salaryAdvance: 'Salary Advance Recovery',
-  lopDeduction: 'Loss of Pay',
-  latePenalty: 'Late Arrival Penalty',
-  emergencyPenalty: 'Emergency Leave (double cut)',
-  otherDeductions: 'Other Deductions',
-};
-
 const NOTE_TEXT =
-  'Other Pay - Working during holidays or leaves, Other deductions - Late coming & LOP';
+  'Rest-Day Pay covers approved work on a holiday or weekly off, paid at twice the day rate.';
 
-/**
- * Map the payslip's earnings/deductions onto the slip's fixed seven rows a side.
- *
- * This is a full PARTITION of both sub-schemas: every schema field lands in
- * exactly one row, nothing twice. The printed totals come from the payslip's own
- * grossSalary/totalDeductions, so a field missing here would silently vanish
- * from the table while still moving the total — `slipRowsBalance` below asserts
- * that can't happen. ANY new earnings/deductions field must be added to a row.
- * @param {Object} payslip
- * @returns {{earningRows: Array<[string, number]>, deductionRows: Array<[string, number]>}}
- */
-function buildSlipRows(payslip) {
-  const e = payslip.earnings?.toObject?.() || payslip.earnings || {};
-  const d = payslip.deductions?.toObject?.() || payslip.deductions || {};
-  return {
-    earningRows: [
-      ['BASIC', e.basic || 0],
-      ['HRA', e.hra || 0],
-      // Medical and LTA have no row of their own on this format.
-      ['Special Allowance', (e.specialAllowance || 0) + (e.medicalAllowance || 0) + (e.lta || 0)],
-      ['TA', e.conveyanceAllowance || 0],
-      ['Incentives', (e.leaveIncentive || 0) + (e.bonus || 0)],
-      ['Variable Pay', e.overtime || 0],
-      // The slip's own note calls this row "working during holidays or leaves",
-      // so the extra day paid for an approved Sunday / comp-off duty belongs here.
-      ['Other Pay', (e.otherEarnings || 0) + (e.doubleDayPay || 0)],
-    ],
-    deductionRows: [
-      ['PF', d.epf || 0],
-      ['ESIC', d.esic || 0],
-      ['LOAN', d.loanRecovery || 0],
-      ['TDS', d.tds || 0],
-      ['Professional Tax', d.professionalTax || 0],
-      ['Salary In Advance', d.salaryAdvance || 0],
-      // Per the note at the foot of the slip: late coming & LOP land here.
-      ['Other Deductions',
-        (d.lopDeduction || 0) + (d.latePenalty || 0) + (d.emergencyPenalty || 0) + (d.otherDeductions || 0)],
-    ],
-  };
-}
+// ---- palette -------------------------------------------------------------
+// One accent, used once (the rule under the letterhead and the column heads).
+const INK = '#14181F';
+const MUTED = '#6B7280';
+const FAINT = '#9AA1AA';
+const HAIRLINE = '#EFF0F2';
+const RULE = '#E1E4E8';
+const GOLD = '#B08843';
 
-/**
- * Do the printed rows add up to the totals printed beside them? Exported so the
- * partition above can be checked against the schema rather than trusted.
- * @param {Object} payslip
- * @returns {{earnings: boolean, deductions: boolean}}
- */
-function slipRowsBalance(payslip) {
-  const { earningRows, deductionRows } = buildSlipRows(payslip);
-  const sum = (rows) => rows.reduce((a, [, v]) => a + (v || 0), 0);
-  return {
-    earnings: sum(earningRows) === Math.round(payslip.grossSalary || 0),
-    deductions: sum(deductionRows) === Math.round(payslip.totalDeductions || 0),
-  };
-}
-
-// Indian grouping, whole rupees. Zero prints as the sheet's em dash placeholder.
+// Indian grouping, whole rupees.
 const num = (n) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Math.round(n || 0));
-const numOrDash = (n) => (Math.round(n || 0) === 0 ? '-' : num(n));
 
-// "01-Jan-23", matching the source spreadsheet.
-const shortDate = (d) => {
-  if (!d) return '-';
+// "12 Jan 2023"
+const longDate = (d) => {
+  if (!d) return '—';
   const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return '-';
-  return `${String(dt.getDate()).padStart(2, '0')}-${MONTHS_SHORT[dt.getMonth()]}-${String(dt.getFullYear()).slice(-2)}`;
+  if (Number.isNaN(dt.getTime())) return '—';
+  return `${dt.getDate()} ${MONTHS[dt.getMonth()].slice(0, 3)} ${dt.getFullYear()}`;
 };
 
-// Aadhaar is stored as 12 bare digits; print it grouped like the physical card.
-const formatAadhaar = (a) => {
-  const digits = String(a || '').replace(/\D/g, '');
-  return digits.length === 12 ? digits.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3') : (a || 'NA');
-};
+const plain = (v) => (v === 0 || v ? String(v) : '—');
 
-// Day counts read better as whole numbers, but half days are genuine halves.
-const days = (n) => {
-  const v = Number(n) || 0;
-  return Number.isInteger(v) ? String(v) : String(+v.toFixed(1));
+// Account numbers are shown as the last four digits, as banks print them.
+const maskAccount = (acc) => {
+  const s = String(acc || '').trim();
+  if (!s) return null;
+  return s.length <= 4 ? s : `••${s.slice(-4)}`;
 };
-
-const plain = (v) => (v === 0 || v ? String(v) : 'NA');
 
 /**
  * Render the salary slip PDF.
  * @param {Object} payslip - Payroll doc with `employee` populated (and
  *   `employee.user`); needs `earnings`, `deductions`, the day counts, the
  *   monthlySalary/annualCtc snapshot and the computed totals.
+ * @param {Object} [ytd] - Year-to-date totals from services/payslipYtd.js. When
+ *   omitted the slip prints a single figure column, exactly as before.
  * @returns {Promise<Buffer>} the rendered PDF bytes.
  * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
-function renderPayslip(payslip) {
+function renderPayslip(payslip, ytd) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
     const chunks = [];
@@ -156,151 +83,276 @@ function renderPayslip(payslip) {
     const F = setupFonts(doc);
     const money = (n) => `${F.rupee}${num(n)}`;
 
-    const INK = '#000000';
-    const LINE = '#000000';
     const PAGE_W = 595.28;
-    const M = 28;
+    const M = 42;
     const x0 = M;
     const x1 = PAGE_W - M;
     const W = x1 - x0;
 
-    // ---- grid primitives -------------------------------------------------
-    // Every visible cell is an outlined box with text inset and vertically
-    // centred, so rows line up whatever their height.
-    const box = (x, y, w, h) => {
-      doc.rect(x, y, w, h).lineWidth(0.8).strokeColor(LINE).stroke();
-    };
-    const text = (s, x, y, w, h, { bold = false, size = 9.5, align = 'left', pad = 5 } = {}) => {
-      doc.font(bold ? F.bold : F.regular).fontSize(size).fillColor(INK)
-        .text(String(s ?? ''), x + pad, y + (h - size) / 2 - 1, {
-          width: w - pad * 2, align, lineBreak: false, ellipsis: true,
+    // ---- primitives ------------------------------------------------------
+    const write = (s, x, y, opts = {}) => {
+      const { bold = false, size = 9, color = INK, width = W, align = 'left', spacing = 0 } = opts;
+      doc.font(bold ? F.bold : F.regular).fontSize(size).fillColor(color)
+        .text(String(s ?? ''), x, y, {
+          width, align, lineBreak: false, ellipsis: true, characterSpacing: spacing,
         });
     };
-    const cell = (s, x, y, w, h, opts) => { box(x, y, w, h); text(s, x, y, w, h, opts); };
-
-    // A 4-column label/value/label/value row — the identity and day blocks.
-    const LBL_W = W * 0.235;
-    const VAL_W = W * 0.265;
-    const pairRow = (y, h, l1, v1, l2, v2) => {
-      cell(l1, x0, y, LBL_W, h, { bold: true });
-      cell(v1, x0 + LBL_W, y, VAL_W, h);
-      cell(l2, x0 + LBL_W + VAL_W, y, LBL_W, h, { bold: true });
-      cell(v2, x0 + LBL_W * 2 + VAL_W, y, W - (LBL_W * 2 + VAL_W), h);
+    // Clip a string to a width, measured in the font it will be drawn in.
+    // pdfkit's own `ellipsis` does not reliably suppress wrapping, and a label
+    // that wraps here lands on top of the next row — so the truncation is done
+    // here rather than trusted to the renderer.
+    const fit = (s, width, { bold = false, size = 9 } = {}) => {
+      const str = String(s ?? '');
+      doc.font(bold ? F.bold : F.regular).fontSize(size);
+      if (doc.widthOfString(str) <= width) return str;
+      let out = str;
+      while (out.length > 1 && doc.widthOfString(`${out}…`) > width) out = out.slice(0, -1);
+      return `${out}…`;
+    };
+    // Small uppercase key over a value — the page's one repeating unit.
+    const keyText = (s, x, y, width) =>
+      write(String(s).toUpperCase(), x, y, { size: 6.2, color: FAINT, spacing: 1.1, width });
+    const rule = (y, from = x0, to = x1, color = RULE, weight = 0.7) => {
+      doc.moveTo(from, y).lineTo(to, y).lineWidth(weight).strokeColor(color).stroke();
     };
 
     // ---- data ------------------------------------------------------------
     const emp = payslip.employee || {};
     const user = emp.user || {};
     const bank = emp.bankDetails || {};
-    const monthLabel = `${MONTHS_SHORT[(payslip.payPeriodMonth || 1) - 1]}-${String(payslip.payPeriodYear || '').slice(-2)}`;
-
-    const { earningRows, deductionRows } = buildSlipRows(payslip);
+    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || '—';
+    const period = `${MONTHS[(payslip.payPeriodMonth || 1) - 1]} ${payslip.payPeriodYear || ''}`.trim();
+    const { earnings, deductions, employer } = buildPayslipLines(payslip, ytd);
+    const employerSum = employerTotal(payslip);
 
     let y = M;
 
     // ===================== LETTERHEAD =====================
-    const HEAD_H = 62;
-    box(x0, y, W, HEAD_H);
     const logoPath = COMPANY.logoPath ? path.resolve(COMPANY.logoPath)
       : path.join(__dirname, '..', 'assets', 'logo.png');
+    let textX = x0;
     if (fs.existsSync(logoPath)) {
-      try { doc.image(logoPath, x0 + 6, y + 6, { fit: [96, 38] }); } catch (_) { /* ignore */ }
+      try {
+        doc.image(logoPath, x0, y - 2, { fit: [74, 30] });
+        textX = x0 + 86;
+      } catch (_) { /* fall back to text-only letterhead */ }
     }
+    write(COMPANY.name, textX, y, { bold: true, size: 12.5, width: W * 0.6 });
     if (COMPANY.tagline) {
-      doc.font(F.regular).fontSize(6.5).fillColor(INK)
-        .text(COMPANY.tagline, x0 + 4, y + HEAD_H - 12, { width: 110, align: 'center', lineBreak: false });
+      write(COMPANY.tagline.toUpperCase(), textX, y + 15, { size: 6.2, color: FAINT, spacing: 1.1, width: W * 0.6 });
     }
-    doc.font(F.bold).fontSize(19).fillColor(INK)
-      .text(String(COMPANY.name || '').toUpperCase(), x0 + 116, y + HEAD_H / 2 - 12,
-        { width: W - 124, align: 'center', lineBreak: false, ellipsis: true });
-    y += HEAD_H;
+    write('SALARY SLIP', x1 - 160, y, { size: 6.2, color: FAINT, spacing: 1.4, width: 160, align: 'right' });
+    write(period, x1 - 160, y + 9, { bold: true, size: 11, width: 160, align: 'right' });
 
-    const ADDR_H = 34;
-    box(x0, y, W, ADDR_H);
-    doc.font(F.bold).fontSize(7.5).fillColor(INK)
-      .text(COMPANY.addressLines.join(', ').toUpperCase(), x0 + 8, y + 7,
-        { width: W - 16, align: 'center', lineBreak: false, ellipsis: true });
-    doc.font(F.bold).fontSize(7.5)
-      .text(`GSTIN : ${COMPANY.gstin || 'NA'}`, x0 + 8, y + 19, { width: W - 16, align: 'center', lineBreak: false });
-    y += ADDR_H;
+    y += 32;
+    rule(y, x0, x1, GOLD, 1.6);
 
-    // ===================== TITLE =====================
-    const TITLE_H = 30;
-    cell('SALARY SLIP', x0, y, W, TITLE_H, { bold: true, size: 17, align: 'center' });
-    y += TITLE_H;
+    // ===================== NET PAY =====================
+    y += 18;
+    keyText('Net Pay', x0, y, W * 0.6);
+    write(money(payslip.netPay), x0, y + 9, { bold: true, size: 25, width: W * 0.6 });
 
-    // ===================== IDENTITY BLOCK =====================
-    const R = 20;
-    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || '-';
-    pairRow(y, R, 'Employee Name', fullName, 'Month/ Year', monthLabel); y += R;
-    pairRow(y, R, 'Employee ID', plain(emp.employeeCode), 'UAN', plain(emp.uan)); y += R;
-    pairRow(y, R, 'Designation', plain(emp.designation), 'PF No.', plain(emp.pfNumber)); y += R;
-    pairRow(y, R, 'DOJ', shortDate(emp.dateOfJoining), 'ESIC No.', plain(emp.esicNumber)); y += R;
-    pairRow(y, R, 'Aadhar No.', formatAadhaar(emp.aadhaar), 'Bank Name', plain(bank.bankName)); y += R;
-    pairRow(y, R, 'PAN No.', plain(emp.pan), 'Account No.', plain(bank.accountNumber)); y += R;
-    pairRow(y, R, 'Salary Per Month', money(payslip.monthlySalary), 'Salary Per Annum', money(payslip.annualCtc)); y += R;
+    const paidOn = payslip.paymentDate ? longDate(payslip.paymentDate) : null;
+    const acct = maskAccount(bank.accountNumber);
+    const creditLine = [
+      acct ? `Credited to ${bank.bankName || 'bank account'} ${acct}` : 'Credited to your registered bank account',
+      paidOn ? `on ${paidOn}` : null,
+    ].filter(Boolean).join(' ');
+    write(creditLine, x0, y + 39, { size: 7.5, color: MUTED, width: W * 0.62 });
 
-    y += 10; // spacer, as on the source sheet
+    // Gross and deductions sit opposite the headline so the arithmetic is visible.
+    const sideX = x1 - 150;
+    const rightKey = (s, ky) =>
+      write(String(s).toUpperCase(), sideX, ky, { size: 6.2, color: FAINT, spacing: 1.1, width: 150, align: 'right' });
+    rightKey('Gross Earnings', y + 2);
+    write(money(payslip.grossSalary), sideX, y + 11, { bold: true, size: 10.5, width: 150, align: 'right' });
+    rightKey('Total Deductions', y + 28);
+    write(`−${money(payslip.totalDeductions)}`, sideX, y + 37, { bold: true, size: 10.5, width: 150, align: 'right' });
 
-    // ===================== DAY COUNTS =====================
-    pairRow(y, R, 'Total Working Days', days(payslip.workingDays), 'LOP Days', days(payslip.lopDays)); y += R;
-    pairRow(y, R, 'Payable Days', days(payslip.paidDays), 'Half Days', days(payslip.halfDays)); y += R;
-    pairRow(y, R, 'Additional Paid Days', days(payslip.additionalPaidDays), 'Late Days', days(payslip.lateDays)); y += R;
+    if (ytd) {
+      write(`${ytd.label} to date: ${money(ytd.netPay)} net over ${ytd.months} month${ytd.months === 1 ? '' : 's'}`,
+        x0, y + 50, { size: 7.5, color: MUTED, width: W * 0.62 });
+    }
 
-    y += 10;
+    // The extra height is the year-to-date line added above.
+    y += ytd ? 70 : 58;
+    rule(y);
+
+    // ===================== EMPLOYEE =====================
+    y += 12;
+    // Contract facts, as opposed to this month's attendance further down. The
+    // pay figures live here because they describe the agreement, not the month.
+    const idFields = [
+      ['Employee', fullName],
+      ['ID', plain(emp.employeeCode)],
+      ['Designation', plain(emp.designation)],
+      ['Department', plain(emp.department)],
+      ['Joined', longDate(emp.dateOfJoining)],
+      ['PAN', plain(emp.pan)],
+      ['UAN', plain(emp.uan)],
+      ['Bank', acct ? `${bank.bankName || 'Account'} ${acct}` : '—'],
+      ['Salary / month', money(payslip.monthlySalary)],
+      ['Salary / year', money(payslip.annualCtc)],
+    ];
+    // Four to a row, so a long designation still has room to breathe.
+    const COLS = 4;
+    const colW = W / COLS;
+    idFields.forEach((f, i) => {
+      const cx = x0 + (i % COLS) * colW;
+      const cy = y + Math.floor(i / COLS) * 26;
+      keyText(f[0], cx, cy, colW - 8);
+      write(fit(f[1], colW - 10, { bold: true, size: 8.5 }), cx, cy + 8, { bold: true, size: 8.5, width: colW - 8 });
+    });
+    y += Math.ceil(idFields.length / COLS) * 26 + 2;
+    rule(y);
 
     // ===================== EARNINGS | DEDUCTIONS =====================
-    const halfW = W / 2;
-    const amtW = halfW * 0.42;
-    const labW = halfW - amtW;
-    const dedX = x0 + halfW;
+    y += 14;
+    const GAP = 22;
+    const colWidth = (W - GAP) / 2;
+    const dedX = x0 + colWidth + GAP;
+    // With year-to-date on, each side carries two figure columns; without it the
+    // single amount column takes the whole width it would otherwise share.
+    const showYtd = Boolean(ytd);
+    const AMT_W = showYtd ? 62 : 80;
+    const labelW = colWidth - AMT_W * (showYtd ? 2 : 1);
+    const monthX = (cx) => cx + labelW;
+    const ytdX = (cx) => cx + labelW + AMT_W;
 
-    cell('Earnings', x0, y, halfW, R + 2, { bold: true, size: 11, align: 'center' });
-    cell('Deductions', dedX, y, halfW, R + 2, { bold: true, size: 11, align: 'center' });
-    y += R + 2;
-
-    for (let i = 0; i < earningRows.length; i += 1) {
-      const [eLabel, eVal] = earningRows[i];
-      const [dLabel, dVal] = deductionRows[i];
-      cell(eLabel, x0, y, labW, R);
-      cell(numOrDash(eVal), x0 + labW, y, amtW, R, { align: 'right' });
-      cell(dLabel, dedX, y, labW, R);
-      cell(numOrDash(dVal), dedX + labW, y, amtW, R, { align: 'right' });
-      y += R;
+    write('EARNINGS', x0, y, { bold: true, size: 6.6, color: GOLD, spacing: 1.4, width: colWidth });
+    write('DEDUCTIONS', dedX, y, { bold: true, size: 6.6, color: GOLD, spacing: 1.4, width: colWidth });
+    if (showYtd) {
+      // Column heads only where two figures could be confused for one another.
+      for (const cx of [x0, dedX]) {
+        write('THIS MONTH', monthX(cx), y, { size: 5.8, color: FAINT, spacing: 0.8, width: AMT_W, align: 'right' });
+        write(ytd.label.replace('FY ', 'FY '), ytdX(cx), y, {
+          size: 5.8, color: FAINT, spacing: 0.8, width: AMT_W, align: 'right',
+        });
+      }
     }
-
-    cell('Total Additions', x0, y, labW, R, { bold: true });
-    cell(num(payslip.grossSalary), x0 + labW, y, amtW, R, { bold: true, align: 'right' });
-    cell('Total Deductions', dedX, y, labW, R, { bold: true });
-    cell(num(payslip.totalDeductions), dedX + labW, y, amtW, R, { bold: true, align: 'right' });
-    y += R;
-
     y += 12;
 
-    // ===================== NET / WORDS / NOTE =====================
-    const NOTE_LBL_W = W * 0.235;
-    const netRow = (label, value, opts = {}) => {
-      cell(label, x0, y, NOTE_LBL_W, R + 2, { bold: true, align: 'center' });
-      cell(value, x0 + NOTE_LBL_W, y, W - NOTE_LBL_W, R + 2, opts);
-      y += R + 2;
-    };
-    netRow('Net Billing Amount', money(payslip.netPay), { bold: true });
-    netRow('Salary in words', amountInWords(payslip.netPay), { size: 8.5 });
-    netRow('Note', NOTE_TEXT, { size: 8.5 });
+    // A component is dropped only when it is empty BOTH this month and for the
+    // year — a slip full of em dashes reads as an error, but a head that was paid
+    // in an earlier month still belongs in the cumulative column. The totals come
+    // from the payslip itself, so nothing can be hidden by this.
+    const shown = (lines) => lines.filter((l) => l.amount !== 0 || (l.ytd || 0) !== 0);
+    const eLines = shown(earnings);
+    const dLines = shown(deductions);
 
-    // ===================== SIGNATURE =====================
-    y += 16;
-    // Optional scanned stamp/signature — printed only when the file is present.
-    const signPath = process.env.ORG_SIGNATURE_PATH
-      || path.join(__dirname, '..', 'assets', 'signature.png');
-    if (fs.existsSync(signPath)) {
-      try { doc.image(signPath, x0, y, { fit: [110, 70] }); y += 74; } catch (_) { /* ignore */ }
+    const ROW_H = 15;
+    const drawColumn = (lines, cx, total, totalLabel, ytdTotal) => {
+      let cy = y;
+      for (const line of lines) {
+        const label = fit(line.label, labelW - 4, { size: 8.5 });
+        write(label, cx, cy, { size: 8.5, width: labelW - 4 });
+        if (line.hint) {
+          const w = doc.font(F.regular).fontSize(8.5).widthOfString(label);
+          // Only when the hint genuinely fits beside the label; the figure
+          // columns must never be written over.
+          if (w + 5 < labelW - 22) {
+            write(line.hint, cx + w + 5, cy + 0.8, { size: 6.8, color: FAINT, width: labelW - w - 9 });
+          }
+        }
+        write(num(line.amount), monthX(cx), cy, { size: 8.5, width: AMT_W, align: 'right' });
+        if (showYtd) {
+          write(num(line.ytd), ytdX(cx), cy, { size: 8.5, color: MUTED, width: AMT_W, align: 'right' });
+        }
+        cy += ROW_H;
+        rule(cy - 4, cx, cx + colWidth, HAIRLINE, 0.6);
+      }
+      cy += 3;
+      rule(cy - 4, cx, cx + colWidth, INK, 1);
+      write(fit(totalLabel, labelW - 4, { bold: true, size: 8.5 }), cx, cy, { bold: true, size: 8.5, width: labelW - 4 });
+      write(num(total), monthX(cx), cy, { bold: true, size: 8.5, width: AMT_W, align: 'right' });
+      if (showYtd) {
+        write(num(ytdTotal), ytdX(cx), cy, { bold: true, size: 8.5, color: MUTED, width: AMT_W, align: 'right' });
+      }
+      return cy + ROW_H;
+    };
+
+    const eEnd = drawColumn(eLines, x0, payslip.grossSalary, 'Gross Earnings', ytd?.grossSalary);
+    const dEnd = drawColumn(dLines, dedX, payslip.totalDeductions, 'Total Deductions', ytd?.totalDeductions);
+    y = Math.max(eEnd, dEnd) + 8;
+
+    // ===================== ATTENDANCE =====================
+    rule(y);
+    y += 12;
+    const counts = [
+      ['Working days', days(payslip.workingDays)],
+      ['Payable', days(payslip.paidDays)],
+      ['Loss of pay', days(payslip.lopDays)],
+      ['Half days', days(payslip.halfDays)],
+      ['Extra paid', days(payslip.additionalPaidDays)],
+      ['Late', days(payslip.lateDays)],
+    ];
+    const cW = W / counts.length;
+    counts.forEach((c, i) => {
+      keyText(c[0], x0 + i * cW, y, cW - 4);
+      write(c[1], x0 + i * cW, y + 8, { bold: true, size: 8.5, width: cW - 4 });
+    });
+    y += 26;
+    rule(y);
+
+    // ===================== EMPLOYER CONTRIBUTIONS =====================
+    // Deliberately below the attendance strip and outside the earnings /
+    // deductions block: none of it is deducted from the employee, and printing
+    // it beside their deductions would invite exactly that misreading.
+    const employerShown = employer.filter((l) => l.amount !== 0 || (l.ytd || 0) !== 0);
+    if (employerShown.length) {
+      y += 12;
+      write('PAID BY THE COMPANY ON TOP OF YOUR SALARY — NOT DEDUCTED FROM YOU', x0, y, {
+        bold: true, size: 6.6, color: GOLD, spacing: 1.2, width: W,
+      });
+      y += 12;
+      // A single row of key/value pairs, plus the total cost of employment.
+      const cells = employerShown.concat([{
+        key: '__total', label: 'Total', amount: employerSum, ytd: ytd ? ytd.employerTotal : null,
+      }]);
+      const eW = W / cells.length;
+      cells.forEach((l, i) => {
+        const cx = x0 + i * eW;
+        keyText(l.label, cx, y, eW - 6);
+        write(num(l.amount), cx, y + 8, {
+          bold: l.key === '__total', size: 8.5, width: eW - 6,
+        });
+        if (showYtd && l.ytd != null) {
+          write(`${ytd.label} ${num(l.ytd)}`, cx, y + 18, { size: 6.2, color: FAINT, width: eW - 6 });
+        }
+      });
+      y += showYtd ? 30 : 22;
+      rule(y);
     }
-    doc.font(F.bold).fontSize(11).fillColor(INK)
-      .text('Authorized Signature', x0, y, { width: W * 0.5, lineBreak: false });
+
+    // ===================== FOOTER =====================
+    y += 12;
+    write('In words', x0, y, { size: 6.2, color: FAINT, spacing: 1.1, width: 46 });
+    write(amountInWords(payslip.netPay), x0 + 50, y - 0.5, { size: 8, width: W - 50 });
+
+    y += 14;
+    write(NOTE_TEXT, x0, y, { size: 7.2, color: MUTED, width: W });
+
+    if (payslip.paymentReference) {
+      y += 11;
+      write(`Payment reference: ${payslip.paymentReference}`, x0, y, { size: 7.2, color: MUTED, width: W });
+    }
+
+    // Anchored to the foot of the page, not to the flow, so the imprint sits in
+    // the same place whatever the component count.
+    const footY = 812;
+    rule(footY - 10, x0, x1, HAIRLINE, 0.6);
+    const imprint = [
+      COMPANY.name,
+      COMPANY.gstin ? `GSTIN ${COMPANY.gstin}` : null,
+      (COMPANY.addressLines || []).slice(-1)[0],
+    ].filter(Boolean).join('  ·  ');
+    write(imprint, x0, footY, { size: 6.6, color: FAINT, width: W * 0.68 });
+    write('Computer generated — no signature required.', x1 - 200, footY, {
+      size: 6.6, color: FAINT, width: 200, align: 'right',
+    });
 
     doc.end();
   });
 }
 
-module.exports = { renderPayslip, buildSlipRows, slipRowsBalance, COMPONENT_LABELS };
+module.exports = { renderPayslip, buildPayslipLines, linesBalance };

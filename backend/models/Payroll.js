@@ -125,35 +125,19 @@ payrollSchema.index(
   { unique: true }
 );
 
+// The component keys, read off the schemas rather than hand-listed. Adding a
+// field to either sub-schema above now folds it into the totals automatically —
+// `doubleDayPay` was once missed from the hand-written gross sum, which left the
+// printed rows on a payslip not adding up to the printed total.
+const EARNING_KEYS = Object.keys(earningsSchema.paths);
+const DEDUCTION_KEYS = Object.keys(deductionsSchema.paths);
+
+const sumOf = (doc, keys) => keys.reduce((total, k) => total + (Number(doc?.[k]) || 0), 0);
+
 // Auto-compute gross / deductions / net before save
 payrollSchema.pre('save', function computeTotals(next) {
-  const e = this.earnings || {};
-  const d = this.deductions || {};
-
-  this.grossSalary =
-    (e.basic || 0) +
-    (e.hra || 0) +
-    (e.specialAllowance || 0) +
-    (e.conveyanceAllowance || 0) +
-    (e.medicalAllowance || 0) +
-    (e.lta || 0) +
-    (e.bonus || 0) +
-    (e.overtime || 0) +
-    (e.leaveIncentive || 0) +
-    (e.otherEarnings || 0);
-
-  this.totalDeductions =
-    (d.epf || 0) +
-    (d.esic || 0) +
-    (d.professionalTax || 0) +
-    (d.tds || 0) +
-    (d.loanRecovery || 0) +
-    (d.salaryAdvance || 0) +
-    (d.lopDeduction || 0) +
-    (d.latePenalty || 0) +
-    (d.emergencyPenalty || 0) +
-    (d.otherDeductions || 0);
-
+  this.grossSalary = sumOf(this.earnings, EARNING_KEYS);
+  this.totalDeductions = sumOf(this.deductions, DEDUCTION_KEYS);
   this.netPay = this.grossSalary - this.totalDeductions;
   next();
 });
