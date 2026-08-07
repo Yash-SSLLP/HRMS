@@ -25,21 +25,49 @@ const { lateMinutes } = require('../utils/workday');
 const { compOffKeysFor, isRestDayRecord, approvedDoublePayDays, doublePayState } = require('../utils/restDay');
 const { renderPayslip } = require('../services/payslipPdf');
 const { buildPayslipLines } = require('../services/payslipLines');
+const { buildPayslipFields, buildClassicRows } = require('../services/payslipFields');
 const { buildYtd, computeYtdFrom } = require('../services/payslipYtd');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
 // exportPayrollSheet builds the company payroll register (.xlsx) via ExcelJS — see below.
+
+// Money as the payslip prints it, so all three surfaces show the same string.
+const inrOrDash = (n) => (Math.round(Number(n) || 0) === 0
+  ? '—'
+  : `₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Math.round(n))}`);
 
 // Serialize a payslip with its printable breakdown attached, so the web and
 // mobile screens render the same components the PDF does instead of each
 // keeping its own list of labels. See services/payslipLines.js. `ytd` is
 // optional — the admin list omits it, since a table of totals has no use for
 // per-employee cumulative figures and it would cost a query per row.
-const withLines = (payslip, ytd) => ({
-  ...payslip.toJSON(),
-  lines: buildPayslipLines(payslip, ytd),
-  ytd: ytd || null,
-});
+//
+// `details` is the identity/statutory/bank block, in the same order and wording
+// the PDF prints (services/payslipFields.js). It is built only for an employee
+// reading their OWN slip — it carries their PAN, Aadhaar and bank account, so it
+// has no business in a list of everyone's payslips.
+const withLines = (payslip, ytd, { details = false } = {}) => {
+  const out = {
+    ...payslip.toJSON(),
+    lines: buildPayslipLines(payslip, ytd),
+    ytd: ytd || null,
+  };
+  if (details) {
+    out.details = buildClassicRows(buildPayslipFields(payslip, inrOrDash));
+    // The profile was populated only to build those rows; the payload keeps the
+    // plain id it has always carried rather than shipping the whole profile.
+    out.employee = payslip.employee?._id || payslip.employee;
+  }
+  return out;
+};
+
+// The employee's own slip needs the full profile to build `details`. Aadhaar is
+// select:false, so it is asked for explicitly — this is the person's own record.
+const MY_PAYSLIP_POPULATE = {
+  path: 'employee',
+  select: '+aadhaar',
+  populate: { path: 'user', select: 'firstName lastName' },
+};
 
 async function getMyProfileOrFail(userId, res) {
   const profile = await EmployeeProfile.findOne({ user: userId });
@@ -61,12 +89,12 @@ const listMyPayslips = asyncHandler(async (req, res) => {
   const payslips = await Payroll.find({
     employee: profile._id,
     status: { $in: ['Approved', 'Paid'] },
-  }).sort({ payPeriodYear: -1, payPeriodMonth: -1 });
+  }).populate(MY_PAYSLIP_POPULATE).sort({ payPeriodYear: -1, payPeriodMonth: -1 });
   // Every slip this employee has is already in hand, so each one's year-to-date
   // is accumulated in memory rather than costing a query per row.
   res.json({
     count: payslips.length,
-    payslips: payslips.map((p) => withLines(p, computeYtdFrom(payslips, p))),
+    payslips: payslips.map((p) => withLines(p, computeYtdFrom(payslips, p), { details: true })),
   });
 });
 
@@ -84,12 +112,12 @@ const getMyPayslip = asyncHandler(async (req, res) => {
     payPeriodYear: Number(req.params.year),
     payPeriodMonth: Number(req.params.month),
     status: { $in: ['Approved', 'Paid'] },
-  });
+  }).populate(MY_PAYSLIP_POPULATE);
   if (!payslip) {
     res.status(404);
     throw new Error('Payslip not found');
   }
-  res.json({ payslip: withLines(payslip, await buildYtd(payslip)) });
+  res.json({ payslip: withLines(payslip, await buildYtd(payslip), { details: true }) });
 });
 
 /**
@@ -628,6 +656,15 @@ const GRATUITY_RATE = 0.0481;
 const GRATUITY_ENABLED = !['0', 'false', 'no', 'off']
   .includes(String(process.env.PAYROLL_GRATUITY_ENABLED ?? 'true').toLowerCase());
 
+// The six salary-structure components. ESIC is assessed on these alone — the
+// incentive/bonus/overtime lines are not part of the structure gross — so the
+// list lives here rather than being spelled out at each site that needs it.
+const STRUCTURE_COMPONENT_KEYS = [
+  'basic', 'hra', 'specialAllowance', 'conveyanceAllowance', 'medicalAllowance', 'lta',
+];
+const structureGross = (earnings) =>
+  STRUCTURE_COMPONENT_KEYS.reduce((a, k) => a + (Number(earnings?.[k]) || 0), 0);
+
 /**
  * Employer contributions for one month, from the same component base the
  * employee-side deductions use.
@@ -646,6 +683,19 @@ function employerContributionsFor(basic, gross) {
     esic: ESIC_ENABLED && g <= ESIC_WAGE_CEILING ? Math.round(g * ESIC_ER_RATE) : 0,
     gratuity: GRATUITY_ENABLED ? Math.round(b * GRATUITY_RATE) : 0,
   };
+}
+
+/**
+ * Stamp a payslip's employer contributions from its own earnings.
+ *
+ * Nothing here is ever hand-entered, so it is derived on every write rather than
+ * taken from the request — otherwise a manually created or edited slip would
+ * carry zeros while a run-generated one for the same employee did not.
+ * @param {Object} payslip - Payroll doc, mutated in place.
+ */
+function applyEmployerContributions(payslip) {
+  const e = payslip.earnings?.toObject?.() || payslip.earnings || {};
+  payslip.employerContributions = employerContributionsFor(e.basic, structureGross(e));
 }
 
 // Derive monthly earnings + standard statutory deductions from a salary
@@ -839,8 +889,7 @@ async function computeEmployeeRun(profile, year, month) {
     };
     // Standard statutory deductions on the same component base used by the
     // manual editor's derive, so all payroll paths fill the same values.
-    const baseGross = earnings.basic + earnings.hra + earnings.specialAllowance
-      + earnings.conveyanceAllowance + earnings.medicalAllowance + earnings.lta;
+    const baseGross = structureGross(earnings);
     statutoryDeductions = {
       epf: EPF_ENABLED ? Math.round(earnings.basic * EPF_EMP_RATE) : 0,
       esic: ESIC_ENABLED && baseGross <= ESIC_WAGE_CEILING ? Math.round(baseGross * ESIC_EMP_RATE) : 0,
@@ -1145,7 +1194,9 @@ const createPayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee profile not found');
   }
-  const payslip = await Payroll.create(req.body);
+  const payslip = new Payroll(req.body);
+  applyEmployerContributions(payslip);
+  await payslip.save();
   res.status(201).json({ payslip });
 });
 
@@ -1173,6 +1224,7 @@ const updatePayslip = asyncHandler(async (req, res) => {
   delete req.body.payPeriodMonth;
 
   Object.assign(payslip, req.body);
+  applyEmployerContributions(payslip);
   await payslip.save();
   res.json({ payslip });
 });
@@ -1226,11 +1278,13 @@ const markPayslipPaid = asyncHandler(async (req, res) => {
 
 // Employee data the salary slip prints. Every PDF route (admin download,
 // employee download, email, public link) uses this same spec so all four render
-// an identical slip. Aadhaar is deliberately NOT requested: it is select:false on
-// the model and the slip no longer prints it, so there is no reason to pull a
-// government id into memory — the payslip is a shareable document.
+// an identical slip. `aadhaar` is select:false on the model, so it has to be
+// asked for explicitly or the slip's Aadhaar row comes out blank. It is fetched
+// only here — never for the JSON endpoints, so the number reaches the printed
+// document without entering an API payload.
 const PAYSLIP_PDF_POPULATE = {
   path: 'employee',
+  select: '+aadhaar',
   populate: { path: 'user', select: 'firstName lastName email' },
 };
 
@@ -1618,6 +1672,8 @@ module.exports = {
   // exported for unit tests
   computeEmployeeRun,
   deriveSalary,
+  employerContributionsFor,
+  applyEmployerContributions,
   resolveCtcForMonth,
   buildRunFields,
   buildPayrollSheetRow,

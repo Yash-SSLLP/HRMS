@@ -114,7 +114,10 @@ async function copyCandidateDocuments(candidate, profileId, actorId, opts = {}) 
         seen.add(sha);
         continue;
       }
-      const saved = storage.saveBuffer({
+      // saveBuffer is async: without the await, storagePath/sha256/sizeBytes come
+      // back undefined and Document.create fails its required-field validation,
+      // so every carried-over document was silently counted as failed.
+      const saved = await storage.saveBuffer({
         buffer, ownerType: 'employee', ownerId: profileId, originalName: fileName,
       });
       await Document.create({

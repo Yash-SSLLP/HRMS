@@ -20,6 +20,9 @@
  */
 require('dotenv').config();
 const mongoose = require('mongoose');
+// connectDB, not mongoose.connect: it pins public DNS resolvers, without which
+// the mongodb+srv lookup fails on restrictive networks (ECONNREFUSED querySrv).
+const connectDB = require('../config/db');
 const Candidate = require('../models/Candidate');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { copyCandidateDocuments } = require('../services/candidateDocuments');
@@ -30,7 +33,7 @@ const ONLY_CODE = codeArg > -1 ? process.argv[codeArg + 1] : null;
 
 (async () => {
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is not set — run this from the backend folder.');
-  await mongoose.connect(process.env.MONGO_URI);
+  await connectDB();
 
   const filter = {
     'employee.profile': { $exists: true, $ne: null },

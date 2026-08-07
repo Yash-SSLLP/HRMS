@@ -129,6 +129,8 @@ function PayslipDetail({ slip, onClose }) {
           </div>
         </div>
 
+        <Details slip={slip} counts={counts} />
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 py-5">
           <Breakdown title="Earnings" lines={linesFor(slip, 'earnings')}
             total={slip.grossSalary} totalLabel="Gross Earnings"
@@ -138,17 +140,43 @@ function PayslipDetail({ slip, onClose }) {
             ytd={slip.ytd} ytdTotal={slip.ytd?.totalDeductions} />
         </div>
 
-        <div className="flex flex-wrap gap-x-8 gap-y-3 pt-4 border-t border-gray-200">
-          {counts.map(([label, value]) => (
-            <div key={label}>
-              <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{label}</p>
-              <div className="font-semibold tabular-nums">{value}</div>
-            </div>
-          ))}
-        </div>
-
         <EmployerContributions slip={slip} />
       </div>
+    </div>
+  );
+}
+
+// The identity, statutory, bank and day-count rows, exactly as the PDF prints
+// them — the server builds the list (services/payslipFields.js) so this screen
+// cannot drift from the document. `counts` is the fallback for a response that
+// predates the field.
+function Details({ slip, counts }) {
+  const d = slip.details;
+  if (!d) {
+    return (
+      <div className="flex flex-wrap gap-x-8 gap-y-3 py-5 border-b border-gray-200">
+        {counts.map(([label, value]) => (
+          <div key={label}>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{label}</p>
+            <div className="font-semibold tabular-nums">{value}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  const row = (r, i, last) => (
+    <div key={`${r[0]}-${i}`} className={`grid grid-cols-2 sm:grid-cols-4 gap-x-4 py-1.5 ${last ? '' : 'border-b border-gray-100'}`}>
+      <div className="text-gray-500">{r[0]}</div>
+      <div className="font-medium break-words">{r[1]}</div>
+      <div className="text-gray-500 sm:pl-2">{r[2]}</div>
+      <div className="font-medium break-words">{r[3]}</div>
+    </div>
+  );
+  return (
+    <div className="py-5 border-b border-gray-200 text-sm">
+      {d.identity.map((r, i) => row(r, i, i === d.identity.length - 1))}
+      <div className="h-3" />
+      {d.dayCounts.map((r, i) => row(r, i, i === d.dayCounts.length - 1))}
     </div>
   );
 }

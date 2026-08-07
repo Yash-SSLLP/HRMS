@@ -117,6 +117,7 @@ export default function PayslipsScreen() {
 
                 {open && (
                   <View style={styles.breakdown}>
+                    <Details slip={p} />
                     <Section title="Earnings" lines={p.lines?.earnings} ytdLabel={p.ytd?.label} />
                     <Section title="Deductions" lines={p.lines?.deductions} tint={colors.danger} ytdLabel={p.ytd?.label} />
                     <Row label="Gross salary" value={rupees(p.grossSalary)} />
@@ -188,6 +189,28 @@ function Section({ title, lines, tint, ytdLabel }) {
   );
 }
 
+// The identity, statutory, bank and day-count rows, exactly as the PDF prints
+// them. The server builds the list (services/payslipFields.js), so this screen
+// cannot drift from the document. Each PDF row holds two label/value pairs;
+// on a phone they stack into single rows.
+function Details({ slip }) {
+  const d = slip.details;
+  if (!d) return null;
+  const pairs = [...d.identity, ...d.dayCounts]
+    .flatMap((r) => [[r[0], r[1]], [r[2], r[3]]])
+    .filter(([label]) => label);
+  return (
+    <View style={{ marginBottom: spacing(3) }}>
+      {pairs.map(([label, value]) => (
+        <View key={label} style={styles.detailRow}>
+          <Text style={[font.body, { color: colors.textFaint, flex: 1, paddingRight: 12 }]} numberOfLines={1}>{label}</Text>
+          <Text style={[font.body, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // Separated from the deductions above on purpose: none of this is taken from the
 // employee, and listing it alongside their deductions would read as if it were.
 function Employer({ slip }) {
@@ -226,6 +249,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   sep: { height: 1, backgroundColor: colors.border, marginVertical: 4 },
   sectionTitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1.1, color: colors.textFaint, marginBottom: 8 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4,
+    borderBottomWidth: 1, borderBottomColor: colors.border },
   hint: { color: colors.textFaint, fontSize: 12 },
   ytd: { color: colors.textFaint, fontSize: 11, marginTop: 1 },
   ytdSummary: { color: colors.textFaint, fontSize: 12, marginTop: 6 },
