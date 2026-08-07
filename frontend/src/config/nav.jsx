@@ -12,15 +12,16 @@ import {
   FiUserPlus, FiCheckSquare, FiUserCheck, FiShield,
   FiClock, FiActivity, FiCalendar, FiTool,
   FiUmbrella, FiRepeat, FiSun,
-  FiDollarSign, FiSliders, FiCreditCard, FiClipboard, FiCheckCircle,
+  FiSliders, FiCreditCard, FiClipboard, FiCheckCircle,
   FiShoppingBag, FiMap, FiPercent, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
   FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
   FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget,
 } from 'react-icons/fi';
-// Feather has no money-ledger glyph; Tabler's outline set matches it visually
-// (same stroke weight) and is already used elsewhere (AdminOverview).
-import { TbCashBanknote, TbReceipt } from 'react-icons/tb';
+// Feather has no money-ledger glyph, and its only currency mark is a dollar sign
+// — wrong for a company paid in rupees. Tabler's outline set matches Feather
+// visually (same stroke weight) and is already used elsewhere (AdminOverview).
+import { TbCashBanknote, TbReceipt, TbCurrencyRupee } from 'react-icons/tb';
 
 // A group's `icon` is used when permissions leave it with a single visible item:
 // NavList then renders it as one plain section link, and without an icon that
@@ -61,8 +62,8 @@ export const adminNav = [
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },
     { to: '/admin/permissions', label: 'Permissions', icon: FiShield, roles: ['SuperAdmin'] },
   ] },
-  { group: 'Payroll & Salary', icon: FiDollarSign, items: [
-    { to: '/admin/payroll', label: 'Payroll', icon: FiDollarSign, perm: 'payroll.manage' },
+  { group: 'Payroll & Salary', icon: TbCurrencyRupee, items: [
+    { to: '/admin/payroll', label: 'Payroll', icon: TbCurrencyRupee, perm: 'payroll.manage' },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders, perm: 'payroll.manage' },
     { to: '/admin/payroll-run', label: 'Hikes', icon: FiRepeat, perm: 'payroll.manage' },
     { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard, perm: 'loans.manage' },
@@ -160,8 +161,8 @@ export const employeeNav = [
     { to: '/employee/onboarding', label: 'Onboarding', icon: FiClipboard },
     { to: '/employee/org-chart', label: 'Org Chart', icon: FiGitBranch },
   ] },
-  { group: 'Payroll & Expenses', icon: FiDollarSign, items: [
-    { to: '/employee/payslips', label: 'Payslips', icon: FiDollarSign },
+  { group: 'Payroll & Expenses', icon: TbCurrencyRupee, items: [
+    { to: '/employee/payslips', label: 'Payslips', icon: TbCurrencyRupee },
     { to: '/employee/expenses', label: 'Expenses', icon: FiShoppingBag },
     { to: '/employee/cashbook', label: 'Cash Vouchers', icon: TbReceipt },
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },

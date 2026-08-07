@@ -11,8 +11,8 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
-// FiDollarSign is what the sidebar uses for Payslips — same glyph, same page.
-import { FiDollarSign } from 'react-icons/fi';
+// TbCurrencyRupee is what the sidebar uses for Payslips — same glyph, same page.
+import { TbCurrencyRupee } from 'react-icons/tb';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -217,7 +217,7 @@ export default function EmployeePayslips() {
         {/* blue-700, not blue-600: index.css remaps text-blue-600 to the portal
             accent (the link colour), which would put a teal/gold glyph on a blue
             tile. 700 keeps the tint and its icon in the same hue. */}
-        <span className="stat-icon bg-blue-100 text-blue-700"><FiDollarSign /></span>
+        <span className="stat-icon bg-blue-100 text-blue-700"><TbCurrencyRupee /></span>
         <div className="min-w-0">
           {loading ? (
             <div className="space-y-2">
