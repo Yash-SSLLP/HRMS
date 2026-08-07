@@ -67,6 +67,44 @@ const employerContributionsSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Release workflow. A payslip is HR's document until they hand it over: the
+// employee asks for it, HR approves the request, corrects the slip if needed,
+// previews it, and only on finalising can the employee download it. The employee
+// may then ask for a correction, which sends it back to HR.
+//
+//   NotRequested → Requested → Approved → Finalised ⇄ ChangeRequested
+//
+// Kept apart from `status` on purpose: `status` tracks the money (is it approved
+// for payment, has it been paid), this tracks custody of the document. A slip can
+// be Paid but not yet released, and vice versa.
+const RELEASE_STATES = ['NotRequested', 'Requested', 'Approved', 'Finalised', 'ChangeRequested'];
+
+const releaseSchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: RELEASE_STATES, default: 'NotRequested', index: true },
+    requestedAt: Date,
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    approvedAt: Date,
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    finalisedAt: Date,
+    finalisedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // What the employee says is wrong, when they ask for a correction.
+    changeNote: { type: String, trim: true },
+    // Every transition, so a disputed payslip has a readable trail.
+    history: [
+      {
+        _id: false,
+        action: String,
+        at: { type: Date, default: Date.now },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byName: String,
+        note: String,
+      },
+    ],
+  },
+  { _id: false }
+);
+
 const payrollSchema = new mongoose.Schema(
   {
     employee: {
@@ -115,6 +153,10 @@ const payrollSchema = new mongoose.Schema(
     // PDF without logging in (generated on demand when HR shares it).
     publicToken: { type: String, index: true },
     emailedAt: { type: Date },
+
+    // Release to the employee — separate from `status`, which is about the money
+    // (Draft/Approved/Paid). This is about who may hold the document.
+    release: { type: releaseSchema, default: () => ({}) },
   },
   { timestamps: true }
 );
@@ -145,4 +187,7 @@ payrollSchema.pre('save', function computeTotals(next) {
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 payrollSchema.plugin(require("./plugins/auditStatus"));
 
-module.exports = mongoose.model('Payroll', payrollSchema);
+const Payroll = mongoose.model('Payroll', payrollSchema);
+Payroll.RELEASE_STATES = RELEASE_STATES;
+
+module.exports = Payroll;

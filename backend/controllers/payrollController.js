@@ -25,7 +25,9 @@ const { lateMinutes } = require('../utils/workday');
 const { compOffKeysFor, isRestDayRecord, approvedDoublePayDays, doublePayState } = require('../utils/restDay');
 const { renderPayslip } = require('../services/payslipPdf');
 const { buildPayslipLines } = require('../services/payslipLines');
-const { buildPayslipFields, buildClassicRows } = require('../services/payslipFields');
+const { buildPayslipFields, buildClassicRows, MONTHS: MONTHS_LONG } = require('../services/payslipFields');
+const { notify, notifyMany } = require('../services/notify');
+const { usersHoldingAny } = require('../services/audience');
 const { buildYtd, computeYtdFrom } = require('../services/payslipYtd');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
@@ -68,6 +70,45 @@ const MY_PAYSLIP_POPULATE = {
   select: '+aadhaar',
   populate: { path: 'user', select: 'firstName lastName' },
 };
+
+// ===== Release workflow =====
+// A payslip belongs to HR until they hand it over. The employee asks for it, HR
+// approves, corrects and previews, and only on finalising can the employee
+// download. See the `release` sub-doc in models/Payroll.js for the states.
+
+// Only a finalised payslip may leave HR's hands.
+const isReleased = (payslip) => payslip?.release?.status === 'Finalised';
+
+// Append to the trail every transition writes, so a disputed slip can be read
+// back in order rather than inferred from timestamps.
+function logRelease(payslip, action, actor, note) {
+  if (!payslip.release) payslip.release = {};
+  if (!Array.isArray(payslip.release.history)) payslip.release.history = [];
+  payslip.release.history.push({
+    action,
+    at: new Date(),
+    by: actor?._id,
+    byName: actor?.fullName || `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim() || undefined,
+    note: note || undefined,
+  });
+}
+
+const periodLabel = (p) => `${MONTHS_LONG[(p.payPeriodMonth || 1) - 1]} ${p.payPeriodYear}`;
+
+// Tell the people who run payroll that something is waiting on them.
+async function notifyPayrollTeam(title, body) {
+  try {
+    await notifyMany(await usersHoldingAny('payroll.manage'), {
+      type: 'payroll',
+      audience: 'admin',
+      title,
+      body,
+      link: '/admin/payroll',
+    });
+  } catch (err) {
+    console.error('payslip release notify failed:', err.message);
+  }
+}
 
 async function getMyProfileOrFail(userId, res) {
   const profile = await EmployeeProfile.findOne({ user: userId });
@@ -120,6 +161,162 @@ const getMyPayslip = asyncHandler(async (req, res) => {
   res.json({ payslip: withLines(payslip, await buildYtd(payslip), { details: true }) });
 });
 
+// Fetch one of the caller's own finalised-or-not payslips, or 404.
+async function myPayslipOrFail(req, res) {
+  const profile = await getMyProfileOrFail(req.user._id, res);
+  const payslip = await Payroll.findOne({
+    _id: req.params.id,
+    employee: profile._id,
+    status: { $in: ['Approved', 'Paid'] },
+  });
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip not found');
+  }
+  return payslip;
+}
+
+/**
+ * Ask HR to release this month's payslip.
+ * @route POST /api/payroll/me/:id/request  (employee)
+ * @param {string} req.params.id - payslip id
+ * @returns {{release: Object}}
+ * @sideeffect notifies everyone holding payroll.manage
+ */
+const requestMyPayslip = asyncHandler(async (req, res) => {
+  const payslip = await myPayslipOrFail(req, res);
+  const state = payslip.release?.status || 'NotRequested';
+  if (state !== 'NotRequested') {
+    res.status(400);
+    throw new Error(state === 'Finalised'
+      ? 'This payslip has already been released — you can download it.'
+      : 'You have already asked for this payslip. HR is looking at it.');
+  }
+  payslip.release.status = 'Requested';
+  payslip.release.requestedAt = new Date();
+  payslip.release.requestedBy = req.user._id;
+  logRelease(payslip, 'Requested', req.user);
+  await payslip.save();
+
+  const who = req.user.fullName || `${req.user.firstName} ${req.user.lastName}`.trim();
+  await notifyPayrollTeam('Payslip requested',
+    `${who} asked for their ${periodLabel(payslip)} payslip.`);
+  res.json({ release: payslip.release });
+});
+
+/**
+ * Ask HR to correct an already-released payslip.
+ * @route POST /api/payroll/me/:id/change-request  (employee)
+ * @param {string} req.params.id - payslip id
+ * @param {string} req.body.note - what the employee believes is wrong (required)
+ * @returns {{release: Object}}
+ * @sideeffect notifies everyone holding payroll.manage
+ */
+const requestMyPayslipChange = asyncHandler(async (req, res) => {
+  const payslip = await myPayslipOrFail(req, res);
+  if (!isReleased(payslip)) {
+    res.status(400);
+    throw new Error('You can only ask for a correction once the payslip has been released to you.');
+  }
+  const note = String(req.body.note || '').trim();
+  if (!note) {
+    res.status(400);
+    throw new Error('Please describe what needs correcting.');
+  }
+  payslip.release.status = 'ChangeRequested';
+  payslip.release.changeNote = note;
+  logRelease(payslip, 'ChangeRequested', req.user, note);
+  await payslip.save();
+
+  const who = req.user.fullName || `${req.user.firstName} ${req.user.lastName}`.trim();
+  await notifyPayrollTeam('Payslip correction requested',
+    `${who} asked for a change to their ${periodLabel(payslip)} payslip: ${note}`);
+  res.json({ release: payslip.release });
+});
+
+/**
+ * Approve an employee's request, opening the payslip for HR to check and correct.
+ * @route PATCH /api/payroll/:id/release/approve  (payroll.manage)
+ * @param {string} req.params.id - payslip id
+ * @returns {{payslip: Object}}
+ * @sideeffect notifies the employee that HR is preparing it
+ */
+const approvePayslipRelease = asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findById(req.params.id).populate('employee', 'user');
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip not found');
+  }
+  if (payslip.release?.status !== 'Requested') {
+    res.status(400);
+    throw new Error('Only a requested payslip can be approved for release.');
+  }
+  payslip.release.status = 'Approved';
+  payslip.release.approvedAt = new Date();
+  payslip.release.approvedBy = req.user._id;
+  logRelease(payslip, 'Approved', req.user);
+  await payslip.save();
+
+  const recipient = payslip.employee?.user;
+  if (recipient) {
+    notify({
+      recipient,
+      type: 'payroll',
+      audience: 'employee',
+      title: 'Payslip request approved',
+      body: `HR is preparing your ${periodLabel(payslip)} payslip. You'll be told when it's ready.`,
+      link: '/employee/payslips',
+    }).catch((err) => console.error('payslip approve notify failed:', err.message));
+  }
+  res.json({ payslip });
+});
+
+/**
+ * Finalise a payslip — the point at which the employee may download it.
+ * @route PATCH /api/payroll/:id/release/finalise  (payroll.manage)
+ * @param {string} req.params.id - payslip id
+ * @returns {{payslip: Object}}
+ * @sideeffect notifies the employee that it is ready
+ */
+const finalisePayslipRelease = asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findById(req.params.id).populate('employee', 'user');
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip not found');
+  }
+  const state = payslip.release?.status;
+  if (!['Approved', 'ChangeRequested'].includes(state)) {
+    res.status(400);
+    throw new Error(state === 'Finalised'
+      ? 'This payslip is already final.'
+      : 'Approve the request before finalising the payslip.');
+  }
+  if (!['Approved', 'Paid'].includes(payslip.status)) {
+    res.status(400);
+    throw new Error('Approve the payslip itself before releasing it to the employee.');
+  }
+  payslip.release.status = 'Finalised';
+  payslip.release.finalisedAt = new Date();
+  payslip.release.finalisedBy = req.user._id;
+  // The correction has been dealt with; clear it so the next one stands alone.
+  payslip.release.changeNote = undefined;
+  logRelease(payslip, 'Finalised', req.user);
+  await payslip.save();
+
+  const recipient = payslip.employee?.user;
+  if (recipient) {
+    notify({
+      recipient,
+      type: 'payroll',
+      audience: 'employee',
+      title: 'Payslip ready',
+      body: `Your ${periodLabel(payslip)} payslip is final and ready to download.`,
+      link: '/employee/payslips',
+    }).catch((err) => console.error('payslip finalise notify failed:', err.message));
+  }
+  res.json({ payslip });
+});
+
 /**
  * The caller's month attendance-policy summary (lateness, paid-leave usage,
  * expected penalty/incentive).
@@ -154,12 +351,22 @@ const myAttendanceSummary = asyncHandler(async (req, res) => {
  */
 // GET /api/payroll  (HR/Admin) — filters: employee, year, month, status
 const listPayslips = asyncHandler(async (req, res) => {
-  const { employee, year, month, status } = req.query;
+  const { employee, year, month, status, releaseStatus } = req.query;
   const filter = {};
   if (employee) filter.employee = employee;
   if (year) filter.payPeriodYear = Number(year);
   if (month) filter.payPeriodMonth = Number(month);
   if (status) filter.status = status;
+  // Comma-separated so the requests queue can ask for everything awaiting HR in
+  // one call. 'NotRequested' has to match slips saved before the release
+  // workflow existed, which carry no `release` field at all.
+  if (releaseStatus) {
+    const wanted = String(releaseStatus).split(',').map((s) => s.trim()).filter(Boolean);
+    filter.$or = [
+      { 'release.status': { $in: wanted } },
+      ...(wanted.includes('NotRequested') ? [{ 'release.status': { $exists: false } }] : []),
+    ];
+  }
 
   const payslips = await Payroll.find(filter)
     .populate({
@@ -1223,8 +1430,22 @@ const updatePayslip = asyncHandler(async (req, res) => {
   delete req.body.payPeriodYear;
   delete req.body.payPeriodMonth;
 
+  // Identity fields aside, the release state is HR's to move through the proper
+  // transitions — a PUT must not be able to hand a payslip over.
+  delete req.body.release;
+
   Object.assign(payslip, req.body);
   applyEmployerContributions(payslip);
+
+  // Editing a released payslip pulls it back: the employee must not be able to
+  // download a half-corrected document, so HR finalises again when they are done.
+  if (isReleased(payslip)) {
+    payslip.release.status = 'Approved';
+    payslip.release.finalisedAt = undefined;
+    payslip.release.finalisedBy = undefined;
+    logRelease(payslip, 'EditedAfterRelease', req.user, 'Edited after release — needs finalising again');
+  }
+
   await payslip.save();
   res.json({ payslip });
 });
@@ -1325,6 +1546,16 @@ const downloadMyPayslipPdf = asyncHandler(async (req, res) => {
   if (!payslip) {
     res.status(404);
     throw new Error('Payslip not found');
+  }
+  // A payslip is HR's document until they release it. Everything up to that
+  // point — requesting, HR's corrections, the preview — happens without the
+  // employee holding a copy.
+  if (!isReleased(payslip)) {
+    res.status(403);
+    const state = payslip.release?.status || 'NotRequested';
+    throw new Error(state === 'NotRequested'
+      ? 'Request this payslip first — HR will release it to you.'
+      : 'HR is still preparing this payslip. You can download it once it is final.');
   }
   await streamPayslipPdf(payslip, res);
 });
@@ -1663,6 +1894,10 @@ const giveHike = asyncHandler(async (req, res) => {
 
 module.exports = {
   listMyPayslips,
+  requestMyPayslip,
+  requestMyPayslipChange,
+  approvePayslipRelease,
+  finalisePayslipRelease,
   getMyPayslip,
   myAttendanceSummary,
   deriveSalaryForEditor,

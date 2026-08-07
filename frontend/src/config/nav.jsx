@@ -64,6 +64,8 @@ export const adminNav = [
   ] },
   { group: 'Payroll & Salary', icon: TbCurrencyRupee, items: [
     { to: '/admin/payroll', label: 'Payroll', icon: TbCurrencyRupee, perm: 'payroll.manage' },
+    // The release queue: employees ask for their payslip, HR checks and hands it over.
+    { to: '/admin/payslip-requests', label: 'Payslip Requests', icon: TbReceipt, perm: 'payroll.manage' },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders, perm: 'payroll.manage' },
     { to: '/admin/payroll-run', label: 'Hikes', icon: FiRepeat, perm: 'payroll.manage' },
     { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard, perm: 'loans.manage' },

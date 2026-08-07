@@ -6,6 +6,7 @@
  * payslip from the company mailbox (POST /payroll/:id/email). Bulk runs live on AdminPayrollRun.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
@@ -31,6 +32,17 @@ const STATUS_COLORS = {
   Paid: 'bg-green-100 text-green-800',
   OnHold: 'bg-amber-100 text-amber-800',
 };
+
+// Custody of the document, separate from `status`, which is about the money.
+// Amber is the queue: something is waiting on HR. See models/Payroll.js.
+const RELEASE = {
+  NotRequested: { label: 'Not requested', tone: 'bg-gray-100 text-gray-600' },
+  Requested: { label: 'Requested', tone: 'bg-amber-100 text-amber-800' },
+  Approved: { label: 'Approved — to finalise', tone: 'bg-blue-100 text-blue-800' },
+  Finalised: { label: 'Released', tone: 'bg-green-100 text-green-800' },
+  ChangeRequested: { label: 'Change requested', tone: 'bg-amber-100 text-amber-800' },
+};
+const releaseOf = (p) => (RELEASE[p.release?.status] ? p.release.status : 'NotRequested');
 
 // Every payslip field the editor round-trips. The save is an Object.assign on
 // the server, so a field missing here is silently zeroed on a manual edit —
@@ -80,6 +92,8 @@ export default function AdminPayroll() {
   const [filter, setFilter] = useState({ year: new Date().getFullYear(), month: '', status: '' });
 
   const [showModal, setShowModal] = useState(false);
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(blankSlip());
   const [saving, setSaving] = useState(false);
@@ -224,6 +238,26 @@ export default function AdminPayroll() {
     }));
   };
 
+  // Deep link from the Payslip Requests queue: /admin/payroll?edit=<id> opens
+  // that payslip in this editor, so HR corrects it in the one place the full
+  // editor lives rather than a second copy of it. The slip is fetched by id
+  // instead of being looked up in `payslips`, which the page's filters may hide.
+  const editParam = params.get('edit');
+  useEffect(() => {
+    if (!editParam) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/payroll/${editParam}`);
+        if (!cancelled && data.payslip) openEdit(data.payslip);
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Could not open that payslip');
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editParam]);
+
   // Load (and optionally apply) the earnings + statutory deductions derived from
   // the employee's assigned salary structure × CTC. Earnings come back at their
   // full monthly value; the unpaid days arrive as the `lopDeduction`.
@@ -308,6 +342,12 @@ export default function AdminPayroll() {
         await api.post('/payroll', form);
       }
       setShowModal(false);
+      // Arrived from the release queue to correct a slip before approving it —
+      // send HR back there rather than stranding them on this page.
+      if (params.get('from') === 'requests') {
+        navigate('/admin/payslip-requests');
+        return;
+      }
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Save failed');
@@ -432,14 +472,15 @@ export default function AdminPayroll() {
               <th className="px-4 py-3 text-right font-medium text-gray-700">Deductions</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Net</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Release</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : payslips.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No payslips</td></tr>
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No payslips</td></tr>
             ) : payslips.map((p) => (
               <tr key={p._id}>
                 <td className="px-4 py-3">
@@ -469,7 +510,21 @@ export default function AdminPayroll() {
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[p.status]}`}>{p.status}</span>
                 </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${RELEASE[releaseOf(p)].tone}`}>
+                    {RELEASE[releaseOf(p)].label}
+                  </span>
+                  {['Requested', 'Approved', 'ChangeRequested'].includes(releaseOf(p)) && (
+                    <Link to="/admin/payslip-requests" className="block text-[11px] text-blue-600 hover:underline mt-1">
+                      Handle in Payslip Requests
+                    </Link>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
+                  {/* Release is handled on the Payslip Requests page — this page
+                      is about the money, and one home for the workflow beats two.
+                      The state is still shown here because it is useful context
+                      when reviewing figures. */}
                   {p.status === 'Draft' && (
                     <>
                       <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
@@ -487,7 +542,9 @@ export default function AdminPayroll() {
                           `/payroll/${p._id}/pdf`,
                           `payslip-${p.employee?.employeeCode || 'employee'}-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`
                         )}
-                        className="text-blue-600 hover:underline">PDF</button>
+                        className="text-blue-600 hover:underline">
+                        {releaseOf(p) === 'Finalised' ? 'PDF' : 'Preview'}
+                      </button>
                       <button onClick={() => emailPayslip(p)} className="text-indigo-600 hover:underline">{p.emailedAt ? 'Resend' : 'Email'}</button>
                     </>
                   )}
@@ -502,7 +559,9 @@ export default function AdminPayroll() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
             <h2 className="card-title mb-4">
-              {editingId ? 'Edit Payslip (Draft)' : 'New Payslip'}
+              {/* Not always a draft: the release queue opens approved payslips
+                  here too, so HR can correct one before handing it over. */}
+              {editingId ? 'Edit Payslip' : 'New Payslip'}
             </h2>
             <form onSubmit={onSave} className="space-y-3">
               <div className="grid grid-cols-3 gap-3">

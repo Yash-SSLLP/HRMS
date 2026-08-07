@@ -17,10 +17,21 @@ import * as Sharing from 'expo-sharing';
 import api, { API_BASE } from '../api/client';
 import { useAuth } from '../store/auth';
 import { colors, radius, spacing, font } from '../theme';
-import { Screen, Card, AppButton, Pill, Loader, refresher, EmptyState, Ionicons, SkeletonScreen } from '../components/ui';
+import { Screen, Card, AppButton, Pill, Loader, refresher, EmptyState, Ionicons, SkeletonScreen, ModalSheet, Field, Input } from '../components/ui';
 import { rupees } from '../utils/format';
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// A payslip stays with HR until they release it. Written from the employee's
+// side — see the `release` sub-doc in backend/models/Payroll.js.
+const RELEASE = {
+  NotRequested: { label: 'Not requested', tone: 'info', note: '' },
+  Requested: { label: 'Requested', tone: 'warning', note: 'Requested — HR will review and release it to you.' },
+  Approved: { label: 'HR preparing', tone: 'info', note: 'HR is checking this payslip. You can download it once it is final.' },
+  Finalised: { label: 'Ready', tone: 'success', note: '' },
+  ChangeRequested: { label: 'Change requested', tone: 'warning', note: 'Your correction is with HR. They will release an updated payslip.' },
+};
+const releaseOf = (p) => (RELEASE[p.release?.status] ? p.release.status : 'NotRequested');
 
 export default function PayslipsScreen() {
   const token = useAuth((s) => s.token);
@@ -29,6 +40,10 @@ export default function PayslipsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [downloading, setDownloading] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [changeFor, setChangeFor] = useState(null);
+  const [changeNote, setChangeNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   // Download the payslip PDF (auth header carried by FileSystem) then hand it to
   // the OS share sheet so the user can save/print/email it.
@@ -57,6 +72,39 @@ export default function PayslipsScreen() {
     setPayslips(data.payslips || []);
     setLoading(false);
   }, []);
+
+  // Ask HR to release this month's payslip.
+  const requestSlip = async (p) => {
+    setBusyId(p._id);
+    try {
+      await api.post(`/payroll/me/${p._id}/request`);
+      await load();
+      Alert.alert('Requested', 'HR will review your payslip and release it to you.');
+    } catch (err) {
+      Alert.alert('Could not request', err.response?.data?.message || 'Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Ask HR to correct a payslip that has already been released. A sheet rather
+  // than Alert.prompt, which exists only on iOS.
+  const submitChange = async () => {
+    const note = changeNote.trim();
+    if (!note) return;
+    setSubmitting(true);
+    try {
+      await api.post(`/payroll/me/${changeFor._id}/change-request`, { note });
+      setChangeFor(null);
+      setChangeNote('');
+      await load();
+      Alert.alert('Sent', 'HR will check the payslip and release an updated one.');
+    } catch (err) {
+      Alert.alert('Could not send', err.response?.data?.message || 'Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -110,7 +158,7 @@ export default function PayslipsScreen() {
                     <Text style={styles.net}>{rupees(p.netPay)}</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Pill label={p.status} tone={p.status === 'Paid' ? 'success' : 'info'} />
+                    <Pill label={RELEASE[releaseOf(p)].label} tone={RELEASE[releaseOf(p)].tone} />
                     <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textFaint} style={{ marginTop: 8 }} />
                   </View>
                 </View>
@@ -130,14 +178,40 @@ export default function PayslipsScreen() {
                       </Text>
                     )}
                     <Employer slip={p} />
-                    <AppButton
-                      title="Download / Share PDF"
-                      icon="download"
-                      variant="outline"
-                      style={{ marginTop: spacing(3), height: 44 }}
-                      loading={downloading === p._id}
-                      onPress={() => downloadPdf(p)}
-                    />
+                    {/* A payslip stays with HR until they release it: ask for it,
+                        HR checks and finalises, then it can be downloaded. */}
+                    {releaseOf(p) === 'Finalised' ? (
+                      <>
+                        <AppButton
+                          title="Download / Share PDF"
+                          icon="download"
+                          variant="outline"
+                          style={{ marginTop: spacing(3), height: 44 }}
+                          loading={downloading === p._id}
+                          onPress={() => downloadPdf(p)}
+                        />
+                        <AppButton
+                          title="Request a change"
+                          icon="create-outline"
+                          variant="ghost"
+                          style={{ marginTop: spacing(2), height: 44 }}
+                          onPress={() => { setChangeNote(''); setChangeFor(p); }}
+                        />
+                      </>
+                    ) : releaseOf(p) === 'NotRequested' ? (
+                      <AppButton
+                        title="Request this payslip"
+                        icon="paper-plane-outline"
+                        variant="outline"
+                        style={{ marginTop: spacing(3), height: 44 }}
+                        loading={busyId === p._id}
+                        onPress={() => requestSlip(p)}
+                      />
+                    ) : (
+                      <Text style={styles.releaseNote}>
+                        {RELEASE[releaseOf(p)].note}
+                      </Text>
+                    )}
                   </View>
                 )}
               </Card>
@@ -146,6 +220,35 @@ export default function PayslipsScreen() {
           </>
         )}
       </ScrollView>
+
+      <ModalSheet
+        visible={!!changeFor}
+        onClose={() => setChangeFor(null)}
+        title="Request a change"
+        footer={(
+          <AppButton
+            title="Send to HR"
+            icon="paper-plane"
+            onPress={submitChange}
+            loading={submitting}
+            disabled={!changeNote.trim()}
+          />
+        )}
+      >
+        <Text style={[font.small, { color: colors.textMuted, marginBottom: spacing(3) }]}>
+          {changeFor
+            ? `${MONTHS[changeFor.payPeriodMonth] || ''} ${changeFor.payPeriodYear} — tell HR what looks wrong and they will check the payslip again.`
+            : ''}
+        </Text>
+        <Field label="What needs correcting?">
+          <Input
+            value={changeNote}
+            onChangeText={setChangeNote}
+            multiline
+            placeholder="For example: my leave deduction looks too high this month."
+          />
+        </Field>
+      </ModalSheet>
     </Screen>
   );
 }
@@ -254,6 +357,7 @@ const styles = StyleSheet.create({
   hint: { color: colors.textFaint, fontSize: 12 },
   ytd: { color: colors.textFaint, fontSize: 11, marginTop: 1 },
   ytdSummary: { color: colors.textFaint, fontSize: 12, marginTop: 6 },
+  releaseNote: { color: colors.textFaint, fontSize: 12, marginTop: spacing(3), lineHeight: 18 },
   employer: { marginTop: spacing(3), paddingTop: spacing(3), borderTopWidth: 1, borderTopColor: colors.border },
   employerTitle: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8, color: colors.primary, marginBottom: 10 },
 });

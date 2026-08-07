@@ -22,6 +22,18 @@ const MONTHS = [
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
 
+// A payslip stays with HR until they release it. These are the states the
+// employee sees, written from their side of the process rather than the
+// system's — see the `release` sub-doc in backend/models/Payroll.js.
+const RELEASE = {
+  NotRequested: { label: 'Not requested', tone: 'bg-gray-100 text-gray-600' },
+  Requested: { label: 'Requested', tone: 'bg-amber-100 text-amber-800' },
+  Approved: { label: 'HR preparing', tone: 'bg-blue-100 text-blue-800' },
+  Finalised: { label: 'Ready', tone: 'bg-green-100 text-green-800' },
+  ChangeRequested: { label: 'Change requested', tone: 'bg-amber-100 text-amber-800' },
+};
+const releaseOf = (p) => (RELEASE[p.release?.status] ? p.release.status : 'NotRequested');
+
 // The server sends the printable breakdown as `lines`, built from the same
 // component list the PDF renders (backend/services/payslipLines.js) so the two
 // can't drift. This only covers a response that predates that field.
@@ -96,10 +108,18 @@ function PayslipDetail({ slip, onClose }) {
             <h2 className="card-title">{MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear}</h2>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onDownloadPdf}
-              className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
-              Download PDF
-            </button>
+            {/* The server refuses an unreleased download, so the button is only
+                offered once HR has finalised — the state, not the click, decides. */}
+            {releaseOf(slip) === 'Finalised' ? (
+              <button onClick={onDownloadPdf}
+                className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
+                Download PDF
+              </button>
+            ) : (
+              <span className={`px-2 py-1 text-xs rounded-lg ${RELEASE[releaseOf(slip)].tone}`}>
+                {RELEASE[releaseOf(slip)].label}
+              </span>
+            )}
             <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700">✕</button>
           </div>
         </div>
@@ -181,6 +201,38 @@ function Details({ slip, counts }) {
   );
 }
 
+// Asking HR to correct a released payslip. The note is required — "something is
+// wrong" gives HR nothing to act on, so the button stays disabled until there is
+// something to send.
+function ChangeRequestModal({ slip, busy, onSubmit, onClose }) {
+  const [note, setNote] = useState('');
+  useEffect(() => { setNote(''); }, [slip?._id]);
+  if (!slip) return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
+        <h2 className="card-title mb-1">Request a change</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          {MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear} — tell HR what looks wrong and they will
+          check the payslip again.
+        </p>
+        <textarea
+          value={note} onChange={(e) => setNote(e.target.value)} rows={4} autoFocus
+          placeholder="For example: my leave deduction looks too high this month."
+          className="w-full border rounded-lg px-3 py-2 text-sm"
+        />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={() => onSubmit(note.trim())} disabled={busy || !note.trim()}
+            className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50">
+            {busy ? 'Sending…' : 'Send to HR'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Kept out of the earnings/deductions block on purpose: none of this is taken
 // from the employee, and showing it beside their deductions would read as if it
 // were. Renders nothing when the company contributes nothing.
@@ -214,19 +266,45 @@ export default function EmployeePayslips() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [changeFor, setChangeFor] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.get('/payroll/me');
-        setPayslips(data.payslips);
-      } catch (err) {
-        setError(err.response?.data?.message || 'Failed to load');
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  const load = async () => {
+    try {
+      const { data } = await api.get('/payroll/me');
+      setPayslips(data.payslips);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const requestSlip = async (p) => {
+    setBusyId(p._id); setError('');
+    try {
+      await api.post(`/payroll/me/${p._id}/request`);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not send the request');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const submitChange = async (note) => {
+    setBusyId(changeFor._id); setError('');
+    try {
+      await api.post(`/payroll/me/${changeFor._id}/change-request`, { note });
+      setChangeFor(null);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not send the request');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   // API returns newest first, but pick the max period explicitly so the summary
   // can't be thrown off by ordering changes.
@@ -278,7 +356,7 @@ export default function EmployeePayslips() {
               <th className="px-4 py-3 text-right font-medium text-gray-700">Gross</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Deductions</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Net</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Release</th>
               <th className="px-4 py-3 text-right"></th>
             </tr>
           </thead>
@@ -294,17 +372,32 @@ export default function EmployeePayslips() {
                 <td className="px-4 py-3 text-right">{inr(p.totalDeductions)}</td>
                 <td className="px-4 py-3 text-right font-semibold">{inr(p.netPay)}</td>
                 <td className="px-4 py-3">
-                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{p.status}</span>
+                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${RELEASE[releaseOf(p)].tone}`}>
+                    {RELEASE[releaseOf(p)].label}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
                   <button onClick={() => setSelected(p)} className="text-blue-600 hover:underline">View</button>
-                  <button
-                    onClick={() => downloadFile(
-                      `/payroll/me/${p._id}/pdf`,
-                      `payslip-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`
-                    )}
-                    className="text-blue-600 hover:underline"
-                  >PDF</button>
+                  {releaseOf(p) === 'NotRequested' && (
+                    <button onClick={() => requestSlip(p)} disabled={busyId === p._id}
+                      className="text-blue-600 hover:underline disabled:opacity-50">
+                      {busyId === p._id ? 'Requesting…' : 'Request'}
+                    </button>
+                  )}
+                  {releaseOf(p) === 'Finalised' && (
+                    <>
+                      <button
+                        onClick={() => downloadFile(
+                          `/payroll/me/${p._id}/pdf`,
+                          `payslip-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`
+                        )}
+                        className="text-blue-600 hover:underline"
+                      >PDF</button>
+                      <button onClick={() => setChangeFor(p)} className="text-blue-600 hover:underline">
+                        Request change
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -313,6 +406,8 @@ export default function EmployeePayslips() {
       </div>
 
       <PayslipDetail slip={selected} onClose={() => setSelected(null)} />
+      <ChangeRequestModal slip={changeFor} busy={busyId === changeFor?._id}
+        onSubmit={submitChange} onClose={() => setChangeFor(null)} />
     </div>
   );
 }

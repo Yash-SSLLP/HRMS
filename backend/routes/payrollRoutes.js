@@ -6,6 +6,10 @@
 const express = require('express');
 const {
   listMyPayslips,
+  requestMyPayslip,
+  requestMyPayslipChange,
+  approvePayslipRelease,
+  finalisePayslipRelease,
   getMyPayslip,
   myAttendanceSummary,
   listPayslips,
@@ -46,8 +50,12 @@ router.use(protect);
 router.get('/me', listMyPayslips);
 // GET /me/attendance-summary — own attendance summary for payroll; protected.
 router.get('/me/attendance-summary', myAttendanceSummary);
-// GET /me/:id/pdf — download own payslip PDF; protected.
+// GET /me/:id/pdf — download own payslip PDF; protected, only once HR has finalised it.
 router.get('/me/:id/pdf', downloadMyPayslipPdf);
+// POST /me/:id/request — ask HR to release this payslip; protected.
+router.post('/me/:id/request', requestMyPayslip);
+// POST /me/:id/change-request — ask HR to correct a released payslip; protected.
+router.post('/me/:id/change-request', requestMyPayslipChange);
 // GET /me/:year/:month — own payslip for a month; protected.
 router.get('/me/:year/:month', getMyPayslip);
 
@@ -83,6 +91,10 @@ router.route('/:id')
 router.get('/:id/pdf', downloadPayslipPdf);
 // PATCH /:id/approve — approve a payslip; protected, requires 'payroll.manage'.
 router.patch('/:id/approve', approvePayslip);
+// PATCH /:id/release/approve — approve the employee's request for their payslip;
+// PATCH /:id/release/finalise — release it to them; both require 'payroll.manage'.
+router.patch('/:id/release/approve', approvePayslipRelease);
+router.patch('/:id/release/finalise', finalisePayslipRelease);
 // PATCH /:id/pay — mark a payslip paid; protected, requires 'payroll.manage'.
 router.patch('/:id/pay', markPayslipPaid);
 // POST /:id/share — generate a shareable payslip link; protected, requires 'payroll.manage'.
