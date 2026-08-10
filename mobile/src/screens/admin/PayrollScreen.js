@@ -6,7 +6,7 @@ import * as Sharing from 'expo-sharing';
 
 import api, { API_BASE, errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canApprove } from '../../utils/roles';
+import { canManage } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, Avatar, Pill, Loader, EmptyState, refresher, Ionicons } from '../../components/ui';
 import MailComposeSheet from '../../components/MailComposeSheet';
@@ -20,7 +20,7 @@ const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
 export default function PayrollScreen() {
   const token = useAuth((s) => s.token);
-  const writable = canApprove(useAuth((s) => s.user));
+  const writable = canManage(useAuth((s) => s.user), 'payroll.manage');
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());

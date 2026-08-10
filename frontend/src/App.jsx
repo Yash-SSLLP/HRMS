@@ -73,6 +73,7 @@ const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding.jsx'));
 const AdminHiringOnboarding = lazy(() => import('./pages/AdminHiringOnboarding.jsx'));
 const AdminNewJoinees = lazy(() => import('./pages/AdminNewJoinees.jsx'));
 const AdminAuditLog = lazy(() => import('./pages/AdminAuditLog.jsx'));
+const AdminTemplates = lazy(() => import('./pages/AdminTemplates.jsx'));
 const AdminChatExport = lazy(() => import('./pages/AdminChatExport.jsx'));
 const EmployeeOnboarding = lazy(() => import('./pages/EmployeeOnboarding.jsx'));
 const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
@@ -173,7 +174,9 @@ export default function App() {
       <Route
         path="/admin"
         element={
-          <ProtectedRoute roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager']}>
+          // Manager is listed, but `admin` makes the guard also require at least
+          // one granted capability — the role alone opens nothing.
+          <ProtectedRoute admin roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager', 'Manager']}>
             <Layout navItems={role === 'LDManager' ? ldNav : role === 'AccountsManager' ? accountsNav : adminNav} sectionTitle="Admin" />
           </ProtectedRoute>
         }
@@ -231,6 +234,7 @@ export default function App() {
         <Route path="change-requests" element={<AdminChangeRequests />} />
         <Route path="password-resets" element={<AdminPasswordResets />} />
         <Route path="audit-log" element={<AdminAuditLog />} />
+        <Route path="templates" element={<AdminTemplates />} />
         <Route path="chat-export" element={<AdminChatExport />} />
         <Route path="account" element={<EmployeeAccount />} />
         <Route path="holidays" element={<AdminHolidays />} />

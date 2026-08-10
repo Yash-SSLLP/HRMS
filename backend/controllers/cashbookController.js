@@ -86,6 +86,9 @@ async function ensureCategories() {
 
 const publicEntry = (e) => ({
   _id: e._id,
+  // Quotable voucher reference (VCH-2026-00042). This mapper is an allowlist —
+  // a field missing here never reaches the client, however it is stored.
+  code: e.code,
   account: e.account?._id || e.account || null,
   accountName: e.account?.name || undefined,
   type: e.type,
@@ -634,22 +637,34 @@ const exportExcel = asyncHandler(async (req, res) => {
   const entries = await CashbookEntry.find(filter)
     .populate('account', 'name')
     .populate('employee', USER_FIELDS)
+    .populate('reviewedBy', USER_FIELDS)
+    .populate('createdBy', USER_FIELDS)
     .sort({ date: 1, createdAt: 1 })
     .lean();
 
+  // The sheet has to answer, for every line: what it was, how much, to whom,
+  // why, when, out of which account, who put it there and who approved it —
+  // and carry the voucher code so a row can be traced back to the record (and
+  // to the expense claim it was paid against) months later.
   const COLS = [
+    { header: 'Voucher Code', key: 'code', width: 18 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Account', key: 'account', width: 18 },
     { header: 'Type', key: 'type', width: 8 },
     { header: 'Category', key: 'category', width: 16 },
     { header: 'Payment Mode', key: 'paymentMode', width: 14 },
     { header: 'Party', key: 'party', width: 18 },
-    { header: 'Reference', key: 'reference', width: 14 },
-    { header: 'Description', key: 'description', width: 30 },
+    { header: 'Reference', key: 'reference', width: 16 },
+    { header: 'Description', key: 'description', width: 34 },
     { header: 'In', key: 'in', width: 12 },
     { header: 'Out', key: 'out', width: 12 },
+    { header: 'Balance After', key: 'balanceAfter', width: 14 },
     { header: 'Status', key: 'status', width: 12 },
     { header: 'Submitted By', key: 'submittedBy', width: 20 },
+    { header: 'Approved / Reviewed By', key: 'reviewedBy', width: 22 },
+    { header: 'Reviewed On', key: 'reviewedAt', width: 14 },
+    { header: 'Recorded By', key: 'createdBy', width: 20 },
+    { header: 'Recorded On', key: 'createdAt', width: 14 },
   ];
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Sequence - HRMS';
@@ -667,10 +682,12 @@ const exportExcel = asyncHandler(async (req, res) => {
   });
 
   const MONEY = '#,##0.00';
+  const name = (u) => (u?.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : '');
+  const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
   for (const e of entries) {
-    const who = e.employee?.firstName ? `${e.employee.firstName} ${e.employee.lastName}`.trim() : '';
     const row = ws.addRow({
-      date: new Date(e.date).toISOString().slice(0, 10),
+      code: e.code || '',
+      date: day(e.date),
       account: e.account?.name || '',
       type: e.type,
       category: e.category || '',
@@ -680,22 +697,32 @@ const exportExcel = asyncHandler(async (req, res) => {
       description: e.description || '',
       in: e.type === 'in' ? e.amount : null,
       out: e.type === 'out' ? e.amount : null,
+      balanceAfter: typeof e.balanceAfter === 'number' ? e.balanceAfter : null,
       status: e.status,
-      submittedBy: e.submittedByEmployee ? who : '',
+      submittedBy: e.submittedByEmployee ? name(e.employee) : '',
+      reviewedBy: name(e.reviewedBy),
+      reviewedAt: day(e.reviewedAt),
+      createdBy: name(e.createdBy),
+      createdAt: day(e.createdAt),
     });
     row.getCell('in').numFmt = MONEY;
     row.getCell('out').numFmt = MONEY;
+    row.getCell('balanceAfter').numFmt = MONEY;
   }
 
-  // Totals row for the In / Out columns (I = In, J = Out).
+  // Totals for the In / Out columns. Addressed by the column's own letter rather
+  // than a hardcoded I/J — adding a column ahead of them silently moved the
+  // formula onto the wrong data otherwise.
   if (entries.length) {
     const last = entries.length + 1; // header is row 1
     const totals = ws.addRow({ description: 'TOTAL' });
     const n = totals.number;
-    ws.getCell(`I${n}`).value = { formula: `SUM(I2:I${last})` };
-    ws.getCell(`J${n}`).value = { formula: `SUM(J2:J${last})` };
-    ws.getCell(`I${n}`).numFmt = MONEY;
-    ws.getCell(`J${n}`).numFmt = MONEY;
+    for (const key of ['in', 'out']) {
+      const letter = ws.getColumn(key).letter;
+      const cell = ws.getCell(`${letter}${n}`);
+      cell.value = { formula: `SUM(${letter}2:${letter}${last})` };
+      cell.numFmt = MONEY;
+    }
     totals.font = { bold: true };
     totals.eachCell((cell) => { cell.border = { top: { style: 'thin', color: { argb: 'FFD4D4D8' } } }; });
   }

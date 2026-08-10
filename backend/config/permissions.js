@@ -6,8 +6,18 @@
 //   SuperAdmin            → implicitly has every capability
 //   HRManager, undefined  → treated as ALL (existing HRs keep full access)
 //   HRManager, [...]      → exactly the listed capabilities
+//   Manager,   undefined  → NONE. Note this is the opposite of the HRManager
+//                           default above: that one is a migration convenience
+//                           from before the catalogue existed, and reusing it
+//                           for Manager would promote every line manager to
+//                           full admin the moment the role became grantable.
+//   Manager,   [...]      → exactly the listed capabilities
 //   LDManager             → only 'courses.manage'
 //   other roles           → role-gated elsewhere, not via this catalog
+//
+// A Manager's team duties (their own team's leave approvals, team attendance)
+// are gated by role in the routes, NOT by this catalogue — granting or clearing
+// capabilities here never takes those away.
 
 const PERMISSIONS = [
   // People
@@ -52,6 +62,10 @@ const PERMISSIONS = [
   { key: 'surveys.manage', label: 'Surveys & polls', group: 'Engagement' },
   { key: 'events.manage', label: 'Events', group: 'Engagement' },
   { key: 'kb.manage', label: 'Knowledge base', group: 'Engagement' },
+  // Editing what every outgoing email and letter SAYS is a company-voice
+  // decision, so it is its own capability rather than riding on the module that
+  // happens to send the mail.
+  { key: 'templates.manage', label: 'Email & letter templates', group: 'Engagement' },
 
   // Reports & insights
   { key: 'analytics.view', label: 'HR analytics', group: 'Reports & Insights' },
@@ -61,6 +75,14 @@ const PERMISSIONS = [
   // answers to catalogued keys.
 ];
 
+/**
+ * Roles whose `permissions` array is meaningful — i.e. the accounts a SuperAdmin
+ * can hand individual capabilities to from the Permissions page. Every other
+ * role is gated by role alone. Keep the client mirror in
+ * frontend/src/config/permissions.js in step.
+ */
+const GRANTABLE_ROLES = ['HRManager', 'Manager'];
+
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 const PERMISSION_KEY_SET = new Set(PERMISSION_KEYS);
 /**
@@ -69,4 +91,4 @@ const PERMISSION_KEY_SET = new Set(PERMISSION_KEYS);
  */
 const isValidPermission = (key) => PERMISSION_KEY_SET.has(key);
 
-module.exports = { PERMISSIONS, PERMISSION_KEYS, PERMISSION_KEY_SET, isValidPermission };
+module.exports = { PERMISSIONS, PERMISSION_KEYS, PERMISSION_KEY_SET, GRANTABLE_ROLES, isValidPermission };

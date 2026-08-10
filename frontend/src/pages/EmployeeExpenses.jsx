@@ -157,7 +157,12 @@ export default function EmployeeExpenses() {
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No claims submitted</td></tr>
             ) : expenses.map((x) => (
               <tr key={x._id}>
-                <td className="px-4 py-3 text-gray-600">{new Date(x.expenseDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                <td className="px-4 py-3 text-gray-600">
+                  {new Date(x.expenseDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  {/* Quotable claim reference — what to cite when asking about
+                      this payment later. */}
+                  {x.code && <div className="font-mono text-[11px] text-gray-400">{x.code}</div>}
+                </td>
                 <td className="px-4 py-3 text-gray-600">{x.category}</td>
                 <td className="px-4 py-3">
                   {x.merchant || '-'}

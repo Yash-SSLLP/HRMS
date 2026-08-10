@@ -4,6 +4,14 @@
 // SuperAdmin → all. CEO/MD → all (read-only viewers still see every page).
 // LDManager → only courses. HRManager → their `permissions` array, where a
 // missing/undefined array means ALL (existing HRs keep full access).
+// Manager → their `permissions` array ONLY; absent means none.
+
+/**
+ * Roles a SuperAdmin can grant individual capabilities to. Mirrors
+ * GRANTABLE_ROLES in backend/config/permissions.js.
+ */
+export const GRANTABLE_ROLES = ['HRManager', 'Manager'];
+
 export function hasPermission(user, cap) {
   if (!user) return false;
   if (user.role === 'SuperAdmin') return true;
@@ -21,6 +29,29 @@ export function hasPermission(user, cap) {
     if (p == null) return true; // undefined/null → all
     return Array.isArray(p) && p.includes(cap);
   }
+  // Manager holds exactly what was granted — absent means none, unlike the
+  // HRManager default above (see backend/config/permissions.js for why).
+  if (user.role === 'Manager') {
+    return Array.isArray(user.permissions) && user.permissions.includes(cap);
+  }
+  return false;
+}
+
+/**
+ * Can this account open the /admin portal at all?
+ *
+ * Role alone isn't the answer for a Manager: the role exists for team duties
+ * (approving your own team's leave) and most Managers hold no admin capability,
+ * so the admin shell only opens for one who has actually been granted something.
+ * Without this a granted Manager would pass every server check and still have
+ * no page to reach them from.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export function canUseAdminPortal(user) {
+  if (!user) return false;
+  if (['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager'].includes(user.role)) return true;
+  if (user.role === 'Manager') return Array.isArray(user.permissions) && user.permissions.length > 0;
   return false;
 }
 

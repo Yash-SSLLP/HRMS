@@ -256,6 +256,46 @@ function letterBodyDefaults(kind, data = {}) {
   return kind === 'appointment' ? appointmentBody(data, '₹') : offerBody(data, '₹');
 }
 
+/**
+ * The letter body to actually print: the org's edited template if one has been
+ * saved (Admin → Templates), otherwise the coded default above.
+ *
+ * Async, and therefore resolved by the CALLER before it hands `data` to a
+ * renderer — the renderers stay synchronous and keep using `data.body` through
+ * bodyOrDefault(), so a body HR typed into the compose modal still wins over
+ * both the template and the default.
+ *
+ * @param {'offer'|'appointment'} kind
+ * @param {Object} data - The same letter data the renderer receives.
+ * @returns {Promise<Array>} Draw blocks for drawBlocks().
+ */
+async function resolveLetterBody(kind, data = {}) {
+  const fallback = letterBodyDefaults(kind, data);
+  try {
+    // Required lazily: services/templates.js pulls in a model, and letterPdf is
+    // also used by scripts that never open a DB connection.
+    const { renderLetterBlocks } = require('./templates');
+    const vars = {
+      candidateName: data.candidateName,
+      position: data.position,
+      department: data.department,
+      departmentClause: data.department ? ` in the ${data.department} department` : '',
+      companyName: COMPANY.name,
+      salaryMonthly: data.salaryMonthly ? `₹${formatINR(data.salaryMonthly)}` : '__________',
+      salaryAnnual: data.salaryAnnual ? `₹${formatINR(data.salaryAnnual)}` : '__________',
+      probationMonths: data.probationMonths || 3,
+      noticePeriodDays: data.noticePeriodDays || 30,
+      joiningDate: longDate(data.joiningDate),
+      acceptanceDeadline: longDate(data.acceptanceDeadline),
+      interviewRef: data.refInterviewDate ? `held on ${longDate(data.refInterviewDate)}` : 'we recently held with you',
+    };
+    return await renderLetterBlocks(`${kind}.letter`, vars, fallback);
+  } catch (err) {
+    console.error(`Letter template lookup failed for ${kind}:`, err.message);
+    return fallback;
+  }
+}
+
 function renderAppointmentLetter(data = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
@@ -338,4 +378,4 @@ function renderAppointmentLetter(data = {}) {
   });
 }
 
-module.exports = { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults };
+module.exports = { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody };

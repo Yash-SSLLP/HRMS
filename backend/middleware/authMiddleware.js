@@ -168,7 +168,8 @@ const restrictTo = (...roles) => (req, res, next) => {
 // Does this user hold a given granular capability? SuperAdmin → always. HRManager
 // → yes if their `permissions` array includes it, OR if the array is absent
 // (undefined = ALL, so existing HRs keep full access until a SuperAdmin trims
-// them). LDManager → only the courses capability. Everyone else → no.
+// them). Manager → ONLY what is explicitly listed (absent = none). LDManager →
+// only the courses capability. Everyone else → no.
 function hasPermission(user, cap) {
   if (!user) return false;
   if (user.role === 'SuperAdmin') return true;
@@ -188,6 +189,15 @@ function hasPermission(user, cap) {
     const perms = user.permissions;
     if (perms === undefined || perms === null) return true; // not configured → all
     return Array.isArray(perms) && perms.includes(cap);
+  }
+  // A Manager holds EXACTLY what a SuperAdmin has granted, and nothing when the
+  // array is absent. Deliberately the opposite of the HRManager rule above: that
+  // "undefined = all" default exists only so pre-existing HR accounts kept their
+  // access when the catalogue was introduced. Every Manager account already has
+  // `permissions: undefined`, so applying the same default here would silently
+  // promote every line manager in the org to full admin.
+  if (user.role === 'Manager') {
+    return Array.isArray(user.permissions) && user.permissions.includes(cap);
   }
   return false;
 }

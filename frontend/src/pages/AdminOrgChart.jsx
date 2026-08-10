@@ -84,7 +84,9 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
   return (
     <li>
       <div
-        className={`org-node ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
+        // rounded-xl + shadow are load-bearing, not decoration: index.css gives
+        // that pair the app-wide card hairline that adapts to dark mode.
+        className={`org-node rounded-xl shadow ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
         onClick={() => canEdit && onSelect(node)}
         title={isMe ? 'This is you'
           : canEdit && !node.profileId ? `${node.name} — click to change role (no employee profile, so no manager)`

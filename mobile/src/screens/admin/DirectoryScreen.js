@@ -4,7 +4,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api, { mediaUrl } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canApprove, isSuperAdmin } from '../../utils/roles';
+import { canManage, isSuperAdmin } from '../../utils/roles';
 import { colors, radius, spacing, font, shadow } from '../../theme';
 import { Screen, Avatar, Pill, Loader, EmptyState, refresher, Ionicons, SkeletonScreen } from '../../components/ui';
 
@@ -19,7 +19,7 @@ const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin'];
 export default function DirectoryScreen() {
   const nav = useNavigation();
   const me = useAuth((s) => s.user);
-  const writable = canApprove(me);
+  const writable = canManage(me, 'employees.manage');
   const superAdmin = isSuperAdmin(me);
   const [people, setPeople] = useState([]);
   const [accounts, setAccounts] = useState([]);

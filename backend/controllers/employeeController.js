@@ -684,11 +684,15 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         skipped.push({ excelRow, email: u.email, reason: 'Email already exists' });
         continue;
       }
-      const existingProfile = await EmployeeProfile.findOne({
-        employeeCode: String(p.employeeCode).toUpperCase(),
-      });
+      // normalizeCode (trim + uppercase) matches what the schema actually
+      // stores. Uppercasing alone left a trailing space from the spreadsheet on
+      // the value, so "SSL 121 " missed the existing "SSL 121" here and then
+      // tripped the unique index on save — the row failed with a raw duplicate
+      // -key error instead of being skipped with a reason.
+      const importCode = normalizeCode(p.employeeCode);
+      const existingProfile = await EmployeeProfile.findOne({ employeeCode: importCode });
       if (existingProfile) {
-        skipped.push({ excelRow, employeeCode: p.employeeCode, reason: 'Employee Code already exists' });
+        skipped.push({ excelRow, employeeCode: importCode, reason: 'Employee Code already exists' });
         continue;
       }
 
@@ -751,7 +755,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         createdProfile = await EmployeeProfile.create({
           ...profileFields,
           user: userDoc._id,
-          employeeCode: String(p.employeeCode).toUpperCase(),
+          employeeCode: importCode,
           employmentType: p.employmentType || 'FullTime',
           hrPartner: hrPartnerId,
           reportingManager: reportingManagerId,
@@ -762,7 +766,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         throw err;
       }
 
-      created.push({ excelRow, email: u.email, employeeCode: p.employeeCode });
+      created.push({ excelRow, email: u.email, employeeCode: importCode });
       // Imports often omit the salary columns — collect them and send ONE
       // notification after the loop rather than one per row.
       if (!salaryStructureId || !p.annualCtc) {

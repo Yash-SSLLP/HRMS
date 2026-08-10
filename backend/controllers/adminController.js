@@ -10,7 +10,7 @@ const User = require('../models/User');
 const { ROLES } = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
-const { PERMISSIONS, isValidPermission } = require('../config/permissions');
+const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { enqueueMail } = require('../services/email');
 const COMPANY = require('../config/company');
@@ -338,12 +338,13 @@ const getPermissionCatalog = asyncHandler(async (req, res) => {
 /**
  * Set an HRManager's explicit permission set.
  * @route PATCH /api/admin/users/:id/permissions  (SuperAdmin only)
- * @param {string} req.params.id - user id (must be an HRManager)
+ * @param {string} req.params.id - user id (must hold a GRANTABLE_ROLES role)
  * @param {string[]} req.body.permissions - valid capability keys (deduped)
  * @returns {{user: Object}}
  */
 // PATCH /api/admin/users/:id/permissions  (SuperAdmin only — enforced by route)
-// Body: { permissions: [key,...] }. Only meaningful for HRManager accounts.
+// Body: { permissions: [key,...] }. Meaningful for HR Manager and Manager
+// accounts (see GRANTABLE_ROLES); other roles are gated by role alone.
 const updateUserPermissions = asyncHandler(async (req, res) => {
   const { permissions } = req.body;
   if (!Array.isArray(permissions)) {
@@ -360,9 +361,9 @@ const updateUserPermissions = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('User not found');
   }
-  if (user.role !== 'HRManager') {
+  if (!GRANTABLE_ROLES.includes(user.role)) {
     res.status(400);
-    throw new Error('Permissions apply only to HR Manager accounts.');
+    throw new Error(`Permissions apply only to ${GRANTABLE_ROLES.join(' and ')} accounts.`);
   }
   // De-dupe; store the explicit set (empty array = no capabilities).
   user.permissions = [...new Set(permissions)];

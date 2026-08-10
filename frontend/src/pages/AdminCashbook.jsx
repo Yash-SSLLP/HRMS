@@ -268,7 +268,12 @@ export default function AdminCashbook() {
                   <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No entries</td></tr>
                 ) : entries.map((e) => (
                   <tr key={e._id}>
-                    <td className="px-3 py-2 text-gray-600">{fmtDate(e.date)}</td>
+                    <td className="px-3 py-2 text-gray-600">
+                      {fmtDate(e.date)}
+                      {/* Quotable voucher reference — the same code the Excel
+                          export carries, so a line can be traced back later. */}
+                      {e.code && <div className="font-mono text-[11px] text-gray-400">{e.code}</div>}
+                    </td>
                     <td className="px-3 py-2">{e.accountName || accName(e.account)}</td>
                     <td className="px-3 py-2 text-gray-600">{e.category}{e.description ? <div className="text-xs text-gray-400">{e.description}</div> : null}</td>
                     <td className="px-3 py-2 text-gray-600">{e.party || '-'}</td>

@@ -3,13 +3,16 @@
 // their own home portal; otherwise renders the wrapped route content.
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+import { canUseAdminPortal } from '../config/permissions';
 
 /**
  * @param {object} props
  * @param {React.ReactNode} props.children  route element to render when allowed
  * @param {string[]} [props.roles]  roles permitted to access this route
+ * @param {boolean} [props.admin]  this is the /admin tree — a Manager may enter
+ *   it only once a SuperAdmin has granted them at least one capability
  */
-export default function ProtectedRoute({ children, roles }) {
+export default function ProtectedRoute({ children, roles, admin = false }) {
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const location = useLocation();
@@ -19,9 +22,17 @@ export default function ProtectedRoute({ children, roles }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Signed in but wrong role → bounce to the portal that role belongs in.
-  if (roles && !roles.includes(user.role)) {
-    const home = user.role === 'Employee' ? '/employee' : '/admin';
+  const roleAllowed = !roles || roles.includes(user.role);
+  // The admin tree lists Manager among its roles so a GRANTED manager can enter,
+  // but the role by itself isn't enough — most Managers hold no capability.
+  const allowed = roleAllowed && (!admin || canUseAdminPortal(user));
+
+  if (!allowed) {
+    // Bounce to the portal this account does belong in. Anyone who can't open
+    // /admin goes to /employee — sending them to '/admin' (the old fallback for
+    // every non-Employee role) bounced a Manager from /admin back to /admin,
+    // which is an infinite redirect.
+    const home = canUseAdminPortal(user) ? '/admin' : '/employee';
     return <Navigate to={home} replace />;
   }
 

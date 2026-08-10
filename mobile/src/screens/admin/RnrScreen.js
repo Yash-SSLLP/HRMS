@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { mediaUrl, errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canApprove } from '../../utils/roles';
+import { canManage } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, AppButton, ModalSheet, Avatar, Pill, EmptyState, Loader, refresher, Ionicons } from '../../components/ui';
 
@@ -18,7 +18,7 @@ const personUri = (p) => (p?.photo ? `${mediaUrl(`/auth/users/${p.user}/avatar`)
 // Achiever per department; the selection is a secret Draft until Announced, when
 // all employees are notified and see the dashboard banner for 2 working days.
 export default function RnrScreen() {
-  const writable = canApprove(useAuth((s) => s.user));
+  const writable = canManage(useAuth((s) => s.user), 'announcements.manage');
   const now = new Date();
 
   const [year, setYear] = useState(now.getFullYear());
@@ -129,7 +129,11 @@ export default function RnrScreen() {
   if (!writable) {
     return (
       <Screen>
-        <EmptyState icon="lock-closed-outline" title="HR only" subtitle="Only HR can manage Rewards & Recognition." />
+        <EmptyState
+          icon="lock-closed-outline"
+          title="No access"
+          subtitle="Managing Rewards & Recognition needs the Announcements permission."
+        />
       </Screen>
     );
   }

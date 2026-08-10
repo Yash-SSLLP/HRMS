@@ -105,6 +105,7 @@ export const adminNav = [
     { to: '/admin/events', label: 'Events', icon: FiFlag, perm: 'events.manage' },
     { to: '/admin/rnr', label: 'Rewards & Recognition', icon: FiAward, perm: 'announcements.manage' },
     { to: '/admin/surveys', label: 'Surveys', icon: FiPieChart, perm: 'surveys.manage' },
+    { to: '/admin/templates', label: 'Email & Letter Templates', icon: FiEdit3, perm: 'templates.manage' },
   ] },
   { group: 'Reports & Audit', icon: FiBarChart2, items: [
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },

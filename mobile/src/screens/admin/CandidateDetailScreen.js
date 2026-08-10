@@ -6,7 +6,7 @@ import * as Sharing from 'expo-sharing';
 
 import api, { API_BASE, errMsg, webUrl } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canApprove } from '../../utils/roles';
+import { canManage } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
 import { fmtDate, fmtDateTime, toYMD, toHM } from '../../utils/format';
 import {
@@ -27,7 +27,7 @@ export default function CandidateDetailScreen() {
   const { id } = route.params || {};
   const token = useAuth((s) => s.token);
   const me = useAuth((s) => s.user);
-  const writable = canApprove(me);
+  const writable = canManage(me, 'recruitment.candidates');
 
   const [cand, setCand] = useState(null);
   const [employees, setEmployees] = useState([]);

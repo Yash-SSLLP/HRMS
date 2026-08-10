@@ -4,7 +4,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api, { errMsg, webUrl } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canApprove } from '../../utils/roles';
+import { canManage } from '../../utils/roles';
 import { colors, radius, spacing, font, shadow } from '../../theme';
 import {
   Screen, Card, Avatar, Pill, AppButton, Input, Field, Loader, EmptyState, refresher,
@@ -27,7 +27,7 @@ const emptyCandidate = { name: '', email: '', phone: '', job: '', stage: 'Applie
 
 export default function RecruitmentScreen() {
   const nav = useNavigation();
-  const writable = canApprove(useAuth((s) => s.user));
+  const writable = canManage(useAuth((s) => s.user), 'recruitment.candidates');
 
   const [tab, setTab] = useState('jobs');
   const [jobs, setJobs] = useState([]);

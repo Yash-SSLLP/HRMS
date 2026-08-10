@@ -1582,40 +1582,100 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
 .org-tree-wrap { overflow-x: auto; text-align: center; padding: 0.5rem 0 1rem; }
 .org-tree, .org-tree ul { list-style: none; margin: 0; padding: 0; }
 .org-tree { display: inline-block; min-width: 100%; }
-.org-tree ul { position: relative; padding-top: 28px; white-space: nowrap; text-align: center; }
+/* Connector geometry. --org-link is a soft, theme-aware hairline rather than a
+   hard slate line, and the radius on the elbows makes the branches read as
+   curves instead of a wiring diagram. --org-gap has to clear the avatar that
+   now sits proud of each card. */
+.org-tree {
+  --org-gap: 40px;
+  --org-link: color-mix(in srgb, var(--accent) 38%, var(--border));
+}
+.org-tree ul { position: relative; padding-top: var(--org-gap); white-space: nowrap; text-align: center; }
 .org-tree li {
   display: inline-block; vertical-align: top; text-align: center;
-  position: relative; padding: 28px 14px 0;
+  position: relative; padding: var(--org-gap) 16px 0;
 }
 /* connectors up from each node to the shared horizontal bar */
 .org-tree li::before, .org-tree li::after {
   content: ''; position: absolute; top: 0; right: 50%;
-  border-top: 2px solid #94a3b8; width: 50%; height: 28px;
+  border-top: 2px solid var(--org-link); width: 50%; height: var(--org-gap);
 }
-.org-tree li::after { right: auto; left: 50%; border-left: 2px solid #94a3b8; }
+.org-tree li::after { right: auto; left: 50%; border-left: 2px solid var(--org-link); }
 .org-tree li:only-child::before, .org-tree li:only-child::after { display: none; }
 .org-tree li:only-child { padding-top: 0; }
 .org-tree li:first-child::before, .org-tree li:last-child::after { border: 0 none; }
-.org-tree li:last-child::before { border-right: 2px solid #94a3b8; border-radius: 0 6px 0 0; }
-.org-tree li:first-child::after { border-radius: 6px 0 0 0; }
+.org-tree li:last-child::before { border-right: 2px solid var(--org-link); border-radius: 0 10px 0 0; }
+.org-tree li:first-child::after { border-radius: 10px 0 0 0; }
 /* vertical line down from a parent to its children's bar */
 .org-tree ul ul::before {
   content: ''; position: absolute; top: 0; left: 50%;
-  border-left: 2px solid #94a3b8; width: 0; height: 28px;
+  border-left: 2px solid var(--org-link); width: 0; height: var(--org-gap);
 }
+/* A node is a card, not a bare dot on the page: a raised surface with its own
+   edge and shadow reads as an object you can act on, and gives the name and
+   role room to breathe. The avatar overlaps the top edge so the card still
+   scans as "a person" at a glance. */
 .org-node {
+  position: relative;
   display: inline-flex; flex-direction: column; align-items: center;
-  gap: 0.3rem; cursor: default; white-space: normal; width: 7.5rem;
+  gap: 0.3rem; cursor: default; white-space: normal;
+  width: 9.5rem;
+  padding: 1.85rem 0.6rem 0.7rem;
+  margin-top: 1.4rem;              /* room for the avatar to sit proud of the card */
+  border-radius: 0.9rem;
+  background: var(--surface);
+  /* The hairline comes from the shared `.rounded-xl.shadow` rule further up
+     this file (the same one every card in the app uses) — the node markup
+     carries those two classes. Setting border-color here instead kept losing to
+     Tailwind's preflight reset on `*`, while the shared rule demonstrably wins,
+     so this reuses the treatment that already works rather than fighting it. */
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, .05),
+    0 8px 20px -12px rgba(15, 23, 42, .22);
+  transition: transform .16s cubic-bezier(.16, 1, .3, 1),
+              box-shadow .16s ease,
+              border-color .16s ease;
+}
+/* A soft accent wash at the head of the card ties the set together without
+   competing with the per-level dot colours the page sets inline. */
+.org-node::before {
+  content: '';
+  position: absolute; inset: 0 0 auto 0; height: 2.6rem;
+  border-radius: 0.9rem 0.9rem 0 0;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    transparent);
+  pointer-events: none;
 }
 .org-node.is-editable { cursor: pointer; }
+.org-node.is-editable:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, .06),
+    0 18px 32px -16px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.org-node.is-editable:active { transform: translateY(-1px); }
+
+/* The viewer's own card — a quiet emerald edge, so "me" is findable in a big
+   tree without shouting over the hierarchy colours. */
+.org-node.is-me {
+  border-color: #10b981;
+  box-shadow:
+    0 0 0 1px #10b981,
+    0 10px 24px -14px rgba(16, 185, 129, .55);
+}
+
 .org-dot {
-  width: 3rem; height: 3rem; border-radius: 9999px;
+  position: absolute; top: -1.4rem; left: 50%; transform: translateX(-50%);
+  width: 2.8rem; height: 2.8rem; border-radius: 9999px;
   display: flex; align-items: center; justify-content: center;
   color: #fff; font-weight: 700; font-size: 0.8rem;
-  box-shadow: 0 3px 8px rgba(0,0,0,.22);
-  transition: transform .12s ease;
+  border: 3px solid var(--surface);
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, .28);
+  transition: transform .16s cubic-bezier(.16, 1, .3, 1);
 }
-.org-node.is-editable:hover .org-dot { transform: scale(1.08); }
+.org-node.is-editable:hover .org-dot { transform: translateX(-50%) scale(1.09); }
 
 /* CEO node — a premium pulsing golden glow to mark the top executive. */
 @keyframes ceoGlow {
@@ -1634,10 +1694,46 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
   .org-dot--ceo { animation: none; box-shadow: 0 0 0 3px rgba(245,158,11,.85), 0 0 16px 4px rgba(245,158,11,.7), 0 3px 8px rgba(0,0,0,.22); }
 }
 
-.org-name { font-size: 0.78rem; font-weight: 600; color: #111827; line-height: 1.15; }
-.org-meta { font-size: 0.68rem; color: #6b7280; line-height: 1.1; }
-html.dark .org-name { color: #e5e7eb; }
+.org-name { font-size: 0.8rem; font-weight: 650; color: #111827; line-height: 1.2; letter-spacing: -0.01em; }
+.org-meta {
+  font-size: 0.66rem; color: #6b7280; line-height: 1.25;
+  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+}
+html.dark .org-name { color: #f1f5f9; }
 html.dark .org-meta { color: #9aa7bd; }
+/* Tailwind's preflight resets border-color on `*`, and here it was beating both
+   the shorthand and a two-class longhand — the same conflict the rest of this
+   file settles with !important. Without it every card kept the light-mode
+   hairline in dark mode. */
+/* Literal colours, not var()-derived: on this element a var() inside a
+   border-color declaration was collapsing back to Tailwind's preflight grey,
+   while literals apply. The neutral hairline comes from `.rounded-xl.shadow`. */
+.org-tree .org-node.is-me { border-color: #10b981 !important; }
+/* The card already carries the elevation; in dark mode it needs a touch more
+   separation from the page than the shared --border gives. */
+html.dark .org-node {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 26px -14px rgba(0, 0, 0, .8);
+}
+html.dark .org-node.is-editable:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .5),
+              0 20px 36px -18px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+/* The whole board gets a subtle dotted surface so the cards sit ON something.
+   It uses --bg, not --surface-2: in the dark palette --surface-2 is LIGHTER
+   than the card's --surface, which inverted the elevation and made every card
+   look pressed into the page instead of raised off it. */
+.org-tree-wrap {
+  border-radius: 0.9rem;
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--accent) 14%, transparent) 1px, transparent 0)
+    0 0 / 22px 22px,
+    var(--bg);
+  border-width: 1px;
+  border-style: solid;
+  border-color: var(--border);
+  padding: 1.25rem 1rem 1.75rem;
+}
 
 /* ---------------------------------------------------------------------------
    Chart polish — attractive, interactive bars / pie / line.

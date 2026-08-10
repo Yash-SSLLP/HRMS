@@ -16,6 +16,10 @@ const attachmentSchema = new mongoose.Schema(
 
 const cashbookEntrySchema = new mongoose.Schema(
   {
+    // Short quotable reference (VCH-2026-00042), stamped on first save and never
+    // rewritten — see services/sequence.js. Sparse because rows created before
+    // codes existed have none until the backfill script runs.
+    code: { type: String, trim: true, unique: true, sparse: true, index: true },
     // Required once Approved; an employee voucher may be Pending with no account
     // until the reviewer picks which book to pay it from.
     account: { type: mongoose.Schema.Types.ObjectId, ref: 'CashAccount', index: true },
@@ -54,6 +58,9 @@ const cashbookEntrySchema = new mongoose.Schema(
 );
 
 cashbookEntrySchema.index({ account: 1, date: 1, createdAt: 1 });
+
+// Stamp the quotable voucher code before the first save.
+cashbookEntrySchema.pre('save', require('../services/sequence').stampCode('VCH', 'date'));
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 cashbookEntrySchema.plugin(require('./plugins/auditStatus'));

@@ -26,6 +26,10 @@ const MONTHS = [
 // is always computed server-side), but keep the two in step.
 const LATE_ALLOWANCE = 5;
 
+/** Strip undefined keys so a spread can't blank a value the engine didn't produce. */
+const dropUndefined = (obj) =>
+  Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+
 const STATUS_COLORS = {
   Draft: 'bg-gray-100 text-gray-700',
   Approved: 'bg-blue-100 text-blue-800',
@@ -227,7 +231,7 @@ export default function AdminPayroll() {
       employee,
       payPeriodYear: p.payPeriodYear,
       payPeriodMonth: p.payPeriodMonth,
-    }).then((days) => fetchSalaryInfo({
+    }, { amounts: false }).then((days) => fetchSalaryInfo({
       over: {
         employee,
         payPeriodYear: p.payPeriodYear,
@@ -292,7 +296,16 @@ export default function AdminPayroll() {
   // employee's month and write them into the form, so the payslip always reflects
   // real attendance — the same LOP + leave-quota normalization the payroll run
   // uses — instead of a manual guess or a copy of last month. Returns the days.
-  const syncAttendanceDays = async (over = {}) => {
+  //
+  // The money the same policy produces is written here too. Counting 8 late days
+  // into the header and leaving the late-coming deduction at ₹0 was the bug: the
+  // amounts are attendance-derived, not structure-derived, so `derive-salary`
+  // (the "Fill from structure" button) never had them and nothing else filled
+  // them in. They stay editable, exactly like the day counts above them.
+  // `amounts: false` refreshes only the day counts — used when reopening a SAVED
+  // payslip, whose earnings/deductions may have been corrected by hand and must
+  // not be silently recomputed underneath HR.
+  const syncAttendanceDays = async (over = {}, { amounts = true } = {}) => {
     const f = { ...form, ...over };
     if (!f.employee) return null;
     try {
@@ -311,8 +324,31 @@ export default function AdminPayroll() {
         monthlySalary: c.ctc ? Math.round(c.ctc / 12) : f.monthlySalary,
         annualCtc: c.ctc ?? f.annualCtc,
       };
-      setForm((prev) => ({ ...prev, ...days }));
-      return days;
+      // Only overwrite a figure the engine actually produced — before a salary
+      // structure exists the pay-derived ones come back 0/undefined, and blanking
+      // a value HR typed would be worse than leaving it alone. The late penalty
+      // is flat-rate, so it is real even without a structure.
+      const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+      const money = {
+        deductions: dropUndefined({
+          latePenalty: num(c.latePenalty),
+          lopDeduction: num(c.lopDeduction),
+          emergencyPenalty: num(c.emergencyPenalty),
+        }),
+        earnings: dropUndefined({
+          leaveIncentive: num(c.earnings?.leaveIncentive),
+          doubleDayPay: num(c.doubleDayPay),
+        }),
+      };
+      setForm((prev) => (amounts
+        ? {
+          ...prev,
+          ...days,
+          deductions: { ...prev.deductions, ...money.deductions },
+          earnings: { ...prev.earnings, ...money.earnings },
+        }
+        : { ...prev, ...days }));
+      return { ...days, ...money };
     } catch {
       return null; // attendance unavailable — keep whatever is in the form
     }
@@ -662,8 +698,14 @@ export default function AdminPayroll() {
                       <span className="text-gray-700">{salaryInfo.structure?.name} · CTC {inr(salaryInfo.annualCtc)}/yr</span>
                     )}
                   </div>
+                  {/* Structure first, then attendance: the structure supplies the
+                      component earnings and the statutory cuts, and the sync adds
+                      the attendance-derived money (late coming, LOP, emergency
+                      leave, leave incentive, 2× duty) on top. This is also the
+                      one action that re-derives a SAVED slip, which openEdit
+                      deliberately leaves alone. */}
                   <button type="button" disabled={!form.employee || !salaryInfo || salaryInfo.needsSetup}
-                    onClick={() => fetchSalaryInfo({ apply: true })}
+                    onClick={async () => { await fetchSalaryInfo({ apply: true }); await syncAttendanceDays(); }}
                     className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
                     Fill earnings &amp; deductions from structure
                   </button>

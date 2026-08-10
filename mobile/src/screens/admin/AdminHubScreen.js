@@ -5,7 +5,9 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import api from '../../api/client';
 import { readCacheSync, hydrate, writeCache } from '../../api/cache';
 import { useAuth } from '../../store/auth';
-import { canViewAdmin, canApprove, isExec, hasTeam } from '../../utils/roles';
+import {
+  canViewAdmin, canApprove, isExec, hasTeam, hasPermission, hasAnyPermission, isGrantedManager,
+} from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, Pill, ProgressBar, refresher, SectionHeader, Loader, EmptyState, Ionicons, SkeletonScreen, MiniBarChart } from '../../components/ui';
 import { fmtDate } from '../../utils/format';
@@ -30,17 +32,26 @@ export default function AdminHubScreen() {
     return () => { active = false; };
   }, []);
 
+  // Only ask for what this account is actually allowed to read. The org-wide
+  // summary is SuperAdmin/HRManager-only on the server (and CEO/MD by the exec
+  // rule), and the daily stats need attendance.manage — a granted Manager
+  // without them would otherwise fire a 403 on every focus.
+  const canSeeSummary = canViewAdmin(me) && !isGrantedManager(me);
+  const canSeeDailyStats = hasPermission(me, 'attendance.manage');
+
   const load = useCallback(async () => {
     if (!viewAdmin) { setLoading(false); return; }
     const [res, ds] = await Promise.all([
-      api.get('/dashboard/admin').catch(() => ({ data: null })),
-      api.get('/attendance/daily-stats', { params: { days: 14 } }).catch(() => ({ data: { days: [] } })),
+      canSeeSummary ? api.get('/dashboard/admin').catch(() => ({ data: null })) : Promise.resolve({ data: null }),
+      canSeeDailyStats
+        ? api.get('/attendance/daily-stats', { params: { days: 14 } }).catch(() => ({ data: { days: [] } }))
+        : Promise.resolve({ data: { days: [] } }),
     ]);
     if (res?.data) { setData(res.data); writeCache('adminHub', res.data); }
     const days = ds?.data?.days || [];
     setDaily(days); writeCache('adminHubDaily', days);
     setLoading(false);
-  }, [viewAdmin]);
+  }, [viewAdmin, canSeeSummary, canSeeDailyStats]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
@@ -51,21 +62,33 @@ export default function AdminHubScreen() {
   const holidays = data?.nextHolidays || [];
   const maxDept = depts.reduce((m, d) => Math.max(m, d.count), 0) || 1;
 
-  // Build the tile list per role.
+  // Tiles are gated on the capability the destination screen needs, so a
+  // Manager granted only attendance gets the attendance tiles and nothing else.
+  // `canApprove` still guards the write-y ones (Add Employee, Work Locations)
+  // for execs — a view-only CEO/MD must not see a create button — so those read
+  // "holds the capability AND may write".
+  // canApprove() is the blanket "writes anywhere" answer and deliberately
+  // excludes Managers; a granted Manager's write access comes from the
+  // capability itself, so it is allowed alongside it here.
+  const mayWrite = canApprove(me);
+  const isGranted = isGrantedManager(me);
+  const canDo = (cap) => hasPermission(me, cap);
   const tiles = [];
+  // Not capability-gated on purpose: the approvals inbox only ever lets you act
+  // on your own rung of the chain (same rule as the web).
   tiles.push({ key: 'Approvals', label: 'Approvals (HR)', icon: 'checkmark-done', tint: '#16a34a', show: viewAdmin });
   // Reporting-chain inbox — distinct from the HR-wide queue above, and the only
   // way an exec (who has no self-service menu) reaches the requests they approve.
   tiles.push({ key: 'MyApprovals', label: 'My Approvals', icon: 'git-merge', tint: '#0d9488', show: true });
   tiles.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb', show: hasTeam(me) });
-  tiles.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9', show: viewAdmin });
-  tiles.push({ key: 'PunchMap', label: 'Punch Map', icon: 'map', tint: '#0891b2', show: viewAdmin });
-  tiles.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea', show: viewAdmin });
-  tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canApprove(me) });
-  tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canApprove(me) });
-  tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: canApprove(me) });
-  tiles.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a', show: viewAdmin });
-  tiles.push({ key: 'RnrAdmin', label: 'Recognition', icon: 'trophy', tint: '#f59e0b', show: canApprove(me) });
+  tiles.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9', show: canDo('attendance.manage') });
+  tiles.push({ key: 'PunchMap', label: 'Punch Map', icon: 'map', tint: '#0891b2', show: canDo('attendance.manage') });
+  tiles.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea', show: canDo('employees.manage') });
+  tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canDo('employees.manage') && (mayWrite || isGranted) });
+  tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canDo('org.manage') && (mayWrite || isGranted) });
+  tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: hasAnyPermission(me, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews']) });
+  tiles.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a', show: canDo('payroll.manage') });
+  tiles.push({ key: 'RnrAdmin', label: 'Recognition', icon: 'trophy', tint: '#f59e0b', show: canDo('announcements.manage') });
   const visibleTiles = tiles.filter((t) => t.show);
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
@@ -78,9 +101,15 @@ export default function AdminHubScreen() {
           <View style={styles.bannerIcon}><Ionicons name="shield-checkmark" size={22} color="#fff" /></View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.bannerTitle}>Admin Console</Text>
-            <Text style={styles.bannerSub}>{role}{isExec(me) && !canApprove(me) ? ' · read-only' : ''}</Text>
+            <Text style={styles.bannerSub}>
+              {role}
+              {isExec(me) && !canApprove(me) ? ' · read-only' : ''}
+              {/* A granted Manager isn't read-only — they hold a specific slice,
+                  so say how much rather than mislabelling them. */}
+              {isGranted ? ` · ${me.permissions.length} module${me.permissions.length === 1 ? '' : 's'}` : ''}
+            </Text>
           </View>
-          {!canApprove(me) && viewAdmin ? <Pill label="View only" tone="warning" /> : null}
+          {!canApprove(me) && viewAdmin && !isGranted ? <Pill label="View only" tone="warning" /> : null}
         </View>
 
         {/* Overview stats */}

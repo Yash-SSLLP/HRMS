@@ -14,6 +14,10 @@ const receiptSchema = new mongoose.Schema(
 
 const expenseSchema = new mongoose.Schema(
   {
+    // Short quotable reference (EXP-2026-00017), stamped on first save and never
+    // rewritten — see services/sequence.js. Sparse because claims filed before
+    // codes existed have none until the backfill script runs.
+    code: { type: String, trim: true, unique: true, sparse: true, index: true },
     employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     category: { type: String, enum: EXPENSE_CATEGORIES, default: 'Other' },
     amount: { type: Number, required: true, min: 0 },
@@ -41,6 +45,9 @@ expenseSchema.set('toJSON', {
     return ret;
   },
 });
+
+// Stamp the quotable claim code before the first save.
+expenseSchema.pre('save', require('../services/sequence').stampCode('EXP', 'expenseDate'));
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
 expenseSchema.plugin(require("./plugins/auditStatus"));

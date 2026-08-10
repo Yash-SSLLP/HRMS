@@ -9,7 +9,9 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, LayoutAnimation, 
 import { useNavigation } from '@react-navigation/native';
 
 import { useAuth } from '../store/auth';
-import { showsAdminEntry, canViewAdmin, canApprove, hasTeam, canEmployeeSelf } from '../utils/roles';
+import {
+  showsAdminEntry, canViewAdmin, hasTeam, canEmployeeSelf, hasPermission, hasAnyPermission,
+} from '../utils/roles';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Ionicons } from '../components/ui';
 
@@ -105,12 +107,18 @@ export default function MenuScreen() {
   if (showsAdminEntry(me)) {
     // Daily actions (approvals, today's attendance) lead; the console and the
     // reference screens follow.
+    // Each row is gated on the capability its screen actually needs, so a
+    // Manager granted (say) only attendance sees the attendance rows and not
+    // payroll or recruitment. An HR Manager with no permissions array still
+    // holds everything, so their menu is unchanged.
     const adminItems = [];
+    // The leave-approval inbox is deliberately NOT capability-gated — it only
+    // ever lets you act on your own rung of the chain (same rule as the web).
     if (canViewAdmin(me)) {
-      adminItems.push(
-        { key: 'Approvals', label: 'Approvals (HR)', icon: 'checkmark-done', tint: '#16a34a' },
-        { key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9' }
-      );
+      adminItems.push({ key: 'Approvals', label: 'Approvals (HR)', icon: 'checkmark-done', tint: '#16a34a' });
+    }
+    if (hasPermission(me, 'attendance.manage')) {
+      adminItems.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9' });
     }
     // CEO/MD get no self-service groups, so the reporting-chain inbox they DO
     // sit in (as approvers) — and the org chart — would otherwise be unreachable.
@@ -122,18 +130,23 @@ export default function MenuScreen() {
     }
     adminItems.push({ key: 'AdminHub', label: 'Admin Console', icon: 'shield-checkmark', tint: colors.text });
     if (hasTeam(me)) adminItems.push({ key: 'Team', label: 'My Team', icon: 'people', tint: '#2563eb' });
-    if (canViewAdmin(me)) {
-      adminItems.push(
-        { key: 'AttendanceMonth', label: 'Monthly Attendance', icon: 'calendar', tint: '#ea580c' },
-        { key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea' },
-        { key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' }
-      );
+    if (hasPermission(me, 'attendance.manage')) {
+      adminItems.push({ key: 'AttendanceMonth', label: 'Monthly Attendance', icon: 'calendar', tint: '#ea580c' });
     }
-    if (canApprove(me)) {
-      adminItems.push(
-        { key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' },
-        { key: 'RnrAdmin', label: 'Rewards & Recognition', icon: 'trophy', tint: '#f59e0b' }
-      );
+    if (hasPermission(me, 'employees.manage')) {
+      adminItems.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea' });
+    }
+    if (hasPermission(me, 'payroll.manage')) {
+      adminItems.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' });
+    }
+    if (hasAnyPermission(me, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'])) {
+      adminItems.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' });
+    }
+    if (hasPermission(me, 'announcements.manage')) {
+      adminItems.push({ key: 'RnrAdmin', label: 'Rewards & Recognition', icon: 'trophy', tint: '#f59e0b' });
+    }
+    if (hasPermission(me, 'org.manage')) {
+      adminItems.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2' });
     }
     const adminGroup = { title: 'Admin & Manager', items: adminItems };
     // Admins and execs live in this group, so it leads and opens by default (the

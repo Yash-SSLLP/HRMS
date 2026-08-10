@@ -236,6 +236,9 @@ async function postReimbursementToCashbook(expense, accountId, actor) {
     paymentMode: 'Bank',
     description: `Expense reimbursement — ${expense.category}${expense.merchant ? ` (${expense.merchant})` : ''}`,
     party: who,
+    // Cross-reference the claim's own code, so the ledger row and the expense
+    // can be tied together from either side without an id lookup.
+    referenceNo: expense.code || undefined,
     status: 'Approved',
     sourceExpense: expense._id,
     createdBy: actor._id,

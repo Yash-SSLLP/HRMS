@@ -16,7 +16,7 @@ import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock,
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
-import { hasPermission, hasAnyPermission, isReadOnlyExec, isEditingExec } from '../config/permissions';
+import { hasPermission, hasAnyPermission, isReadOnlyExec, isEditingExec, canUseAdminPortal } from '../config/permissions';
 import { formatDateTime12 } from '../utils/time';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
@@ -706,7 +706,11 @@ export default function Layout({ navItems = [], sectionTitle }) {
     navigate('/login', { replace: true });
   };
 
-  const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager');
+  // Drives the portal switcher, the employee results in global search and the
+  // notification audience. A Manager counts once they hold a granted capability
+  // — without that they'd land in the admin shell with no way back to My Portal.
+  const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager'
+    || (user.role === 'Manager' && canUseAdminPortal(user)));
   // CEO/MD: executives who can browse the whole admin portal, read-only unless a
   // SuperAdmin has switched this account into edit mode.
   const viewOnlyExec = isReadOnlyExec(user);

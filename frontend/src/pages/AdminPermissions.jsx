@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { roleLabel } from '../config/roles';
+import { GRANTABLE_ROLES } from '../config/permissions';
 import { useAuthStore } from '../store/authStore';
 
 // Dedicated access-control page: grant module permissions to any user or employee.
@@ -118,7 +119,16 @@ export default function AdminPermissions() {
     }
   };
 
-  const openPerms = (u) => { setPermSel(u.permissions == null ? new Set(allKeys) : new Set(u.permissions)); setPermUser(u); };
+  // Seed the dialog with what the account effectively holds RIGHT NOW. A null
+  // array is "all" for an HR Manager but "none" for a Manager — seeding every
+  // box for a Manager would mean one careless Save handed them full admin.
+  const openPerms = (u) => {
+    const effective = u.permissions == null
+      ? (u.role === 'HRManager' ? allKeys : [])
+      : u.permissions;
+    setPermSel(new Set(effective));
+    setPermUser(u);
+  };
   const togglePerm = (key) => setPermSel((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
   const savePerms = async () => {
     setPermSaving(true); setError('');
@@ -155,7 +165,8 @@ export default function AdminPermissions() {
       <p className="text-sm text-gray-500 mb-4">
         Grant module access to any user or employee. <strong>Cashbook</strong> and <strong>Expenses</strong> access can
         be given to anyone, whatever their role; <strong>Work from home</strong> is granted per employee;
-        {' '}<strong>HR permissions</strong> apply to HR Managers.
+        {' '}<strong>Module permissions</strong> apply to HR Managers and Managers — an HR Manager with none set keeps
+        full access, while a Manager starts with nothing and only sees the admin portal once granted something.
         {' '}<strong>CEO / MD access</strong> switches an executive account between view-only (the default) and edit
         mode — in edit mode they can change data anywhere an HR Manager can, but this page, org settings and the
         audit log stay with Super Admins.
@@ -251,9 +262,13 @@ export default function AdminPermissions() {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  {u.role === 'HRManager' ? (
+                  {GRANTABLE_ROLES.includes(u.role) ? (
                     <button onClick={() => openPerms(u)} className="text-indigo-600 hover:underline text-xs">
-                      Edit ({u.permissions == null ? 'All' : u.permissions.length})
+                      {/* A null array means ALL for an HR Manager but NONE for a
+                          Manager, so the count has to read the role too. */}
+                      Edit ({u.permissions == null
+                        ? (u.role === 'HRManager' ? 'All' : 'None')
+                        : u.permissions.length})
                     </button>
                   ) : (
                     <span className="text-xs text-gray-400">—</span>
@@ -268,9 +283,16 @@ export default function AdminPermissions() {
       {permUser && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="card-title mb-1">HR permissions</h2>
+            <h2 className="card-title mb-1">Module permissions</h2>
             <p className="text-sm text-gray-500 mb-4">
-              {permUser.firstName} {permUser.lastName} · choose which admin capabilities this HR Manager has.
+              {permUser.firstName} {permUser.lastName} · {roleLabel(permUser.role)} — choose which admin capabilities
+              this account has.
+              {permUser.role === 'Manager' && (
+                <>
+                  {' '}A Manager sees the admin portal only while they hold at least one capability; their team duties
+                  (approving their own team&apos;s leave) come from the role and are unaffected by anything here.
+                </>
+              )}
             </p>
             <div className="flex gap-2 mb-4">
               <button type="button" onClick={() => setPermSel(new Set(allKeys))}

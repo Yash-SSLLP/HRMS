@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { mediaUrl, errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canApprove } from '../../utils/roles';
+import { canManage } from '../../utils/roles';
 import { colors, radius, spacing, font, roleAccent } from '../../theme';
 import { Screen, Card, Avatar, AppButton, Input, Field, Pill, Loader, Ionicons, SkeletonScreen, ChipSelect } from '../../components/ui';
 import { fmtDate } from '../../utils/format';
@@ -26,7 +26,7 @@ function Detail({ icon, label, value, last }) {
 
 export default function EmployeeDetailScreen({ route }) {
   const { id } = route.params || {};
-  const writable = canApprove(useAuth((s) => s.user));
+  const writable = canManage(useAuth((s) => s.user), 'employees.manage');
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);

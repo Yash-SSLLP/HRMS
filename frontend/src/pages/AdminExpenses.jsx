@@ -133,7 +133,10 @@ export default function AdminExpenses() {
                   {x.employee ? `${x.employee.firstName} ${x.employee.lastName}` : '-'}
                   <div className="text-xs text-gray-500">{x.employee?.role}</div>
                 </td>
-                <td className="px-4 py-3 text-gray-600">{new Date(x.expenseDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                <td className="px-4 py-3 text-gray-600">
+                  {new Date(x.expenseDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  {x.code && <div className="font-mono text-[11px] text-gray-400">{x.code}</div>}
+                </td>
                 <td className="px-4 py-3 text-gray-600">{x.category}</td>
                 <td className="px-4 py-3">
                   {x.merchant || '-'}

@@ -14,16 +14,28 @@ const storage = require('./storage');
 const googleMail = require('./googleMail');
 
 // Map outbox attachment refs to nodemailer attachments. Prefers a storage path
-// (streamed from disk), else uses inline base64 bytes embedded in `content`.
-function buildAttachments(attachments) {
+// (read from GridFS), else uses inline base64 bytes embedded in `content`.
+//
+// Async because `storage.readBuffer` is: the previous version called the
+// (equally async) `storage.readStream` WITHOUT awaiting it, so nodemailer was
+// handed a Promise as the attachment body and the file went out empty or the
+// send failed. Reading the bytes here also lets a missing file drop just that
+// attachment instead of failing the whole message.
+async function buildAttachments(attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return undefined;
-  const out = attachments
-    .filter((a) => a && (a.storagePath || a.content))
-    .map((a) => ({
-      filename: a.filename || 'attachment',
-      content: a.storagePath ? storage.readStream(a.storagePath) : Buffer.from(a.content, 'base64'),
-      contentType: a.contentType || undefined,
-    }));
+  const usable = attachments.filter((a) => a && (a.storagePath || a.content));
+  const out = [];
+  for (const a of usable) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const content = a.storagePath
+        ? await storage.readBuffer(a.storagePath)
+        : Buffer.from(a.content, 'base64');
+      out.push({ filename: a.filename || 'attachment', content, contentType: a.contentType || undefined });
+    } catch (err) {
+      console.error(`Mail attachment skipped (${a.filename || a.storagePath}):`, err.message);
+    }
+  }
   return out.length ? out : undefined;
 }
 
@@ -109,7 +121,7 @@ async function sendMail(opts) {
     text: opts.text,
     html: opts.html,
     replyTo: opts.replyTo,
-    attachments: buildAttachments(opts.attachments),
+    attachments: await buildAttachments(opts.attachments),
   });
   return { messageId: info.messageId, response: info.response };
 }

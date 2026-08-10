@@ -21,7 +21,7 @@ const { copyCandidateDocuments } = require('../services/candidateDocuments');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
-const { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults } = require('../services/letterPdf');
+const { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody } = require('../services/letterPdf');
 const { enqueueMail, sendMail } = require('../services/email');
 const { notify } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
@@ -961,19 +961,33 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
 // on disk (UPLOAD_DIR is ephemeral on some hosts, so a letter generated on one
 // deploy can be gone by send time — the classic "email sent but nothing arrived"
 // cause). Returns a storage path that is guaranteed to exist right now.
+/**
+ * Fill the letter body from the org template (Admin → Templates) unless this
+ * particular letter already carries wording HR typed in the compose modal —
+ * a per-letter edit always beats the org-wide template, which in turn beats the
+ * coded default.
+ * @param {'offer'|'appointment'} kind
+ * @param {Object} data - Letter data about to go to a renderer.
+ * @returns {Promise<Object>} `data` with `body` populated.
+ */
+async function withLetterBody(kind, data = {}) {
+  if (Array.isArray(data.body) && data.body.some((b) => b && String(b.text || '').trim())) return data;
+  return { ...data, body: await resolveLetterBody(kind, data) };
+}
+
 async function ensureLetterFile(candidate, kind) {
   const letter = candidate[kind];
   if (letter?.letterPath && await storage.exists(letter.letterPath)) return letter.letterPath;
 
   const data = letter?.data ? (letter.data.toObject?.() || letter.data) : {};
   const buffer = kind === 'offer'
-    ? await renderOfferLetter({ ...data, candidateName: candidate.name })
-    : await renderAppointmentLetter({
+    ? await renderOfferLetter(await withLetterBody('offer', { ...data, candidateName: candidate.name }))
+    : await renderAppointmentLetter(await withLetterBody('appointment', {
       ...data,
       candidateName: candidate.name,
       signatoryName: data.signatoryName || COMPANY.defaultSignatoryName,
       signatoryTitle: data.signatoryTitle || COMPANY.defaultSignatoryTitle,
-    });
+    }));
   const originalName = letter?.letterName
     || `${kind === 'offer' ? 'Offer-Letter' : 'Appointment-Letter'}-${safeName(candidate.name)}.pdf`;
   const { storagePath } = await storage.saveBuffer({ buffer, ownerType: kind, ownerId: candidate._id, originalName });
@@ -1109,7 +1123,9 @@ const generateOffer = asyncHandler(async (req, res) => {
     body: cleanLetterBody(b.body),
   };
 
-  const buffer = await renderOfferLetter({ ...data, candidateName: candidate.name });
+  const buffer = await renderOfferLetter(
+    await withLetterBody('offer', { ...data, candidateName: candidate.name })
+  );
   const letterName = `Offer-Letter-${safeName(candidate.name)}.pdf`;
   if (candidate.offer?.letterPath) await storage.remove(candidate.offer.letterPath);
   // Keep the same shareable token across re-generations so old links still work.
@@ -1238,12 +1254,12 @@ const generateAppointment = asyncHandler(async (req, res) => {
     body: cleanLetterBody(b.body),
   };
 
-  const buffer = await renderAppointmentLetter({
+  const buffer = await renderAppointmentLetter(await withLetterBody('appointment', {
     ...data,
     candidateName: candidate.name,
     signatoryName: b.signatoryName || COMPANY.defaultSignatoryName,
     signatoryTitle: b.signatoryTitle || COMPANY.defaultSignatoryTitle,
-  });
+  }));
   const letterName = `Appointment-Letter-${safeName(candidate.name)}.pdf`;
   if (candidate.appointment?.letterPath) await storage.remove(candidate.appointment.letterPath);
   const apptToken = candidate.appointment?.token || crypto.randomBytes(16).toString('hex');
@@ -1688,7 +1704,9 @@ const letterDraft = asyncHandler(async (req, res) => {
 
   const data = letterDataFor(kind, candidate, req.body);
   const saved = cleanLetterBody(data.body);
-  const defaults = letterBodyDefaults(kind, data);
+  // Prefill the editor from the ORG TEMPLATE, so HR starts from the wording the
+  // company has actually standardised on rather than the shipped default.
+  const defaults = await resolveLetterBody(kind, data);
   res.json({ blocks: saved || defaults, customised: !!saved, defaults });
 });
 
@@ -1709,9 +1727,10 @@ const previewLetter = asyncHandler(async (req, res) => {
 
   const data = letterDataFor(kind, candidate, req.body);
   data.body = cleanLetterBody(req.body.body) || cleanLetterBody(data.body);
+  const withBody = await withLetterBody(kind, data);
   const buffer = kind === 'offer'
-    ? await renderOfferLetter(data)
-    : await renderAppointmentLetter(data);
+    ? await renderOfferLetter(withBody)
+    : await renderAppointmentLetter(withBody);
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${kind}-preview.pdf"`);

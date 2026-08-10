@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canApprove } from '../../utils/roles';
+import { canManage } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, Avatar, Loader, EmptyState, refresher, Ionicons } from '../../components/ui';
 import { fmtDate, rupees } from '../../utils/format';
@@ -82,7 +82,7 @@ const CATEGORIES = [
 
 export default function ApprovalsScreen() {
   const me = useAuth((s) => s.user);
-  const writable = canApprove(me);
+  const writable = canManage(me, 'leave.manage');
 
   const [tab, setTab] = useState(0);
   const [items, setItems] = useState([]);

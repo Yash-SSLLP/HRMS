@@ -117,7 +117,15 @@ async function appendEmployee(archive, profile, folder = '') {
   const usedNames = new Set();
   for (const doc of docs) {
     try {
-      const stream = storage.readStream(doc.storagePath);
+      // readBuffer, not readStream, and AWAITED. `storage.readStream` is async:
+      // the un-awaited call handed archiver a *Promise* instead of a stream, so
+      // every document entry in the export was written empty/invalid — and,
+      // being async, its "file not found" rejection escaped the try/catch below
+      // instead of producing the MISSING placeholder. Resolving the bytes up
+      // front also means a missing file can no longer error midway through an
+      // archive that is already streaming to the client.
+      // eslint-disable-next-line no-await-in-loop
+      const body = await storage.readBuffer(doc.storagePath);
       let name = `${prefix}documents/${safe(doc.category)}-${safe(doc.fileName)}`;
       // De-duplicate identical filenames within the same archive.
       let n = 1;
@@ -128,7 +136,7 @@ async function appendEmployee(archive, profile, folder = '') {
         n += 1;
       }
       usedNames.add(name);
-      archive.append(stream, { name });
+      archive.append(body, { name });
     } catch (_) {
       // Missing/unreadable file on disk — note it rather than failing the whole zip.
       archive.append(`Could not read file for ${doc.category} (${doc.fileName})`, {
