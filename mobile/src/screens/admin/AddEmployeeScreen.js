@@ -36,9 +36,23 @@ export default function AddEmployeeScreen() {
       Alert.alert('Missing info', 'Employee code and joining date are required.');
       return;
     }
+    const employeeCode = f.employeeCode.trim().toUpperCase();
     setSubmitting(true);
     let createdUser = null;
     try {
+      // Step 0 — the employee code is unique org-wide, and the profile is
+      // created AFTER the login account. Checking it first means a duplicate
+      // code fails before an orphan account exists.
+      const { data: check } = await api.get('/employees/code-available', { params: { code: employeeCode } });
+      if (!check.available) {
+        Alert.alert(
+          'Employee code already exists',
+          `“${employeeCode}” is already in use${check.takenBy ? ` by ${check.takenBy}` : ''}. Please choose another code.`
+        );
+        setSubmitting(false);
+        return;
+      }
+
       // Step 1 — create the login account.
       const { data: u } = await api.post('/admin/users', {
         firstName: f.firstName.trim(),
@@ -53,7 +67,7 @@ export default function AddEmployeeScreen() {
       // Step 2 — create the employee profile linked to that account.
       await api.post('/employees', {
         user: createdUser._id,
-        employeeCode: f.employeeCode.trim().toUpperCase(),
+        employeeCode,
         dateOfJoining: f.dateOfJoining,
         designation: f.designation || undefined,
         department: f.department || undefined,

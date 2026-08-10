@@ -1474,20 +1474,72 @@ html.dark .login-submit:disabled {
    without per-page edits. Tailwind responsive utilities still win where used.
 --------------------------------------------------------------------------- */
 
-/* Never let stray wide content force the whole page to scroll sideways. */
+/* Never let stray wide content force the whole page to scroll sideways.
+   Individual wide things (tables, charts, the org tree) scroll inside their own
+   box instead; the document itself must not. */
 html, body { max-width: 100%; overflow-x: hidden; }
+main { max-width: 100%; }
 
-/* Long unbroken strings (e.g. a pasted URL, or "hihihi…" with no spaces) in
-   pre-wrapped text must wrap rather than force horizontal overflow. */
+/* Long unbroken strings (a pasted URL, a Cloudinary filename, "hihihi…" with no
+   spaces) must wrap rather than force horizontal overflow. `anywhere` rather
+   than `break-word` is deliberate: it also lowers the element's min-content
+   width, which is what actually lets a flex or grid child shrink to a phone.
+   Capped at 1279px so roomy desktop layouts measure exactly as they did. */
 .whitespace-pre-wrap { overflow-wrap: anywhere; }
+@media (max-width: 1279px) {
+  main :is(h1, h2, h3, p, td, th, li, dd, dt, label, span, div) { overflow-wrap: anywhere; }
+  /* …but not where the layout depends on measured / deliberately nowrap text. */
+  main :is(.whitespace-nowrap, .font-mono, .tabular-nums, svg, svg *) { overflow-wrap: normal; }
+}
 
 /* Data tables sit in `…rounded-lg overflow-hidden` cards that clip overflow.
    On any screen, let the card scroll horizontally so wide tables stay reachable
    instead of being cut off (the !important overrides the card's overflow-hidden;
-   overflow-y stays hidden so only sideways scroll appears, and only when needed). */
-div:has(> table) {
+   overflow-y stays hidden so only sideways scroll appears, and only when
+   needed). `section`/`form` wrappers get the same treatment — a handful of
+   pages use those instead of a div. */
+:is(div, section, form):has(> table) {
   overflow-x: auto !important;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
+  /* Momentum scrolling shouldn't drag the page sideways with it. */
+  overscroll-behavior-x: contain;
+}
+
+/* Several cards put a title row (or a filter bar, or a footer) in the SAME
+   wrapper as the table — AdminRoster, AdminAttendance, EmployeePayslips. Those
+   siblings are only as wide as the visible card, so without this they slide off
+   to the left as soon as the table is scrolled, leaving a blank band. Pinning
+   them keeps the card's chrome in place while the table moves under it. */
+:is(div, section, form):has(> table) > :not(table) {
+  position: sticky;
+  left: 0;
+}
+
+/* Slimmer scrollbar on the table scrollers so it reads as part of the card. */
+:has(> table)::-webkit-scrollbar { height: 8px; }
+:has(> table)::-webkit-scrollbar-track { background: transparent; }
+:has(> table)::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, .38);
+  border-radius: 9999px;
+}
+:has(> table)::-webkit-scrollbar-thumb:hover { background-color: rgba(100, 116, 139, .6); }
+html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, .18); }
+
+/* Scrolling only helps if the table is allowed to BE wide. Left to itself, auto
+   table layout squeezes nine columns into 340px and turns every cell into a
+   one-word-per-line column — far harder to read than a sideways swipe. The
+   per-cell cap stops a long free-text column (a complaint, a note) from
+   stretching the table absurdly: past 20rem it wraps as usual.
+   1279px, not the lg breakpoint: the 320px sidebar appears at lg, so a 1024px
+   laptop gives a page LESS room (~670px) than a 768px tablet does. */
+@media (max-width: 1279px) {
+  /* `table.min-w-full` repeats the rule at class specificity so it beats the
+     Tailwind utility nearly every one of these tables carries. */
+  :has(> table) > table,
+  table.min-w-full { min-width: max-content; }
+  :has(> table) > table :is(th, td),
+  table.min-w-full :is(th, td) { max-width: 20rem; }
 }
 
 /* Modal dialogs (full-screen overlay → inner panel): keep the panel inside the
@@ -1498,10 +1550,29 @@ div:has(> table) {
   overflow-y: auto;
 }
 
-/* Tighter gutters on phones so cards get more usable width. */
+/* Tighter gutters on phones so cards get more usable width, and nothing with a
+   hard-coded width may exceed the screen. */
 @media (max-width: 640px) {
   main { padding-left: 0.85rem; padding-right: 0.85rem; }
-  .fixed.inset-0 > div { padding: 1.1rem; }
+  .fixed.inset-0 > div { padding: 1.1rem; max-width: calc(100vw - 1.5rem); }
+  .menu-pop { max-width: calc(100vw - 1.5rem); }
+}
+
+/* The top bar's quick-shortcut strip. Below lg the sidebar is a drawer and the
+   bar carries the shortcuts, the chat launcher, the search and the account
+   cluster at once — more than a 360px phone has room for. The shortcuts scroll
+   sideways instead of pushing the bell and avatar off the edge; the scrollbar
+   itself is hidden because the row is only ever a few pills long. */
+.topbar-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
+}
+.topbar-scroll::-webkit-scrollbar { display: none; }
+
+/* Touch targets: 38px minimum for the icon-only buttons on a coarse pointer. */
+@media (pointer: coarse) {
+  .topbar-icon-btn { min-width: 38px; min-height: 38px; }
 }
 
 /* ---------------------------------------------------------------------------

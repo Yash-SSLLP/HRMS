@@ -5,9 +5,14 @@
  * admin side; reimbursed claims post to the cashbook there.
  */
 import { useEffect, useRef, useState } from 'react';
+import { FiCamera, FiUpload, FiX } from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import ReceiptView from '../components/ReceiptView';
+import CameraCapture from '../components/CameraCapture';
+import { StatusTrailLine, StatusTrailButton, StatusTrailModal } from '../components/StatusTrail';
+import { compressImage, RECEIPT_MAX_PX } from '../utils/image';
+import { toYMD } from '../utils/time';
 
 const CATEGORIES = ['Travel', 'Food', 'Accommodation', 'Supplies', 'Medical', 'Communication', 'Other'];
 
@@ -20,7 +25,20 @@ const STATUS_STYLES = {
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 
-const blank = { category: 'Travel', amount: '', expenseDate: '', merchant: '', description: '' };
+// A claim is nearly always filed for today, so the date opens filled in (and
+// stays editable for a receipt someone is catching up on). Built fresh per
+// form open — a module-level constant would freeze the date of the page load.
+const blankForm = () => ({
+  category: 'Travel',
+  amount: '',
+  expenseDate: toYMD(new Date()),
+  merchant: '',
+  description: '',
+});
+
+const prettySize = (bytes) => (bytes >= 1024 * 1024
+  ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
 export default function EmployeeExpenses() {
   const [expenses, setExpenses] = useState([]);
@@ -28,9 +46,13 @@ export default function EmployeeExpenses() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState(blank);
+  const [form, setForm] = useState(blankForm);
   const [receiptFile, setReceiptFile] = useState(null);
+  const [showCamera, setShowCamera] = useState(false);
+  // Claim whose full status trail is open, if any.
+  const [trailOf, setTrailOf] = useState(null);
   const fileRef = useRef(null);
+  const today = toYMD(new Date());
 
   const load = async () => {
     setLoading(true);
@@ -47,8 +69,37 @@ export default function EmployeeExpenses() {
 
   useEffect(() => { load(); }, []);
 
+  // Thumbnail for an attached image, so a photo taken a moment ago is visibly
+  // the right one. Created once per file (not per render) and revoked with it.
+  const [receiptPreview, setReceiptPreview] = useState('');
+  useEffect(() => {
+    if (!receiptFile?.type?.startsWith('image/')) { setReceiptPreview(''); return undefined; }
+    const url = URL.createObjectURL(receiptFile);
+    setReceiptPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [receiptFile]);
+
   const openCreate = () => {
-    setForm(blank); setReceiptFile(null); setError(''); setShowModal(true);
+    setForm(blankForm()); setReceiptFile(null); setError(''); setShowModal(true);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // One place to accept a receipt, whichever way it arrived (file picker or
+  // camera). Photos are downscaled first: a phone still is routinely 4-8 MB and
+  // the endpoint caps uploads at 5 MB, so without this a perfectly good receipt
+  // is rejected on submit. PDFs pass through compressImage untouched.
+  const acceptReceipt = async (file) => {
+    if (!file) { setReceiptFile(null); return; }
+    setError('');
+    try {
+      setReceiptFile(await compressImage(file, RECEIPT_MAX_PX));
+    } catch {
+      setReceiptFile(file); // compression is an optimisation, never a gate
+    }
+  };
+
+  const clearReceipt = () => {
+    setReceiptFile(null);
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -64,7 +115,7 @@ export default function EmployeeExpenses() {
       fd.append('receipt', receiptFile);
       await api.post('/expenses', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       setShowModal(false);
-      setForm(blank);
+      setForm(blankForm());
       setReceiptFile(null);
       await load();
     } catch (err) {
@@ -118,7 +169,11 @@ export default function EmployeeExpenses() {
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[x.status] || 'bg-gray-100 text-gray-700'}`}>{x.status}</span>
+                  {/* Who moved the claim, so it never just silently changes
+                      state on the claimant. Full trail behind "History". */}
+                  <StatusTrailLine record={x} className="mt-1" />
                   {x.reviewNote && <div className="text-xs text-gray-500 mt-1">Note: {x.reviewNote}</div>}
+                  <StatusTrailButton record={x} onClick={() => setTrailOf(x)} className="mt-1" />
                 </td>
               </tr>
             ))}
@@ -148,7 +203,9 @@ export default function EmployeeExpenses() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Expense Date *</label>
-                  <input required type="date" value={form.expenseDate}
+                  {/* Opens on today and stays editable; capped at today to match
+                      the app, which never offers a future expense date. */}
+                  <input required type="date" value={form.expenseDate} max={today}
                     onChange={(e) => setForm({ ...form, expenseDate: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
@@ -167,10 +224,35 @@ export default function EmployeeExpenses() {
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Receipt (image or PDF) *</label>
-                <input ref={fileRef} type="file" accept="image/*,application/pdf" required
-                  onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
-                  className="mt-1 block w-full text-sm border rounded-lg px-3 py-2 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700" />
-                <p className="mt-1 text-xs text-gray-500">A receipt is required to verify your claim. Max 5 MB.</p>
+                {/* Two ways in: photograph the paper receipt, or attach a file
+                    (a PDF invoice, or a screenshot already on the machine).
+                    The input is NOT `required` — a camera capture never fills
+                    it, and submit() already refuses an empty receipt. */}
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setShowCamera(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                    <FiCamera size={15} /> Take photo
+                  </button>
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                    <FiUpload size={15} /> Choose file
+                  </button>
+                </div>
+                <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
+                  onChange={(e) => acceptReceipt(e.target.files?.[0] || null)} />
+                {receiptFile ? (
+                  <div className="mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm" style={{ background: 'var(--surface-2)' }}>
+                    {receiptPreview && (
+                      <img src={receiptPreview} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{receiptFile.name}</span>
+                    <span className="text-xs text-gray-500 shrink-0">{prettySize(receiptFile.size)}</span>
+                    <button type="button" onClick={clearReceipt} aria-label="Remove receipt"
+                      className="text-gray-400 hover:text-red-600 shrink-0"><FiX size={16} /></button>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-gray-500">A receipt is required to verify your claim. Max 5 MB.</p>
+                )}
               </div>
               {error && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
@@ -186,6 +268,24 @@ export default function EmployeeExpenses() {
             </form>
           </div>
         </div>
+      )}
+
+      {trailOf && (
+        <StatusTrailModal
+          record={trailOf}
+          title={`Status history · ${inr.format(trailOf.amount)} ${trailOf.category}`}
+          onClose={() => setTrailOf(null)}
+        />
+      )}
+
+      {/* Sits above the claim modal (z-70 vs z-50) and hands back a JPEG File. */}
+      {showCamera && (
+        <CameraCapture
+          title="Photograph the receipt"
+          fileName="receipt"
+          onCapture={acceptReceipt}
+          onClose={() => setShowCamera(false)}
+        />
       )}
     </div>
   );

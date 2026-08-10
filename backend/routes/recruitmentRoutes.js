@@ -6,7 +6,7 @@
  * recruitment.jobs / .candidates / .interviews permissions.
  */
 const express = require('express');
-const multer = require('multer');
+const { createUpload } = require('../middleware/upload');
 const {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
@@ -30,8 +30,7 @@ const RESUME_TYPES = [
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
-const resumeUpload = multer({
-  storage: multer.memoryStorage(),
+const resumeUpload = createUpload({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = RESUME_TYPES.includes(file.mimetype) || /\.(pdf|docx?|)$/i.test(file.originalname);
@@ -47,8 +46,7 @@ const DOC_TYPES = [
   'image/jpeg',
   'image/png',
 ];
-const docUpload = multer({
-  storage: multer.memoryStorage(),
+const docUpload = createUpload({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = DOC_TYPES.includes(file.mimetype) || /\.(pdf|docx?|jpe?g|png)$/i.test(file.originalname);

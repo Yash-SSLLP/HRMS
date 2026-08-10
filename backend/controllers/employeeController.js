@@ -25,6 +25,73 @@ const { notifyMany } = require('../services/notify');
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
 /**
+ * Normalise an employee code to the form the schema stores (trimmed, uppercase),
+ * so "ssl 9" and "SSL 9 " are recognised as the same code.
+ * @param {*} code - raw value from the request body.
+ * @returns {string} normalised code ('' when nothing was supplied).
+ */
+const normalizeCode = (code) => String(code ?? '').trim().toUpperCase();
+
+/**
+ * Look up the profile already holding an employee code. The code carries a
+ * unique index, but that only ever surfaces as a raw duplicate-key error — this
+ * check runs first so the caller gets a plain "already exists" message naming
+ * the code, and (on the mobile flow) before any User account is created.
+ * @param {string} code - code being saved, any case.
+ * @param {*} [excludeProfileId] - profile being edited; excluded from the check.
+ * @returns {Promise<Object|null>} the clashing profile, or null when free.
+ */
+async function findProfileByCode(code, excludeProfileId = null) {
+  const employeeCode = normalizeCode(code);
+  if (!employeeCode) return null;
+  const query = { employeeCode };
+  if (excludeProfileId) query._id = { $ne: excludeProfileId };
+  return EmployeeProfile.findOne(query).select('_id employeeCode user').populate('user', 'firstName lastName email');
+}
+
+/**
+ * Throw a 409 when the employee code is already taken.
+ * @param {import('express').Response} res
+ * @param {string} code - code being saved, any case.
+ * @param {*} [excludeProfileId] - profile being edited; excluded from the check.
+ * @returns {Promise<string>} the normalised code, safe to persist.
+ */
+async function assertCodeAvailable(res, code, excludeProfileId = null) {
+  const employeeCode = normalizeCode(code);
+  const clash = await findProfileByCode(employeeCode, excludeProfileId);
+  if (clash) {
+    const who = `${clash.user?.firstName || ''} ${clash.user?.lastName || ''}`.trim();
+    res.status(409);
+    throw new Error(
+      `Employee code "${employeeCode}" already exists${who ? ` (${who})` : ''}. Please choose another.`
+    );
+  }
+  return employeeCode;
+}
+
+/**
+ * Live availability check for the employee-code field, so the form can say
+ * "already exists" while the operator types instead of only on save.
+ * @route GET /api/employees/code-available?code=SSL%209&exclude=<profileId>
+ * @returns {{code: string, available: boolean, takenBy?: string}}
+ */
+const checkEmployeeCode = asyncHandler(async (req, res) => {
+  const code = normalizeCode(req.query.code);
+  if (!code) {
+    res.json({ code, available: false });
+    return;
+  }
+  const clash = await findProfileByCode(code, req.query.exclude || null);
+  res.json({
+    code,
+    available: !clash,
+    takenBy: clash
+      ? `${clash.user?.firstName || ''} ${clash.user?.lastName || ''}`.trim() || undefined
+      : undefined,
+  });
+});
+
+/**
  * Tell whoever runs payroll that new employees were added without a salary
  * basis. Payroll can compute nothing for them — they produce a ₹0 payslip, and
  * even the late-arrival penalty is ₹0 because its rate keys off monthly Basic.
@@ -349,6 +416,10 @@ const createEmployee = asyncHandler(async (req, res) => {
     throw new Error('Profile already exists for this user');
   }
 
+  // The employee code is unique across the org — check it here so a clash reads
+  // as "already exists" rather than as a duplicate-key error from the index.
+  req.body.employeeCode = await assertCodeAvailable(res, employeeCode);
+
   // Same rule as updateEmployee: assigning the HR Partner / reporting manager is
   // SuperAdmin-only. Without this an HR Manager could set them on create and
   // simply never edit them again.
@@ -401,6 +472,15 @@ const updateEmployee = asyncHandler(async (req, res) => {
   }
   // Don't allow changing the linked user
   delete req.body.user;
+
+  // Same uniqueness rule as create, minus this profile's own current code.
+  if (req.body.employeeCode !== undefined) {
+    if (!normalizeCode(req.body.employeeCode)) {
+      res.status(400);
+      throw new Error('Employee Code is required');
+    }
+    req.body.employeeCode = await assertCodeAvailable(res, req.body.employeeCode, profile._id);
+  }
   // Reassigning the HR Partner is a SuperAdmin-only action — an HR Manager must
   // not be able to hand an employee off (or grab one) by editing this field.
   if (req.user.role !== 'SuperAdmin') {
@@ -837,6 +917,7 @@ module.exports = {
   exportEmployeeZip,
   exportAllEmployeesZip,
   getEmployee,
+  checkEmployeeCode,
   createEmployee,
   updateEmployee,
   deleteEmployee,

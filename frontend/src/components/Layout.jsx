@@ -332,7 +332,11 @@ function NavPill({ to, icon, label }) {
       }}
     >
       {icon}
-      <span className="hidden sm:inline">{label}</span>
+      {/* Icon-only until lg: below that the shortcut strip shares the bar with
+          the search and the account cluster, and four labelled pills leave the
+          strip a 90px scroller showing one and a half of them. The title/
+          aria-label above still name each one. */}
+      <span className="hidden lg:inline">{label}</span>
     </Link>
   );
 }
@@ -363,7 +367,7 @@ function ChatLauncher() {
         className="drop-shadow-sm">
         <path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z" />
       </svg>
-      <span className="hidden sm:inline">Chats</span>
+      <span className="hidden lg:inline">Chats</span>
       {unread > 0 && (
         <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none"
           style={{ boxShadow: '0 0 0 2px #fff' }}>
@@ -470,7 +474,10 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
   const nothing = term && !loading && pageMatches.length === 0 && employees.length === 0 && accounts.length === 0;
 
   return (
-    <div className="hidden md:flex items-center flex-1 max-w-md relative" ref={wrapRef}>
+    // The search may shrink on a tablet rather than force the account cluster
+    // off the right edge — but not below the width of a usable field. The
+    // shortcut strip beside it scrolls, so it is the one that gives way first.
+    <div className="hidden md:flex items-center flex-1 min-w-[11rem] max-w-md relative" ref={wrapRef}>
       <div className="relative w-full">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
         <input
@@ -599,15 +606,18 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
         className="flex items-center gap-2.5 pl-1 pr-2.5 py-1 rounded-full hover:bg-gray-100 transition-colors"
       >
         <span className="avatar-ring inline-flex rounded-full"><UserAvatar user={user} /></span>
-        <span className="hidden sm:flex flex-col items-start leading-tight">
-          <span className="text-sm font-semibold text-gray-800">{user?.firstName} {user?.lastName}</span>
-          <span className="text-[11px] text-gray-500">
+        {/* The name only earns its ~120px from lg up — below that the top bar
+            needs the room for the shortcuts, search and portal switch, and the
+            same details are one tap away inside this menu. */}
+        <span className="hidden lg:flex flex-col items-start leading-tight max-w-[11rem]">
+          <span className="text-sm font-semibold text-gray-800 truncate">{user?.firstName} {user?.lastName}</span>
+          <span className="text-[11px] text-gray-500 truncate">
             {employeeCode ? `${employeeCode} · ${roleLabel}` : roleLabel}
           </span>
         </span>
         <FiChevronDown
           size={15}
-          className="hidden sm:block text-gray-400 transition-transform duration-200"
+          className="hidden lg:block text-gray-400 transition-transform duration-200"
           style={{ transform: open ? 'rotate(180deg)' : 'none' }}
         />
       </button>
@@ -740,6 +750,23 @@ export default function Layout({ navItems = [], sectionTitle }) {
         <NavList items={navItems} user={user} onNavigate={closeMobile} />
       </nav>
       <div className="border-t border-gray-100 p-3 shrink-0">
+        {/* Portal switch for the drawer. The top-bar switcher needs ~180px it
+            can only spare from lg up — below that the bar is already carrying
+            the shortcuts, the search and the account cluster — so on a phone or
+            a tablet a dual-role HR Manager switches portals from here. */}
+        {isAdmin && canEmployeePortal && (
+          <div className="lg:hidden grid grid-cols-2 gap-1 p-1 mb-2 rounded-full"
+            style={{ background: 'var(--surface-3)' }}>
+            <Link to="/admin" onClick={closeMobile}
+              className={`text-center text-sm font-semibold py-1.5 rounded-full transition-colors ${portal === 'admin' ? 'accent-bg on-accent' : 'text-gray-600'}`}>
+              Admin
+            </Link>
+            <Link to="/employee" onClick={closeMobile}
+              className={`text-center text-sm font-semibold py-1.5 rounded-full whitespace-nowrap transition-colors ${portal === 'employee' ? 'accent-bg on-accent' : 'text-gray-600'}`}>
+              My Portal
+            </Link>
+          </div>
+        )}
         <div className="flex items-center gap-3 px-2 py-2 rounded-lg">
           <UserAvatar user={user} />
           <div className="min-w-0 flex-1">
@@ -774,46 +801,51 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
       {/* Content column */}
       <div className="lg:pl-80 flex flex-col min-h-screen">
-        <header className="sticky top-1 z-30 h-16 bg-white border-b border-gray-200 flex items-center gap-3 px-4 sm:px-6">
-          <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn lg:hidden" aria-label="Open menu">
+        <header className="sticky top-1 z-30 h-16 bg-white border-b border-gray-200 flex items-center gap-2 sm:gap-3 px-3 sm:px-6">
+          <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn shrink-0 lg:hidden" aria-label="Open menu">
             <span className="text-xl leading-none">☰</span>
           </button>
 
           {/* Quick shortcuts — available to everyone, in both portals. One solid
-              colour for both; the label appears from sm up so each is unmistakable. */}
-          <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
-          <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
-          {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in
-              config/nav.jsx) and is reached often enough to earn a shortcut. */}
-          {user?.role === 'SuperAdmin' && (
-            <NavPill to="/admin/permissions" label="Permissions" icon={<FiShield size={16} strokeWidth={2.2} />} />
-          )}
+              colour for both; the label appears from sm up so each is
+              unmistakable. On a phone this strip is the first thing to run out
+              of room, so it scrolls sideways rather than shoving the account
+              cluster off the edge (min-w-0 is what lets it shrink at all). */}
+          <div className="topbar-scroll flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-1">
+            <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
+            <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
+            {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in
+                config/nav.jsx) and is reached often enough to earn a shortcut. */}
+            {user?.role === 'SuperAdmin' && (
+              <NavPill to="/admin/permissions" label="Permissions" icon={<FiShield size={16} strokeWidth={2.2} />} />
+            )}
 
-          {/* Chat is an org-wide switch a SuperAdmin controls. */}
-          {chatEnabled && <ChatLauncher />}
+            {/* Chat is an org-wide switch a SuperAdmin controls. */}
+            {chatEnabled && <ChatLauncher />}
+          </div>
 
           <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
 
           {viewOnlyExec && (
-            <span className="hidden sm:inline-flex items-center gap-1 ml-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200"
+            <span className="hidden xl:inline-flex items-center gap-1 ml-1 shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200"
               title="CEO/MD accounts can view everything but cannot make changes. A Super Admin can switch this account to edit mode.">
               👁 View only
             </span>
           )}
           {/* The counterpart: an exec whose writes are live should know it. */}
           {isEditingExec(user) && (
-            <span className="hidden sm:inline-flex items-center gap-1 ml-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200"
+            <span className="hidden xl:inline-flex items-center gap-1 ml-1 shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200"
               title="A Super Admin has switched this account to edit mode: your changes here are saved. Super Admin areas (permissions, org settings, audit log) stay read-only.">
               ✎ Edit mode
             </span>
           )}
 
-          <div className="flex items-center gap-1 sm:gap-2 ml-auto">
+          <div className="flex items-center gap-1 sm:gap-2 ml-auto shrink-0">
             {isAdmin && canEmployeePortal && (
               // Sliding segmented portal switch — an accent knob slides under the
               // active portal. Matches the theme toggle's height + track styling.
               <div
-                className="relative hidden sm:grid grid-cols-2 items-center rounded-full mr-1"
+                className="relative hidden lg:grid grid-cols-2 items-center rounded-full mr-1 shrink-0"
                 style={{
                   height: 30, padding: 3,
                   background: mode === 'dark' ? '#3b4457' : '#e5e7eb',

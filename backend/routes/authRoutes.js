@@ -4,7 +4,7 @@
  * avatar and banner upload/removal (and viewing any user's images).
  */
 const express = require('express');
-const multer = require('multer');
+const { createUpload } = require('../middleware/upload');
 const {
   signup,
   login,
@@ -23,8 +23,7 @@ const { protect } = require('../middleware/authMiddleware');
 const router = express.Router();
 
 // 5 MB cap; accept only images for the profile photo.
-const avatarUpload = multer({
-  storage: multer.memoryStorage(),
+const avatarUpload = createUpload({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = file.mimetype.startsWith('image/');

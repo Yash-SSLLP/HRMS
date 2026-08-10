@@ -4,7 +4,7 @@
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
-const multer = require('multer');
+const { createUpload } = require('../middleware/upload');
 const {
   listHolidays,
   createHoliday,
@@ -23,8 +23,7 @@ const XLSX_MIME = [
   'application/vnd.ms-excel',
   'application/octet-stream', // some browsers send this for .xlsx
 ];
-const sheetUpload = multer({
-  storage: multer.memoryStorage(),
+const sheetUpload = createUpload({
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = XLSX_MIME.includes(file.mimetype) || /\.xlsx$/i.test(file.originalname || '');

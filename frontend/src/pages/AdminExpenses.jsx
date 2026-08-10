@@ -11,6 +11,7 @@ import PageHeader from '../components/PageHeader';
 import ReceiptView from '../components/ReceiptView';
 import { promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { StatusTrailLine, StatusTrailButton, StatusTrailModal } from '../components/StatusTrail';
 
 const STATUS = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
 
@@ -29,6 +30,7 @@ export default function AdminExpenses() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
   const [payFor, setPayFor] = useState(null); // expense being reimbursed
+  const [trailOf, setTrailOf] = useState(null); // expense whose status trail is open
   const [accounts, setAccounts] = useState([]);
   const [accountId, setAccountId] = useState('');
   const [paying, setPaying] = useState(false);
@@ -143,8 +145,12 @@ export default function AdminExpenses() {
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[x.status] || 'bg-gray-100 text-gray-700'}`}>{x.status}</span>
+                  {/* Same attribution the claimant sees, so a reviewer can tell
+                      at a glance who already actioned a claim. */}
+                  <StatusTrailLine record={x} className="mt-1" />
                   {x.reviewNote && <div className="text-xs text-gray-500 mt-1">Note: {x.reviewNote}</div>}
                   {x.cashbookEntry && <div className="text-xs text-emerald-700 mt-1">Posted to cashbook</div>}
+                  <StatusTrailButton record={x} onClick={() => setTrailOf(x)} className="mt-1" />
                 </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   {x.status === 'Reimbursed' ? (
@@ -162,6 +168,14 @@ export default function AdminExpenses() {
           </tbody>
         </table>
       </div>
+
+      {trailOf && (
+        <StatusTrailModal
+          record={trailOf}
+          title={`Status history · ${trailOf.employee ? `${trailOf.employee.firstName} ${trailOf.employee.lastName}` : 'claim'}`}
+          onClose={() => setTrailOf(null)}
+        />
+      )}
 
       {payFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">

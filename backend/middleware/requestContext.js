@@ -27,6 +27,36 @@ function requestContext(req, res, next) {
 }
 
 /**
+ * Wrap a middleware that finishes OUTSIDE the ALS store, and re-establish the
+ * store for everything after it.
+ *
+ * The store propagates down the synchronous call chain and its promise
+ * descendants, but not across an EventEmitter boundary: a listener runs in the
+ * context that emits, not the context that registered it. Body parsers are the
+ * case that bites — multer resolves from the request stream's 'end' event,
+ * which is emitted by the socket resource that existed BEFORE `requestContext`
+ * ran, so its `next()` (and the whole controller after it) executes with no
+ * store. Every upload route silently lost `currentUser()`, and the audit plugin
+ * recorded those changes with no actor.
+ *
+ * Re-running (rather than `als.enterWith`) is deliberate: enterWith would pin
+ * the store onto the long-lived socket resource, where a keep-alive connection
+ * could hand a stale request's user to the next one — and misattributing an
+ * audit entry is worse than leaving it blank.
+ *
+ * @param {Function} mw - Express middleware (req, res, next).
+ * @returns {Function} The same middleware, with the context restored after it.
+ */
+function preserveContext(mw) {
+  return function contextPreserving(req, res, next) {
+    mw(req, res, (err) => {
+      if (err) return next(err);
+      return als.run({ req }, next);
+    });
+  };
+}
+
+/**
  * @returns {import('mongoose').Document|null} The authenticated User doc for the
  *   in-flight request, or null when unauthenticated / outside a request context.
  */
@@ -35,4 +65,4 @@ function currentUser() {
   return als.getStore()?.req?.user || null;
 }
 
-module.exports = { requestContext, currentUser, als };
+module.exports = { requestContext, preserveContext, currentUser, als };

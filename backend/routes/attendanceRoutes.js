@@ -5,7 +5,7 @@
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
-const multer = require('multer');
+const { createUpload } = require('../middleware/upload');
 const {
   checkIn,
   checkOut,
@@ -34,8 +34,7 @@ const { protect, restrictTo, requirePermission } = require('../middleware/authMi
 const router = express.Router();
 
 // 5 MB cap; accept only images for the punch selfie.
-const photoUpload = multer({
-  storage: multer.memoryStorage(),
+const photoUpload = createUpload({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     cb(file.mimetype.startsWith('image/') ? null : new Error('Only image files are accepted'), file.mimetype.startsWith('image/'));

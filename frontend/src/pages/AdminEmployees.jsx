@@ -78,6 +78,11 @@ export default function AdminEmployees() {
   const [docBusy, setDocBusy] = useState(false);
   const [docCopied, setDocCopied] = useState(false);
   const [editEmail, setEditEmail] = useState('');
+  // Live "is this employee code free?" result for the form field. The server
+  // enforces uniqueness either way; this just says so before the operator has
+  // filled in the rest of the record. 'idle' | 'checking' | 'free' | 'taken'
+  const [codeState, setCodeState] = useState('idle');
+  const [codeTakenBy, setCodeTakenBy] = useState('');
   // Phone lives on the User, not the profile, so it saves separately.
   const [editPhone, setEditPhone] = useState('');
   const phoneAtOpen = useRef('');
@@ -260,6 +265,30 @@ export default function AdminEmployees() {
 
   const resetDocLink = () => { setDocToken(''); setDocCopied(false); setDocBusy(false); };
 
+  // Debounced employee-code availability check while the modal is open. Codes
+  // are stored uppercase, so the comparison — and what we send — is normalised
+  // the same way the server does it. Editing a profile excludes its own code.
+  const typedCode = (form.employeeCode || '').trim().toUpperCase();
+  useEffect(() => {
+    if (!showModal || !typedCode) { setCodeState('idle'); setCodeTakenBy(''); return undefined; }
+    setCodeState('checking');
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/employees/code-available', {
+          params: { code: typedCode, ...(editingId ? { exclude: editingId } : {}) },
+        });
+        setCodeState(data.available ? 'free' : 'taken');
+        setCodeTakenBy(data.takenBy || '');
+      } catch {
+        // A failed check must not block the form — the server still rejects a
+        // duplicate on save.
+        setCodeState('idle');
+        setCodeTakenBy('');
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [typedCode, showModal, editingId]);
+
   const openCreate = async () => {
     setEditingId(null);
     setForm(blankProfile);
@@ -341,6 +370,13 @@ export default function AdminEmployees() {
 
   const onSave = async (e) => {
     e.preventDefault();
+
+    // The live check already flagged this code as taken — stop here rather than
+    // send a request the server is certain to reject.
+    if (codeState === 'taken') {
+      setError(`Employee code "${typedCode}" already exists. Please choose another.`);
+      return;
+    }
 
     // Changing the login email locks the old address out, so it is confirmed
     // against both values before a single request goes out.
@@ -693,8 +729,18 @@ export default function AdminEmployees() {
                     value={form.employeeCode}
                     onChange={(e) => setForm({ ...form, employeeCode: e.target.value })}
                     placeholder="SSL 1"
-                    className="mt-1 block w-full border rounded-lg px-3 py-2 uppercase"
+                    aria-invalid={codeState === 'taken'}
+                    className={`mt-1 block w-full border rounded-lg px-3 py-2 uppercase ${codeState === 'taken' ? 'border-red-400' : ''}`}
                   />
+                  {codeState === 'taken' && (
+                    <p className="text-xs text-red-600 mt-1">
+                      Employee code “{typedCode}” already exists
+                      {codeTakenBy ? ` (${codeTakenBy})` : ''}. Please choose another.
+                    </p>
+                  )}
+                  {codeState === 'free' && (
+                    <p className="text-xs text-emerald-600 mt-1">“{typedCode}” is available.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Date of Joining *</label>
@@ -1018,7 +1064,8 @@ export default function AdminEmployees() {
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowModal(false)}
                   className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving}
+                <button type="submit" disabled={saving || codeState === 'taken'}
+                  title={codeState === 'taken' ? 'That employee code already exists' : undefined}
                   className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
                   {saving ? 'Saving…' : 'Save'}
                 </button>

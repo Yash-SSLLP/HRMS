@@ -5,7 +5,7 @@
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
-const multer = require('multer');
+const { createUpload } = require('../middleware/upload');
 const {
   listMine,
   uploadMine,
@@ -31,8 +31,7 @@ const ALLOWED_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
-const upload = multer({
-  storage: multer.memoryStorage(),
+const upload = createUpload({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_MIMES.has(file.mimetype)) {

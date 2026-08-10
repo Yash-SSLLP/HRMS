@@ -18,6 +18,15 @@ export const AVATAR_MAX_PX = 512;
 export const BANNER_MAX_PX = 1280;
 
 /**
+ * Longest edge (px) for a photographed receipt/document. Much larger than an
+ * avatar because the whole point of the image is that an approver can READ it
+ * — amount, date, merchant — so it is sized to stay legible full-screen while
+ * landing well inside the 5 MB upload cap. Keep in step with the web copy in
+ * frontend/src/utils/image.js.
+ */
+export const RECEIPT_MAX_PX = 1600;
+
+/**
  * Downscale + re-encode a picked image as JPEG.
  * @param {{uri: string, width?: number, height?: number}} asset - An
  *   expo-image-picker asset (its width/height decide whether a resize is needed).

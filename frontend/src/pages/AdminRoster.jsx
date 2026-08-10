@@ -173,7 +173,7 @@ export default function AdminRoster() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
           <h2 className="card-title">Roster</h2>
           <div className="flex flex-wrap items-center gap-2">
-            <form onSubmit={applyFilter} className="flex items-center gap-2">
+            <form onSubmit={applyFilter} className="flex flex-wrap items-center gap-2">
               <input type="date" value={filter.from} onChange={(e) => setFilter({ ...filter, from: e.target.value })} className="border rounded-lg px-3 py-2 text-sm" />
               <span className="text-gray-400 text-sm">to</span>
               <input type="date" value={filter.to} onChange={(e) => setFilter({ ...filter, to: e.target.value })} className="border rounded-lg px-3 py-2 text-sm" />

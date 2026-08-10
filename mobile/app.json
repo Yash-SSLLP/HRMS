@@ -47,7 +47,7 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Allow SSLLP HRMS to use the camera for attendance check-in selfies."
+          "cameraPermission": "Allow SSLLP HRMS to use the camera for attendance check-in selfies and to photograph expense receipts."
         }
       ],
       [
@@ -64,8 +64,8 @@
       ]
     ],
     "extra": {
-      "apiBaseUrl": "https://hrms-production-97a8.up.railway.app",
-      "webBaseUrl": "https://hrms-production-97a8.up.railway.app",
+      "apiBaseUrl": "https://hrms-cfyq.onrender.com",
+      "webBaseUrl": "https://hrms-orpin-gamma.vercel.app",
       "eas": {
         "projectId": "00000000-0000-0000-0000-000000000000"
       }

@@ -5,7 +5,7 @@
  * submission (multer uploads for xlsx and documents).
  */
 const express = require('express');
-const multer = require('multer');
+const { createUpload } = require('../middleware/upload');
 const {
   getMyProfile,
   updateMyBirthday,
@@ -14,6 +14,7 @@ const {
   exportEmployeeZip,
   exportAllEmployeesZip,
   getEmployee,
+  checkEmployeeCode,
   createEmployee,
   updateEmployee,
   deleteEmployee,
@@ -29,8 +30,7 @@ const { protect, restrictTo, requirePermission } = require('../middleware/authMi
 const router = express.Router();
 
 // 2 MB cap on xlsx uploads; allow only xlsx mime
-const xlsxUpload = multer({
-  storage: multer.memoryStorage(),
+const xlsxUpload = createUpload({
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -40,8 +40,7 @@ const xlsxUpload = multer({
 });
 
 // 10 MB cap; documents the employee submits via the public link.
-const docUpload = multer({
-  storage: multer.memoryStorage(),
+const docUpload = createUpload({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf'
@@ -85,6 +84,9 @@ router.get('/documents-status', employeesDocumentStatus);
 router.get('/export-all.zip', exportAllEmployeesZip);
 // POST /import — bulk-import employees from xlsx; protected, requires 'employees.manage' + multer single 'file' (2MB xlsx).
 router.post('/import', xlsxUpload.single('file'), importEmployeesXlsx);
+// GET /code-available — is an employee code free? (live check for the add/edit
+// form). Also before /:id so "code-available" isn't matched as an id.
+router.get('/code-available', checkEmployeeCode);
 
 // POST / — create an employee; protected, requires 'employees.manage'.
 router.post('/', createEmployee);

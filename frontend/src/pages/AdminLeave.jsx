@@ -342,7 +342,9 @@ function BalancesTab() {
 
             <form onSubmit={onSave} className="space-y-3">
               {['EL', 'CL', 'SL'].map((t) => (
-                <div key={t} className="grid grid-cols-3 gap-3 items-end">
+                // Three columns squeeze the two labelled number fields to ~75px
+                // inside a phone-width modal, so the row stacks below sm.
+                <div key={t} className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 sm:items-end">
                   <div className="text-sm font-medium text-gray-700">{t}</div>
                   <div>
                     <label className="block text-xs text-gray-600">Carry-forward (opening)</label>
@@ -358,9 +360,9 @@ function BalancesTab() {
                   </div>
                 </div>
               ))}
-              <div className="grid grid-cols-3 gap-3 items-end">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 sm:items-end">
                 <div className="text-sm font-medium text-gray-700">ML</div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-xs text-gray-600">Granted (default 182 = 26 weeks)</label>
                   <input type="number" value={form.ML.granted}
                     onChange={(e) => setForm({ ...form, ML: { granted: Number(e.target.value) || 0 } })}

@@ -9,19 +9,23 @@ import { useAuth } from '../store/auth';
 
 // The mobile app ALWAYS talks to the deployed (remote) backend — never a local
 // machine. The URL comes from app.json -> expo.extra.apiBaseUrl, with the
-// Railway deployment as the hard-coded fallback. (No localhost / LAN override:
-// a phone can't reach the dev machine's localhost anyway.)
+// current deployment as the hard-coded fallback. Keep both in step with the
+// website's frontend/.env -> VITE_BACKEND_URL, or the app and the website end
+// up on different databases. (No localhost / LAN override: a phone can't reach
+// the dev machine's localhost anyway.)
 const configured =
   Constants.expoConfig?.extra?.apiBaseUrl ||
-  'https://hrms-production-97a8.up.railway.app';
+  'https://hrms-cfyq.onrender.com';
 
 const stripSlash = (u) => (u || '').replace(/\/+$/, '');
 export const API_BASE = `${stripSlash(configured)}/api`;
 
 // The public website origin (where candidate-facing pages like the application
 // form and document-upload page live). Used only to build shareable links that
-// HR sends to candidates. Defaults to the API origin; override via
-// app.json -> expo.extra.webBaseUrl if the web portal is hosted elsewhere.
+// HR sends to candidates, so it must point at the WEBSITE deployment, not the
+// API: the backend serves no HTML, so a link built from the API origin 404s.
+// Set in app.json -> expo.extra.webBaseUrl; the API origin is only a last-ditch
+// fallback for a build that forgot to configure it.
 export const WEB_BASE = stripSlash(Constants.expoConfig?.extra?.webBaseUrl || configured);
 
 /**

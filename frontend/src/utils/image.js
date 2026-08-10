@@ -16,6 +16,14 @@
 export const AVATAR_MAX_PX = 512;
 
 /**
+ * Longest edge (px) for a photographed receipt/document. Far larger than an
+ * avatar because the point of the image is that an approver can READ it — the
+ * amount, the date, the merchant — so it is sized to stay legible full-screen
+ * while still landing well inside the 5 MB upload cap.
+ */
+export const RECEIPT_MAX_PX = 1600;
+
+/**
  * Downscale + re-encode an image File as JPEG.
  * @param {File} file - The picked file.
  * @param {number} [maxPx] - Cap for the longest edge.

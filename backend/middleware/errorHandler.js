@@ -38,11 +38,25 @@ function errorHandler(err, req, res, next) {
     message = Object.values(err.errors).map((e) => e.message).join('; ');
   }
 
-  // Duplicate key
+  // Duplicate key. Controllers that can hit a unique index on a user-entered
+  // field check it up front and throw their own message; this is the backstop
+  // for everything else, and it names the field in the words the UI uses rather
+  // than the raw schema path.
   if (err.code === 11000) {
     status = 409;
     const field = Object.keys(err.keyValue || {})[0] || 'field';
-    message = `Duplicate value for ${field}`;
+    const value = err.keyValue?.[field];
+    const LABELS = {
+      employeeCode: 'Employee code',
+      email: 'Email address',
+      phone: 'Phone number',
+      code: 'Code',
+      name: 'Name',
+    };
+    const label = LABELS[field] || field;
+    message = value
+      ? `${label} "${value}" already exists. Please choose another.`
+      : `${label} already exists. Please choose another.`;
   }
 
   // Bad ObjectId

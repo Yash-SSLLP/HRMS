@@ -8,6 +8,7 @@
 const asyncHandler = require('express-async-handler');
 const Expense = require('../models/Expense');
 const { EXPENSE_STATUS } = require('../models/Expense');
+const AuditLog = require('../models/AuditLog');
 const CashAccount = require('../models/CashAccount');
 const CashbookEntry = require('../models/CashbookEntry');
 const { recomputeBalance } = require('./cashbookController');
@@ -17,6 +18,52 @@ const { notify, notifyMany } = require('../services/notify');
 const { usersHoldingAny } = require('../services/audience');
 
 const USER_FIELDS = 'firstName lastName email role';
+
+/**
+ * Attach each claim's status trail — who moved it, from what to what, and when.
+ *
+ * `reviewedBy` on the document only ever holds the LAST person to touch it, so
+ * a claim approved by one reviewer and paid out by another loses the first
+ * name. The auditStatus plugin on the Expense schema already records every
+ * transition in AuditLog with the actor's name and role, so the trail is read
+ * back from there — one indexed query for the whole page — and returned
+ * alongside the claim. The names are snapshots taken at the time of the change,
+ * which is what an audit trail should show even if someone is later renamed.
+ *
+ * @param {Array<import('mongoose').Document>} expenses - Expense docs.
+ * @returns {Promise<Object[]>} Serialised claims, each with `statusHistory`
+ *   oldest-first (the first entry is the submission).
+ */
+async function withStatusHistory(expenses) {
+  if (!expenses.length) return [];
+
+  const logs = await AuditLog.find({
+    entity: 'Expense',
+    field: 'status',
+    entityId: { $in: expenses.map((e) => e._id) },
+  })
+    .sort({ at: 1 })
+    .select('entityId fromStatus toStatus by byName byRole at')
+    .lean();
+
+  const trails = new Map();
+  for (const log of logs) {
+    const key = String(log.entityId);
+    if (!trails.has(key)) trails.set(key, []);
+    trails.get(key).push({
+      from: log.fromStatus || null, // null on the submission row
+      to: log.toStatus,
+      by: log.by || null,
+      byName: log.byName || null,
+      byRole: log.byRole || null,
+      at: log.at,
+    });
+  }
+
+  // toJSON (not the raw doc) so the schema transform still hides the receipt's
+  // storage path and adds hasReceipt.
+  return expenses.map((e) => ({ ...e.toJSON(), statusHistory: trails.get(String(e._id)) || [] }));
+}
 
 // Tell the people who settle claims that a new one landed. Reimbursement is paid
 // out of the cashbook, so cashbook-access holders are notified alongside the
@@ -55,8 +102,10 @@ async function attachReceipt(expense, file) {
  * @returns {{count: number, expenses: Object[]}}
  */
 const listMyExpenses = asyncHandler(async (req, res) => {
-  const expenses = await Expense.find({ employee: req.user._id }).sort({ createdAt: -1 });
-  res.json({ count: expenses.length, expenses });
+  const expenses = await Expense.find({ employee: req.user._id })
+    .sort({ createdAt: -1 })
+    .populate('reviewedBy', USER_FIELDS);
+  res.json({ count: expenses.length, expenses: await withStatusHistory(expenses) });
 });
 
 /**
@@ -136,7 +185,8 @@ const downloadReceipt = asyncHandler(async (req, res) => {
  * @route GET /api/expenses  (expenses.manage)
  * @param {string} [req.query.status]
  * @param {string} [req.query.category]
- * @returns {{count: number, expenses: Object[]}} with populated employee
+ * @returns {{count: number, expenses: Object[]}} with populated employee/reviewer
+ *   and each claim's `statusHistory`
  */
 const listExpenses = asyncHandler(async (req, res) => {
   const filter = {};
@@ -144,8 +194,9 @@ const listExpenses = asyncHandler(async (req, res) => {
   if (req.query.category) filter.category = req.query.category;
   const expenses = await Expense.find(filter)
     .populate('employee', USER_FIELDS)
+    .populate('reviewedBy', USER_FIELDS)
     .sort({ createdAt: -1 });
-  res.json({ count: expenses.length, expenses });
+  res.json({ count: expenses.length, expenses: await withStatusHistory(expenses) });
 });
 
 /**
@@ -261,6 +312,9 @@ const reviewExpense = asyncHandler(async (req, res) => {
   expense.reviewedBy = req.user._id;
   expense.reviewedAt = new Date();
   await expense.save();
+  // Send the reviewer back named, so the row the caller re-renders shows who
+  // acted without waiting for the next list fetch.
+  await expense.populate('reviewedBy', USER_FIELDS);
 
   // Tell the employee once the payout is actually persisted. Keyed off the
   // status TRANSITION rather than the cashbook post, so re-saving an already

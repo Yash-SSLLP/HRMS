@@ -1391,10 +1391,10 @@ const convertToEmployee = asyncHandler(async (req, res) => {
     throw new Error('A date of joining is required (set it on the Onboarding page or in this form).');
   }
 
-  const employeeCode = (req.body.employeeCode || (await computeNextEmployeeCode()).suggestion).toUpperCase();
+  const employeeCode = (req.body.employeeCode || (await computeNextEmployeeCode()).suggestion).trim().toUpperCase();
   if (await EmployeeProfile.findOne({ employeeCode })) {
     res.status(409);
-    throw new Error(`Employee code "${employeeCode}" is already in use. Please choose another.`);
+    throw new Error(`Employee code "${employeeCode}" already exists. Please choose another.`);
   }
 
   const { firstName: fnGuess, lastName: lnGuess } = splitName(candidate.name);

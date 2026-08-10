@@ -5,7 +5,7 @@
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
-const multer = require('multer');
+const { createUpload } = require('../middleware/upload');
 const {
   listMyExpenses, createExpense, listExpenses, reviewExpense, deleteExpense,
   downloadReceipt, listAccounts,
@@ -15,8 +15,7 @@ const { protect, requirePermission } = require('../middleware/authMiddleware');
 const router = express.Router();
 
 // 5 MB receipts; images or PDF only (mirrors the cashbook receipt upload).
-const receiptUpload = multer({
-  storage: multer.memoryStorage(),
+const receiptUpload = createUpload({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf';
