@@ -16,7 +16,16 @@
  */
 const fs = require('fs');
 const path = require('path');
-const admin = require('firebase-admin');
+// firebase-admin v13+ dropped the old `admin.credential` / `admin.messaging()`
+// namespace in favour of these modular entry points. Importing the root package
+// and reaching for `admin.apps` / `admin.credential.cert` — as this file used to
+// — throws on v14, which is why push was silently dead even once a service
+// account was configured: the throw was swallowed by the try/catch below and
+// only ever surfaced as a log line.
+// `getMessaging` is aliased because this module already exports a function of
+// that name.
+const { initializeApp, getApp, getApps, cert } = require('firebase-admin/app');
+const { getMessaging: getFcmMessaging } = require('firebase-admin/messaging');
 const DeviceToken = require('../models/DeviceToken');
 
 let messaging = null;
@@ -59,10 +68,8 @@ function getMessaging() {
     return null;
   }
   try {
-    const app = admin.apps.length
-      ? admin.app()
-      : admin.initializeApp({ credential: admin.credential.cert(creds) });
-    messaging = admin.messaging(app);
+    const app = getApps().length ? getApp() : initializeApp({ credential: cert(creds) });
+    messaging = getFcmMessaging(app);
     console.log('FCM push initialised for project:', creds.project_id);
   } catch (err) {
     console.error('Firebase Admin init failed:', err.message);

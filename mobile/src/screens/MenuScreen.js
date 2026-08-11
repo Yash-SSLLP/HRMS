@@ -148,6 +148,13 @@ export default function MenuScreen() {
     if (hasPermission(me, 'org.manage')) {
       adminItems.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2' });
     }
+    // Bulk calendar upload rides on the same capability the server enforces for
+    // /holidays/import ('leave.manage'), not on events.manage — the workbook is
+    // mostly holidays and comp-offs, and the Celebrations sheet is checked
+    // separately server-side.
+    if (hasPermission(me, 'leave.manage')) {
+      adminItems.push({ key: 'CalendarImport', label: 'Calendar Upload', icon: 'cloud-upload', tint: '#0ea5e9' });
+    }
     const adminGroup = { title: 'Admin & Manager', items: adminItems };
     // Admins and execs live in this group, so it leads and opens by default (the
     // first group is the expanded one). A plain Manager is an employee first —

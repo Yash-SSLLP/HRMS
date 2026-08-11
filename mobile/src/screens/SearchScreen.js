@@ -10,7 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 
 import api, { mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
-import { canEmployeeSelf, canViewAdmin, canApprove, hasTeam, showsAdminEntry, isSuperAdmin } from '../utils/roles';
+import { canEmployeeSelf, canViewAdmin, canApprove, hasTeam, showsAdminEntry, isSuperAdmin, hasPermission } from '../utils/roles';
 import { Screen, Avatar, Ionicons } from '../components/ui';
 import { colors, radius, spacing, font } from '../theme';
 
@@ -74,6 +74,7 @@ const PAGES = [
   { label: 'Work Locations', screen: 'WorkLocations', group: 'Admin', icon: 'location', show: canApprove },
   { label: 'Recruitment', screen: 'Recruitment', group: 'Admin', icon: 'briefcase', show: canApprove },
   { label: 'Rewards & Recognition', screen: 'RnrAdmin', group: 'Admin', icon: 'trophy', show: canApprove },
+  { label: 'Calendar Upload', screen: 'CalendarImport', group: 'Admin', icon: 'cloud-upload', show: (u) => hasPermission(u, 'leave.manage') },
 ];
 
 const personUri = (p) => (p.user?.photo ? `${mediaUrl(`/auth/users/${p.user._id}/avatar`)}?p=${encodeURIComponent(p.user.photo)}` : null);

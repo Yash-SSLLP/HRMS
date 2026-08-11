@@ -85,6 +85,15 @@ const updateEvent = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Event not found');
   }
+  // Snapshot the details people plan around, so the save below can be compared
+  // against them.
+  const before = {
+    title: event.title,
+    date: new Date(event.date).getTime(),
+    time: event.time || '',
+    location: event.location || '',
+  };
+
   const { title, date, time, location, description } = req.body;
   if (title !== undefined) event.title = title;
   if (date !== undefined) event.date = date;
@@ -92,7 +101,29 @@ const updateEvent = asyncHandler(async (req, res) => {
   if (location !== undefined) event.location = location;
   if (description !== undefined) event.description = description;
   await event.save();
-  res.json({ event });
+
+  // A rescheduled or moved event is exactly the thing attendees must be told
+  // about, and until now only creation notified — someone who saw "Friday, 4pm"
+  // kept that in their head after HR changed it. Only the details people plan
+  // around count as a change: a description tidy-up must not push everyone.
+  const changed = [];
+  if (before.title !== event.title) changed.push('renamed');
+  if (before.date !== new Date(event.date).getTime()) changed.push('moved to a new date');
+  if (before.time !== (event.time || '')) changed.push('rescheduled');
+  if (before.location !== (event.location || '')) changed.push('moved');
+
+  if (changed.length) {
+    const recipients = await User.find({ isActive: true, _id: { $ne: req.user._id } }).select('_id');
+    const detail = [event.time, event.location].filter(Boolean).join(' · ');
+    await notifyMany(recipients.map((u) => u._id), {
+      type: 'event',
+      title: `Event updated: ${event.title}`,
+      body: `Now ${fmtDate(event.date)}${detail ? ` - ${detail}` : ''}`,
+      link: 'calendar',
+    });
+  }
+
+  res.json({ event, notified: changed.length ? true : false });
 });
 
 /**
@@ -108,7 +139,19 @@ const deleteEvent = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Event not found');
   }
+  const { title, date } = event;
   await event.deleteOne();
+
+  // A cancellation matters more than the original invitation — without this an
+  // attendee only finds out by noticing the entry has vanished from the calendar.
+  const recipients = await User.find({ isActive: true, _id: { $ne: req.user._id } }).select('_id');
+  await notifyMany(recipients.map((u) => u._id), {
+    type: 'event',
+    title: `Event cancelled: ${title}`,
+    body: `${fmtDate(date)} - this event has been removed from the calendar`,
+    link: 'calendar',
+  });
+
   res.json({ id: req.params.id, deleted: true });
 });
 
