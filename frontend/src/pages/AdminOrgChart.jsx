@@ -311,10 +311,14 @@ export default function AdminOrgChart() {
             <h2 className="text-center text-2xl font-bold text-gray-900 mb-2">{ROOT_TITLE}</h2>
             <div className="org-tree-wrap">
               <ul className="org-tree">
-                {/* Synthetic company root (black), branching to the real org roots */}
+                {/* Synthetic company root, branching to the real org roots. Its
+                    dot carries the animated company mark rather than a flat
+                    colour, so the top of the tree reads as the company itself. */}
                 <li>
-                  <div className="org-node" title={ROOT_TITLE}>
-                    <span className="org-dot" style={{ background: ROOT_COLOR }} aria-label={ROOT_TITLE} />
+                  <div className="org-node org-node--company" title={ROOT_TITLE}>
+                    <span className="org-dot org-dot--company" style={{ background: ROOT_COLOR }}>
+                      <img src="/company-logo.gif" alt={ROOT_TITLE} className="org-dot__logo" />
+                    </span>
                   </div>
                   <ul>
                     {sortedRoots.map((node) => (

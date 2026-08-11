@@ -1,8 +1,11 @@
 /**
  * OrgChartScreen — the reporting hierarchy, read-only. The web draws this as a
- * wide horizontal tree; on a phone that is unreadable, so the same forest is
- * rendered as an indented, collapsible list — tap a person to fold their reports
- * away, or search to jump straight to someone.
+ * wide horizontal tree; a phone cannot show that, so the same forest is drawn as
+ * a VERTICAL tree: each report hangs off its manager on a drawn rail, with an
+ * elbow into the card and the rail continuing past it only while more siblings
+ * follow (the ├ / └ of a file browser). Depth is therefore readable from the
+ * connectors themselves rather than from indentation alone. Tap a person to fold
+ * their reports away, or search to jump straight to someone.
  *
  * Route: "OrgChart" (Menu > My work). Any role — the endpoint is protect-only and
  * already hides whoever the viewer isn't allowed to see.
@@ -17,10 +20,22 @@ import api, { mediaUrl } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Avatar, Input, EmptyState, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 
-// How far each level is pushed in. Kept small — a deep chain still has to fit a
-// 360dp screen, so the connector line does most of the work of showing depth.
-const INDENT = 16;
-const MAX_INDENT_LEVEL = 6;
+// Width of one rail column — this is also the per-level indent, since every
+// level adds exactly one column. Kept narrow because a deep chain still has to
+// leave the card readable on a 360dp screen.
+const RAIL = 20;
+
+// Rails stop accumulating past this depth. Beyond it every level reuses the same
+// gutter width, so a pathologically deep chain squeezes the card but never
+// pushes it off-screen. The elbow still comes from the immediate parent, so the
+// row directly above a node is always the correct one.
+const MAX_RAILS = 6;
+
+// Vertical centre of a card, where the elbow meets it. The card is a fixed
+// height (a 40px avatar plus 10px padding top and bottom plus 1px borders), and
+// both text lines are clamped to one line, so this stays constant and every
+// elbow across the tree lines up.
+const CARD_MID = 31;
 
 /** Flatten the forest to a searchable list of {node, path} for the search mode. */
 function flatten(nodes, trail = [], out = []) {
@@ -38,6 +53,35 @@ function allIds(nodes, out = []) {
     allIds(n.reports, out);
   }
   return out;
+}
+
+/**
+ * The connector gutter to the left of a nested card.
+ *
+ * `ancestors` carries one flag per level above this node: true where that
+ * ancestor still has siblings below it, so its rail must run past this row to
+ * reach them. False leaves the column blank, which is what makes a finished
+ * branch visibly close instead of trailing a line down the whole screen.
+ *
+ * The last column is this node's own elbow: rail down to the card's centre,
+ * a tick across into it, and the rail continued below only when another sibling
+ * follows (└ when last, ├ otherwise).
+ */
+function Rails({ ancestors, isLast }) {
+  return (
+    <View style={styles.gutter}>
+      {ancestors.map((continues, i) => (
+        <View key={i} style={styles.railCol}>
+          {continues ? <View style={styles.railFull} /> : null}
+        </View>
+      ))}
+      <View style={styles.railCol}>
+        <View style={styles.railTop} />
+        {!isLast ? <View style={styles.railBottom} /> : null}
+        <View style={styles.elbow} />
+      </View>
+    </View>
+  );
 }
 
 function Person({ node, size = 40 }) {
@@ -94,28 +138,40 @@ export default function OrgChartScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
-  /** One person plus their reports, recursively. */
-  const renderNode = (node, level) => {
+  /**
+   * One person plus their reports, recursively.
+   *
+   * `ancestors` is the rail-continuation flag per level above this node (see
+   * Rails); `isLast` says whether this node closes its sibling group.
+   */
+  const renderNode = (node, ancestors, isLast, isRoot = false) => {
     const kids = node.reports || [];
     const isCollapsed = collapsed.has(node.id);
-    const pad = Math.min(level, MAX_INDENT_LEVEL) * INDENT;
+    const hasKids = kids.length > 0;
+    // Children inherit our ancestors plus one flag for THIS node's level: its
+    // rail must run past them only while we still have a sibling to reach. A
+    // root contributes no rail of its own — its children start the tree.
+    const childAncestors = isRoot ? [] : [...ancestors, !isLast].slice(-MAX_RAILS);
     return (
       <View key={node.id}>
-        <TouchableOpacity
-          style={[styles.row, { marginLeft: pad }]}
-          activeOpacity={kids.length ? 0.6 : 1}
-          onPress={kids.length ? () => toggle(node.id) : undefined}
-        >
-          {level > 0 ? <View style={styles.connector} /> : null}
-          <Person node={node} />
-          {kids.length ? (
-            <View style={styles.countChip}>
-              <Text style={styles.countText}>{kids.length}</Text>
-              <Ionicons name={isCollapsed ? 'chevron-down' : 'chevron-up'} size={14} color={colors.textMuted} />
-            </View>
-          ) : null}
-        </TouchableOpacity>
-        {!isCollapsed && kids.map((c) => renderNode(c, level + 1))}
+        <View style={styles.branch}>
+          {/* Root rows have no parent to hang from, so they carry no gutter. */}
+          {isRoot ? null : <Rails ancestors={ancestors} isLast={isLast} />}
+          <TouchableOpacity
+            style={styles.card}
+            activeOpacity={hasKids ? 0.6 : 1}
+            onPress={hasKids ? () => toggle(node.id) : undefined}
+          >
+            <Person node={node} />
+            {hasKids ? (
+              <View style={styles.countChip}>
+                <Text style={styles.countText}>{kids.length}</Text>
+                <Ionicons name={isCollapsed ? 'chevron-down' : 'chevron-up'} size={14} color={colors.textMuted} />
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        </View>
+        {!isCollapsed && kids.map((c, i) => renderNode(c, childAncestors, i === kids.length - 1))}
       </View>
     );
   };
@@ -160,7 +216,7 @@ export default function OrgChartScreen() {
                 <Text style={styles.toolLink}>{allCollapsed ? 'Expand all' : 'Collapse all'}</Text>
               </TouchableOpacity>
             </View>
-            {roots.map((r) => renderNode(r, 0))}
+            {roots.map((r, i) => renderNode(r, [], i === roots.length - 1, true))}
           </>
         )}
       </ScrollView>
@@ -174,17 +230,46 @@ const styles = StyleSheet.create({
     marginTop: spacing(3), marginBottom: spacing(2),
   },
   toolLink: { color: colors.primaryDark, fontWeight: '700', fontSize: 12.5 },
+  // Gutter + card. `alignItems: 'stretch'` is what lets the rail columns take
+  // the full height of the row INCLUDING the card's bottom margin — without it
+  // the rails stop at the card's edge and the tree reads as dashes rather than
+  // continuous lines.
+  branch: { flexDirection: 'row', alignItems: 'stretch' },
+  gutter: { flexDirection: 'row' },
+  railCol: { width: RAIL },
+  // A rail passing straight through this row to a lower sibling of an ancestor.
+  railFull: {
+    position: 'absolute', left: RAIL / 2, top: 0, bottom: 0,
+    width: 1, backgroundColor: colors.borderStrong,
+  },
+  // This node's own connector: down from the parent to the card's centre...
+  railTop: {
+    position: 'absolute', left: RAIL / 2, top: 0, height: CARD_MID,
+    width: 1, backgroundColor: colors.borderStrong,
+  },
+  // ...continuing below only when another sibling follows (├ rather than └)...
+  railBottom: {
+    position: 'absolute', left: RAIL / 2, top: CARD_MID, bottom: 0,
+    width: 1, backgroundColor: colors.borderStrong,
+  },
+  // ...and the tick across into the card.
+  elbow: {
+    position: 'absolute', left: RAIL / 2, top: CARD_MID,
+    width: RAIL / 2, height: 1, backgroundColor: colors.borderStrong,
+  },
+  card: {
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+    padding: spacing(2.5), marginBottom: spacing(2),
+  },
+  // Search results are a flat list with no hierarchy to draw, so they keep the
+  // plain card shape.
   row: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: colors.surface, borderRadius: radius.md,
     borderWidth: 1, borderColor: colors.border,
     padding: spacing(2.5), marginBottom: spacing(2),
-  },
-  // Short stub on the left of a nested row, standing in for the web chart's
-  // connector line between a manager and a report.
-  connector: {
-    position: 'absolute', left: -10, top: '50%',
-    width: 10, height: 1, backgroundColor: colors.borderStrong,
   },
   countChip: {
     flexDirection: 'row', alignItems: 'center', gap: 2,

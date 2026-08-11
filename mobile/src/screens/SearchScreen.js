@@ -51,6 +51,11 @@ const PAGES = [
   { label: 'Surveys', screen: 'Surveys', group: 'Workplace', icon: 'clipboard', show: emp },
   { label: 'Documents', screen: 'Documents', group: 'Workplace', icon: 'folder', show: emp },
   { label: 'Assets', screen: 'Assets', group: 'Workplace', icon: 'cube', show: emp },
+  // Reachable by everyone rather than gated to `emp`: the Menu lists it under
+  // Workplace for employees AND re-lists it in the admin group for CEO/MD/
+  // SuperAdmin, who get no self-service groups at all. Gating this to `emp`
+  // would hide it from exactly the people most likely to search for it.
+  { label: 'Org Chart', screen: 'OrgChart', group: 'Workplace', icon: 'git-branch', show: always },
   // Tabs (available to everyone)
   { label: 'Calendar', screen: 'Calendar', group: 'Workplace', icon: 'calendar', tab: true, show: always },
   // Chat is an org-wide switch; `show` also receives the feature flags.

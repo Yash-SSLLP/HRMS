@@ -18,6 +18,8 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import api, { mediaUrl } from '../api/client';
 import { readCacheSync, hydrate, writeCache } from '../api/cache';
 import { useAuth } from '../store/auth';
+import { useBadges } from '../store/badges';
+import { routeForNotification } from '../navigation/navRef';
 import { colors, radius, spacing, shadow, font, roleAccent, notifStyle } from '../theme';
 import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, refresher, Ionicons } from '../components/ui';
 import { greeting, fmtTime, fmtDate, timeAgo } from '../utils/format';
@@ -57,6 +59,7 @@ const ADMIN_ACTIONS = [
 export default function DashboardScreen() {
   const nav = useNavigation();
   const user = useAuth((s) => s.user);
+  const refreshBadges = useBadges((s) => s.refresh);
   const accent = roleAccent[user?.role] || colors.primary;
 
   // Seed from the cached snapshot for an instant paint, then refresh.
@@ -105,6 +108,36 @@ export default function DashboardScreen() {
     setData(next);
     writeCache('dashboard', next);
   }, [user?.role]);
+
+  /**
+   * Open a recent alert — the same gesture the Notifications tab offers, so a
+   * home-screen alert is actionable where it is read instead of only through
+   * "See all". Marks it read optimistically (the unread wash clears on tap
+   * rather than after the round-trip) and then follows the notification to
+   * whatever it is about.
+   */
+  const openAlert = (n) => {
+    if (!n.readAt) {
+      const next = {
+        ...data,
+        notifs: (data.notifs || []).map((x) => (x._id === n._id ? { ...x, readAt: new Date().toISOString() } : x)),
+      };
+      setData(next);
+      // Keep the cached snapshot in step, or the next cold start would paint the
+      // row unread again until the refresh lands.
+      writeCache('dashboard', next);
+      api.patch(`/notifications/${n._id}/read`).then(refreshBadges).catch(() => {});
+    }
+    const { tab, screen, params } = routeForNotification(n);
+    // This screen already sits in the Home stack, so a Home target is a plain
+    // push; every other target is a sibling tab and has to go via the parent
+    // navigator (the same hop "See all" makes).
+    if (tab === 'Home') {
+      if (screen) nav.navigate(screen, params);
+    } else if (tab) {
+      nav.getParent()?.navigate(tab, screen ? { screen, params } : undefined);
+    }
+  };
 
   // Dismiss an announcement from the home banner (per-user, persisted server-side;
   // also hidden locally so it disappears immediately even before a reload).
@@ -363,7 +396,12 @@ export default function DashboardScreen() {
           data.notifs.slice(0, 4).map((n) => {
             const s = notifStyle[n.type] || notifStyle.general;
             return (
-              <View key={n._id} style={[styles.alertRow, !n.readAt && { backgroundColor: colors.primarySoft }]}>
+              <TouchableOpacity
+                key={n._id}
+                activeOpacity={0.7}
+                onPress={() => openAlert(n)}
+                style={[styles.alertRow, !n.readAt && { backgroundColor: colors.primarySoft }]}
+              >
                 <View style={[styles.upIcon, { backgroundColor: s.tint + '1a' }]}>
                   <Ionicons name={s.icon} size={18} color={s.tint} />
                 </View>
@@ -372,7 +410,8 @@ export default function DashboardScreen() {
                   {n.body ? <Text style={font.small} numberOfLines={1}>{n.body}</Text> : null}
                 </View>
                 <Text style={font.small}>{timeAgo(n.createdAt)}</Text>
-              </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textFaint} style={{ marginLeft: 6 }} />
+              </TouchableOpacity>
             );
           })
         ) : (
