@@ -23,6 +23,7 @@ import LockScreen from './src/screens/LockScreen';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { navRef, navigateFromNotification } from './src/navigation/navRef';
 import { registerForPush, clearBadge } from './src/services/push';
+import { warmUp } from './src/api/client';
 
 const navTheme = {
   dark: isDark,
@@ -51,6 +52,9 @@ export default function App() {
   useEffect(() => {
     hydrate();
     sec.hydrate();
+    // Start the backend waking up now, so its cold boot runs while the user is
+    // still reading the login screen rather than after they tap Sign in.
+    warmUp();
     // Paint the root window in the theme background so there's no white flash
     // behind sheets / during navigation transitions in dark mode.
     SystemUI.setBackgroundColorAsync(colors.bg).catch(() => {});
