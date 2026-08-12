@@ -11,7 +11,7 @@
  * Salary figures are deliberately NOT shown here — home is the first screen up
  * and is easily seen by someone nearby. Net pay lives on the Payslips screen.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
@@ -21,7 +21,7 @@ import { useAuth } from '../store/auth';
 import { useBadges } from '../store/badges';
 import { routeForNotification } from '../navigation/navRef';
 import { colors, radius, spacing, shadow, font, roleAccent, notifStyle } from '../theme';
-import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, refresher, Ionicons } from '../components/ui';
+import { Screen, Card, Avatar, SectionHeader, Pill, ProgressBar, Badge, refresher, Ionicons } from '../components/ui';
 import { greeting, fmtTime, fmtDate, timeAgo } from '../utils/format';
 import { showsAdminEntry, isExec, canApprove, canEmployeeSelf } from '../utils/roles';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
@@ -45,7 +45,9 @@ const QUICK_ACTIONS = [
 
 // SuperAdmin has no employee self-service — surface admin shortcuts instead.
 const ADMIN_ACTIONS = [
-  { key: 'Approvals', label: 'Approvals', icon: 'checkmark-done', tint: '#16a34a' },
+  // "(HR)" distinguishes the org-wide queue from the "My Approvals" tile the
+  // approver roles get — same wording MenuScreen already uses for the pair.
+  { key: 'Approvals', label: 'Approvals (HR)', icon: 'checkmark-done', tint: '#16a34a' },
   { key: 'TodayAttendance', label: 'Attendance', icon: 'finger-print', tint: '#0ea5e9' },
   { key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea' },
   { key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' },
@@ -83,6 +85,11 @@ export default function DashboardScreen() {
       api.get('/celebrations/upcoming?days=14').catch(() => null),
       api.get('/notifications').catch(() => null),
       api.get('/announcements').catch(() => null),
+      // Count for the Approvals tile badge — how many requests sit in MY
+      // reporting-chain inbox. Kept in this fixed slot (rather than appended
+      // conditionally) so the destructuring below can't shift; roles without the
+      // tile resolve null instead of paying for a call nothing renders.
+      showsAdminEntry(user) ? api.get('/approvals/count').catch(() => null) : Promise.resolve(null),
     ];
     // Employee self-service data — skipped entirely for SuperAdmin (no profile).
     const emp = isEmp ? [
@@ -92,8 +99,9 @@ export default function DashboardScreen() {
       // Birthday/anniversary wishes colleagues sent ME.
       api.get('/celebrations/wishes/received').catch(() => null),
     ] : [];
-    const [today, upcoming, notif, ann, bal, att, me, wish] = await Promise.all([...base, ...emp]);
+    const [today, upcoming, notif, ann, appr, bal, att, me, wish] = await Promise.all([...base, ...emp]);
     const next = {
+      pendingApprovals: appr?.data?.total || 0,
       wishes: wish?.data?.wishes || [],
       balances: bal?.data?.balance?.balances || null,
       // This month's paid-leave quota {quota, used, remaining, prorated, …}.
@@ -167,7 +175,16 @@ export default function DashboardScreen() {
   ];
   const monthly = data.monthly;
   const ml = data.balances?.ML;
-  const quickActions = employeeSelf ? QUICK_ACTIONS : ADMIN_ACTIONS;
+  // Approvers get a "My Approvals" tile in front of the rest — it is the one
+  // action where somebody else is blocked until they act, and it carries the
+  // pending badge. It leads to MyApprovals (the reporting-chain inbox the badge
+  // counts), NOT the org-wide HR queue that the admin grid's "Approvals" opens:
+  // a plain Manager would find that one read-only.
+  const quickActions = useMemo(() => {
+    const base = employeeSelf ? QUICK_ACTIONS : ADMIN_ACTIONS;
+    if (!showsAdminEntry(user)) return base;
+    return [{ key: 'MyApprovals', label: 'My Approvals', icon: 'checkmark-done-circle', tint: '#16a34a', badge: true }, ...base];
+  }, [employeeSelf, user]);
   const announcements = (data.announcements || []).filter((a) => !a.dismissed && !dismissed.has(a._id));
 
   return (
@@ -333,6 +350,7 @@ export default function DashboardScreen() {
             >
               <View style={[styles.actionIcon, { backgroundColor: a.tint + '1a' }]}>
                 <Ionicons name={a.icon} size={22} color={a.tint} />
+                {a.badge ? <Badge count={data.pendingApprovals} style={styles.actionBadge} /> : null}
               </View>
               <Text style={styles.actionLabel}>{a.label}</Text>
             </TouchableOpacity>
@@ -460,6 +478,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing(3),
   },
   actionIcon: { width: 54, height: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  // Overhangs the tile's icon square, like the count on an app icon. The ring
+  // matches the card behind it so the badge reads as lifted off the tile.
+  actionBadge: { position: 'absolute', top: -4, right: -4, borderWidth: 2, borderColor: colors.surface },
   actionLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '600', textAlign: 'center' },
   celebCard: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(2.5) },
   upcomingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(2.5), paddingVertical: spacing(3) },
