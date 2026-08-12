@@ -148,6 +148,11 @@ export default function MenuScreen() {
     if (hasPermission(me, 'org.manage')) {
       adminItems.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2' });
     }
+    // The daily reminder schedule pushes at the whole company, so it is
+    // SuperAdmin-only — the same gate the server applies.
+    if (me?.role === 'SuperAdmin') {
+      adminItems.push({ key: 'PushNotification', label: 'Push Notification', icon: 'notifications', tint: '#7c3aed' });
+    }
     // Bulk calendar upload rides on the same capability the server enforces for
     // /holidays/import ('leave.manage'), not on events.manage — the workbook is
     // mostly holidays and comp-offs, and the Celebrations sheet is checked

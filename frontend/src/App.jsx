@@ -107,6 +107,7 @@ const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
 const AdminCashbook = lazy(() => import('./pages/AdminCashbook.jsx'));
 const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
+const AdminPushNotifications = lazy(() => import('./pages/AdminPushNotifications.jsx'));
 
 /** Index route ("/"): send unauthenticated users to login, otherwise route each
  *  role to its home portal (employee vs admin). */
@@ -185,6 +186,7 @@ export default function App() {
         <Route path="dashboard" element={<AdminOverview />} />
         <Route path="users" element={<AdminDashboard />} />
         <Route path="permissions" element={<AdminPermissions />} />
+        <Route path="push-notifications" element={<AdminPushNotifications />} />
         <Route path="employees" element={<AdminEmployees />} />
         <Route path="employees/:id" element={<AdminEmployeeDetail />} />
         <Route path="departments" element={<AdminDepartments />} />

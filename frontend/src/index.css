@@ -2478,3 +2478,145 @@ html.dark .docfield-action { color: var(--gold-300); }
   border-bottom: 1px solid var(--docfield-edge);
   background-color: var(--docfield-chip);
 }
+
+/* ---------------------------------------------------------------------------
+   Toasts (react-toastify)
+   ---------------------------------------------------------------------------
+   The stock stylesheet is a flat white slab with a chunky coloured progress
+   bar. These overrides restyle it onto the app's own surface tokens so it
+   follows light/dark for free, and give it the weight of the rest of the UI:
+   a layered shadow, a hairline border, a coloured status rail down the left,
+   and a thin gradient progress bar instead of the default block.
+
+   Everything keys off --surface/--border and the semantic hues, so there is no
+   second palette to keep in sync. Loaded after ReactToastify.css (imported in
+   main.jsx), hence the plain-class overrides rather than !important.
+   --------------------------------------------------------------------------- */
+.Toastify__toast-container {
+  width: auto;
+  min-width: 20rem;
+  max-width: min(26rem, calc(100vw - 2rem));
+  padding: 0;
+  /* Stock sets `color: #fff` here for its coloured themes. Left alone, the
+     toast below inherits white and the message vanishes on a white card. */
+  color: inherit;
+}
+
+.Toastify__toast {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  /* Explicit, not `inherit`: the inheritance chain runs through the container,
+     which stock CSS paints white. */
+  color: #0f172a;
+  padding: 0.85rem 1rem 0.85rem 1.05rem;
+  min-height: 0;
+  margin-bottom: 0.75rem;
+  font-family: inherit;
+  /* Two shadows: a tight contact shadow to seat it, and a wide soft one for
+     lift. A single large blur reads as a smudge on a light background. */
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.06),
+    0 12px 32px -8px rgb(15 23 42 / 0.18);
+}
+
+/* The status rail. Colour comes from the type modifier below; without a type
+   (a plain toast) it inherits the current role accent. */
+.Toastify__toast::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: 14px 0 0 14px;
+  background: var(--toast-rail, var(--accent));
+}
+
+.Toastify__toast-body {
+  padding: 0;
+  margin: 0;
+  align-items: flex-start;
+  gap: 0.7rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+/* Toastify sizes its icon slot for the default 20px glyph; keep it from
+   shrinking when the message wraps to two lines. */
+.Toastify__toast-body > div:last-child { padding-top: 0.05rem; }
+.Toastify__toast-icon {
+  width: 20px;
+  margin-inline-end: 0;
+  flex-shrink: 0;
+}
+
+.Toastify__close-button {
+  align-self: flex-start;
+  opacity: 0.35;
+  color: inherit;
+  transition: opacity 0.15s ease;
+}
+.Toastify__close-button:hover { opacity: 0.85; }
+
+/* Thin, tapered progress bar — the default is a 5px block that dominates a
+   small card. Also drop the default opacity so the colour reads true. */
+.Toastify__progress-bar {
+  height: 3px;
+  opacity: 1;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--toast-rail, var(--accent)) 55%, transparent),
+    var(--toast-rail, var(--accent)));
+}
+.Toastify__progress-bar--wrp { height: 3px; }
+
+/* Semantic hues, shared with the rest of the app's status colours. */
+.Toastify__toast--success { --toast-rail: #16a34a; }
+.Toastify__toast--error   { --toast-rail: #dc2626; }
+.Toastify__toast--warning { --toast-rail: #d97706; }
+.Toastify__toast--info    { --toast-rail: #0ea5e9; }
+.Toastify__toast--default { --toast-rail: var(--accent); }
+
+.Toastify__toast--success .Toastify__toast-icon svg { fill: #16a34a; }
+.Toastify__toast--error   .Toastify__toast-icon svg { fill: #dc2626; }
+.Toastify__toast--warning .Toastify__toast-icon svg { fill: #d97706; }
+.Toastify__toast--info    .Toastify__toast-icon svg { fill: #0ea5e9; }
+
+/* Dark mode. ToastContainer is mounted with theme="light", so its own theme
+   classes stay light — these ride on html.dark instead, which is what actually
+   tracks the app's theme toggle. */
+html.dark .Toastify__toast {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text, #e5e7eb);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.4),
+    0 14px 34px -10px rgb(0 0 0 / 0.6);
+}
+html.dark .Toastify__toast--success { --toast-rail: #4ade80; }
+html.dark .Toastify__toast--error   { --toast-rail: #f87171; }
+html.dark .Toastify__toast--warning { --toast-rail: #fbbf24; }
+html.dark .Toastify__toast--info    { --toast-rail: #38bdf8; }
+html.dark .Toastify__toast--success .Toastify__toast-icon svg { fill: #4ade80; }
+html.dark .Toastify__toast--error   .Toastify__toast-icon svg { fill: #f87171; }
+html.dark .Toastify__toast--warning .Toastify__toast-icon svg { fill: #fbbf24; }
+html.dark .Toastify__toast--info    .Toastify__toast-icon svg { fill: #38bdf8; }
+
+/* Entrance: a short rise + fade rather than the default slide, which throws the
+   card in from off-screen. Respects reduced-motion. */
+@keyframes toastRise {
+  from { opacity: 0; transform: translate3d(0, -8px, 0) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.Toastify__bounce-enter--top-right,
+.Toastify__bounce-enter--top-center,
+.Toastify__bounce-enter--top-left {
+  animation: toastRise 0.22s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .Toastify__bounce-enter--top-right,
+  .Toastify__bounce-enter--top-center,
+  .Toastify__bounce-enter--top-left { animation: none; }
+}

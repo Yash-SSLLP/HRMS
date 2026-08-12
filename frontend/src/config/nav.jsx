@@ -16,7 +16,7 @@ import {
   FiShoppingBag, FiMap, FiPercent, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
   FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
-  FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget,
+  FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell,
 } from 'react-icons/fi';
 // Feather has no money-ledger glyph, and its only currency mark is a dollar sign
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
@@ -120,6 +120,9 @@ export const adminNav = [
     { to: '/admin/rnr', label: 'Rewards & Recognition', icon: FiAward, perm: 'announcements.manage' },
     { to: '/admin/surveys', label: 'Surveys', icon: FiPieChart, perm: 'surveys.manage' },
     { to: '/admin/templates', label: 'Email & Letter Templates', icon: FiEdit3, perm: 'templates.manage' },
+    // Push reminder schedule — SuperAdmin-only, matching the server, which
+    // ignores the reminder block from anyone else.
+    { to: '/admin/push-notifications', label: 'Push Notification', icon: FiBell, roles: ['SuperAdmin'] },
   ] },
   { group: 'Reports & Audit', icon: FiBarChart2, items: [
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },

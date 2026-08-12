@@ -66,6 +66,7 @@ import EmployeeDetailScreen from '../screens/admin/EmployeeDetailScreen';
 import AccountDetailScreen from '../screens/admin/AccountDetailScreen';
 import AddEmployeeScreen from '../screens/admin/AddEmployeeScreen';
 import WorkLocationsScreen from '../screens/admin/WorkLocationsScreen';
+import PushNotificationScreen from '../screens/admin/PushNotificationScreen';
 import PayrollScreen from '../screens/admin/PayrollScreen';
 import RnrScreen from '../screens/admin/RnrScreen';
 import CalendarImportScreen from '../screens/admin/CalendarImportScreen';
@@ -135,6 +136,8 @@ function HomeStack() {
       <HomeStackNav.Screen name="AccountDetail" component={AccountDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Account' })} />
       <HomeStackNav.Screen name="AddEmployee" component={AddEmployeeScreen} options={{ title: 'Add Employee' }} />
       <HomeStackNav.Screen name="WorkLocations" component={WorkLocationsScreen} options={{ title: 'Work Locations' }} />
+      {/* SuperAdmin-only in practice; the screen and the server both gate it. */}
+      <HomeStackNav.Screen name="PushNotification" component={PushNotificationScreen} options={{ title: 'Push Notification' }} />
       <HomeStackNav.Screen name="PayrollAdmin" component={PayrollScreen} options={{ title: 'Payroll' }} />
       <HomeStackNav.Screen name="RnrAdmin" component={RnrScreen} options={{ title: 'Rewards & Recognition' }} />
       <HomeStackNav.Screen name="CalendarImport" component={CalendarImportScreen} options={{ title: 'Calendar Upload' }} />
