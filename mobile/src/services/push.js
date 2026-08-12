@@ -6,7 +6,14 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/client';
+
+// The last token we registered, persisted so unregisterPush() still works after
+// an app restart. Without this, a logout in a fresh process was a silent no-op
+// and the device stayed registered to the previous user — who then kept getting
+// that user's push notifications.
+const TOKEN_KEY = 'hrms.pushToken';
 
 // Foreground behaviour: still show the banner + play sound while the app is open.
 Notifications.setNotificationHandler({
@@ -61,6 +68,7 @@ export async function registerForPush() {
     const token = tokenResp.data;
     if (!token) return null;
     cachedToken = token;
+    await AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {});
 
     await api.post('/devices/register', {
       token,
@@ -86,13 +94,24 @@ export async function registerForPush() {
  * @returns {Promise<void>}
  */
 export async function unregisterPush() {
-  if (!cachedToken) return;
+  let token = cachedToken;
+  if (!token) {
+    // Registered in an earlier run of the app — fall back to the stored copy so
+    // the device is still detached from this user's account.
+    try {
+      token = await AsyncStorage.getItem(TOKEN_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!token) return;
   try {
-    await api.delete(`/devices/${encodeURIComponent(cachedToken)}`);
+    await api.delete(`/devices/${encodeURIComponent(token)}`);
   } catch {
     /* best effort */
   } finally {
     cachedToken = null;
+    await AsyncStorage.removeItem(TOKEN_KEY).catch(() => {});
   }
 }
 

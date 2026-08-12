@@ -2,7 +2,7 @@
   "expo": {
     "name": "SSLLP HRMS",
     "slug": "ssllp-hrms",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "ssllphrms",
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.ssllp.hrms",
-      "versionCode": 10,
+      "versionCode": 11,
       "googleServicesFile": "./google-services.json",
       "config": {
         "googleMaps": { "apiKey": "AIzaSyACNwDcUY-3BhcqiE61heY3yKe_YN4e8n8" }
@@ -28,8 +28,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0c0c0e"
       },
-      "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE", "POST_NOTIFICATIONS", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
-      "useNextNotificationsApi": true
+      "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE", "POST_NOTIFICATIONS", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
     },
     "notification": {
       "icon": "./assets/notification-icon.png",

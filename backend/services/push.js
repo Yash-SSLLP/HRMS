@@ -92,10 +92,15 @@ function stringifyData(data) {
   return out;
 }
 
+// Only these two unambiguously mean "this token is dead" and may be pruned.
+// NOTE: 'messaging/invalid-argument' is deliberately NOT here. FCM returns it for
+// any bad *message* too (oversized data, empty title) and — critically — for every
+// recipient when the app was built against a different Firebase project than these
+// credentials. Treating it as a dead token silently wiped the whole DeviceToken
+// collection on the first send, so push looked "just broken" with nothing logged.
 const DEAD_TOKEN_ERRORS = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
-  'messaging/invalid-argument',
 ]);
 
 /**
@@ -136,6 +141,13 @@ async function pushToTokens(tokens, { title, body, data, badge } = {}) {
           dead.push(batch[i]);
         } else if (r.error) {
           console.error('FCM send error:', r.error.code, r.error.message);
+          if (r.error.code === 'messaging/invalid-argument') {
+            console.error(
+              '  ^ if EVERY device fails with this, the app was built against a different',
+              'Firebase project than backend/config/firebase-service-account.json',
+              '(check mobile/google-services.json project_id).'
+            );
+          }
         }
       });
     } catch (err) {

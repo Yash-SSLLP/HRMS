@@ -141,6 +141,74 @@ async function notifyEmployeeDecision(request, note) {
   }
 }
 
+// Heads-up to every approver ABOVE the first rung when a request is filed, so
+// the whole ladder knows it is coming rather than only hearing about it at the
+// moment it lands in their inbox. Informational — `notifyApprover` is still what
+// tells someone it is actually their turn.
+async function notifyChainQueued(request, chain, applicantName) {
+  try {
+    const upper = (chain || []).filter((s) => s.order > 0 && s.approver);
+    if (!upper.length) return;
+    const first = chain[0];
+    const total = chain.length;
+    await notifyMany(
+      upper.map((s) => s.approver),
+      {
+        type: 'leave',
+        audience: 'admin',
+        title: 'Leave awaiting approval below you',
+        body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d). You are in the approval chain - it is with ${first.approverName || 'their manager'} first (step 1 of ${total}).`,
+        link: 'leave',
+      }
+    );
+  } catch (err) {
+    console.error('chain-queued notify failed:', err.message);
+  }
+}
+
+// Tell the applicant that ONE rung of the ladder has decided, while the request
+// is still travelling. Without this the employee heard nothing between applying
+// and the final decision, which on a 3-rung chain can be days of silence.
+async function notifyEmployeeStep(request, step, next, note) {
+  try {
+    const prof = await EmployeeProfile.findById(request.employee).select('user');
+    if (!prof?.user) return;
+    const total = (request.approvalChain || []).length;
+    const stepNo = (step?.order ?? 0) + 1;
+    const days = `${request.totalDays} day${request.totalDays === 1 ? '' : 's'}`;
+    await notify({
+      recipient: prof.user,
+      type: 'leave',
+      audience: 'employee',
+      title: `Leave approved at step ${stepNo} of ${total}`,
+      body: `${step?.approverName || 'Your manager'} approved your ${request.leaveType} leave (${days}). It now needs ${next?.approverName || 'the next approver'}'s approval.${note ? ` Note: ${note}` : ''}`,
+      link: 'leave',
+    });
+  } catch (err) {
+    console.error('leave step notify failed:', err.message);
+  }
+}
+
+// Tell approvers who still had (or were waiting for) their turn that the request
+// left the ladder — cancelled by the employee, or force-decided by HR — so it
+// doesn't sit in their inbox as a ghost.
+async function notifyChainVoided(request, voidedSteps, reason) {
+  try {
+    const ids = (voidedSteps || []).filter((s) => s.approver).map((s) => s.approver);
+    if (!ids.length) return;
+    const name = await applicantNameOf(request);
+    await notifyMany(ids, {
+      type: 'leave',
+      audience: 'admin',
+      title: `Leave ${reason}`,
+      body: `${name}'s ${request.leaveType} leave (${request.totalDays}d) was ${reason} - no action is needed from you.`,
+      link: 'leave',
+    });
+  } catch (err) {
+    console.error('chain-voided notify failed:', err.message);
+  }
+}
+
 // HR is informed (not an approval rung): notify the employee's HR partner + a
 // SuperAdmin once a request is fully approved or rejected through the hierarchy.
 async function notifyHrInformational(request, verb) {
@@ -694,8 +762,10 @@ const applyForLeave = asyncHandler(async (req, res) => {
 
   const applicantName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
   if (chain.length) {
-    // Ping only the first approver; the chain climbs from there.
+    // The first rung gets the actionable "your turn" nudge; everyone above gets a
+    // heads-up so the whole approval hierarchy is in the loop from the start.
     await notifyApprover(chain[0].approver, request, applicantName);
+    await notifyChainQueued(request, chain, applicantName);
   } else {
     // No manager in the hierarchy — fall back to HR/SuperAdmin to force-decide.
     await emailLeaveToHr(profile, request, req.user);
@@ -871,12 +941,17 @@ const cancelMyRequest = asyncHandler(async (req, res) => {
 
   // Stop the approval ladder: no one's turn any more, pending/waiting rungs void.
   request.currentApprover = null;
+  const stranded = (request.approvalChain || []).filter(
+    (s) => s.status === 'Pending' || s.status === 'Waiting'
+  );
   for (const s of request.approvalChain || []) {
     if (s.status === 'Pending' || s.status === 'Waiting') s.status = 'Skipped';
   }
   request.status = 'Cancelled';
   request.decisionAt = new Date();
   await request.save();
+  // Clear it out of the inbox of whoever was holding it.
+  await notifyChainVoided(request, stranded, 'cancelled by the employee');
   res.json({ request });
 });
 
@@ -1052,6 +1127,8 @@ async function advanceApproval(request, userId, action, note) {
     request.currentApprover = next.approver;
     await request.save();
     await notifyApprover(next.approver, request, await applicantNameOf(request));
+    // The employee hears about every rung, not just the final outcome.
+    await notifyEmployeeStep(request, step, next, note);
     return request;
   }
 
@@ -1086,6 +1163,11 @@ async function applyLeaveDecision(request, userId, action, note) {
   } else {
     request.status = 'Rejected';
   }
+  // Capture whose turn it was (or would have been) before voiding those rungs —
+  // they are told below that HR decided over them.
+  const overridden = (request.approvalChain || []).filter(
+    (s) => s.status === 'Pending' || s.status === 'Waiting'
+  );
   for (const s of request.approvalChain || []) {
     if (s.status === 'Pending' || s.status === 'Waiting') s.status = 'Skipped';
   }
@@ -1105,7 +1187,8 @@ async function applyLeaveDecision(request, userId, action, note) {
   await request.save();
   if (action === 'approve') await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
-  if (action === 'approve') await notifyHrInformational(request, 'approved (HR override)');
+  await notifyChainVoided(request, overridden, `${action === 'approve' ? 'approved' : 'rejected'} by HR override`);
+  await notifyHrInformational(request, `${action === 'approve' ? 'approved' : 'rejected'} (HR override)`);
   return request;
 }
 

@@ -125,6 +125,13 @@ api.interceptors.response.use(
  * local session. A failed ping never blocks the sign-out.
  */
 export async function signOut() {
+  // Detach this device from the account first, while the token still authenticates
+  // the DELETE. Required lazily because services/push.js imports this module.
+  try {
+    await require('../services/push').unregisterPush();
+  } catch {
+    /* best effort — never block sign-out on push cleanup */
+  }
   try {
     await api.post('/auth/logout');
   } catch {
