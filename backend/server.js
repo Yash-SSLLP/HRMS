@@ -120,7 +120,6 @@
 // app.use('/api/analytics', require('./routes/analyticsRoutes'));
 // app.use('/api/audit', require('./routes/auditRoutes'));
 // app.use('/api/reports', require('./routes/reportRoutes'));
-app.use('/api/push-reminders', require('./routes/pushReminderRoutes'));
 
 // app.use(notFound);
 // app.use(errorHandler);
@@ -315,6 +314,7 @@ app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/audit', require('./routes/auditRoutes'));
 app.use('/api/templates', require('./routes/templateRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
+app.use('/api/push-reminders', require('./routes/pushReminderRoutes'));
 
 /* ============================================================
    ERROR HANDLING
