@@ -71,6 +71,10 @@ const userSchema = new mongoose.Schema(
     // cashbookAccess above. Switch it on for ANY user or employee and they get
     // the expense-claim review module in their own portal.
     expensesAccess: { type: Boolean, default: false },
+    // Assets access — same standalone, role-independent grant. Switch it on for
+    // the employee who actually looks after company hardware and they get the
+    // Assets register in their own portal, without becoming an admin.
+    assetsAccess: { type: Boolean, default: false },
     // CEO/MD only. Off (the default) = the read-only executive described above.
     // On = a SuperAdmin has switched that account into edit mode, giving it write
     // access equivalent to an HR Manager holding every capability. It never

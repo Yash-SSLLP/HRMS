@@ -6,6 +6,7 @@
 const express = require('express');
 const {
   listAssets, createAsset, updateAsset, deleteAsset, assignAsset, listAssignments, listMyAssets,
+  listAssetPeople,
 } = require('../controllers/assetController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -20,6 +21,10 @@ router.get('/me', listMyAssets);
 router.use(requirePermission('assets.manage'));
 // GET /assignments — list all asset assignments; protected, requires 'assets.manage'.
 router.get('/assignments', listAssignments);
+// GET /people — assignable people for the picker; protected, requires 'assets.manage'.
+// Declared here rather than reusing /admin/users, which is role-gated and would
+// 403 for the holder of the standalone Assets grant.
+router.get('/people', listAssetPeople);
 // GET / — list assets; POST / — create one; protected, requires 'assets.manage'.
 router.route('/').get(listAssets).post(createAsset);
 // PATCH /:id/assign — assign/unassign an asset; protected, requires 'assets.manage'.

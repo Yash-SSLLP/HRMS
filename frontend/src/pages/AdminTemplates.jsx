@@ -11,7 +11,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
-import { FiEye, FiRotateCcw, FiSave, FiMail, FiFileText } from 'react-icons/fi';
+import { FiEye, FiRotateCcw, FiSave, FiMail, FiFileText, FiDownload } from 'react-icons/fi';
+import { downloadFile } from '../api/download';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
@@ -28,6 +29,7 @@ export default function AdminTemplates() {
   const [activeKey, setActiveKey] = useState('');
   const [draft, setDraft] = useState({ subject: '', body: '' });
   const [saving, setSaving] = useState(false);
+  const [texBusy, setTexBusy] = useState(false); // building the .tex export
   const [preview, setPreview] = useState(null);
   const bodyRef = useRef(null);
 
@@ -109,6 +111,25 @@ export default function AdminTemplates() {
       toast.error(err.response?.data?.message || 'Could not save');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Export the letter as a standalone Overleaf-ready .tex. The server builds it
+  // from the SAVED wording, so an unsaved draft is deliberately not included —
+  // exporting a draft would produce a file that doesn't match any real letter.
+  const doDownloadTex = async () => {
+    if (!active) return;
+    if (dirty) {
+      toast.error('Save your changes first — the export uses the saved wording.');
+      return;
+    }
+    setTexBusy(true);
+    try {
+      await downloadFile(`/templates/${active.key}/tex`, `${active.key.replace(/\./g, '-')}.tex`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not build the .tex file');
+    } finally {
+      setTexBusy(false);
     }
   };
 
@@ -197,6 +218,8 @@ export default function AdminTemplates() {
                 <p className="text-[11px] text-gray-400 mt-2">
                   Blank line starts a new paragraph · <code>**wrap in stars**</code> for a bold paragraph ·
                   {' '}<code>- Heading: text</code> for a numbered clause. The letterhead, fonts and signature block are fixed.
+                  {' '}<strong>Download .tex</strong> exports the saved wording as an Overleaf-ready LaTeX file
+                  {' '}for designing the layout — it does not change how the PDF is produced.
                 </p>
               )}
 
@@ -245,6 +268,16 @@ export default function AdminTemplates() {
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
                   <FiEye size={15} /> Preview
                 </button>
+                {/* Letters only — a mail template has no page layout to design.
+                    Exports the SAVED wording, so save first if you have unsaved
+                    edits (the hint below the button says so). */}
+                {active.format === 'letter' && (
+                  <button type="button" onClick={doDownloadTex} disabled={texBusy}
+                    title="Download this letter as an Overleaf-ready .tex file, prefilled with its current wording"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                    <FiDownload size={15} /> {texBusy ? 'Preparing…' : 'Download .tex'}
+                  </button>
+                )}
                 <button type="button" onClick={doReset} disabled={!active.isOverridden}
                   title={active.isOverridden ? 'Restore the shipped wording' : 'This template is already the default'}
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">

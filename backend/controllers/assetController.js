@@ -175,6 +175,31 @@ const listMyAssets = asyncHandler(async (req, res) => {
   res.json({ count: assets.length, assets });
 });
 
+/**
+ * People an asset can be assigned to.
+ *
+ * Exists because the assets page needs a person picker, and GET /admin/users is
+ * gated by ROLE, not capability — so the holder of the standalone Assets grant
+ * (usually a plain employee) is refused by it and the whole page fails to load.
+ * Serving the picker from the assets router keeps it behind the same
+ * `assets.manage` gate as everything else here. Mirrors the /rnr/people
+ * precedent. Same field shape as /admin/users so the client is unchanged.
+ * @route GET /api/assets/people  (assets.manage)
+ * @returns {{count: number, users: Object[]}} active, non-executive accounts
+ */
+const listAssetPeople = asyncHandler(async (req, res) => {
+  const User = require('../models/User');
+  const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
+  const filter = { isActive: true };
+  // The picker asks to hide execs, the same opt-in /admin/users honours.
+  const excluded = ['SuperAdmin'];
+  if (await shouldExcludeExecutives(req)) excluded.push(...EXECUTIVE_ROLES);
+  filter.role = { $nin: excluded };
+  const users = await User.find(filter).select(USER_FIELDS).sort({ firstName: 1, lastName: 1 }).lean();
+  res.json({ count: users.length, users });
+});
+
 module.exports = {
-  listAssets, createAsset, updateAsset, deleteAsset, assignAsset, listAssignments, listMyAssets, ASSET_STATUS,
+  listAssets, createAsset, updateAsset, deleteAsset, assignAsset, listAssignments, listMyAssets,
+  listAssetPeople, ASSET_STATUS,
 };

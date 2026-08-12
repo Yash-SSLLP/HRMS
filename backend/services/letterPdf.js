@@ -76,25 +76,33 @@ function drawLetterhead(doc, F) {
 }
 
 // A flowing paragraph from the current/optional y.
+// Vertical compression factor, carried on the font bundle so it reaches every
+// drawing helper without rethreading their signatures. 1 = the natural layout;
+// the offer letter's fit loop dials it down only when the letter would spill
+// onto a second page. See renderOfferLetter.
+const S = (F) => (F && F.s) || 1;
+
 function para(doc, F, text, opts = {}) {
-  doc.font(opts.bold ? F.bold : F.regular).fontSize(opts.size || 10.5).fillColor(opts.color || INK);
-  doc.text(text, X0, opts.y, { width: CW, align: opts.align || 'left', lineGap: 2, ...opts });
-  doc.moveDown(opts.gap ?? 0.7);
+  const s = S(F);
+  doc.font(opts.bold ? F.bold : F.regular).fontSize((opts.size || 10.5) * s).fillColor(opts.color || INK);
+  doc.text(text, X0, opts.y, { width: CW, align: opts.align || 'left', lineGap: 2 * s, ...opts });
+  doc.moveDown((opts.gap ?? 0.7) * s);
 }
 
 function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance) {
-  doc.moveDown(1);
+  const s = S(F);
+  doc.moveDown(1 * s);
   para(doc, F, 'Yours Sincerely,');
   para(doc, F, `For ${COMPANY.name},`, { bold: true, gap: 2.5 });
   para(doc, F, signatoryTitle || COMPANY.defaultSignatoryTitle, { bold: true, gap: 0.1 });
   para(doc, F, signatoryName || COMPANY.defaultSignatoryName, { bold: true });
 
   if (withAcceptance) {
-    doc.moveDown(1.5);
+    doc.moveDown(1.5 * s);
     para(doc, F, 'I confirm that I have accepted the above.', { gap: 1.2 });
-    doc.font(F.regular).fontSize(10.5).fillColor(INK);
+    doc.font(F.regular).fontSize(10.5 * s).fillColor(INK);
     doc.text('Signature: ____________________', X0, doc.y);
-    doc.text('Date: ____________________', X0, doc.y + 6);
+    doc.text('Date: ____________________', X0, doc.y + 6 * s);
   }
 }
 
@@ -150,15 +158,16 @@ function offerBody(data = {}, R = '₹') {
 // Print a block list. Paragraphs flow; terms are numbered with a bold heading,
 // numbered in the order they appear so removing one doesn't leave a gap.
 function drawBlocks(doc, F, blocks) {
+  const s = S(F);
   let termNo = 0;
   blocks.forEach((b, i) => {
     const last = i === blocks.length - 1;
     if (b.type === 'term') {
       termNo += 1;
-      doc.font(F.bold).fontSize(10.5).fillColor(INK)
+      doc.font(F.bold).fontSize(10.5 * s).fillColor(INK)
         .text(`${termNo}. ${b.head}: `, X0, doc.y, { continued: true })
-        .font(F.regular).text(b.text, { width: CW, lineGap: 1.5 });
-      doc.moveDown(0.45);
+        .font(F.regular).text(b.text, { width: CW, lineGap: 1.5 * s });
+      doc.moveDown(0.45 * s);
     } else {
       para(doc, F, b.text, { bold: !!b.bold, gap: last ? 1 : undefined });
     }
@@ -172,20 +181,23 @@ const bodyOrDefault = (data, fallback) => {
   return custom.length ? custom : fallback;
 };
 
-function renderOfferLetter(data = {}) {
+// One pass at a given compression. Resolves { buffer, pages }.
+function renderOfferOnce(data, scale) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
     const chunks = [];
+    let pages = 1; // the first page exists before anything is drawn
+    doc.on('pageAdded', () => { pages += 1; });
     doc.on('data', (c) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pages }));
     doc.on('error', reject);
 
-    const F = setupFonts(doc);
+    const F = { ...setupFonts(doc), s: scale };
     const R = F.rupee;
     let y = drawLetterhead(doc, F);
 
     para(doc, F, `Date: ${todayLong()}`, { y });
-    doc.moveDown(0.4);
+    doc.moveDown(0.4 * scale);
     para(doc, F, data.candidateName || '', { bold: true, gap: 0.15 });
     if (data.address) para(doc, F, `Address: ${data.address}`, { gap: 1 });
 
@@ -198,6 +210,29 @@ function renderOfferLetter(data = {}) {
 
     doc.end();
   });
+}
+
+// The offer letter is a ONE-PAGE document — a couple of orphan lines and a
+// stranded signature block on page 2 look like a mistake to a candidate. Render
+// at the natural size first and only compress if it spills, so a short letter
+// keeps its spacing and a long one tightens just enough to fit.
+//
+// Compression scales the body type and every vertical gap; the letterhead is
+// left alone so the branding stays constant across letters. The floor is 0.82 —
+// below that the letter reads as cramped, and at that point the wording is too
+// long for one page and should be edited rather than shrunk further.
+const OFFER_FIT_STEPS = [1, 0.96, 0.93, 0.90, 0.87, 0.84, 0.82];
+
+async function renderOfferLetter(data = {}) {
+  let lastBuffer = null;
+  for (const scale of OFFER_FIT_STEPS) {
+    const { buffer, pages } = await renderOfferOnce(data, scale);
+    if (pages === 1) return buffer;
+    lastBuffer = buffer;
+  }
+  // Still overflowing at the floor: ship the tightest version rather than fail.
+  console.warn('Offer letter does not fit one page even at minimum spacing; the body wording is too long.');
+  return lastBuffer;
 }
 
 /**
@@ -277,12 +312,20 @@ async function resolveLetterBody(kind, data = {}) {
     const { renderLetterBlocks } = require('./templates');
     const vars = {
       candidateName: data.candidateName,
-      position: data.position,
+      // The offer form collects `position`/`salaryAnnual`; the appointment form
+      // collects `designation`/`ctcAnnual` for the same two ideas. Both letter
+      // templates use {{position}} and {{salaryAnnual}}, so accept either name —
+      // without this the appointment letter printed the LITERAL "{{position}}"
+      // to the candidate (a missing variable is deliberately left visible) and
+      // showed the CTC as a blank "__________".
+      position: data.position || data.designation,
       department: data.department,
       departmentClause: data.department ? ` in the ${data.department} department` : '',
       companyName: COMPANY.name,
       salaryMonthly: data.salaryMonthly ? `₹${formatINR(data.salaryMonthly)}` : '__________',
-      salaryAnnual: data.salaryAnnual ? `₹${formatINR(data.salaryAnnual)}` : '__________',
+      salaryAnnual: (data.salaryAnnual || data.ctcAnnual)
+        ? `₹${formatINR(data.salaryAnnual || data.ctcAnnual)}`
+        : '__________',
       probationMonths: data.probationMonths || 3,
       noticePeriodDays: data.noticePeriodDays || 30,
       joiningDate: longDate(data.joiningDate),
@@ -378,4 +421,8 @@ function renderAppointmentLetter(data = {}) {
   });
 }
 
-module.exports = { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody };
+module.exports = {
+  renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody,
+  // Exported so the one-page behaviour can be measured at a chosen compression.
+  renderOfferOnce, OFFER_FIT_STEPS,
+};

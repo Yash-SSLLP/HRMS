@@ -13,7 +13,7 @@ const User = require('../models/User');
 const { hasPermission } = require('../middleware/authMiddleware');
 
 // The fields hasPermission consults — extend if its rules grow.
-const PERMISSION_FIELDS = '_id role permissions cashbookAccess expensesAccess execEditAccess';
+const PERMISSION_FIELDS = '_id role permissions cashbookAccess expensesAccess assetsAccess execEditAccess';
 
 /**
  * Ids of every active user holding AT LEAST ONE of the given capabilities.

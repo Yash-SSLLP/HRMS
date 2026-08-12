@@ -68,6 +68,7 @@ export default function DashboardScreen() {
   const [data, setData] = useState(() => readCacheSync('dashboard') || {});
   const [refreshing, setRefreshing] = useState(false);
   const [dismissed, setDismissed] = useState(() => new Set()); // locally-hidden announcements
+  const [wishesClosed, setWishesClosed] = useState(false); // "Wishes for you" closed this session
 
   // Cold-start hydrate from AsyncStorage if memory was empty.
   useEffect(() => {
@@ -154,6 +155,18 @@ export default function DashboardScreen() {
     api.post(`/announcements/${id}/dismiss`).catch(() => {});
   };
 
+  // Close the "Wishes for you" card. There is no dismiss endpoint for wishes —
+  // they are celebration Notifications — so marking them read is what makes the
+  // dismissal stick across restarts: `load()` below drops wishes that carry a
+  // readAt. Hidden locally too, so the card goes immediately rather than after
+  // the next refresh.
+  const dismissWishes = () => {
+    setWishesClosed(true);
+    for (const w of data.wishes || []) {
+      if (!w.readAt) api.patch(`/notifications/${w._id}/read`).catch(() => {});
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       load();
@@ -186,6 +199,9 @@ export default function DashboardScreen() {
     return [{ key: 'MyApprovals', label: 'My Approvals', icon: 'checkmark-done-circle', tint: '#16a34a', badge: true }, ...base];
   }, [employeeSelf, user]);
   const announcements = (data.announcements || []).filter((a) => !a.dismissed && !dismissed.has(a._id));
+  // A wish that has been read is a wish already acknowledged, so it drops off the
+  // card — that is what makes the close button survive an app restart.
+  const openWishes = wishesClosed ? [] : (data.wishes || []).filter((w) => !w.readAt);
 
   return (
     <Screen>
@@ -241,14 +257,23 @@ export default function DashboardScreen() {
             HR announces; closeable per-user. */}
         <RnrBanner />
 
-        {/* Birthday / anniversary wishes colleagues sent me. */}
-        {(data.wishes || []).length > 0 && (
+        {/* Birthday / anniversary wishes colleagues sent me. Closeable, like the
+            announcements and R&R banners — a congratulation you have read should
+            not sit on your home screen forever. */}
+        {openWishes.length > 0 && (
           <Card style={styles.wishCard}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing(2) }}>
               <Ionicons name="gift" size={16} color="#9333ea" style={{ marginRight: 6 }} />
-              <Text style={font.h3}>Wishes for you</Text>
+              <Text style={[font.h3, { flex: 1 }]}>Wishes for you</Text>
+              <TouchableOpacity
+                onPress={dismissWishes}
+                accessibilityLabel="Dismiss wishes"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
             </View>
-            {data.wishes.map((w, i) => (
+            {openWishes.map((w, i) => (
               <View key={w._id} style={i > 0 ? { marginTop: spacing(2.5) } : null}>
                 <Text style={font.body}>
                   {w.title}

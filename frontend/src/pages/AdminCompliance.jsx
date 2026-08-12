@@ -7,6 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
 import { downloadTableXlsx } from '../api/download';
 
@@ -103,7 +104,7 @@ const TAB_KEYS = Object.keys(TABS);
 const pad2 = (n) => String(n).padStart(2, '0');
 
 export default function AdminCompliance() {
-  const [tab, setTab] = useState('pf');
+  const [tab, setTab] = useTabParam('pf', TAB_KEYS);
   const [month, setMonth] = useState(CURRENT_MONTH);
   const [year, setYear] = useState(CURRENT_YEAR);
   const [data, setData] = useState(null);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { approvalStepSchema } = require('./Leave'); // reuse the shared approval-chain rung schema
 
 // An attendance-correction request: an employee asks HR to fix a day's punch
 // (missing/incorrect check-in or -out). On approval it is applied to the
@@ -34,6 +35,19 @@ const regularizationSchema = new mongoose.Schema(
     previousCheckOut: { type: Date },
     appliedCheckIn: { type: Date },
     appliedCheckOut: { type: Date },
+
+    // Configured approval ladder (EmployeeProfile.regularizationApprovers): 1 or
+    // 2 rungs, same rung shape as leave/exit so the inbox logic is shared. An
+    // EMPTY chain is meaningful — it means no approvers were configured for this
+    // employee, so the request stays on the flat "any HR reviewer" path.
+    approvalChain: [approvalStepSchema],
+    // Whose turn it is right now; null once decided (or when there is no chain).
+    currentApprover: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
   },
   { timestamps: true }
 );

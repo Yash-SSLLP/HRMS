@@ -20,6 +20,7 @@ export function hasPermission(user, cap) {
   // user/employee, whatever their role.
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
+  if (cap === 'assets.manage' && user.assetsAccess === true) return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
   // Account Managers settle reimbursements out of the cashbook, so they hold the
   // expense capability alongside it.

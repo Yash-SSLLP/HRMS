@@ -415,6 +415,25 @@ const setExpensesAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant/revoke the standalone Assets grant. Role-independent by design, like
+ * cashbook and expenses above: the person who looks after company hardware is
+ * usually an ordinary employee, not an admin.
+ * @route PATCH /api/admin/users/:id/assets-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, assetsAccess}}
+ */
+const setAssetsAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.assetsAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, assetsAccess: user.assetsAccess });
+});
+
+/**
  * Switch a CEO/MD account between view-only and edit mode.
  * @route PATCH /api/admin/users/:id/exec-edit-access  (SuperAdmin)
  * @param {string} req.params.id - user id (must be a CEO or MD account)
@@ -518,6 +537,7 @@ module.exports = {
   updateUserPermissions,
   setCashbookAccess,
   setExpensesAccess,
+  setAssetsAccess,
   setExecEditAccess,
   setWfhAccess,
   getOrgSettings,

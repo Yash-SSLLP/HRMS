@@ -25,6 +25,99 @@ const EMPLOYEE_FIELDS = 'firstName lastName email role';
 const HR_REVIEW_ROLES = ['SuperAdmin', 'CEO', 'MD'];
 const HR_ROLE = 'HRManager';
 
+/**
+ * Build the configured approval ladder for an employee's regularization.
+ *
+ * Unlike leave, this is NOT derived from the org chart — a SuperAdmin names the
+ * approvers per employee (EmployeeProfile.regularizationApprovers), because an
+ * attendance correction is often signed off by a shift or ops lead rather than
+ * the employee's reporting manager. 1 rung minimum, 2 maximum.
+ *
+ * Inactive approvers and the requester themselves are dropped (nobody signs off
+ * their own attendance correction). An empty result is normal and meaningful:
+ * it means "not configured", and the caller keeps the flat HR-review path.
+ * @param {mongoose.Types.ObjectId} employeeUserId - the requester's User id
+ * @returns {Promise<Object[]>} rungs shaped like approvalStepSchema
+ */
+async function buildRegularizationChain(employeeUserId) {
+  const profile = await EmployeeProfile.findOne({ user: employeeUserId })
+    .select('regularizationApprovers')
+    .lean();
+  const configured = (profile?.regularizationApprovers || []).slice(0, 2);
+  if (!configured.length) return [];
+
+  const chain = [];
+  const seen = new Set([String(employeeUserId)]);
+  for (const id of configured) {
+    const key = String(id);
+    if (seen.has(key)) continue; // no self-approval, no duplicate rung
+    seen.add(key);
+    const u = await User.findById(id).select('firstName lastName role isActive').lean();
+    if (!u || u.isActive === false) continue;
+    chain.push({
+      approver: u._id,
+      approverName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      role: u.role,
+      order: chain.length,
+      status: 'Waiting',
+    });
+  }
+  return chain;
+}
+
+// Tell the person whose turn it is. Best-effort — a failed notification must
+// never stop the request being filed or advanced.
+async function notifyRegApprover(approverUserId, item, applicantName) {
+  try {
+    await notify({
+      recipient: approverUserId,
+      type: 'regularization',
+      audience: 'admin',
+      title: 'Regularization needs your approval',
+      body: `${applicantName} raised an attendance regularization (${item.type}) - it's awaiting your approval.`,
+      link: 'regularizations',
+    });
+  } catch (err) {
+    console.error('regularization approver notify failed:', err.message);
+  }
+}
+
+// Tell the employee a rung decided, mirroring the leave hierarchy: they hear
+// about every step, not just the final outcome.
+async function notifyRegEmployeeStep(item, step, next, note) {
+  try {
+    const total = (item.approvalChain || []).length;
+    const stepNo = (step?.order ?? 0) + 1;
+    await notify({
+      recipient: item.employee,
+      type: 'regularization',
+      audience: 'employee',
+      title: `Regularization approved at step ${stepNo} of ${total}`,
+      body: `${step?.approverName || 'Your approver'} approved your ${item.type} regularization. It now needs ${next?.approverName || 'the next approver'}'s approval.${note ? ` Note: ${note}` : ''}`,
+      link: 'regularizations',
+    });
+  } catch (err) {
+    console.error('regularization step notify failed:', err.message);
+  }
+}
+
+// Final outcome for the employee.
+async function notifyRegEmployeeDecision(item, note) {
+  try {
+    const approved = item.status === 'Approved';
+    await notify({
+      recipient: item.employee,
+      type: 'regularization',
+      audience: 'employee',
+      title: `Regularization ${approved ? 'approved' : 'rejected'}`,
+      body: `Your ${item.type} regularization has been ${approved ? 'approved' : 'rejected'}.${note ? ` Note: ${note}` : ''}`,
+      link: 'regularizations',
+    });
+  } catch (err) {
+    console.error('regularization decision notify failed:', err.message);
+  }
+}
+
 // 'HH:mm' (or a full date string) + the request's day → a concrete Date on
 // that IST day. Returns undefined when the value is empty/unparseable.
 function timeOnDay(day, value) {
@@ -108,6 +201,11 @@ const createRequest = asyncHandler(async (req, res) => {
     throw new Error('date and reason are required');
   }
 
+  // A configured ladder routes the request to named approvers; with none
+  // configured it stays on the flat "any HR reviewer" path it has always used.
+  const chain = await buildRegularizationChain(req.user._id);
+  if (chain.length) chain[0].status = 'Pending';
+
   const item = await Regularization.create({
     employee: req.user._id,
     date,
@@ -116,7 +214,14 @@ const createRequest = asyncHandler(async (req, res) => {
     requestedCheckOut,
     reason,
     status: 'Pending',
+    approvalChain: chain,
+    currentApprover: chain.length ? chain[0].approver : null,
   });
+
+  if (chain.length) {
+    const name = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
+    await notifyRegApprover(chain[0].approver, item, name);
+  }
 
   res.status(201).json({ item });
 });
@@ -151,6 +256,106 @@ const listAll = asyncHandler(async (req, res) => {
 // PATCH /api/regularizations/:id/status  (admin)  { status, reviewNote }
 // Approving now also APPLIES the requested times to the day's Attendance
 // record, so the fix is visible everywhere immediately.
+// The requester's display name, for approver-facing notifications. Never throws:
+// it is called as an argument to the notify helpers, i.e. OUTSIDE their own
+// try/catch, and the request has already been saved by then — a lookup failure
+// must not turn a completed approval into a 500.
+async function applicantNameOf(userId) {
+  try {
+    const u = await User.findById(userId).select('firstName lastName').lean();
+    return `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || 'An employee';
+  } catch {
+    return 'An employee';
+  }
+}
+
+/**
+ * Configured-ladder decision — the normal path once a SuperAdmin has named
+ * approvers. The acting user MUST be the current approver, so an ordinary
+ * employee named as an approver can decide without holding attendance.manage.
+ *
+ * Approve → advance to the next rung, or, on the LAST rung, finalize and apply
+ * the correction to the attendance record. Reject → stop the chain immediately.
+ * The apply deliberately fires only at the end: a 2-step request must not touch
+ * attendance after step 1.
+ * @param {Object} item - the Regularization doc (mutated + saved)
+ * @param {*} userId - the acting approver
+ * @param {'approve'|'reject'} action
+ * @param {string} [note]
+ * @param {Object} [actor] - req.user, used to attribute the attendance remark
+ * @returns {Promise<{item: Object, applied: boolean}>}
+ * @throws {Error} with `.status` on a bad transition
+ */
+async function advanceRegularizationApproval(item, userId, action, note, actor) {
+  if (item.status !== 'Pending') {
+    const err = new Error(`Cannot ${action} - this request is ${item.status}.`);
+    err.status = 400;
+    throw err;
+  }
+  if (!item.currentApprover || String(item.currentApprover) !== String(userId)) {
+    const err = new Error('This regularization is not awaiting your approval.');
+    err.status = 403;
+    throw err;
+  }
+  // Belt and braces: the chain builder already refuses to add the requester.
+  if (String(item.employee) === String(userId)) {
+    const err = new Error('You cannot review your own regularization request.');
+    err.status = 403;
+    throw err;
+  }
+
+  const now = new Date();
+  const step = (item.approvalChain || []).find(
+    (s) => String(s.approver) === String(userId) && s.status === 'Pending'
+  );
+
+  if (action === 'reject') {
+    if (step) { step.status = 'Rejected'; step.decidedAt = now; step.note = note; }
+    for (const s of item.approvalChain || []) {
+      if (s.status === 'Waiting') s.status = 'Skipped';
+    }
+    item.status = 'Rejected';
+    item.currentApprover = null;
+    item.reviewedBy = userId;
+    item.reviewedAt = now;
+    item.reviewNote = note;
+    await item.save();
+    await notifyRegEmployeeDecision(item, note);
+    return { item, applied: false };
+  }
+
+  const next = (item.approvalChain || []).find(
+    (s) => s.status === 'Waiting' && (!step || s.order > step.order)
+  );
+  if (next) {
+    if (step) { step.status = 'Approved'; step.decidedAt = now; step.note = note; }
+    next.status = 'Pending';
+    item.currentApprover = next.approver;
+    await item.save();
+    await notifyRegApprover(next.approver, item, await applicantNameOf(item.employee));
+    await notifyRegEmployeeStep(item, step, next, note);
+    return { item, applied: false };
+  }
+
+  // Last rung — the correction takes effect now.
+  if (step) { step.status = 'Approved'; step.decidedAt = now; step.note = note; }
+  item.status = 'Approved';
+  item.currentApprover = null;
+  item.reviewedBy = userId;
+  item.reviewedAt = now;
+  item.reviewNote = note;
+  await item.save();
+  let applied = null;
+  try {
+    applied = await applyToAttendance(item, actor);
+  } catch (err) {
+    // Same rule as the HR path: the decision stands even if applying fails.
+    console.error('Regularization apply failed:', err.message);
+  }
+  await notifyRegEmployeeDecision(item, note);
+  return { item, applied: !!applied };
+}
+
 const reviewRequest = asyncHandler(async (req, res) => {
   const { status, reviewNote } = req.body;
 
@@ -187,11 +392,41 @@ const reviewRequest = asyncHandler(async (req, res) => {
     throw new Error('CEO/MD accounts review HR regularizations only; this one is for HR to decide.');
   }
 
+  // HR deciding a request that has a configured ladder is an OVERRIDE: void the
+  // rungs that never got their turn and tell those approvers it is off their
+  // plate, so it can't sit in their inbox as a ghost. (Mirrors the leave
+  // override valve — HR keeps a way to unstick a request whose named approver
+  // is unavailable.)
+  const overridden = (item.approvalChain || []).filter(
+    (s) => s.status === 'Pending' || s.status === 'Waiting'
+  );
+  for (const s of overridden) s.status = 'Skipped';
+  item.currentApprover = null;
+
   item.status = status;
   item.reviewNote = reviewNote;
   item.reviewedBy = req.user._id;
   item.reviewedAt = new Date();
   await item.save();
+
+  if (overridden.length) {
+    const name = await applicantNameOf(item.employee);
+    try {
+      const { notifyMany } = require('../services/notify');
+      await notifyMany(
+        overridden.map((s) => s.approver).filter(Boolean),
+        {
+          type: 'regularization',
+          audience: 'admin',
+          title: `Regularization ${status.toLowerCase()} by HR`,
+          body: `${name}'s ${item.type} regularization was ${status.toLowerCase()} by HR - no action is needed from you.`,
+          link: 'regularizations',
+        }
+      );
+    } catch (err) {
+      console.error('regularization override notify failed:', err.message);
+    }
+  }
 
   let applied = null;
   if (status === 'Approved') {
@@ -280,4 +515,8 @@ const adminCreate = asyncHandler(async (req, res) => {
   res.status(201).json({ item, record });
 });
 
-module.exports = { listMine, createRequest, listAll, reviewRequest, adminCreate };
+module.exports = {
+  listMine, createRequest, listAll, reviewRequest, adminCreate,
+  // Used by the shared approvals inbox (controllers/approvalController.js).
+  advanceRegularizationApproval,
+};

@@ -53,6 +53,7 @@ export function hasPermission(u, cap) {
   // Standalone grants that ride on a flag rather than the role.
   if (cap === 'cashbook.manage' && u.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && u.expensesAccess === true) return true;
+  if (cap === 'assets.manage' && u.assetsAccess === true) return true;
   if (u.role === 'LDManager') return cap === 'courses.manage';
   if (u.role === 'AccountsManager') return cap === 'cashbook.manage' || cap === 'expenses.manage';
   if (u.role === 'HRManager') {

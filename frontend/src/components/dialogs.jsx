@@ -70,7 +70,7 @@ export function DialogHost() {
 
   const {
     type, title, message, details, tone = 'default',
-    confirmText, cancelText = 'Cancel', placeholder, inputLabel,
+    confirmText, cancelText = 'Cancel', placeholder, inputLabel, inputType,
   } = req;
   const isDanger = tone === 'danger';
   // 'warning' sits between default and danger: the action is allowed and
@@ -117,6 +117,11 @@ export function DialogHost() {
                   {inputLabel && <label className="block text-xs font-medium text-gray-500 mb-1">{inputLabel}</label>}
                   <input
                     ref={inputRef}
+                    // 'password' masks the field and keeps it out of the
+                    // browser's saved form values — needed now that an admin can
+                    // set someone's password from here.
+                    type={inputType || 'text'}
+                    autoComplete={inputType === 'password' ? 'new-password' : undefined}
                     value={value}
                     placeholder={placeholder || ''}
                     onChange={(e) => setValue(e.target.value)}

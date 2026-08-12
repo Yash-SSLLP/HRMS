@@ -31,6 +31,21 @@ const { notify } = require('../services/notify');
 // the user sees, so it surfaces correctly on the website's attendance views.
 const { startOfDayIST: startOfDay, monthRangeIST: monthRange, ymdIST: ymdLocal } = require('../utils/dateHelpers');
 
+// Attendance is a record of what HAS happened, so the registers never show
+// future dates. This matters because approving a leave stamps an OnLeave/Absent
+// row onto EVERY working day it covers, including days still to come — without
+// this cap, approving leave for the 14th makes a 14th row appear on the 12th.
+// The rows are still written (payroll and reporting need them); they simply stay
+// out of the list until their day arrives. Upcoming leave belongs to the leave
+// and calendar screens, which show it as a plan rather than as attendance.
+// Returns the exclusive upper bound to query with: the earlier of the requested
+// range end and the end of today (IST).
+function capToToday(end) {
+  const tomorrow = startOfDay(new Date());
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return end < tomorrow ? end : tomorrow;
+}
+
 // Full month names (index 0 = January) for building human-readable export filenames.
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -685,11 +700,14 @@ const listMine = asyncHandler(async (req, res) => {
   const month = Number(req.query.month) || now.getMonth() + 1;
   const { start, end } = monthRange(year, month);
 
+  const upto = capToToday(end);
   const [records, holidays] = await Promise.all([
     Attendance.find({
       employee: profile._id,
-      date: { $gte: start, $lt: end },
+      date: { $gte: start, $lt: upto },
     }).sort({ date: 1 }),
+    // Holidays keep the full month — an upcoming holiday is a published plan,
+    // not a claim about attendance that has already happened.
     require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date type').lean().catch(() => []),
   ]);
 
@@ -736,7 +754,7 @@ const listAll = asyncHandler(async (req, res) => {
   const month = Number(req.query.month) || now.getMonth() + 1;
   const { start, end } = monthRange(year, month);
 
-  const filter = { date: { $gte: start, $lt: end } };
+  const filter = { date: { $gte: start, $lt: capToToday(end) } };
   if (req.query.employee) filter.employee = req.query.employee;
 
   const records = await Attendance.find(filter)
@@ -799,8 +817,11 @@ const monthSummary = asyncHandler(async (req, res) => {
       .select('employeeCode designation department user workLocationRef')
       .populate('user', 'firstName lastName email')
       .populate('workLocationRef', 'name lat lng radiusM'),
-    Attendance.find({ employee: req.query.employee, date: { $gte: start, $lt: end } }).sort({ date: -1 }),
+    // Capped at today like the registers: a leave approved for later this month
+    // must not be counted as attendance that has already happened.
+    Attendance.find({ employee: req.query.employee, date: { $gte: start, $lt: capToToday(end) } }).sort({ date: -1 }),
     Setting.getSettings(),
+    // Holidays keep the full month — an upcoming holiday is a published plan.
     require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date name').catch(() => []),
   ]);
   if (!profile) {
@@ -1109,7 +1130,9 @@ const runAttendanceExport = async (req, res, opts = {}) => {
     ({ end } = monthRange(year, month));
   }
 
-  const filter = { date: { $gte: start, $lt: end } };
+  // Same rule as the on-screen registers: an export of the running month stops
+  // at today rather than shipping rows for days that have not happened yet.
+  const filter = { date: { $gte: start, $lt: capToToday(end) } };
   let employeeProfile = null;
   if (req.query.employee) {
     // When scoped (manager), the requested employee must be one of their reports.

@@ -17,6 +17,7 @@ const {
   updateUserPermissions,
   setCashbookAccess,
   setExpensesAccess,
+  setAssetsAccess,
   setExecEditAccess,
   setWfhAccess,
   getOrgSettings,
@@ -48,6 +49,8 @@ router.patch('/users/:id/permissions', restrictTo('SuperAdmin'), updateUserPermi
 router.patch('/users/:id/cashbook-access', restrictTo('SuperAdmin'), setCashbookAccess);
 // PATCH /users/:id/expenses-access — grant/revoke expense-claim review; protected, SuperAdmin only.
 router.patch('/users/:id/expenses-access', restrictTo('SuperAdmin'), setExpensesAccess);
+// PATCH /users/:id/assets-access — grant/revoke the assets register; protected, SuperAdmin only.
+router.patch('/users/:id/assets-access', restrictTo('SuperAdmin'), setAssetsAccess);
 // CEO/MD view-only ↔ edit mode — SuperAdmin only. Lifting the executive
 // read-only restriction is exactly the kind of decision that stays with the one
 // role that administers the system.

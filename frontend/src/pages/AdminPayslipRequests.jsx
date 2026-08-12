@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { useTabParam } from "../hooks/useTabParam";
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 
@@ -57,7 +58,7 @@ const NEXT_STEP = {
 };
 
 export default function AdminPayslipRequests() {
-  const [tab, setTab] = useState('pending');
+  const [tab, setTab] = useTabParam('pending', TABS.map((t) => t.key));
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);

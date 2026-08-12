@@ -27,11 +27,6 @@ const STATUS_COLORS = {
 // GPS accuracy tuning for the punch location watch.
 const GPS_GOOD_ENOUGH_M = 25;   // stop refining once a fix is at least this accurate
 const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting the best fix
-// Only flag fixes coarser than this as imprecise. Aligned with the default
-// geofence tolerance (200 m) so a usable fix (e.g. ±114 m on a laptop/indoors,
-// which never blocks a punch) isn't nagged — only genuinely poor fixes are.
-const GPS_POOR_M = 200;
-
 // Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day started
 // after this is the AFTERNOON half — always allowed, and never a late arrival.
 // Kept in IST (not the browser's zone) so a laptop set to another timezone still
@@ -65,20 +60,20 @@ const fmtElapsed = (ms) => {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 };
 
-// The GPS location recorded with a punch, shown as a Google Maps link. Renders
-// nothing when the punch has no coordinates (older records or denied location).
-const PunchLocation = ({ loc, className = '' }) =>
-  loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng) ? (
-    <a
-      href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
-      target="_blank"
-      rel="noreferrer"
-      title={loc.accuracy != null ? `Accuracy ±${Math.round(loc.accuracy)} m` : 'View on map'}
-      className={`inline-flex items-center gap-0.5 text-xs text-blue-600 plain-link font-normal ${className}`}
-    >
-      📍 {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
-    </a>
-  ) : null;
+// Punch coordinates are deliberately NOT rendered for the employee — no map
+// link, no lat/lng, no accuracy. The positions are still captured and stored,
+// and remain visible to HR/admin on the attendance and punch-map screens.
+
+// The server records an out-of-range punch as a remark like
+// "Check-in outside Head Office (742 m)." — that is HR's audit trail, not
+// something the employee is shown, so strip those sentences before rendering
+// the Remarks cell. Any other remark (leave auto-stamp, regularization note)
+// passes through untouched.
+// appendRemark joins notes with a single space, so removing the sentence and
+// collapsing the leftover whitespace is enough.
+const GEOFENCE_REMARK = /Check-(?:in|out) outside [^()]*\(\s*\d+\s*m\s*\)\.?/gi;
+const employeeRemarks = (remarks) =>
+  (remarks || '').replace(GEOFENCE_REMARK, '').replace(/\s{2,}/g, ' ').trim();
 
 export default function EmployeeAttendance() {
   const now = new Date();
@@ -407,12 +402,10 @@ export default function EmployeeAttendance() {
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Check-in</div>
             <div className="text-lg font-mono">{fmtTime(today?.checkIn)}</div>
-            <PunchLocation loc={today?.checkInLocation} className="mt-1" />
           </div>
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Check-out</div>
             <div className="text-lg font-mono">{fmtTime(today?.checkOut)}</div>
-            <PunchLocation loc={today?.checkOutLocation} className="mt-1" />
           </div>
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Hours</div>
@@ -455,42 +448,22 @@ export default function EmployeeAttendance() {
               <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">{camError}</div>
             )}
 
-            {/* Captured location readout */}
-            {geo ? (
-              (() => {
-                const poor = geo.accuracy != null && geo.accuracy > GPS_POOR_M;
-                return (
-                  <div className={`mb-3 text-xs px-2 py-1.5 rounded-lg border ${
-                    poor ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200'}`}>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span>📍</span>
-                      <a href={`https://www.google.com/maps?q=${geo.lat},${geo.lng}`} target="_blank" rel="noreferrer"
-                        className="font-mono text-blue-600 hover:underline">
-                        {geo.lat.toFixed(6)}, {geo.lng.toFixed(6)}
-                      </a>
-                      {geo.accuracy != null && (
-                        <span className={poor ? 'text-amber-700 font-medium' : 'text-gray-400'}>±{Math.round(geo.accuracy)} m</span>
-                      )}
-                      {locating && <span className="text-gray-400">· refining…</span>}
-                    </div>
-                    {poor && !locating && (
-                      <div className="mt-1 flex items-center justify-between gap-2">
-                        <span>For a more precise location, move near a window or outdoors.</span>
-                        <button type="button" onClick={() => captureLocation()}
-                          className="shrink-0 font-medium text-amber-800 underline hover:no-underline">Retry</button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()
-            ) : geoError ? (
+            {/* Location status — deliberately contentless. The punch still captures
+                GPS and the server still flags an out-of-range punch for HR, but the
+                employee is never shown coordinates, a map link, accuracy, distance,
+                or whether they are inside or outside the office range. Only the
+                acquisition STATE is surfaced, because the Confirm button waits on it
+                and a silent disabled button would look broken. */}
+            {geoError ? (
               <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg flex items-center justify-between gap-2">
                 <span>{geoError}</span>
                 <button type="button" onClick={() => captureLocation()}
                   className="shrink-0 font-medium text-amber-800 underline hover:no-underline">Retry</button>
               </div>
+            ) : geo && !locating ? (
+              <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Location info captured.</div>
             ) : (
-              <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting an accurate location…</div>
+              <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting location info…</div>
             )}
 
             {/* Work-from-home is a privilege granted per employee by the Backend. */}
@@ -534,11 +507,9 @@ export default function EmployeeAttendance() {
                     className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">
                     {busy
                       ? 'Submitting…'
-                      : locating
-                        ? 'Refining location…'
-                        : !geo && !geoError
-                          ? 'Getting location…'
-                          : `Confirm ${capture === 'checkin' ? 'Check In' : 'Check Out'}`}
+                      : locating || (!geo && !geoError)
+                        ? 'Getting location info…'
+                        : `Confirm ${capture === 'checkin' ? 'Check In' : 'Check Out'}`}
                   </button>
                 </>
               )}
@@ -600,19 +571,13 @@ export default function EmployeeAttendance() {
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-3 font-mono">
-                  {fmtTime(r.checkIn)}
-                  <PunchLocation loc={r.checkInLocation} className="mt-0.5 flex" />
-                </td>
-                <td className="px-4 py-3 font-mono">
-                  {fmtTime(r.checkOut)}
-                  <PunchLocation loc={r.checkOutLocation} className="mt-0.5 flex" />
-                </td>
+                <td className="px-4 py-3 font-mono">{fmtTime(r.checkIn)}</td>
+                <td className="px-4 py-3 font-mono">{fmtTime(r.checkOut)}</td>
                 <td className="px-4 py-3 text-right font-mono">{formatHours(r.hoursWorked)}</td>
                 <td className={`px-4 py-3 text-right font-mono ${r.lateMinutes > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
                   {r.lateMinutes > 0 ? formatDuration(r.lateMinutes) : '-'}
                 </td>
-                <td className="px-4 py-3 text-gray-500">{r.remarks || '-'}</td>
+                <td className="px-4 py-3 text-gray-500">{employeeRemarks(r.remarks) || '-'}</td>
               </tr>
             ))}
           </tbody>

@@ -24,6 +24,9 @@ import { fmtDate } from '../utils/format';
 
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || 'Employee';
 const empName = (r) => fullName(r.employee?.user);
+// Regularization.employee refs User directly, not EmployeeProfile, so it is
+// populated one level shallower than leave/exit requests.
+const regName = (r) => fullName(r.employee);
 
 // Chain-step tone, matching the web ladder's colours.
 const STEP_TONE = {
@@ -75,16 +78,19 @@ export default function MyApprovalsScreen() {
   const [emergency, setEmergency] = useState([]);
   const [exits, setExits] = useState([]);
   const [clearances, setClearances] = useState([]);
+  // Attendance corrections routed by the SuperAdmin-configured ladder.
+  const [regularizations, setRegularizations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
-    const [lv, hist, ex, cl] = await Promise.all([
+    const [lv, hist, ex, cl, rg] = await Promise.all([
       api.get('/approvals/leave?scope=pending').catch(() => ({ data: {} })),
       api.get('/approvals/leave?scope=history').catch(() => ({ data: {} })),
       api.get('/approvals/exits?scope=pending').catch(() => ({ data: {} })),
       api.get('/approvals/clearances?scope=pending').catch(() => ({ data: {} })),
+      api.get('/approvals/regularizations?scope=pending').catch(() => ({ data: {} })),
     ]);
     setLeave(lv.data?.requests || []);
     setEmergency(
@@ -95,6 +101,7 @@ export default function MyApprovalsScreen() {
     );
     setExits(ex.data?.requests || []);
     setClearances(cl.data?.requests || []);
+    setRegularizations(rg.data?.requests || []);
     setLoading(false);
   }, []);
 
@@ -118,6 +125,28 @@ export default function MyApprovalsScreen() {
     Alert.alert('Reject leave?', `${empName(item)} · ${item.leaveType}`, [
       { text: 'Cancel' },
       { text: 'Reject', style: 'destructive', onPress: () => decideLeave(item, 'reject') },
+    ]);
+  };
+
+  // ── Regularizations ──────────────────────────────────────────────────────
+  // Approving the LAST rung is what actually rewrites the attendance record, so
+  // a mid-ladder approval is safe: it only passes the request along.
+  const decideRegularization = async (item, action) => {
+    setBusyId(item._id);
+    try {
+      await api.patch(`/approvals/regularizations/${item._id}/${action}`, {});
+      setRegularizations((prev) => prev.filter((x) => x._id !== item._id));
+    } catch (err) {
+      Alert.alert('Action failed', errMsg(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmRegularizationReject = (item) => {
+    Alert.alert('Reject regularization?', `${regName(item)} · ${item.type} · ${fmtDate(item.date)}`, [
+      { text: 'Cancel' },
+      { text: 'Reject', style: 'destructive', onPress: () => decideRegularization(item, 'reject') },
     ]);
   };
 
@@ -205,7 +234,8 @@ export default function MyApprovalsScreen() {
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
-  const nothing = !leave.length && !emergency.length && !exits.length && !clearances.length;
+  const nothing = !leave.length && !emergency.length && !exits.length && !clearances.length
+    && !regularizations.length;
 
   return (
     <Screen edges={[]}>
@@ -214,7 +244,7 @@ export default function MyApprovalsScreen() {
           <EmptyState
             icon="checkmark-done-outline"
             title="Nothing waiting on you"
-            subtitle="Leave, resignations and no-dues clearances that need your approval will appear here."
+            subtitle="Leave, regularizations, resignations and no-dues clearances that need your approval will appear here."
           />
         ) : null}
 
@@ -237,6 +267,36 @@ export default function MyApprovalsScreen() {
                   busy={busyId === it._id}
                   onApprove={() => decideLeave(it, 'approve')}
                   onReject={() => confirmLeaveReject(it)}
+                />
+              </Card>
+            ))}
+          </>
+        )}
+
+        {/* Attendance regularizations awaiting my rung. Only employees whose
+            SuperAdmin-configured ladder names me reach this queue. */}
+        {regularizations.length > 0 && (
+          <>
+            <SectionHeader title={`Regularizations (${regularizations.length})`} />
+            {regularizations.map((it) => (
+              <Card key={it._id} style={{ marginBottom: spacing(3) }}>
+                <View style={styles.head}>
+                  <Avatar name={regName(it)} size={40} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={font.h3}>{regName(it)}</Text>
+                    <Text style={font.label}>
+                      {it.type} · {fmtDate(it.date)}
+                      {it.requestedCheckIn ? ` · in ${it.requestedCheckIn}` : ''}
+                      {it.requestedCheckOut ? ` · out ${it.requestedCheckOut}` : ''}
+                    </Text>
+                  </View>
+                </View>
+                {it.reason ? <Text style={[font.small, { marginTop: 8 }]}>{it.reason}</Text> : null}
+                <ChainProgress chain={it.approvalChain} />
+                <DecideRow
+                  busy={busyId === it._id}
+                  onApprove={() => decideRegularization(it, 'approve')}
+                  onReject={() => confirmRegularizationReject(it)}
                 />
               </Card>
             ))}

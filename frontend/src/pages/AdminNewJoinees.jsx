@@ -160,38 +160,52 @@ export default function AdminNewJoinees() {
                   {c.appointment?.generatedAt ? ` · appointment letter issued ${fmtDate(c.appointment.generatedAt)}` : ''}
                 </div>
               </div>
-              <div className="flex flex-col items-stretch sm:items-end gap-2">
+              {/* Offer and appointment are the same three things — when it was
+                  sent, the PDF, the send button — so they share a 3-column grid.
+                  Laying each row out independently made the columns ragged,
+                  because "Resend Appointment Letter" is wider than "Resend Offer
+                  Letter" and every row then found its own right edge. Empty
+                  cells are rendered as spacers so a row with no timestamp or no
+                  PDF still lines up with the one below it. */}
+              <div className="grid grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-2 sm:justify-end">
                 {/* Offer letter */}
-                <div className="flex items-center gap-2 justify-end flex-wrap">
-                  {c.offer?.emailedAt && <span className="text-[10px] text-gray-400">already sent {fmtDate(c.offer.emailedAt)}</span>}
-                  {c.offer?.hasLetter && (
-                    <button onClick={() => downloadOffer(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Offer PDF</button>
-                  )}
-                  <button
-                    onClick={() => sendLetter(c, 'offer')}
-                    disabled={!c.offer?.hasLetter || !c.email}
-                    title={!c.email ? 'No email on file for this candidate' : 'Email the offer letter to the candidate'}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    {c.offer?.emailedAt ? 'Resend Offer Letter' : 'Send Offer Letter'}
-                  </button>
-                </div>
+                {c.offer?.emailedAt
+                  ? <span className="text-[10px] text-gray-400 text-right whitespace-nowrap">already sent {fmtDate(c.offer.emailedAt)}</span>
+                  : <span />}
+                {c.offer?.hasLetter
+                  ? <button onClick={() => downloadOffer(c)} className="w-full text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">Offer PDF</button>
+                  : <span />}
+                <button
+                  onClick={() => sendLetter(c, 'offer')}
+                  disabled={!c.offer?.hasLetter || !c.email}
+                  title={!c.email ? 'No email on file for this candidate' : 'Email the offer letter to the candidate'}
+                  className="w-full text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {c.offer?.emailedAt ? 'Resend Offer Letter' : 'Send Offer Letter'}
+                </button>
+
                 {/* Appointment letter */}
-                <div className="flex items-center gap-2 justify-end flex-wrap">
-                  {c.appointment?.emailedAt && <span className="text-[10px] text-gray-400">already sent {fmtDate(c.appointment.emailedAt)}</span>}
-                  {c.appointment?.hasLetter && (
-                    <button onClick={() => downloadAppointment(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Appointment PDF</button>
-                  )}
-                  <button
-                    onClick={() => sendLetter(c, 'appointment')}
-                    disabled={!c.appointment?.hasLetter || !c.email}
-                    title={!c.email ? 'No email on file for this candidate' : 'Email the appointment letter to the candidate'}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    {c.appointment?.emailedAt ? 'Resend Appointment Letter' : 'Send Appointment Letter'}
-                  </button>
-                </div>
-                <button onClick={() => openConvert(c)} className="text-xs px-2.5 py-1 rounded-lg bg-gray-900 text-white hover:bg-gray-700">Make Employee &amp; User</button>
+                {c.appointment?.emailedAt
+                  ? <span className="text-[10px] text-gray-400 text-right whitespace-nowrap">already sent {fmtDate(c.appointment.emailedAt)}</span>
+                  : <span />}
+                {c.appointment?.hasLetter
+                  ? <button onClick={() => downloadAppointment(c)} className="w-full text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">Appointment PDF</button>
+                  : <span />}
+                <button
+                  onClick={() => sendLetter(c, 'appointment')}
+                  disabled={!c.appointment?.hasLetter || !c.email}
+                  title={!c.email ? 'No email on file for this candidate' : 'Email the appointment letter to the candidate'}
+                  className="w-full text-xs px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {c.appointment?.emailedAt ? 'Resend Appointment Letter' : 'Send Appointment Letter'}
+                </button>
+
+                {/* The final step, so it spans the full width under the two rows
+                    rather than floating off on its own right edge. */}
+                <button onClick={() => openConvert(c)}
+                  className="col-span-3 w-full text-xs px-2.5 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 whitespace-nowrap">
+                  Make Employee &amp; User
+                </button>
               </div>
             </div>
           ))}

@@ -88,6 +88,20 @@ const employeeProfileSchema = new mongoose.Schema(
     // Dedicated HR contact for this employee. The exit flow uses this person
     // as the default "handledBy" so the exit email is signed by them.
     hrPartner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // Who signs off THIS employee's attendance regularizations, in order: the
+    // first entry decides first, the second (optional) confirms. SuperAdmin-only
+    // to set. Unlike leave, this is configured explicitly rather than derived
+    // from reportingManager — a correction to someone's attendance is often
+    // approved by a shift/ops lead who is not their org-chart manager.
+    // Empty = not configured, and the request falls back to flat HR review.
+    regularizationApprovers: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+      default: [],
+      validate: {
+        validator: (v) => !v || v.length <= 2,
+        message: 'A regularization can have at most 2 approval steps',
+      },
+    },
 
     // --- Indian statutory identifiers ---
     pan: {

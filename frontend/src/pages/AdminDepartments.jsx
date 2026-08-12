@@ -10,6 +10,7 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import { downloadTableXlsx } from '../api/download';
 
 const blank = { name: '', isActive: true };
 
@@ -30,6 +31,7 @@ export default function AdminDepartments() {
   const [expanded, setExpanded] = useState(null); // department _id whose members are shown
   const [members, setMembers] = useState({}); // { [deptName]: profile[] }
   const [memLoading, setMemLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -104,12 +106,61 @@ export default function AdminDepartments() {
     }
   };
 
+  // Export every employee with their department, as an .xlsx.
+  //
+  // The page loads members lazily (only for the row you expand), so this pulls
+  // the full list in one go rather than exporting whatever happens to be open.
+  // Employees with no department are included under "(No department)" — leaving
+  // them out would make the export silently disagree with the headcount.
+  const exportEmployees = async () => {
+    setExporting(true);
+    try {
+      const { data } = await api.get('/employees');
+      const rows = (data.profiles || [])
+        .map((p) => {
+          const name = `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim()
+            || p.user?.email || p.employeeCode || 'Employee';
+          return {
+            name,
+            department: p.department || '(No department)',
+            designation: p.designation || '-',
+            status: p.user?.isActive === false ? 'Inactive' : 'Active',
+            code: p.employeeCode || '-',
+            email: p.user?.email || '-',
+          };
+        })
+        // Grouped by department, then alphabetical — reads like the page does.
+        .sort((a, b) => a.department.localeCompare(b.department) || a.name.localeCompare(b.name))
+        .map((r) => [r.name, r.department, r.designation, r.status, r.code, r.email]);
+
+      if (!rows.length) {
+        toast.error('No employees to export');
+        return;
+      }
+      await downloadTableXlsx({
+        filename: `employees-by-department-${new Date().toISOString().slice(0, 10)}`,
+        sheetName: 'Employees',
+        headers: ['Employee Name', 'Department', 'Designation', 'Status', 'Employee Code', 'Email'],
+        rows,
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not export');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="Departments"
         subtitle={!canManage ? 'Only HR can add or rename departments.' : undefined}
       >
+        <button onClick={exportEmployees} disabled={exporting}
+          title="Download every employee with their department, designation and status"
+          className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50">
+          {exporting ? 'Preparing…' : 'Export'}
+        </button>
         {canManage && (
           <button onClick={openCreate}
             className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">

@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
 import PromptDialog from '../components/PromptDialog';
 import { confirmDialog } from '../components/dialogs';
@@ -27,7 +28,7 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-di
 const personName = (u) => (u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email : '-');
 
 export default function AdminAssets() {
-  const [tab, setTab] = useState('assets');
+  const [tab, setTab] = useTabParam('assets', ['assets', 'assignments']);
   const [assets, setAssets] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +60,14 @@ export default function AdminAssets() {
     setLoading(true);
     setError('');
     try {
-      const [aRes, uRes] = await Promise.all([api.get('/assets'), api.get('/admin/users?active=true&excludeExecutives=true')]);
+      // The person picker comes from /assets/people, not /admin/users: the
+      // latter is role-gated, so the holder of the standalone Assets grant
+      // (a plain employee) would 403 and — sharing this catch — the whole page
+      // would fail to load, not just the picker.
+      const [aRes, uRes] = await Promise.all([
+        api.get('/assets'),
+        api.get('/assets/people?excludeExecutives=true'),
+      ]);
       setAssets(aRes.data.assets);
       setUsers(uRes.data.users);
     } catch (err) {

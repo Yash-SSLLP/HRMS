@@ -219,6 +219,36 @@ async function validateHierarchy(body, linkedUserId, existing = null, allowCross
     }
   }
 
+  // Regularization approvers are an ordered array (1 or 2 people), so they need
+  // their own checks rather than the single-field loop above.
+  if (body.regularizationApprovers !== undefined) {
+    const list = (body.regularizationApprovers || []).map(String).filter(Boolean);
+    if (list.length > 2) {
+      const err = new Error('A regularization can have at most 2 approval steps');
+      err.status = 400;
+      throw err;
+    }
+    if (list.includes(linkedId)) {
+      const err = new Error('An employee cannot approve their own regularization');
+      err.status = 400;
+      throw err;
+    }
+    if (new Set(list).size !== list.length) {
+      const err = new Error('The same person cannot be both regularization approvers');
+      err.status = 400;
+      throw err;
+    }
+    for (const id of list) {
+      const u = await User.findById(id).select('isActive');
+      if (!u || u.isActive === false) {
+        const err = new Error('A regularization approver must be an active user');
+        err.status = 400;
+        throw err;
+      }
+    }
+    body.regularizationApprovers = list;
+  }
+
   if (body.reportingManager) {
     // On an update the payload may not carry the department — fall back to the
     // stored one so a manager change is still checked against the real value.
@@ -426,6 +456,9 @@ const createEmployee = asyncHandler(async (req, res) => {
   if (req.user.role !== 'SuperAdmin') {
     delete req.body.hrPartner;
     delete req.body.reportingManager;
+    // Who signs off this employee's attendance corrections is a control an HR
+    // Manager must not be able to point at themselves.
+    delete req.body.regularizationApprovers;
   }
 
   // Consent flag, not profile data: pull it off the body so it is never stored,
@@ -486,6 +519,9 @@ const updateEmployee = asyncHandler(async (req, res) => {
   if (req.user.role !== 'SuperAdmin') {
     delete req.body.hrPartner;
     delete req.body.reportingManager;
+    // Who signs off this employee's attendance corrections is a control an HR
+    // Manager must not be able to point at themselves.
+    delete req.body.regularizationApprovers;
   }
 
   // See createEmployee: consent flag, stripped before the payload is persisted.

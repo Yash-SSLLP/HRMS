@@ -38,6 +38,7 @@ const blankProfile = {
   pfNumber: '',
   esicNumber: '',
   reportingManager: '',
+  regularizationApprovers: [], // 0, 1 or 2 user ids, in approval order
   documentsVerified: false,
   dateOfBirth: '',
   gender: '',
@@ -318,6 +319,7 @@ export default function AdminEmployees() {
       user: p.user?._id || p.user,
       hrPartner: undefined, // HR ownership removed · never send this field
       reportingManager: p.reportingManager?._id || p.reportingManager || '',
+      regularizationApprovers: (p.regularizationApprovers || []).map((a) => a?._id || a).filter(Boolean),
       dateOfJoining: p.dateOfJoining ? p.dateOfJoining.slice(0, 10) : '',
       dateOfBirth: p.dateOfBirth ? p.dateOfBirth.slice(0, 10) : '',
       gender: p.gender || '',
@@ -847,6 +849,64 @@ export default function AdminEmployees() {
                     {isSuperAdmin && !form.department
                       ? 'Pick a department first — managers are chosen from within it.'
                       : 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'}
+                  </p>
+                </div>
+                {/* Attendance-regularization approval ladder: 1 or 2 named people,
+                    in order. Deliberately separate from the reporting manager —
+                    a correction is often signed off by a shift/ops lead. Step 2
+                    only appears once step 1 is chosen, so the ladder can never be
+                    configured with a gap. SuperAdmin-only, matching the backend. */}
+                <div className="sm:col-span-2">
+                  <label className="block text-sm text-gray-700">Regularization approval</label>
+                  {isSuperAdmin ? (
+                    <div className="mt-1 space-y-2">
+                      {[0, 1].map((idx) => {
+                        const chain = form.regularizationApprovers || [];
+                        // Step 2 stays hidden until step 1 is set — no gaps.
+                        if (idx === 1 && !chain[0]) return null;
+                        return (
+                          <div key={idx} className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500 w-14 shrink-0">Step {idx + 1}</span>
+                            <SearchableSelect
+                              value={chain[idx] || ''}
+                              onChange={(e) => {
+                                const next = [...chain];
+                                if (e.target.value) next[idx] = e.target.value;
+                                else next.splice(idx);       // clearing a step drops the ones after it
+                                setForm({ ...form, regularizationApprovers: next.filter(Boolean) });
+                              }}
+                              className="block w-full border rounded-lg px-3 py-2"
+                            >
+                              <option value="">{idx === 0 ? 'None — any HR reviewer decides' : 'None — one step only'}</option>
+                              {allUsers
+                                .filter((u) => u.isActive !== false)
+                                .filter((u) => u._id !== (form.user?._id || form.user))
+                                .filter((u) => u._id === chain[idx] || !chain.includes(u._id))
+                                .map((u) => (
+                                  <option key={u._id} value={u._id}>
+                                    {u.firstName} {u.lastName} ({u.role}) · {u.email}
+                                  </option>
+                                ))}
+                            </SearchableSelect>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700 text-sm">
+                      {(form.regularizationApprovers || [])
+                        .map((id) => {
+                          const u = allUsers.find((x) => x._id === id);
+                          return u ? `${u.firstName} ${u.lastName}` : null;
+                        })
+                        .filter(Boolean)
+                        .join(' → ') || '-'}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Who approves this employee&apos;s attendance regularizations, in order — step 1 decides
+                    first, step 2 confirms. Leave step 1 empty to keep the current behaviour, where any
+                    HR reviewer can decide. Approvers need no special permission.
                   </p>
                 </div>
                 <div className="sm:col-span-2">

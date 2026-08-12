@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import { confirmDialog, promptDialog } from '../components/dialogs';
@@ -397,7 +398,7 @@ function BalancesTab() {
 // ============ Page shell ============
 
 export default function AdminLeave() {
-  const [tab, setTab] = useState('requests');
+  const [tab, setTab] = useTabParam('requests', ['requests', 'balances']);
 
   return (
     <div>

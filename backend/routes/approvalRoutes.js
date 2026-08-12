@@ -15,6 +15,9 @@ const {
   listMyClearances,
   updateMyClearanceSection,
   countMyApprovals,
+  listMyRegularizationApprovals,
+  approveRegularization,
+  rejectRegularization,
 } = require('../controllers/approvalController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -44,6 +47,15 @@ router.get('/exits', listMyExitApprovals);
 router.patch('/exits/:id/approve', approveExit);
 // PATCH /exits/:id/reject — reject an exit request; protected (must be current approver).
 router.patch('/exits/:id/reject', rejectExit);
+
+// GET /regularizations — regularizations awaiting my approval; protected (chain-scoped).
+// Lives here rather than on /api/regularizations because a named approver may be
+// an ordinary employee, and that router gates review behind 'attendance.manage'.
+router.get('/regularizations', listMyRegularizationApprovals);
+// PATCH /regularizations/:id/approve — approve at my step; protected (must be current approver).
+router.patch('/regularizations/:id/approve', approveRegularization);
+// PATCH /regularizations/:id/reject — reject at my step; protected (must be current approver).
+router.patch('/regularizations/:id/reject', rejectRegularization);
 
 // GET /clearances — exits with a no-dues section assigned to me; protected (assignee-scoped).
 router.get('/clearances', listMyClearances);

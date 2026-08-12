@@ -12,6 +12,7 @@ import PageHeader from '../components/PageHeader';
 import LeaveApprovalsInbox from '../components/LeaveApprovalsInbox';
 import ExitApprovalsInbox from '../components/ExitApprovalsInbox';
 import ExitClearanceInbox from '../components/ExitClearanceInbox';
+import RegularizationApprovalsInbox from '../components/RegularizationApprovalsInbox';
 
 export default function AdminApprovals() {
   return (
@@ -23,6 +24,9 @@ export default function AdminApprovals() {
 
       <h2 className="card-title mb-3">Leave</h2>
       <LeaveApprovalsInbox />
+
+      <h2 className="card-title mt-8 mb-3">Attendance regularizations</h2>
+      <RegularizationApprovalsInbox />
 
       <h2 className="card-title mt-8 mb-3">Resignations</h2>
       <ExitApprovalsInbox />

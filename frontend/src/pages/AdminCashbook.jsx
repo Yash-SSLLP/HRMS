@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
@@ -37,7 +38,7 @@ const TABS = [
 const clean = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== '' && v != null));
 
 export default function AdminCashbook() {
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useTabParam('overview', TABS.map(([k]) => k));
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [ov, setOv] = useState(null);

@@ -7,6 +7,8 @@
 const asyncHandler = require('express-async-handler');
 const { LeaveRequest } = require('../models/Leave');
 const ExitRequest = require('../models/ExitRequest');
+const Regularization = require('../models/Regularization');
+const { advanceRegularizationApproval } = require('./regularizationController');
 const { advanceApproval, ensureApprovalChain } = require('./leaveController');
 const {
   advanceExitApproval,
@@ -234,6 +236,63 @@ const listMyClearances = asyncHandler(async (req, res) => {
   res.json({ scope, count: requests.length, requests });
 });
 
+// ================= Attendance regularizations (configured ladder) =================
+// Only requests whose employee has SuperAdmin-configured approvers reach here —
+// an unconfigured one has no chain and stays on the flat HR-review path.
+
+/**
+ * List regularizations for the current approver.
+ * @route GET /api/approvals/regularizations?scope=pending|history
+ * @param {string} [req.query.scope] - 'pending' (awaiting me) or 'history' (any chain I'm in)
+ * @returns {{scope, count, requests: Object[]}}
+ */
+const listMyRegularizationApprovals = asyncHandler(async (req, res) => {
+  const me = req.user._id;
+  const scope = req.query.scope === 'history' ? 'history' : 'pending';
+  const filter =
+    scope === 'history'
+      ? { 'approvalChain.approver': me }
+      : { currentApprover: me, status: 'Pending' };
+  const requests = await Regularization.find(filter)
+    .populate('employee', 'firstName lastName email role')
+    .sort({ date: -1 })
+    .lean();
+  res.json({ scope, count: requests.length, requests });
+});
+
+// Shared by the approve/reject routes below — both are the same call with a
+// different action, and both are scoped to `currentApprover === me` inside
+// advanceRegularizationApproval.
+const decideRegularization = (action) =>
+  asyncHandler(async (req, res) => {
+    const item = await Regularization.findById(req.params.id);
+    if (!item) {
+      res.status(404);
+      throw new Error('Regularization request not found');
+    }
+    try {
+      const out = await advanceRegularizationApproval(
+        item, req.user._id, action, req.body.note, req.user
+      );
+      res.json(out);
+    } catch (err) {
+      res.status(err.status || 400);
+      throw err;
+    }
+  });
+
+/**
+ * Approve a regularization at the current chain step (may advance or finalise+apply).
+ * @route PATCH /api/approvals/regularizations/:id/approve
+ */
+const approveRegularization = decideRegularization('approve');
+
+/**
+ * Reject a regularization at the current chain step (stops the chain).
+ * @route PATCH /api/approvals/regularizations/:id/reject
+ */
+const rejectRegularization = decideRegularization('reject');
+
 /**
  * How many items are waiting on the current user, for the top-bar shortcut badge.
  *
@@ -247,15 +306,22 @@ const listMyClearances = asyncHandler(async (req, res) => {
  */
 const countMyApprovals = asyncHandler(async (req, res) => {
   const me = req.user._id;
-  const [leave, exits, clearances] = await Promise.all([
+  const [leave, exits, clearances, regularizations] = await Promise.all([
     LeaveRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
     ExitRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
     ExitRequest.countDocuments({
       status: 'InClearance',
       clearanceSections: { $elemMatch: { assignedTo: me, completed: false } },
     }),
+    Regularization.countDocuments({ currentApprover: me, status: 'Pending' }),
   ]);
-  res.json({ leave, exits, clearances, total: leave + exits + clearances });
+  res.json({
+    leave,
+    exits,
+    clearances,
+    regularizations,
+    total: leave + exits + clearances + regularizations,
+  });
 });
 
 /**
@@ -290,4 +356,7 @@ module.exports = {
   listMyClearances,
   updateMyClearanceSection,
   countMyApprovals,
+  listMyRegularizationApprovals,
+  approveRegularization,
+  rejectRegularization,
 };

@@ -10,6 +10,7 @@ const asyncHandler = require('express-async-handler');
 const Template = require('../models/Template');
 const { getRegistry } = require('../services/templateRegistry');
 const templates = require('../services/templates');
+const { buildLetterTex } = require('../services/letterTex');
 const COMPANY = require('../config/company');
 
 /**
@@ -143,4 +144,47 @@ const previewTemplate = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { listTemplates, getTemplate, saveTemplate, resetTemplate, previewTemplate };
+/**
+ * Download a letter template as a standalone Overleaf-ready .tex file, carrying
+ * the wording it has right now (org override if one exists, else the shipped
+ * default). Placeholders survive as \ph{name} rather than being filled, because
+ * this exports the TEMPLATE, not one candidate's letter.
+ *
+ * Authoring aid only — the live PDF is still drawn by services/letterPdf.js, so
+ * nothing here needs a TeX toolchain on the server.
+ * @route GET /api/templates/:key/tex  (templates.manage)
+ * @returns {text/x-tex} 400 for a mail template, 404 for an unknown key
+ */
+const downloadTemplateTex = asyncHandler(async (req, res) => {
+  const reg = getRegistry(req.params.key);
+  if (!reg) {
+    res.status(404);
+    throw new Error('Unknown template');
+  }
+  if (reg.format !== 'letter') {
+    res.status(400);
+    throw new Error('Only letter templates can be exported as LaTeX.');
+  }
+
+  // Current wording, override-aware — the same resolve() the renderer uses.
+  const current = await templates.resolve(req.params.key);
+  const blocks = templates.parseLetterBody(current.body);
+
+  const tex = buildLetterTex({
+    key: reg.key,
+    label: reg.name,
+    blocks,
+    variables: reg.variables || [],
+    // Only the appointment letter carries the CTC annexure on page 2.
+    annexure: reg.key === 'appointment.letter',
+  });
+
+  const filename = `${reg.key.replace(/\./g, '-')}.tex`;
+  res.setHeader('Content-Type', 'application/x-tex; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(tex);
+});
+
+module.exports = {
+  listTemplates, getTemplate, saveTemplate, resetTemplate, previewTemplate, downloadTemplateTex,
+};

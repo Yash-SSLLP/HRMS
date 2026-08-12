@@ -39,18 +39,26 @@ export const adminNav = [
   // shouldn't need a dropdown opened first. An entry with no `group` renders as
   // a plain top-level link (see NavList in components/Layout.jsx).
   { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome },
+  // Approvals spans leave, resignations, no-dues clearance AND attendance
+  // regularizations, so it outgrew the Leave category it used to sit in.
+  // Pinned like Dashboard: it is a daily inbox, not an occasional lookup.
+  { to: '/admin/approvals', label: 'Approvals', icon: FiCheckSquare },
   { group: 'Attendance & Shifts', icon: FiClock, items: [
     { to: '/admin/presence', label: "Who's In / On Leave", icon: FiUserCheck, perm: 'attendance.manage' },
     { to: '/admin/attendance', label: 'Attendance', icon: FiClock, perm: 'attendance.manage' },
     { to: '/admin/attendance-month', label: 'Monthly View', icon: FiCalendar, perm: 'attendance.manage' },
     { to: '/admin/attendance-report', label: 'Attendance Report', icon: FiActivity, perm: 'attendance.manage' },
-    { to: '/admin/regularizations', label: 'Regularization', icon: FiTool, perm: 'attendance.manage' },
+    { to: '/admin/regularizations', label: 'Regularization', icon: FiTool, perm: 'attendance.manage',
+      // The setup tab is SuperAdmin-only (see AdminRegularizations) — gated here
+      // too so search never offers a tab the page would refuse to open.
+      tabs: [{ id: 'requests', label: 'Requests' },
+        { id: 'setup', label: 'Approval setup', roles: ['SuperAdmin'] }] },
     { to: '/admin/roster', label: 'Shifts & Roster', icon: FiCalendar, perm: 'attendance.manage' },
     { to: '/admin/punch-map', label: 'Punch Map', icon: FiMap, perm: 'attendance.manage' },
   ] },
   { group: 'Leave & Holidays', icon: FiUmbrella, items: [
-    { to: '/admin/leave', label: 'Leave', icon: FiUmbrella, perm: 'leave.manage' },
-    { to: '/admin/approvals', label: 'Approvals', icon: FiCheckSquare },
+    { to: '/admin/leave', label: 'Leave', icon: FiUmbrella, perm: 'leave.manage',
+      tabs: [{ id: 'requests', label: 'Requests' }, { id: 'balances', label: 'Balances' }] },
     { to: '/admin/holidays', label: 'Holidays', icon: FiSun, perm: 'leave.manage' },
   ] },
   { group: 'People & Organization', icon: FiUsers, items: [
@@ -65,39 +73,45 @@ export const adminNav = [
   { group: 'Payroll & Salary', icon: TbCurrencyRupee, items: [
     { to: '/admin/payroll', label: 'Payroll', icon: TbCurrencyRupee, perm: 'payroll.manage' },
     // The release queue: employees ask for their payslip, HR checks and hands it over.
-    { to: '/admin/payslip-requests', label: 'Payslip Requests', icon: TbReceipt, perm: 'payroll.manage' },
+    { to: '/admin/payslip-requests', label: 'Payslip Requests', icon: TbReceipt, perm: 'payroll.manage',
+      tabs: [{ id: 'pending', label: 'Needs action' }, { id: 'released', label: 'Released' }] },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders, perm: 'payroll.manage' },
-    { to: '/admin/payroll-run', label: 'Hikes', icon: FiRepeat, perm: 'payroll.manage' },
+    { to: '/admin/payroll-run', label: 'Salary Revisions', icon: FiRepeat, perm: 'payroll.manage' },
     { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard, perm: 'loans.manage' },
     { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent, perm: 'declarations.manage' },
-    { to: '/admin/compliance', label: 'Compliance', icon: FiCheckCircle, perm: 'compliance.view' },
+    { to: '/admin/compliance', label: 'Compliance', icon: FiCheckCircle, perm: 'compliance.view',
+      tabs: [{ id: 'pf', label: 'PF' }, { id: 'esi', label: 'ESI' }, { id: 'pt', label: 'PT' },
+        { id: 'tds', label: 'TDS' }, { id: 'form16', label: 'Form 16' }] },
   ] },
   // Cashbook used to be a category of its own, which meant it rendered as a
   // bare section link with no icon (see the single-item branch in NavList).
   // Folded in with the other money-out modules so it gets a real nav row.
   { group: 'Expenses & Cashbook', icon: FiShoppingBag, items: [
     { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage' },
-    { to: '/admin/cashbook', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage' },
+    { to: '/admin/cashbook', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage',
+      tabs: [{ id: 'overview', label: 'Overview' }, { id: 'ledger', label: 'Ledger' }, { id: 'vouchers', label: 'Vouchers' },
+        { id: 'accounts', label: 'Accounts' }, { id: 'categories', label: 'Categories' }, { id: 'reports', label: 'Reports' }] },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus, anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'] },
-    { to: '/admin/hiring-onboarding', label: 'Onboarding', icon: FiClipboard, perm: 'recruitment.candidates' },
-    { to: '/admin/new-joinees', label: 'New Joinees', icon: FiUserCheck, perm: 'recruitment.candidates' },
-    { to: '/admin/onboarding', label: 'Onboarding Tasks', icon: FiCheckSquare, perm: 'onboarding.manage' },
+    { to: '/admin/hiring-onboarding', label: 'Offers & Joining', icon: FiClipboard, perm: 'recruitment.candidates' },
+    { to: '/admin/new-joinees', label: 'New Joinee Records', icon: FiUserCheck, perm: 'recruitment.candidates' },
+    { to: '/admin/onboarding', label: 'Onboarding Checklist', icon: FiCheckSquare, perm: 'onboarding.manage' },
     { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage' },
   ] },
   { group: 'Performance & Learning', icon: FiTrendingUp, items: [
     { to: '/admin/performance', label: 'Performance', icon: FiTrendingUp, perm: 'performance.manage' },
     { to: '/admin/review-cycles', label: 'Appraisals', icon: FiEdit, perm: 'performance.manage' },
-    { to: '/admin/courses', label: 'Courses (LMS)', icon: FiBook, perm: 'courses.manage', ld: true },
+    { to: '/admin/courses', label: 'Courses', icon: FiBook, perm: 'courses.manage', ld: true },
     { to: '/admin/training', label: 'Training', icon: FiBookOpen, perm: 'training.manage' },
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [
     { to: '/admin/projects', label: 'Projects', icon: FiFolder, perm: 'projects.manage' },
     { to: '/admin/tasks', label: 'Tasks', icon: FiList, perm: 'tasks.manage' },
     { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage' },
-    { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage' },
+    { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
+      tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' }] },
   ] },
   { group: 'Communication & Culture', icon: FiVolume2, items: [
     { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
@@ -132,7 +146,7 @@ export const adminNav = [
 // HR L&D (LDManager) is an LMS-only admin: they enter the admin portal but see
 // only the Courses page. A flat, single-item nav keeps the sidebar unambiguous.
 export const ldNav = [
-  { to: '/admin/courses', label: 'Courses (LMS)', end: true, icon: FiBook },
+  { to: '/admin/courses', label: 'Courses', end: true, icon: FiBook },
 ];
 
 // Account Manager (AccountsManager) is a cashbook-only admin: they enter the
@@ -185,6 +199,10 @@ export const employeeNav = [
     { to: '/employee/tasks', label: 'Tasks', icon: FiList },
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
     { to: '/employee/assets', label: 'Assets', icon: FiPackage },
+    // The register, for holders of the standalone Assets grant with no admin
+    // portal. Named apart from the self-service "Assets" row above, which
+    // lists only what is allotted to me.
+    { to: '/employee/assets-manage', label: 'Manage Assets', icon: FiPackage, perm: 'assets.manage' },
   ] },
   { group: 'Communication & Culture', icon: FiVolume2, items: [
     { to: '/employee/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },

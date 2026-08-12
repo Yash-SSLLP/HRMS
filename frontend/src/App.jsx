@@ -277,6 +277,10 @@ export default function App() {
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />
         <Route path="assets" element={<EmployeeAssets />} />
+        {/* Asset register for holders of the standalone Assets grant who have
+            no admin portal — the same page /admin/assets serves, mounted here.
+            The backend's assets.manage gate is the real check. */}
+        <Route path="assets-manage" element={<AdminAssets />} />
         <Route path="goals" element={<EmployeeGoals />} />
         <Route path="reviews" element={<EmployeeReviews />} />
         <Route path="learning" element={<EmployeeLearning />} />

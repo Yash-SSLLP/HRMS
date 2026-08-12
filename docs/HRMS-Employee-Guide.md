@@ -60,7 +60,7 @@ The Dashboard is your landing page. From top to bottom you'll typically see:
 **What you do:**
 - Tap **Check In** in the morning and **Check Out** when you leave. You get **one check-in and one check-out per day**.
 - Each punch requires a **selfie** (a quick photo from your camera) - this is mandatory.
-- Each punch also captures your **GPS location**. The app waits a few seconds for an accurate fix and shows your coordinates with a map link. If the fix is poor or you're far from the office, it warns you - but it **still lets you punch** (it just records the distance).
+- Each punch also captures your **GPS location**. The app just shows `Getting location info...` while it works - your coordinates are not displayed, and you are never told whether you are inside or outside the office range. It **never blocks your punch**; the location is recorded for HR.
 - **Work From Home (WFH)** is a permission, not a checkbox everyone gets. If the Backend has granted it to you, a WFH tick appears at punch time and those punches are never flagged as "outside office." If you don't see it, you haven't been given it - ask the Backend.
 - At checkout you can tick **Mark as Half Day** if it was a half day.
 - After check-in a **live timer** counts your working time; it freezes when you check out.

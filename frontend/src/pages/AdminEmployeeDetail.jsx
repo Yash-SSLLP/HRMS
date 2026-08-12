@@ -65,9 +65,14 @@ export default function AdminEmployeeDetail() {
   // Unless a SuperAdmin has switched that exec account into edit mode.
   const canEdit = me?.role === 'SuperAdmin'
     || (!isReadOnlyExec(me) && hasPermission(me, 'employees.manage'));
+  // Setting someone else's password is SuperAdmin-only, matching the server:
+  // PUT /admin/users/:id refuses a non-SuperAdmin touching a non-Employee, and
+  // handing out passwords is not something an HR Manager should do silently.
+  const canSetPassword = me?.role === 'SuperAdmin';
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [pwBusy, setPwBusy] = useState(false);
   const [docs, setDocs] = useState([]);
   const [token, setToken] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
@@ -120,6 +125,41 @@ export default function AdminEmployeeDetail() {
     setTimeout(() => setLinkCopied(false), 1600);
   };
 
+  // SuperAdmin sets a new sign-in password for this employee.
+  //
+  // Reads profile.user rather than the `u` alias further down, so it never
+  // depends on where in the render this is declared. The server does the real
+  // work: PUT /admin/users/:id assigns the plain value and the User pre-save
+  // hook re-hashes it, so nothing hashed is ever sent from the browser.
+  const setPassword = async () => {
+    const target = profile?.user;
+    if (!target?._id) return;
+    const name = fullName(target) || target.email || 'this employee';
+    const pw = await promptDialog({
+      title: 'Set a new password',
+      message: `${name} will sign in with this password from now on. Tell them through a channel you trust — it is not emailed to them.`,
+      inputLabel: 'New password',
+      inputType: 'password',
+      placeholder: 'At least 8 characters',
+      confirmText: 'Set password',
+      tone: 'warning',
+    });
+    if (pw === null) return;                       // cancelled
+    if (String(pw).trim().length < 8) {
+      toast.error('Password must be at least 8 characters');
+      return;
+    }
+    setPwBusy(true);
+    try {
+      await api.put(`/admin/users/${target._id}`, { password: String(pw) });
+      toast.success(`Password updated for ${name}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not set the password');
+    } finally {
+      setPwBusy(false);
+    }
+  };
+
   const setDocStatus = async (docId, status) => {
     let note;
     if (status === 'Rejected') note = (await promptDialog({ message: 'Reason for rejecting (optional):' })) || '';
@@ -164,6 +204,13 @@ export default function AdminEmployeeDetail() {
   return (
     <div>
       <PageHeader title={fullName(u) || profile.employeeCode} subtitle={`${profile.designation || '-'} · ${profile.department || '-'}`}>
+        {canSetPassword && u?._id && (
+          <button onClick={setPassword} disabled={pwBusy}
+            title={`Set a new sign-in password for ${fullName(u) || 'this employee'}`}
+            className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">
+            {pwBusy ? 'Saving…' : 'Set password'}
+          </button>
+        )}
         {canEdit && (
           // Editing reuses the full form on the employees list rather than a
           // second copy here; `back=1` returns to this page once saved.

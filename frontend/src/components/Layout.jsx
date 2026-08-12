@@ -463,7 +463,24 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
     (navItems || []).forEach((g) => {
       const items = g.items || (g.to ? [g] : []);
       items.forEach((i) => {
-        if (i.to && canSee(i)) out.push({ to: i.to, label: i.label, icon: i.icon, group: g.group || '' });
+        if (!i.to || !canSee(i)) return;
+        out.push({ to: i.to, label: i.label, icon: i.icon, group: g.group || '' });
+        // Index each in-page tab too, so searching "approval setup" or "ledger"
+        // lands ON that tab rather than only on the page that hides it. The
+        // ?tab= is read by useTabParam; it inherits the parent's permissions
+        // because a tab is never more visible than its own page.
+        (i.tabs || []).forEach((t) => {
+          // A tab may narrow its parent's access (e.g. a SuperAdmin-only setup
+          // tab on a page HR can otherwise open), never widen it.
+          if (!canSee(t)) return;
+          out.push({
+            to: `${i.to}?tab=${t.id}`,
+            label: t.label,
+            icon: i.icon,
+            group: i.label,          // shows as "Regularization › Approval setup"
+            parent: i.label,
+          });
+        });
       });
     });
     return out;
@@ -472,8 +489,15 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
   }, [navItems, user, chatEnabled]);
 
   const term = q.trim().toLowerCase();
+  // A tab matches on its OWN name only. Matching it on the parent page's name
+  // too would mean typing "regularization" returned the page plus every one of
+  // its tabs, pushing genuinely different pages out of the six shown.
   const pageMatches = term
-    ? pages.filter((p) => p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)).slice(0, 6)
+    ? pages
+      .filter((p) => (p.parent
+        ? p.label.toLowerCase().includes(term)
+        : p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)))
+      .slice(0, 8)
     : [];
 
   // Employee lookup (HR/Admin only), debounced. For a SuperAdmin the same pass
