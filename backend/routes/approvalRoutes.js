@@ -14,6 +14,7 @@ const {
   rejectExit,
   listMyClearances,
   updateMyClearanceSection,
+  countMyApprovals,
 } = require('../controllers/approvalController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -25,6 +26,10 @@ const router = express.Router();
 // this can't be abused. This is also why CEO/MD can act here despite being
 // read-only on the admin-gated routes.
 router.use(protect);
+
+// GET /count — how many items await me, for the top-bar shortcut badge; protected.
+// Declared before the resource routes so the literal path is never shadowed.
+router.get('/count', countMyApprovals);
 
 // GET /leave — leave requests awaiting the current user's approval; protected (chain-scoped).
 router.get('/leave', listMyLeaveApprovals);

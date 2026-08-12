@@ -235,6 +235,30 @@ const listMyClearances = asyncHandler(async (req, res) => {
 });
 
 /**
+ * How many items are waiting on the current user, for the top-bar shortcut badge.
+ *
+ * Deliberately cheap — three countDocuments, no populate and no chain healing —
+ * because every logged-in user's top bar polls this on a timer, whereas the list
+ * endpoints above each run healOrphanChains() and fully populate their results.
+ * The trade-off: a legacy request whose chain was never built (currentApprover
+ * null) is not counted here until an inbox load heals it.
+ * @route GET /api/approvals/count
+ * @returns {{leave: number, exits: number, clearances: number, total: number}}
+ */
+const countMyApprovals = asyncHandler(async (req, res) => {
+  const me = req.user._id;
+  const [leave, exits, clearances] = await Promise.all([
+    LeaveRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
+    ExitRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
+    ExitRequest.countDocuments({
+      status: 'InClearance',
+      clearanceSections: { $elemMatch: { assignedTo: me, completed: false } },
+    }),
+  ]);
+  res.json({ leave, exits, clearances, total: leave + exits + clearances });
+});
+
+/**
  * The assigned manager ticks their no-dues section.
  * @route PATCH /api/approvals/clearances/:id/:key
  * @param {Object} req.body.items - array of { done, note } by item index
@@ -265,4 +289,5 @@ module.exports = {
   rejectExit,
   listMyClearances,
   updateMyClearanceSection,
+  countMyApprovals,
 };
