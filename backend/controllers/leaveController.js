@@ -17,6 +17,7 @@ const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
 const { enqueueMail } = require('../services/email');
 const { notify, notifyMany } = require('../services/notify');
+const { usersHoldingAny } = require('../services/audience');
 const { daysInclusive, currentYear, startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
 const { hasPermission } = require('../middleware/authMiddleware');
@@ -209,24 +210,49 @@ async function notifyChainVoided(request, voidedSteps, reason) {
   }
 }
 
-// HR is informed (not an approval rung): notify the employee's HR partner + a
-// SuperAdmin once a request is fully approved or rejected through the hierarchy.
-async function notifyHrInformational(request, verb) {
+// HR is informed (not an approval rung): the whole HR team hears about EVERY
+// status change a request goes through — applied, fully approved, rejected,
+// cancelled, HR override.
+//
+// Recipients are resolved by capability (`leave.manage`) rather than by role or
+// by the per-employee hrPartner, so the list stays in step with
+// config/permissions.js. That matters: hrPartner is set on only a minority of
+// profiles (the web employee form stopped sending it), so the old
+// "hrPartner + oldest SuperAdmin" rule silently skipped the actual HR Managers.
+//
+// Two exclusions keep it from being noise: anyone on the approval chain already
+// got a specific message about their own rung, and nobody needs a notification
+// about an action they just performed themselves.
+async function notifyHrInformational(request, verb, actorId) {
   try {
     const prof = await EmployeeProfile.findById(request.employee)
       .select('user hrPartner')
       .populate('user', 'firstName lastName');
     const ids = new Set();
+    for (const id of await usersHoldingAny('leave.manage')) ids.add(String(id));
     if (prof?.hrPartner) ids.add(String(prof.hrPartner));
-    const sa = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('_id');
-    if (sa) ids.add(String(sa._id));
+    // Safety net: never let a status change go completely unheard.
+    if (!ids.size) {
+      const sa = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('_id');
+      if (sa) ids.add(String(sa._id));
+    }
+    for (const s of request.approvalChain || []) {
+      if (s.approver) ids.delete(String(s.approver));
+    }
+    if (actorId) ids.delete(String(actorId));
+    const applicantUserId = prof?.user?._id || prof?.user;
+    if (applicantUserId) ids.delete(String(applicantUserId));
     if (!ids.size) return;
     const name = `${prof?.user?.firstName || ''} ${prof?.user?.lastName || ''}`.trim() || 'An employee';
+    const days = `${request.totalDays}d`;
     await notifyMany([...ids], {
       type: 'leave',
       audience: 'admin',
       title: `Leave ${verb}`,
-      body: `${name}'s ${request.leaveType} leave (${request.totalDays}d) was ${verb} via the reporting hierarchy.`,
+      body:
+        verb === 'applied'
+          ? `${name} applied for ${request.leaveType} leave (${days}). It has entered the reporting-hierarchy approval chain.`
+          : `${name}'s ${request.leaveType} leave (${days}) was ${verb}.`,
       link: 'leave',
     });
   } catch (err) {
@@ -766,6 +792,8 @@ const applyForLeave = asyncHandler(async (req, res) => {
     // heads-up so the whole approval hierarchy is in the loop from the start.
     await notifyApprover(chain[0].approver, request, applicantName);
     await notifyChainQueued(request, chain, applicantName);
+    // HR sees the request the moment it is filed, not only at the outcome.
+    await notifyHrInformational(request, 'applied', req.user._id);
   } else {
     // No manager in the hierarchy — fall back to HR/SuperAdmin to force-decide.
     await emailLeaveToHr(profile, request, req.user);
@@ -950,8 +978,10 @@ const cancelMyRequest = asyncHandler(async (req, res) => {
   request.status = 'Cancelled';
   request.decisionAt = new Date();
   await request.save();
-  // Clear it out of the inbox of whoever was holding it.
+  // Clear it out of the inbox of whoever was holding it, and tell HR the status
+  // changed — a withdrawn request is as much a status change as a decision.
   await notifyChainVoided(request, stranded, 'cancelled by the employee');
+  await notifyHrInformational(request, 'cancelled', req.user._id);
   res.json({ request });
 });
 
@@ -1113,7 +1143,7 @@ async function advanceApproval(request, userId, action, note) {
     await request.save();
     await notifyEmployeeDecision(request, note);
     await notifyChainAbove(request, step);
-    await notifyHrInformational(request, 'rejected');
+    await notifyHrInformational(request, 'rejected', userId);
     return request;
   }
 
@@ -1143,7 +1173,7 @@ async function advanceApproval(request, userId, action, note) {
   await request.save();
   await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
-  await notifyHrInformational(request, 'fully approved');
+  await notifyHrInformational(request, 'fully approved', userId);
   return request;
 }
 
@@ -1188,7 +1218,7 @@ async function applyLeaveDecision(request, userId, action, note) {
   if (action === 'approve') await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
   await notifyChainVoided(request, overridden, `${action === 'approve' ? 'approved' : 'rejected'} by HR override`);
-  await notifyHrInformational(request, `${action === 'approve' ? 'approved' : 'rejected'} (HR override)`);
+  await notifyHrInformational(request, `${action === 'approve' ? 'approved' : 'rejected'} (HR override)`, userId);
   return request;
 }
 
