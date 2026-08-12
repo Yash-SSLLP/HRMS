@@ -1498,7 +1498,11 @@ const updateRecord = asyncHandler(async (req, res) => {
 // Returns the office location + geofence threshold used for punch distances.
 const getSettings = asyncHandler(async (req, res) => {
   const s = await Setting.getSettings();
-  res.json({ office: s.office, geofenceThresholdM: s.geofenceThresholdM });
+  res.json({
+    office: s.office,
+    geofenceThresholdM: s.geofenceThresholdM,
+    attendanceReminders: s.attendanceReminders,
+  });
 });
 
 /**
@@ -1519,8 +1523,34 @@ const updateSettings = asyncHandler(async (req, res) => {
   if (req.body.geofenceThresholdM != null && Number.isFinite(Number(req.body.geofenceThresholdM))) {
     s.geofenceThresholdM = Math.max(0, Number(req.body.geofenceThresholdM));
   }
+
+  // When the daily push reminders fire is a SuperAdmin decision — it pushes at
+  // the whole company, so it sits above the attendance.manage crowd who own the
+  // rest of this endpoint. Silently ignored for anyone else, matching how
+  // employeeController strips its SuperAdmin-only fields.
+  if (req.body.attendanceReminders && req.user.role === 'SuperAdmin') {
+    for (const key of ['punchIn', 'punchOut']) {
+      const incoming = req.body.attendanceReminders[key];
+      if (!incoming) continue;
+      const target = s.attendanceReminders[key];
+      if (typeof incoming.enabled === 'boolean') target.enabled = incoming.enabled;
+      // Clamped here as well as in the schema: an out-of-range hour would make
+      // the reminder unreachable, and it would fail silently every day.
+      if (Number.isFinite(Number(incoming.hour))) {
+        target.hour = Math.min(23, Math.max(0, Math.trunc(Number(incoming.hour))));
+      }
+      if (Number.isFinite(Number(incoming.minute))) {
+        target.minute = Math.min(59, Math.max(0, Math.trunc(Number(incoming.minute))));
+      }
+    }
+  }
+
   await s.save();
-  res.json({ office: s.office, geofenceThresholdM: s.geofenceThresholdM });
+  res.json({
+    office: s.office,
+    geofenceThresholdM: s.geofenceThresholdM,
+    attendanceReminders: s.attendanceReminders,
+  });
 });
 
 /**

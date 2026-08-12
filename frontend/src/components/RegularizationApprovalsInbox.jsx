@@ -14,10 +14,33 @@
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { formatTime12 } from '../utils/time';
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 const empName = (r) => `${r.employee?.firstName || ''} ${r.employee?.lastName || ''}`.trim() || 'Employee';
+
+// Every time of day in the portal is 12-hour with a meridiem. formatTime12
+// takes both a Date/ISO (the stored punch) and an "HH:mm" string (what the
+// employee typed into the request), so both sides of the arrow go through it.
+const t12 = (v) => formatTime12(v) || '—';
+
+/**
+ * One "In / Out" line showing what the punch is now and what it would become.
+ * Rendered only for the side the employee actually asked to change, so a
+ * check-in correction doesn't show a meaningless "Out — → —".
+ */
+function ChangeLine({ label, from, to }) {
+  if (!to) return null;
+  return (
+    <div className="text-xs text-gray-700">
+      <span className="text-gray-400 inline-block w-7">{label}</span>
+      <span>{t12(from)}</span>
+      <span className="text-gray-400 mx-1.5">→</span>
+      <span className="font-medium">{t12(to)}</span>
+    </div>
+  );
+}
 
 // Where this request sits in its ladder, e.g. "Step 1 of 2".
 function stepLabel(r) {
@@ -79,10 +102,15 @@ export default function RegularizationApprovalsInbox() {
                     {empName(r)}
                     <span className="ml-2 text-xs font-normal text-gray-500">{r.type}</span>
                   </div>
-                  <div className="text-sm text-gray-600 mt-0.5">
-                    {fmtDate(r.date)}
-                    {r.requestedCheckIn ? ` · in ${r.requestedCheckIn}` : ''}
-                    {r.requestedCheckOut ? ` · out ${r.requestedCheckOut}` : ''}
+                  <div className="text-sm text-gray-600 mt-0.5">{fmtDate(r.date)}</div>
+                  {/* previousCheckIn/Out are written at approval time and hold the
+                      true before-value, so history rows show the real change.
+                      A pending request has them empty, so it falls back to the
+                      day's current punch — which is the before-value it would
+                      overwrite. */}
+                  <div className="mt-1.5 space-y-0.5">
+                    <ChangeLine label="In" from={r.previousCheckIn || r.current?.checkIn} to={r.requestedCheckIn} />
+                    <ChangeLine label="Out" from={r.previousCheckOut || r.current?.checkOut} to={r.requestedCheckOut} />
                   </div>
                   <div className="text-sm text-gray-700 mt-1">{r.reason}</div>
                 </div>

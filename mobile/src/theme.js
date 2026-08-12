@@ -191,6 +191,10 @@ function build(s) {
     celebration: { icon: 'sparkles', tint: isDark ? '#f472b6' : '#db2777' },
     recognition: { icon: 'trophy', tint: isDark ? '#fbbf24' : '#f59e0b' },
     leave: { icon: 'airplane', tint: colors.info },
+    // Punch-in / punch-out reminders and attendance notices. Matches the
+    // fingerprint on the punch card so the alert reads as the same module.
+    attendance: { icon: 'finger-print', tint: colors.success },
+    regularization: { icon: 'build', tint: colors.warning },
     general: { icon: 'notifications', tint: colors.textMuted },
   };
 }

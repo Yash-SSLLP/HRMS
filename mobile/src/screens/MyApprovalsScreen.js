@@ -20,7 +20,7 @@ import api, { errMsg } from '../api/client';
 import { useAuth } from '../store/auth';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, Avatar, Pill, EmptyState, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
-import { fmtDate } from '../utils/format';
+import { fmtDate, fmtClock } from '../utils/format';
 
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || 'Employee';
 const empName = (r) => fullName(r.employee?.user);
@@ -55,6 +55,19 @@ function ChainProgress({ chain = [] }) {
 }
 
 /** Approve / Reject pair used by both the leave and resignation queues. */
+/** "In  9:15 AM → 10:00 AM" — hidden when this side isn't being changed. */
+function ChangeLine({ label, from, to }) {
+  if (!to) return null;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+      <Text style={[font.small, { width: 28, color: colors.textMuted }]}>{label}</Text>
+      <Text style={font.small}>{fmtClock(from) || '—'}</Text>
+      <Text style={[font.small, { marginHorizontal: 6, color: colors.textMuted }]}>→</Text>
+      <Text style={[font.small, { fontWeight: '700' }]}>{fmtClock(to) || '—'}</Text>
+    </View>
+  );
+}
+
 function DecideRow({ busy, onApprove, onReject }) {
   return (
     <View style={styles.actions}>
@@ -284,12 +297,14 @@ export default function MyApprovalsScreen() {
                   <Avatar name={regName(it)} size={40} />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={font.h3}>{regName(it)}</Text>
-                    <Text style={font.label}>
-                      {it.type} · {fmtDate(it.date)}
-                      {it.requestedCheckIn ? ` · in ${it.requestedCheckIn}` : ''}
-                      {it.requestedCheckOut ? ` · out ${it.requestedCheckOut}` : ''}
-                    </Text>
+                    <Text style={font.label}>{it.type} · {fmtDate(it.date)}</Text>
                   </View>
+                </View>
+                {/* What the punch is now vs what it would become. Only the side
+                    actually being corrected is shown. */}
+                <View style={{ marginTop: 8 }}>
+                  <ChangeLine label="In" from={it.previousCheckIn || it.current?.checkIn} to={it.requestedCheckIn} />
+                  <ChangeLine label="Out" from={it.previousCheckOut || it.current?.checkOut} to={it.requestedCheckOut} />
                 </View>
                 {it.reason ? <Text style={[font.small, { marginTop: 8 }]}>{it.reason}</Text> : null}
                 <ChainProgress chain={it.approvalChain} />

@@ -257,8 +257,63 @@ const listMyRegularizationApprovals = asyncHandler(async (req, res) => {
     .populate('employee', 'firstName lastName email role')
     .sort({ date: -1 })
     .lean();
-  res.json({ scope, count: requests.length, requests });
+
+  // Attach the day's CURRENT punches so the approver sees "from → to" rather
+  // than only the value being asked for. previousCheckIn/Out on the request
+  // itself are no help here: applyToAttendance fills those at approval time, so
+  // a pending request has them empty — which is exactly when the approver needs
+  // to know what is being changed.
+  const withCurrent = await attachCurrentPunches(requests);
+  res.json({ scope, count: withCurrent.length, requests: withCurrent });
 });
+
+/**
+ * Look up the attendance record behind each regularization and hang the current
+ * punches off it as `current: { checkIn, checkOut, status }`.
+ *
+ * Regularization.employee refs User while Attendance.employee refs
+ * EmployeeProfile, so this hops through the profile. Two queries for the whole
+ * page rather than one per row; a day with no record simply comes back null.
+ * @param {Object[]} requests - lean Regularization docs
+ * @returns {Promise<Object[]>} the same docs, each with `current`
+ */
+async function attachCurrentPunches(requests) {
+  if (!requests.length) return requests;
+  const EmployeeProfile = require('../models/EmployeeProfile');
+  const Attendance = require('../models/Attendance');
+  const { startOfDayIST } = require('../utils/dateHelpers');
+
+  const userIds = [...new Set(requests.map((r) => String(r.employee?._id || r.employee)).filter(Boolean))];
+  const profiles = await EmployeeProfile.find({ user: { $in: userIds } }).select('user').lean();
+  const profByUser = new Map(profiles.map((p) => [String(p.user), String(p._id)]));
+
+  const pairs = requests
+    .map((r) => ({
+      profileId: profByUser.get(String(r.employee?._id || r.employee)),
+      day: startOfDayIST(r.date),
+    }))
+    .filter((p) => p.profileId);
+  // An empty $or is a Mongo error, so bail before building the query.
+  if (!pairs.length) return requests.map((r) => ({ ...r, current: null }));
+
+  const records = await Attendance.find({
+    $or: pairs.map((p) => ({ employee: p.profileId, date: p.day })),
+  }).select('employee date checkIn checkOut status').lean();
+
+  const key = (empId, day) => `${empId}|${new Date(day).getTime()}`;
+  const byKey = new Map(records.map((a) => [key(String(a.employee), a.date), a]));
+
+  return requests.map((r) => {
+    const profileId = profByUser.get(String(r.employee?._id || r.employee));
+    const found = profileId ? byKey.get(key(profileId, startOfDayIST(r.date))) : null;
+    return {
+      ...r,
+      current: found
+        ? { checkIn: found.checkIn || null, checkOut: found.checkOut || null, status: found.status || null }
+        : null,
+    };
+  });
+}
 
 // Shared by the approve/reject routes below — both are the same call with a
 // different action, and both are scoped to `currentApprover === me` inside

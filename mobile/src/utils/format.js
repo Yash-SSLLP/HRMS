@@ -33,6 +33,27 @@ export function fmtTime(d) {
   }
 }
 
+/**
+ * 12-hour time from EITHER a stored punch (Date/ISO) or an "HH:mm" string the
+ * employee typed into a form. fmtTime above only handles the former —
+ * `new Date('10:00')` is Invalid Date, so a requested time rendered blank.
+ * Mirrors formatTime12 in the web app's utils/time.js.
+ * @param {string|Date} v
+ * @returns {string} e.g. "10:00 AM", or '' when there is nothing to show
+ */
+export function fmtClock(v) {
+  if (!v) return '';
+  const s = String(v);
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m) {
+    let h = Number(m[1]);
+    const ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${m[2]} ${ap}`;
+  }
+  return fmtTime(v);
+}
+
 /** Combined date + 12-hour time, e.g. "23 Jul 2026 · 9:30 AM". */
 export function fmtDateTime(d) {
   if (!d) return '-';

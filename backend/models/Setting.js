@@ -23,6 +23,25 @@ const settingSchema = new mongoose.Schema(
     // and mobile Chat tab are hidden and the chat endpoints refuse writes.
     // Conversations are never deleted — turning it back on restores everything.
     chatEnabled: { type: Boolean, default: false },
+
+    // Daily push reminders (services/attendanceReminderWorker.js), each with its
+    // own IST time so a SuperAdmin can move them without a deploy. Stored as
+    // hour+minute rather than a string so the worker never has to parse, and
+    // clamped by the schema so a bad value can't stop the worker firing.
+    // punchOut defaults to WORKDAY_END_HOUR (19:00) — the same hour
+    // attendanceWorker assumes a missing punch-out closed at.
+    attendanceReminders: {
+      punchIn: {
+        enabled: { type: Boolean, default: true },
+        hour: { type: Number, default: 9, min: 0, max: 23 },
+        minute: { type: Number, default: 45, min: 0, max: 59 },
+      },
+      punchOut: {
+        enabled: { type: Boolean, default: true },
+        hour: { type: Number, default: 19, min: 0, max: 23 },
+        minute: { type: Number, default: 0, min: 0, max: 59 },
+      },
+    },
   },
   { timestamps: true }
 );
