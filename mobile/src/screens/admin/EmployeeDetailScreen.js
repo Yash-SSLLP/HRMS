@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, Linking, TouchableOpacity, Modal, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -65,7 +66,7 @@ export default function EmployeeDetailScreen({ route }) {
       setEditing(false);
       await load();
     } catch (err) {
-      Alert.alert('Could not save', errMsg(err));
+      toast('Could not save', errMsg(err));
     } finally {
       setSaving(false);
     }

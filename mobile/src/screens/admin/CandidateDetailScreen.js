@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Share, Linking, ActivityIndicator } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
@@ -70,9 +71,9 @@ export default function CandidateDetailScreen() {
       const res = await FileSystem.downloadAsync(`${API_BASE}${apiPath}`, fileUri, { headers: { Authorization: `Bearer ${token}` } });
       if (res.status !== 200) throw new Error('File not available');
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri);
-      else Alert.alert('Downloaded', `${filename} saved to the app cache.`);
+      else toast('Downloaded', `${filename} saved to the app cache.`);
     } catch (err) {
-      Alert.alert('Download failed', err.message || 'Could not download the file.');
+      toast('Download failed', err.message || 'Could not download the file.');
     } finally {
       setDownloading(null);
     }
@@ -82,7 +83,7 @@ export default function CandidateDetailScreen() {
   const run = async (fn, errTitle = 'Action failed') => {
     setBusy(true);
     try { await fn(); await load(); }
-    catch (err) { Alert.alert(errTitle, errMsg(err)); }
+    catch (err) { toast(errTitle, errMsg(err)); }
     finally { setBusy(false); }
   };
 
@@ -247,8 +248,8 @@ export default function CandidateDetailScreen() {
   });
 
   const saveConvert = () => {
-    if (!form.email.trim()) { Alert.alert('Missing info', 'An email is required to create the login account.'); return; }
-    if (!form.dateOfJoining) { Alert.alert('Missing info', 'A date of joining is required.'); return; }
+    if (!form.email.trim()) { toast('Missing info', 'An email is required to create the login account.'); return; }
+    if (!form.dateOfJoining) { toast('Missing info', 'A date of joining is required.'); return; }
     run(async () => {
       const { data } = await api.post(`/recruitment/candidates/${id}/convert-to-employee`, {
         email: form.email.trim(), dateOfJoining: form.dateOfJoining, employeeCode: form.employeeCode.trim() || undefined,
@@ -257,7 +258,7 @@ export default function CandidateDetailScreen() {
       });
       setModal(null);
       const pw = data.initialPassword ? `\nTemporary password: ${data.initialPassword}` : '';
-      Alert.alert('Employee created', `${cand.name} is now an employee.\nEmployee code: ${data.employeeCode}${pw}`);
+      toast('Employee created', `${cand.name} is now an employee.\nEmployee code: ${data.employeeCode}${pw}`);
     }, 'Could not convert to employee');
   };
 
@@ -275,7 +276,7 @@ export default function CandidateDetailScreen() {
       sendLabel: 'Send invite',
       onSend: async ({ subject, body }) => {
         await api.post(`/recruitment/candidates/${id}/round/meet/email`, { index: idx, subject, body });
-        Alert.alert('Invite sent', `Emailed to ${Array.isArray(mailData.to) ? mailData.to.join(', ') : mailData.to}.`);
+        toast('Invite sent', `Emailed to ${Array.isArray(mailData.to) ? mailData.to.join(', ') : mailData.to}.`);
       },
     });
   };
@@ -287,9 +288,9 @@ export default function CandidateDetailScreen() {
       const { data } = await api.post(`/recruitment/candidates/${id}/round/meet`, { index: idx, sendEmail: false });
       await load();
       if (data.mail?.to?.length) openInviteSheet(idx, data.mail);
-      else Alert.alert('Meet created', 'No email on file for the candidate or interviewer, so there is no one to invite by mail.');
+      else toast('Meet created', 'No email on file for the candidate or interviewer, so there is no one to invite by mail.');
     } catch (err) {
-      Alert.alert('Could not create Meet', errMsg(err));
+      toast('Could not create Meet', errMsg(err));
     } finally {
       setBusy(false);
     }
@@ -301,7 +302,7 @@ export default function CandidateDetailScreen() {
       const { data } = await api.post(`/recruitment/candidates/${id}/round/meet/email`, { index: idx, preview: true });
       openInviteSheet(idx, data);
     } catch (err) {
-      Alert.alert('Could not load the invite email', errMsg(err));
+      toast('Could not load the invite email', errMsg(err));
     }
   };
 
@@ -321,11 +322,11 @@ export default function CandidateDetailScreen() {
         onSend: async ({ subject, body }) => {
           await api.post(`/recruitment/candidates/${id}/letters/${kind}/email`, { subject, body });
           await load();
-          Alert.alert('Letter sent', `Emailed to ${data.to}.`);
+          toast('Letter sent', `Emailed to ${data.to}.`);
         },
       });
     } catch (err) {
-      Alert.alert('Could not prepare the email', errMsg(err));
+      toast('Could not prepare the email', errMsg(err));
     }
   };
 
@@ -373,11 +374,11 @@ export default function CandidateDetailScreen() {
         onSend: async ({ subject, body }) => {
           await api.post(`/recruitment/candidates/${id}/documents/email`, { subject, body });
           await load();
-          Alert.alert('Request sent', `Emailed to ${data.to}.`);
+          toast('Request sent', `Emailed to ${data.to}.`);
         },
       });
     } catch (err) {
-      Alert.alert('Could not prepare the email', errMsg(err));
+      toast('Could not prepare the email', errMsg(err));
     }
   };
 
@@ -412,7 +413,7 @@ export default function CandidateDetailScreen() {
           : 'No email on file for this candidate — share the upload link with them yourself.',
       );
     } catch (err) {
-      Alert.alert('Could not reject the document', errMsg(err));
+      toast('Could not reject the document', errMsg(err));
     } finally {
       setBusy(false);
     }

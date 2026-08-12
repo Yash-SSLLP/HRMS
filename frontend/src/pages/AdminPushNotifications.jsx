@@ -14,6 +14,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
+import { confirmDialog } from '../components/dialogs';
 
 // The two reminders, described in the terms an operator thinks in.
 const REMINDERS = [
@@ -43,6 +44,250 @@ const to12 = (r) => {
   const h = Number(r?.hour ?? 0);
   return `${h % 12 || 12}:${pad2(r?.minute ?? 0)} ${h >= 12 ? 'PM' : 'AM'}`;
 };
+
+// ============ Custom reminders ============
+// The two above are built in — their audiences are computed, so only the time is
+// editable. These are open-ended: a SuperAdmin writes the message, picks a time,
+// the weekdays it repeats on, and who receives it.
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const blankCustom = () => ({
+  title: '', body: '', hour: 10, minute: 0, days: [], audience: 'all', department: '', enabled: true,
+});
+const hhmm = (r) => `${pad2(r.hour)}:${pad2(r.minute)}`;
+// "Every day" / "Mon–Fri" read better than a seven-chip row that is all on.
+const daysLabel = (days) => {
+  if (!days?.length) return 'Every day';
+  const set = [...days].sort();
+  if (set.join() === '1,2,3,4,5') return 'Mon to Fri';
+  return set.map((d) => DAY_LABELS[d]).join(', ');
+};
+
+function CustomReminders({ canEdit }) {
+  const [rows, setRows] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // a draft, or null
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/push-reminders');
+      setRows(data.reminders || []);
+      setDepartments(data.departments || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load custom reminders');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      if (editing._id) await api.put(`/push-reminders/${editing._id}`, editing);
+      else await api.post('/push-reminders', editing);
+      setEditing(null);
+      await load();
+      toast.success('Reminder saved — it applies from the next check.');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (r) => {
+    const ok = await confirmDialog({
+      title: 'Delete this reminder?',
+      message: `“${r.title}” will stop being sent. This cannot be undone.`,
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/push-reminders/${r._id}`);
+      await load();
+      toast.success('Reminder deleted');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not delete');
+    }
+  };
+
+  // Toggling enabled is a one-field save, so it does not open the editor.
+  const toggle = async (r) => {
+    try {
+      await api.put(`/push-reminders/${r._id}`, { ...r, enabled: !r.enabled });
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update');
+    }
+  };
+
+  const setDay = (d) => setEditing((p) => ({
+    ...p,
+    days: p.days.includes(d) ? p.days.filter((x) => x !== d) : [...p.days, d].sort(),
+  }));
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 className="card-title">Custom reminders</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Your own recurring pushes — a message, a time, and who gets it.
+          </p>
+        </div>
+        {canEdit && !editing && (
+          <button onClick={() => setEditing(blankCustom())}
+            className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 shrink-0">
+            + Add reminder
+          </button>
+        )}
+      </div>
+
+      {editing && (
+        <div className="bg-white shadow rounded-lg p-5 mb-4 border border-indigo-100">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="block text-sm text-gray-700">Title *</label>
+              <input value={editing.title} maxLength={80}
+                onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+                placeholder="Submit your timesheet"
+                className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm" />
+              <p className="text-[11px] text-gray-400 mt-1">This is the bold line of the push.</p>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-sm text-gray-700">Message</label>
+              <textarea value={editing.body} rows={2} maxLength={240}
+                onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+                placeholder="Before you leave today."
+                className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm" />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-700">Time (IST)</label>
+              <input type="time" value={hhmm(editing)}
+                onChange={(e) => {
+                  const [h, m] = e.target.value.split(':').map(Number);
+                  if (Number.isFinite(h) && Number.isFinite(m)) setEditing({ ...editing, hour: h, minute: m });
+                }}
+                className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm" />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-700">Send to</label>
+              <select value={editing.audience}
+                onChange={(e) => setEditing({ ...editing, audience: e.target.value })}
+                className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm">
+                <option value="all">Everyone</option>
+                <option value="department">One department</option>
+              </select>
+            </div>
+
+            {editing.audience === 'department' && (
+              <div>
+                <label className="block text-sm text-gray-700">Department *</label>
+                <select value={editing.department}
+                  onChange={(e) => setEditing({ ...editing, department: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm">
+                  <option value="">Select…</option>
+                  {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div className="sm:col-span-2">
+              <label className="block text-sm text-gray-700">Repeats on</label>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {DAY_LABELS.map((label, d) => {
+                  const on = editing.days.includes(d);
+                  return (
+                    <button key={d} type="button" onClick={() => setDay(d)}
+                      className={`px-3 py-1.5 text-xs rounded-lg border ${on
+                        ? 'bg-gray-900 text-white border-gray-900'
+                        : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Select none for every day.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-4 mt-4 border-t border-gray-100">
+            <button onClick={() => setEditing(null)}
+              className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+            <button onClick={save} disabled={busy || !editing.title.trim()}
+              className="ml-auto px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+              {busy ? 'Saving…' : 'Save reminder'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200 text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Reminder</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Time</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Repeats</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Audience</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Last sent</th>
+              {canEdit && <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {loading ? (
+              <tr><td colSpan={canEdit ? 6 : 5} className="px-4 py-4"><div className="skeleton h-4 rounded" /></td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={canEdit ? 6 : 5} className="px-4 py-6 text-center text-gray-500">
+                No custom reminders yet.
+              </td></tr>
+            ) : rows.map((r) => (
+              <tr key={r._id} className={r.enabled ? undefined : 'opacity-55'}>
+                <td className="px-4 py-3">
+                  <div className="font-medium">{r.title}</div>
+                  {r.body ? <div className="text-xs text-gray-500 mt-0.5">{r.body}</div> : null}
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap">{to12(r)}</td>
+                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{daysLabel(r.days)}</td>
+                <td className="px-4 py-3 text-gray-600">
+                  {r.audience === 'department' ? r.department : 'Everyone'}
+                </td>
+                <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                  {r.lastSentAt
+                    ? `${new Date(r.lastSentAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} · ${r.lastSentCount}`
+                    : '—'}
+                </td>
+                {canEdit && (
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <button onClick={() => toggle(r)}
+                      className="px-2.5 py-1 text-xs border rounded-lg hover:bg-gray-50 mr-1.5">
+                      {r.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button onClick={() => setEditing({ ...r, days: r.days || [] })}
+                      className="px-2.5 py-1 text-xs border rounded-lg hover:bg-gray-50 mr-1.5">Edit</button>
+                    <button onClick={() => remove(r)}
+                      className="px-2.5 py-1 text-xs border border-red-300 text-red-700 rounded-lg hover:bg-red-50">
+                      Delete
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 export default function AdminPushNotifications() {
   const me = useAuthStore((s) => s.user);
@@ -178,6 +423,8 @@ export default function AdminPushNotifications() {
             Each reminder is sent at most once a day and only within 30 minutes of its scheduled time —
             so a server restart later in the day cannot replay a morning reminder. Times are IST.
           </p>
+
+          <CustomReminders canEdit={isSuperAdmin} />
         </div>
       )}
     </div>

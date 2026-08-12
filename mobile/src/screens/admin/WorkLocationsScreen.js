@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Location from 'expo-location';
@@ -28,16 +29,16 @@ export default function WorkLocationsScreen() {
   const useMyLocation = async () => {
     try {
       const perm = await Location.requestForegroundPermissionsAsync();
-      if (!perm.granted) { Alert.alert('Location needed', 'Allow location access to use your current position.'); return; }
+      if (!perm.granted) { toast('Location needed', 'Allow location access to use your current position.'); return; }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setEditing((f) => ({ ...f, lat: String(pos.coords.latitude.toFixed(6)), lng: String(pos.coords.longitude.toFixed(6)) }));
     } catch {
-      Alert.alert('Could not read location', 'Please try again.');
+      toast('Could not read location', 'Please try again.');
     }
   };
 
   const save = async () => {
-    if (!editing.name.trim()) { Alert.alert('Name required', 'Enter a location name.'); return; }
+    if (!editing.name.trim()) { toast('Name required', 'Enter a location name.'); return; }
     setSaving(true);
     try {
       const payload = {
@@ -52,7 +53,7 @@ export default function WorkLocationsScreen() {
       setEditing(null);
       await load();
     } catch (err) {
-      Alert.alert('Save failed', errMsg(err));
+      toast('Save failed', errMsg(err));
     } finally {
       setSaving(false);
     }
@@ -171,7 +172,7 @@ function AssignSheet({ location, locations, onClose, onDone }) {
       if (toUnassign.length) await api.post(`/work-locations/${location._id}/unassign`, { employeeIds: toUnassign });
       onDone();
     } catch (err) {
-      Alert.alert('Could not update', errMsg(err));
+      toast('Could not update', errMsg(err));
     } finally {
       setBusy(false);
     }

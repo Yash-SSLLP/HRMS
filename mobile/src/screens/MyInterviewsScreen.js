@@ -5,7 +5,8 @@
  * (save result + feedback), GET /recruitment/my-interviews/:candidateId/resume (download résumé PDF).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -57,7 +58,7 @@ export default function MyInterviewsScreen() {
       setEditing(null);
       await load();
     } catch (err) {
-      Alert.alert('Could not save', errMsg(err));
+      toast('Could not save', errMsg(err));
     } finally {
       setBusy(false);
     }
@@ -78,7 +79,7 @@ export default function MyInterviewsScreen() {
       if (res.status !== 200) throw new Error('Résumé not available');
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri);
     } catch (err) {
-      Alert.alert('Could not open the résumé', err.message);
+      toast('Could not open the résumé', err.message);
     } finally {
       setDownloadingId(null);
     }

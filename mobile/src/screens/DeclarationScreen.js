@@ -6,6 +6,7 @@
  * Backend: GET /declarations/me, POST /declarations/me, PATCH /declarations/me/submit.
  */
 import React, { useCallback, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -74,8 +75,8 @@ export default function DeclarationScreen() {
     try {
       await api.post('/declarations/me', payload());
       await load();
-      Alert.alert('Saved', 'Your declaration draft has been saved.');
-    } catch (err) { Alert.alert('Could not save', errMsg(err)); }
+      toast('Saved', 'Your declaration draft has been saved.');
+    } catch (err) { toast('Could not save', errMsg(err)); }
     finally { setSaving(false); }
   };
 

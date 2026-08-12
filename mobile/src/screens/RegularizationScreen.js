@@ -9,7 +9,8 @@
  * for a correction — the existing times prefill the request.
  */
 import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -150,18 +151,18 @@ export default function RegularizationScreen() {
 
   // Validate, POST the request, then reset the form and reload the list.
   const submit = async () => {
-    if (!date) { Alert.alert('Pick a date', 'Choose the date to regularize.'); return; }
+    if (!date) { toast('Pick a date', 'Choose the date to regularize.'); return; }
     // A type about exactly one punch is useless without that punch's time.
-    if (fields.in && !fields.out && !checkIn) { Alert.alert('Check-in needed', 'Enter the check-in time you are requesting.'); return; }
-    if (fields.out && !fields.in && !checkOut) { Alert.alert('Check-out needed', 'Enter the check-out time you are requesting.'); return; }
-    if (!reason.trim()) { Alert.alert('Reason needed', 'Add a reason.'); return; }
+    if (fields.in && !fields.out && !checkIn) { toast('Check-in needed', 'Enter the check-in time you are requesting.'); return; }
+    if (fields.out && !fields.in && !checkOut) { toast('Check-out needed', 'Enter the check-out time you are requesting.'); return; }
+    if (!reason.trim()) { toast('Reason needed', 'Add a reason.'); return; }
     setSubmitting(true);
     try {
       await api.post('/regularizations', { date, type, requestedCheckIn: checkIn, requestedCheckOut: checkOut, reason });
       setShowForm(false);
       resetForm();
       await load();
-    } catch (err) { Alert.alert('Could not submit', errMsg(err)); }
+    } catch (err) { toast('Could not submit', errMsg(err)); }
     finally { setSubmitting(false); }
   };
 

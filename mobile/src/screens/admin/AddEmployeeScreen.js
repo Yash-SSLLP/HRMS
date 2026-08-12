@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
@@ -29,11 +30,11 @@ export default function AddEmployeeScreen() {
 
   const submit = async () => {
     if (!f.firstName || !f.lastName || !f.email || !f.password) {
-      Alert.alert('Missing info', 'First name, last name, email and a temporary password are required.');
+      toast('Missing info', 'First name, last name, email and a temporary password are required.');
       return;
     }
     if (!f.employeeCode || !f.dateOfJoining) {
-      Alert.alert('Missing info', 'Employee code and joining date are required.');
+      toast('Missing info', 'Employee code and joining date are required.');
       return;
     }
     const employeeCode = f.employeeCode.trim().toUpperCase();
@@ -45,7 +46,7 @@ export default function AddEmployeeScreen() {
       // code fails before an orphan account exists.
       const { data: check } = await api.get('/employees/code-available', { params: { code: employeeCode } });
       if (!check.available) {
-        Alert.alert(
+        toast(
           'Employee code already exists',
           `“${employeeCode}” is already in use${check.takenBy ? ` by ${check.takenBy}` : ''}. Please choose another code.`
         );
@@ -84,7 +85,7 @@ export default function AddEmployeeScreen() {
       const msg = createdUser
         ? `The login account was created, but the employee profile failed: ${errMsg(err)}. You can finish it from the web portal.`
         : errMsg(err);
-      Alert.alert('Could not add employee', msg);
+      toast('Could not add employee', msg);
     } finally {
       setSubmitting(false);
     }

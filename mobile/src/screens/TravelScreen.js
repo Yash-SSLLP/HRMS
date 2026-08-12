@@ -6,7 +6,8 @@
  * POST /travel/:id/receipt (proof of payment for a reimbursement claim).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Switch } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -57,9 +58,9 @@ export default function TravelScreen() {
 
   // Validate required fields and date order, POST, then reset the form and reload.
   const submit = async () => {
-    if (!f.purpose || !f.origin || !f.destination) { Alert.alert('Missing info', 'Purpose, origin and destination are required.'); return; }
-    if (!f.fromDate || !f.toDate) { Alert.alert('Pick dates', 'Choose both travel dates.'); return; }
-    if (f.toDate < f.fromDate) { Alert.alert('Invalid dates', 'The return date must be on or after the departure date.'); return; }
+    if (!f.purpose || !f.origin || !f.destination) { toast('Missing info', 'Purpose, origin and destination are required.'); return; }
+    if (!f.fromDate || !f.toDate) { toast('Pick dates', 'Choose both travel dates.'); return; }
+    if (f.toDate < f.fromDate) { toast('Invalid dates', 'The return date must be on or after the departure date.'); return; }
     setSubmitting(true);
     try {
       const { data } = await api.post('/travel', {
@@ -77,7 +78,7 @@ export default function TravelScreen() {
       setF(BLANK);
       setReceipt(null);
       await load();
-    } catch (err) { Alert.alert('Could not submit', errMsg(err)); }
+    } catch (err) { toast('Could not submit', errMsg(err)); }
     finally { setSubmitting(false); }
   };
 

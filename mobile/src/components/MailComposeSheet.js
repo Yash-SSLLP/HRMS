@@ -4,7 +4,8 @@
 // mail.onSend) when the send button is pressed. Used for offer/appointment/
 // payslip emails.
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import { toast } from './Toast';
+import { View, Text, StyleSheet } from 'react-native';
 import { colors, radius, spacing, font } from '../theme';
 import { ModalSheet, Field, Input, AppButton, Ionicons } from './ui';
 
@@ -47,7 +48,7 @@ export default function MailComposeSheet({ visible, onClose, mail }) {
       await mail.onSend({ subject, body });
       onClose();
     } catch (err) {
-      Alert.alert('Could not send', err?.response?.data?.message || err?.message || 'Something went wrong');
+      toast('Could not send', err?.response?.data?.message || err?.message || 'Something went wrong');
     } finally {
       setSending(false);
     }

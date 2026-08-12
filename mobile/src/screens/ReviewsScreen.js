@@ -7,7 +7,8 @@
  * PATCH /reviews/me/:id (submit ratings).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -61,16 +62,16 @@ export default function ReviewsScreen() {
   const submit = async () => {
     // Require every competency scored; overall is the mean rounded to 1 decimal.
     const ratings = competencies.map((c) => ({ competency: c, score: scores[c] || 0 }));
-    if (ratings.some((r) => !r.score)) { Alert.alert('Incomplete', 'Please rate every competency.'); return; }
+    if (ratings.some((r) => !r.score)) { toast('Incomplete', 'Please rate every competency.'); return; }
     const overall = Math.round((ratings.reduce((a, r) => a + r.score, 0) / ratings.length) * 10) / 10;
     setSubmitting(true);
     try {
       await api.patch(`/reviews/me/${active._id}`, { ratings, overallRating: overall, strengths, improvements });
       setActive(null);
       await load();
-      Alert.alert('Submitted', 'Your review has been submitted. Thank you!');
+      toast('Submitted', 'Your review has been submitted. Thank you!');
     } catch (err) {
-      Alert.alert('Could not submit', errMsg(err));
+      toast('Could not submit', errMsg(err));
     } finally {
       setSubmitting(false);
     }

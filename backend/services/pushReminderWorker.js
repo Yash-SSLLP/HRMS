@@ -1,5 +1,8 @@
 /**
- * Attendance reminders — two scheduled nudges a day, both pushed to mobile:
+ * Scheduled push reminders. Two are built in, and a SuperAdmin can add any
+ * number of their own on top.
+ *
+ * BUILT-IN (times configurable in Settings, audience is not):
  *
  *   09:45 IST  "punch in"   → active employees who have not checked in yet and
  *                             are not off today (leave / holiday / Sunday).
@@ -17,6 +20,13 @@
  * Neither repeats: a second punch-in nudge would fire at people already at their
  * desk, and a second punch-out nudge at people legitimately still working.
  *
+ * CUSTOM (models/PushReminder): a SuperAdmin's own title/message/time, sent to
+ * everyone or to one department, on chosen weekdays. They ride exactly the same
+ * firing window and once-per-day claim as the built-ins, so they inherit the
+ * restart-safety rather than reimplementing it. The built-ins stay in Settings
+ * because their audiences are computed (who has not punched in, who is still
+ * checked in) and no generic row could express that.
+ *
  * Same lightweight interval pattern as the other workers — no node-cron anywhere
  * in this codebase.
  */
@@ -26,6 +36,7 @@ const Holiday = require('../models/Holiday');
 const { LeaveRequest } = require('../models/Leave');
 const DigestLog = require('../models/DigestLog');
 const Setting = require('../models/Setting');
+const PushReminder = require('../models/PushReminder');
 const { notify } = require('./notify');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { istDateString, IST_TZ } = require('../utils/istDate');
@@ -175,6 +186,70 @@ async function remindPunchOut(today) {
 }
 
 /**
+ * Recipients for a custom reminder: every active employee, or one department.
+ * @param {Object} rem - a PushReminder
+ * @returns {Promise<Array>} User ids
+ */
+async function customAudience(rem) {
+  const filter = { $or: [{ dateOfExit: null }, { dateOfExit: { $exists: false } }] };
+  if (rem.audience === 'department') {
+    // An empty department would silently mean "everyone", which is the opposite
+    // of what the author asked for — so it targets nobody instead.
+    if (!rem.department) return [];
+    filter.department = rem.department;
+  }
+  const profiles = await EmployeeProfile.find(filter)
+    .select('user')
+    .populate({ path: 'user', select: 'isActive' })
+    .lean();
+  return profiles
+    .filter((p) => p.user?._id && p.user.isActive !== false)
+    .map((p) => p.user._id);
+}
+
+/**
+ * Load the SuperAdmin-authored reminders that are due today, shaped like the
+ * built-ins so tick() can treat them identically.
+ * @param {number} dow - IST day of week, 0 = Sunday
+ */
+async function customReminders(dow) {
+  let rows = [];
+  try {
+    rows = await PushReminder.find({ enabled: true }).lean();
+  } catch (err) {
+    console.error('custom reminder load failed:', err.message);
+    return [];
+  }
+  return rows
+    // An empty `days` means every day; otherwise today must be listed.
+    .filter((r) => !r.days?.length || r.days.includes(dow))
+    .map((r) => ({
+      // Keyed by id, so renaming or re-timing a reminder cannot collide with
+      // another one's claim for the same day.
+      kind: `custom:${r._id}`,
+      at: { h: r.hour, m: r.minute },
+      enabled: true,
+      run: async () => {
+        const targets = await customAudience(r);
+        if (!targets.length) return 0;
+        const sent = await pushEach(targets, {
+          type: 'general',
+          audience: 'employee',
+          title: r.title,
+          body: r.body || undefined,
+        });
+        if (sent) {
+          await PushReminder.updateOne(
+            { _id: r._id },
+            { $set: { lastSentAt: new Date(), lastSentCount: sent } }
+          ).catch(() => {});
+        }
+        return sent;
+      },
+    }));
+}
+
+/**
  * The two reminders with their CURRENT schedule, read fresh from settings each
  * tick so a SuperAdmin's change takes effect on the next pass — no restart.
  * Falls back to the coded defaults if the settings read fails, because a
@@ -219,11 +294,16 @@ async function tick() {
     const dateStr = istDateString(now);
     const today = startOfDayIST(now);
 
+    // Built-ins plus whichever custom reminders are scheduled for today. Both
+    // kinds are the same shape from here on, so the window/claim logic below is
+    // written once.
+    const due = [...(await schedule()), ...(await customReminders(istDayOfWeek(now)))];
+
     let total = 0;
-    for (const r of await schedule()) {
+    for (const r of due) {
       if (!r.enabled) continue;                       // switched off by a SuperAdmin
-      const due = r.at.h * 60 + r.at.m;
-      if (mins < due || mins > due + FIRE_WINDOW_MIN) continue; // outside the firing window
+      const dueAt = r.at.h * 60 + r.at.m;
+      if (mins < dueAt || mins > dueAt + FIRE_WINDOW_MIN) continue; // outside the firing window
       if (!(await claim(r.kind, dateStr))) continue;  // already sent today
       const sent = await r.run(today);
       total += sent;

@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -84,12 +85,12 @@ export default function RnrScreen() {
   };
 
   const onSave = async () => {
-    if (!hasAnySelection) { Alert.alert('Pick a winner', 'Select at least one winner first.'); return; }
+    if (!hasAnySelection) { toast('Pick a winner', 'Select at least one winner first.'); return; }
     setBusy(true);
     try {
       await save();
-      Alert.alert('Draft saved', 'Winners are hidden from employees until you announce.');
-    } catch (e) { Alert.alert('Save failed', errMsg(e)); }
+      toast('Draft saved', 'Winners are hidden from employees until you announce.');
+    } catch (e) { toast('Save failed', errMsg(e)); }
     finally { setBusy(false); }
   };
 
@@ -98,14 +99,14 @@ export default function RnrScreen() {
     try {
       const a = await save();
       await api.post(`/rnr/${a._id}/announce`);
-      Alert.alert('Announced 🎉', 'Everyone has been notified.');
+      toast('Announced 🎉', 'Everyone has been notified.');
       await load();
-    } catch (e) { Alert.alert('Announce failed', errMsg(e)); }
+    } catch (e) { toast('Announce failed', errMsg(e)); }
     finally { setBusy(false); }
   };
 
   const onAnnounce = () => {
-    if (!hasAnySelection) { Alert.alert('Pick a winner', 'Select at least one winner first.'); return; }
+    if (!hasAnySelection) { toast('Pick a winner', 'Select at least one winner first.'); return; }
     Alert.alert(
       'Announce winners?',
       `Notify all employees for ${MONTHS_FULL[month]} ${year} now? The banner shows for 2 working days.`,

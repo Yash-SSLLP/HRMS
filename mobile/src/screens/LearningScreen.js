@@ -6,7 +6,8 @@
  * Backend: GET /courses/me, GET /courses, POST /courses/:id/enroll.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -52,9 +53,9 @@ export default function LearningScreen() {
     try {
       await api.post(`/courses/${course._id}/enroll`);
       await load();
-      Alert.alert('Requested', 'Your enrollment request was sent for approval.');
+      toast('Requested', 'Your enrollment request was sent for approval.');
     } catch (err) {
-      Alert.alert('Could not enroll', errMsg(err));
+      toast('Could not enroll', errMsg(err));
     } finally {
       setBusyId(null);
     }

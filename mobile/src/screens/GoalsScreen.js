@@ -5,7 +5,8 @@
  * Backend: GET /performance/goals/me, PATCH /performance/goals/me/:id/progress.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -35,7 +36,7 @@ export default function GoalsScreen() {
     try {
       await api.patch(`/performance/goals/me/${goal._id}/progress`, { progress });
     } catch (err) {
-      Alert.alert('Update failed', errMsg(err));
+      toast('Update failed', errMsg(err));
       load();
     }
   };

@@ -5,7 +5,8 @@
  * Backend: GET /loans/me, POST /loans.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -37,14 +38,14 @@ export default function LoansScreen() {
 
   // Validate amount + reason, then POST the loan/advance request for approval.
   const submit = async () => {
-    if (!(Number(principal) > 0)) { Alert.alert('Invalid', 'Enter a positive amount.'); return; }
-    if (!reason.trim()) { Alert.alert('Reason needed', 'Add a reason.'); return; }
+    if (!(Number(principal) > 0)) { toast('Invalid', 'Enter a positive amount.'); return; }
+    if (!reason.trim()) { toast('Reason needed', 'Add a reason.'); return; }
     setSubmitting(true);
     try {
       await api.post('/loans', { type, principal: Number(principal), reason });
       setShowForm(false); setPrincipal(''); setReason('');
       await load();
-    } catch (err) { Alert.alert('Could not submit', errMsg(err)); }
+    } catch (err) { toast('Could not submit', errMsg(err)); }
     finally { setSubmitting(false); }
   };
 

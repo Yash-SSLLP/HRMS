@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -135,7 +136,7 @@ export default function ApprovalsScreen() {
       setItems((prev) => prev.filter((x) => x._id !== item._id));
       setCounts((prev) => ({ ...prev, [cat.key]: Math.max(0, (prev[cat.key] || 1) - 1) }));
     } catch (err) {
-      Alert.alert('Action failed', errMsg(err));
+      toast('Action failed', errMsg(err));
     } finally {
       setBusyId(null);
     }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { toast } from '../../components/Toast';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import MapView, { Marker, Callout, Circle, PROVIDER_GOOGLE } from 'react-native-maps';
 
 import api, { errMsg } from '../../api/client';
@@ -50,7 +51,7 @@ export default function PunchMapScreen() {
       const { data } = await api.get(`/attendance/punch-map?${params}`);
       setData(data);
     } catch (err) {
-      Alert.alert('Failed to load', errMsg(err));
+      toast('Failed to load', errMsg(err));
       setData(null);
     } finally {
       setLoading(false);

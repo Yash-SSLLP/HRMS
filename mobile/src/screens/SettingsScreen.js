@@ -6,6 +6,7 @@
  * theme + lock state persist locally (AsyncStorage / security store).
  */
 import React, { useState, useEffect } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Switch } from 'react-native';
 import Constants from 'expo-constants';
 import { useNavigation } from '@react-navigation/native';
@@ -80,7 +81,7 @@ export default function SettingsScreen() {
         LocalAuthentication.isEnrolledAsync(),
       ]);
       if (!hw || !enrolled) {
-        Alert.alert('Not available', 'Set up a fingerprint or face unlock in your device settings first.');
+        toast('Not available', 'Set up a fingerprint or face unlock in your device settings first.');
         return;
       }
       const res = await LocalAuthentication.authenticateAsync({ promptMessage: 'Confirm to enable app lock' });
@@ -100,7 +101,7 @@ export default function SettingsScreen() {
     setWorking(true);
     const token = await registerForPush();
     setWorking(false);
-    Alert.alert(
+    toast(
       token ? 'Notifications enabled' : 'Could not enable',
       token
         ? 'This device is registered for push notifications.'

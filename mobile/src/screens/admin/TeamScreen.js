@@ -8,6 +8,7 @@
  * web's split between /employee/team and /employee/approvals.
  */
 import React, { useCallback, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
@@ -86,10 +87,10 @@ export default function TeamScreen() {
           dialogTitle: 'Team attendance',
         });
       } else {
-        Alert.alert('Downloaded', 'Saved to the app cache.');
+        toast('Downloaded', 'Saved to the app cache.');
       }
     } catch (err) {
-      Alert.alert('Export failed', err.message || 'Could not export attendance.');
+      toast('Export failed', err.message || 'Could not export attendance.');
     } finally {
       setExporting(false);
     }
@@ -103,7 +104,7 @@ export default function TeamScreen() {
       await api.patch(`/manager/rest-day-work/${claim._id}`, { decision });
       await load();
     } catch (err) {
-      Alert.alert('Action failed', errMsg(err));
+      toast('Action failed', errMsg(err));
     } finally {
       setBusyId(null);
     }

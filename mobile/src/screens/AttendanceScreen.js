@@ -6,7 +6,8 @@
  * POST /attendance/me/checkin, POST /attendance/me/checkout (multipart photo+coords).
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert, Switch } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, Switch } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -117,7 +118,7 @@ export default function AttendanceScreen() {
   const capture = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Camera needed', 'Allow camera access to punch with a selfie.');
+      toast('Camera needed', 'Allow camera access to punch with a selfie.');
       return null;
     }
     const result = await ImagePicker.launchCameraAsync({ quality: 0.5, cameraType: ImagePicker.CameraType.front, allowsEditing: false });
@@ -186,9 +187,9 @@ export default function AttendanceScreen() {
       }
       await api.post(`/attendance/me/${which}`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await load();
-      Alert.alert('Done', `You have checked ${which === 'checkin' ? 'in' : 'out'} successfully.`);
+      toast('Done', `You have checked ${which === 'checkin' ? 'in' : 'out'} successfully.`);
     } catch (err) {
-      Alert.alert('Punch failed', errMsg(err));
+      toast('Punch failed', errMsg(err));
     } finally {
       setBusy(false);
     }

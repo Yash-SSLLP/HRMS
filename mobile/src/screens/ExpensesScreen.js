@@ -6,7 +6,8 @@
  * Backend: GET /expenses/me, POST /expenses (multipart with receipt).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -64,7 +65,7 @@ export default function ExpensesScreen() {
   const shootReceipt = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Camera needed', 'Allow camera access to photograph a receipt.');
+      toast('Camera needed', 'Allow camera access to photograph a receipt.');
       return;
     }
     const res = await ImagePicker.launchCameraAsync({
@@ -77,15 +78,15 @@ export default function ExpensesScreen() {
       const shot = await compressImage(res.assets[0], RECEIPT_MAX_PX);
       setReceipt({ uri: shot.uri, name: `receipt-${Date.now()}.jpg`, mimeType: 'image/jpeg' });
     } catch {
-      Alert.alert('Could not use that photo', 'Please try again, or attach a file instead.');
+      toast('Could not use that photo', 'Please try again, or attach a file instead.');
     }
   };
 
   // Validate amount/date/receipt, then POST the claim as multipart with the file.
   const submit = async () => {
-    if (!amount || Number(amount) <= 0) { Alert.alert('Invalid', 'Enter a positive amount.'); return; }
-    if (!date) { Alert.alert('Pick a date', 'Choose the expense date.'); return; }
-    if (!receipt) { Alert.alert('Receipt required', 'Attach a receipt (image or PDF) to verify your claim.'); return; }
+    if (!amount || Number(amount) <= 0) { toast('Invalid', 'Enter a positive amount.'); return; }
+    if (!date) { toast('Pick a date', 'Choose the expense date.'); return; }
+    if (!receipt) { toast('Receipt required', 'Attach a receipt (image or PDF) to verify your claim.'); return; }
     setSubmitting(true);
     try {
       const form = new FormData();
@@ -99,9 +100,9 @@ export default function ExpensesScreen() {
       setShowForm(false);
       setAmount(''); setDate(toYMD(new Date())); setMerchant(''); setDescription(''); setReceipt(null);
       await load();
-      Alert.alert('Submitted', 'Your expense claim has been submitted.');
+      toast('Submitted', 'Your expense claim has been submitted.');
     } catch (err) {
-      Alert.alert('Could not submit', errMsg(err));
+      toast('Could not submit', errMsg(err));
     } finally {
       setSubmitting(false);
     }

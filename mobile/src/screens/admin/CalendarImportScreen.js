@@ -16,7 +16,8 @@
  * Backend: GET /holidays/template.xlsx, POST /holidays/import (multipart `file`).
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
+import { toast } from '../../components/Toast';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -60,10 +61,10 @@ export default function CalendarImportScreen() {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(res.uri, { mimeType: XLSX_MIME, dialogTitle: 'Calendar import template' });
       } else {
-        Alert.alert('Downloaded', 'Template saved to the app cache.');
+        toast('Downloaded', 'Template saved to the app cache.');
       }
     } catch (err) {
-      Alert.alert('Download failed', err.message || 'Could not download the template.');
+      toast('Download failed', err.message || 'Could not download the template.');
     } finally {
       setBusy(false);
     }
@@ -79,7 +80,7 @@ export default function CalendarImportScreen() {
     if (res.canceled) return;
     const file = res.assets[0];
     if (!/\.xlsx$/i.test(file.name || '')) {
-      Alert.alert('Wrong file type', 'Pick the .xlsx template you filled in.');
+      toast('Wrong file type', 'Pick the .xlsx template you filled in.');
       return;
     }
     setResult(null);
@@ -98,7 +99,7 @@ export default function CalendarImportScreen() {
       setResult(data);
       setPending(null);
     } catch (err) {
-      Alert.alert('Import failed', errMsg(err, 'Could not import the calendar.'));
+      toast('Import failed', errMsg(err, 'Could not import the calendar.'));
     } finally {
       setUploading(false);
     }

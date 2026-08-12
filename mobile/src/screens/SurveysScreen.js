@@ -5,7 +5,8 @@
  * Backend: GET /surveys (list), GET /surveys/:id (questions), POST /surveys/:id/respond.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -38,7 +39,7 @@ export default function SurveysScreen() {
       setActive(data.survey || s);
       setAnswers({});
     } catch (err) {
-      Alert.alert('Error', errMsg(err));
+      toast('Error', errMsg(err));
     }
   };
 
@@ -59,15 +60,15 @@ export default function SurveysScreen() {
     const payload = qs.map((q, i) => ({ questionIndex: i, choice: answers[i]?.choice || [], text: answers[i]?.text || '' }));
     // Require an answer for every question.
     const unanswered = qs.some((q, i) => (q.type === 'text' ? !answers[i]?.text?.trim() : !(answers[i]?.choice || []).length));
-    if (unanswered) { Alert.alert('Incomplete', 'Please answer every question.'); return; }
+    if (unanswered) { toast('Incomplete', 'Please answer every question.'); return; }
     setSubmitting(true);
     try {
       await api.post(`/surveys/${active._id}/respond`, { answers: payload });
       setActive(null);
       await load();
-      Alert.alert('Thank you', 'Your response has been recorded.');
+      toast('Thank you', 'Your response has been recorded.');
     } catch (err) {
-      Alert.alert('Could not submit', errMsg(err));
+      toast('Could not submit', errMsg(err));
     } finally {
       setSubmitting(false);
     }

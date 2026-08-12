@@ -22,6 +22,7 @@ import RootNavigator from './src/navigation/RootNavigator';
 import LockScreen from './src/screens/LockScreen';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { navRef, navigateFromNotification } from './src/navigation/navRef';
+import { ToastHost } from './src/components/Toast';
 import { registerForPush, clearBadge } from './src/services/push';
 import { warmUp } from './src/api/client';
 
@@ -126,6 +127,9 @@ export default function App() {
               <LockScreen />
             </View>
           )}
+          {/* Above the navigator so a toast floats over whatever screen is up,
+              but below the lock overlay — nothing should draw over that. */}
+          <ToastHost />
         </ErrorBoundary>
       </SafeAreaProvider>
     </GestureHandlerRootView>

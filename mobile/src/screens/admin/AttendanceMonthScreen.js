@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
@@ -63,7 +64,7 @@ export default function AttendanceMonthScreen() {
       const { data } = await api.get(`/attendance/month-summary?employee=${employee}&year=${year}&month=${month}`);
       setData(data);
     } catch (err) {
-      Alert.alert('Failed to load', errMsg(err));
+      toast('Failed to load', errMsg(err));
     } finally {
       setLoading(false);
     }
@@ -77,7 +78,7 @@ export default function AttendanceMonthScreen() {
   //   kind='bulk'  → every employee, selected month
   //   kind=3 / 4   → selected employee, trailing N months
   const exportCsv = async (kind) => {
-    if (kind !== 'bulk' && !employee) { Alert.alert('Pick an employee first'); return; }
+    if (kind !== 'bulk' && !employee) { toast('Pick an employee first'); return; }
     setExporting(String(kind));
     try {
       const params = new URLSearchParams({ year: String(year), month: String(month) });
@@ -113,7 +114,7 @@ export default function AttendanceMonthScreen() {
         });
       }
     } catch (err) {
-      Alert.alert('Export failed', err.message || 'Please try again');
+      toast('Export failed', err.message || 'Please try again');
     } finally {
       setExporting('');
     }
@@ -142,7 +143,7 @@ export default function AttendanceMonthScreen() {
         status: form.status, checkIn: at(form.checkIn), checkOut: at(form.checkOut), remarks: form.remarks,
       });
       setEditRec(null); await load();
-    } catch (err) { Alert.alert('Update failed', errMsg(err)); }
+    } catch (err) { toast('Update failed', errMsg(err)); }
     finally { setBusy(false); }
   };
 
@@ -155,7 +156,7 @@ export default function AttendanceMonthScreen() {
     setRegOpen(true);
   };
   const saveReg = async () => {
-    if (!form.date || !form.reason) { Alert.alert('Missing info', 'Date and reason are required.'); return; }
+    if (!form.date || !form.reason) { toast('Missing info', 'Date and reason are required.'); return; }
     setBusy(true);
     try {
       await api.post('/regularizations/admin', {
@@ -167,7 +168,7 @@ export default function AttendanceMonthScreen() {
         reason: form.reason,
       });
       setRegOpen(false); await load();
-    } catch (err) { Alert.alert('Regularization failed', errMsg(err)); }
+    } catch (err) { toast('Regularization failed', errMsg(err)); }
     finally { setBusy(false); }
   };
 

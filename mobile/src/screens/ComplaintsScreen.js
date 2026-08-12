@@ -6,7 +6,8 @@
  * Backend: GET /complaints/mine, GET /chat/directory, POST /complaints.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, FlatList, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, FlatList } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -47,16 +48,16 @@ export default function ComplaintsScreen() {
 
   // Validate target + text, then POST the complaint confidentially to HR.
   const submit = async () => {
-    if (!against) { Alert.alert('Pick a person', 'Choose who the complaint is about.'); return; }
-    if (!subject.trim() || !description.trim()) { Alert.alert('Incomplete', 'Add a subject and description.'); return; }
+    if (!against) { toast('Pick a person', 'Choose who the complaint is about.'); return; }
+    if (!subject.trim() || !description.trim()) { toast('Incomplete', 'Add a subject and description.'); return; }
     setSubmitting(true);
     try {
       await api.post('/complaints', { againstUserId: against._id, subject: subject.trim(), description: description.trim() });
       setShowForm(false); setAgainst(null); setSubject(''); setDescription('');
       await load();
-      Alert.alert('Submitted', 'Your complaint has been raised confidentially with HR.');
+      toast('Submitted', 'Your complaint has been raised confidentially with HR.');
     } catch (err) {
-      Alert.alert('Could not submit', errMsg(err));
+      toast('Could not submit', errMsg(err));
     } finally {
       setSubmitting(false);
     }

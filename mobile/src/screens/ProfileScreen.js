@@ -7,6 +7,7 @@
  * logout unregisters the push token first. Uses the photo library permission for uploads.
  */
 import React, { useCallback, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -79,7 +80,7 @@ export default function ProfileScreen() {
   // Needs media-library permission.
   const changeAvatar = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { Alert.alert('Permission needed', 'Allow photo access to update your picture.'); return; }
+    if (!perm.granted) { toast('Permission needed', 'Allow photo access to update your picture.'); return; }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, allowsEditing: true, aspect: [1, 1] });
     if (res.canceled) return;
     try {
@@ -89,14 +90,14 @@ export default function ProfileScreen() {
       const { data } = await api.post('/auth/me/avatar', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await setUser(data.user);
     } catch (err) {
-      Alert.alert('Upload failed', errMsg(err));
+      toast('Upload failed', errMsg(err));
     }
   };
 
   // Same flow as changeAvatar but for the 16:9 header banner image.
   const changeBanner = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { Alert.alert('Permission needed', 'Allow photo access to update your banner.'); return; }
+    if (!perm.granted) { toast('Permission needed', 'Allow photo access to update your banner.'); return; }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, allowsEditing: true, aspect: [16, 9] });
     if (res.canceled) return;
     try {
@@ -106,7 +107,7 @@ export default function ProfileScreen() {
       const { data } = await api.post('/auth/me/banner', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await setUser(data.user);
     } catch (err) {
-      Alert.alert('Upload failed', errMsg(err));
+      toast('Upload failed', errMsg(err));
     }
   };
 

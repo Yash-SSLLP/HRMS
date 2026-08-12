@@ -7,6 +7,7 @@
  * PATCH /leave/me/requests/:id/cancel.
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Switch } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -91,11 +92,11 @@ export default function LeaveScreen() {
   // Validate the date range, then POST the leave request for approval.
   const apply = async () => {
     if (!start || (!isHalfDay && !end)) {
-      Alert.alert('Pick dates', isHalfDay ? 'Choose the date.' : 'Choose a start and end date.');
+      toast('Pick dates', isHalfDay ? 'Choose the date.' : 'Choose a start and end date.');
       return;
     }
     if (!isHalfDay && end < start) {
-      Alert.alert('Invalid dates', 'The end date must be on or after the start date.');
+      toast('Invalid dates', 'The end date must be on or after the start date.');
       return;
     }
     setSubmitting(true);
@@ -118,17 +119,17 @@ export default function LeaveScreen() {
         const told = data.emergency.informed?.length
           ? `${data.emergency.informed.join(', ')} and HR have been informed.`
           : 'HR has been informed.';
-        Alert.alert(
+        toast(
           'Emergency leave granted',
           data.emergency.flagged
             ? `Granted without approval, but this is emergency leave #${data.emergency.indexInMonth} this month, so it has been flagged to your managers and HR — they can charge the day at double pay. ${told}`
             : `No approval was needed. ${told}`
         );
       } else {
-        Alert.alert('Submitted', 'Your leave request has been sent for approval.');
+        toast('Submitted', 'Your leave request has been sent for approval.');
       }
     } catch (err) {
-      Alert.alert('Could not apply', errMsg(err));
+      toast('Could not apply', errMsg(err));
     } finally {
       setSubmitting(false);
     }

@@ -8,7 +8,8 @@
  * and the authenticated video stream GET /courses/:id/modules/:mid/video.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Video, ResizeMode } from 'expo-av';
 
@@ -156,7 +157,7 @@ export default function CoursePlayerScreen() {
       const { data } = await api.post(`/courses/${courseId}/modules/${active._id}/complete`, { completed });
       applyUpdated(data.enrollment);
     } catch (err) {
-      Alert.alert('Could not update', errMsg(err));
+      toast('Could not update', errMsg(err));
     }
   };
 
@@ -311,9 +312,9 @@ function ReportModal({ visible, onClose, courseId, module }) {
       await api.post(`/courses/${courseId}/report`, { module: module?._id, category, note });
       onClose();
       setNote('');
-      Alert.alert('Thanks', "We've received your report and will look into it.");
+      toast('Thanks', "We've received your report and will look into it.");
     } catch (err) {
-      Alert.alert('Could not send', errMsg(err));
+      toast('Could not send', errMsg(err));
     } finally {
       setBusy(false);
     }
@@ -350,13 +351,13 @@ function FeedbackCard({ courseId, existing, onSaved }) {
   }
 
   const submit = async () => {
-    if (!rating) { Alert.alert('Pick a rating', 'Please tap a star rating first.'); return; }
+    if (!rating) { toast('Pick a rating', 'Please tap a star rating first.'); return; }
     setBusy(true);
     try {
       const { data } = await api.post(`/courses/${courseId}/feedback`, { rating, comment });
       onSaved(data.enrollment);
     } catch (err) {
-      Alert.alert('Could not submit', errMsg(err));
+      toast('Could not submit', errMsg(err));
     } finally {
       setBusy(false);
     }

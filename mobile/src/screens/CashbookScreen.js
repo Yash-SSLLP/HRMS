@@ -6,7 +6,8 @@
  * Backend: GET /cashbook/me, GET /cashbook/me/categories, POST /cashbook/me.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -51,17 +52,17 @@ export default function CashbookScreen() {
 
   // Validate amount + date, then POST the voucher for approval and reset the form.
   const submit = async () => {
-    if (!amount || Number(amount) <= 0) { Alert.alert('Invalid', 'Enter a positive amount.'); return; }
-    if (!date) { Alert.alert('Pick a date', 'Choose the voucher date.'); return; }
+    if (!amount || Number(amount) <= 0) { toast('Invalid', 'Enter a positive amount.'); return; }
+    if (!date) { toast('Pick a date', 'Choose the voucher date.'); return; }
     setSubmitting(true);
     try {
       await api.post('/cashbook/me', { amount: Number(amount), date, category, paymentMode, party, description });
       setShowForm(false);
       setAmount(''); setDate(''); setParty(''); setDescription('');
       await load();
-      Alert.alert('Submitted', 'Your cash voucher was submitted for approval.');
+      toast('Submitted', 'Your cash voucher was submitted for approval.');
     } catch (err) {
-      Alert.alert('Could not submit', errMsg(err));
+      toast('Could not submit', errMsg(err));
     } finally {
       setSubmitting(false);
     }

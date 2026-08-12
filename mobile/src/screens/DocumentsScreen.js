@@ -8,6 +8,7 @@
  * GET /documents/:id/download, DELETE /documents/:id.
  */
 import React, { useCallback, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -89,10 +90,10 @@ export default function DocumentsScreen() {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(res.uri, { mimeType: d.mime || undefined, dialogTitle: d.fileName });
       } else {
-        Alert.alert('Downloaded', 'Saved to the app cache.');
+        toast('Downloaded', 'Saved to the app cache.');
       }
     } catch (err) {
-      Alert.alert('Could not open', err.message || 'Download failed.');
+      toast('Could not open', err.message || 'Download failed.');
     } finally {
       setBusyId(null);
     }
@@ -140,9 +141,9 @@ export default function DocumentsScreen() {
       await api.post('/documents/me', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       setPending(null);
       await load();
-      Alert.alert('Uploaded', `${prettyCat(category)} uploaded. HR will verify it.`);
+      toast('Uploaded', `${prettyCat(category)} uploaded. HR will verify it.`);
     } catch (err) {
-      Alert.alert('Upload failed', errMsg(err));
+      toast('Upload failed', errMsg(err));
     } finally {
       setUploading(false);
     }

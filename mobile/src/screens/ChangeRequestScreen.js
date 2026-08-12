@@ -6,7 +6,8 @@
  * Backend: GET /change-requests/fields, GET /change-requests, POST /change-requests.
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -46,16 +47,16 @@ export default function ChangeRequestScreen() {
 
   // Validate then POST the selected field + new value for HR approval.
   const submit = async () => {
-    if (!field) { Alert.alert('Pick a field', 'Choose what you want to change.'); return; }
-    if (!value.trim()) { Alert.alert('Add a value', 'Enter the new value.'); return; }
+    if (!field) { toast('Pick a field', 'Choose what you want to change.'); return; }
+    if (!value.trim()) { toast('Add a value', 'Enter the new value.'); return; }
     setSubmitting(true);
     try {
       await api.post('/change-requests', { field: field.key, requestedValue: value.trim(), reason: reason.trim() || undefined });
       setShowForm(false); setField(null); setValue(''); setReason('');
       await load();
-      Alert.alert('Submitted', 'Your change request was sent to HR for approval.');
+      toast('Submitted', 'Your change request was sent to HR for approval.');
     } catch (err) {
-      Alert.alert('Could not submit', errMsg(err));
+      toast('Could not submit', errMsg(err));
     } finally {
       setSubmitting(false);
     }

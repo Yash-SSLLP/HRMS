@@ -120,6 +120,7 @@
 // app.use('/api/analytics', require('./routes/analyticsRoutes'));
 // app.use('/api/audit', require('./routes/auditRoutes'));
 // app.use('/api/reports', require('./routes/reportRoutes'));
+app.use('/api/push-reminders', require('./routes/pushReminderRoutes'));
 
 // app.use(notFound);
 // app.use(errorHandler);
@@ -160,7 +161,7 @@
  *
  * Mounted route groups: everything under /api/*
  *
- * Startup (after connectDB): email, celebration, attendance, attendance-reminder
+ * Startup (after connectDB): email, celebration, attendance, push-reminder
  * and exit workers; a one-off HR-profile backfill; then app.listen on PORT (default 5000).
  * The workers own their own cron schedules internally.
  */
@@ -176,7 +177,7 @@ const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { startWorker: startEmailWorker } = require('./services/emailWorker');
 const { startWorker: startCelebrationWorker } = require('./services/celebrationWorker');
 const { startWorker: startAttendanceWorker } = require('./services/attendanceWorker');
-const { startWorker: startAttendanceReminderWorker } = require('./services/attendanceReminderWorker');
+const { startWorker: startPushReminderWorker } = require('./services/pushReminderWorker');
 const { startWorker: startExitWorker } = require('./services/exitWorker');
 
 const { backfillHrProfiles } = require('./services/ensureProfile');
@@ -339,7 +340,7 @@ connectDB()
     startEmailWorker();
     startCelebrationWorker();
     startAttendanceWorker();
-    startAttendanceReminderWorker();
+    startPushReminderWorker();
     startExitWorker();
 
     // One-time HR profile backfill

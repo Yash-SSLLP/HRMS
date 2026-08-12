@@ -7,6 +7,7 @@
  * derived from lastWorkingDay server-side).
  */
 import React, { useCallback, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -60,7 +61,7 @@ export default function ResignationScreen() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const submit = () => {
-    if (!lastWorkingDay) { Alert.alert('Pick a date', 'Choose your intended last working day.'); return; }
+    if (!lastWorkingDay) { toast('Pick a date', 'Choose your intended last working day.'); return; }
     Alert.alert('Submit resignation?', 'This sends your resignation to your reporting manager for approval. You can discuss details with HR afterwards.', [
       { text: 'Cancel' },
       {

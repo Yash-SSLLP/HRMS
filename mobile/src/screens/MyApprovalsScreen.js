@@ -13,6 +13,7 @@
  * fact — same control the web inbox offers.
  */
 import React, { useCallback, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -128,7 +129,7 @@ export default function MyApprovalsScreen() {
       await api.patch(`/approvals/leave/${item._id}/${action}`, {});
       setLeave((prev) => prev.filter((x) => x._id !== item._id));
     } catch (err) {
-      Alert.alert('Action failed', errMsg(err));
+      toast('Action failed', errMsg(err));
     } finally {
       setBusyId(null);
     }
@@ -150,7 +151,7 @@ export default function MyApprovalsScreen() {
       await api.patch(`/approvals/regularizations/${item._id}/${action}`, {});
       setRegularizations((prev) => prev.filter((x) => x._id !== item._id));
     } catch (err) {
-      Alert.alert('Action failed', errMsg(err));
+      toast('Action failed', errMsg(err));
     } finally {
       setBusyId(null);
     }
@@ -201,7 +202,7 @@ export default function MyApprovalsScreen() {
       await api.patch(`/approvals/exits/${item._id}/${action}`, {});
       setExits((prev) => prev.filter((x) => x._id !== item._id));
     } catch (err) {
-      Alert.alert('Action failed', errMsg(err));
+      toast('Action failed', errMsg(err));
     } finally {
       setBusyId(null);
     }
@@ -239,7 +240,7 @@ export default function MyApprovalsScreen() {
         ? { ...r, clearanceSections: data.request.clearanceSections }
         : r)));
     } catch (err) {
-      Alert.alert('Could not update', errMsg(err));
+      toast('Could not update', errMsg(err));
     } finally {
       setBusyId(null);
     }

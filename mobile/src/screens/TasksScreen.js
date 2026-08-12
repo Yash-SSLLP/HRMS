@@ -5,7 +5,8 @@
  * Backend: GET /tasks/me (list), PATCH /tasks/me/:id/status (update status).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { toast } from '../components/Toast';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { errMsg } from '../api/client';
@@ -38,7 +39,7 @@ export default function TasksScreen() {
     try {
       await api.patch(`/tasks/me/${task._id}/status`, { status });
     } catch (err) {
-      Alert.alert('Update failed', errMsg(err));
+      toast('Update failed', errMsg(err));
       load();
     }
   };

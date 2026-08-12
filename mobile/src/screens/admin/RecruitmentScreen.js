@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, FlatList, ScrollView, TouchableOpacity, Alert, Share } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
@@ -83,7 +84,7 @@ export default function RecruitmentScreen() {
   };
 
   const saveJob = async () => {
-    if (!jobForm.title.trim()) { Alert.alert('Missing info', 'A job title is required.'); return; }
+    if (!jobForm.title.trim()) { toast('Missing info', 'A job title is required.'); return; }
     setSavingJob(true);
     try {
       const payload = {
@@ -100,7 +101,7 @@ export default function RecruitmentScreen() {
       setJobModal(false);
       await load();
     } catch (err) {
-      Alert.alert('Could not save job', errMsg(err));
+      toast('Could not save job', errMsg(err));
     } finally {
       setSavingJob(false);
     }
@@ -132,7 +133,7 @@ export default function RecruitmentScreen() {
   };
 
   const saveCandidate = async () => {
-    if (!candForm.name.trim()) { Alert.alert('Missing info', 'A candidate name is required.'); return; }
+    if (!candForm.name.trim()) { toast('Missing info', 'A candidate name is required.'); return; }
     setSavingCand(true);
     try {
       await api.post('/recruitment/candidates', {
@@ -147,7 +148,7 @@ export default function RecruitmentScreen() {
       setCandModal(false);
       await load();
     } catch (err) {
-      Alert.alert('Could not add candidate', errMsg(err));
+      toast('Could not add candidate', errMsg(err));
     } finally {
       setSavingCand(false);
     }

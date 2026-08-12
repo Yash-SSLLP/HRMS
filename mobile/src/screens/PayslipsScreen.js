@@ -9,6 +9,7 @@
  * anyone glancing at the phone.
  */
 import React, { useCallback, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
@@ -58,10 +59,10 @@ export default function PayslipsScreen() {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(res.uri, { mimeType: 'application/pdf', dialogTitle: 'Payslip', UTI: 'com.adobe.pdf' });
       } else {
-        Alert.alert('Downloaded', 'Payslip saved to the app cache.');
+        toast('Downloaded', 'Payslip saved to the app cache.');
       }
     } catch (err) {
-      Alert.alert('Download failed', err.message || 'Could not download the payslip.');
+      toast('Download failed', err.message || 'Could not download the payslip.');
     } finally {
       setDownloading(null);
     }
@@ -79,9 +80,9 @@ export default function PayslipsScreen() {
     try {
       await api.post(`/payroll/me/${p._id}/request`);
       await load();
-      Alert.alert('Requested', 'HR will review your payslip and release it to you.');
+      toast('Requested', 'HR will review your payslip and release it to you.');
     } catch (err) {
-      Alert.alert('Could not request', err.response?.data?.message || 'Please try again.');
+      toast('Could not request', err.response?.data?.message || 'Please try again.');
     } finally {
       setBusyId(null);
     }
@@ -98,9 +99,9 @@ export default function PayslipsScreen() {
       setChangeFor(null);
       setChangeNote('');
       await load();
-      Alert.alert('Sent', 'HR will check the payslip and release an updated one.');
+      toast('Sent', 'HR will check the payslip and release an updated one.');
     } catch (err) {
-      Alert.alert('Could not send', err.response?.data?.message || 'Please try again.');
+      toast('Could not send', err.response?.data?.message || 'Please try again.');
     } finally {
       setSubmitting(false);
     }

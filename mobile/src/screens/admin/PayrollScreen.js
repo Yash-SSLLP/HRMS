@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
@@ -56,7 +57,7 @@ export default function PayrollScreen() {
       await api.patch(`/payroll/${p._id}/${kind === 'approve' ? 'approve' : 'pay'}`, {});
       await load(year, month, status);
     } catch (err) {
-      Alert.alert('Action failed', errMsg(err));
+      toast('Action failed', errMsg(err));
     } finally {
       setBusyId(null);
     }
@@ -77,7 +78,7 @@ export default function PayrollScreen() {
       if (res.status !== 200) throw new Error('Payslip PDF not available');
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
     } catch (err) {
-      Alert.alert('Download failed', err.message);
+      toast('Download failed', err.message);
     } finally {
       setBusyId(null);
     }
@@ -95,7 +96,7 @@ export default function PayrollScreen() {
       if (res.status !== 200) throw new Error('Export not available');
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri, { mimeType: XLSX_MIME, UTI: 'org.openxmlformats.spreadsheetml.sheet' });
     } catch (err) {
-      Alert.alert('Export failed', err.message);
+      toast('Export failed', err.message);
     } finally {
       setBusyId(null);
     }
@@ -105,7 +106,7 @@ export default function PayrollScreen() {
   // fetch the server-rendered editable preview, then send it server-side.
   const emailPayslip = async (p) => {
     const email = p.employee?.user?.email;
-    if (!email) { Alert.alert('No email', 'No email on file for this employee.'); return; }
+    if (!email) { toast('No email', 'No email on file for this employee.'); return; }
     setBusyId(p._id);
     try {
       const { data } = await api.post(`/payroll/${p._id}/email`, { preview: true });
@@ -124,7 +125,7 @@ export default function PayrollScreen() {
         },
       });
     } catch (err) {
-      Alert.alert('Could not prepare the payslip email', errMsg(err));
+      toast('Could not prepare the payslip email', errMsg(err));
     } finally {
       setBusyId(null);
     }

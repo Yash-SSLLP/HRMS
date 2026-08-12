@@ -7,6 +7,7 @@
  * defaults from ../content/guides are used when no server copy exists.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
 
 import api, { errMsg } from '../api/client';
@@ -82,9 +83,9 @@ export default function HowToUseScreen() {
       const { data } = await api.put(`/guides/${tab}`, { content: draft });
       setRemote((r) => ({ ...r, [tab]: data }));
       setEditing(false);
-      Alert.alert('Saved', 'The guide has been updated for everyone.');
+      toast('Saved', 'The guide has been updated for everyone.');
     } catch (e) {
-      Alert.alert('Save failed', errMsg(e));
+      toast('Save failed', errMsg(e));
     } finally {
       setSaving(false);
     }
