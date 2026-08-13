@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 const OFFICE = require('../config/office');
 
+// The signature slots a letter can carry. Fixed rather than free-form so a
+// renderer can ask for a specific one ("the CEO signs appointment letters")
+// without depending on upload order. Extend here to add a slot.
+const SIGNATURE_KEYS = ['ceo', 'md', 'hr'];
+const SIGNATURE_LABELS = { ceo: 'CEO', md: 'Managing Director', hr: 'Human Resources' };
+
 // Single organization-wide settings document. Currently holds the attendance
 // geofence config (office location + how far a punch may be from it). HR /
 // SuperAdmin edit these from the admin Attendance page.
@@ -42,6 +48,39 @@ const settingSchema = new mongoose.Schema(
         minute: { type: Number, default: 0, min: 0, max: 59 },
       },
     },
+
+    // Letterhead branding, uploaded by a SuperAdmin from Admin → Email & Letter
+    // Templates and applied to every generated document (offer, appointment,
+    // payslip). Images are GridFS keys, same as User.photo — see services/storage.js.
+    //
+    // Why here and not config/company.js: that file is env-var constants, so
+    // changing a signature would need a redeploy. This is the org-settings
+    // singleton, which is exactly the runtime-editable equivalent.
+    branding: {
+      // Company logo drawn at the top-left of every letterhead. Falls back to
+      // ORG_LOGO_PATH, then the bundled backend/assets/logo.png.
+      logoPath: { type: String, default: '' },
+      // Named signature slots. Keyed rather than free-form so a renderer can ask
+      // for "the CEO's signature" without guessing at array order, and so
+      // re-uploading one replaces it in place.
+      signatures: {
+        type: [
+          new mongoose.Schema(
+            {
+              key: { type: String, enum: SIGNATURE_KEYS, required: true },
+              storagePath: { type: String, required: true },
+              // Printed under the signature image. Blank falls back to the
+              // COMPANY defaults so an unnamed slot still renders sensibly.
+              signatoryName: { type: String, trim: true, default: '' },
+              signatoryTitle: { type: String, trim: true, default: '' },
+              updatedAt: { type: Date, default: Date.now },
+            },
+            { _id: false }
+          ),
+        ],
+        default: [],
+      },
+    },
   },
   { timestamps: true }
 );
@@ -54,3 +93,5 @@ settingSchema.statics.getSettings = async function getSettings() {
 };
 
 module.exports = mongoose.model('Setting', settingSchema);
+module.exports.SIGNATURE_KEYS = SIGNATURE_KEYS;
+module.exports.SIGNATURE_LABELS = SIGNATURE_LABELS;

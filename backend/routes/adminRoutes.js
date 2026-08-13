@@ -22,10 +22,27 @@ const {
   setWfhAccess,
   getOrgSettings,
   updateOrgSettings,
+  uploadBrandingLogo,
+  deleteBrandingLogo,
+  getBrandingLogo,
+  uploadBrandingSignature,
+  deleteBrandingSignature,
+  getBrandingSignature,
 } = require('../controllers/adminController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
+const { createUpload } = require('../middleware/upload');
 
 const router = express.Router();
+
+// 3 MB cap; images only. A logo/signature is a small transparent PNG — anything
+// larger is a scan that would bloat every generated PDF.
+const brandingUpload = createUpload({
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = file.mimetype.startsWith('image/');
+    cb(ok ? null : new Error('Only image files are accepted'), ok);
+  },
+});
 
 router.use(protect);
 
@@ -67,6 +84,21 @@ router.patch('/users/:id/wfh-access', restrictTo('SuperAdmin'), setWfhAccess);
 router.route('/org-settings')
   .get(restrictTo('SuperAdmin'), getOrgSettings)
   .put(restrictTo('SuperAdmin'), updateOrgSettings);
+
+// ----- Letterhead branding: company logo + CEO/MD/HR signatures -----
+// SuperAdmin only; edited from Admin → Email & Letter Templates. The images are
+// applied to every generated letter and payslip.
+// GET/POST/DELETE /org-settings/logo
+router.route('/org-settings/logo')
+  .get(restrictTo('SuperAdmin'), getBrandingLogo)
+  .post(restrictTo('SuperAdmin'), brandingUpload.single('image'), uploadBrandingLogo)
+  .delete(restrictTo('SuperAdmin'), deleteBrandingLogo);
+
+// GET/POST/DELETE /org-settings/signature/:key  (key = ceo | md | hr)
+router.route('/org-settings/signature/:key')
+  .get(restrictTo('SuperAdmin'), getBrandingSignature)
+  .post(restrictTo('SuperAdmin'), brandingUpload.single('image'), uploadBrandingSignature)
+  .delete(restrictTo('SuperAdmin'), deleteBrandingSignature);
 
 // POST /users — create a user; protected, requires 'users.manage'.
 router.post('/users', createUser);

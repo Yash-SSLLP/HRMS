@@ -14,6 +14,8 @@ const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/p
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { enqueueMail } = require('../services/email');
 const COMPANY = require('../config/company');
+const path = require('path');
+const storage = require('../services/storage');
 
 // Shared resolver — see config/appUrl.js.
 const { appBaseUrl: APP_BASE_URL } = require('../config/appUrl');
@@ -487,9 +489,178 @@ const setWfhAccess = asyncHandler(async (req, res) => {
 });
 
 // The org-wide preference payload, in one place so GET and PUT can't drift.
-const orgSettingsPayload = (s) => ({
-  includeExecutivesInLists: !!s.includeExecutivesInLists,
-  chatEnabled: !!s.chatEnabled,
+// `branding` reports only whether each image EXISTS plus its captions — never the
+// GridFS key, which is an internal handle the browser has no use for (same rule
+// Candidate.toJSON follows for letterPath). The UI fetches the bytes from the
+// dedicated logo/signature endpoints below.
+const orgSettingsPayload = (s) => {
+  const { SIGNATURE_KEYS, SIGNATURE_LABELS } = require('../models/Setting');
+  const sigs = s.branding?.signatures || [];
+  return {
+    includeExecutivesInLists: !!s.includeExecutivesInLists,
+    chatEnabled: !!s.chatEnabled,
+    branding: {
+      hasLogo: !!s.branding?.logoPath,
+      signatures: SIGNATURE_KEYS.map((key) => {
+        const hit = sigs.find((x) => x.key === key);
+        return {
+          key,
+          label: SIGNATURE_LABELS[key],
+          hasImage: !!hit?.storagePath,
+          signatoryName: hit?.signatoryName || '',
+          signatoryTitle: hit?.signatoryTitle || '',
+          updatedAt: hit?.updatedAt || null,
+        };
+      }),
+    },
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Letterhead branding — company logo + CEO/MD/HR signature images.
+// SuperAdmin only (the routes enforce it). Stored in GridFS via services/storage
+// and referenced from the Setting singleton, mirroring the avatar flow in
+// controllers/authController.js.
+// ---------------------------------------------------------------------------
+
+const CONTENT_TYPES = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp',
+};
+const contentTypeFor = (p) => CONTENT_TYPES[path.extname(String(p || '')).toLowerCase()] || 'image/png';
+
+/**
+ * Upload the company logo used on every letterhead.
+ * @route POST /api/admin/org-settings/logo  (SuperAdmin, multipart field "image")
+ */
+const uploadBrandingLogo = asyncHandler(async (req, res) => {
+  if (!req.file) { res.status(400); throw new Error('No image uploaded'); }
+  const Setting = require('../models/Setting');
+  const s = await Setting.getSettings();
+  const previous = s.branding?.logoPath;
+  const { storagePath } = await storage.saveBuffer({
+    buffer: req.file.buffer,
+    ownerType: 'branding',
+    ownerId: 'logo',
+    originalName: req.file.originalname || 'logo.png',
+  });
+  s.branding = s.branding || {};
+  s.branding.logoPath = storagePath;
+  await s.save();
+  // Only after the new pointer is safely persisted — a failed delete must never
+  // orphan the record we just wrote.
+  if (previous && previous !== storagePath) storage.remove(previous).catch(() => {});
+  res.json(orgSettingsPayload(s));
+});
+
+/**
+ * Remove the company logo, reverting letters to the bundled default.
+ * @route DELETE /api/admin/org-settings/logo  (SuperAdmin)
+ */
+const deleteBrandingLogo = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const s = await Setting.getSettings();
+  const previous = s.branding?.logoPath;
+  if (s.branding) s.branding.logoPath = '';
+  await s.save();
+  if (previous) storage.remove(previous).catch(() => {});
+  res.json(orgSettingsPayload(s));
+});
+
+/**
+ * Stream the company logo back. Protected: it is only ever shown inside the
+ * admin UI, and the PDF renderers read the bytes from GridFS directly.
+ * @route GET /api/admin/org-settings/logo  (SuperAdmin)
+ */
+const getBrandingLogo = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const s = await Setting.getSettings();
+  const p = s.branding?.logoPath;
+  if (!p) return res.status(404).json({ message: 'No logo uploaded' });
+  res.setHeader('Content-Type', contentTypeFor(p));
+  res.setHeader('Cache-Control', 'private, max-age=60');
+  if (!(await storage.streamTo(p, res))) return res.status(404).json({ message: 'File not found' });
+});
+
+/**
+ * Upload (or replace) one signature slot, and optionally its printed name/title.
+ * @route POST /api/admin/org-settings/signature/:key  (SuperAdmin, field "image")
+ * @param {'ceo'|'md'|'hr'} req.params.key
+ */
+const uploadBrandingSignature = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const { SIGNATURE_KEYS } = Setting;
+  const key = String(req.params.key || '').toLowerCase();
+  if (!SIGNATURE_KEYS.includes(key)) {
+    res.status(400);
+    throw new Error(`Unknown signature slot. Expected one of: ${SIGNATURE_KEYS.join(', ')}`);
+  }
+  const s = await Setting.getSettings();
+  s.branding = s.branding || {};
+  s.branding.signatures = s.branding.signatures || [];
+  const existing = s.branding.signatures.find((x) => x.key === key);
+  const previous = existing?.storagePath;
+
+  // The image is optional on a re-save so the captions can be edited alone —
+  // but a slot with no image at all is meaningless, so require one to create it.
+  let storagePath = previous;
+  if (req.file) {
+    ({ storagePath } = await storage.saveBuffer({
+      buffer: req.file.buffer,
+      ownerType: 'branding',
+      ownerId: `signature-${key}`,
+      originalName: req.file.originalname || `${key}-signature.png`,
+    }));
+  } else if (!previous) {
+    res.status(400);
+    throw new Error('No image uploaded');
+  }
+
+  const patch = {
+    key,
+    storagePath,
+    signatoryName: req.body.signatoryName !== undefined ? String(req.body.signatoryName).trim() : (existing?.signatoryName || ''),
+    signatoryTitle: req.body.signatoryTitle !== undefined ? String(req.body.signatoryTitle).trim() : (existing?.signatoryTitle || ''),
+    updatedAt: new Date(),
+  };
+  if (existing) Object.assign(existing, patch);
+  else s.branding.signatures.push(patch);
+  await s.save();
+  if (req.file && previous && previous !== storagePath) storage.remove(previous).catch(() => {});
+  res.json(orgSettingsPayload(s));
+});
+
+/**
+ * Clear one signature slot.
+ * @route DELETE /api/admin/org-settings/signature/:key  (SuperAdmin)
+ */
+const deleteBrandingSignature = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const key = String(req.params.key || '').toLowerCase();
+  const s = await Setting.getSettings();
+  const list = s.branding?.signatures || [];
+  const hit = list.find((x) => x.key === key);
+  if (hit) {
+    s.branding.signatures = list.filter((x) => x.key !== key);
+    await s.save();
+    if (hit.storagePath) storage.remove(hit.storagePath).catch(() => {});
+  }
+  res.json(orgSettingsPayload(s));
+});
+
+/**
+ * Stream one signature image back for the admin preview.
+ * @route GET /api/admin/org-settings/signature/:key  (SuperAdmin)
+ */
+const getBrandingSignature = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const key = String(req.params.key || '').toLowerCase();
+  const s = await Setting.getSettings();
+  const hit = (s.branding?.signatures || []).find((x) => x.key === key);
+  if (!hit?.storagePath) return res.status(404).json({ message: 'No signature uploaded' });
+  res.setHeader('Content-Type', contentTypeFor(hit.storagePath));
+  res.setHeader('Cache-Control', 'private, max-age=60');
+  if (!(await storage.streamTo(hit.storagePath, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 /**
@@ -543,4 +714,10 @@ module.exports = {
   setWfhAccess,
   getOrgSettings,
   updateOrgSettings,
+  uploadBrandingLogo,
+  deleteBrandingLogo,
+  getBrandingLogo,
+  uploadBrandingSignature,
+  deleteBrandingSignature,
+  getBrandingSignature,
 };

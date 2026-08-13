@@ -15,6 +15,9 @@ import { FiEye, FiRotateCcw, FiSave, FiMail, FiFileText, FiDownload } from 'reac
 import { downloadFile } from '../api/download';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import BrandingSettings from '../components/BrandingSettings';
+import { useAuthStore } from '../store/authStore';
+import { useTabParam } from '../hooks/useTabParam';
 import { confirmDialog } from '../components/dialogs';
 
 const FORMAT_META = {
@@ -22,7 +25,15 @@ const FORMAT_META = {
   letter: { label: 'Letter (PDF)', icon: FiFileText, tone: 'bg-violet-100 text-violet-800' },
 };
 
+const TABS = [
+  { id: 'templates', label: 'Templates' },
+  { id: 'branding', label: 'Logo & signatures' },
+];
+
 export default function AdminTemplates() {
+  const me = useAuthStore((s) => s.user);
+  const canBrand = me?.role === 'SuperAdmin';
+  const [tab, setTab] = useTabParam('templates', TABS.map((t) => t.id));
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -160,6 +171,25 @@ export default function AdminTemplates() {
         subtitle="Change what the system says when it emails a candidate or an employee, and the wording of the offer and appointment letters."
       />
 
+      {/* Branding is a SuperAdmin control (the API refuses anyone else), so the
+          tab strip only appears for them — an HR with templates.manage sees the
+          page exactly as before. */}
+      {canBrand && (
+        <div className="mb-5">
+          <nav className="seg-track">
+            {TABS.map((t) => (
+              <button key={t.id} type="button" onClick={() => setTab(t.id)}
+                aria-current={tab === t.id ? 'page' : undefined}
+                className={`seg-btn${tab === t.id ? ' is-active' : ''}`}>
+                {t.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
+
+      {canBrand && tab === 'branding' ? <BrandingSettings /> : (
+      <>
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
@@ -308,6 +338,8 @@ export default function AdminTemplates() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );
