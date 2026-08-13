@@ -126,6 +126,16 @@ async function buildLeaveChain(profile) {
   return buildApprovalChain(profile);
 }
 
+// Every leaveType already ends in the word "Leave" ("Paid Leave", "Unpaid
+// Leave", "Emergency Leave", "Maternity Leave"), so the long-standing
+// `${leaveType} leave` interpolation rendered "Paid Leave leave" in every
+// notification this module sends. Build the phrase with this instead.
+const leaveLabel = (t) => {
+  const s = String(t || '').trim();
+  if (!s) return 'leave';
+  return /leave$/i.test(s) ? s : `${s} leave`;
+};
+
 async function applicantNameOf(request) {
   const prof = await EmployeeProfile.findById(request.employee)
     .select('user')
@@ -141,7 +151,7 @@ async function notifyApprover(approverUserId, request, applicantName) {
       type: 'leave',
       audience: 'admin',
       title: 'Leave needs your approval',
-      body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) - it's awaiting your approval.`,
+      body: `${applicantName} applied for ${leaveLabel(request.leaveType)} (${request.totalDays}d) - it's awaiting your approval.`,
       link: 'leave',
     });
     const appr = await User.findById(approverUserId).select('email');
@@ -151,7 +161,7 @@ async function notifyApprover(approverUserId, request, applicantName) {
           to: [appr.email],
           subject: `Leave approval needed - ${applicantName} (${request.leaveType}, ${request.totalDays}d)`,
           text: [
-            `${applicantName} has a ${request.leaveType} leave request (${request.totalDays} day(s)) awaiting your approval.`,
+            `${applicantName} has a ${leaveLabel(request.leaveType)} request (${request.totalDays} day(s)) awaiting your approval.`,
             '',
             'Review and approve/reject it in the HRMS portal under Leave Approvals.',
           ].join('\n'),
@@ -176,7 +186,7 @@ async function notifyEmployeeDecision(request, note) {
       type: 'leave',
       audience: 'employee',
       title: approved ? 'Leave approved' : 'Leave rejected',
-      body: `Your ${request.leaveType} leave (${days}) has been ${approved ? 'approved' : 'rejected'}.${note ? ` Note: ${note}` : ''}`,
+      body: `Your ${leaveLabel(request.leaveType)} (${days}) has been ${approved ? 'approved' : 'rejected'}.${note ? ` Note: ${note}` : ''}`,
       link: 'leave',
     });
   } catch (err) {
@@ -200,7 +210,7 @@ async function notifyChainQueued(request, chain, applicantName) {
         type: 'leave',
         audience: 'admin',
         title: 'Leave awaiting approval below you',
-        body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d). You are in the approval chain - it is with ${first.approverName || 'their manager'} first (step 1 of ${total}).`,
+        body: `${applicantName} applied for ${leaveLabel(request.leaveType)} (${request.totalDays}d). You are in the approval chain - it is with ${first.approverName || 'their manager'} first (step 1 of ${total}).`,
         link: 'leave',
       }
     );
@@ -224,7 +234,7 @@ async function notifyEmployeeStep(request, step, next, note) {
       type: 'leave',
       audience: 'employee',
       title: `Leave approved at step ${stepNo} of ${total}`,
-      body: `${step?.approverName || 'Your manager'} approved your ${request.leaveType} leave (${days}). It now needs ${next?.approverName || 'the next approver'}'s approval.${note ? ` Note: ${note}` : ''}`,
+      body: `${step?.approverName || 'Your manager'} approved your ${leaveLabel(request.leaveType)} (${days}). It now needs ${next?.approverName || 'the next approver'}'s approval.${note ? ` Note: ${note}` : ''}`,
       link: 'leave',
     });
   } catch (err) {
@@ -247,7 +257,7 @@ async function notifyEmployeeSubmitted(request, chain) {
       type: 'leave',
       audience: 'employee',
       title: `Leave submitted — step 1 of ${total}`,
-      body: `Your ${request.leaveType} leave (${days}) is awaiting ${chain[0]?.approverName || 'your approver'}'s approval${total > 1 ? `, the first of ${total} steps` : ''}.`,
+      body: `Your ${leaveLabel(request.leaveType)} (${days}) is awaiting ${chain[0]?.approverName || 'your approver'}'s approval${total > 1 ? `, the first of ${total} steps` : ''}.`,
       link: 'leave',
     });
   } catch (err) {
@@ -267,7 +277,7 @@ async function notifyChainVoided(request, voidedSteps, reason) {
       type: 'leave',
       audience: 'admin',
       title: `Leave ${reason}`,
-      body: `${name}'s ${request.leaveType} leave (${request.totalDays}d) was ${reason} - no action is needed from you.`,
+      body: `${name}'s ${leaveLabel(request.leaveType)} (${request.totalDays}d) was ${reason} - no action is needed from you.`,
       link: 'leave',
     });
   } catch (err) {
@@ -318,8 +328,8 @@ async function notifyHrInformational(request, verb, actorId, excludeIds = []) {
       title: `Leave ${verb}`,
       body:
         verb === 'applied'
-          ? `${name} applied for ${request.leaveType} leave (${days}). It has entered the reporting-hierarchy approval chain.`
-          : `${name}'s ${request.leaveType} leave (${days}) was ${verb}.`,
+          ? `${name} applied for ${leaveLabel(request.leaveType)} (${days}). It has entered the reporting-hierarchy approval chain.`
+          : `${name}'s ${leaveLabel(request.leaveType)} (${days}) was ${verb}.`,
       link: 'leave',
     });
   } catch (err) {
@@ -396,7 +406,7 @@ async function notifyHrFinalApproval(request, actorId, { configuredOnly = false 
       type: 'leave',
       audience: 'admin',
       title: 'Leave fully approved',
-      body: `${who}${prof?.department ? ` · ${prof.department}` : ''} — ${request.leaveType}${half} leave, ${span} (${request.totalDays}d).${split}${by}`,
+      body: `${who}${prof?.department ? ` · ${prof.department}` : ''} — ${leaveLabel(request.leaveType)}${half}, ${span} (${request.totalDays}d).${split}${by}`,
       link: 'leave',
     });
     return [...ids];
@@ -419,7 +429,7 @@ async function notifyChainAbove(request, rejectedStep) {
       type: 'leave',
       audience: 'admin',
       title: 'Leave rejected below you',
-      body: `${name}'s ${request.leaveType} leave was rejected by ${rejectedStep.approverName || 'a manager'} before it reached you.`,
+      body: `${name}'s ${leaveLabel(request.leaveType)} was rejected by ${rejectedStep.approverName || 'a manager'} before it reached you.`,
       link: 'leave',
     });
   } catch (err) {
@@ -956,7 +966,7 @@ const applyForLeave = asyncHandler(async (req, res) => {
           type: 'leave',
           audience: 'admin',
           title: 'Leave needs a decision',
-          body: `${applicantName} applied for ${request.leaveType} leave (${request.totalDays}d) but has no reporting manager - please review.`,
+          body: `${applicantName} applied for ${leaveLabel(request.leaveType)} (${request.totalDays}d) but has no reporting manager - please review.`,
           link: 'leave',
         });
       }
