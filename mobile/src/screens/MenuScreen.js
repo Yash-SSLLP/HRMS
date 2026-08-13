@@ -139,6 +139,11 @@ export default function MenuScreen() {
     if (hasPermission(me, 'payroll.manage')) {
       adminItems.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' });
     }
+    // SuperAdmin-only by role, not capability — the org-settings endpoints this
+    // screen uses are restrictTo('SuperAdmin') and 403 for anyone else.
+    if (me?.role === 'SuperAdmin') {
+      adminItems.push({ key: 'Branding', label: 'Logo & Signatures', icon: 'color-palette', tint: '#C7A24C' });
+    }
     if (hasAnyPermission(me, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'])) {
       adminItems.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' });
     }

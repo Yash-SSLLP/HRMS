@@ -90,6 +90,10 @@ export default function AdminHubScreen() {
   tiles.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a', show: canDo('payroll.manage') });
   tiles.push({ key: 'RnrAdmin', label: 'Recognition', icon: 'trophy', tint: '#f59e0b', show: canDo('announcements.manage') });
   tiles.push({ key: 'CalendarImport', label: 'Calendar Upload', icon: 'cloud-upload', tint: '#0ea5e9', show: canDo('leave.manage') });
+  // Letterhead branding for generated documents. Hard role check, not a
+  // capability: the org-settings endpoints are restrictTo('SuperAdmin') and 403
+  // for everyone else, so anything looser would show a tile that cannot load.
+  tiles.push({ key: 'Branding', label: 'Logo & Signatures', icon: 'color-palette', tint: '#C7A24C', show: me?.role === 'SuperAdmin' });
   const visibleTiles = tiles.filter((t) => t.show);
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;

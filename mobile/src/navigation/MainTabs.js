@@ -67,6 +67,7 @@ import AccountDetailScreen from '../screens/admin/AccountDetailScreen';
 import AddEmployeeScreen from '../screens/admin/AddEmployeeScreen';
 import WorkLocationsScreen from '../screens/admin/WorkLocationsScreen';
 import PushNotificationScreen from '../screens/admin/PushNotificationScreen';
+import BrandingScreen from '../screens/admin/BrandingScreen';
 import PayrollScreen from '../screens/admin/PayrollScreen';
 import RnrScreen from '../screens/admin/RnrScreen';
 import CalendarImportScreen from '../screens/admin/CalendarImportScreen';
@@ -138,6 +139,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="WorkLocations" component={WorkLocationsScreen} options={{ title: 'Work Locations' }} />
       {/* SuperAdmin-only in practice; the screen and the server both gate it. */}
       <HomeStackNav.Screen name="PushNotification" component={PushNotificationScreen} options={{ title: 'Push Notification' }} />
+      <HomeStackNav.Screen name="Branding" component={BrandingScreen} options={{ title: 'Logo & Signatures' }} />
       <HomeStackNav.Screen name="PayrollAdmin" component={PayrollScreen} options={{ title: 'Payroll' }} />
       <HomeStackNav.Screen name="RnrAdmin" component={RnrScreen} options={{ title: 'Rewards & Recognition' }} />
       <HomeStackNav.Screen name="CalendarImport" component={CalendarImportScreen} options={{ title: 'Calendar Upload' }} />
