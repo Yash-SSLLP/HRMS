@@ -22,6 +22,7 @@ const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
 const { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody } = require('../services/letterPdf');
+const { getBranding } = require('../services/branding');
 const { enqueueMail, sendMail } = require('../services/email');
 const { notify } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
@@ -972,9 +973,20 @@ function emailLetter(candidate, kind, letterPath, letterName, hr) {
  * @param {Object} data - Letter data about to go to a renderer.
  * @returns {Promise<Object>} `data` with `body` populated.
  */
+/**
+ * Attach everything the (synchronous) PDF renderers cannot fetch themselves:
+ * the letter body, and the letterhead branding images.
+ *
+ * Every render call site goes through here, so both are resolved in one place.
+ * `brand` carries the logo + signature BYTES because pdfkit needs bytes and they
+ * live in GridFS behind an async read — see services/branding.js.
+ */
 async function withLetterBody(kind, data = {}) {
-  if (Array.isArray(data.body) && data.body.some((b) => b && String(b.text || '').trim())) return data;
-  return { ...data, body: await resolveLetterBody(kind, data) };
+  const brand = await getBranding();
+  if (Array.isArray(data.body) && data.body.some((b) => b && String(b.text || '').trim())) {
+    return { ...data, brand };
+  }
+  return { ...data, brand, body: await resolveLetterBody(kind, data) };
 }
 
 async function ensureLetterFile(candidate, kind) {

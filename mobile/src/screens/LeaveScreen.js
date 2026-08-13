@@ -14,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
+import ChainProgress from '../components/ChainProgress';
 import { fmtDate } from '../utils/format';
 
 // Mirrors the web apply form. The value IS the stored name, so request history
@@ -284,6 +285,18 @@ export default function LeaveScreen() {
                 {fmtDate(r.startDate)} → {fmtDate(r.endDate)}
               </Text>
               {r.reason ? <Text style={[font.small, { marginTop: 4 }]}>{r.reason}</Text> : null}
+              {/* Where the request has got to. Worth showing now that the ladder
+                  is configurable per employee (1–4 people, not necessarily the
+                  reporting line) — otherwise "Pending" gives no clue who is
+                  holding it. Emergency leave is granted on filing, so its rungs
+                  are all Skipped and the ladder would only mislead. */}
+              {r.leaveType !== 'Emergency Leave' && (
+                <ChainProgress
+                  chain={r.approvalChain}
+                  showPosition={r.status === 'Pending'}
+                  emptyLabel="Awaiting HR review"
+                />
+              )}
               {r.status === 'Pending' && !hasStarted(r.startDate) && (
                 <TouchableOpacity onPress={() => cancel(r._id)} style={styles.cancelBtn}>
                   <Ionicons name="close-circle" size={16} color={colors.danger} />

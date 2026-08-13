@@ -16,6 +16,7 @@ const { enqueueMail } = require('../services/email');
 const COMPANY = require('../config/company');
 const path = require('path');
 const storage = require('../services/storage');
+const { invalidateBranding } = require('../services/branding');
 
 // Shared resolver — see config/appUrl.js.
 const { appBaseUrl: APP_BASE_URL } = require('../config/appUrl');
@@ -547,6 +548,7 @@ const uploadBrandingLogo = asyncHandler(async (req, res) => {
   s.branding = s.branding || {};
   s.branding.logoPath = storagePath;
   await s.save();
+  invalidateBranding();
   // Only after the new pointer is safely persisted — a failed delete must never
   // orphan the record we just wrote.
   if (previous && previous !== storagePath) storage.remove(previous).catch(() => {});
@@ -563,6 +565,7 @@ const deleteBrandingLogo = asyncHandler(async (req, res) => {
   const previous = s.branding?.logoPath;
   if (s.branding) s.branding.logoPath = '';
   await s.save();
+  invalidateBranding();
   if (previous) storage.remove(previous).catch(() => {});
   res.json(orgSettingsPayload(s));
 });
@@ -626,6 +629,7 @@ const uploadBrandingSignature = asyncHandler(async (req, res) => {
   if (existing) Object.assign(existing, patch);
   else s.branding.signatures.push(patch);
   await s.save();
+  invalidateBranding();
   if (req.file && previous && previous !== storagePath) storage.remove(previous).catch(() => {});
   res.json(orgSettingsPayload(s));
 });
@@ -643,6 +647,7 @@ const deleteBrandingSignature = asyncHandler(async (req, res) => {
   if (hit) {
     s.branding.signatures = list.filter((x) => x.key !== key);
     await s.save();
+    invalidateBranding();
     if (hit.storagePath) storage.remove(hit.storagePath).catch(() => {});
   }
   res.json(orgSettingsPayload(s));

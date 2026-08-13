@@ -21,6 +21,7 @@ import api, { errMsg } from '../api/client';
 import { useAuth } from '../store/auth';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, Avatar, Pill, EmptyState, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
+import ChainProgress from '../components/ChainProgress';
 import { fmtDate, fmtClock } from '../utils/format';
 
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || 'Employee';
@@ -29,31 +30,8 @@ const empName = (r) => fullName(r.employee?.user);
 // populated one level shallower than leave/exit requests.
 const regName = (r) => fullName(r.employee);
 
-// Chain-step tone, matching the web ladder's colours.
-const STEP_TONE = {
-  Waiting: 'neutral',
-  Pending: 'warning',
-  Approved: 'success',
-  Rejected: 'danger',
-  Skipped: 'neutral',
-};
-
-/** The reporting ladder as a row of chips: who approved, whose turn it is. */
-function ChainProgress({ chain = [] }) {
-  if (!chain.length) {
-    return <Text style={[font.small, { fontStyle: 'italic', marginTop: 6 }]}>No hierarchy — HR decides</Text>;
-  }
-  return (
-    <View style={styles.chain}>
-      {chain.map((s, i) => (
-        <View key={s._id || i} style={styles.chainStep}>
-          {i > 0 ? <Text style={styles.chainArrow}>→</Text> : null}
-          <Pill label={s.approverName || 'Approver'} tone={STEP_TONE[s.status] || 'neutral'} />
-        </View>
-      ))}
-    </View>
-  );
-}
+/* ChainProgress now lives in components/ChainProgress.js so the employee's own
+   leave list can show the same ladder — see that file for why. */
 
 /** Approve / Reject pair used by both the leave and resignation queues. */
 /** "In  9:15 AM → 10:00 AM" — hidden when this side isn't being changed. */
@@ -441,9 +419,6 @@ export default function MyApprovalsScreen() {
 
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center' },
-  chain: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 10 },
-  chainStep: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  chainArrow: { color: colors.textFaint, fontSize: 12 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   actBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: 44, borderRadius: radius.md },
   approve: { backgroundColor: colors.success },

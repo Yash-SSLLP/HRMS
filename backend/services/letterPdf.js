@@ -37,42 +37,81 @@ const todayLong = () => longDate(new Date());
 
 const M = 54;
 const PAGE_W = 595.28;
+const PAGE_H = 841.89;
 const X0 = M;
 const X1 = PAGE_W - M;
 const CW = X1 - X0;
+// The last y a glyph may occupy. pdfkit's own margins are bypassed (every
+// renderer builds its doc with `margin: 0` and positions absolutely), so nothing
+// stops text running off the bottom unless we check it — which is exactly how
+// the appointment letter came to print into the last 4pt of the sheet and strand
+// its acceptance stub, alone and letterhead-less, on a page of its own.
+const BOTTOM = PAGE_H - M;
 
 const INK = '#1a1a1a';
 const MUTED = '#555555';
 const ACCENT = '#1f3a5f';
 const RULE = '#cccccc';
+// Brand gold, sampled from the Sequence Surfaces logo — the same ramp the web
+// app uses for the brand lockup (frontend/src/index.css --gold-*).
+const GOLD = '#C7A24C';
+const GOLD_DARK = '#8A6B22';
 
-// Draw the shared letterhead; returns the y to continue the body from.
-function drawLetterhead(doc, F) {
-  const logoPath = COMPANY.logoPath && path.resolve(COMPANY.logoPath);
+/**
+ * The shared letterhead: logo left, address block right, a fine gold rule under
+ * both. Returns the y to continue the body from.
+ *
+ * The logo comes in as BYTES on `brand` (see services/branding.js) because the
+ * uploaded one lives in GridFS behind an async read and these renderers are
+ * synchronous. When nothing is uploaded, branding.js has already fallen back to
+ * the env var or the bundled asset, so `brand.logo` is normally non-null and the
+ * text-only lockup below is a genuine last resort.
+ */
+function drawLetterhead(doc, F, brand = {}) {
+  const TOP = 42;
   let leftX = X0;
-  if (logoPath && fs.existsSync(logoPath)) {
-    try { doc.image(logoPath, X0, 44, { fit: [48, 48] }); leftX = X0 + 58; } catch (_) { /* ignore */ }
+  let logoBottom = TOP;
+
+  if (brand.logo) {
+    try {
+      // fit[] preserves aspect ratio inside the box, so a wide wordmark and a
+      // square mark both sit correctly rather than being stretched.
+      doc.image(brand.logo, X0, TOP, { fit: [132, 46], align: 'left', valign: 'top' });
+      logoBottom = TOP + 46;
+    } catch (err) {
+      // Corrupt/unsupported image — fall through to the text lockup, loudly.
+      console.error('Letterhead logo could not be drawn:', err.message);
+      brand = { ...brand, logo: null };
+    }
   }
 
-  doc.font(F.bold).fontSize(18).fillColor(ACCENT)
-    .text(COMPANY.name, leftX, 46, { width: CW * 0.5, lineBreak: true });
-  if (COMPANY.tagline) {
-    doc.font(F.regular).fontSize(9).fillColor(MUTED).text(COMPANY.tagline, leftX, doc.y + 1, { width: CW * 0.5 });
+  if (!brand.logo) {
+    doc.font(F.bold).fontSize(18).fillColor(ACCENT)
+      .text(COMPANY.name, leftX, TOP + 4, { width: CW * 0.5, lineBreak: true });
+    if (COMPANY.tagline) {
+      doc.font(F.regular).fontSize(8.5).fillColor(MUTED)
+        .text(COMPANY.tagline, leftX, doc.y + 1, { width: CW * 0.5 });
+    }
+    logoBottom = doc.y;
   }
 
   // Right-aligned address / contact block.
-  const rightW = CW * 0.44;
+  const rightW = CW * 0.46;
   const rightX = X1 - rightW;
-  let ry = 46;
+  let ry = TOP;
   doc.font(F.regular).fontSize(8.5).fillColor(MUTED);
-  COMPANY.addressLines.forEach((l) => { doc.text(l, rightX, ry, { width: rightW, align: 'right' }); ry += 11; });
-  if (COMPANY.phone) { doc.text(`Phone: ${COMPANY.phone}`, rightX, ry, { width: rightW, align: 'right' }); ry += 11; }
-  if (COMPANY.email) { doc.text(COMPANY.email, rightX, ry, { width: rightW, align: 'right' }); ry += 11; }
-  if (COMPANY.gstin) { doc.text(`GSTIN: ${COMPANY.gstin}`, rightX, ry, { width: rightW, align: 'right' }); ry += 11; }
+  COMPANY.addressLines.forEach((l) => { doc.text(l, rightX, ry, { width: rightW, align: 'right' }); ry += 10.5; });
+  if (COMPANY.phone) { doc.text(`Phone: ${COMPANY.phone}`, rightX, ry, { width: rightW, align: 'right' }); ry += 10.5; }
+  if (COMPANY.email) { doc.text(COMPANY.email, rightX, ry, { width: rightW, align: 'right' }); ry += 10.5; }
+  if (COMPANY.gstin) { doc.text(`GSTIN: ${COMPANY.gstin}`, rightX, ry, { width: rightW, align: 'right' }); ry += 10.5; }
 
-  const ruleY = Math.max(doc.y, ry) + 10;
-  doc.moveTo(X0, ruleY).lineTo(X1, ruleY).strokeColor(RULE).lineWidth(1).stroke();
-  return ruleY + 18;
+  // A 2pt gold bar over a hairline — reads as a deliberate brand edge rather
+  // than a default divider, and survives greyscale printing as two weights.
+  const ruleY = Math.max(logoBottom, ry) + 10;
+  doc.rect(X0, ruleY, CW, 2).fill(GOLD);
+  doc.moveTo(X0, ruleY + 3.6).lineTo(X1, ruleY + 3.6).strokeColor(RULE).lineWidth(0.6).stroke();
+  doc.fillColor(INK);
+  return ruleY + 20;
 }
 
 // A flowing paragraph from the current/optional y.
@@ -82,6 +121,30 @@ function drawLetterhead(doc, F) {
 // onto a second page. See renderOfferLetter.
 const S = (F) => (F && F.s) || 1;
 
+/**
+ * Start a continuation page and return the y to draw from.
+ *
+ * Continuation pages carry NO letterhead — that matches how the company's
+ * printed letters read (logo and address on the first sheet only) and keeps a
+ * multi-page appointment letter from looking like several stapled letters.
+ */
+function continuationPage(doc) {
+  doc.addPage({ size: 'A4', margin: 0 });
+  doc.x = X0;
+  doc.y = M;
+  return M;
+}
+
+/**
+ * Guarantee `needed` points of room below the cursor, breaking the page if not.
+ * Used to keep a block that must not be split — a numbered term, the whole
+ * signing block — off the bottom edge.
+ */
+function ensureRoom(doc, needed) {
+  if (doc.y + needed > BOTTOM) continuationPage(doc);
+  return doc.y;
+}
+
 function para(doc, F, text, opts = {}) {
   const s = S(F);
   doc.font(opts.bold ? F.bold : F.regular).fontSize((opts.size || 10.5) * s).fillColor(opts.color || INK);
@@ -89,17 +152,83 @@ function para(doc, F, text, opts = {}) {
   doc.moveDown((opts.gap ?? 0.7) * s);
 }
 
-function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance) {
+/**
+ * Signing block — "For <Company>", then one signature column per uploaded
+ * signatory (HR left, CEO right, as on the printed letters), and optionally the
+ * candidate's acceptance stub.
+ *
+ * Each column prints the uploaded signature image above a hairline, with the
+ * name and title beneath. A slot with no uploaded image prints the rule alone,
+ * so the letter still reads as a signable document instead of losing the column.
+ *
+ * Everything here scales with the fit factor `s` — including the image height.
+ * That matters: the offer letter's one-page fit loop compresses type and gaps,
+ * and a fixed-height image would have made the block un-shrinkable and pushed
+ * the letter to two pages no matter how far the loop dialled down.
+ */
+function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, brand = {}) {
   const s = S(F);
+  const sigs = brand.signatures || {};
+
+  // Column order mirrors the printed letters: HR signs on the left, the CEO (or
+  // MD, when there is no CEO signature) on the right.
+  const right = sigs.ceo || sigs.md;
+  const columns = [];
+  if (sigs.hr) columns.push({ slot: 'hr', fallbackTitle: 'Human Resources', ...sigs.hr });
+  if (right) columns.push({ slot: 'ceo', fallbackTitle: sigs.ceo ? 'CEO' : 'Managing Director', ...right });
+
+  // The signing block must never be split — a signature on one page and its
+  // acceptance stub alone on the next reads as a printing error. Reserve the
+  // whole thing up front (greeting + columns +, when present, the stub) and
+  // break the page once, here, if it will not fit.
+  const needed = (columns.length ? 130 : 110) * s + (withAcceptance ? 78 * s : 0);
+  ensureRoom(doc, needed);
+
   doc.moveDown(1 * s);
-  para(doc, F, 'Yours Sincerely,');
-  para(doc, F, `For ${COMPANY.name},`, { bold: true, gap: 2.5 });
-  para(doc, F, signatoryTitle || COMPANY.defaultSignatoryTitle, { bold: true, gap: 0.1 });
-  para(doc, F, signatoryName || COMPANY.defaultSignatoryName, { bold: true });
+  para(doc, F, 'Yours Sincerely,', { gap: 0.15 });
+  para(doc, F, `For ${COMPANY.name},`, { bold: true, gap: 0.4 });
+
+  if (!columns.length) {
+    // Nothing uploaded — the original text-only block, so behaviour is unchanged
+    // for an org that has not set signatures up.
+    doc.moveDown(2.1 * s);
+    para(doc, F, signatoryTitle || COMPANY.defaultSignatoryTitle, { bold: true, gap: 0.1 });
+    para(doc, F, signatoryName || COMPANY.defaultSignatoryName, { bold: true });
+  } else {
+    const imgH = 34 * s;              // scales with the fit loop
+    const colW = columns.length > 1 ? (CW - 40) / 2 : CW * 0.46;
+    const top = doc.y + 6 * s;
+
+    columns.forEach((c, i) => {
+      const x = X0 + i * (colW + 40);
+      if (c.image) {
+        try {
+          doc.image(c.image, x, top, { fit: [colW, imgH], align: 'left', valign: 'bottom' });
+        } catch (err) {
+          // The rule below still prints, so the letter stays signable — but say
+          // so, otherwise a corrupt upload silently disappears from every letter
+          // with nothing to diagnose.
+          console.error(`Signature image for "${c.slot}" could not be drawn:`, err.message);
+        }
+      }
+      const lineY = top + imgH + 2;
+      doc.moveTo(x, lineY).lineTo(x + colW * 0.72, lineY).strokeColor(RULE).lineWidth(0.8).stroke();
+      doc.font(F.bold).fontSize(10 * s).fillColor(INK)
+        .text(c.name || signatoryName || COMPANY.defaultSignatoryName, x, lineY + 4 * s, { width: colW, lineBreak: false });
+      doc.font(F.regular).fontSize(9 * s).fillColor(MUTED)
+        .text(c.title || c.fallbackTitle, x, doc.y + 1, { width: colW, lineBreak: false });
+    });
+
+    // Both columns were drawn from the same `top`, so put the cursor below the
+    // taller one rather than wherever the last column happened to end.
+    doc.y = top + imgH + 2 + 26 * s;
+    doc.x = X0;
+    doc.fillColor(INK);
+  }
 
   if (withAcceptance) {
-    doc.moveDown(1.5 * s);
-    para(doc, F, 'I confirm that I have accepted the above.', { gap: 1.2 });
+    doc.moveDown(1.2 * s);
+    para(doc, F, 'I confirm that I have accepted the above.', { gap: 1.0 });
     doc.font(F.regular).fontSize(10.5 * s).fillColor(INK);
     doc.text('Signature: ____________________', X0, doc.y);
     doc.text('Date: ____________________', X0, doc.y + 6 * s);
@@ -164,11 +293,22 @@ function drawBlocks(doc, F, blocks) {
     const last = i === blocks.length - 1;
     if (b.type === 'term') {
       termNo += 1;
-      doc.font(F.bold).fontSize(10.5 * s).fillColor(INK)
+      // Keep a numbered term whole: its heading stranded at the foot of one page
+      // with the text on the next is the classic "generated by a script" tell.
+      // Measured rather than guessed, so a long clause breaks correctly too.
+      const size = 10.5 * s;
+      doc.font(F.regular).fontSize(size);
+      const h = doc.heightOfString(`${termNo}. ${b.head}: ${b.text}`, { width: CW, lineGap: 1.5 * s });
+      ensureRoom(doc, Math.min(h, 90 * s) + 6 * s);
+      doc.font(F.bold).fontSize(size).fillColor(INK)
         .text(`${termNo}. ${b.head}: `, X0, doc.y, { continued: true })
         .font(F.regular).text(b.text, { width: CW, lineGap: 1.5 * s });
       doc.moveDown(0.45 * s);
     } else {
+      const size = 10.5 * s;
+      doc.font(F.regular).fontSize(size);
+      const h = doc.heightOfString(b.text || '', { width: CW, lineGap: 2 * s });
+      ensureRoom(doc, Math.min(h, 80 * s) + 6 * s);
       para(doc, F, b.text, { bold: !!b.bold, gap: last ? 1 : undefined });
     }
   });
@@ -194,7 +334,8 @@ function renderOfferOnce(data, scale) {
 
     const F = { ...setupFonts(doc), s: scale };
     const R = F.rupee;
-    let y = drawLetterhead(doc, F);
+    const brand = data.brand || {};
+    let y = drawLetterhead(doc, F, brand);
 
     para(doc, F, `Date: ${todayLong()}`, { y });
     doc.moveDown(0.4 * scale);
@@ -206,7 +347,7 @@ function renderOfferOnce(data, scale) {
 
     drawBlocks(doc, F, bodyOrDefault(data, offerBody(data, R)));
 
-    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true);
+    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true, brand);
 
     doc.end();
   });
@@ -339,17 +480,24 @@ async function resolveLetterBody(kind, data = {}) {
   }
 }
 
-function renderAppointmentLetter(data = {}) {
+// One pass at a given compression. Resolves { buffer, letterPages }, where
+// letterPages counts only the LETTER — Annexure A always gets its own sheet and
+// must not count against the fit.
+function renderAppointmentOnce(data, scale) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
     const chunks = [];
+    let pages = 1;             // the first page exists before anything is drawn
+    let letterPages = 1;       // captured before the annexure page is added
+    doc.on('pageAdded', () => { pages += 1; });
     doc.on('data', (c) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), letterPages }));
     doc.on('error', reject);
 
-    const F = setupFonts(doc);
+    const F = { ...setupFonts(doc), s: scale };
     const R = F.rupee;
-    let y = drawLetterhead(doc, F);
+    const brand = data.brand || {};
+    let y = drawLetterhead(doc, F, brand);
 
     para(doc, F, `Date: ${todayLong()}`, { y });
     doc.moveDown(0.4);
@@ -360,11 +508,15 @@ function renderAppointmentLetter(data = {}) {
 
     drawBlocks(doc, F, bodyOrDefault(data, appointmentBody(data, R)));
 
-    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true);
+    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true, brand);
+
+    // Everything above is the letter proper; the annexure below is always a
+    // separate sheet, so freeze the count here for the fit loop.
+    letterPages = pages;
 
     // ---------- Annexure A: CTC breakup (new page) ----------
     doc.addPage({ size: 'A4', margin: 0 });
-    let ay = drawLetterhead(doc, F);
+    let ay = drawLetterhead(doc, F, brand);
     para(doc, F, 'Annexure A - Compensation Structure (CTC Breakup)', { bold: true, align: 'center', y: ay, gap: 1 });
     para(doc, F, `Employee: ${data.candidateName || '-'}    |    Designation: ${data.designation || '-'}`, { color: MUTED, size: 9.5, gap: 1 });
 
@@ -421,8 +573,28 @@ function renderAppointmentLetter(data = {}) {
   });
 }
 
+/**
+ * Appointment letter: the LETTER on one sheet, Annexure A on its own.
+ *
+ * Same reasoning as the offer's fit loop. Without it the letter ran a hundred
+ * points past the foot of page 1, which pushed the signing block onto a sheet of
+ * its own that was 80% white space — three pages where two read far better. The
+ * annexure is excluded from the count because it is meant to be a separate sheet.
+ */
+async function renderAppointmentLetter(data = {}) {
+  let lastBuffer = null;
+  for (const scale of OFFER_FIT_STEPS) {
+    const { buffer, letterPages } = await renderAppointmentOnce(data, scale);
+    if (letterPages === 1) return buffer;
+    lastBuffer = buffer;
+  }
+  // A genuinely long body (HR pasted several extra clauses) legitimately runs to
+  // a second sheet — ship it rather than shrinking past readability.
+  return lastBuffer;
+}
+
 module.exports = {
   renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody,
   // Exported so the one-page behaviour can be measured at a chosen compression.
-  renderOfferOnce, OFFER_FIT_STEPS,
+  renderOfferOnce, renderAppointmentOnce, OFFER_FIT_STEPS,
 };
