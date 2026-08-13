@@ -19,7 +19,9 @@ const { buildApprovalChain } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { buildDefaultSections } = require('../config/exitClearance');
 
-const APP_BASE_URL = () => process.env.APP_BASE_URL || 'http://localhost:5173';
+// Shared resolver — see config/appUrl.js. The exit-feedback link goes to a
+// leaver who no longer has a company login, so a localhost default is dead mail.
+const { appBaseUrl: APP_BASE_URL } = require('../config/appUrl');
 const FEEDBACK_TTL_DAYS = 60;
 
 function generateToken() {

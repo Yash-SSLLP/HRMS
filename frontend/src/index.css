@@ -102,6 +102,28 @@ html.dark {
   --surface-3: #292c34;
   --border: #363a44;
 
+  /* ---- Dark neutral ink ramp -----------------------------------------
+     The greys the dark UI writes with, strongest (1) → faintest (8), plus
+     one chrome step for inert glyphs. Tokenised so a portal can restage the
+     WHOLE ramp in one place instead of each rule carrying its own literal:
+     the Admin portal re-points these at a pure-neutral scale further down,
+     while My Portal keeps the slate values defined here. Any new dark rule
+     that needs a neutral should take a token, not a fresh hex. */
+  --dk-ink-1: #f1f5f9;   /* headings, card titles, strongest body */
+  --dk-ink-2: #e2e8f0;
+  --dk-ink-3: #cbd5e1;   /* default body copy */
+  --dk-ink-4: #aebacd;   /* nav labels, top-bar glyphs */
+  --dk-ink-5: #9aa7bd;   /* secondary / meta */
+  --dk-ink-6: #8b98ad;   /* muted */
+  --dk-ink-7: #6b7890;   /* faintest text still meant to be read */
+  --dk-ink-8: #64748b;   /* placeholders */
+  --dk-chrome: #414652;      /* inert non-text chrome (an unlit star) */
+  --dk-skeleton: #243044;    /* loading-placeholder block */
+  --dk-pie-label: #94a3b8;   /* donut centre label */
+  --dk-pie-track: #334155;   /* donut remainder track */
+  --dk-thumb: #33373f;       /* file-thumbnail tile */
+  --dk-meta: #98a2b3;        /* meta line inside the salary-alert / doc-field panels */
+
   /* Chart palette, re-stepped for the dark surface — the same eight hues at
      steps that clear 3:1 against #17181d, not an automatic lightening. */
   --chart-1: #3987e5;
@@ -493,7 +515,7 @@ a.plain-link:hover { text-decoration: underline; }
   touch-action: manipulation;
 }
 .star-btn.is-on { color: #f59e0b; }
-html.dark .star-btn { color: #414652; }
+html.dark .star-btn { color: var(--dk-chrome); }
 html.dark .star-btn.is-on { color: #fbbf24; }
 
 /* The hover lift scales the ICON, never the button.
@@ -580,8 +602,75 @@ table tbody tr:hover > td { background-color: color-mix(in srgb, var(--accent) 5
 /* Slightly rounder form controls for the modern look */
 input, select, textarea { border-radius: 0.5rem; }
 
-html.dark .topbar-icon-btn { color: #aebacd; }
-html.dark .card-title { color: #f1f5f9; }
+html.dark .topbar-icon-btn { color: var(--dk-ink-4); }
+html.dark .card-title { color: var(--dk-ink-1); }
+
+/* ---------------------------------------------------------------------------
+   Segmented control — a raised pill on a recessed track (the Regularization
+   page's "Requests / Approval setup" switch).
+
+   Its own component class rather than neutral Tailwind utilities, for two
+   reasons:
+
+   1. The depth has to INVERT between themes. In light the pill is white lifted
+      off a grey track; in dark the track is the darker surface and the PILL is
+      what steps up. Left on utilities, `bg-white` remaps to --surface (#1a1a1a)
+      and `bg-gray-100` to --surface-3 (#292929) — which would have rendered the
+      active pill DARKER than its own track, reading as a hole rather than a chip.
+   2. The markup reached for the opacity variants (bg-gray-100/80,
+      border-gray-200/80). Tailwind compiles those to their own classes, so the
+      dark remaps — which only match the plain `.bg-gray-100` — never applied,
+      and the track stayed near-white on a dark page. That was the visible bug.
+
+   Light values are carried over verbatim from those utilities, so light mode is
+   unchanged.
+--------------------------------------------------------------------------- */
+.seg-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 0.75rem;
+  background-color: rgba(243, 244, 246, .8);          /* gray-100/80 */
+  border: 1px solid rgba(229, 231, 235, .8);          /* gray-200/80 */
+  box-shadow: inset 0 2px 4px 0 rgba(15, 23, 42, .05);
+}
+.seg-btn {
+  position: relative;
+  padding: 0.375rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  border-radius: 0.5rem;
+  color: #6b7280;
+  transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.seg-btn:hover { color: #1f2937; background-color: rgba(255, 255, 255, .6); }
+.seg-btn.is-active,
+.seg-btn.is-active:hover {
+  background-color: #ffffff;
+  color: #111827;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 0 0 1px rgba(0, 0, 0, .05);
+}
+
+/* Dark — the track recedes to the card surface and the active pill steps up to
+   the lightest one, so the raised/recessed relationship survives the flip. */
+html.dark .seg-track {
+  background-color: var(--surface);
+  border-color: var(--border);
+  box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, .35);
+}
+html.dark .seg-btn { color: var(--dk-ink-6); }
+html.dark .seg-btn:hover {
+  color: var(--dk-ink-2);
+  background-color: color-mix(in srgb, #ffffff 6%, transparent);
+}
+html.dark .seg-btn.is-active,
+html.dark .seg-btn.is-active:hover {
+  background-color: var(--surface-3);
+  color: var(--dk-ink-1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .06);
+}
 
 /* ---------------------------------------------------------------------------
    Premium controls — buttons, dropdowns, inputs & modals get a richer, more
@@ -816,7 +905,7 @@ html.dark .ss-hl { background: color-mix(in srgb, var(--accent) 26%, transparent
   justify-content: center;
 }
 .ss-empty-q { font-weight: 600; color: #64748b; }
-html.dark .ss-empty-q { color: #cbd5e1; }
+html.dark .ss-empty-q { color: var(--dk-ink-3); }
 
 .ss-option { transition: background-color .12s ease, color .12s ease; }
 .ss-option:hover,
@@ -1086,12 +1175,12 @@ html.dark .sidebar-nav::-webkit-scrollbar-thumb:hover { background-color: rgba(2
 
 /* Dark mode — hairlines + label colours. */
 html.dark .nav-group, html.dark .nav-section-link { border-top-color: rgba(255, 255, 255, 0.07); }
-html.dark .nav-group-header { color: #aebacd; }
+html.dark .nav-group-header { color: var(--dk-ink-4); }
 html.dark .nav-group-header:hover, html.dark .nav-group-header.is-open { color: #fff; }
-html.dark .nav-section-link { color: #aebacd; }
+html.dark .nav-section-link { color: var(--dk-ink-4); }
 html.dark .nav-section-link:hover, html.dark .nav-section-link.is-active { color: #fff; }
 
-html.dark .nav-link { color: #aebacd; }
+html.dark .nav-link { color: var(--dk-ink-4); }
 html.dark .nav-link:hover,
 html.dark .nav-link-active { color: #fff; }
 html.dark .nav-link:hover {
@@ -1191,21 +1280,21 @@ html.dark .bg-gray-300 { background-color: var(--border) !important; }
    surface — on the now-dark off-track it would sink to 1.6:1. Keep the knob
    light so it reads against both the off-track and the accent-filled on-track
    (pages/AdminEmployees.jsx, the "show CEO & MD" toggle). */
-html.dark [role="switch"] > span { background-color: #cbd5e1 !important; }
+html.dark [role="switch"] > span { background-color: var(--dk-ink-3) !important; }
 
-html.dark .text-gray-900 { color: #f1f5f9 !important; }
-html.dark .text-gray-800 { color: #e2e8f0 !important; }
-html.dark .text-gray-700 { color: #cbd5e1 !important; }
-html.dark .text-gray-600 { color: #9aa7bd !important; }
-html.dark .text-gray-500 { color: #8b98ad !important; }
-html.dark .text-gray-400 { color: #6b7890 !important; }
+html.dark .text-gray-900 { color: var(--dk-ink-1) !important; }
+html.dark .text-gray-800 { color: var(--dk-ink-2) !important; }
+html.dark .text-gray-700 { color: var(--dk-ink-3) !important; }
+html.dark .text-gray-600 { color: var(--dk-ink-5) !important; }
+html.dark .text-gray-500 { color: var(--dk-ink-6) !important; }
+html.dark .text-gray-400 { color: var(--dk-ink-7) !important; }
 
 /* PieChart SVG text uses Tailwind fill-* utilities (not covered by the text-*
    remap above), so the centre number/label stay near-black in dark mode. Make
    them legible and dim the donut track. */
-html.dark .pie-chart .fill-gray-900 { fill: #f1f5f9; }
-html.dark .pie-chart .fill-gray-500 { fill: #94a3b8; }
-html.dark .pie-chart .text-gray-100 { color: #334155; }
+html.dark .pie-chart .fill-gray-900 { fill: var(--dk-ink-1); }
+html.dark .pie-chart .fill-gray-500 { fill: var(--dk-pie-label); }
+html.dark .pie-chart .text-gray-100 { color: var(--dk-pie-track); }
 
 html.dark .border,
 html.dark .border-gray-100,
@@ -1241,13 +1330,13 @@ html.dark input,
 html.dark select,
 html.dark textarea {
   background-color: var(--surface-2) !important;
-  color: #e5e7eb !important;
+  color: var(--text, #e5e7eb) !important;
   border-color: var(--border) !important;
 }
-html.dark ::placeholder { color: #64748b !important; }
+html.dark ::placeholder { color: var(--dk-ink-8) !important; }
 
 /* Keep code chips readable */
-html.dark code { background-color: var(--surface-3) !important; color: #e5e7eb; }
+html.dark code { background-color: var(--surface-3) !important; color: var(--text, #e5e7eb); }
 
 /* ---------------------------------------------------------------------------
    Dark-mode COLOUR accuracy. The old approach dimmed pastel badges with a
@@ -1383,17 +1472,71 @@ html[data-portal="admin"] {
   --bg: #eceefb;
   --surface-3: #e6e9fb;
 }
-/* Admin — dark */
+/* Admin — dark.
+   A pure-neutral, near-black theme modelled on cushion.so: no hue in any
+   surface or grey, so the only colour on screen is the accent, the status hues
+   and the charts. This replaces the old indigo-navy admin theme — the navy
+   tinted every card and every "grey" label, which fought with the status
+   badges and the chart palette sitting on top of them.
+
+   The scale is Cushion's own: a #121212 page, three flat lifts for cards and
+   their inner panels, and a hairline that is just white at ~11%. Because the
+   ramp is achromatic, each step is a clean, even lightness increment, so
+   nesting a panel inside a card still reads as a step rather than a hue shift.
+   Employee / My Portal is untouched — it keeps the warm near-black board and
+   gold accent defined below.
+
+   Higher specificity than the plain `html.dark` blocks (one extra attribute),
+   so these win wherever they overlap regardless of source order. */
 html.dark[data-portal="admin"] {
-  --accent: #818cf8;
-  --accent-700: #6366f1;
-  /* Light indigo: white on it is 2.98:1, the onyx 5.6:1. */
+  /* Cushion's sky accent. White on it is only 2.71:1, so accent FILLS keep
+     taking the onyx ink (6.1:1) exactly as the old indigo did; as TEXT or an
+     icon on the #1a1a1a card it lands at 7.4:1. */
+  --accent: #00a6f4;
+  --accent-700: #0084d1;
   --pill-ink: var(--onyx);
-  --bg: #0b1024;
-  --surface: #161c34;
-  --surface-2: #1f2747;
-  --surface-3: #2a3360;
-  --border: #313c6b;
+  /* Default body/input/code ink. Undefined elsewhere, so every other dark
+     surface keeps falling back to the #e5e7eb these rules already carried. */
+  --text: #ededed;
+
+  --bg: #121212;         /* page */
+  --surface: #1a1a1a;    /* card */
+  --surface-2: #212121;  /* inset panel / table stripe / input */
+  --surface-3: #292929;  /* one further lift: hover, chips, headers */
+  --border: #303030;     /* the hairline — white ~11% flattened onto the card */
+
+  /* Neutral ink ramp — Cushion's greys. #ededed rather than pure white at the
+     top (softer on a near-black page, still 14.4:1 on the card), then even
+     steps down to the placeholder grey. */
+  --dk-ink-1: #ededed;
+  --dk-ink-2: #dcdcdc;
+  --dk-ink-3: #c2c2c2;
+  --dk-ink-4: #b5b5b5;
+  --dk-ink-5: #a3a3a3;
+  --dk-ink-6: #949494;
+  /* Cushion's own faintest text step is #7a7a7a, which lands at 4.14:1 on the
+     card — under AA for body copy, and this tier carries real meta text. Held
+     one step up at the exact 4.5:1 grey instead; still inside their scale,
+     between gray-10 and gray-11. (The old navy theme ran this at 3.78:1.) */
+  --dk-ink-7: #828282;
+  --dk-ink-8: #6e6e6e;
+  --dk-chrome: #3b3b3b;
+  --dk-skeleton: #262626;
+  --dk-pie-label: #949494;
+  --dk-pie-track: #3b3b3b;
+  --dk-thumb: #303030;
+  --dk-meta: #a3a3a3;
+
+  /* Chart chrome follows the neutral surfaces so gridlines stop reading blue. */
+  --chart-grid: #303030;
+  --chart-empty: #212121;
+
+  /* The calendar board is a card like any other here. */
+  --cal-panel: #1a1a1a;
+  --cal-cell: #292929;
+  --cal-cell-out: #212121;
+  --cal-ink: #ededed;
+  --cal-ink-dim: #7a7a7a;
 }
 
 /* Employee / My Portal — light */
@@ -1724,8 +1867,8 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
   font-size: 0.66rem; color: #6b7280; line-height: 1.25;
   text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
 }
-html.dark .org-name { color: #f1f5f9; }
-html.dark .org-meta { color: #9aa7bd; }
+html.dark .org-name { color: var(--dk-ink-1); }
+html.dark .org-meta { color: var(--dk-ink-5); }
 /* Tailwind's preflight resets border-color on `*`, and here it was beating both
    the shorthand and a two-class longhand — the same conflict the rest of this
    file settles with !important. Without it every card kept the light-mode
@@ -2054,7 +2197,7 @@ html.dark {
   animation: skeleton-sweep 1.4s ease-in-out infinite;
 }
 @keyframes skeleton-sweep { 100% { transform: translateX(100%); } }
-html.dark .skeleton { background-color: #243044; }
+html.dark .skeleton { background-color: var(--dk-skeleton); }
 html.dark .skeleton::after { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent); }
 
 /* ---------------------------------------------------------------------------
@@ -2210,8 +2353,8 @@ html.dark {
   --salert-row-edge-hover: color-mix(in srgb, #f59e0b 42%, transparent);
   --salert-row-shadow: none;
   --salert-row-shadow-hover: 0 4px 16px rgba(0, 0, 0, .38);
-  --salert-name: #f1f5f9;
-  --salert-meta: #98a2b3;
+  --salert-name: var(--dk-ink-1);
+  --salert-meta: var(--dk-meta);
   --salert-tag-bg: color-mix(in srgb, #f59e0b 15%, transparent);
   --salert-chip-bg: linear-gradient(180deg, #fcd34d 0%, #d99406 100%);
 }
@@ -2331,12 +2474,12 @@ html.dark {
   --docfield-zone: var(--surface-3);
   --docfield-zone-hover: color-mix(in srgb, var(--gold-500) 12%, var(--surface-3));
   --docfield-icon-bg: color-mix(in srgb, var(--gold-500) 22%, transparent);
-  --docfield-ink: #f1f5f9;
-  --docfield-meta: #98a2b3;
+  --docfield-ink: var(--dk-ink-1);
+  --docfield-meta: var(--dk-meta);
   --docfield-ok: #34d399;
   --docfield-ok-bg: color-mix(in srgb, #10b981 18%, transparent);
   --docfield-chip: var(--surface-3);
-  --docfield-thumb: #33373f;
+  --docfield-thumb: var(--dk-thumb);
   --docfield-preview: var(--surface);
 }
 

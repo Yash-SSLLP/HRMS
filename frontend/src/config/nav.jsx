@@ -58,7 +58,10 @@ export const adminNav = [
   ] },
   { group: 'Leave & Holidays', icon: FiUmbrella, items: [
     { to: '/admin/leave', label: 'Leave', icon: FiUmbrella, perm: 'leave.manage',
-      tabs: [{ id: 'requests', label: 'Requests' }, { id: 'balances', label: 'Balances' }] },
+      // The hierarchy tab is SuperAdmin-only (see AdminLeave) — gated here too so
+      // search never offers a tab the page would refuse to open.
+      tabs: [{ id: 'requests', label: 'Requests' }, { id: 'balances', label: 'Balances' },
+        { id: 'hierarchy', label: 'Approval hierarchy', roles: ['SuperAdmin'] }] },
     { to: '/admin/holidays', label: 'Holidays', icon: FiSun, perm: 'leave.manage' },
   ] },
   { group: 'People & Organization', icon: FiUsers, items: [

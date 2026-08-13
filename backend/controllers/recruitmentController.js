@@ -29,7 +29,9 @@ const { computeNextEmployeeCode } = require('./lifecycleController');
 
 const DEFAULT_NEW_USER_PASSWORD = process.env.DEFAULT_NEW_USER_PASSWORD || 'Welcome@123';
 // Public website origin, for candidate-facing letter-download links in emails.
-const APP_BASE_URL = () => (process.env.APP_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '');
+// Shared resolver — see config/appUrl.js for why this must never default to
+// localhost in production (these links go to candidates' personal inboxes).
+const { appBaseUrl: APP_BASE_URL } = require('../config/appUrl');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Parse an HR-typed Cc string (comma / semicolon / whitespace separated) into a
@@ -1315,14 +1317,40 @@ const downloadLetterByToken = asyncHandler(async (req, res) => {
   const candidate = await Candidate.findOne({
     $or: [{ 'offer.token': token }, { 'appointment.token': token }],
   });
-  const letter = candidate && (candidate.offer?.token === token ? candidate.offer : candidate.appointment);
-  if (!letter?.letterPath) {
+  const kind = candidate && candidate.offer?.token === token ? 'offer' : 'appointment';
+  const letter = candidate && candidate[kind];
+  if (!letter) {
     res.status(404);
     throw new Error('This letter link is invalid or has expired.');
   }
+
+  // The recipient is an external candidate on an unknown origin, and this route
+  // is already public and token-scoped, so it must not depend on CORS_ORIGIN
+  // matching the site they came from. Without this the download page's XHR is
+  // blocked by the browser and the candidate just sees "could not load".
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+  // Regenerate from the stored letter data if the bytes are gone (files written
+  // during the ephemeral-disk era outlived their storage). The EMAIL path
+  // already self-heals this way; the public link used to 404 instead, so a
+  // letter HR could still send was undownloadable by its own link.
+  let letterPath = letter.letterPath;
+  if (!letterPath || !(await storage.exists(letterPath))) {
+    try {
+      letterPath = await ensureLetterFile(candidate, kind);
+    } catch (err) {
+      console.error('letter self-heal failed:', err.message);
+    }
+  }
+  if (!letterPath) {
+    res.status(404);
+    throw new Error('This letter link is invalid or has expired.');
+  }
+
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${letter.letterName || 'letter.pdf'}"`);
-  if (!(await storage.streamTo(letter.letterPath, res))) return res.status(404).json({ message: 'File not found' });
+  if (!(await storage.streamTo(letterPath, res))) return res.status(404).json({ message: 'File not found' });
 });
 
 // Record that HR has sent a stored letter. Actual delivery happens from the HR's

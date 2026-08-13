@@ -15,7 +15,8 @@ const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibilit
 const { enqueueMail } = require('../services/email');
 const COMPANY = require('../config/company');
 
-const APP_BASE_URL = () => (process.env.APP_BASE_URL || 'http://localhost:5173').replace(/\/+$/, '');
+// Shared resolver — see config/appUrl.js.
+const { appBaseUrl: APP_BASE_URL } = require('../config/appUrl');
 
 /**
  * Tell someone their sign-in email was changed for them.

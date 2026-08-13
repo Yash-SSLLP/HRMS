@@ -1,49 +1,53 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import api from '../api/client';
+import api, { getBaseURL } from '../api/client';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from '../components/BrandLockup';
 
 /**
  * LetterDownload — public (no-login) page, route /letters/:token.
  * A candidate/employee opens their offer or appointment letter from the
- * tokenised link emailed to them. Fetches the PDF as a blob via
- * GET /recruitment/letters/:token and renders it inline + a download button.
+ * tokenised link emailed to them.
+ *
+ * The PDF is rendered from the API URL DIRECTLY rather than fetched as a blob.
+ * An iframe/anchor navigation is not subject to CORS, whereas the old XHR was —
+ * so whenever the API's CORS_ORIGIN didn't match the site the candidate had
+ * opened, every letter failed with the generic "could not load" message. The
+ * recipient is external and unauthenticated, so the page has to work without
+ * depending on origin configuration at all.
+ *
+ * A probe request still runs, but only to turn a genuine 404 into a friendly
+ * message. If the probe fails for any other reason the direct render proceeds
+ * regardless — the probe must never be what blocks the letter.
  */
 export default function LetterDownload() {
   const { token } = useParams();
   const [url, setUrl] = useState('');
-  const [name, setName] = useState('letter.pdf');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Fetch the letter as a blob, derive the filename from Content-Disposition,
-  // and build an object URL for the iframe/download (revoked on unmount).
   useEffect(() => {
-    let objUrl;
+    let cancelled = false;
     (async () => {
       try {
-        const res = await api.get(`/recruitment/letters/${token}`, { responseType: 'blob' });
-        const cd = res.headers['content-disposition'] || '';
-        const m = /filename="?([^";]+)"?/i.exec(cd);
-        if (m) setName(m[1]);
-        objUrl = URL.createObjectURL(res.data);
-        setUrl(objUrl);
+        const base = await getBaseURL();
+        if (!cancelled) setUrl(`${String(base).replace(/\/+$/, '')}/recruitment/letters/${token}`);
+      } catch {
+        /* base URL unresolvable — the probe below still decides what to show */
+      }
+      // Probe purely to distinguish "bad token" from "everything else".
+      try {
+        await api.get(`/recruitment/letters/${token}`, { responseType: 'blob' });
       } catch (err) {
-        setError(err.response?.status === 404
-          ? 'This letter link is invalid or has expired.'
-          : 'Sorry, we could not load this letter. Please try again later.');
-      } finally { setLoading(false); }
+        if (!cancelled && err.response?.status === 404) {
+          setError('This letter link is invalid or has expired.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
-    return () => { if (objUrl) URL.revokeObjectURL(objUrl); };
+    return () => { cancelled = true; };
   }, [token]);
-
-  const download = () => {
-    if (!url) return;
-    const a = document.createElement('a');
-    a.href = url; a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-  };
 
   return (
     <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 px-4 py-10">
@@ -59,11 +63,21 @@ export default function LetterDownload() {
           <div className="text-center text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">{error}</div>
         ) : (
           <>
-            <div className="flex justify-center mb-4">
-              <button onClick={download} className="bg-gray-900 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-gray-700">
+            <div className="flex flex-wrap justify-center gap-2 mb-4">
+              {/* Plain anchors, not a blob click — the server's Content-Disposition
+                  supplies the filename, and this keeps working on mobile mail
+                  browsers that block programmatic blob downloads. */}
+              <a href={url} download
+                className="bg-gray-900 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-gray-700">
                 ⬇ Download PDF
-              </button>
+              </a>
+              <a href={url} target="_blank" rel="noreferrer"
+                className="border border-gray-300 text-gray-700 px-5 py-2.5 rounded-lg font-medium hover:bg-gray-50">
+                Open in new tab
+              </a>
             </div>
+            {/* Some in-app mail browsers refuse to render a PDF in an iframe;
+                the buttons above are the guaranteed path, this is the nicety. */}
             <iframe title="Letter" src={url} className="w-full h-[70vh] rounded-lg border border-gray-200" />
           </>
         )}

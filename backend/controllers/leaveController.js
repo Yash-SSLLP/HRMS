@@ -84,6 +84,48 @@ async function buildApprovalChain(profile) {
   return chain;
 }
 
+// Build the ladder from the SuperAdmin-CONFIGURED list on the profile
+// (`leaveApprovers`, 1–4 people, in order). Inactive users and the applicant
+// themselves are dropped rather than failing the whole chain, so deactivating
+// someone degrades the ladder instead of stranding every request behind them.
+// Returns [] when nothing usable is configured.
+async function buildConfiguredLeaveChain(profile) {
+  const ids = (profile.leaveApprovers || []).map(String).filter(Boolean).slice(0, 4);
+  if (!ids.length) return [];
+  const chain = [];
+  const seen = new Set([String(profile.user)]); // never let someone approve their own leave
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const u = await User.findById(id).select('firstName lastName role isActive');
+    if (!u || u.isActive === false) continue;
+    chain.push({
+      approver: u._id,
+      approverName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      role: u.role,
+      order: chain.length,
+      status: 'Waiting',
+    });
+  }
+  return chain;
+}
+
+/**
+ * The ladder a LEAVE request should climb.
+ *
+ * Prefers the configured `leaveApprovers` ladder; falls back to the org-chart
+ * walk (`buildApprovalChain`) when the employee has not been configured. That
+ * fallback is why this is a separate function rather than a change inside
+ * `buildApprovalChain` — that builder is also used by the exit/resignation flow
+ * (controllers/exitController.js), which must keep walking reportingManager
+ * regardless of how leave is configured.
+ */
+async function buildLeaveChain(profile) {
+  const configured = await buildConfiguredLeaveChain(profile);
+  if (configured.length) return configured;
+  return buildApprovalChain(profile);
+}
+
 async function applicantNameOf(request) {
   const prof = await EmployeeProfile.findById(request.employee)
     .select('user')
@@ -190,6 +232,29 @@ async function notifyEmployeeStep(request, step, next, note) {
   }
 }
 
+// Tell the applicant, at submit time, WHO the request is with and how long the
+// ladder is. Without this the employee only heard from step 2 onward
+// (notifyEmployeeStep fires on a decision), so on a 1-step chain they were told
+// nothing at all until the outcome.
+async function notifyEmployeeSubmitted(request, chain) {
+  try {
+    const prof = await EmployeeProfile.findById(request.employee).select('user');
+    if (!prof?.user) return;
+    const total = chain.length;
+    const days = `${request.totalDays} day${request.totalDays === 1 ? '' : 's'}`;
+    await notify({
+      recipient: prof.user,
+      type: 'leave',
+      audience: 'employee',
+      title: `Leave submitted — step 1 of ${total}`,
+      body: `Your ${request.leaveType} leave (${days}) is awaiting ${chain[0]?.approverName || 'your approver'}'s approval${total > 1 ? `, the first of ${total} steps` : ''}.`,
+      link: 'leave',
+    });
+  } catch (err) {
+    console.error('leave submitted notify failed:', err.message);
+  }
+}
+
 // Tell approvers who still had (or were waiting for) their turn that the request
 // left the ladder — cancelled by the employee, or force-decided by HR — so it
 // doesn't sit in their inbox as a ghost.
@@ -223,7 +288,7 @@ async function notifyChainVoided(request, voidedSteps, reason) {
 // Two exclusions keep it from being noise: anyone on the approval chain already
 // got a specific message about their own rung, and nobody needs a notification
 // about an action they just performed themselves.
-async function notifyHrInformational(request, verb, actorId) {
+async function notifyHrInformational(request, verb, actorId, excludeIds = []) {
   try {
     const prof = await EmployeeProfile.findById(request.employee)
       .select('user hrPartner')
@@ -242,6 +307,8 @@ async function notifyHrInformational(request, verb, actorId) {
     if (actorId) ids.delete(String(actorId));
     const applicantUserId = prof?.user?._id || prof?.user;
     if (applicantUserId) ids.delete(String(applicantUserId));
+    // Anyone who already got a more specific notice about this same event.
+    for (const id of excludeIds) ids.delete(String(id));
     if (!ids.size) return;
     const name = `${prof?.user?.firstName || ''} ${prof?.user?.lastName || ''}`.trim() || 'An employee';
     const days = `${request.totalDays}d`;
@@ -257,6 +324,85 @@ async function notifyHrInformational(request, verb, actorId) {
     });
   } catch (err) {
     console.error('HR informational notify failed:', err.message);
+  }
+}
+
+/**
+ * The "leave is fully approved" notice to HR — a fuller message than the generic
+ * status line `notifyHrInformational` sends, because this is the one HR acts on
+ * (payroll split, roster cover). Carries type, dates, day count and the
+ * paid/LOP split, plus who gave the final sign-off.
+ *
+ * Audience: the SuperAdmin-configured `leaveFinalHrRecipients` for THIS employee
+ * when set — an explicit choice, so chain members are not filtered out of it.
+ * With none configured it falls back to the same capability-based audience the
+ * other leave notices use, with the usual exclusions.
+ *
+ * `configuredOnly` suppresses that fallback, for the HR-override path where a
+ * generic notice is already going to the derived audience and only the named
+ * recipients still need the detailed one.
+ *
+ * @returns {Promise<string[]>} the user ids actually notified, so a caller can
+ *   exclude them from a second notice and avoid double-notifying.
+ */
+async function notifyHrFinalApproval(request, actorId, { configuredOnly = false } = {}) {
+  try {
+    const prof = await EmployeeProfile.findById(request.employee)
+      .select('user hrPartner leaveFinalHrRecipients employeeCode department')
+      .populate('user', 'firstName lastName');
+
+    const configured = (prof?.leaveFinalHrRecipients || []).map(String).filter(Boolean);
+    const ids = new Set();
+    if (configured.length) {
+      for (const id of configured) ids.add(id);
+    } else if (configuredOnly) {
+      return [];
+    } else {
+      for (const id of await usersHoldingAny('leave.manage')) ids.add(String(id));
+      if (prof?.hrPartner) ids.add(String(prof.hrPartner));
+      if (!ids.size) {
+        const sa = await User.findOne({ role: 'SuperAdmin', isActive: true })
+          .sort({ createdAt: 1 })
+          .select('_id');
+        if (sa) ids.add(String(sa._id));
+      }
+      // Only the derived audience gets these exclusions — a named recipient was
+      // chosen deliberately and should hear about it even if they also approved.
+      for (const s of request.approvalChain || []) {
+        if (s.approver) ids.delete(String(s.approver));
+      }
+    }
+    if (actorId) ids.delete(String(actorId));
+    const applicantUserId = prof?.user?._id || prof?.user;
+    if (applicantUserId) ids.delete(String(applicantUserId));
+    if (!ids.size) return [];
+
+    const fmt = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const name = `${prof?.user?.firstName || ''} ${prof?.user?.lastName || ''}`.trim() || 'An employee';
+    const who = prof?.employeeCode ? `${name} (${prof.employeeCode})` : name;
+    const span =
+      String(request.startDate) === String(request.endDate)
+        ? fmt(request.startDate)
+        : `${fmt(request.startDate)} – ${fmt(request.endDate)}`;
+    const half = request.isHalfDay ? ' half-day' : '';
+    const split =
+      request.lopDays > 0
+        ? ` Paid ${request.paidDays}d, LOP ${request.lopDays}d.`
+        : '';
+    const approver = await User.findById(actorId).select('firstName lastName');
+    const by = approver ? ` Final approval by ${`${approver.firstName || ''} ${approver.lastName || ''}`.trim()}.` : '';
+
+    await notifyMany([...ids], {
+      type: 'leave',
+      audience: 'admin',
+      title: 'Leave fully approved',
+      body: `${who}${prof?.department ? ` · ${prof.department}` : ''} — ${request.leaveType}${half} leave, ${span} (${request.totalDays}d).${split}${by}`,
+      link: 'leave',
+    });
+    return [...ids];
+  } catch (err) {
+    console.error('HR final-approval notify failed:', err.message);
+    return [];
   }
 }
 
@@ -290,9 +436,9 @@ async function notifyChainAbove(request, rejectedStep) {
 async function ensureApprovalChain(request) {
   if (!request || request.status !== 'Pending') return false;
   if (request.currentApprover || (request.approvalChain && request.approvalChain.length)) return false;
-  const profile = await EmployeeProfile.findById(request.employee).select('user reportingManager');
+  const profile = await EmployeeProfile.findById(request.employee).select('user reportingManager leaveApprovers');
   if (!profile) return false;
-  const chain = await buildApprovalChain(profile);
+  const chain = await buildLeaveChain(profile);
   if (!chain.length) return false; // no manager in the hierarchy → HR decides
   chain[0].status = 'Pending';
   request.approvalChain = chain;
@@ -613,7 +759,7 @@ async function grantEmergencyLeave(profile, data) {
   const now = new Date();
   // The ladder is recorded so the request still shows WHO was informed, with
   // every rung marked Skipped — nobody's decision was ever required.
-  const chain = (await buildApprovalChain(profile)).map((s) => ({
+  const chain = (await buildLeaveChain(profile)).map((s) => ({
     ...s,
     status: 'Skipped',
     decidedAt: now,
@@ -766,9 +912,10 @@ const applyForLeave = asyncHandler(async (req, res) => {
     });
   }
 
-  // Build the reporting-hierarchy approval ladder. The first rung is Pending
-  // (their turn); the rest wait. Empty chain = no reporting manager → HR decides.
-  const chain = await buildApprovalChain(profile);
+  // Build the approval ladder — the configured `leaveApprovers` if this employee
+  // has one, otherwise the reportingManager walk. The first rung is Pending
+  // (their turn); the rest wait. Empty chain = nobody to ask → HR decides.
+  const chain = await buildLeaveChain(profile);
   if (chain.length) chain[0].status = 'Pending';
 
   const request = await LeaveRequest.create({
@@ -792,6 +939,10 @@ const applyForLeave = asyncHandler(async (req, res) => {
     // heads-up so the whole approval hierarchy is in the loop from the start.
     await notifyApprover(chain[0].approver, request, applicantName);
     await notifyChainQueued(request, chain, applicantName);
+    // ...and the employee is told where it landed, so every rung of the ladder
+    // produces a notification for them (submit here, each decision via
+    // notifyEmployeeStep, the outcome via notifyEmployeeDecision).
+    await notifyEmployeeSubmitted(request, chain);
     // HR sees the request the moment it is filed, not only at the outcome.
     await notifyHrInformational(request, 'applied', req.user._id);
   } else {
@@ -1173,7 +1324,7 @@ async function advanceApproval(request, userId, action, note) {
   await request.save();
   await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
-  await notifyHrInformational(request, 'fully approved', userId);
+  await notifyHrFinalApproval(request, userId);
   return request;
 }
 
@@ -1218,7 +1369,17 @@ async function applyLeaveDecision(request, userId, action, note) {
   if (action === 'approve') await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
   await notifyChainVoided(request, overridden, `${action === 'approve' ? 'approved' : 'rejected'} by HR override`);
-  await notifyHrInformational(request, `${action === 'approve' ? 'approved' : 'rejected'} (HR override)`, userId);
+  // An override approval is still a final approval, so the SuperAdmin-named HR
+  // recipients get the detailed notice — then they are excluded from the generic
+  // one below rather than hearing about the same event twice.
+  const toldInDetail =
+    action === 'approve' ? await notifyHrFinalApproval(request, userId, { configuredOnly: true }) : [];
+  await notifyHrInformational(
+    request,
+    `${action === 'approve' ? 'approved' : 'rejected'} (HR override)`,
+    userId,
+    toldInDetail
+  );
   return request;
 }
 

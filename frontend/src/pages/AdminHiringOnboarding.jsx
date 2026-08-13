@@ -19,16 +19,36 @@ import ShiftHoursSelect from '../components/ShiftHoursSelect';
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '-');
 
-const APPT_NUM_FIELDS = [
-  ['ctcAnnual', 'Annual CTC (₹)'],
-  ['basic', 'Basic Pay (₹)'],
-  ['hra', 'HRA (₹)'],
-  ['specialAllowance', 'Special Allowance (₹)'],
-  ['conveyance', 'Conveyance (₹)'],
-  ['otherAllowances', 'Other Allowances (₹)'],
-  ['employerPf', 'Employer PF (₹)'],
-  ['gratuity', 'Gratuity (₹)'],
+// The components of the CTC breakup, entered either as a % of the annual CTC or
+// as a rupee amount — the two are kept in step (see pctOf/amountFromPct below).
+// Annual CTC itself is deliberately NOT here: it is the base the percentages are
+// taken from, so it has no percentage of its own.
+const APPT_COMPONENT_FIELDS = [
+  ['basic', 'Basic Pay'],
+  ['hra', 'HRA'],
+  ['specialAllowance', 'Special Allowance'],
+  ['conveyance', 'Conveyance'],
+  ['otherAllowances', 'Other Allowances'],
+  ['employerPf', 'Employer PF'],
+  ['gratuity', 'Gratuity'],
 ];
+
+// Percentages are of the ANNUAL CTC — the same convention the reusable salary
+// structures use (models/SalaryStructure.js), so a breakup typed here and one
+// generated from a structure mean the same thing and both total to <= 100%.
+const round2 = (n) => Math.round(n * 100) / 100;
+const pctOf = (amount, ctc) => {
+  const a = Number(amount);
+  const c = Number(ctc);
+  if (!c || !Number.isFinite(a) || !Number.isFinite(c)) return '';
+  return String(round2((a / c) * 100));
+};
+const amountFromPct = (pct, ctc) => {
+  const p = Number(pct);
+  const c = Number(ctc);
+  if (!c || !Number.isFinite(p) || !Number.isFinite(c)) return '';
+  return String(Math.round((p / 100) * c));
+};
 
 export default function AdminHiringOnboarding() {
   const [rows, setRows] = useState([]);
@@ -303,13 +323,73 @@ export default function AdminHiringOnboarding() {
                 </div>
               </div>
 
-              <div className="sm:col-span-2 mt-1 text-xs font-semibold text-gray-600">CTC breakup (Annexure A) · annual ₹</div>
-              {APPT_NUM_FIELDS.map(([key, label]) => (
+              <div className="sm:col-span-2 mt-1 text-xs font-semibold text-gray-600">
+                CTC breakup (Annexure A) · annual
+              </div>
+
+              {/* Annual CTC is the base every percentage below is taken from.
+                  Changing it re-derives the component amounts from their current
+                  percentages, so the split survives a change of CTC. */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs text-gray-600 mb-1">Annual CTC (₹)</label>
+                <input
+                  type="number" min="0" value={apptForm.ctcAnnual}
+                  onChange={(e) => {
+                    const ctc = e.target.value;
+                    const next = { ...apptForm, ctcAnnual: ctc };
+                    for (const [key] of APPT_COMPONENT_FIELDS) {
+                      const pct = pctOf(apptForm[key], apptForm.ctcAnnual);
+                      if (pct !== '') next[key] = amountFromPct(pct, ctc);
+                    }
+                    setApptForm(next);
+                  }}
+                  className="block w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+
+              {APPT_COMPONENT_FIELDS.map(([key, label]) => (
                 <div key={key}>
                   <label className="block text-xs text-gray-600 mb-1">{label}</label>
-                  <input type="number" min="0" value={apptForm[key]} onChange={(e) => setApptForm({ ...apptForm, [key]: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-24 shrink-0">
+                      <input
+                        type="number" min="0" max="100" step="0.01"
+                        value={pctOf(apptForm[key], apptForm.ctcAnnual)}
+                        onChange={(e) => setApptForm({ ...apptForm, [key]: amountFromPct(e.target.value, apptForm.ctcAnnual) })}
+                        disabled={!Number(apptForm.ctcAnnual)}
+                        title={Number(apptForm.ctcAnnual) ? 'Percentage of annual CTC' : 'Enter the Annual CTC first'}
+                        className="block w-full border rounded-lg pl-3 pr-6 py-2 disabled:bg-gray-50"
+                      />
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">%</span>
+                    </div>
+                    <span className="text-xs text-gray-400 shrink-0">=</span>
+                    <input
+                      type="number" min="0" value={apptForm[key]}
+                      onChange={(e) => setApptForm({ ...apptForm, [key]: e.target.value })}
+                      title="Amount in ₹ — editable directly; the % follows"
+                      className="block w-full border rounded-lg px-3 py-2"
+                    />
+                  </div>
                 </div>
               ))}
+
+              {/* The components are all percentages of the same base, so their
+                  total is meaningful — and over 100% means the breakup promises
+                  more than the CTC. Warn, but don't block: Employer PF and
+                  Gratuity are sometimes quoted on top of the headline CTC. */}
+              {(() => {
+                const ctc = Number(apptForm.ctcAnnual);
+                if (!ctc) return null;
+                const sum = APPT_COMPONENT_FIELDS.reduce((t, [key]) => t + (Number(apptForm[key]) || 0), 0);
+                const pct = round2((sum / ctc) * 100);
+                const over = sum > ctc;
+                return (
+                  <div className={`sm:col-span-2 -mt-1 text-xs ${over ? 'text-amber-700' : 'text-gray-500'}`}>
+                    Components total ₹{sum.toLocaleString('en-IN')} · {pct}% of CTC
+                    {over && ' — more than the annual CTC'}
+                  </div>
+                );
+              })()}
 
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Signatory name</label>

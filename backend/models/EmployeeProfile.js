@@ -102,6 +102,30 @@ const employeeProfileSchema = new mongoose.Schema(
         message: 'A regularization can have at most 2 approval steps',
       },
     },
+    // Who signs off THIS employee's LEAVE, in order: entry 0 decides first, and
+    // the last entry gives final approval. 1 to 4 rungs. SuperAdmin-only to set.
+    //
+    // Empty = NOT configured, and leave keeps its original behaviour: the chain
+    // is derived by walking `reportingManager` up to the first CEO/MD (see
+    // buildApprovalChain in controllers/leaveController.js). That fallback is
+    // deliberate so this can be rolled out employee by employee without
+    // stranding anyone who has not been configured yet.
+    leaveApprovers: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+      default: [],
+      validate: {
+        validator: (v) => !v || v.length <= 4,
+        message: 'A leave approval hierarchy can have at most 4 steps',
+      },
+    },
+    // Which HR people are told once THIS employee's leave is fully approved.
+    // SuperAdmin-only, HRManager/SuperAdmin members only. Empty = fall back to
+    // the capability-based audience (everyone holding `leave.manage`, plus this
+    // employee's hrPartner), which is what every other leave notice uses.
+    leaveFinalHrRecipients: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+      default: [],
+    },
 
     // --- Indian statutory identifiers ---
     pan: {

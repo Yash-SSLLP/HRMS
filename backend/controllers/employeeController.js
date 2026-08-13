@@ -249,6 +249,58 @@ async function validateHierarchy(body, linkedUserId, existing = null, allowCross
     body.regularizationApprovers = list;
   }
 
+  // Leave approval hierarchy — same shape as the regularization ladder above,
+  // but up to 4 rungs. Empty is legal and means "not configured": leave then
+  // falls back to the reportingManager walk.
+  if (body.leaveApprovers !== undefined) {
+    const list = (body.leaveApprovers || []).map(String).filter(Boolean);
+    if (list.length > 4) {
+      const err = new Error('A leave approval hierarchy can have at most 4 steps');
+      err.status = 400;
+      throw err;
+    }
+    if (list.includes(linkedId)) {
+      const err = new Error('An employee cannot approve their own leave');
+      err.status = 400;
+      throw err;
+    }
+    if (new Set(list).size !== list.length) {
+      const err = new Error('The same person cannot appear twice in the leave approval hierarchy');
+      err.status = 400;
+      throw err;
+    }
+    for (const id of list) {
+      const u = await User.findById(id).select('isActive');
+      if (!u || u.isActive === false) {
+        const err = new Error('A leave approver must be an active user');
+        err.status = 400;
+        throw err;
+      }
+    }
+    body.leaveApprovers = list;
+  }
+
+  // HR recipients of the "fully approved" notice. Same rule as hrPartner: only
+  // an HRManager or SuperAdmin can be told, since the notice carries the whole
+  // request. Order is irrelevant here — it is an audience, not a ladder.
+  if (body.leaveFinalHrRecipients !== undefined) {
+    const list = [...new Set((body.leaveFinalHrRecipients || []).map(String).filter(Boolean))];
+    for (const id of list) {
+      const u = await User.findById(id).select('role isActive');
+      if (!u || u.isActive === false) {
+        const err = new Error('A leave HR recipient must be an active user');
+        err.status = 400;
+        throw err;
+      }
+      if (u.role !== 'HRManager' && u.role !== 'SuperAdmin') {
+        const err = new Error('Only an HR Manager or SuperAdmin can be a leave HR recipient');
+        err.status = 400;
+        throw err;
+      }
+    }
+    body.leaveFinalHrRecipients = list;
+  }
+
   if (body.reportingManager) {
     // On an update the payload may not carry the department — fall back to the
     // stored one so a manager change is still checked against the real value.
@@ -459,6 +511,10 @@ const createEmployee = asyncHandler(async (req, res) => {
     // Who signs off this employee's attendance corrections is a control an HR
     // Manager must not be able to point at themselves.
     delete req.body.regularizationApprovers;
+    // Same reasoning for leave: the approval ladder and who is told once leave
+    // is fully approved are both SuperAdmin controls.
+    delete req.body.leaveApprovers;
+    delete req.body.leaveFinalHrRecipients;
   }
 
   // Consent flag, not profile data: pull it off the body so it is never stored,
@@ -522,6 +578,10 @@ const updateEmployee = asyncHandler(async (req, res) => {
     // Who signs off this employee's attendance corrections is a control an HR
     // Manager must not be able to point at themselves.
     delete req.body.regularizationApprovers;
+    // Same reasoning for leave: the approval ladder and who is told once leave
+    // is fully approved are both SuperAdmin controls.
+    delete req.body.leaveApprovers;
+    delete req.body.leaveFinalHrRecipients;
   }
 
   // See createEmployee: consent flag, stripped before the payload is persisted.

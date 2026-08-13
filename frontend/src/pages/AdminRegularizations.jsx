@@ -487,7 +487,7 @@ export default function AdminRegularizations() {
           get no strip at all — there is nothing to switch between. */}
       {tabs.length > 1 && (
         <div className="mb-5">
-          <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-gray-100/80 border border-gray-200/80 shadow-inner">
+          <div className="seg-track">
             {tabs.map((t) => {
               const active = tab === t.id;
               return (
@@ -496,11 +496,7 @@ export default function AdminRegularizations() {
                   type="button"
                   onClick={() => setTab(t.id)}
                   aria-current={active ? 'page' : undefined}
-                  className={`relative px-4 py-1.5 text-sm rounded-lg transition-all duration-150 ${
-                    active
-                      ? 'bg-white text-gray-900 font-semibold shadow-sm ring-1 ring-black/5'
-                      : 'text-gray-500 hover:text-gray-800 hover:bg-white/60'
-                  }`}
+                  className={`seg-btn${active ? ' is-active' : ''}`}
                 >
                   {t.label}
                 </button>
