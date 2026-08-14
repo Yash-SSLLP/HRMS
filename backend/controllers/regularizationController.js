@@ -18,6 +18,46 @@ const { statusFromHours } = require('../utils/workday');
 // from an ordinary employee's (see HR_REVIEW_ROLES below).
 const EMPLOYEE_FIELDS = 'firstName lastName email role';
 
+// The day and the punches, written the way the employee reads them everywhere
+// else in the portal: "14 Aug 2026", and 12-hour times with a meridiem. Node's
+// en-IN emits a lowercase "pm" where the browser emits "PM", so it is upper-cased
+// to match the rest of the UI.
+const fmtDay = (d) => new Date(d).toLocaleDateString('en-IN', { dateStyle: 'medium', timeZone: 'Asia/Kolkata' });
+const fmtTime = (d) => (d
+  ? new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
+    .replace(/\b([ap])\.?m\.?\b/i, (_, p) => `${p.toUpperCase()}M`)
+  : null);
+
+/**
+ * The body of the decision notification.
+ *
+ * On approval this names the times the day now carries, taken from what was
+ * actually written to the attendance record rather than from what was asked for
+ * — if applying the correction partly failed, the message must not claim a
+ * change that did not land. With neither punch available it falls back to a
+ * plain confirmation.
+ *
+ * @param {Object} item the decided Regularization document
+ * @param {'Approved'|'Rejected'} status
+ * @param {string} [reviewNote]
+ * @returns {string}
+ */
+function regularizationOutcome(item, status, reviewNote) {
+  const day = fmtDay(item.date);
+  const note = reviewNote ? ` Note: ${reviewNote}` : '';
+  if (status !== 'Approved') {
+    return `${day} was not changed, so the day stands as recorded.${note}`;
+  }
+  const parts = [];
+  const inAt = fmtTime(item.appliedCheckIn);
+  const outAt = fmtTime(item.appliedCheckOut);
+  if (inAt) parts.push(`in ${inAt}`);
+  if (outAt) parts.push(`out ${outAt}`);
+  return parts.length
+    ? `${day} now reads ${parts.join(', ')}.${note}`
+    : `${day} has been corrected on your attendance.${note}`;
+}
+
 // HR review their own colleagues' attendance, so an HR's OWN regularization
 // cannot be decided by HR — it goes up to an executive or a SuperAdmin. CEO/MD
 // are read-only everywhere else; this route is a deliberate exception, the same
@@ -443,8 +483,12 @@ const reviewRequest = asyncHandler(async (req, res) => {
     recipient: item.employee,
     type: 'regularization',
     audience: 'employee',
-    title: `Attendance regularization ${status.toLowerCase()}`,
-    body: `Your request for ${new Date(item.date).toLocaleDateString('en-IN', { dateStyle: 'medium' })} was ${status.toLowerCase()}${reviewNote ? ` - ${reviewNote}` : ''}.`,
+    title: status === 'Approved' ? 'Attendance corrected' : 'Regularization not approved',
+    // Say what actually changed, not just that something did. "Your request was
+    // approved" leaves the employee to go and look up what their day now reads
+    // as; the corrected punches are the whole point of the request, so they
+    // belong in the line they are already reading.
+    body: regularizationOutcome(item, status, reviewNote),
     link: 'regularizations',
   }).catch(() => {});
 

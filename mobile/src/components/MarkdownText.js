@@ -3,6 +3,7 @@
 // blocks. Also exports slug() for generating section anchor ids.
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../theme';
 
 // Minimal, dependency-free Markdown renderer for the in-app guides. Handles the
@@ -36,10 +37,30 @@ function inlineSpans(text) {
   return out;
 }
 
-// 💡 tip / ⚠️ warning paragraphs render as tinted callout cards.
+/**
+ * Callout kinds. The guides tag these `[!NOTE]` / `[!TIP]` / `[!IMPORTANT]` /
+ * `[!WARNING]` rather than using an emoji, so each renders as a real Ionicon
+ * that takes the callout's colour — and carries an uppercase text label, so the
+ * kind survives greyscale and colour-blindness rather than living in hue alone.
+ */
+const CALLOUTS = {
+  note: { icon: 'information-circle-outline', label: 'Note', bg: colors.infoSoft, bar: colors.info },
+  tip: { icon: 'bulb-outline', label: 'Tip', bg: colors.infoSoft, bar: colors.primary },
+  important: { icon: 'alert-circle-outline', label: 'Important', bg: colors.warningSoft, bar: colors.warning },
+  warning: { icon: 'warning-outline', label: 'Warning', bg: colors.dangerSoft, bar: colors.danger },
+};
+
+/**
+ * A line tagged `[!NOTE] …` (optionally quoted) becomes a callout card. The two
+ * legacy emoji markers are still recognised: HR can save its own edited copy of
+ * a guide server-side, so a guide written before this change keeps rendering —
+ * and now does so with an icon instead of the emoji.
+ */
 function calloutOf(line) {
-  if (/^💡/.test(line)) return { icon: '💡', bg: colors.infoSoft, bar: colors.info, body: line.replace(/^💡\s*/, '') };
-  if (/^⚠️?/.test(line)) return { icon: '⚠️', bg: colors.warningSoft, bar: colors.warning, body: line.replace(/^⚠️?\s*/, '') };
+  const tagged = line.match(/^>?\s*\[!(NOTE|TIP|IMPORTANT|WARNING)\]\s*(.*)$/i);
+  if (tagged) return { ...CALLOUTS[tagged[1].toLowerCase()], body: tagged[2] };
+  if (/^💡/.test(line)) return { ...CALLOUTS.tip, body: line.replace(/^💡\s*/, '') };
+  if (/^⚠️?/.test(line)) return { ...CALLOUTS.warning, body: line.replace(/^⚠️?\s*/, '') };
   return null;
 }
 
@@ -84,8 +105,11 @@ export default function MarkdownText({ md, onHeadingY }) {
       if (callout) {
         out.push(
           <View key={k++} style={[styles.callout, { backgroundColor: callout.bg, borderLeftColor: callout.bar }]}>
-            <Text style={styles.calloutIcon}>{callout.icon}</Text>
-            <Text style={[styles.para, styles.calloutText]}>{inlineSpans(callout.body)}</Text>
+            <Ionicons name={callout.icon} size={16} color={callout.bar} style={{ marginTop: 1 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.calloutLabel, { color: callout.bar }]}>{callout.label.toUpperCase()}</Text>
+              <Text style={[styles.para, styles.calloutText]}>{inlineSpans(callout.body)}</Text>
+            </View>
           </View>
         );
         return;
@@ -135,6 +159,6 @@ const styles = StyleSheet.create({
   numMark: { color: colors.primary, fontSize: 14.5, lineHeight: 21.5, minWidth: 22, fontWeight: '700' },
   li: { flex: 1, fontSize: 14.5, lineHeight: 21.5, color: colors.textMuted, marginBottom: 0 },
   callout: { flexDirection: 'row', gap: spacing(2.5), alignItems: 'flex-start', borderLeftWidth: 3, borderRadius: radius.md, paddingVertical: spacing(2.5), paddingHorizontal: spacing(3), marginVertical: spacing(2) },
-  calloutIcon: { fontSize: 15, lineHeight: 21 },
-  calloutText: { flex: 1, fontSize: 13.5, lineHeight: 20, color: colors.text },
+  calloutLabel: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.8, marginBottom: 3 },
+  calloutText: { fontSize: 13.5, lineHeight: 20, color: colors.text },
 });

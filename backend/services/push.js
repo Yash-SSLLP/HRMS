@@ -28,6 +28,11 @@ const { initializeApp, getApp, getApps, cert } = require('firebase-admin/app');
 const { getMessaging: getFcmMessaging } = require('firebase-admin/messaging');
 const DeviceToken = require('../models/DeviceToken');
 
+// The brand gold. Android tints the notification's small icon and the app-name
+// line with this. Keep it in step with mobile/app.json (expo.notification.color)
+// and colors.primary in mobile/src/theme.js.
+const BRAND_COLOR = '#C7A24C';
+
 let messaging = null;
 let initTried = false;
 
@@ -121,7 +126,21 @@ async function pushToTokens(tokens, { title, body, data, badge } = {}) {
     data: stringifyData(data),
     android: {
       priority: 'high',
-      notification: { channelId: 'default', sound: 'default', defaultSound: true },
+      notification: {
+        channelId: 'default',
+        sound: 'default',
+        defaultSound: true,
+        // Name the status-bar drawable and the tint explicitly rather than
+        // relying on the manifest defaults. When the app is backgrounded or
+        // killed, FCM builds the notification itself, and without these it falls
+        // back to whatever the launcher icon happens to be — which Android then
+        // flattens to a featureless grey square, because a small icon is drawn
+        // from its ALPHA channel alone. `notification_icon` is the purpose-drawn
+        // brand glyph (see mobile/brand/notification-icon.js) and this colour is
+        // what Android tints it, and the app name line, with.
+        icon: 'notification_icon',
+        color: BRAND_COLOR,
+      },
     },
     apns: {
       payload: { aps: { sound: 'default', ...(typeof badge === 'number' ? { badge } : {}) } },

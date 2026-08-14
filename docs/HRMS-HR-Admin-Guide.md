@@ -1,336 +1,348 @@
-# HRMS - HR & Admin Guide
+# HR and Admin Guide
 
-*A complete walkthrough of the Admin Portal - every module HR, managers, and leadership use, with the rules, statuses, and permissions behind each. Written for someone new to running the HRMS.*
+*A complete walkthrough of the Admin Portal: every module HR, managers and leadership use, together with the rules, statuses and permissions behind each one. Written for someone taking over the running of the HRMS. Two automated rules — the monthly pay policy and the leave auto-stamp — quietly drive a great many of the numbers, so they are worth reading closely.*
 
 ---
 
-## 1. Introduction & the role/permission model
+## 1. Roles and permissions
 
-The HRMS has **two portals**:
-- **My Portal** - employee self-service (covered in the Employee guide).
-- **Admin Portal** - HR/leadership tools. This guide covers the Admin Portal.
+The system has two portals. **My Portal** is employee self-service, covered in the Employee Handbook. The **Admin Portal** is the subject of this guide.
 
 ### The roles
-- **Backend** - full control of everything, including creating other admins and setting permissions.
-- **HR Manager** - the main HR operator. Can be given **granular permissions** (or, if none are set, has **full HR access** by default).
-- **CEO / MD** - **read-only** across the admin portal (they can *view* everything but not change it). *Important exception below.*
-- **Manager** - sees and approves their own team's leave and attendance (mostly from within the employee portal).
-- **L&D Manager (LDManager)** - a **courses-only** admin; sees just the LMS/Courses page.
-- **Employee** - no admin access.
+
+- **Super Admin** — full control, including creating other admins and setting their permissions.
+- **HR Manager** — the main HR operator, who can be given granular permissions. If none have ever been set, they hold all of them, so an existing HR account never loses access when the catalogue changes.
+- **CEO and MD** — read-only across the admin portal. They can view and export anything, but cannot save changes. One deliberate exception is described below.
+- **Manager** — approves their own team's requests and sees their team's attendance, mostly from inside the employee portal.
+- **L&D Manager** — a courses-only admin who sees the learning platform and nothing else.
+- **Accounts Manager** — a cashbook-only admin.
+- **Employee** — no admin access.
 
 ### How access is controlled
-- Each admin screen is gated by a **permission** (e.g. `payroll.manage`, `leave.manage`, `announcements.manage`). The Backend always passes; an HR Manager passes if they hold that permission - **and if an HR Manager's permissions were never set, they hold ALL of them** (so legacy HRs keep full access).
-- **CEO/MD are read-only**: they can open any admin page and view/read/export, but any *save/edit/delete* is blocked with a "read-only access" message.
-- ⭐ **The one place CEO/MD (and everyone) can act:** the **Leave Approvals** inbox. Because it only lets you act on *your own* approval rung, a CEO/MD (or any manager) can approve the leave requests that have climbed the chain to them - even though they're read-only elsewhere.
-- **Backend-only actions:** creating/editing/deleting *admin-role* users, setting HR permissions and org settings, deleting departments/employee-profiles, and reassigning an employee's HR partner or reporting manager.
 
-💡 Throughout this guide, "HR" means "the Backend or an HR Manager with the relevant permission," unless noted.
+Each admin screen is gated by a **capability**, such as `payroll.manage`, `leave.manage` or `announcements.manage`. Super Admin always passes; an HR Manager passes if they hold that capability.
+
+[!IMPORTANT] The approvals inbox is the one place a read-only executive can act. Because every action there is scoped to "you are the current approver", a CEO or MD — or any manager, or any ordinary employee who happens to sit in someone's chain — can decide their own rung despite being read-only everywhere else.
+
+Some actions are reserved for the Super Admin alone: creating or editing admin-role accounts, setting HR permissions and organisation settings, deleting departments and employee profiles, and reassigning an employee's HR partner or reporting manager.
+
+[!NOTE] Throughout this guide, "HR" means the Super Admin or an HR Manager holding the relevant capability, unless stated otherwise.
 
 ---
 
-## 2. Reports & Audit
+## 2. Reports and audit
 
 ### Dashboard
-The admin home page. Shows org-wide cards: **total employees, present today, on leave today, absent today, pending leaves, open complaints, departments, documents incomplete**, plus **headcount by department**, the latest **pending leave requests**, and the **next holidays**. (The Rewards & Recognition banner shows here too.)
 
-### Analytics *(permission: analytics.view)*
-Read-only workforce analytics from employee data: headcount by **department** and **employment type**, **gender diversity**, **tenure buckets**, **confirmation** breakdown, **exits by month** and **attrition rate**, and **new hires** trend.
+The admin home page, showing organisation-wide figures: total employees, present today, on leave today, absent today, pending leaves, open complaints, departments, and incomplete documents. Below that sit headcount by department, the latest pending leave requests, and the next holidays.
 
-### Audit Log *(Backend only)*
-A history of **status changes** across the system (e.g. payroll approvals, interview-round changes). Filter by entity, person, text, and date. ⚠️ **Only the Backend (Super Admin) can open this** - it is not available to HR, and executives cannot view it either.
+[!NOTE] Every figure here counts **active, not-yet-exited** employees only, and the three attendance figures are resolved as disjoint sets — nobody is counted as both present and on leave, so present, on leave and absent always add up to the headcount.
 
-### Chat Export *(Backend only)*
-The Backend can export full chat transcripts - including after chat has been switched off, since the conversations are kept.
+### Analytics
 
-### ⭐ Chat on/off *(Backend only, on the Permissions page)*
-**Chat is an org-wide switch and is OFF by default.** While it is off, the chat button disappears from both web portals, the mobile **Chat** tab disappears, and the chat API refuses requests - so an old link or deep link cannot get back in. Nothing is deleted: switch it on and every conversation returns exactly as it was.
-- The **Complaints** people-picker keeps working either way (it reads the staff directory, not chat).
-- Shift assignments and birthday wishes stop posting their chat copy while it's off; the notification and email still go out.
+Read-only workforce analytics built from employee records: headcount by department and employment type, gender diversity, tenure bands, confirmation status, exits by month with an attrition rate, and a new-hires trend.
 
----
+### Audit log
 
-## 3. People & Organization
+A history of status changes across the system — payroll approvals, interview-round changes, leave decisions, and more. Filter by entity, person, text or date.
 
-### Org Masters *(org.manage)*
-Reference lists for **Designations, Grades, and Locations** used across forms. Adding one auto-generates a short unique **code**.
+[!WARNING] The audit log is **Super Admin only**. It is not available to HR Managers, and executives cannot open it either.
 
-### Departments *(org.manage; delete = Backend only)*
-Create and rename departments (used everywhere as dropdowns). Only the Backend can delete one.
+### Chat export and the chat switch
 
-### Work Locations *(org.manage)*
-Named, **geofenced** work sites: **name, latitude, longitude, radius (metres), active**. Assign employees to a location; their attendance geofence then uses that site (otherwise the global office). ⚠️ You **can't delete** a location while employees are still assigned to it.
+The Super Admin can export full chat transcripts, including after chat has been switched off, because conversations are retained rather than deleted.
 
-### Org Chart
-A read-only reporting tree built from each person's **reporting manager**. CEO/MD appear as top nodes even though they aren't "employees." To change who reports to whom, edit the employee (a Backend-only field).
-
-### Users *(users.manage)*
-Login accounts + HR permissions + org settings.
-- Create/edit/deactivate/reactivate/delete accounts. **HR Managers can only manage Employee accounts**; only the **Backend** can create or change *admin-role* accounts.
-- Creating an HR Manager or L&D Manager auto-creates their employee profile. **CEO/MD are not employees** (no profile).
-- **Backend-only:** the **permission catalog** (fine-tune exactly what an HR Manager can do) and **org settings** (e.g. whether CEO/MD appear in people-pickers).
-- You can't deactivate or delete your own account.
-
-### Permissions *(Backend only)*
-One page for every grant the Backend controls:
-- **Modules** - the org-wide **Chat on/off** switch (§2).
-- **Cashbook** - standalone access for anyone, whatever their role.
-- ⭐ **Work from home** - per employee. Granting it makes the WFH tick appear at punch time and exempts those punches from the geofence check. Accounts with no employee profile (CEO/MD) show a dash, since there is nothing to grant.
-- **HR Permissions** - the fine-grained capability list for each HR Manager.
-
-### Employees *(employees.manage)*
-The master employee records.
-- Create a profile (needs the linked user account, an **employee code**, and **date of joining**), edit details, and (Backend only) delete.
-- **Bulk tools:** export to Excel, download an import template, **import from Excel**, export a ZIP of documents (per employee or all), and a **documents-status** report (verified/complete/missing against the required set).
-- **Document collection link:** generate a **tokenised public upload link** so a person (even without a login) can submit their documents.
-- Reassigning an employee's **HR partner** or **reporting manager** is **Backend-only**.
-- ⭐ **The reporting manager must be in the same department.** Pick the department first; the manager list then offers only people from that department, plus an **Executive** group (CEO / MD / Backend) so a department head still has someone to report to. Changing the department clears a manager who no longer qualifies. This is enforced on the server too, so the **Excel import** rejects a cross-department manager with a readable error rather than importing it silently. An employee whose manager was set before this rule keeps them - they stay listed as "currently assigned" so editing the record doesn't wipe them.
+Chat itself is an organisation-wide switch, off by default. While it is off the chat button disappears from both web portals, the mobile tab disappears, and the API refuses requests, so an old deep link cannot get back in. Switching it on restores every conversation untouched.
 
 ---
 
-## 4. Hiring & Onboarding
+## 3. People and organisation
 
-### Recruitment *(recruitment.jobs / .candidates / .interviews)*
-The hiring pipeline, from job post to a converted employee.
-- **Jobs:** create/edit/delete postings; status **Open / On Hold / Closed**. Each Open job has a **public application link** to share.
-- **Public apply:** candidates apply with a résumé (PDF/DOC, ≤5 MB) - no login, one application per email per job, only while the job is Open.
-- **Candidate stages:** **Applied → Shortlisted → Screening → Interview → Offer → Onboarding → New Joinee → Hired** (or Rejected).
-- **Interview rounds:** shortlist first, then schedule rounds - set status (Pending/Scheduled/Cleared/Rejected), assign an **interviewer** (they get it in "My Interviews"), add feedback, times, and a meeting link. You can create a real **Google Meet** link and email a branded invite (résumé attached).
-- ⭐ **Choosing the interviewer:** the picker is **scoped to the job's department** - it lists everyone in that department (managers and team members alike, with their designation) rather than the whole company. **Type to search** by name or designation, and use **"Show all employees"** when the interviewer sits outside the department. A job with no department set simply lists everyone. Anyone already assigned stays visible even if they're from another department, so re-opening a round never silently clears them.
-- **Pre-offer document gate:** when all rounds are **Cleared**, a document-submission link is generated; the candidate uploads docs and **HR must confirm them before an offer can be created**.
-- **Offer → Appointment → Employee:** generate the **Offer Letter** (PDF), move to **Onboarding**, set joining date/notice, release the **Appointment Letter** (PDF), then **Convert to Employee** - this creates the login + employee profile (auto-suggested employee code) and moves the candidate to **Hired**.
+### Org masters
 
-### Onboarding (hiring) *(recruitment.candidates)*
-The workspace for candidates in the **Onboarding / New Joinee** stage - set joining details and release the appointment letter.
+Reference lists for designations, grades and locations used across the forms. Adding one generates a short unique code automatically.
 
-### Onboarding Tasks *(onboarding.manage)*
-Assign **checklist tasks** to a person (category: Documentation, IT Setup, HR, Finance, Training, Introduction, Other) with due dates. The employee marks each **Pending → In Progress → Done**.
+### Departments
 
-### New Joinees *(recruitment.candidates)*
-Lists candidates whose appointment letter is out but who aren't converted yet - the primary action is **Convert to Employee**.
+Create and rename departments, which appear as dropdowns throughout the system. Only the Super Admin can delete one.
 
-### Confirmations *(lifecycle.manage)*
-Probation → confirmation lifecycle. The **due date** is the date of joining + probation months (default 6) unless set explicitly. Actions: **Confirm**, **Extend** (+3 months), or **Reset** to probation, each with an optional note.
+### Work locations
+
+Named, geofenced work sites, each with a latitude, longitude, radius in metres, and an active flag. Assigning an employee to a location means their attendance is measured against that site rather than the global office.
+
+[!WARNING] A location cannot be deleted while employees are still assigned to it.
+
+### Org chart
+
+A read-only reporting tree built from each person's reporting manager. CEO and MD appear as top nodes even though they are not employees. To change who reports to whom, edit the employee record — a Super Admin field.
+
+### Users
+
+Login accounts, HR permissions, and organisation settings. Create, edit, deactivate, reactivate and delete accounts; HR Managers can manage Employee accounts only, while admin-role accounts are Super Admin territory. Creating an HR Manager or L&D Manager creates their employee profile automatically. CEO and MD are not employees and have no profile. You cannot deactivate or delete your own account.
+
+### Permissions
+
+One page for every grant the Super Admin controls: the organisation-wide chat switch, standalone cashbook and expense access for anyone regardless of role, per-employee **work from home**, and the fine-grained capability list for each HR Manager.
+
+[!IMPORTANT] Work from home is a permission, not a preference. Granting it makes the WFH tick appear at punch time and exempts those punches from the geofence check. The server ignores the flag from anyone who has not been granted it, so nobody can clear their own geofence violation by sending it anyway.
+
+### Employees
+
+The master employee records. Create a profile — which needs a linked user account, an employee code, and a date of joining — edit details, and (Super Admin only) delete.
+
+Bulk tools cover export to Excel, an import template, import from Excel, a ZIP export of documents, and a documents-status report measured against the required set. You can also generate a tokenised public upload link so somebody without a login can submit their documents.
+
+[!IMPORTANT] A reporting manager must be in the same department. Choose the department first and the manager list offers only that department's people, plus an executive group so a department head still has someone to report to. This is enforced on the server as well, so an Excel import rejects a cross-department manager with a readable error rather than importing it silently. Anyone assigned before this rule stays assigned.
+
+This is also where the **approval hierarchies** are configured, each independently of the org chart:
+
+- **Leave approvers** — an ordered ladder of up to four people. Leave climbs it one rung at a time. Left empty, leave falls back to walking the reporting-manager chain.
+- **Regularization approvers** — one or two people. Left empty, the request stays on the flat HR-review path.
+- **Final HR recipients** — who is told in detail when a leave is fully approved.
 
 ---
 
-## 5. Attendance & Shifts *(all: attendance.manage; CEO/MD read-only)*
+## 4. Hiring and onboarding
 
-- **Who's In / On Leave (Presence):** one row per active employee, split into **present / on leave / absent** for today, with selfie flags, how late each person was, WFH, and hours.
-- **Attendance:** view any employee's month (with per-punch geofence distance), **manually add/edit/delete** records, and view punch selfies. **Settings** define the office location and geofence threshold.
-  - Employee punches capture GPS but are **never blocked** - out-of-geofence punches are only **flagged**. WFH is exempt. "Late" = check-in after **10:00 AM**, shown as hours and minutes (e.g. `1h 15m`).
-  - ⭐ **WFH is a per-employee permission** granted by the Backend on the **Permissions** page. Employees without it never see the WFH tick, and the server ignores the flag even if it is sent - so nobody can clear their own geofence violation.
-- ⭐ **Automatic half days.** A day worth **under 6 hours** is recorded as **Half Day**. When someone forgets to punch out, the day is counted from their check-in to **7:00 PM** and the same rule applies (10 AM check-in → full day; 3 PM check-in → half day), with the reason written into the record's remarks. Approving a **Regularization** recalculates the day from the corrected times, so a day that now reaches 6 hours goes back to **Present**. HR setting a status by hand always wins. This flows straight into payroll, where each half day counts as 0.5 paid days.
-- **Attendance Report:** per-day present counts + average hours, and an org-wide attendance heatmap.
-- **Monthly View:** one employee's full month with lateness, geofence distance, and no-punch-out flags, plus a summary bar (working days, on-time, late, leave, half-day, absent, holiday, etc.). **This is the same data the Payroll Run calendar uses.**
-- **Shifts & Roster:** define shifts and assign them per employee/day.
-- **Regularization:** review employee correction requests; **Approving applies the corrected times to that day's attendance** (creating the record if needed, clearing "no punch-out," flipping Absent→Present, and re-deriving Present vs Half Day from the hours). HR can also regularize directly.
+### Recruitment
+
+The pipeline from job post to converted employee.
+
+**Jobs** are created with a status of Open, On Hold or Closed, and each open job carries a public application link to share. Candidates apply with a résumé without logging in — one application per email per job, and only while the job is open.
+
+**Candidates** move through Applied, Shortlisted, Screening, Interview, Offer, Onboarding, New Joinee and Hired, or are rejected.
+
+**Interview rounds** are scheduled after shortlisting. Each round carries a status, an assigned interviewer who then sees it under My Interviews, feedback, timings and a meeting link. You can generate a real meeting link and email a branded invitation with the résumé attached.
+
+[!TIP] The interviewer picker is scoped to the job's department and lists everyone in it, not just managers. Type to search by name or designation, and use "show all employees" when the interviewer sits outside the department. Anyone already assigned stays visible even if they are from elsewhere, so re-opening a round never silently clears them.
+
+**Before an offer**, when every round is cleared, a document-submission link is generated. The candidate uploads their documents and HR must confirm them before an offer can be created.
+
+**From offer to employee**: generate the offer letter, move to onboarding, set the joining date and notice period, release the appointment letter, then convert to an employee — which creates the login and the employee profile and marks the candidate as hired.
+
+### Onboarding tasks
+
+Checklist tasks assigned to a person with a category and a due date. The employee moves each one from Pending to In Progress to Done.
+
+### Confirmations
+
+The probation lifecycle. The due date is the date of joining plus the probation period unless set explicitly. You can confirm, extend, or reset to probation, each with a note.
+
+---
+
+## 5. Attendance
+
+### Presence and records
+
+The presence board gives one row per active employee, split into present, on leave and absent for today, with selfie flags, lateness, WFH tags and hours. The attendance screen shows any employee's month with per-punch geofence distance, lets you add, edit and delete records by hand, and shows the punch selfies. Settings define the office location and the geofence threshold.
+
+Punches capture GPS but are never blocked; an out-of-range punch is flagged, not refused, and WFH punches are exempt. Late means a check-in after 10:00 AM.
+
+[!IMPORTANT] A day worth under six hours is recorded as a half day. When someone forgets to punch out, the day is counted from their check-in to 7:00 PM and the same rule applies, with the reason written into the record's remarks. Approving a regularization recalculates the day from the corrected times. A status you set by hand always wins. Each half day counts as half a paid day in payroll.
+
+### Work on a leave day
+
+When an employee punches in on a day they are already on approved leave, the punch is recorded but the day keeps its leave status and a claim is raised for the **top rung of that employee's leave hierarchy** to decide.
+
+Approving it returns the leave day to the employee and turns the day into a normal worked day. Rejecting it keeps the punches on the record for reference while the day stays leave. HR is notified of the outcome either way.
+
+[!NOTE] The claim is decided by the top of the leave ladder — the last configured leave approver, or the highest manager the reporting walk reaches. If you expect a particular manager to handle these, make sure they are the **final** step of that employee's leave hierarchy.
+
+Half-day leave is excluded, since the employee is expected to work the other half, as are Sundays and holidays, which are covered by the double-pay rule instead.
+
+### Reports
+
+The attendance report gives per-day present counts and average hours, plus an organisation-wide heatmap. The monthly view shows one employee's full month with lateness, geofence distance and no-punch-out flags, alongside a summary bar — and it is the same data the payroll run uses. There is also a punch-location map and a three-mode export.
+
+### Shifts and regularization
+
+Define shifts and assign them per employee and day. Regularization requests are reviewed here; approving one applies the corrected times to that day's attendance, creating the record if needed, clearing the no-punch-out mark, flipping Absent to Present, and re-deriving the status from the hours. HR can also regularize directly.
 
 ---
 
 ## 6. Leave
 
-### Leave *(leave.manage)*
-- View all requests (filter by employee/status/date). As HR you can **override**-approve or reject **regardless of where the request sits** in the chain (recorded as an "HR override").
-- **Balances:** view and **grant** balances per employee/year (balance = opening + granted − used − encashed). Leave is only deducted at **final approval** (and only for EL/CL/SL/ML).
+### Managing requests
 
-### Leave Approvals (the hierarchy inbox) *(no permission - visible to all admin roles)*
-- This is where whoever is the **current approver** acts. It's deliberately **not** admin-gated, and every action is scoped to "you are the current approver" - which is why **CEO/MD can approve their own rung** here despite being read-only elsewhere.
-- **The approval chain:** built from the employee's **reporting-manager links**, one rung per active manager, **stopping at the first CEO/MD** (the top). Inactive managers are skipped; cycles are guarded. No manager at all → falls back to HR/Backend.
-- ⭐ **Auto-stamp on final approval:** when a leave is fully approved, each covered day is written to the attendance calendar - **On Leave** for normal types, **Absent for LOP** - **skipping Sundays and holidays**, and never overwriting a day the employee actually worked. Cancelling an approved leave **removes** those auto-marks. These stamped days feed the **2-paid-leave / LOP** payroll rule.
-- Everyone relevant is **notified** - the current approver at their turn, the applicant on decision, and HR/Backend on the final outcome.
+View every request, filtered by employee, status or date. HR can override-approve or reject regardless of where a request sits in its chain; the override is recorded as such in the approval history.
 
-### Holidays *(leave.manage)*
-Maintain the company holiday calendar (type: Public / Restricted / Company / **Comp Off**). Holidays are respected by attendance, payroll, and the Rewards & Recognition banner window.
-- **Comp Off** is a company-wide day off (e.g. the office closes on a Friday because everyone worked the Saturday). It is non-working like any holiday, and it is one of the two days that pay **double** when actually worked - see *Sunday & comp-off duty* below.
-- **Bulk upload:** *Template* downloads one workbook with three sheets - **Holidays**, **Comp Offs** and **Celebrations** - and *Import Excel* uploads it back. Fill in only the sheets you need; the example row in each sheet is ignored, and entries already on the calendar (same name, same day) are skipped, so a corrected file can be re-uploaded safely. Celebrations become company events and need the events permission. The whole upload sends **one** notification, not one per row.
+The four leave types are **Paid Leave**, **Unpaid Leave**, **Emergency Leave** and **Maternity Leave**. Only maternity draws a banked balance; the rest are governed by the monthly quota.
 
-### Sunday & comp-off duty *(attendance.manage)*
-Pay is spread over calendar days, so Sundays and holidays are already paid inside the monthly salary. When someone **works** a Sunday or a **Comp Off** day, that day can be paid **double** - but only after it is approved.
-- Attendance shows a **Sunday & comp-off duty** panel listing every such day that was worked, with Approve 2x / Reject. A reporting manager sees their own team's under **My Team**.
-- Approving adds **one extra day's salary** for that day (half a day for a half day), which is what makes it 2x. It shows on the payslip under **Other Pay** and in the payroll register's own **DUTY PAY** column (with the day count in LNT + EXTRA DAYS).
-- A day left pending, or rejected, pays exactly as normal. Working an ordinary Public/Restricted/Company holiday also pays normally - file the day as **Comp Off** if it should pay double.
+[!IMPORTANT] Emergency leave is granted the moment it is filed, with no approval step — the hierarchy and HR are informed instead. From the second one in a calendar month it is flagged as a repeat, and a manager or HR can then charge that day at double the usual deduction.
 
----
+### The approval inbox
 
-## 7. ⭐ Payroll & Salary *(payroll.manage unless noted)*
+This is where whoever is the current approver acts. It is deliberately not admin-gated, and every action is scoped to the current approver, which is why executives can decide their own rung here despite being read-only elsewhere.
 
-### Payroll (payslip records)
-- Payslip **status: Draft → Approved → Paid** (or **On Hold**). One payslip per employee per month; gross/deductions/net auto-compute.
-- Actions: create/edit, **Approve**, **Mark Paid** (stamps payment date/reference), **delete** (Draft only), **PDF**, **share a public link**, and **email** the payslip (with PDF attached) after previewing the message. **Export the whole month to the payroll register (.xlsx).**
-- Earnings include a **Leave Incentive** line; deductions include **LOP / unpaid days** and a **Late coming** line (all explained below). These appear in the payslip editor, the register export, and the PDF.
-- ⭐ **Salary-setup alert.** If any active employee has **no salary structure or no annual CTC**, an amber banner appears on the **Dashboard** and at the top of the **Payroll** page naming them. Payroll cannot compute anything for those people - they come out of a run with a **₹0 payslip**, and even the late-coming penalty is ₹0 because its ₹200/₹400 rate is based on monthly Basic. **Click a name in the banner** to jump straight to **Salary Structures** with the assign modal already open for that person - if they already have a structure it opens that one so you only type the CTC, otherwise it starts a new structure. Save, then re-run the month. The banner disappears once everyone is set up, and only people with the payroll permission ever see it. **You also get a notification** the moment an employee is added without salary details - one per employee from the Add Profile form, and a single combined one for a bulk Excel import, sent to everyone who holds the payroll permission. Opening it lands on **Salary Structures**, on the assign modal for that person when the notification is about a single employee.
-- ⭐ **Basic pay is never reduced.** Every earning is the full monthly amount whatever the attendance — days not worked and late coming are taken off on the **deductions** side instead.
+A leave request climbs the configured leave hierarchy if the employee has one, and otherwise walks the reporting-manager chain, stopping at the first CEO or MD. Inactive managers are skipped and cycles are guarded. With no manager at all, it falls to HR.
 
-### The salary slip (PDF)
-The generated slip follows the company's own format: letterhead + GSTIN, an identity block (Employee ID, UAN, PF No., ESIC No., DOJ, Aadhar, PAN, bank name & account, Salary Per Month / Per Annum), a day block (Total Working Days, LOP Days, Payable Days, Half Days, Additional Paid Days, Late Days), the Earnings / Deductions tables, **Net Billing Amount**, the amount in words, and the authorised signature.
-- The slip's **Other Deductions** line is the total of **LOP + late coming + emergency-leave double cut + any other deduction** — as its printed note says.
-- **Special Allowance** on the slip also absorbs Medical and LTA (the format has no row for those); **TA** is Conveyance; **Incentives** is Leave Incentive + Bonus; **Variable Pay** is Overtime.
+The same inbox also carries attendance regularizations, work-on-leave claims, resignations, and no-dues clearance sections assigned to you.
 
-### ⭐ Hikes (salary basis & increments)
-This is where an employee's **salary structure** and **annual CTC** are set, and where **increments** are given. The pay policy below is what those figures then drive when payroll runs.
+[!IMPORTANT] On final approval, each covered day is written to the attendance calendar — On Leave for paid types, Absent for unpaid — skipping Sundays and holidays, and never overwriting a day the employee actually worked. Cancelling an approved leave removes those marks again. These stamped days are what feed the two-paid-leave rule in payroll.
 
-**How you use it:**
-1. Pick an **employee** and **month**.
-2. Set their **Salary Structure** and **Annual CTC**, then **Save**.
-3. **Give hike** to record an increment (percent / amount / set-to), effective from a chosen month. Future-dated hikes only apply from that month onward.
-4. The **CTC revisions** list underneath is the history of who changed what, when, and why.
+### Holidays
 
-⚠️ **Generating, approving and holding payslips is on the Payroll page**, not here — use **▶ Run Payroll** there for everyone at once, or open a payslip to edit it. Per-day attendance is edited on **Attendance → Monthly View**. This screen shows the month's attendance roll-up (paid/LOP days, leave, lateness) purely as context for the increment decision.
+Maintain the company calendar, with each entry typed as Public, Restricted, Company or Comp Off. Holidays are respected by attendance, by payroll, and by the Rewards and Recognition banner window.
 
-**What the system computes automatically when payroll runs:**
-- **Base salary:** each component = its % of (Annual CTC ÷ 12), **at full value** — attendance never shrinks Basic or any other head.
-- **Paid days** = days in month − Absent − ½ × Half-days − **excess leave**. Anything unpaid becomes **LOP days**.
-- ⭐ **LOP deduction:** every unpaid day — LOP plus any day before joining / after exit — is charged back at **one day's pay** (monthly gross ÷ days in month) into the **LOP / unpaid days** deduction. Net pay works out the same as prorating would; it just reads correctly on the slip.
-- ⭐ **2-paid-leave policy:**
-  - **Excess leave** (On-Leave days beyond **2**/month) → added to **LOP** (unpaid).
-  - **Unused leave** (fewer than 2 taken) → paid out as a **Leave Incentive** earning = unused days × one day's pay. **Settled monthly, never carried forward.**
-- ⭐ **Late-arrival penalty:** late days (check-in after **10:00 AM**) beyond **5**/month are deducted at **₹200/day** if the employee's **monthly Basic < ₹25,000**, else **₹400/day** → written to the **Late Penalty** deduction.
-- **Loans:** active **EMIs** are summed into **Loan Recovery**, except **Salary Advance** loans which get their own **Salary Advance** deduction (the slip prints them as separate lines).
+A Comp Off is a company-wide day off, and it is one of the two kinds of day that pay double when actually worked. Bulk upload provides one workbook with sheets for holidays, comp offs and celebrations; entries already on the calendar are skipped, so a corrected file can be re-uploaded safely, and the whole upload sends a single notification rather than one per row.
 
-**What HR sees on the Hikes page:** the salary-setup controls and CTC revision history, an **"Attendance policy" panel** (Leave used of 2, Late arrivals of 5, excess late, excess leave, with a plain-language caption) and a **working-hours** roll-up (days present, average hours, comp-off earned for worked weekends/holidays).
+### Sunday and comp-off duty
 
-**Worked examples of the policy:**
-- Employee takes **0 leaves** → **+2 days' pay** (Leave Incentive).
-- Takes **3 leaves** → 2 paid, **1 day LOP** → that day's pay comes off as the LOP deduction.
-- **8 late days**, Basic ₹20,000 → 3 × ₹200 = **₹600** Late Penalty.
-- **6 late days**, Basic ₹30,000 → 1 × ₹400 = **₹400** Late Penalty.
+Pay is spread across calendar days, so Sundays and holidays are already paid within the monthly salary. When somebody actually **works** a Sunday or a Comp Off day, that day can be paid double — but only once approved.
 
-### Salary Structures *(payroll.manage)*
-CTC templates as component **percentages** (Basic, HRA, Special, Conveyance, Medical, LTA). ⚠️ The percentages **can't sum to more than 100%**. A **preview** shows monthly/annual figures for a given CTC.
-
-### Loans & Advances *(loans.manage)*
-Approve requests, set **EMI/tenure/disbursement**, and record **repayments** (balance hits zero → **Closed**). Active EMIs flow into payroll's Loan Recovery.
-
-### Tax Declarations *(declarations.manage)*
-Review employees' Form 12BB declarations; **Verify** or **Reject** with a note. Statuses: Draft → Submitted → Verified/Rejected.
-
-### Compliance *(compliance.view - read-only)*
-Summary reports built from processed payslips: **PF, ESI, Professional Tax, TDS**, and an annual **Form-16** summary - each with rows and totals. *(These are summaries, not official government return files.)*
+The attendance screen lists every such day with approve and reject actions, and a manager sees their own team's under My Team. Approving adds one extra day's salary, which is what makes it double; it appears on the payslip under Other Pay. A day left pending, or rejected, pays exactly as normal. Working an ordinary public holiday also pays normally — file the day as a Comp Off if it is meant to pay double.
 
 ---
 
-## 8. Expenses & Travel
+## 7. Payroll and salary
 
-### Expenses *(expenses.manage)*
-Review claims (category, amount, date, receipt): set **Approved / Rejected / Reimbursed**, or delete.
+### Payslips
 
-### Travel *(travel.manage)*
-Approve travel requests (Approved/Rejected/Completed) and handle **reimbursements** separately (Approved/Rejected/Reimbursed), including viewing uploaded receipts.
+Payslips move through Draft, Approved and Paid, with On Hold available. There is one per employee per month, and gross, deductions and net compute automatically.
 
----
+You can create and edit, approve, mark paid with a payment date and reference, delete while still in draft, generate the PDF, share a public link, email the slip after previewing the message, and export the whole month to the payroll register.
 
-## 9. Performance & Learning
+[!IMPORTANT] Employees cannot download a payslip until it is released. They request it, HR checks and corrects it, previews, and finalises. Editing a payslip after release withdraws the download until it is released again, which stops an outdated slip circulating.
 
-### Performance / Goals *(performance.manage)*
-Create and assign **goals** (status Draft/Active/Completed/Cancelled); employees update progress.
+[!WARNING] If any active employee has no salary structure or no annual CTC, an amber banner names them on the dashboard and at the top of the payroll page. Payroll cannot compute anything for those people — they come out of a run with a zero payslip, and even the late-coming penalty is zero because its rate depends on monthly Basic. Clicking a name jumps straight to their salary setup. You are also notified the moment an employee is added without salary details.
 
-### Appraisals - Review Cycles *(performance.manage)*
-Run appraisal cycles (Draft/Active/Closed): **assign** reviews (self/manager/peer) built from competencies, then read submissions. ⚠️ Reviews about an employee are shown to them **anonymously** - protect that confidentiality.
+### What payroll computes
 
-### Training *(training.manage)*
-Maintain training programs (Planned/Ongoing/Completed/Cancelled).
+- **Base salary** — each component is its percentage of the annual CTC divided by twelve, at full value. Attendance never shrinks Basic or any other head.
+- **Paid days** — days in the month, less absences, less half of each half day, less excess leave. Anything unpaid becomes a Loss of Pay day.
+- **Loss of Pay** — every unpaid day, including any day before joining or after exit, is charged back at one day's pay into the Loss of Pay deduction. The net works out the same as prorating would; it simply reads correctly on the slip.
+- **The two-paid-leave policy** — On-Leave days beyond two in a month are added to Loss of Pay, while unused days are paid out as a Leave Incentive earning of one day's pay each. Settled monthly, never carried forward.
+- **Late-arrival penalty** — late days beyond five in a month are deducted at ₹200 a day where monthly Basic is below ₹25,000, otherwise ₹400 a day.
+- **Loans** — active EMIs are summed into Loan Recovery, except salary advances, which get their own deduction line.
 
-### Courses / LMS *(courses.manage - also L&D Managers)*
-The learning platform. Create internal/external courses (video via Cloudinary or Drive, or text modules), **assign** them, approve or reject **enrollment requests**, view **rosters**, moderate **comments** and **issue reports**, and optionally share a course publicly to capture leads. *(L&D Managers see only this page.)*
+[!IMPORTANT] Basic pay is never reduced. Every earning is the full monthly amount whatever the attendance; days not worked and late arrivals come off on the deductions side instead, so the slip always shows what was taken and why.
 
----
+Worked examples: no leave taken earns two extra days' pay; three days taken means two paid and one unpaid; eight late days on a Basic of ₹20,000 costs ₹600; six late days on a Basic of ₹30,000 costs ₹400.
 
-## 10. Projects & Resources
+### Salary structures, hikes and the rest
 
-### Projects *(projects.manage)*
-Maintain projects (Planning/Active/On Hold/Completed/Cancelled).
+**Salary structures** are CTC templates expressed as component percentages, which cannot sum to more than one hundred. A preview shows the monthly and annual figures for a given CTC.
 
-### Tasks *(tasks.manage)*
-Create and assign tasks; employees update status (Todo/In Progress/Review/Done).
+**Hikes** is where an employee's structure and annual CTC are set and where increments are recorded, by percentage, by amount, or by setting a new figure, effective from a chosen month. The revision list beneath is the history of who changed what, when and why. Generating and approving payslips happens on the payroll page, not here.
 
-### Assets *(assets.manage)*
-Asset register (status Available/Assigned/In Repair/Retired). **Assign** an asset to a person (→ Assigned) and record the **return** (→ Available). A full **allocation register** keeps the history. Asset tags are unique.
+**Loans and advances** — approve requests, set the EMI, tenure and disbursement, and record repayments until the balance closes.
 
-### Documents *(documents.manage)*
-Manage employee documents: view, **upload on behalf**, and set status **Submitted → Verified / Rejected**. Some categories are **HR-only**; sensitive **PII** documents (PAN, Aadhaar, address proof) are download-restricted to HR. A **required set** drives the "documents complete" indicator.
+**Tax declarations** — review each Form 12BB and verify or reject it with a note.
+
+**Compliance** — read-only summaries built from processed payslips for PF, ESI, professional tax and TDS, plus an annual Form 16 summary. These are summaries, not official return files.
 
 ---
 
-## 11. Communication & Culture
+## 8. Money out
 
-### Announcements *(announcements.manage)*
-Post company notices (category, pinned, start/end window). Publishing **notifies all active users**. Employees can dismiss each from their banner.
+### Expenses
 
-### Surveys *(surveys.manage)*
-Build surveys/polls with **single-choice, multi-choice, and text** questions, then view **aggregated results** (respecting anonymity). One response per user; closed/out-of-window surveys reject responses.
+Review claims by category, amount, date and receipt, then set them to Approved, Rejected or Reimbursed.
 
-### Events *(events.manage)*
-Maintain company events (shown in the Calendar).
+[!NOTE] A receipt is mandatory on the employee's side, and marking a claim reimbursed posts a matching cash-out entry to the cashbook against the account you choose, carrying the receipt across for verification.
 
-### Calendar
-A shared view of holidays, events, birthdays, anniversaries, and interviews; also powers the peer **"send a wish"** feature.
+### Travel
 
-### ⭐ Rewards & Recognition (RNR) *(announcements.manage)*
-The monthly recognition program. **This replaced the old peer "kudos" feature** - now HR curates the winners.
+Approve travel requests and handle reimbursements separately, including the uploaded bills.
 
-**How you run it:**
-1. Go to **Rewards & Recognition** and pick the **month/year**.
-2. Choose **one Employee of the Month** (org-wide) and **one Key Achiever per department** from the pickers.
-3. **Save Draft** - the selection is **secret**; employees see nothing yet ("Draft · N selected · hidden from employees").
-4. When ready, **Announce** (with a confirmation). This:
-   - **Notifies every active employee**,
-   - Shows a **celebration banner** (with winners' **photos**) on everyone's dashboard,
-   - Keeps it visible for **2 working days** (the announce day counts if it's a working day; **Sundays and holidays are skipped**),
-   - and **locks** the month - once announced, it **can't be edited or deleted**.
+### Cashbook
 
-💡 Winner details are **snapshotted** at announce time, so the banner stays correct even if someone's profile later changes. Employees can close the banner (it stays closed for them). You can prepare a Draft well in advance and only Announce when you're ready.
+Cash accounts with an in-and-out ledger and a running balance, employee vouchers routed for approval, transfers between accounts, and a day book, summary and export. Access can be granted to anyone regardless of role, and there is a dedicated Accounts Manager role for people who need the cashbook and nothing else.
 
 ---
 
-## 12. My Account & Requests
+## 9. Performance and learning
 
-### Complaints *(leadership inbox - no permission gate)*
-- The **assigned inbox** is visible to the **Backend, HR Manager, and CEO** (each sees all complaints except ones against themselves).
-- **Routing:** a complaint about an admin, or about the complainant's own HR partner, escalates to the **Backend**; otherwise it goes to the complainant's **HR partner**.
-- ⚠️ **CEO can view but not action** complaints (only HR/Backend or the assignee can). Notifications are deliberately vague and **never sent to the accused**. Statuses: open / under review / resolved / dismissed.
+**Goals** are created and assigned by managers and HR; employees update their own progress.
 
-### Change Requests *(HR/Backend inbox)*
-- Employees can't self-edit most profile fields or credentials - they raise **Change Requests**. HR reviews the inbox and **Approves** (which **applies the value** to the record, with validators like email-uniqueness and password re-hash) or **Declines**. Assigned to the requester's HR partner (the Backend sees all).
+**Review cycles** run as Draft, Active or Closed. Assign self, manager and peer reviews built from competencies, then read the submissions.
 
-### Password Resets *(users.manage)*
-- Requests come in from the login page. HR can **resolve** and **reset** the password (min 8 chars). ⚠️ **HR Managers can only reset Employee accounts**; admin-account resets are **Backend-only**. A reset logs the user out of all devices.
+[!WARNING] Reviews about an employee are shown to them anonymously. Protect that confidentiality — it is what makes the feedback honest.
 
-### My Account
-Every admin's own account/password page (not a tool for managing others).
+**Training** maintains programmes through their lifecycle. **Courses** is the learning platform: create internal or external courses with video or text modules, assign them, approve enrolment requests, view rosters, and moderate comments and issue reports. Video is hosted with signed upload and signed playback, and watch progress is measured on genuine viewing rather than on skipping ahead. L&D Managers see this page and nothing else.
 
 ---
 
-## 13. Exit management *(exit.manage)*
+## 10. Work and resources
 
-- Initiate an exit (Resignation/Termination/Retirement), record **clearance items, dates, reason, and handler**, and edit until it's finalised.
-- **Complete an exit** does three things: generates a **feedback token** (60-day link), sets the employee's **date of exit**, and **deactivates their login** - then hands you an editable **feedback email** to review and send (nothing is sent automatically).
-- Employees can also self-initiate a **resignation** (they can't open a second one while one is open). A **public exit-feedback** form (no login) collects their feedback.
+**Projects** and **tasks** are maintained here, with employees updating task status.
 
----
+**Assets** is a register with statuses of Available, Assigned, In Repair and Retired. Assign an asset to a person and record its return; a full allocation register keeps the history, and asset tags are unique.
 
-## 14. On the mobile app (admin surface)
-
-HR and managers get an admin surface in the Android app too:
-
-- **Admin Hub** - org stats, today's split, trend charts, attendance heatmap, headcount by department, pending leave, upcoming holidays (execs see a "read-only" badge).
-- **Approvals** - the leave-approval hierarchy inbox.
-- **My Team** - manager presence/approvals for direct reports.
-- **Today's / Monthly Attendance**, **Directory / Employee detail / Add employee**, **Work Locations**.
-- **Payroll** - list, approve, mark paid, PDF/CSV.
-- **Recruitment** - jobs, candidates, interview rounds.
-- ⭐ **Rewards & Recognition** - pick the Employee of the Month + Key Achievers per department, **Save Draft**, and **Announce** (same 2-working-day banner). Gated to HR; others see "HR only."
-
-Role gating on mobile mirrors the web: the Backend/HR Manager can write, CEO/MD are read-only, Managers get team features.
+**Documents** manages employee documents: view, upload on behalf, and set each to Verified or Rejected. Some categories are HR-only, and sensitive identity documents are download-restricted to HR. A required set drives the documents-complete indicator.
 
 ---
 
-## 15. What changed recently (so you're not surprised)
+## 11. Communication and culture
 
-- ✅ **New pay policy** (auto-applied when payroll runs): **2 paid leaves/month** (unused → **Leave Incentive** pay; excess → **LOP**) and a **late-arrival penalty** (₹200/₹400 per late day beyond 5, by monthly Basic). Employees also see a **"Lateness & leave"** card on their attendance screen.
-- ✅ **Leave approval now auto-stamps the attendance calendar** (On Leave / Absent for LOP; skips weekends & holidays; reverses on cancel).
-- ✅ **Rewards & Recognition** is a **new HR-curated** monthly program (web + mobile), replacing the old peer kudos feature.
-- ❌ **Removed:** the **Comp-off request** module, the **Knowledge Base**, and the old **peer Recognition/Kudos**. *(The comp-off concept still appears only as a legend on the attendance heatmap and as "comp-off earned" for worked weekends/holidays in payroll - there's no comp-off request workflow anymore.)*
+**Announcements** are posted with a category, an optional pin, and a display window; publishing notifies every active user.
+
+**Surveys** support single-choice, multi-choice and text questions, with aggregated results that respect anonymity. One response per user.
+
+**Events** feed the shared **calendar** alongside holidays, birthdays, anniversaries and interviews.
+
+**Email and letter templates** are editable centrally, so offer letters, appointment letters and payslip emails can be reworded without a code change.
+
+### Rewards and Recognition
+
+The monthly recognition programme, curated by HR.
+
+1. Pick the month, then choose one Employee of the Month for the organisation and one Key Achiever per department.
+2. **Save draft** — the selection is secret and employees see nothing yet.
+3. **Announce** when ready. This notifies every active employee, shows a celebration banner with the winners' photographs on every dashboard, keeps it visible for two working days with Sundays and holidays skipped, and locks the month.
+
+[!NOTE] Winner details are snapshotted when you announce, so the banner stays correct even if somebody's profile changes afterwards. A draft can be prepared well in advance.
+
+[!WARNING] Announcing is final. Once announced, a month cannot be edited or deleted.
 
 ---
 
-*That's the whole Admin Portal. Keep the permission model in mind (Backend > HR Manager with caps > CEO/MD read-only), and remember the two big automated rules - the pay policy in payroll and the leave auto-stamp - because they quietly drive a lot of the numbers.*
+## 12. Requests and cases
+
+**Complaints** are visible to the Super Admin, HR Managers and the CEO, each seeing everything except complaints against themselves. A complaint about an admin, or about the complainant's own HR partner, escalates to the Super Admin; otherwise it goes to their HR partner. The CEO can view but not action them. Notifications are deliberately vague and are never sent to the person the complaint concerns.
+
+**Change requests** are how employees alter profile fields and credentials they cannot self-edit. Approving one applies the value to the record, with validation; declining one closes it with a note.
+
+**Password resets** arrive from the login page. HR Managers can reset Employee accounts only; admin-account resets are Super Admin territory. A reset signs the user out of every device.
+
+---
+
+## 13. Exits
+
+An exit can be initiated by HR — as a resignation, termination or retirement — or by the employee themselves, who cannot open a second one while one is in progress.
+
+An employee's resignation climbs the same reporting hierarchy for approval. Once approved it enters the **notice period**, during which their login stays active and they keep working normally, while the assigned managers complete their **no-dues clearance** sections. The account is deactivated automatically only once clearance is complete and the last working day has passed — never before.
+
+Completing an exit generates a feedback token for a public, no-login feedback form, sets the date of exit, and hands you an editable feedback email to review and send. Nothing is emailed automatically.
+
+[!NOTE] The notice period and the last working day stay in step: changing one updates the other, so the two can never disagree.
+
+---
+
+## 14. The mobile app
+
+HR and managers get an admin surface in the Android app as well:
+
+- **Admin Hub** — organisation statistics, today's split, trend charts, the attendance heatmap, headcount by department, pending leave and upcoming holidays. Executives see a read-only badge.
+- **My Approvals** — the same chain inbox as the web, covering leave, regularizations, work-on-leave claims, resignations and clearance.
+- **My Team**, **today's and monthly attendance**, **directory**, **employee detail**, **add employee**, and **work locations**.
+- **Payroll** — list, approve, mark paid, and PDF.
+- **Recruitment** — jobs, candidates and interview rounds.
+- **Rewards and Recognition** — pick the winners, save a draft, and announce.
+
+Role gating mirrors the web: HR can write, executives are read-only, and managers get team features.
+
+---
+
+## 15. The things that catch people out
+
+- **Two automated rules drive most of the numbers.** The monthly pay policy — two paid leaves, five free late arrivals — and the leave auto-stamp onto the attendance calendar. Neither needs any action from you, and both are applied when payroll runs.
+- **Approval hierarchies are separate from the org chart.** Leave and regularization each have their own configurable ladder per employee. If a request reaches someone unexpected, check that ladder before checking the reporting manager.
+- **Work-on-leave claims go to the top of the leave ladder**, which is not necessarily the manager who normally approves that person's leave.
+- **A payslip is not visible to the employee until it is released**, and editing it after release withdraws it again.
+- **An exit does not deactivate anyone early.** The account stays live through the whole notice period.
+- **Removed modules.** The comp-off request workflow, the knowledge base, and the old peer recognition feature are gone. Comp-off survives only as a holiday type and as earned days in payroll.
+
+---
+
+*That is the whole Admin Portal. Keep the permission model in mind — Super Admin, then HR Manager with capabilities, then read-only executives — and remember that the pay policy and the leave auto-stamp are working quietly in the background behind a great many of the figures you will be asked about.*

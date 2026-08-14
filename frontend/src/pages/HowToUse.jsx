@@ -18,6 +18,23 @@ import { formatDateTime12 } from '../utils/time';
 // The apps ship a bundled default guide; HR can override it (saved server-side).
 const DEFAULTS = { employee: employeeGuide, hr: hrGuide };
 
+import { FiInfo, FiZap, FiAlertCircle, FiAlertTriangle } from 'react-icons/fi';
+
+/**
+ * Callout kinds. The guides mark these with a leading `[!NOTE]` / `[!TIP]` /
+ * `[!IMPORTANT]` / `[!WARNING]` tag rather than an emoji, so the rendered page
+ * draws a real vector icon that inherits the callout's colour and the reader's
+ * font size. The uppercase label is deliberate: it carries the kind in TEXT as
+ * well as in colour, so the distinction survives greyscale printing and
+ * colour-blindness.
+ */
+const CALLOUTS = {
+  note: { Icon: FiInfo, label: 'Note', cls: 'border-sky-400 bg-sky-50 text-sky-900' },
+  tip: { Icon: FiZap, label: 'Tip', cls: 'border-indigo-400 bg-indigo-50 text-indigo-900' },
+  important: { Icon: FiAlertCircle, label: 'Important', cls: 'border-violet-400 bg-violet-50 text-violet-900' },
+  warning: { Icon: FiAlertTriangle, label: 'Warning', cls: 'border-amber-400 bg-amber-50 text-amber-900' },
+};
+
 // Stable id for a heading, shared by the renderer (anchors) and the ToC (links).
 const slug = (s) =>
   s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '') || 'section';
@@ -55,10 +72,19 @@ const HEADING_CLS = {
   4: 'text-sm font-semibold text-gray-600 mt-4 mb-1.5',
 };
 
-// 💡 tip / ⚠️ warning paragraphs render as tinted callout cards.
+/**
+ * A line tagged `[!NOTE] …` (optionally quoted, `> [!NOTE] …`) becomes a tinted
+ * callout card.
+ *
+ * The two legacy emoji markers are still recognised. HR can save its own edited
+ * copy of a guide server-side, so a guide written before this change is still
+ * out there — it keeps rendering, and as a proper icon rather than the emoji.
+ */
 function calloutOf(line) {
-  if (/^💡/.test(line)) return { icon: '💡', cls: 'border-indigo-400 bg-indigo-50 text-indigo-800', body: line.replace(/^💡\s*/, '') };
-  if (/^⚠️?/.test(line)) return { icon: '⚠️', cls: 'border-amber-400 bg-amber-50 text-amber-800', body: line.replace(/^⚠️?\s*/, '') };
+  const tagged = line.match(/^>?\s*\[!(NOTE|TIP|IMPORTANT|WARNING)\]\s*(.*)$/i);
+  if (tagged) return { ...CALLOUTS[tagged[1].toLowerCase()], body: tagged[2] };
+  if (/^💡/.test(line)) return { ...CALLOUTS.tip, body: line.replace(/^💡\s*/, '') };
+  if (/^⚠️?/.test(line)) return { ...CALLOUTS.warning, body: line.replace(/^⚠️?\s*/, '') };
   return null;
 }
 
@@ -95,10 +121,16 @@ function MarkdownView({ md }) {
       const callout = calloutOf(line.trim());
       if (callout) {
         flush();
+        const { Icon } = callout;
         out.push(
-          <div key={`b${k++}`} className={`flex gap-3 my-4 rounded-lg border-l-4 px-4 py-3 ${callout.cls}`}>
-            <span className="text-base leading-6 shrink-0">{callout.icon}</span>
-            <p className="text-sm leading-relaxed m-0">{renderInline(callout.body)}</p>
+          <div key={`b${k++}`} className={`flex gap-3 my-5 rounded-lg border-l-4 px-4 py-3.5 ${callout.cls}`}>
+            <Icon className="shrink-0 mt-0.5 opacity-80" size={17} aria-hidden="true" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-wider opacity-70 mb-1">
+                {callout.label}
+              </div>
+              <p className="text-sm leading-relaxed m-0">{renderInline(callout.body)}</p>
+            </div>
           </div>
         );
         continue;

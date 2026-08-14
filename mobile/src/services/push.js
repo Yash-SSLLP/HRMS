@@ -34,7 +34,9 @@ async function ensureAndroidChannel() {
     name: 'General',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#4f46e5',
+    // The brand gold. This was still the indigo from the pre-rebrand palette, so
+    // the notification LED lit up in a colour the app no longer uses anywhere.
+    lightColor: '#C7A24C',
     sound: 'default',
   });
 }
