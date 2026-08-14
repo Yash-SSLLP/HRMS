@@ -231,6 +231,7 @@ app.get('/', (req, res) => {
  * Used by Render and frontend/client health checks.
  */
 app.get('/api/health', (req, res) => {
+  console.log('Health check');
   res.status(200).json({
     status: 'ok',
     service: 'sequence-hrms-backend',
