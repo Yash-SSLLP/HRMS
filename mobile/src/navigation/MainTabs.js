@@ -1,12 +1,14 @@
 // navigation/MainTabs.js — the signed-in app shell.
-// A bottom-tab navigator with five tabs: Home, Calendar, Chat, Alerts, Profile.
+// A bottom-tab navigator: Home, Calendar, Chat, Alerts, Profile, plus a raised
+// centre Search button sitting between Calendar and Chat/Alerts (see
+// SearchTabButton — it jumps into the Home stack rather than being a tab).
 // Home, Chat and Profile each wrap a JS stack navigator (createStackNavigator,
 // not native-stack — see note below) holding all the module screens; Home's
 // stack also carries the admin/manager screens, which self-gate by role. Chat
 // and Alerts tabs show live unread badges from the badges store, refreshed on a
 // 30s foreground poll.
 import React, { useEffect, useRef } from 'react';
-import { AppState } from 'react-native';
+import { AppState, View, StyleSheet, TouchableOpacity } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 // JS stack (not native-stack): react-native-screens' native ScreenStack renders
 // blank on some Android OEMs (e.g. realme/ColorOS). The JS stack renders with
@@ -14,7 +16,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors } from '../theme';
+import { colors, shadow } from '../theme';
 import api from '../api/client';
 import { useAuth } from '../store/auth';
 import { useBadges } from '../store/badges';
@@ -180,10 +182,58 @@ function ChatStack() {
 const ICONS = {
   Home: 'home',
   Calendar: 'calendar',
+  SearchTab: 'search',
   Chat: 'chatbubbles',
   Alerts: 'notifications',
   Profile: 'person',
 };
+
+/**
+ * The raised centre action in the tab bar — Search, sitting between Calendar and
+ * the Alerts side of the bar. Replaces the whole tab button (icon + label), so
+ * it carries no label; the gold disc IS the affordance.
+ *
+ * Deliberately built WITHOUT `elevation`. A View combining elevation + border
+ * radius renders blank (children vanish) on some Adreno/ColorOS devices — the
+ * same class of bug that took out the Card shadow — so depth comes from
+ * `shadow.floating` (a no-op on Android by design) plus a surface-coloured ring,
+ * which reads as a cut-out in the bar. Ink is `colors.onPrimary`: white on the
+ * brand gold is only ~2.4:1.
+ */
+function SearchTabButton({ onPress, onLongPress }) {
+  return (
+    <TouchableOpacity
+      style={tabStyles.centreSlot}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="Search"
+    >
+      <View style={[tabStyles.centreDisc, shadow.floating]}>
+        <Ionicons name="search" size={24} color={colors.onPrimary} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+const tabStyles = StyleSheet.create({
+  centreSlot: { flex: 1, alignItems: 'center', justifyContent: 'flex-start' },
+  centreDisc: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    // The ring is the bar's own colour, so the disc reads as lifted out of it.
+    borderWidth: 4,
+    borderColor: colors.surface,
+    // Lift it above the bar's top edge. The bar height below is raised to match
+    // so the disc never collides with the labels on either side.
+    marginTop: -20,
+  },
+});
 
 /**
  * Bottom-tab navigator shown once authenticated. Wires the five tabs, their
@@ -234,7 +284,9 @@ export default function MainTabs() {
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
-          height: 62,
+          // 62 → 68 to make room for the raised centre Search disc, which is
+          // pulled 20px above the bar's top edge.
+          height: 68,
           paddingBottom: 8,
           paddingTop: 6,
         },
@@ -246,6 +298,28 @@ export default function MainTabs() {
     >
       <Tab.Screen name="Home" component={HomeStack} />
       <Tab.Screen name="Calendar" component={CalendarScreen} />
+      {/* Raised centre action, between Calendar and the Alerts side of the bar.
+          Same screen the Dashboard header's search icon opens — that entry point
+          still works, this just makes it reachable from anywhere in the app.
+
+          The press is intercepted and routed into the HOME STACK's Search rather
+          than switching to this tab, and the component below is never actually
+          rendered. That is deliberate: SearchScreen's result rows navigate with
+          `nav.navigate('Leave' | 'EmployeeDetail' | …)`, which only resolve
+          inside the Home stack, and `nav.getParent()` must be the tab navigator
+          for its tab shortcuts. Hosted as a tab in its own right, every one of
+          those rows would be a dead tap. */}
+      <Tab.Screen
+        name="SearchTab"
+        component={SearchScreen}
+        options={{ tabBarButton: (props) => <SearchTabButton {...props} /> }}
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            navigation.navigate('Home', { screen: 'Search' });
+          },
+        })}
+      />
       {/* Chat is an org-wide switch a SuperAdmin controls. */}
       {chatEnabled && (
         <Tab.Screen
