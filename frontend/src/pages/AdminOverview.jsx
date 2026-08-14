@@ -162,8 +162,13 @@ export default function AdminOverview() {
         {/* Clock-In/Out board */}
         <ClockInOutCard />
 
-        {/* Today's attendance — present vs on leave vs absent */}
-        <div className="bg-white shadow rounded-lg p-5">
+        {/* Today's attendance — present vs on leave vs absent.
+            This card is a grid twin of the Clock-In/Out board, so it stretches to
+            whatever height that list reaches. Without the flex column below, the
+            donut stayed pinned to the top and left a growing pool of dead space
+            underneath as more people punched in. `flex-1` on the chart row lets
+            it take the leftover height and centre the donut in it. */}
+        <div className="bg-white shadow rounded-lg p-5 flex flex-col">
           <div className="flex items-center justify-between mb-3">
             <h2 className="card-title">Today's Attendance</h2>
             <Link to="/admin/attendance" className="text-sm text-blue-600 hover:underline">Attendance →</Link>
@@ -171,7 +176,9 @@ export default function AdminOverview() {
           {(c.totalEmployees ?? 0) === 0 ? (
             <p className="text-sm text-gray-400 italic">No employees yet</p>
           ) : (
-            <PieChart data={attendancePie} />
+            <div className="flex-1 flex items-center justify-center">
+              <PieChart data={attendancePie} size={200} />
+            </div>
           )}
         </div>
 
