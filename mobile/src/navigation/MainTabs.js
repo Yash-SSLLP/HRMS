@@ -1,7 +1,7 @@
 // navigation/MainTabs.js — the signed-in app shell.
-// A bottom-tab navigator: Home, Calendar, Chat, Alerts, Profile, plus a raised
-// centre Search button sitting between Calendar and Chat/Alerts (see
-// SearchTabButton — it jumps into the Home stack rather than being a tab).
+// A bottom-tab navigator: Home, Calendar, Chat, Alerts, Profile, plus a Search
+// button sitting inline between Calendar and Chat/Alerts (see SearchTabButton —
+// it jumps into the Home stack rather than being a tab of its own).
 // Home, Chat and Profile each wrap a JS stack navigator (createStackNavigator,
 // not native-stack — see note below) holding all the module screens; Home's
 // stack also carries the admin/manager screens, which self-gate by role. Chat
@@ -190,16 +190,18 @@ const ICONS = {
 };
 
 /**
- * The raised centre action in the tab bar — Search, sitting between Calendar and
- * the Alerts side of the bar. Replaces the whole tab button (icon + label), so
- * it carries no label; the gold disc IS the affordance.
+ * The Search action in the tab bar, between Calendar and Chat/Alerts.
+ *
+ * It sits ON the same line as the other tab icons rather than lifted above the
+ * bar. The disc is centred on the icon row — the small negative margin is what
+ * lines its centre up with the neighbouring glyphs, which sit above their labels
+ * rather than in the middle of the bar. It carries no label of its own; the gold
+ * disc is the affordance.
  *
  * Deliberately built WITHOUT `elevation`. A View combining elevation + border
  * radius renders blank (children vanish) on some Adreno/ColorOS devices — the
- * same class of bug that took out the Card shadow — so depth comes from
- * `shadow.floating` (a no-op on Android by design) plus a surface-coloured ring,
- * which reads as a cut-out in the bar. Ink is `colors.onPrimary`: white on the
- * brand gold is only ~2.4:1.
+ * same class of bug that took out the Card shadow. Ink is `colors.onPrimary`:
+ * white on the brand gold is only ~2.4:1.
  */
 function SearchTabButton({ onPress, onLongPress }) {
   return (
@@ -212,7 +214,7 @@ function SearchTabButton({ onPress, onLongPress }) {
       accessibilityLabel="Search"
     >
       <View style={[tabStyles.centreDisc, shadow.floating]}>
-        <Ionicons name="search" size={24} color={colors.onPrimary} />
+        <Ionicons name="search" size={20} color={colors.onPrimary} />
       </View>
     </TouchableOpacity>
   );
@@ -221,18 +223,17 @@ function SearchTabButton({ onPress, onLongPress }) {
 const tabStyles = StyleSheet.create({
   centreSlot: { flex: 1, alignItems: 'center', justifyContent: 'flex-start' },
   centreDisc: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.primary,
-    // The ring is the bar's own colour, so the disc reads as lifted out of it.
-    borderWidth: 4,
-    borderColor: colors.surface,
-    // Lift it above the bar's top edge. The bar height below is raised to match
-    // so the disc never collides with the labels on either side.
-    marginTop: -20,
+    // The neighbouring tabs draw a ~24px glyph at the top of the slot with the
+    // label beneath, so their icons' centre sits well above the middle of the
+    // bar. This nudge puts the disc's centre on that same line; without it the
+    // larger disc centres itself in the slot and rides visibly low.
+    marginTop: -3,
   },
 });
 
@@ -290,9 +291,7 @@ export default function MainTabs() {
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
-          // 62 → 68 to make room for the raised centre Search disc, which is
-          // pulled 20px above the bar's top edge.
-          height: 68,
+          height: 62,
           paddingBottom: 8,
           paddingTop: 6,
         },
