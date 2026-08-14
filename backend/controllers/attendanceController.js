@@ -235,7 +235,12 @@ async function notifyWorkOnLeaveApprover(record, profile, claim) {
     await notify({
       recipient: claim.approver,
       type: 'attendance',
-      audience: 'admin',
+      // 'all', not 'admin'. The top rung of a leave ladder can be ANY employee —
+      // commonly a plain Manager with no admin portal at all — and the
+      // notification list is filtered by portal (see notificationController's
+      // audienceScope), so an 'admin' notice is invisible to exactly the people
+      // most likely to be the approver.
+      audience: 'all',
       title: 'Punch-in on a leave day needs your approval',
       body: `${name} punched in on ${fmtIstDate(record.date)} while on approved ${leaveLabel(claim.leaveType)}. Approve to give the leave day back and count the day as worked.`,
       link: 'approvals',
@@ -289,6 +294,54 @@ async function notifyHrWorkOnLeave(record, profile, claim, actorId) {
 }
 
 /**
+ * Open claims for days that were punched BEFORE this feature existed.
+ *
+ * A punch made against the old code overwrote the leave stamp with 'Present'
+ * and raised nothing, so those days are invisible to every approver and always
+ * would be — nothing re-examines a finished punch. This runs on inbox load (the
+ * same self-healing idea as healOrphanChains for leave) over a bounded recent
+ * window, so a day worked on leave still reaches its approver after the fact.
+ *
+ * Deliberately NOT called from countMyApprovals: every signed-in user polls that
+ * on a timer, whereas an inbox load is occasional.
+ *
+ * @returns {Promise<number>} how many claims were opened
+ */
+async function healWorkOnLeaveClaims() {
+  const HEAL_WINDOW_DAYS = 14;
+  let opened = 0;
+  try {
+    const since = new Date(startOfDay(new Date()).getTime() - HEAL_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const rows = await Attendance.find({
+      date: { $gte: since },
+      checkIn: { $ne: null },
+      'workOnLeave.status': { $exists: false },
+    }).limit(500);
+
+    for (const record of rows) {
+      try {
+        const profile = await EmployeeProfile.findById(record.employee);
+        if (!profile) continue;
+        const claim = await openWorkOnLeaveClaim(profile, startOfDay(record.date), record);
+        if (!claim) continue;
+        record.remarks = appendRemark(
+          record.remarks,
+          `Punched in while on approved ${leaveLabel(claim.leaveType)} — awaiting approval${claim.approverName ? ` from ${claim.approverName}` : ''}.`
+        );
+        await record.save();
+        await notifyWorkOnLeaveApprover(record, profile, claim);
+        opened += 1;
+      } catch (err) {
+        console.error('heal work-on-leave claim failed:', err.message);
+      }
+    }
+  } catch (err) {
+    console.error('healWorkOnLeaveClaims failed:', err.message);
+  }
+  return opened;
+}
+
+/**
  * Work-on-leave claims for one approver's inbox, newest day first.
  *
  * Returned as plain rows rather than raw Attendance documents because the
@@ -300,6 +353,7 @@ async function notifyHrWorkOnLeave(record, profile, claim, actorId) {
  * @returns {Promise<Object[]>}
  */
 async function listWorkOnLeaveClaims(userId, scope = 'pending') {
+  await healWorkOnLeaveClaims();
   const filter = scope === 'history'
     ? { 'workOnLeave.approver': userId }
     : { 'workOnLeave.approver': userId, 'workOnLeave.status': 'Pending' };
@@ -2114,6 +2168,7 @@ module.exports = {
   applyRestDayDecision,
   listWorkOnLeaveClaims,
   decideWorkOnLeave,
+  healWorkOnLeaveClaims,
   getSettings,
   updateSettings,
 };

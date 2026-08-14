@@ -31,6 +31,15 @@ function Root() {
         /* fall back to system */
       }
       initTheme(mode);
+      // Mirror console.* to the server log before any screen code runs, so a
+      // startup failure on a user's phone is visible without a USB cable.
+      // Required lazily (not imported at the top) to keep this file's static
+      // import graph minimal — the same reason ./App is deferred.
+      try {
+        require('./src/services/remoteLog').installRemoteLogging();
+      } catch {
+        /* logging must never stop the app from starting */
+      }
       const App = require('./App').default;
       if (active) setAppComponent(() => App);
     })();

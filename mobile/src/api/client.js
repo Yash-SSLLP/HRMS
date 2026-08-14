@@ -101,6 +101,24 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   async (err) => {
+    // Log every failed call once, centrally. Almost every screen swallows its
+    // own errors (`.catch(() => ({ data: {} }))`) and renders the result as "no
+    // data", so without this a broken endpoint is completely silent — the exact
+    // reason a dead backend once looked like empty screens rather than an error.
+    // remoteLog mirrors this into the server log. The log sink itself is
+    // excluded, or a failing flush would log its own failure forever.
+    try {
+      const cfg = err.config || {};
+      if (!String(cfg.url || '').includes('client-logs')) {
+        const status = err.response?.status ?? 'no response';
+        const method = (cfg.method || 'get').toUpperCase();
+        const body = err.response?.data?.message ? ` — ${err.response.data.message}` : '';
+        console.warn(`[api] ${method} ${cfg.url} failed: ${status}${body}`);
+      }
+    } catch {
+      /* never let logging break the error path */
+    }
+
     if (err.response?.status === 401) {
       useAuth.getState().logout();
       return Promise.reject(err);

@@ -246,6 +246,10 @@ app.get('/api/health', (req, res) => {
    ============================================================ */
 
 app.use('/api/auth', require('./routes/authRoutes'));
+// Mobile console output, forwarded into this process's log. Auth is optional
+// (a login failure has no token yet), so it is mounted before the protected
+// routers rather than inside one.
+app.use('/api/client-logs', require('./routes/clientLogRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/employees', require('./routes/employeeRoutes'));
 app.use('/api/payroll', require('./routes/payrollRoutes'));
