@@ -5,7 +5,7 @@
  * Backend: none directly — push register/unregister go through services/push;
  * theme + lock state persist locally (AsyncStorage / security store).
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking, Switch } from 'react-native';
 import Constants from 'expo-constants';
@@ -18,8 +18,12 @@ import { API_BASE, signOut } from '../api/client';
 import { useAuth } from '../store/auth';
 import { useSecurity } from '../store/security';
 import { registerForPush, unregisterPush } from '../services/push';
+import {
+  UPDATES_SUPPORTED, checkForUpdate, downloadApk, installApk, openInstallSettings,
+  getInstalledVersion, isAutoCheckEnabled, setAutoCheckEnabled, getPendingUpdate,
+} from '../services/appUpdate';
 import { colors, radius, spacing, font, THEME_KEY } from '../theme';
-import { Screen, Card, Ionicons } from '../components/ui';
+import { Screen, Card, Ionicons, ProgressBar } from '../components/ui';
 
 const THEME_OPTIONS = [
   { key: 'system', label: 'System default', icon: 'phone-portrait', hint: 'Match your device setting' },
@@ -47,9 +51,27 @@ export default function SettingsScreen() {
   const setLockEnabled = useSecurity((s) => s.setEnabled);
   const [working, setWorking] = useState(false);
   const [themeMode, setThemeMode] = useState('system');
+  // The update row's state machine: idle → checking → uptodate | available →
+  // downloading → ready. `rel` is the release being acted on, `file` the APK on disk.
+  const [upd, setUpd] = useState({ state: 'idle', pct: 0, rel: null, file: null });
+  const [autoUpdate, setAutoUpdate] = useState(true);
 
   useEffect(() => {
     AsyncStorage.getItem(THEME_KEY).then((v) => setThemeMode(v || 'system')).catch(() => {});
+    isAutoCheckEnabled().then(setAutoUpdate).catch(() => {});
+    // If the silent check at app open already found something, open showing it
+    // rather than making the user tap to rediscover it.
+    const pending = getPendingUpdate();
+    if (pending) setUpd((s) => ({ ...s, state: 'available', rel: pending }));
+  }, []);
+
+  // A 70 MB download easily outlives the user backing out of Settings, and the
+  // progress callback would then set state on an unmounted component every few
+  // hundred kilobytes.
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const patchUpd = useCallback((p) => {
+    if (mounted.current) setUpd((s) => ({ ...s, ...p }));
   }, []);
 
   // Persist the chosen appearance and reload the JS bundle so index.js re-runs
@@ -115,6 +137,95 @@ export default function SettingsScreen() {
       { text: 'Turn off', style: 'destructive', onPress: () => unregisterPush().then(() => Alert.alert('Done', 'This device will no longer receive push notifications.')) },
     ]);
   };
+
+  // ===== App updates =====
+  // Alert is used for the decisions (download 70 MB? open system settings?) and
+  // toast for pure feedback — the same split the rest of this screen uses.
+
+  const doInstall = async (fileUri) => {
+    try {
+      const { cancelled } = await installApk(fileUri || upd.file);
+      if (cancelled) toast('Install cancelled', 'The update is saved — tap Install to try again.');
+    } catch (err) {
+      if (err.code === 'GONE') {
+        patchUpd({ state: 'available', file: null });
+        toast('Download expired', 'The file was cleared. Please download it again.');
+        return;
+      }
+      Alert.alert(
+        'Cannot install',
+        'Android is blocking installs from this app. Turn on "Allow from this source", then try again.',
+        [
+          { text: 'Not now' },
+          { text: 'Open settings', onPress: () => openInstallSettings().catch(() => {}) },
+        ]
+      );
+    }
+  };
+
+  const doDownload = async (rel) => {
+    patchUpd({ state: 'downloading', pct: 0, rel });
+    try {
+      const file = await downloadApk(rel, (pct) => patchUpd({ pct }));
+      patchUpd({ state: 'ready', file });
+      doInstall(file); // straight into the installer on the happy path
+    } catch (err) {
+      // Stay actionable: the row goes back to saying "Download".
+      patchUpd({ state: 'available' });
+      toast('Download failed', err.code === 'NOSPACE'
+        ? err.message
+        : 'The download was interrupted. Check your connection and try again.');
+    }
+  };
+
+  const doCheck = async () => {
+    patchUpd({ state: 'checking' });
+    const r = await checkForUpdate();
+    if (!mounted.current) return;
+    switch (r.status) {
+      case 'available':
+        patchUpd({ state: 'available', rel: r });
+        Alert.alert(
+          `Update available — v${r.versionName}`,
+          `${r.notes ? `${r.notes}\n\n` : ''}Download ${(r.size / 1e6).toFixed(0)} MB now?`,
+          [{ text: 'Later' }, { text: 'Download', onPress: () => doDownload(r) }]
+        );
+        break;
+      case 'up-to-date':
+        patchUpd({ state: 'uptodate' });
+        toast('Up to date', `You're on the latest version (v${getInstalledVersion().versionName}).`);
+        break;
+      case 'rate-limited':
+        patchUpd({ state: 'error' });
+        toast('Try again later', `GitHub is limiting update checks. Try again after ${r.resetAt.toLocaleTimeString()}.`);
+        break;
+      case 'offline':
+        patchUpd({ state: 'error' });
+        toast('Check failed', 'No internet connection. Connect and try again.');
+        break;
+      default:
+        patchUpd({ state: 'error' });
+        toast('Check failed', r.message || 'Could not reach GitHub. Please try again.');
+    }
+  };
+
+  const toggleAutoUpdate = async (on) => {
+    setAutoUpdate(on);
+    await setAutoCheckEnabled(on);
+  };
+
+  // Label / trailing value / tap handler for each state. `Row` shows EITHER a
+  // value OR a chevron, which lines up exactly: idle has no value so it gets the
+  // chevron that says "tappable"; every busy state supplies one, so it doesn't.
+  const UPDATE_ROW = {
+    idle: { label: 'Check for updates', value: undefined, tap: doCheck },
+    checking: { label: 'Checking for updates…', value: ' ', tap: undefined },
+    uptodate: { label: 'Check for updates', value: 'Up to date', tap: doCheck },
+    available: { label: `Update to v${upd.rel?.versionName || ''}`, value: 'Download', tap: () => doDownload(upd.rel) },
+    downloading: { label: 'Downloading update…', value: `${upd.pct}%`, tap: undefined },
+    ready: { label: `Install v${upd.rel?.versionName || ''}`, value: 'Install', tap: () => doInstall() },
+    error: { label: 'Check for updates', value: 'Retry', tap: doCheck },
+  }[upd.state];
 
   const doLogout = () => {
     Alert.alert('Log out?', 'You will need to sign in again.', [
@@ -197,6 +308,48 @@ export default function SettingsScreen() {
         <Text style={styles.group}>ABOUT</Text>
         <Card style={styles.card}>
           <Row icon="phone-portrait" label="App version" value={`v${version}`} />
+
+          {/* Update controls. Android only — there is no sideloading on iOS. */}
+          {UPDATES_SUPPORTED ? (
+            <>
+              <Row
+                icon={upd.state === 'ready' ? 'download' : 'cloud-download-outline'}
+                label={UPDATE_ROW.label}
+                value={UPDATE_ROW.value}
+                onPress={UPDATE_ROW.tap}
+                tint={upd.state === 'ready' ? colors.success : colors.primary}
+              />
+              {upd.state === 'downloading' ? (
+                <View style={[styles.row, styles.rowBorder, { paddingTop: 0 }]}>
+                  {/* Empty gutter so the bar lines up with the labels above. */}
+                  <View style={{ width: 34, marginRight: 12 }} />
+                  <View style={{ flex: 1 }}>
+                    <ProgressBar value={upd.pct} />
+                  </View>
+                </View>
+              ) : null}
+              <View style={[styles.row, styles.rowBorder]}>
+                <View style={[styles.rowIcon, { backgroundColor: colors.primary + '1a' }]}>
+                  <Ionicons name="sync" size={18} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>Automatic update check</Text>
+                  <Text style={styles.rowHint}>
+                    {autoUpdate
+                      ? 'Checks once a day and tells you when a new version is ready'
+                      : 'Off · only checks when you tap above'}
+                  </Text>
+                </View>
+                <Switch
+                  value={autoUpdate}
+                  onValueChange={toggleAutoUpdate}
+                  trackColor={{ true: colors.primary, false: colors.borderStrong }}
+                  thumbColor="#fff"
+                />
+              </View>
+            </>
+          ) : null}
+
           <Row icon="server" label="Server" value={host} />
           <Row icon="shield-outline" label="Privacy Policy" onPress={() => nav.navigate('Privacy')} tint={colors.textMuted} />
           <Row icon="help-buoy" label="Help & support" onPress={() => Linking.openURL('mailto:hr@sequencesurface.com?subject=HRMS%20App%20Support')} tint="#0ea5e9" last />

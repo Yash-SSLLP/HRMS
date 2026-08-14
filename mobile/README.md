@@ -82,8 +82,9 @@ npx expo run:android --variant release
 cd android && .\gradlew assembleRelease
 # → APK at android/app/build/outputs/apk/release/app-release.apk
 ```
-The release type is pre-signed with the debug keystore, so this works with no
-extra setup. (First build takes a few minutes.)
+Without release signing configured this falls back to the debug keystore so a
+fresh checkout still builds — but **never distribute such a build**. See
+*Releasing a new version* below. (First build takes a few minutes.)
 
 **B. Keep the debug build (needs Metro running).** In one terminal:
 ```bash
@@ -92,6 +93,72 @@ npx expo start --dev-client
 Then let the phone reach Metro:
 - USB-connected: `adb reverse tcp:8081 tcp:8081`, then reload (R, R).
 - Same Wi-Fi: shake the device → *Settings → Debug server host* → `<your-PC-IP>:8081`.
+
+## Releasing a new version
+
+The app updates itself: **Settings → Check for updates** reads the latest GitHub
+release, compares the `versionCode` encoded in the asset filename against the
+installed package, and offers the APK. So publishing a release *is* the
+distribution — no more sending the file to people.
+
+```bash
+# 1. bump BOTH in mobile/app.json:  expo.version  and  expo.android.versionCode
+# 2. commit and push (the release tag points at HEAD)
+cd android && .\gradlew assembleRelease -x lint -x test --max-workers=2 --no-daemon
+cd ..\.. && node scripts/publish-apk.js --notes "What changed"
+```
+
+Run it once with `--dry-run` first: that exercises every preflight guard —
+built version matches `app.json`, APK newer than `app.json`, not a downgrade,
+tag free, working tree clean and pushed — and changes nothing.
+
+Publishing needs a **fine-grained GitHub token** (repo `Yash-SSLLP/HRMS`,
+*Contents: Read and write*) in the repo-root `.env` as `GITHUB_TOKEN=…`. That
+file is already gitignored.
+
+### Signing — read this before your first release
+
+Distributed builds must be signed with the **private release key**, not the
+debug keystore. The debug keystore shipped with React Native is byte-identical
+in every RN project on earth and its password is printed in `build.gradle`, so
+anyone holding it can build an APK that Android accepts as a genuine upgrade of
+`com.ssllp.hrms` — inheriting the signed-in session. That mattered little when
+the APK was hand-delivered; it matters now that the app itself offers updates.
+
+Create the key once:
+
+```bash
+keytool -genkeypair -v -keystore ssllp-release.jks -alias ssllp \
+  -keyalg RSA -keysize 2048 -validity 9125
+```
+
+Keep the `.jks` outside the repo, back it up in a password manager, and put the
+credentials in `~/.gradle/gradle.properties` (never in the repo):
+
+```properties
+SSLLP_RELEASE_STORE_FILE=C:/keys/ssllp-release.jks
+SSLLP_RELEASE_STORE_PASSWORD=…
+SSLLP_RELEASE_KEY_ALIAS=ssllp
+SSLLP_RELEASE_KEY_PASSWORD=…
+```
+
+Every release build prints which key it used. If it says it signed with the
+public debug key, do not distribute that APK.
+
+> **Losing the keystore is unrecoverable.** Android only installs an update over
+> an app signed with the *same* certificate, so a lost or changed key means every
+> employee must uninstall and reinstall, losing their login and local state.
+
+### If you ever run `expo prebuild`
+
+`android/` is gitignored and generated, so a prebuild silently reverts several
+hand-applied fixes. Adding a native module does **not** need one —
+`useExpoModules()` autolinks from `node_modules` at Gradle configure time. If you
+do run it, restore: the `signingConfigs.release` block and its `buildTypes`
+reference, the `createExpoConfig` task at the end of `app/build.gradle`,
+`org.gradle.java.home` / `workers.max` in `gradle.properties`, and
+`REQUEST_INSTALL_PACKAGES` in the manifest (it is in `app.json`, so prebuild
+regenerates that one correctly).
 
 ### Cloud build (no local Android SDK needed)
 

@@ -2,7 +2,7 @@
   "expo": {
     "name": "SSLLP HRMS",
     "slug": "ssllp-hrms",
-    "version": "1.10.0",
+    "version": "1.11.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "ssllphrms",
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.ssllp.hrms",
-      "versionCode": 24,
+      "versionCode": 25,
       "googleServicesFile": "./google-services.json",
       "config": {
         "googleMaps": { "apiKey": "AIzaSyACNwDcUY-3BhcqiE61heY3yKe_YN4e8n8" }
@@ -28,7 +28,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0c0c0e"
       },
-      "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE", "POST_NOTIFICATIONS", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": ["CAMERA", "RECEIVE_BOOT_COMPLETED", "VIBRATE", "POST_NOTIFICATIONS", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "REQUEST_INSTALL_PACKAGES"]
     },
     "notification": {
       "icon": "./assets/notification-icon.png",
@@ -66,6 +66,7 @@
     "extra": {
       "apiBaseUrl": "https://hrms-cfyq.onrender.com",
       "webBaseUrl": "https://hrms-orpin-gamma.vercel.app",
+      "updateRepo": "Yash-SSLLP/HRMS",
       "eas": {
         "projectId": "00000000-0000-0000-0000-000000000000"
       }

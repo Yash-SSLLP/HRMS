@@ -14,3 +14,14 @@ coverage/
 # Firebase service-account key (backend push) — secret, never commit
 backend/config/firebase-service-account.json
 firebase-service-account*.json
+
+# Build artefacts. Only APKs under mobile/android/ were ignored before, so one
+# copied anywhere else could be committed by a stray `git add .` — a ~70 MB blob
+# that stays in the history for good. Releases belong on GitHub Releases, which
+# is what scripts/publish-apk.js uploads to.
+*.apk
+*.aab
+
+# Signing keys — the release keystore must never enter the repo
+*.jks
+*.keystore

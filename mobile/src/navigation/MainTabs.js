@@ -20,6 +20,7 @@ import { colors, shadow } from '../theme';
 import api from '../api/client';
 import { useAuth } from '../store/auth';
 import { useBadges } from '../store/badges';
+import { autoCheckForUpdate } from '../services/appUpdate';
 
 import DashboardScreen from '../screens/DashboardScreen';
 import CalendarScreen from '../screens/CalendarScreen';
@@ -257,6 +258,11 @@ export default function MainTabs() {
         setFeatures(data?.features);
       })
       .catch(() => {});
+    // Silent: it only caches the answer so Settings can show a dot. It never
+    // alerts or navigates — an update nobody asked for should not interrupt
+    // whatever the app was opened to do. Self-limiting to once a day, and a
+    // no-op when the Settings toggle is off.
+    autoCheckForUpdate().catch(() => {});
   }, [setUser, setFeatures]);
 
   // Poll unread badges while foregrounded.
