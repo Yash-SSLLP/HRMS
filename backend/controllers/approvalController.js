@@ -8,7 +8,9 @@ const asyncHandler = require('express-async-handler');
 const { LeaveRequest } = require('../models/Leave');
 const ExitRequest = require('../models/ExitRequest');
 const Regularization = require('../models/Regularization');
+const Attendance = require('../models/Attendance');
 const { advanceRegularizationApproval } = require('./regularizationController');
+const { listWorkOnLeaveClaims, decideWorkOnLeave } = require('./attendanceController');
 const { advanceApproval, ensureApprovalChain } = require('./leaveController');
 const {
   advanceExitApproval,
@@ -348,6 +350,55 @@ const approveRegularization = decideRegularization('approve');
  */
 const rejectRegularization = decideRegularization('reject');
 
+// ============ Work on a leave day (punched in while on approved leave) ============
+// Not a ladder: the whole leave hierarchy already granted the leave, so only its
+// TOP rung rules on whether working through it counts. The claim lives on the
+// attendance record itself (Attendance.workOnLeave), so these are days, not
+// requests. Scoping is `workOnLeave.approver === me`, enforced again inside
+// decideWorkOnLeave, which also honours an HR (`leave.manage`) override.
+
+/**
+ * List work-on-leave claims for the current approver.
+ * @route GET /api/approvals/work-on-leave?scope=pending|history
+ * @param {string} [req.query.scope] - 'pending' (awaiting me) or 'history' (every claim routed to me)
+ * @returns {{scope, count, claims: Object[]}}
+ */
+const listMyWorkOnLeave = asyncHandler(async (req, res) => {
+  const scope = req.query.scope === 'history' ? 'history' : 'pending';
+  const claims = await listWorkOnLeaveClaims(req.user._id, scope);
+  res.json({ scope, count: claims.length, claims });
+});
+
+// Shared by the approve/reject routes — the same call with a different action.
+const decideWorkOnLeaveRoute = (action) =>
+  asyncHandler(async (req, res) => {
+    const record = await Attendance.findById(req.params.id);
+    if (!record) {
+      res.status(404);
+      throw new Error('Attendance record not found');
+    }
+    try {
+      const out = await decideWorkOnLeave(record, req.user._id, action, req.body.note, req.user);
+      res.json({ record: out.record, leaveDayReturned: out.leaveDayReturned });
+    } catch (err) {
+      res.status(err.status || 400);
+      throw err;
+    }
+  });
+
+/**
+ * Approve a punch-in made on an approved-leave day: the leave day is returned
+ * and the day becomes a worked day.
+ * @route PATCH /api/approvals/work-on-leave/:id/approve
+ */
+const approveWorkOnLeave = decideWorkOnLeaveRoute('approve');
+
+/**
+ * Reject it: the punches stay on the record, the day stays leave.
+ * @route PATCH /api/approvals/work-on-leave/:id/reject
+ */
+const rejectWorkOnLeave = decideWorkOnLeaveRoute('reject');
+
 /**
  * How many items are waiting on the current user, for the top-bar shortcut badge.
  *
@@ -361,7 +412,7 @@ const rejectRegularization = decideRegularization('reject');
  */
 const countMyApprovals = asyncHandler(async (req, res) => {
   const me = req.user._id;
-  const [leave, exits, clearances, regularizations] = await Promise.all([
+  const [leave, exits, clearances, regularizations, workOnLeave] = await Promise.all([
     LeaveRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
     ExitRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
     ExitRequest.countDocuments({
@@ -369,13 +420,15 @@ const countMyApprovals = asyncHandler(async (req, res) => {
       clearanceSections: { $elemMatch: { assignedTo: me, completed: false } },
     }),
     Regularization.countDocuments({ currentApprover: me, status: 'Pending' }),
+    Attendance.countDocuments({ 'workOnLeave.approver': me, 'workOnLeave.status': 'Pending' }),
   ]);
   res.json({
     leave,
     exits,
     clearances,
     regularizations,
-    total: leave + exits + clearances + regularizations,
+    workOnLeave,
+    total: leave + exits + clearances + regularizations + workOnLeave,
   });
 });
 
@@ -414,4 +467,7 @@ module.exports = {
   listMyRegularizationApprovals,
   approveRegularization,
   rejectRegularization,
+  listMyWorkOnLeave,
+  approveWorkOnLeave,
+  rejectWorkOnLeave,
 };

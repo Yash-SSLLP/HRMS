@@ -24,7 +24,17 @@ const {
 } = require('../utils/workday');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../utils/restDay');
-const { notify } = require('../services/notify');
+const { notify, notifyMany } = require('../services/notify');
+const { usersHoldingAny } = require('../services/audience');
+const { hasPermission } = require('../middleware/authMiddleware');
+// Punching in on a day you are on approved leave. The leave-side rules (which
+// day a leave still claims, who sits at the top of the ladder, and how a day is
+// handed back) live in leaveController; this module owns the punch and the
+// decision. leaveController requires no controller of its own, so this is a
+// one-way dependency.
+const {
+  leaveCoveringDay, topLeaveApproverFor, releaseLeaveDay, leaveLabel,
+} = require('./leaveController');
 // All attendance "day" logic is anchored to the IST calendar day so it is
 // independent of the server's timezone (the deployed backend runs in UTC).
 // This keeps a punch made from any client (mobile or web) on the same IST day
@@ -158,6 +168,278 @@ const fmtIstTime = (d) => (d ? to12hIst(d, 'Asia/Kolkata') : '');
 // stays correct if HALF_DAY_CUTOFF_HOUR is ever changed.
 const HALF_DAY_CUTOFF_LABEL = to12hIst(Date.UTC(2000, 0, 1, HALF_DAY_CUTOFF_HOUR, 0), 'UTC');
 
+// A day written the way the employee reads it, e.g. "14 Aug 2026".
+const fmtIstDate = (d) => new Date(d).toLocaleDateString('en-IN', {
+  day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata',
+});
+
+// ===== Working through your own leave =====
+
+/**
+ * Open a work-on-leave claim if this punch lands on a day the employee is on
+ * approved leave.
+ *
+ * The punch itself is never refused — the employee may genuinely be needed —
+ * but it does not silently convert the day into a worked one either, which is
+ * what used to happen: check-in overwrote the OnLeave stamp with 'Present' while
+ * the leave stayed spent. Instead the day KEEPS its leave status and the claim
+ * goes to the top rung of that employee's leave hierarchy to rule on.
+ *
+ * Mutates `record` (status + workOnLeave) but does not save it — the caller is
+ * mid-punch and saves once.
+ *
+ * @param {Object} profile - the punching employee's EmployeeProfile
+ * @param {Date} day - IST midnight of the punch day
+ * @param {Object} record - the Attendance document being written
+ * @returns {Promise<Object|null>} the claim sub-document, or null when not on leave
+ */
+async function openWorkOnLeaveClaim(profile, day, record) {
+  // A claim already exists for the day (a second punch, or an HR-reset record) —
+  // never reopen it, or a rejected day could be quietly re-queued.
+  if (record.workOnLeave && record.workOnLeave.status) return record.workOnLeave;
+
+  const leave = await leaveCoveringDay(profile._id, day);
+  if (!leave) return null;
+
+  const top = await topLeaveApproverFor(profile);
+  // Nobody at all could be resolved to decide it — not a rung, not the HR
+  // partner, not even a SuperAdmin. Holding the day hostage to an approval that
+  // no one can ever see would be worse than not raising it, so let the punch
+  // behave as an ordinary one rather than stranding the employee's day.
+  if (!top?.approver) return null;
+
+  // Whatever the leave auto-stamp wrote is what the day goes back to if this is
+  // rejected: OnLeave for a paid day, Absent for an LOP one. A brand-new record
+  // (the stamp never ran) is treated as ordinary paid leave.
+  const leaveStatus = record.status === 'Absent' ? 'Absent' : 'OnLeave';
+
+  record.workOnLeave = {
+    status: 'Pending',
+    leaveRequest: leave._id,
+    leaveType: leave.leaveType,
+    leaveStatus,
+    approver: top.approver,
+    approverName: top.approverName || '',
+    requestedAt: new Date(),
+  };
+  record.status = leaveStatus;
+  return record.workOnLeave;
+}
+
+/** In-app + push nudge to the one person who decides a work-on-leave claim. */
+async function notifyWorkOnLeaveApprover(record, profile, claim) {
+  if (!claim?.approver) return;
+  try {
+    const user = await require('../models/User').findById(profile.user).select('firstName lastName');
+    const name = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'An employee';
+    await notify({
+      recipient: claim.approver,
+      type: 'attendance',
+      audience: 'admin',
+      title: 'Punch-in on a leave day needs your approval',
+      body: `${name} punched in on ${fmtIstDate(record.date)} while on approved ${leaveLabel(claim.leaveType)}. Approve to give the leave day back and count the day as worked.`,
+      link: 'approvals',
+    });
+  } catch (err) {
+    console.error('work-on-leave approver notify failed:', err.message);
+  }
+}
+
+/**
+ * Tell HR the outcome — the point of the whole flow, since HR is who pays for
+ * it: an approval both returns a leave day to the employee's monthly quota and
+ * turns an unworked day into a worked one in the payroll run.
+ *
+ * Resolved by capability (attendance.manage / leave.manage) so the list tracks
+ * config/permissions.js rather than a hard-coded role, matching how the leave
+ * module picks its HR audience. The decider and the employee are dropped: both
+ * already know.
+ */
+async function notifyHrWorkOnLeave(record, profile, claim, actorId) {
+  try {
+    const ids = new Set();
+    for (const id of await usersHoldingAny('attendance.manage')) ids.add(String(id));
+    for (const id of await usersHoldingAny('leave.manage')) ids.add(String(id));
+    if (profile.hrPartner) ids.add(String(profile.hrPartner));
+    if (!ids.size) {
+      const sa = await require('../models/User')
+        .findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('_id');
+      if (sa) ids.add(String(sa._id));
+    }
+    if (actorId) ids.delete(String(actorId));
+    if (profile.user) ids.delete(String(profile.user));
+    if (!ids.size) return;
+
+    const user = await require('../models/User').findById(profile.user).select('firstName lastName');
+    const name = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'An employee';
+    const approved = claim.status === 'Approved';
+    const day = fmtIstDate(record.date);
+    await notifyMany([...ids], {
+      type: 'attendance',
+      audience: 'admin',
+      title: approved ? 'Work on a leave day approved' : 'Work on a leave day rejected',
+      body: approved
+        ? `${name} worked ${day} while on approved ${leaveLabel(claim.leaveType)}. ${claim.decidedByName || 'The approver'} approved it${claim.leaveDayReturned ? ' — the leave day has been returned and the day now counts as worked' : ' — the day now counts as worked'}.`
+        : `${name} punched in on ${day} while on approved ${leaveLabel(claim.leaveType)}. ${claim.decidedByName || 'The approver'} rejected it — the day stays as leave and the punches are kept for the record.${claim.note ? ` Note: ${claim.note}` : ''}`,
+      link: 'attendance',
+    });
+  } catch (err) {
+    console.error('work-on-leave HR notify failed:', err.message);
+  }
+}
+
+/**
+ * Work-on-leave claims for one approver's inbox, newest day first.
+ *
+ * Returned as plain rows rather than raw Attendance documents because the
+ * approver needs the person and the leave behind the claim, not the day's photo
+ * flags — and because Attendance.toJSON is shaped for the employee's own view.
+ *
+ * @param {string} userId - the approver
+ * @param {'pending'|'history'} scope
+ * @returns {Promise<Object[]>}
+ */
+async function listWorkOnLeaveClaims(userId, scope = 'pending') {
+  const filter = scope === 'history'
+    ? { 'workOnLeave.approver': userId }
+    : { 'workOnLeave.approver': userId, 'workOnLeave.status': 'Pending' };
+
+  const rows = await Attendance.find(filter)
+    .select('employee date checkIn checkOut hoursWorked status remarks workOnLeave')
+    .populate({
+      path: 'employee',
+      select: 'employeeCode designation department user',
+      populate: { path: 'user', select: 'firstName lastName email' },
+    })
+    .sort({ date: -1 })
+    .limit(200)
+    .lean();
+
+  return rows.map((r) => ({
+    _id: String(r._id),
+    employee: r.employee,
+    date: r.date,
+    checkIn: r.checkIn || null,
+    checkOut: r.checkOut || null,
+    hoursWorked: r.hoursWorked || 0,
+    status: r.status,
+    workOnLeave: r.workOnLeave,
+  }));
+}
+
+/**
+ * Record the decision on one work-on-leave claim.
+ *
+ * Approve → the leave day is handed back (dropped from the request's paid/LOP
+ * split, credited to the maternity bucket if applicable, and freed from the
+ * 2-paid-days-a-month count by the status flip) and the day becomes a normal
+ * worked day. Reject → the punches stay on the record for audit but the day
+ * keeps its leave status and the leave stays spent. HR is told either way.
+ *
+ * Mutates + saves the record; throws Error with `.status` on a bad transition.
+ *
+ * @param {Object} record - Attendance document (not lean)
+ * @param {string} userId - the deciding user's id
+ * @param {'approve'|'reject'} action
+ * @param {string} [note]
+ * @param {Object} [actor] - the full user, so an HR override can be recognised
+ * @returns {Promise<{record: Object, leaveDayReturned: boolean}>}
+ */
+async function decideWorkOnLeave(record, userId, action, note, actor) {
+  const claim = record.workOnLeave;
+  if (!claim || !claim.status) {
+    const err = new Error('That day has no work-on-leave approval to decide.');
+    err.status = 400;
+    throw err;
+  }
+  if (claim.status !== 'Pending') {
+    const err = new Error(`Cannot ${action} - this claim is already ${claim.status}.`);
+    err.status = 400;
+    throw err;
+  }
+  // The named approver decides. HR keeps an override so a claim is never stuck
+  // behind someone who has left or is unavailable — the same safety valve leave
+  // itself has (applyLeaveDecision).
+  const mine = claim.approver && String(claim.approver) === String(userId);
+  if (!mine && !(actor && hasPermission(actor, 'leave.manage'))) {
+    const err = new Error('This punch-in is not awaiting your approval.');
+    err.status = 403;
+    throw err;
+  }
+
+  const now = new Date();
+  const approved = action === 'approve';
+  const decidedByName = `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim();
+  let leaveDayReturned = false;
+
+  if (approved) {
+    // Hand the day back BEFORE deciding the status, but never let a failure here
+    // lose the decision — the approver acted, and an unreleased day is a
+    // reporting discrepancy HR can correct, not a reason to refuse them.
+    try {
+      const { LeaveRequest } = require('../models/Leave');
+      const leave = claim.leaveRequest ? await LeaveRequest.findById(claim.leaveRequest) : null;
+      // Which bucket the day came out of is what the auto-stamp wrote on it:
+      // OnLeave = a paid day, Absent = an LOP one.
+      if (leave) {
+        leaveDayReturned = await releaseLeaveDay(
+          leave, ymdLocal(record.date), claim.leaveStatus !== 'Absent'
+        );
+      }
+    } catch (err) {
+      console.error('releaseLeaveDay failed:', err.message);
+    }
+  }
+
+  record.workOnLeave = {
+    ...(typeof claim.toObject === 'function' ? claim.toObject() : claim),
+    status: approved ? 'Approved' : 'Rejected',
+    decidedBy: userId,
+    decidedAt: now,
+    note: note || undefined,
+    leaveDayReturned,
+  };
+
+  if (approved) {
+    // The punch counts from here on, so the ordinary hours rule decides the day.
+    // It has to be taken off the leave status first: statusFromHours refuses to
+    // judge a non-working day (by design), and would otherwise return null.
+    record.status = 'Present';
+    if (record.halfDayDeclared) record.status = 'HalfDay';
+    else record.status = statusFromHours(record) || 'Present';
+    record.remarks = appendRemark(
+      record.remarks,
+      `Worked while on ${leaveLabel(claim.leaveType)} — approved${decidedByName ? ` by ${decidedByName}` : ''}${leaveDayReturned ? '; the leave day was returned' : ''}.`
+    );
+  } else {
+    record.status = claim.leaveStatus || 'OnLeave';
+    record.remarks = appendRemark(
+      record.remarks,
+      `Worked while on ${leaveLabel(claim.leaveType)} — not approved${decidedByName ? ` by ${decidedByName}` : ''}; the day stays as leave.`
+    );
+  }
+  await record.save();
+
+  const profile = await EmployeeProfile.findById(record.employee).select('user hrPartner').lean();
+  const saved = record.workOnLeave;
+  const decided = { ...(typeof saved.toObject === 'function' ? saved.toObject() : saved), decidedByName };
+  if (profile?.user) {
+    await notify({
+      recipient: profile.user,
+      type: 'attendance',
+      audience: 'employee',
+      title: approved ? 'Your work on a leave day was approved' : 'Your work on a leave day was not approved',
+      body: approved
+        ? `${fmtIstDate(record.date)} now counts as a working day${leaveDayReturned ? ', and the leave day has been returned to you' : ''}.${note ? ` Note: ${note}` : ''}`
+        : `${fmtIstDate(record.date)} stays recorded as ${leaveLabel(claim.leaveType)}. Your punches are kept on the record.${note ? ` Note: ${note}` : ''}`,
+      link: 'attendance',
+    }).catch(() => {});
+  }
+  if (profile) await notifyHrWorkOnLeave(record, profile, decided, userId);
+
+  return { record, leaveDayReturned };
+}
+
 /**
  * Punch in for today with a selfie and optional GPS (geofence captured, not blocked).
  * @route POST /api/attendance/me/checkin  (multipart field: photo)
@@ -206,15 +488,43 @@ const checkIn = asyncHandler(async (req, res) => {
   // a normal afternoon half day and is always honoured. It only changes lateness:
   // the second half doesn't start at 10:00 AM, so lateMinutes() reports 0 for it.
   record.halfDayDeclared = req.body.halfDay === 'true';
-  record.status = record.halfDayDeclared ? 'HalfDay' : 'Present';
+
+  // Punching in on a day you are on approved leave. The punch is kept, but the
+  // day stays leave and the claim goes to the top of the leave hierarchy — so
+  // this must run before the status is decided, and owns it when it fires.
+  const claim = await openWorkOnLeaveClaim(profile, today, record);
+  if (!claim) record.status = record.halfDayDeclared ? 'HalfDay' : 'Present';
+
   if (record.halfDayDeclared && halfDayCutoffPassed(record)) {
     record.remarks = appendRemark(
       record.remarks,
       `Afternoon half day: checked in at ${fmtIstTime(record.checkIn)}, after ${HALF_DAY_CUTOFF_LABEL} — not counted as a late arrival.`
     );
   }
+  if (claim && claim.status === 'Pending') {
+    record.remarks = appendRemark(
+      record.remarks,
+      `Punched in while on approved ${leaveLabel(claim.leaveType)} — awaiting approval${claim.approverName ? ` from ${claim.approverName}` : ''}.`
+    );
+  }
   await record.save();
-  res.status(201).json({ record });
+
+  if (claim && claim.status === 'Pending') {
+    await notifyWorkOnLeaveApprover(record, profile, claim);
+  }
+
+  res.status(201).json({
+    record,
+    // The client turns this into the on-screen warning. Absent on an ordinary punch.
+    workOnLeave: claim && claim.status === 'Pending'
+      ? {
+        status: claim.status,
+        leaveType: claim.leaveType,
+        approverName: claim.approverName || '',
+        message: `You are on approved ${leaveLabel(claim.leaveType)} today. Your punch has been recorded but today still counts as leave until ${claim.approverName || 'your leave approver'} approves it. Once approved, the leave day is returned to you and the day counts as worked.`,
+      }
+      : null,
+  });
 });
 
 /**
@@ -264,8 +574,15 @@ const checkOut = asyncHandler(async (req, res) => {
   // of the same statement, and the hours rule must not talk the employee out of
   // it. HR can still correct the day through a regularization.
   if (req.body.halfDay === 'true') record.halfDayDeclared = true;
-  if (record.halfDayDeclared) record.status = 'HalfDay';
-  else record.status = statusFromHours(record) || record.status;
+  // A day worked on leave holds its leave status until the claim is decided, so
+  // punching out must not promote it to a worked day. statusFromHours already
+  // refuses to judge a leave day; the half-day declaration is the branch that
+  // would otherwise slip past.
+  const heldOnLeave = record.workOnLeave && record.workOnLeave.status !== 'Approved';
+  if (!heldOnLeave) {
+    if (record.halfDayDeclared) record.status = 'HalfDay';
+    else record.status = statusFromHours(record) || record.status;
+  }
   await record.save();
   res.json({ record });
 });
@@ -726,6 +1043,29 @@ const listMine = asyncHandler(async (req, res) => {
     return o;
   });
 
+  // Is today a day this employee is on approved leave? Sent so the punch screen
+  // can warn BEFORE the punch — the server warns again on the response, but by
+  // then the claim already exists, which is a worse moment to learn about it.
+  // Skipped once a claim exists for today: the record itself then says more.
+  let todayLeave = null;
+  if (!today?.workOnLeave?.status) {
+    try {
+      const leave = await leaveCoveringDay(profile._id, startOfDay(new Date()));
+      if (leave) {
+        const top = await topLeaveApproverFor(profile);
+        todayLeave = {
+          leaveType: leave.leaveType,
+          startDate: leave.startDate,
+          endDate: leave.endDate,
+          approverName: top?.approverName || '',
+        };
+      }
+    } catch (err) {
+      // Best-effort: a failure here must never break the attendance screen.
+      console.error('todayLeave lookup failed:', err.message);
+    }
+  }
+
   res.json({
     year,
     month,
@@ -735,6 +1075,7 @@ const listMine = asyncHandler(async (req, res) => {
     // Whether this employee may mark a punch as work-from-home (granted by a
     // SuperAdmin) — drives whether the WFH control is shown at all.
     wfhAllowed: !!profile.wfhAllowed,
+    todayLeave,
   });
 });
 
@@ -1753,6 +2094,8 @@ module.exports = {
   decideRestDayWork,
   buildRestDayClaims,
   applyRestDayDecision,
+  listWorkOnLeaveClaims,
+  decideWorkOnLeave,
   getSettings,
   updateSettings,
 };

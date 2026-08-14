@@ -24,6 +24,20 @@ const STATUS_COLORS = {
   OnLeave: 'bg-purple-100 text-purple-800',
 };
 
+// A day punched in on while on approved leave. The day keeps its leave status
+// until the top of the leave hierarchy rules on it, so the chip is what tells
+// the employee the punch was recorded and what it is waiting for.
+const WORK_ON_LEAVE_COLORS = {
+  Pending: 'bg-amber-100 text-amber-800',
+  Approved: 'bg-green-100 text-green-800',
+  Rejected: 'bg-gray-100 text-gray-600',
+};
+const WORK_ON_LEAVE_LABELS = {
+  Pending: 'worked on leave · pending',
+  Approved: 'worked on leave · approved',
+  Rejected: 'worked on leave · rejected',
+};
+
 // GPS accuracy tuning for the punch location watch.
 const GPS_GOOD_ENOUGH_M = 25;   // stop refining once a fix is at least this accurate
 const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting the best fix
@@ -82,6 +96,11 @@ export default function EmployeeAttendance() {
   const [today, setToday] = useState(null);
   const [policy, setPolicy] = useState(null); // { year, month, needsSetup, policy }
   const [wfhAllowed, setWfhAllowed] = useState(false); // WFH granted to this employee?
+  // Set when today falls inside an approved leave: { leaveType, approverName, … }.
+  // Drives the warning shown BEFORE the punch — punching is still allowed, but
+  // the day only counts once the top of the leave hierarchy approves it.
+  const [todayLeave, setTodayLeave] = useState(null);
+  const [leaveNotice, setLeaveNotice] = useState(''); // what the server said after such a punch
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -271,9 +290,13 @@ export default function EmployeeAttendance() {
       // planned half day) or at check-out. A declaration at check-in sticks —
       // the server will not let the hours rule undo it.
       fd.append('halfDay', halfDay ? 'true' : 'false');
-      await api.post(`/attendance/me/${capture}`, fd, {
+      const { data } = await api.post(`/attendance/me/${capture}`, fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      // Punched in on a day already covered by approved leave: the punch is on
+      // record, but the day stays leave until it is approved. Say so plainly
+      // rather than letting the screen look like an ordinary check-in.
+      setLeaveNotice(data?.workOnLeave?.message || '');
       closeCapture();
       await load();
     } catch (err) {
@@ -296,6 +319,7 @@ export default function EmployeeAttendance() {
       setRecords(attRes.data.records);
       setToday(attRes.data.today);
       setWfhAllowed(!!attRes.data.wfhAllowed);
+      setTodayLeave(attRes.data.todayLeave || null);
       setPolicy(polRes?.data || null);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
@@ -375,7 +399,57 @@ export default function EmployeeAttendance() {
           {today?.status && (
             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[today.status]}`}>{today.status}</span>
           )}
+          {today?.workOnLeave?.status && (
+            <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${WORK_ON_LEAVE_COLORS[today.workOnLeave.status]}`}>
+              {WORK_ON_LEAVE_LABELS[today.workOnLeave.status]}
+            </span>
+          )}
         </div>
+
+        {/* Before the punch: today is already covered by approved leave. Punching
+            in is still allowed — the employee may genuinely be needed — but it
+            does not quietly turn the day into a worked one. */}
+        {todayLeave && !today?.workOnLeave?.status && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <div className="font-medium">You are on approved {todayLeave.leaveType} today.</div>
+            <p className="mt-1 text-amber-800">
+              You can still punch in, but today stays recorded as leave until
+              {' '}<strong>{todayLeave.approverName || 'your leave approver'}</strong> approves it. Once approved,
+              the leave day is returned to you and the day counts as worked.
+            </p>
+          </div>
+        )}
+
+        {/* After the punch: the same message, in the server's words. */}
+        {leaveNotice && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start justify-between gap-3">
+            <span>{leaveNotice}</span>
+            <button onClick={() => setLeaveNotice('')}
+              className="shrink-0 text-amber-700 hover:text-amber-900 text-lg leading-none">×</button>
+          </div>
+        )}
+
+        {/* Already claimed: where the decision stands. */}
+        {today?.workOnLeave?.status === 'Pending' && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            You worked today while on approved {today.workOnLeave.leaveType}. It is awaiting
+            {' '}<strong>{today.workOnLeave.approverName || 'your leave approver'}</strong>&apos;s approval — until
+            then the day counts as leave.
+          </div>
+        )}
+        {today?.workOnLeave?.status === 'Approved' && (
+          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
+            Your work on today&apos;s leave day was approved
+            {today.workOnLeave.leaveDayReturned ? ' — the leave day has been returned to you' : ''}.
+          </div>
+        )}
+        {today?.workOnLeave?.status === 'Rejected' && (
+          <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+            Your work on today&apos;s leave day was not approved, so today stays recorded as
+            {' '}{today.workOnLeave.leaveType}. Your punches are kept on the record.
+            {today.workOnLeave.note ? ` Note: ${today.workOnLeave.note}` : ''}
+          </div>
+        )}
         {today?.checkIn && (
           <div className={`mb-4 flex items-center justify-between rounded-lg px-4 py-3 border ${
             running ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
@@ -446,6 +520,16 @@ export default function EmployeeAttendance() {
 
             {camError && (
               <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">{camError}</div>
+            )}
+
+            {/* The warning at the moment it matters most — the confirm button is
+                one tap away and the employee may not have read the card behind. */}
+            {capture === 'checkin' && todayLeave && (
+              <div className="mb-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">
+                ⚠️ You are on approved <strong>{todayLeave.leaveType}</strong> today. This punch will be
+                recorded, but the day stays as leave until{' '}
+                <strong>{todayLeave.approverName || 'your leave approver'}</strong> approves it.
+              </div>
             )}
 
             {/* Location status — deliberately contentless. The punch still captures
@@ -568,6 +652,13 @@ export default function EmployeeAttendance() {
                             : 'bg-amber-100 text-amber-800'}`}>
                       {r.doublePayState === 'Approved' ? '2× approved'
                         : r.doublePayState === 'Rejected' ? '2× rejected' : '2× pending'}
+                    </span>
+                  )}
+                  {/* A leave day you worked: counts only once approved. */}
+                  {r.workOnLeave?.status && (
+                    <span title="You punched in on a day you were on approved leave"
+                      className={`ml-1 inline-block px-2 py-0.5 text-xs rounded-lg ${WORK_ON_LEAVE_COLORS[r.workOnLeave.status]}`}>
+                      {WORK_ON_LEAVE_LABELS[r.workOnLeave.status]}
                     </span>
                   )}
                 </td>

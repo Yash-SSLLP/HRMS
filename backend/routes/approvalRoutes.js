@@ -18,6 +18,9 @@ const {
   listMyRegularizationApprovals,
   approveRegularization,
   rejectRegularization,
+  listMyWorkOnLeave,
+  approveWorkOnLeave,
+  rejectWorkOnLeave,
 } = require('../controllers/approvalController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -56,6 +59,14 @@ router.get('/regularizations', listMyRegularizationApprovals);
 router.patch('/regularizations/:id/approve', approveRegularization);
 // PATCH /regularizations/:id/reject — reject at my step; protected (must be current approver).
 router.patch('/regularizations/:id/reject', rejectRegularization);
+
+// GET /work-on-leave — days someone punched in on while on approved leave, waiting
+// on me; protected (scoped to the top rung of that employee's leave hierarchy).
+router.get('/work-on-leave', listMyWorkOnLeave);
+// PATCH /work-on-leave/:id/approve — the leave day is returned, the day counts as worked.
+router.patch('/work-on-leave/:id/approve', approveWorkOnLeave);
+// PATCH /work-on-leave/:id/reject — punches kept for audit, the day stays leave.
+router.patch('/work-on-leave/:id/reject', rejectWorkOnLeave);
 
 // GET /clearances — exits with a no-dues section assigned to me; protected (assignee-scoped).
 router.get('/clearances', listMyClearances);

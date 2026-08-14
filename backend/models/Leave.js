@@ -78,6 +78,13 @@ const leaveRequestSchema = new mongoose.Schema(
     // Sundays + holidays, so paidDays + lopDays can be < totalDays.
     paidDays: { type: Number, default: 0 },
     lopDays: { type: Number, default: 0 },
+    // IST day keys ('YYYY-MM-DD') inside this request's range that the employee
+    // actually WORKED, and which an approver has given back to them — see
+    // releaseLeaveDay in leaveController. Such a day is excluded from the
+    // paid/LOP split and is never re-stamped onto the attendance calendar.
+    // `totalDays` deliberately still reports the span originally applied for;
+    // this array is what says how much of it was handed back.
+    workedDays: { type: [String], default: [] },
     reason: { type: String, trim: true, maxlength: 1000 },
     status: { type: String, enum: LEAVE_STATUS, default: 'Pending' },
     appliedAt: { type: Date, default: Date.now },

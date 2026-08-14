@@ -23,6 +23,38 @@ const doublePaySchema = new mongoose.Schema(
   { _id: false }
 );
 
+// An employee who punched in on a day they are on APPROVED leave.
+//
+// Working through your own leave is allowed but never silent: the punch is
+// recorded, the day KEEPS its leave status, and the claim waits for the top rung
+// of that employee's leave approval hierarchy. Approved → the leave day is given
+// back and the day becomes a normal worked day; Rejected → the punches stay on
+// the record for audit but the day remains leave. HR is told either way.
+// Lives on the day it describes, exactly like the doublePay decision above.
+const workOnLeaveSchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
+    // The approved leave being worked through, and a snapshot of its type so the
+    // approver's inbox reads correctly without a second lookup.
+    leaveRequest: { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveRequest' },
+    leaveType: String,
+    // The status the day carries while this is undecided — 'OnLeave' for a paid
+    // leave day, 'Absent' for an LOP one. Restored on rejection.
+    leaveStatus: String,
+    // Whose decision it is: the TOP rung of the employee's leave hierarchy.
+    approver: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    approverName: String,
+    requestedAt: Date,
+    decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    decidedAt: Date,
+    note: String,
+    // Set once the approval actually gave the leave day back, so a re-run (or a
+    // later HR edit) can never credit the same day twice.
+    leaveDayReturned: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
 // GPS location captured by the client at the moment of a punch photo.
 const locationSchema = new mongoose.Schema(
   {
@@ -89,6 +121,9 @@ const attendanceSchema = new mongoose.Schema(
     // Only ever set on a Sunday / Comp Off day that was worked — the approval
     // that turns that day into double pay in the payroll run.
     doublePay: doublePaySchema,
+    // Only ever set when the employee punched in on a day they were on approved
+    // leave — the approval that decides whether that punch counts as work.
+    workOnLeave: workOnLeaveSchema,
     remarks: String,
   },
   { timestamps: true }
@@ -96,6 +131,13 @@ const attendanceSchema = new mongoose.Schema(
 
 // One attendance record per employee per day.
 attendanceSchema.index({ employee: 1, date: 1 }, { unique: true });
+
+// The approver's inbox query: "work-on-leave claims awaiting me". Sparse because
+// only the handful of days someone worked through their leave carry the field.
+attendanceSchema.index(
+  { 'workOnLeave.approver': 1, 'workOnLeave.status': 1 },
+  { sparse: true }
+);
 
 // A later-filled check-out (HR edit / regularization) clears the no-punch-out mark.
 attendanceSchema.pre('save', function clearNoPunchOut(next) {

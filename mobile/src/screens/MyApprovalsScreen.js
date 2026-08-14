@@ -72,17 +72,21 @@ export default function MyApprovalsScreen() {
   const [clearances, setClearances] = useState([]);
   // Attendance corrections routed by the SuperAdmin-configured ladder.
   const [regularizations, setRegularizations] = useState([]);
+  // Days someone punched in on while on approved leave. Not a ladder — the whole
+  // hierarchy already granted the leave, so only its top rung rules on this.
+  const [workOnLeave, setWorkOnLeave] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
-    const [lv, hist, ex, cl, rg] = await Promise.all([
+    const [lv, hist, ex, cl, rg, wol] = await Promise.all([
       api.get('/approvals/leave?scope=pending').catch(() => ({ data: {} })),
       api.get('/approvals/leave?scope=history').catch(() => ({ data: {} })),
       api.get('/approvals/exits?scope=pending').catch(() => ({ data: {} })),
       api.get('/approvals/clearances?scope=pending').catch(() => ({ data: {} })),
       api.get('/approvals/regularizations?scope=pending').catch(() => ({ data: {} })),
+      api.get('/approvals/work-on-leave?scope=pending').catch(() => ({ data: {} })),
     ]);
     setLeave(lv.data?.requests || []);
     setEmergency(
@@ -94,6 +98,7 @@ export default function MyApprovalsScreen() {
     setExits(ex.data?.requests || []);
     setClearances(cl.data?.requests || []);
     setRegularizations(rg.data?.requests || []);
+    setWorkOnLeave(wol.data?.claims || []);
     setLoading(false);
   }, []);
 
@@ -173,6 +178,41 @@ export default function MyApprovalsScreen() {
     );
   };
 
+  // ── Worked on a leave day ────────────────────────────────────────────────
+  // Approving hands the leave day back and turns the day into a worked one;
+  // rejecting keeps the punches on the record but the day stays leave. Both are
+  // one-shot — there is no next rung to pass it to.
+  const decideWorkOnLeave = async (item, action) => {
+    setBusyId(item._id);
+    try {
+      await api.patch(`/approvals/work-on-leave/${item._id}/${action}`, {});
+      setWorkOnLeave((prev) => prev.filter((x) => x._id !== item._id));
+    } catch (err) {
+      toast('Action failed', errMsg(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmWorkOnLeave = (item, action) => {
+    const approving = action === 'approve';
+    const who = empName(item);
+    Alert.alert(
+      approving ? 'Count this day as worked?' : 'Reject the punch-in?',
+      approving
+        ? `${who}'s leave day on ${fmtDate(item.date)} will be returned to them and the day will count as worked.`
+        : `${fmtDate(item.date)} will stay recorded as leave for ${who}. Their punches are kept on the record.`,
+      [
+        { text: 'Cancel' },
+        {
+          text: approving ? 'Approve' : 'Reject',
+          style: approving ? 'default' : 'destructive',
+          onPress: () => decideWorkOnLeave(item, action),
+        },
+      ]
+    );
+  };
+
   // ── Resignations ─────────────────────────────────────────────────────────
   const decideExit = async (item, action) => {
     setBusyId(item._id);
@@ -227,7 +267,7 @@ export default function MyApprovalsScreen() {
   if (loading) return <Screen><SkeletonScreen /></Screen>;
 
   const nothing = !leave.length && !emergency.length && !exits.length && !clearances.length
-    && !regularizations.length;
+    && !regularizations.length && !workOnLeave.length;
 
   return (
     <Screen edges={[]}>
@@ -259,6 +299,43 @@ export default function MyApprovalsScreen() {
                   busy={busyId === it._id}
                   onApprove={() => decideLeave(it, 'approve')}
                   onReject={() => confirmLeaveReject(it)}
+                />
+              </Card>
+            ))}
+          </>
+        )}
+
+        {/* Punched in on a day they were on approved leave. I am the top of their
+            leave hierarchy, so this is mine alone to decide — no next rung. */}
+        {workOnLeave.length > 0 && (
+          <>
+            <SectionHeader title={`Worked on a leave day (${workOnLeave.length})`} />
+            {workOnLeave.map((it) => (
+              <Card key={it._id} style={{ marginBottom: spacing(3) }}>
+                <View style={styles.head}>
+                  <Avatar name={empName(it)} size={40} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={font.h3}>{empName(it)}</Text>
+                    <Text style={font.label}>
+                      {it.workOnLeave?.leaveType || 'Leave'} · {fmtDate(it.date)}
+                    </Text>
+                  </View>
+                  <Pill label="On leave" tone="warning" />
+                </View>
+                <View style={{ marginTop: 8 }}>
+                  <Text style={font.small}>
+                    In {fmtClock(it.checkIn) || '—'} · Out {fmtClock(it.checkOut) || '—'}
+                    {it.hoursWorked > 0 ? ` · ${it.hoursWorked} h` : ''}
+                  </Text>
+                  <Text style={[font.small, { marginTop: 6, color: colors.textMuted }]}>
+                    Approving returns the leave day and records the day as worked. Rejecting keeps the
+                    punches on the record but the day stays as leave.
+                  </Text>
+                </View>
+                <DecideRow
+                  busy={busyId === it._id}
+                  onApprove={() => confirmWorkOnLeave(it, 'approve')}
+                  onReject={() => confirmWorkOnLeave(it, 'reject')}
                 />
               </Card>
             ))}

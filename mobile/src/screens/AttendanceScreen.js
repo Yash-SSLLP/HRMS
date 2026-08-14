@@ -7,7 +7,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from '../components/Toast';
-import { View, Text, StyleSheet, ScrollView, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Switch, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -68,6 +68,10 @@ export default function AttendanceScreen() {
   const [wfh, setWfh] = useState(false);
   const [wfhAllowed, setWfhAllowed] = useState(false); // granted per employee by the Backend
   const [halfDay, setHalfDay] = useState(false); // declare today a half day at either punch
+  // Set when today falls inside an approved leave. Punching in is still allowed,
+  // but it is warned about first and the day only counts once the top of the
+  // leave hierarchy approves it — see openWorkOnLeaveClaim on the backend.
+  const [todayLeave, setTodayLeave] = useState(null);
   const [policy, setPolicy] = useState(null); // { year, month, needsSetup, policy }
   const [, setTick] = useState(0); // re-render each second to advance the live clock
 
@@ -104,6 +108,7 @@ export default function AttendanceScreen() {
     setToday(data.today || null);
     setRecords(data.records || []);
     setWfhAllowed(!!data.wfhAllowed);
+    setTodayLeave(data.todayLeave || null);
     // Reflect a half day already declared at check-in, so the toggle doesn't
     // read as "off" when punching out of a day the employee already marked.
     setHalfDay(data.today?.status === 'HalfDay');
@@ -169,6 +174,24 @@ export default function AttendanceScreen() {
   // Selfie -> best GPS fix -> multipart POST to checkin/checkout, then reload.
   // `which` is 'checkin' or 'checkout'; aborts if no selfie captured.
   const punch = async (which) => {
+    // Punching in on a day already covered by approved leave: warn first, before
+    // the camera opens, so the employee decides knowing the day will not count
+    // until it is approved. Punching is never refused — they may genuinely be needed.
+    if (which === 'checkin' && todayLeave) {
+      const proceed = await new Promise((resolve) => {
+        Alert.alert(
+          'You are on leave today',
+          `You are on approved ${todayLeave.leaveType} today. You can still punch in, but today stays recorded as leave until ${todayLeave.approverName || 'your leave approver'} approves it. Once approved, the leave day is returned to you and the day counts as worked.`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Punch in anyway', onPress: () => resolve(true) },
+          ],
+          { cancelable: true, onDismiss: () => resolve(false) }
+        );
+      });
+      if (!proceed) return;
+    }
+
     const asset = await capture();
     if (!asset) return;
     const coords = await getLocation();
@@ -185,9 +208,13 @@ export default function AttendanceScreen() {
         form.append('longitude', String(coords.longitude));
         if (coords.accuracy != null) form.append('accuracy', String(coords.accuracy));
       }
-      await api.post(`/attendance/me/${which}`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const { data } = await api.post(`/attendance/me/${which}`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await load();
-      toast('Done', `You have checked ${which === 'checkin' ? 'in' : 'out'} successfully.`);
+      if (data?.workOnLeave?.message) {
+        toast('Awaiting approval', data.workOnLeave.message);
+      } else {
+        toast('Done', `You have checked ${which === 'checkin' ? 'in' : 'out'} successfully.`);
+      }
     } catch (err) {
       toast('Punch failed', errMsg(err));
     } finally {
@@ -241,6 +268,48 @@ export default function AttendanceScreen() {
                   <Text style={styles.liveText}>Running</Text>
                 </View>
               )}
+            </View>
+          )}
+
+          {/* On approved leave today, but not yet punched in — say so before the
+              punch, not after it. */}
+          {todayLeave && !today?.workOnLeave?.status && (
+            <View style={styles.leaveNote}>
+              <Ionicons name="alert-circle" size={16} color={colors.warning} />
+              <Text style={styles.leaveNoteText}>
+                You are on approved {todayLeave.leaveType} today. You can still punch in, but the day
+                stays as leave until {todayLeave.approverName || 'your leave approver'} approves it.
+              </Text>
+            </View>
+          )}
+
+          {/* Punched in anyway — where the decision stands. */}
+          {today?.workOnLeave?.status === 'Pending' && (
+            <View style={styles.leaveNote}>
+              <Ionicons name="time" size={16} color={colors.warning} />
+              <Text style={styles.leaveNoteText}>
+                Worked on approved {today.workOnLeave.leaveType} — awaiting
+                {' '}{today.workOnLeave.approverName || 'your leave approver'}&apos;s approval. Until then
+                today counts as leave.
+              </Text>
+            </View>
+          )}
+          {today?.workOnLeave?.status === 'Approved' && (
+            <View style={styles.halfNote}>
+              <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+              <Text style={styles.halfNoteText}>
+                Your work on today&apos;s leave day was approved
+                {today.workOnLeave.leaveDayReturned ? ' — the leave day has been returned to you' : ''}.
+              </Text>
+            </View>
+          )}
+          {today?.workOnLeave?.status === 'Rejected' && (
+            <View style={[styles.leaveNote, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+              <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+              <Text style={[styles.leaveNoteText, { color: colors.textMuted }]}>
+                Your work on today&apos;s leave day was not approved, so today stays recorded as
+                {' '}{today.workOnLeave.leaveType}. Your punches are kept on the record.
+              </Text>
             </View>
           )}
 
@@ -422,6 +491,15 @@ const styles = StyleSheet.create({
     padding: spacing(3), marginBottom: spacing(3),
   },
   halfNoteText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.success, fontWeight: '600' },
+  // Worked on an approved-leave day: amber while it waits on the approver, green
+  // once it counts, plain once it has been refused.
+  leaveNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: colors.warningSoft, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.warning,
+    padding: spacing(3), marginBottom: spacing(3),
+  },
+  leaveNoteText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.warning, fontWeight: '600' },
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   metric: { width: '48.5%', backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), marginBottom: spacing(2.5) },
   metricLabel: { fontSize: 11, color: colors.textMuted },

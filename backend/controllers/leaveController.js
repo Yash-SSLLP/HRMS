@@ -560,18 +560,23 @@ function eachDayInclusive(startDate, endDate) {
 // Working days (Sundays + holidays excluded) covered by [start, end], grouped by
 // IST calendar month → { 'YYYY-MM': ['YYYY-MM-DD', …] } in chronological order.
 // These are the only days that carry a pay effect (matches attendance stamping).
-async function workingDaysByMonth(startDate, endDate) {
+// `excluded` drops further day keys — the days the employee worked through their
+// own leave and had given back (LeaveRequest.workedDays), which must not count
+// against the paid quota or be re-stamped as leave.
+async function workingDaysByMonth(startDate, endDate, excluded = []) {
   const days = eachDayInclusive(startDate, endDate);
   if (!days.length) return {};
   const holidays = await Holiday.find({ date: { $gte: days[0], $lte: days[days.length - 1] } })
     .select('date').lean().catch(() => []);
   const holidayKeys = new Set((holidays || []).map((h) => ymdIST(h.date)));
+  const workedKeys = new Set((excluded || []).map(String));
   const byMonth = {};
   for (const d of days) {
     const key = ymdIST(d);
     const [Y, M, D] = key.split('-').map(Number);
     if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) continue; // Sunday
     if (holidayKeys.has(key)) continue;                              // holiday
+    if (workedKeys.has(key)) continue;                               // worked, given back
     const ym = `${Y}-${String(M).padStart(2, '0')}`;
     (byMonth[ym] ||= []).push(key);
   }
@@ -602,10 +607,10 @@ async function paidLeaveUsedInMonth(employeeId, ym, excludeRequestId = null) {
     endDate: { $gte: start },
   };
   if (excludeRequestId) pendFilter._id = { $ne: excludeRequestId };
-  const pending = await LeaveRequest.find(pendFilter).select('startDate endDate isHalfDay').lean();
+  const pending = await LeaveRequest.find(pendFilter).select('startDate endDate isHalfDay workedDays').lean();
   let pendingDays = 0;
   for (const r of pending) {
-    const byMonth = await workingDaysByMonth(r.startDate, r.endDate);
+    const byMonth = await workingDaysByMonth(r.startDate, r.endDate, r.workedDays);
     const n = byMonth[ym]?.length || 0;
     pendingDays += r.isHalfDay ? Math.min(0.5, n) : n;
   }
@@ -622,8 +627,8 @@ async function paidLeaveUsedInMonth(employeeId, ym, excludeRequestId = null) {
 //   a month the employee only worked part of (joined or exited mid-month).
 // Returns day counts plus the set of LOP day-keys and a per-month breakdown so
 // the calendar can be stamped and the employee shown the split at apply time.
-async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, isHalfDay }, excludeRequestId = null) {
-  const byMonth = await workingDaysByMonth(startDate, endDate);
+async function computeLeaveSplit(employeeId, { leaveType, startDate, endDate, isHalfDay, workedDays }, excludeRequestId = null) {
+  const byMonth = await workingDaysByMonth(startDate, endDate, workedDays);
   const months = Object.keys(byMonth).sort();
   const workingKeys = months.flatMap((ym) => byMonth[ym]);
   const half = !!isHalfDay;
@@ -1223,7 +1228,14 @@ async function stampLeaveAttendance(request) {
     // onto the request so payslip/reporting reflect what was actually granted.
     const split = await computeLeaveSplit(
       request.employee,
-      { leaveType: request.leaveType, startDate: request.startDate, endDate: request.endDate, isHalfDay: request.isHalfDay },
+      {
+        leaveType: request.leaveType,
+        startDate: request.startDate,
+        endDate: request.endDate,
+        isHalfDay: request.isHalfDay,
+        // Days already worked back never return to the calendar as leave.
+        workedDays: request.workedDays,
+      },
       request._id
     );
     if (request.paidDays !== split.paidDays || request.lopDays !== split.lopDays) {
@@ -1269,6 +1281,127 @@ async function unstampLeaveAttendance(request) {
   } catch (err) {
     console.error('unstampLeaveAttendance failed:', err.message);
   }
+}
+
+// ===== Working through your own leave =====
+// An employee on approved leave who punches in anyway. The attendance side
+// (controllers/attendanceController) owns the punch and the approval record;
+// these three helpers are the leave-side knowledge it needs, and live here so
+// the quota/stamping rules stay in one module.
+
+/**
+ * The APPROVED leave that covers an IST day and still claims it, or null.
+ *
+ * Excludes the cases where punching in is already the expected thing to do, so
+ * no warning is raised for them:
+ *   - a half-day leave (the employee is meant to work the other half),
+ *   - a Sunday or a published holiday inside the range (a rest day worked is
+ *     rest-day duty — the doublePay claim — not work on leave),
+ *   - a day already worked back through this very flow.
+ *
+ * Date comparison note: startDate/endDate are cast from 'YYYY-MM-DD' and so sit
+ * at UTC midnight, while `day` is IST midnight (5h30 earlier). Comparing against
+ * [day, tomorrow) rather than `$lte: day` is what makes the first day of a leave
+ * match — the same idiom presenceBoard uses.
+ *
+ * @param {ObjectId|string} employeeId - EmployeeProfile id
+ * @param {Date} day - IST midnight of the day in question
+ * @returns {Promise<Object|null>} the LeaveRequest document, or null
+ */
+async function leaveCoveringDay(employeeId, day) {
+  const key = ymdIST(day);
+  const [Y, M, D] = key.split('-').map(Number);
+  if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) return null; // Sunday
+  const tomorrow = new Date(startOfDayIST(day).getTime() + 24 * 60 * 60 * 1000);
+  const request = await LeaveRequest.findOne({
+    employee: employeeId,
+    status: 'Approved',
+    isHalfDay: false,
+    startDate: { $lt: tomorrow },
+    endDate: { $gte: startOfDayIST(day) },
+    workedDays: { $ne: key },
+  }).sort({ decisionAt: -1 });
+  if (!request) return null;
+  const holiday = await Holiday.findOne({ date: startOfDayIST(day) }).select('_id').lean().catch(() => null);
+  if (holiday) return null;
+  return request;
+}
+
+/**
+ * The single person who decides whether a day worked on leave counts: the TOP
+ * rung of this employee's leave hierarchy — the last step of the configured
+ * `leaveApprovers` ladder, or the highest manager the org-chart walk reaches.
+ *
+ * Unlike a leave request this never climbs step by step: the employee has
+ * already been granted the leave by the whole ladder, so only the person who had
+ * the final say on it needs to rule on working through it. Falls back to the HR
+ * partner and then the oldest active SuperAdmin so the claim is never stranded
+ * with nobody able to act on it.
+ *
+ * @param {Object} profile - EmployeeProfile (needs user, reportingManager, leaveApprovers, hrPartner)
+ * @returns {Promise<{approver: ObjectId, approverName: string}|null>}
+ */
+async function topLeaveApproverFor(profile) {
+  const chain = await buildLeaveChain(profile);
+  const top = chain.length ? chain[chain.length - 1] : null;
+  if (top?.approver) return { approver: top.approver, approverName: top.approverName };
+
+  const fallbackId = profile.hrPartner
+    || (await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('_id'))?._id;
+  if (!fallbackId) return null;
+  const u = await User.findById(fallbackId).select('firstName lastName isActive');
+  if (!u || u.isActive === false) return null;
+  return {
+    approver: u._id,
+    approverName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+  };
+}
+
+/**
+ * Give one day of an approved leave back to the employee because they worked it.
+ *
+ * `totalDays` is left alone — it records the span that was applied for and
+ * approved. What changes is what the day COSTS: the key joins `workedDays`, so
+ * it never returns to the calendar as leave, and its day comes off the split.
+ * The employee's monthly paid-leave quota frees up on its own, because that is
+ * counted from OnLeave attendance rows and the caller flips this day to Present.
+ * Maternity leave additionally draws a banked bucket, so that day is credited
+ * back to it here.
+ *
+ * The split is adjusted by DECREMENTING the bucket the day was actually stamped
+ * into, not by recomputing it. A recompute would be wrong: the quota counter
+ * reads stamped OnLeave rows, and by now this very request has stamped its own —
+ * so it would see the month as full and quietly push the leave's remaining days
+ * into LOP.
+ *
+ * @param {Object} request - the LeaveRequest document to amend
+ * @param {string} dayKey - IST day key 'YYYY-MM-DD'
+ * @param {boolean} [wasPaid=true] - whether the day was stamped OnLeave (paid) rather than Absent (LOP)
+ * @returns {Promise<boolean>} true if the day was released, false if it already had been
+ */
+async function releaseLeaveDay(request, dayKey, wasPaid = true) {
+  if (!request || !dayKey) return false;
+  const worked = (request.workedDays || []).map(String);
+  if (worked.includes(dayKey)) return false; // already given back — never twice
+  request.workedDays = [...worked, dayKey];
+
+  const weight = request.isHalfDay ? 0.5 : 1;
+  if (wasPaid) request.paidDays = Math.max(0, (request.paidDays || 0) - weight);
+  else request.lopDays = Math.max(0, (request.lopDays || 0) - weight);
+  await request.save();
+
+  // Maternity leave is the only type drawn from a balance bucket; hand the day back.
+  if (balanceBucketFor(request.leaveType)) {
+    try {
+      const year = new Date(request.startDate).getFullYear();
+      const balance = await getOrCreateBalance(request.employee, year);
+      adjustBalance(balance, request.leaveType, -weight); // negative delta restores
+      await balance.save();
+    } catch (err) {
+      console.error('releaseLeaveDay balance restore failed:', err.message);
+    }
+  }
+  return true;
 }
 
 // Hierarchy step decision — the normal path. The acting user MUST be the current
@@ -1505,4 +1638,9 @@ module.exports = {
   advanceApproval,
   buildApprovalChain,
   ensureApprovalChain,
+  // Working through your own leave — used by the attendance punch + approval path.
+  leaveCoveringDay,
+  topLeaveApproverFor,
+  releaseLeaveDay,
+  leaveLabel,
 };
