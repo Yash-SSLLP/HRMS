@@ -280,13 +280,21 @@ function uploadAsset(releaseId, repo, assetName, file, size) {
   const notes = notesFile
     ? fs.readFileSync(path.resolve(ROOT, notesFile), 'utf8').trim()
     : (valueOf('--notes') || '').trim();
+  // The footer is the line most people actually read, so it must not promise a
+  // clean in-place upgrade when the signing certificate has changed — Android
+  // refuses those, and "App not installed" with no explanation is the worst way
+  // to find that out.
+  const footer = has('--requires-uninstall')
+    ? 'This build is signed with a new key, so it will NOT install over the previous version. Uninstall the old app first, then install this one. You will need to sign in again. Future updates install normally.'
+    : 'Installs over the previous version and keeps your data. Android 7+.';
+
   const body = [
     `v${version} (build ${versionCode})`,
     '',
     notes,
     '',
     '---',
-    'Installs over the previous version and keeps your data. Android 7+.',
+    footer,
   ].filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
 
   if (DRY) {
