@@ -1672,10 +1672,10 @@ const presenceBoard = asyncHandler(async (req, res) => {
       .populate('user', 'firstName lastName photo isActive')
       .lean(),
     Attendance.find({ date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
-      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInPhotoCloud checkOutPhotoCloud checkInWfh hoursWorked status')
+      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInPhotoCloud checkOutPhotoCloud checkInWfh hoursWorked status workOnLeave')
       .lean(),
     LeaveRequest.find({ status: 'Approved', startDate: { $lt: tomorrow }, endDate: { $gte: today } })
-      .select('employee leaveType isHalfDay halfDaySession startDate endDate reason')
+      .select('employee leaveType isHalfDay halfDaySession startDate endDate reason workedDays')
       .lean(),
   ]);
 
@@ -1695,9 +1695,14 @@ const presenceBoard = asyncHandler(async (req, res) => {
     hasAvatar: Boolean(p.user?.photo),
   });
 
+  // A punch puts you in the present list — unless the day's own record still
+  // says the day is leave, which is the case while a work-on-leave claim is
+  // undecided. Those people belong in the leave list until it is approved, so
+  // this board and the dashboard donut tell the same story about them.
   const presentIds = new Set();
   const present = records
-    .filter((r) => byId.has(String(r.employee)))
+    .filter((r) => byId.has(String(r.employee))
+      && !(r.workOnLeave && r.workOnLeave.status === 'Pending'))
     .map((r) => {
       const p = byId.get(String(r.employee));
       presentIds.add(String(r.employee));
@@ -1718,9 +1723,22 @@ const presenceBoard = asyncHandler(async (req, res) => {
 
   // Someone can be on approved leave and still have punched in (e.g. half-day).
   // The present list wins; leave-only people go in the leave list.
+  //
+  // Two days are NOT leave any more: one the employee worked and had approved
+  // back (`workedDays`), and one where they are already in the present list.
+  // The `seen` guard is what keeps the row counts honest — an employee with two
+  // approved leaves covering today would otherwise be listed (and counted) twice.
+  const todayKey = ymdLocal(today);
   const leaveIds = new Set();
+  const seen = new Set();
   const onLeave = leaves
-    .filter((lv) => byId.has(String(lv.employee)) && !presentIds.has(String(lv.employee)))
+    .filter((lv) => {
+      const id = String(lv.employee);
+      if (!byId.has(id) || presentIds.has(id) || seen.has(id)) return false;
+      if ((lv.workedDays || []).includes(todayKey)) return false;
+      seen.add(id);
+      return true;
+    })
     .map((lv) => {
       const p = byId.get(String(lv.employee));
       leaveIds.add(String(lv.employee));

@@ -15,7 +15,7 @@ const Department = require('../models/Department');
 const Holiday = require('../models/Holiday');
 // Anchor "today" to the IST calendar day (server runs in UTC) so the
 // "Present today" count matches the day attendance punches are filed under.
-const { startOfDayIST } = require('../utils/dateHelpers');
+const { startOfDayIST, ymdIST } = require('../utils/dateHelpers');
 
 function startOfToday() {
   return startOfDayIST();
@@ -32,10 +32,6 @@ function startOfToday() {
 const adminSummary = asyncHandler(async (req, res) => {
   const isHR = req.user.role === 'HRManager';
 
-  // All HR/SuperAdmin see the whole organisation — no per-HR employee scoping.
-  const profiles = await EmployeeProfile.find({})
-    .select('_id department documentsVerified')
-    .lean();
   const empFilter = {};
 
   const today = startOfToday();
@@ -44,22 +40,37 @@ const adminSummary = asyncHandler(async (req, res) => {
   const in30 = new Date(today);
   in30.setDate(today.getDate() + 30);
 
+  // All HR/SuperAdmin see the whole organisation — no per-HR employee scoping.
+  //
+  // Everyone this dashboard counts is an ACTIVE, not-yet-exited employee, the
+  // same rule the presence board uses for its headcount. Counting every profile
+  // ever created made "Total employees" — and the attendance donut, whose slices
+  // are derived from it — read higher than the real headcount.
+  const allProfiles = await EmployeeProfile.find({})
+    .select('_id department documentsVerified dateOfExit user')
+    .populate('user', 'isActive')
+    .lean();
+  const profiles = allProfiles.filter(
+    (p) => p.user && p.user.isActive !== false && (!p.dateOfExit || new Date(p.dateOfExit) > today)
+  );
+
   const [
-    presentToday,
-    onLeaveToday,
+    todayRecords,
+    todayLeaves,
     pendingLeaves,
     departmentsCount,
     docs,
     pendingLeaveRequests,
     nextHolidays,
   ] = await Promise.all([
-    Attendance.countDocuments({ ...empFilter, date: today, checkIn: { $ne: null } }),
-    LeaveRequest.countDocuments({
+    Attendance.find({ ...empFilter, date: today, checkIn: { $ne: null } })
+      .select('employee workOnLeave').lean(),
+    LeaveRequest.find({
       ...empFilter,
       status: 'Approved',
-      startDate: { $lte: tomorrow },
+      startDate: { $lt: tomorrow },
       endDate: { $gte: today },
-    }),
+    }).select('employee workedDays').lean(),
     LeaveRequest.countDocuments({ ...empFilter, status: 'Pending' }),
     Department.countDocuments({}),
     Document.find({}).select('employee category').lean(),
@@ -70,6 +81,39 @@ const adminSummary = asyncHandler(async (req, res) => {
       .lean(),
     Holiday.find({ date: { $gte: today, $lt: in30 } }).sort({ date: 1 }).limit(5).lean(),
   ]);
+
+  // Present / on leave / absent are three buckets over the SAME headcount, so
+  // they are resolved as disjoint sets of employees rather than three
+  // independent counts. Counting them separately let one person land in two
+  // buckets — someone on approved leave who punched in was counted as present
+  // AND on leave, which understated "absent" by the same amount.
+  const activeIds = new Set(profiles.map((p) => String(p._id)));
+  const todayKey = ymdIST(today);
+
+  // A punch makes you present — unless the day's own record says the day is
+  // still leave, which is the case while a work-on-leave claim is undecided.
+  const heldOnLeave = new Set(
+    todayRecords
+      .filter((r) => r.workOnLeave && r.workOnLeave.status === 'Pending')
+      .map((r) => String(r.employee))
+  );
+  const presentIds = new Set(
+    todayRecords
+      .filter((r) => activeIds.has(String(r.employee)) && !heldOnLeave.has(String(r.employee)))
+      .map((r) => String(r.employee))
+  );
+  // On leave: an approved leave that still claims today. A day the employee
+  // worked and had approved back (workedDays) is no longer leave, and someone
+  // already counted present is never counted again here.
+  const onLeaveIds = new Set(
+    todayLeaves
+      .filter((l) => activeIds.has(String(l.employee))
+        && !(l.workedDays || []).includes(todayKey)
+        && !presentIds.has(String(l.employee)))
+      .map((l) => String(l.employee))
+  );
+  const presentToday = presentIds.size;
+  const onLeaveToday = onLeaveIds.size;
 
   // Open complaints assigned to this admin (SuperAdmin: all open).
   const complaintFilter = { status: { $in: ['open', 'under_review'] } };
