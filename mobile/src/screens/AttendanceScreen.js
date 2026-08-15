@@ -10,24 +10,17 @@ import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, Switch, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, AppButton, Pill, Loader, refresher, SectionHeader, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate, fmtTime, fmtHours, rupees } from '../utils/format';
+import { getPunchLocation, submitPunch, markPunchPending, clearPunchPending } from '../utils/punch';
 
 const STATUS_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info', Holiday: 'neutral', WeekOff: 'neutral' };
 // Rest-day duty (a Sunday / company comp-off day that was worked): paid double
 // once HR or the reporting manager approves it, so the day carries its state.
 const DOUBLE_PAY_TONE = { Approved: 'success', Rejected: 'neutral', Pending: 'warning' };
-
-// GPS accuracy tuning for the punch location. The first fix a device returns is
-// usually coarse (network based); a real GPS fix converges over a few seconds,
-// so we watch briefly and keep the most accurate reading instead of trusting
-// the first one, which was recording misleading locations.
-const GPS_GOOD_ENOUGH_M = 25;   // resolve early once a fix is at least this accurate
-const GPS_MAX_WAIT_MS = 12000;  // otherwise accept the best fix within this window
 
 // Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day started
 // after this is the AFTERNOON half — always allowed, and never a late arrival.
@@ -120,55 +113,27 @@ export default function AttendanceScreen() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   // Prompt for camera access and take a front-camera selfie for the punch.
-  const capture = async () => {
+  // `which` is only recorded so the punch can be finished on the next launch if
+  // Android destroys the app behind the camera — see utils/punch.js.
+  const capture = async (which) => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
       toast('Camera needed', 'Allow camera access to punch with a selfie.');
       return null;
     }
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.5, cameraType: ImagePicker.CameraType.front, allowsEditing: false });
-    if (result.canceled) return null;
-    return result.assets[0];
-  };
-
-  // Accurate GPS fix for the punch. Rather than trusting the first (coarse)
-  // reading, watch for a few seconds and keep the most accurate fix, resolving
-  // early once it is good enough. Returns null if permission is denied or no
-  // fix arrives — the punch still proceeds without coordinates.
-  const getLocation = async () => {
+    await markPunchPending({ which, wfh, halfDay });
+    let result;
     try {
-      const perm = await Location.requestForegroundPermissionsAsync();
-      if (!perm.granted) return null;
-      return await new Promise((resolve) => {
-        let best = null;
-        let sub = null;
-        let done = false;
-        const finish = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          if (sub) sub.remove();
-          resolve(best);
-        };
-        const timer = setTimeout(finish, GPS_MAX_WAIT_MS);
-        Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Highest, timeInterval: 1000, distanceInterval: 0 },
-          (pos) => {
-            const c = pos?.coords;
-            if (!c) return;
-            if (!best || (c.accuracy != null && c.accuracy < best.accuracy)) best = c;
-            if (best.accuracy != null && best.accuracy <= GPS_GOOD_ENOUGH_M) finish();
-          }
-        )
-          .then((s) => {
-            sub = s;
-            if (done) s.remove(); // max-wait already elapsed before the watch started
-          })
-          .catch(() => finish());
-      });
-    } catch {
+      result = await ImagePicker.launchCameraAsync({ quality: 0.5, cameraType: ImagePicker.CameraType.front, allowsEditing: false });
+    } catch (err) {
+      await clearPunchPending();
+      throw err;
+    }
+    if (result.canceled) {
+      await clearPunchPending();
       return null;
     }
+    return result.assets[0];
   };
 
   // Selfie -> best GPS fix -> multipart POST to checkin/checkout, then reload.
@@ -192,23 +157,18 @@ export default function AttendanceScreen() {
       if (!proceed) return;
     }
 
-    const asset = await capture();
+    let asset;
+    try {
+      asset = await capture(which);
+    } catch (err) {
+      toast('Camera failed', errMsg(err));
+      return;
+    }
     if (!asset) return;
-    const coords = await getLocation();
+    const coords = await getPunchLocation();
     setBusy(true);
     try {
-      const form = new FormData();
-      form.append('photo', { uri: asset.uri, name: 'punch.jpg', type: 'image/jpeg' });
-      form.append('wfh', wfh ? 'true' : 'false');
-      // Declared at check-in it stands for the whole day; declared at check-out
-      // it overrides the hours rule. Either way the server decides, not us.
-      form.append('halfDay', halfDay ? 'true' : 'false');
-      if (coords) {
-        form.append('latitude', String(coords.latitude));
-        form.append('longitude', String(coords.longitude));
-        if (coords.accuracy != null) form.append('accuracy', String(coords.accuracy));
-      }
-      const { data } = await api.post(`/attendance/me/${which}`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const data = await submitPunch({ which, asset, wfh, halfDay, coords });
       await load();
       if (data?.workOnLeave?.message) {
         toast('Awaiting approval', data.workOnLeave.message);
@@ -218,6 +178,8 @@ export default function AttendanceScreen() {
     } catch (err) {
       toast('Punch failed', errMsg(err));
     } finally {
+      // The photo has been dealt with either way; nothing left to recover.
+      await clearPunchPending();
       setBusy(false);
     }
   };

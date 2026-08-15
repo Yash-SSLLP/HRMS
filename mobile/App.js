@@ -3,8 +3,10 @@
 // mounts the NavigationContainer (with navRef) around RootNavigator. On launch it
 // hydrates the persisted auth session and security prefs (showing a splash until
 // both are ready), then, once authenticated, registers for push and wires the
-// notification received/tapped/cold-launch listeners. Renders the biometric
-// LockScreen as an overlay above the nav tree when app-lock is engaged.
+// notification received/tapped/cold-launch listeners, and completes any
+// attendance punch Android interrupted by killing the app behind the camera.
+// Renders the biometric LockScreen as an overlay above the nav tree when
+// app-lock is engaged.
 import React, { useEffect, useRef } from 'react';
 import { View, ActivityIndicator, StyleSheet, AppState } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -22,9 +24,10 @@ import RootNavigator from './src/navigation/RootNavigator';
 import LockScreen from './src/screens/LockScreen';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { navRef, navigateFromNotification } from './src/navigation/navRef';
-import { ToastHost } from './src/components/Toast';
+import { ToastHost, toast } from './src/components/Toast';
 import { registerForPush, clearBadge } from './src/services/push';
-import { warmUp } from './src/api/client';
+import { warmUp, errMsg } from './src/api/client';
+import { resumeInterruptedPunch } from './src/utils/punch';
 
 const navTheme = {
   dark: isDark,
@@ -48,6 +51,7 @@ export default function App() {
   const sec = useSecurity();
   const responseListener = useRef();
   const receivedListener = useRef();
+  const punchResumed = useRef(false);
 
   // Restore the saved session + security prefs on launch.
   useEffect(() => {
@@ -98,6 +102,26 @@ export default function App() {
       receivedListener.current && Notifications.removeNotificationSubscription(receivedListener.current);
       responseListener.current && Notifications.removeNotificationSubscription(responseListener.current);
     };
+  }, [token, refreshBadges]);
+
+  // Finish a punch Android interrupted. Taking the selfie hands the phone to the
+  // camera app, which can cost us our activity — the app cold starts on return,
+  // so the punch has to be completed from here rather than from the Attendance
+  // screen, which by then no longer exists. Once per launch only.
+  useEffect(() => {
+    if (!token || punchResumed.current) return;
+    punchResumed.current = true;
+    resumeInterruptedPunch()
+      .then((done) => {
+        if (!done) return;
+        refreshBadges();
+        const verb = done.which === 'checkin' ? 'in' : 'out';
+        if (done.data?.workOnLeave?.message) toast('Awaiting approval', done.data.workOnLeave.message);
+        else toast('Punch saved', `The app closed while the camera was open — your check ${verb} has been recorded.`);
+      })
+      .catch((err) => {
+        toast('Punch not saved', `${errMsg(err)} Please punch again.`);
+      });
   }, [token, refreshBadges]);
 
   if (!hydrated || !sec.hydrated) {

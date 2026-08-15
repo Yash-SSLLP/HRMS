@@ -27,6 +27,14 @@ export const BANNER_MAX_PX = 1280;
 export const RECEIPT_MAX_PX = 1600;
 
 /**
+ * Longest edge (px) for an attendance punch selfie. Only ever viewed to confirm
+ * who punched — in the record list and on the punch map — so a full 8–12 MP
+ * front-camera frame buys nothing and costs an upload the employee is standing
+ * at the gate waiting for.
+ */
+export const SELFIE_MAX_PX = 1080;
+
+/**
  * Downscale + re-encode a picked image as JPEG.
  * @param {{uri: string, width?: number, height?: number}} asset - An
  *   expo-image-picker asset (its width/height decide whether a resize is needed).
