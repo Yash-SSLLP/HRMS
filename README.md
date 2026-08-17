@@ -32,7 +32,6 @@ HRMS/
 ```bash
 cd backend
 npm install
-cp .env.example .env   # MONGO_URI, JWT_SECRET, CLOUDINARY_*, mail + push config, etc.
 npm run dev            # nodemon server.js  (npm start for production)
 ```
 
