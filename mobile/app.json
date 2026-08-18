@@ -2,7 +2,7 @@
   "expo": {
     "name": "SSLLP HRMS",
     "slug": "ssllp-hrms",
-    "version": "1.13.0",
+    "version": "1.13.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "ssllphrms",
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.ssllp.hrms",
-      "versionCode": 28,
+      "versionCode": 29,
       "googleServicesFile": "./google-services.json",
       "config": {
         "googleMaps": {
