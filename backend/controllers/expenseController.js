@@ -7,6 +7,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const Expense = require('../models/Expense');
+const khataSync = require('../services/khataSync');
 const { EXPENSE_STATUS } = require('../models/Expense');
 const AuditLog = require('../models/AuditLog');
 const CashAccount = require('../models/CashAccount');
@@ -315,6 +316,13 @@ const reviewExpense = asyncHandler(async (req, res) => {
   expense.reviewedBy = req.user._id;
   expense.reviewedAt = new Date();
   await expense.save();
+
+  // Mirror the claim into the employee's khata: approving it records that the
+  // company owes them for their own spend, reimbursing it squares that off. The
+  // pair nets to zero, and neither leg re-banks the cash — the cashbook entry
+  // posted above is the single record of the money leaving. Best-effort.
+  if (status === 'Approved') await khataSync.syncExpenseApproved(expense, req.user);
+  if (status === 'Reimbursed' && !wasReimbursed) await khataSync.syncExpenseReimbursed(expense, req.user);
   // Send the reviewer back named, so the row the caller re-renders shows who
   // acted without waiting for the next list fetch.
   await expense.populate('reviewedBy', USER_FIELDS);

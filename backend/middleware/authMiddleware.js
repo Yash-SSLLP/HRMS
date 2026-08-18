@@ -182,10 +182,21 @@ function hasPermission(user, cap) {
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (cap === 'assets.manage' && user.assetsAccess === true) return true;
+  // Khata access is the same kind of standalone grant — it opens the employee
+  // cash-ledger module for anyone, whatever their role. Paying a specific
+  // employee out of a specific account is gated separately, per account, by
+  // CashAccount.operators (see services/khataLedger.js → resolveDisburseRights).
+  if (cap === 'khata.manage' && user.khataAccess === true) return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
   // Account Managers settle reimbursements out of the cashbook, so they hold the
   // expense capability alongside it.
-  if (user.role === 'AccountsManager') return cap === 'cashbook.manage' || cap === 'expenses.manage';
+  // The khata rides along with the cashbook here because handing an employee a
+  // cash advance IS the accounts job. It stays safe because opening the module
+  // is not the same as being able to pay out of any given account — an Accounts
+  // Manager still has to be listed on the account before cash will move.
+  if (user.role === 'AccountsManager') {
+    return cap === 'cashbook.manage' || cap === 'expenses.manage' || cap === 'khata.manage';
+  }
   if (user.role === 'HRManager') {
     const perms = user.permissions;
     if (perms === undefined || perms === null) return true; // not configured → all

@@ -54,8 +54,13 @@ export function hasPermission(u, cap) {
   if (cap === 'cashbook.manage' && u.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && u.expensesAccess === true) return true;
   if (cap === 'assets.manage' && u.assetsAccess === true) return true;
+  // Khata access is the same kind of standalone grant. It opens the module;
+  // WHICH cash account they may pay from is decided per account on the server.
+  if (cap === 'khata.manage' && u.khataAccess === true) return true;
   if (u.role === 'LDManager') return cap === 'courses.manage';
-  if (u.role === 'AccountsManager') return cap === 'cashbook.manage' || cap === 'expenses.manage';
+  if (u.role === 'AccountsManager') {
+    return cap === 'cashbook.manage' || cap === 'expenses.manage' || cap === 'khata.manage';
+  }
   if (u.role === 'HRManager') {
     const p = u.permissions;
     if (p === undefined || p === null) return true; // not configured → all

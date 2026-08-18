@@ -52,6 +52,12 @@ const cashbookEntrySchema = new mongoose.Schema(
     // Set when this ledger row was auto-posted from a reimbursed expense claim.
     sourceExpense: { type: mongoose.Schema.Types.ObjectId, ref: 'Expense', default: null, index: true },
 
+    // Set when this row is the company-cash leg of an employee khata movement —
+    // an advance paid out, or a settlement taken back in. Lets finance jump from
+    // "₹5,000 left the petty-cash tin" straight to whose khata it landed in, and
+    // stops the khata posting the same cash twice.
+    sourceKhataEntry: { type: mongoose.Schema.Types.ObjectId, ref: 'KhataEntry', default: null, index: true },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

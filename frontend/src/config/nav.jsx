@@ -94,6 +94,9 @@ export const adminNav = [
     { to: '/admin/cashbook', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage',
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'ledger', label: 'Ledger' }, { id: 'vouchers', label: 'Vouchers' },
         { id: 'accounts', label: 'Accounts' }, { id: 'categories', label: 'Categories' }, { id: 'reports', label: 'Reports' }] },
+    { to: '/admin/khata', label: 'Employee Khata', icon: TbReceipt, perm: 'khata.manage',
+      tabs: [{ id: 'overview', label: 'Overview' }, { id: 'people', label: 'People' }, { id: 'ledger', label: 'Ledger' },
+        { id: 'approvals', label: 'Approvals' }, { id: 'accounts', label: 'Accounts' }] },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
@@ -161,6 +164,8 @@ export const accountsNav = [
   { to: '/admin/cashbook', label: 'Cashbook', end: true, icon: TbCashBanknote },
   // Account Managers settle reimbursements, so they get the expense queue too.
   { to: '/admin/expenses', label: 'Expenses', end: true, icon: FiShoppingBag },
+  // Handing cash to staff is the other half of the accounts job.
+  { to: '/admin/khata', label: 'Employee Khata', end: true, icon: TbReceipt },
 ];
 
 export const employeeNav = [
@@ -191,7 +196,10 @@ export const employeeNav = [
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
     { to: '/employee/travel', label: 'Travel', icon: FiMap },
+    { to: '/employee/khata', label: 'My Khata', icon: TbReceipt },
     { to: '/employee/cashbook-manage', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage' },
+    // The khata admin surface, for standalone-grant holders with no admin portal.
+    { to: '/employee/khata-manage', label: 'Employee Khata', icon: TbCashBanknote, perm: 'khata.manage' },
     // The review queue, for standalone-grant holders with no admin portal. Named
     // apart from the self-service "Expenses" row above, which lists only my own.
     { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },

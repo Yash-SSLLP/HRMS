@@ -21,10 +21,16 @@ export function hasPermission(user, cap) {
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (cap === 'assets.manage' && user.assetsAccess === true) return true;
+  // Khata access is the same kind of standalone grant: it opens the employee
+  // cash-ledger module for anyone. WHICH company account they may pay out of is
+  // decided per account on the server (CashAccount.operators), not here.
+  if (cap === 'khata.manage' && user.khataAccess === true) return true;
   if (user.role === 'LDManager') return cap === 'courses.manage';
   // Account Managers settle reimbursements out of the cashbook, so they hold the
   // expense capability alongside it.
-  if (user.role === 'AccountsManager') return cap === 'cashbook.manage' || cap === 'expenses.manage';
+  if (user.role === 'AccountsManager') {
+    return cap === 'cashbook.manage' || cap === 'expenses.manage' || cap === 'khata.manage';
+  }
   if (user.role === 'HRManager') {
     const p = user.permissions;
     if (p == null) return true; // undefined/null → all

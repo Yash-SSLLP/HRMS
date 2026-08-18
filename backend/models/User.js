@@ -71,6 +71,13 @@ const userSchema = new mongoose.Schema(
     // cashbookAccess above. Switch it on for ANY user or employee and they get
     // the expense-claim review module in their own portal.
     expensesAccess: { type: Boolean, default: false },
+    // Employee-khata access — the same standalone, role-independent grant as
+    // cashbookAccess. Switch it on for whoever actually hands cash to staff (a
+    // branch supervisor, a site in-charge) and they get the khata module without
+    // becoming an admin. It opens the MODULE only: which company account they may
+    // pay out of, and how much they may release without a second signature, is
+    // set per account on CashAccount.operators.
+    khataAccess: { type: Boolean, default: false },
     // Assets access — same standalone, role-independent grant. Switch it on for
     // the employee who actually looks after company hardware and they get the
     // Assets register in their own portal, without becoming an admin.

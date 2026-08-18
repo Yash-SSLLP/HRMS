@@ -5,6 +5,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const Loan = require('../models/Loan');
+const khataSync = require('../services/khataSync');
 
 // Populated employee sub-fields returned for loan references
 const USER_FIELDS = 'firstName lastName email';
@@ -119,6 +120,9 @@ const reviewLoan = asyncHandler(async (req, res) => {
     throw new Error('Loan not found');
   }
   const { status, reviewNote, emi, tenureMonths, disbursedOn } = req.body;
+  // Remembered before the overwrite so the khata is posted only on the FIRST
+  // activation, not every time an already-active loan is edited.
+  const wasActive = loan.status === 'Active';
   if (status) loan.status = status;
   if (reviewNote !== undefined) loan.reviewNote = reviewNote;
 
@@ -133,7 +137,17 @@ const reviewLoan = asyncHandler(async (req, res) => {
     loan.balance = loan.principal;
   }
   loan.reviewedBy = req.user._id;
+  const becameActive = status === 'Active' && !wasActive;
   await loan.save();
+
+  // Mirror the disbursement into the borrower's khata, so one screen shows the
+  // whole money position with this person rather than loans and cash advances
+  // sitting in two places. Idempotent and best-effort: it never blocks the
+  // approval it is following. Pass `cashAccount` to bank the payout as well.
+  if (becameActive) {
+    await khataSync.syncLoanDisbursement(loan, req.user, { cashAccount: req.body.cashAccount });
+  }
+
   res.json({ loan });
 });
 
@@ -159,6 +173,11 @@ const recordRepayment = asyncHandler(async (req, res) => {
   loan.balance = Math.max(0, loan.balance - amount);
   if (loan.balance === 0) loan.status = 'Closed';
   await loan.save();
+
+  // Mirror the repayment into the khata so the employee's balance follows the
+  // loan down. Best-effort; a failure here never voids a recorded repayment.
+  await khataSync.syncLoanRepayment(loan, amount, req.user, { cashAccount: req.body.cashAccount });
+
   res.json({ loan });
 });
 

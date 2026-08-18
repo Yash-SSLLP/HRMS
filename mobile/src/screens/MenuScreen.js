@@ -43,6 +43,8 @@ const GROUPS = [
       { key: 'Expenses', label: 'Expenses', icon: 'bag-handle', tint: '#ef4444' },
       // 'book' read as a library/reading module; a voucher is a receipt.
       { key: 'Cashbook', label: 'Cash Vouchers', icon: 'receipt', tint: '#0891b2' },
+      // The employee's own running cash account with the company.
+      { key: 'Khata', label: 'My Khata', icon: 'book', tint: '#c026d3' },
       { key: 'Loans', label: 'Loans', icon: 'wallet', tint: '#16a34a' },
       // Sits with the rest of the pay modules, as on the web ("Payroll & Expenses").
       { key: 'Declaration', label: 'Tax Declaration', icon: 'calculator', tint: '#0d9488' },
@@ -152,6 +154,11 @@ export default function MenuScreen() {
     }
     if (hasPermission(me, 'org.manage')) {
       adminItems.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2' });
+    }
+    // Handing cash to staff. Gated on the capability the screen's endpoints
+    // need, so a standalone khataAccess grant is enough — no admin role.
+    if (hasPermission(me, 'khata.manage')) {
+      adminItems.push({ key: 'KhataAdmin', label: 'Employee Khata', icon: 'book', tint: '#c026d3' });
     }
     // The daily reminder schedule pushes at the whole company, so it is
     // SuperAdmin-only — the same gate the server applies.

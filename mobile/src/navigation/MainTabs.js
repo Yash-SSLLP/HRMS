@@ -39,6 +39,7 @@ import AnnouncementsScreen from '../screens/AnnouncementsScreen';
 import TasksScreen from '../screens/TasksScreen';
 import ExpensesScreen from '../screens/ExpensesScreen';
 import CashbookScreen from '../screens/CashbookScreen';
+import KhataScreen from '../screens/KhataScreen';
 import DocumentsScreen from '../screens/DocumentsScreen';
 import GoalsScreen from '../screens/GoalsScreen';
 import ReviewsScreen from '../screens/ReviewsScreen';
@@ -69,6 +70,7 @@ import EmployeeDetailScreen from '../screens/admin/EmployeeDetailScreen';
 import AccountDetailScreen from '../screens/admin/AccountDetailScreen';
 import AddEmployeeScreen from '../screens/admin/AddEmployeeScreen';
 import WorkLocationsScreen from '../screens/admin/WorkLocationsScreen';
+import KhataAdminScreen from '../screens/admin/KhataAdminScreen';
 import PushNotificationScreen from '../screens/admin/PushNotificationScreen';
 import BrandingScreen from '../screens/admin/BrandingScreen';
 import PayrollScreen from '../screens/admin/PayrollScreen';
@@ -107,6 +109,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="Tasks" component={TasksScreen} options={{ title: 'My Tasks' }} />
       <HomeStackNav.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Expenses' }} />
       <HomeStackNav.Screen name="Cashbook" component={CashbookScreen} options={{ title: 'Cash Vouchers' }} />
+      <HomeStackNav.Screen name="Khata" component={KhataScreen} options={{ title: 'My Khata' }} />
       <HomeStackNav.Screen name="Documents" component={DocumentsScreen} options={{ title: 'Documents' }} />
       <HomeStackNav.Screen name="Goals" component={GoalsScreen} options={{ title: 'My Goals' }} />
       <HomeStackNav.Screen name="Reviews" component={ReviewsScreen} options={{ title: 'Performance Reviews' }} />
@@ -140,6 +143,7 @@ function HomeStack() {
       <HomeStackNav.Screen name="AccountDetail" component={AccountDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Account' })} />
       <HomeStackNav.Screen name="AddEmployee" component={AddEmployeeScreen} options={{ title: 'Add Employee' }} />
       <HomeStackNav.Screen name="WorkLocations" component={WorkLocationsScreen} options={{ title: 'Work Locations' }} />
+      <HomeStackNav.Screen name="KhataAdmin" component={KhataAdminScreen} options={{ title: 'Employee Khata' }} />
       {/* SuperAdmin-only in practice; the screen and the server both gate it. */}
       <HomeStackNav.Screen name="PushNotification" component={PushNotificationScreen} options={{ title: 'Push Notification' }} />
       <HomeStackNav.Screen name="Branding" component={BrandingScreen} options={{ title: 'Logo & Signatures' }} />

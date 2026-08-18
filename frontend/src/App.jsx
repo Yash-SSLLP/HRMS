@@ -106,6 +106,8 @@ const EmployeeReviews = lazy(() => import('./pages/EmployeeReviews.jsx'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
 const AdminCashbook = lazy(() => import('./pages/AdminCashbook.jsx'));
 const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
+const AdminKhata = lazy(() => import('./pages/AdminKhata.jsx'));
+const EmployeeKhata = lazy(() => import('./pages/EmployeeKhata.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
 const AdminPushNotifications = lazy(() => import('./pages/AdminPushNotifications.jsx'));
 
@@ -208,6 +210,7 @@ export default function App() {
         <Route path="salary-structures" element={<AdminSalaryStructures />} />
         <Route path="loans" element={<AdminLoans />} />
         <Route path="cashbook" element={<AdminCashbook />} />
+        <Route path="khata" element={<AdminKhata />} />
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
@@ -275,6 +278,9 @@ export default function App() {
         <Route path="expenses-manage" element={<AdminExpenses />} />
         <Route path="cashbook" element={<EmployeeCashbook />} />
         <Route path="cashbook-manage" element={<AdminCashbook />} />
+        <Route path="khata" element={<EmployeeKhata />} />
+        {/* The khata admin surface for standalone-grant holders who have no admin portal. */}
+        <Route path="khata-manage" element={<AdminKhata />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />

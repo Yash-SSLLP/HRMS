@@ -10,7 +10,9 @@
     "seed:superadmin": "node scripts/seedSuperAdmin.js",
     "seed:accounts-manager": "node scripts/seedAccountsManager.js",
     "seed:holidays": "node scripts/seedHolidays.js",
-    "seed:departments": "node scripts/seedDepartments.js"
+    "seed:departments": "node scripts/seedDepartments.js",
+    "test:khata": "node scripts/testKhataLedger.js",
+    "test:khata:db": "node scripts/testKhataIntegration.js"
   },
   "keywords": [
     "hrms",
