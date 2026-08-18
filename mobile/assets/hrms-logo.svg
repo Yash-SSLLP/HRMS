@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="HRMS"
+     color-interpolation-filters="sRGB">
+
+  <title>HRMS</title>
+
+  <defs>
+    <!-- Near-black tile with a faint lift so it doesn't read as dead flat -->
+    <radialGradient id="bg" cx="40%" cy="32%" r="86%">
+      <stop offset="0"    stop-color="#131211"/>
+      <stop offset="0.55" stop-color="#070706"/>
+      <stop offset="1"    stop-color="#000000"/>
+    </radialGradient>
+
+    <!-- Built around the reference gold #DAB66C -->
+    <linearGradient id="gold" gradientUnits="userSpaceOnUse" x1="150" y1="55" x2="360" y2="455">
+      <stop offset="0"    stop-color="#F6E3B4"/>
+      <stop offset="0.24" stop-color="#E6C98A"/>
+      <stop offset="0.50" stop-color="#DAB66C"/>
+      <stop offset="0.78" stop-color="#C39A4C"/>
+      <stop offset="1"    stop-color="#A87E33"/>
+    </linearGradient>
+
+    <linearGradient id="sheen" gradientUnits="userSpaceOnUse" x1="150" y1="40" x2="300" y2="300">
+      <stop offset="0"    stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.05"/>
+      <stop offset="1"    stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="18" flood-color="#C69B45" flood-opacity="0.34"/>
+    </filter>
+
+    <filter id="lift" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="7" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+
+    <!--
+      The mark is a zigzag stroke + arrowhead, CLIPPED to a vertical strip.
+      That clip is what produces the flat vertical faces at the tail, the left
+      chevron and the right point in the original artwork — they are not
+      mitred joins, they are cut off square.
+    -->
+    <clipPath id="strip">
+      <rect x="147.5" y="0" width="217.2" height="512"/>
+    </clipPath>
+
+    <g id="mark" clip-path="url(#strip)">
+      <!-- centreline: tail -> right vertex -> left vertex -> arrow base -->
+      <path d="M87.3 460.4 L364.7 324.5 L106.5 198.0 L327.5 89.7"
+            fill="none" stroke-width="37" stroke-linejoin="miter" stroke-miterlimit="12"/>
+      <!-- arrowhead: base corners, barbs, tip -->
+      <path d="M319.4 73.1 L318.8 60.5 L364.7 71.5 L345.2 114.5 L335.6 106.3 Z"
+            stroke="none"/>
+    </g>
+  </defs>
+
+  <!-- 1. Tile  (set rx on this rect for a rounded app-icon version) -->
+  <rect width="512" height="512" rx="0" fill="url(#bg)"/>
+
+  <!-- 2. Gold mark, BEHIND the wordmark -->
+  <g filter="url(#glow)">
+    <use xlink:href="#mark" href="#mark" fill="url(#gold)" stroke="url(#gold)"/>
+  </g>
+  <use xlink:href="#mark" href="#mark" fill="url(#sheen)" stroke="url(#sheen)"/>
+
+  <!-- 3. Wordmark in front, solid white -->
+  <text x="256" y="312" textLength="404" lengthAdjust="spacingAndGlyphs"
+        font-family="'Playfair Display','Didot','Bodoni MT','Bodoni 72',Georgia,'Times New Roman',serif"
+        font-size="160" font-weight="500" text-anchor="middle"
+        fill="#FFFFFF" filter="url(#lift)">HRMS</text>
+</svg>
