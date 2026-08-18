@@ -4,6 +4,17 @@
 
   <title>HRMS</title>
 
+  <!--
+    The HRMS lockup: "HRM" in a white serif, with the gold zigzag mark standing
+    in for the S. The mark is taller than the cap height on purpose — it
+    overshoots above and below the letters, which is what stops it reading as a
+    fourth letter and makes it read as a device.
+
+    Laid out on a 512 square because the app icon is the demanding case. The
+    banner crop (a tight viewBox around the lockup) is taken from this same
+    artwork at build time — see the icon generator.
+  -->
+
   <defs>
     <!-- Near-black tile with a faint lift so it doesn't read as dead flat -->
     <radialGradient id="bg" cx="40%" cy="32%" r="86%">
@@ -12,7 +23,9 @@
       <stop offset="1"    stop-color="#000000"/>
     </radialGradient>
 
-    <!-- Built around the reference gold #DAB66C -->
+    <!-- Built around the reference gold #DAB66C. userSpaceOnUse coordinates are
+         the MARK's own, before it is placed — so the gradient runs along the
+         zigzag rather than across the whole canvas. -->
     <linearGradient id="gold" gradientUnits="userSpaceOnUse" x1="150" y1="55" x2="360" y2="455">
       <stop offset="0"    stop-color="#F6E3B4"/>
       <stop offset="0.24" stop-color="#E6C98A"/>
@@ -22,24 +35,16 @@
     </linearGradient>
 
     <linearGradient id="sheen" gradientUnits="userSpaceOnUse" x1="150" y1="40" x2="300" y2="300">
-      <stop offset="0"    stop-color="#FFFFFF" stop-opacity="0.30"/>
-      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.05"/>
+      <stop offset="0"    stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.04"/>
       <stop offset="1"    stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
-
-    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="8" stdDeviation="18" flood-color="#C69B45" flood-opacity="0.34"/>
-    </filter>
-
-    <filter id="lift" x="-15%" y="-15%" width="130%" height="130%">
-      <feDropShadow dx="0" dy="3" stdDeviation="7" flood-color="#000000" flood-opacity="0.55"/>
-    </filter>
 
     <!--
       The mark is a zigzag stroke + arrowhead, CLIPPED to a vertical strip.
       That clip is what produces the flat vertical faces at the tail, the left
-      chevron and the right point in the original artwork — they are not
-      mitred joins, they are cut off square.
+      chevron and the right point — they are not mitred joins, they are cut off
+      square. Visible bounds after clipping: x 147.5-364.7, y 60.5-451.5.
     -->
     <clipPath id="strip">
       <rect x="147.5" y="0" width="217.2" height="512"/>
@@ -55,18 +60,21 @@
     </g>
   </defs>
 
-  <!-- 1. Tile  (set rx on this rect for a rounded app-icon version) -->
+  <!-- 1. Tile  (the icon generator drops this rect for the transparent variants) -->
   <rect width="512" height="512" rx="0" fill="url(#bg)"/>
 
-  <!-- 2. Gold mark, BEHIND the wordmark -->
-  <g filter="url(#glow)">
-    <use xlink:href="#mark" href="#mark" fill="url(#gold)" stroke="url(#gold)"/>
-  </g>
-  <use xlink:href="#mark" href="#mark" fill="url(#sheen)" stroke="url(#sheen)"/>
-
-  <!-- 3. Wordmark in front, solid white -->
-  <text x="256" y="312" textLength="404" lengthAdjust="spacingAndGlyphs"
+  <!-- 2. "HRM", white serif, sitting on the left of the lockup -->
+  <text x="42.6" y="302.3" textLength="319" lengthAdjust="spacingAndGlyphs"
         font-family="'Playfair Display','Didot','Bodoni MT','Bodoni 72',Georgia,'Times New Roman',serif"
-        font-size="160" font-weight="500" text-anchor="middle"
-        fill="#FFFFFF" filter="url(#lift)">HRMS</text>
+        font-size="140" font-weight="500" text-anchor="start"
+        fill="#FFFFFF">HRM</text>
+
+  <!-- 3. The gold mark as the S: scaled to 0.4066 and set just right of the M.
+          Nudged 9px above the letters' own midline — in the reference the mark
+          overshoots the cap height more than it drops below the baseline, and
+          centring it exactly makes the lockup sit low. -->
+  <g transform="translate(321.03,142.9) scale(0.4066)">
+    <use xlink:href="#mark" href="#mark" fill="url(#gold)" stroke="url(#gold)"/>
+    <use xlink:href="#mark" href="#mark" fill="url(#sheen)" stroke="url(#sheen)"/>
+  </g>
 </svg>
