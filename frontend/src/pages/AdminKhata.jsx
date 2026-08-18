@@ -82,6 +82,24 @@ function Stat({ label, value, tone = 'gray', hint }) {
   );
 }
 
+/**
+ * The net-position tile, worded from the company's side like the two beside it.
+ * `net` is receivable minus payable: positive means staff owe the company more
+ * than it owes them, negative the other way round.
+ */
+function netStat(ov) {
+  const net = Number(ov?.net) || 0;
+  const across = `across ${ov?.activeKhatas || 0} khatas`;
+  const value = money(Math.abs(net));
+  if (net > 0) {
+    return { label: 'Net — you will get', tone: 'rose', value, hint: `Staff owe the company this much more than it owes them, ${across}` };
+  }
+  if (net < 0) {
+    return { label: 'Net — you will give', tone: 'emerald', value, hint: `The company owes staff this much more than they owe it, ${across}` };
+  }
+  return { label: 'Net position', tone: 'gray', value, hint: `All square, ${across}` };
+}
+
 /** The "you will get / you will give" chip, worded from the company's side. */
 function BalanceChip({ display }) {
   if (!display) return null;
@@ -438,7 +456,9 @@ export default function AdminKhata() {
                 hint="Advances staff hold and have not settled" />
               <Stat label="You will give" tone="emerald" value={money(ov?.totalPayable)}
                 hint="Money staff spent that is not paid back" />
-              <Stat label="Net position" value={money(ov?.net)} hint={`Across ${ov?.activeKhatas || 0} khatas`} />
+              {/* A bare net figure reads identically whether the company is owed
+                  or owing, so the tile names the direction and drops the sign. */}
+              <Stat {...netStat(ov)} />
               <Stat label="Waiting on approval" tone={ov?.pendingCount ? 'amber' : 'gray'}
                 value={ov?.pendingCount || 0} hint="No cash has moved for these" />
             </div>

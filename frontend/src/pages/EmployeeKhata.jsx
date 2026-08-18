@@ -16,7 +16,7 @@
  * and their balance only drops once the company confirms it got the cash back.
  * The wording deliberately avoids debit/credit — see the backend's describeBalance.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -55,6 +55,10 @@ export default function EmployeeKhata() {
   // '' = every book; otherwise the statement is narrowed to one.
   const [viewKhata, setViewKhata] = useState('');
   const [newKhata, setNewKhata] = useState(null); // { name, note }
+  // Two ways to attach the slip: pick a file, or shoot it with the phone camera
+  // (`capture` makes a mobile browser open the camera instead of the gallery).
+  const fileRef = useRef(null);
+  const cameraRef = useRef(null);
 
   const load = async () => {
     setLoading(true); setError('');
@@ -79,6 +83,24 @@ export default function EmployeeKhata() {
     [entries, viewKhata]
   );
 
+  // The arithmetic behind the headline: what came to you, what went back, and
+  // what is still only proposed. Only Approved rows move a balance, so pending
+  // and reversed ones are counted separately rather than folded in — otherwise
+  // the figures here would not reconcile with the statement's running balance.
+  const sums = useMemo(() => {
+    const s = { given: 0, settled: 0, pendingIn: 0, pendingOut: 0, pendingCount: 0 };
+    for (const e of entries) {
+      const amt = Number(e.amount) || 0;
+      if (e.status === 'Approved') {
+        if (e.direction === 'to_employee') s.given += amt; else s.settled += amt;
+      } else if (e.status === 'Pending') {
+        if (e.direction === 'to_employee') s.pendingIn += amt; else s.pendingOut += amt;
+        s.pendingCount += 1;
+      }
+    }
+    return s;
+  }, [entries]);
+
   const open = (which) => {
     const blank = which === 'request' ? blankRequest : blankSettle;
     setForm({
@@ -88,6 +110,9 @@ export default function EmployeeKhata() {
       khata: viewKhata || openKhatas.find((k) => k.isDefault)?._id || openKhatas[0]?._id || '',
     });
     setReceipt(null);
+    // Clear the inputs too, else re-picking the same file fires no change event.
+    if (fileRef.current) fileRef.current.value = '';
+    if (cameraRef.current) cameraRef.current.value = '';
     setModal(which);
   };
 
@@ -139,6 +164,12 @@ export default function EmployeeKhata() {
   // Money running both ways at once is the case a single netted figure ruins.
   const bothWays = totals.owe > 0 && totals.owed > 0;
   const pending = entries.filter((e) => e.status === 'Pending');
+  // Which books each side of the split is actually sitting on — without this the
+  // two chips would just repeat the headline above them.
+  const bookCount = (direction) => {
+    const n = khatas.filter((k) => k.display?.direction === direction).length;
+    return n === 1 ? '1 khata' : `${n} khatas`;
+  };
 
   return (
     <div>
@@ -197,13 +228,75 @@ export default function EmployeeKhata() {
             </button>
             <button onClick={() => open('settle')} disabled={openKhatas.length === 0}
               className="px-4 py-2.5 bg-white border border-gray-300 text-gray-800 rounded-lg hover:bg-gray-50 text-sm font-medium disabled:opacity-50">
-              I have returned cash
+              Return/Expense
             </button>
             <button onClick={() => setNewKhata({ name: '', note: '' })}
               className="px-4 py-2.5 bg-white border border-gray-300 text-gray-800 rounded-lg hover:bg-gray-50 text-sm font-medium">
               + New khata
             </button>
           </div>
+        </div>
+      )}
+
+      {/* The calculation behind the headline — the two sides in full, and how
+          they arrive at the net. Shown even when money runs only one way, so
+          the same figures are always in the same place. */}
+      {!loading && (
+        <div className="bg-white shadow rounded-lg p-4 sm:p-5 mb-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">How this adds up</h2>
+
+          <dl className="divide-y divide-gray-100 text-sm">
+            <div className="flex items-center justify-between py-2">
+              <dt className="text-gray-600">
+                Cash the company gave you
+                <span className="block text-xs text-gray-400">Advances paid out to you, approved</span>
+              </dt>
+              <dd className="font-medium text-rose-700 whitespace-nowrap">+ {money(sums.given)}</dd>
+            </div>
+
+            <div className="flex items-center justify-between py-2">
+              <dt className="text-gray-600">
+                Returned or spent for the company
+                <span className="block text-xs text-gray-400">Cash handed back and expenses accepted</span>
+              </dt>
+              <dd className="font-medium text-emerald-700 whitespace-nowrap">− {money(sums.settled)}</dd>
+            </div>
+
+            <div className="flex items-center justify-between py-2.5 border-t-2 border-gray-200">
+              <dt className="font-medium text-gray-800">
+                {balance.label}
+                <span className="block text-xs text-gray-400">
+                  {balance.direction === 'settled' ? 'Nothing outstanding either way' : style.hint}
+                </span>
+              </dt>
+              <dd className={`text-lg font-semibold whitespace-nowrap ${style.amount}`}>{money(balance.amount)}</dd>
+            </div>
+          </dl>
+
+          {/* With several books the two sides genuinely coexist, and a single
+              netted figure would hide one of them entirely. */}
+          {bothWays && (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="border border-rose-200 bg-rose-50 rounded-lg px-3 py-2">
+                <p className="text-xs text-rose-800">You owe the company</p>
+                <p className="text-lg font-semibold text-rose-700">{money(totals.owe)}</p>
+                <p className="text-xs text-rose-800/70">on {bookCount('owe')}</p>
+              </div>
+              <div className="border border-emerald-200 bg-emerald-50 rounded-lg px-3 py-2">
+                <p className="text-xs text-emerald-800">The company owes you</p>
+                <p className="text-lg font-semibold text-emerald-700">{money(totals.owed)}</p>
+                <p className="text-xs text-emerald-800/70">on {bookCount('owed')}</p>
+              </div>
+            </div>
+          )}
+
+          {sums.pendingCount > 0 && (
+            <p className="text-xs text-gray-500 mt-3">
+              Not counted above: {money(sums.pendingIn)} requested and {money(sums.pendingOut)} declared
+              across {sums.pendingCount === 1 ? '1 entry' : `${sums.pendingCount} entries`} still waiting on
+              the company. Nothing moves until they act.
+            </p>
+          )}
         </div>
       )}
 
@@ -349,7 +442,7 @@ export default function EmployeeKhata() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">
-              {modal === 'request' ? 'Request a cash advance' : 'Record cash returned'}
+              {modal === 'request' ? 'Request a cash advance' : 'Record return / expense'}
             </h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
               {modal === 'request'
@@ -397,7 +490,7 @@ export default function EmployeeKhata() {
 
             {modal === 'settle' && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">How did you return it?</label>
+                <label className="block text-sm text-gray-700 mb-1">How did you return or spend it?</label>
                 <select value={form.paymentMode}
                   onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
@@ -411,9 +504,31 @@ export default function EmployeeKhata() {
                   placeholder="UPI / cheque / slip number" />
 
                 <label className="block text-sm text-gray-700 mb-1">Receipt (optional)</label>
-                <input type="file" accept="image/*,application/pdf"
-                  onChange={(e) => setReceipt(e.target.files?.[0] || null)}
-                  className="w-full text-sm mb-3" />
+                {/* Two ways in: attach a file already on the device, or take a
+                    photo of the paper slip there and then. */}
+                <div className="flex flex-wrap gap-2 mb-2">
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                    Upload file
+                  </button>
+                  <button type="button" onClick={() => cameraRef.current?.click()}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                    Take photo
+                  </button>
+                </div>
+                <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
+                  onChange={(e) => setReceipt(e.target.files?.[0] || null)} />
+                <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+                  onChange={(e) => setReceipt(e.target.files?.[0] || null)} />
+                {receipt ? (
+                  <div className="flex items-center gap-2 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3">
+                    <span className="truncate text-gray-700">{receipt.name}</span>
+                    <button type="button" onClick={() => { setReceipt(null); if (fileRef.current) fileRef.current.value = ''; if (cameraRef.current) cameraRef.current.value = ''; }}
+                      className="ml-auto text-gray-500 hover:text-gray-800 shrink-0">Remove</button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500 mb-3">Image or PDF.</p>
+                )}
               </>
             )}
 
