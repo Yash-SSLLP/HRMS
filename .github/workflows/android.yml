@@ -1,26 +1,74 @@
 name: Android CI
 
+# Checks that the Android app still compiles, and that its two version numbers
+# have not drifted apart.
+#
+# The previous version of this workflow could never have passed: it ran
+# `./gradlew` from the repository root, but gradlew lives in mobile/android; it
+# asked for JDK 11, which React Native 0.74 does not build on; and it never
+# installed node_modules, which the React Native Gradle plugin needs before it
+# can configure the project at all.
+
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+    paths: ["mobile/**", ".github/workflows/android.yml"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+    paths: ["mobile/**", ".github/workflows/android.yml"]
+
+# Every step runs in mobile/ unless it says otherwise — the app is not at the
+# repository root.
+defaults:
+  run:
+    working-directory: mobile
+
+# A new push supersedes an in-flight run on the same ref; an Android build is
+# slow and there is no value in finishing one for code already replaced.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        java-version: '11'
-        distribution: 'temurin'
-        cache: gradle
+      - uses: actions/checkout@v4
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-    - name: Build with Gradle
-      run: ./gradlew build
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # The React Native Gradle plugin resolves native modules out of
+      # node_modules during configuration, so this has to happen before Gradle
+      # runs — not alongside it.
+      - name: Install dependencies
+        run: npm ci
+
+      # Cheap, and it catches the failure that is otherwise invisible: app.json
+      # and build.gradle disagreeing, which ships a build the in-app updater
+      # silently ignores. See scripts/checkVersionSync.js.
+      - name: Check version sync
+        run: npm run check:version
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: gradle
+
+      - name: Make gradlew executable
+        working-directory: mobile/android
+        run: chmod +x gradlew
+
+      # assembleDebug, not build: this job answers "does it still compile?".
+      # A release build would additionally want the signing keystore, which is
+      # not (and should not be) available to CI.
+      - name: Build
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
