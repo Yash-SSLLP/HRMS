@@ -146,7 +146,7 @@ async function openKhata({ employee, name: rawName, creditLimit, note, actor, re
 
   // Make sure their default exists first, so the FIRST book somebody opens by
   // hand does not accidentally become the fallback for self-service. This also
-  // runs the one-time index self-heal (see khataLedger.ensureMultiKhataIndexes).
+  // runs the one-time integrity repair (see khataLedger.ensureKhataIntegrity).
   await ledger.getOrCreateDefaultKhata(employee, actor);
 
   const limit = toNum(creditLimit);
@@ -377,6 +377,9 @@ const declareSettlement = asyncHandler(async (req, res) => {
  * @returns {{totalReceivable: number, totalPayable: number, employeesOutstanding: number, pendingCount: number, accounts: Object[]}}
  */
 const overview = asyncHandler(async (req, res) => {
+  // Usually the first khata screen anyone opens, so it is where a database that
+  // predates multi-khata gets repaired. Memoized — this costs one check per process.
+  await ledger.ensureKhataIntegrity();
   const khatas = await EmployeeKhata.find({ isActive: true }).select('balance employee').lean();
 
   // Split the signed balances into the two things a manager actually asks:
@@ -427,6 +430,7 @@ const listMyAccounts = asyncHandler(async (req, res) => {
  * @returns {{count: number, khatas: Object[]}}
  */
 const listKhatas = asyncHandler(async (req, res) => {
+  await ledger.ensureKhataIntegrity();
   const query = {};
   if (req.query.includeArchived !== 'true') query.isActive = true;
 

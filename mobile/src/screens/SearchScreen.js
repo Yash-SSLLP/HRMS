@@ -26,6 +26,11 @@ const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin'];
 // Menu + Admin Console gating) and, where relevant, by an org feature switch.
 // It gets the whole user, not just the role, so canApprove can see an exec who
 // has been switched into edit mode.
+//
+// `keywords` are extra terms that should find the row but do not appear in its
+// label — what people actually type. Somebody looking for the khata module
+// searches "khatabook", which matches none of "My Khata"; without this the page
+// is unreachable by the only name its users have for it.
 const PAGES = [
   { label: 'Help', screen: 'HowToUse', group: 'Help', icon: 'help-circle', show: always },
   // Employee self-service
@@ -36,7 +41,14 @@ const PAGES = [
   { label: 'Payslips', screen: 'Payslips', group: 'Money', icon: 'cash', show: emp },
   { label: 'Expenses', screen: 'Expenses', group: 'Money', icon: 'bag-handle', show: emp },
   { label: 'Travel', screen: 'Travel', group: 'Money', icon: 'map', show: emp },
-  { label: 'Loans', screen: 'Loans', group: 'Money', icon: 'wallet', show: emp },
+  { label: 'Loans', screen: 'Loans', group: 'Money', icon: 'wallet', show: emp,
+    keywords: ['advance', 'emi', 'borrow'] },
+  { label: 'My Khata', screen: 'Khata', group: 'Money', icon: 'book', show: emp,
+    keywords: ['khatabook', 'khata', 'ledger', 'advance', 'cash', 'udhar'] },
+  // Was missing from this list entirely, like the khata — the module exists in
+  // the Menu but could not be searched for.
+  { label: 'Cash Vouchers', screen: 'Cashbook', group: 'Money', icon: 'receipt', show: emp,
+    keywords: ['cashbook', 'voucher', 'petty cash'] },
   { label: 'Tasks', screen: 'Tasks', group: 'Growth', icon: 'checkbox', show: emp },
   { label: 'My Interviews', screen: 'MyInterviews', group: 'Growth', icon: 'videocam', show: emp },
   { label: 'Goals', screen: 'Goals', group: 'Growth', icon: 'flag', show: emp },
@@ -70,6 +82,11 @@ const PAGES = [
   { label: 'Monthly Attendance', screen: 'AttendanceMonth', group: 'Admin', icon: 'calendar', show: canViewAdmin },
   { label: 'Directory', screen: 'Directory', group: 'Admin', icon: 'id-card', show: canViewAdmin },
   { label: 'Payroll', screen: 'PayrollAdmin', group: 'Admin', icon: 'cash', show: canViewAdmin },
+  // Gated on the capability rather than a role: a standalone khataAccess grant
+  // is enough to use the screen, so it must be enough to find it.
+  { label: 'Employee Khata', screen: 'KhataAdmin', group: 'Admin', icon: 'book',
+    show: (u) => hasPermission(u, 'khata.manage'),
+    keywords: ['khatabook', 'khata', 'advance', 'cash ledger', 'udhar'] },
   { label: 'Add Employee', screen: 'AddEmployee', group: 'Admin', icon: 'person-add', show: canApprove },
   { label: 'Work Locations', screen: 'WorkLocations', group: 'Admin', icon: 'location', show: canApprove },
   { label: 'Recruitment', screen: 'Recruitment', group: 'Admin', icon: 'briefcase', show: canApprove },
@@ -99,7 +116,12 @@ export default function SearchScreen() {
   // Page results are filtered client-side from the role-permitted subset.
   const myPages = useMemo(() => PAGES.filter((p) => p.show(me, features)), [me, features]);
   const term = q.trim().toLowerCase();
-  const pageMatches = term ? myPages.filter((p) => p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)) : [];
+  const pageMatches = term
+    ? myPages.filter((p) => p.label.toLowerCase().includes(term)
+      || p.group.toLowerCase().includes(term)
+      // …and the terms people actually type, which are often not the label.
+      || (p.keywords || []).some((k) => k.includes(term)))
+    : [];
 
   // Debounced employee search (HR/Admin only); cancels the pending request on
   // each keystroke so only the last query fires. For a SuperAdmin the same pass

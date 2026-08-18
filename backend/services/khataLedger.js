@@ -63,7 +63,8 @@ const nameOf = (user) => (user && user.firstName ? `${user.firstName} ${user.las
 // ---------------------------------------------------------------------------
 
 /**
- * Drop the obsolete one-khata-per-employee unique index, once per process.
+ * Repair anything a database carried over from before multi-khata, once per
+ * process. Covers three things, all of which are otherwise silent failures.
  *
  * `EmployeeKhata.employee` used to be `unique: true`. Taking that out of the
  * schema does NOT take it out of MongoDB — Mongoose only ever creates indexes,
@@ -71,33 +72,67 @@ const nameOf = (user) => (user && user.firstName ? `${user.firstName} ${user.las
  * with a duplicate-key error that looks like "this name is taken" and is
  * nothing of the kind.
  *
- * scripts/migrateMultiKhata.js does this properly, but the feature should not
- * be quietly broken on any database where nobody has run it yet — so the
- * creation paths self-heal. Deliberately narrow: it drops ONLY a unique index
- * whose key is exactly `{ employee: 1 }`, never anything else, and it logs when
- * it does.
- * @returns {Promise<void>} Resolves once the check has run (memoized).
+ * scripts/migrateMultiKhata.js does all of this deliberately, but the module
+ * should not be quietly broken on a database where nobody has run it — so it
+ * heals itself. Every step is narrow and idempotent: the index drop matches ONLY
+ * a unique index keyed exactly `{ employee: 1 }`, the naming touches only khatas
+ * with no name at all, and the default flag is set only for employees who have
+ * none. Each logs when it acts.
+ * @returns {Promise<void>} Resolves once the repair has run (memoized).
  */
-let indexHealCheck = null;
-function ensureMultiKhataIndexes() {
-  if (indexHealCheck) return indexHealCheck;
-  indexHealCheck = (async () => {
+let integrityCheck = null;
+function ensureKhataIntegrity() {
+  if (integrityCheck) return integrityCheck;
+  integrityCheck = (async () => {
     const collection = EmployeeKhata.collection;
+
+    // (a) The obsolete unique index.
     const indexes = await collection.indexes();
     const stale = indexes.find((i) => i.unique
       && Object.keys(i.key).length === 1
       && i.key.employee === 1);
-    if (!stale) return;
-    await collection.dropIndex(stale.name);
-    console.log(`khata: dropped the obsolete unique index "${stale.name}" on { employee: 1 } — `
-      + 'employees can now hold more than one khata.');
+    if (stale) {
+      await collection.dropIndex(stale.name);
+      console.log(`khata: dropped the obsolete unique index "${stale.name}" on { employee: 1 } — `
+        + 'employees can now hold more than one khata.');
+    }
+
+    // (b) Khatas written before `name` existed. They render as a nameless row
+    // with a balance on it, which is worse than useless — you cannot tell what
+    // the money is for. Named rather than left blank, and only where absent, so
+    // this never touches a khata somebody has deliberately named.
+    const unnamed = await collection.updateMany(
+      { $or: [{ name: { $exists: false } }, { name: null }, { name: '' }] },
+      { $set: { name: DEFAULT_KHATA_NAME } }
+    );
+    if (unnamed.modifiedCount) {
+      console.log(`khata: named ${unnamed.modifiedCount} khata(s) "${DEFAULT_KHATA_NAME}" — they predate the name field.`);
+    }
+
+    // (c) Employees with no default book. Self-service falls back to their
+    // oldest when the flag is missing, so nothing is broken — but the flag is
+    // what the UI marks, and what stops the fallback book being closed.
+    const missing = await EmployeeKhata.aggregate([
+      { $group: { _id: '$employee', hasDefault: { $max: { $cond: ['$isDefault', 1, 0] } } } },
+      { $match: { hasDefault: 0 } },
+    ]);
+    for (const row of missing) {
+      const oldest = await EmployeeKhata.findOne({ employee: row._id }).sort({ createdAt: 1 });
+      if (oldest) {
+        oldest.isDefault = true;
+        await oldest.save();
+      }
+    }
+    if (missing.length) {
+      console.log(`khata: flagged a default khata for ${missing.length} employee(s).`);
+    }
   })().catch((err) => {
-    // Never block a khata being created over this. If the drop failed (no
-    // permission, a racing process), creation still runs and the caller gets a
-    // precise diagnosis from the duplicate-key handler instead.
-    console.error('khata: could not drop the obsolete employee index:', err.message);
+    // Never block a khata operation over a repair. If this failed (no
+    // permission, a racing process), the caller still works and the duplicate-key
+    // handler gives a precise diagnosis where it matters.
+    console.error('khata: integrity repair failed:', err.message);
   });
-  return indexHealCheck;
+  return integrityCheck;
 }
 
 /**
@@ -116,7 +151,7 @@ function ensureMultiKhataIndexes() {
  * @returns {Promise<object>} The EmployeeKhata document.
  */
 async function getOrCreateDefaultKhata(employeeId, actor) {
-  await ensureMultiKhataIndexes();
+  await ensureKhataIntegrity();
   // Prefer the flagged default; fall back to their oldest, which covers khatas
   // created before the flag existed and any where it was somehow cleared.
   const existing = await EmployeeKhata.findOne({ employee: employeeId, isDefault: true })
@@ -697,7 +732,7 @@ module.exports = {
   splitTotals,
   signedAmount,
   nameOf,
-  ensureMultiKhataIndexes,
+  ensureKhataIntegrity,
   getOrCreateDefaultKhata,
   resolveKhata,
   listKhatasOf,

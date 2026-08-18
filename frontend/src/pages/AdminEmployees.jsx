@@ -56,6 +56,25 @@ const blankProfile = {
   },
 };
 
+// Roles that deliberately never get an employee profile: CEO and MD are not
+// employees, and SuperAdmin is an admin login rather than somebody on the
+// payroll. Everyone else can have one.
+const PROFILE_INELIGIBLE_ROLES = ['CEO', 'MD', 'SuperAdmin'];
+
+/**
+ * Does this user already have an employee profile?
+ *
+ * Prefers the server's own `hasProfile` (listUsers computes it straight from the
+ * EmployeeProfile collection) and only falls back to joining against the loaded
+ * profile list, which is the weaker test — that list is filtered for display and
+ * so cannot be relied on to contain every profile.
+ */
+const userHasProfile = (u, profiles) => (
+  typeof u.hasProfile === 'boolean'
+    ? u.hasProfile
+    : profiles.some((p) => (p.user?._id || p.user) === u._id)
+);
+
 export default function AdminEmployees() {
   const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
@@ -507,8 +526,14 @@ export default function AdminEmployees() {
     }
   };
 
-  const usersWithoutProfile = users.filter(
-    (u) => !profiles.some((p) => (p.user?._id || p.user) === u._id)
+
+  // Candidates for a NEW employee profile: anyone who can hold one and does not
+  // already. Deliberately drawn from every user, not just role=Employee — a
+  // Manager, HR Manager or Accounts Manager is an employee too and needs a
+  // profile, and filtering to role=Employee made those accounts impossible to
+  // convert once every plain Employee already had one.
+  const usersWithoutProfile = allUsers.filter(
+    (u) => !PROFILE_INELIGIBLE_ROLES.includes(u.role) && !userHasProfile(u, profiles)
   );
 
   // Shared cell renderers so the desktop table and the mobile card list stay
@@ -715,11 +740,12 @@ export default function AdminEmployees() {
                   >
                     <option value="">Select a user…</option>
                     {(editingId
-                      ? users
+                      ? allUsers
                       : usersWithoutProfile
                     ).map((u) => (
                       <option key={u._id} value={u._id}>
                         {u.firstName} {u.lastName} · {u.email}
+                        {u.role !== 'Employee' ? ` · ${u.role}` : ''}
                       </option>
                     ))}
                   </SearchableSelect>
