@@ -1783,9 +1783,15 @@ const deriveSalaryForEditor = asyncHandler(async (req, res) => {
  * records the raise in the CTC history. A hike effective this month (or earlier)
  * updates the current CTC immediately; a future-dated hike is stored and takes
  * effect automatically when that month's payroll runs (resolveCtcForMonth).
+ * Record a CTC revision — up OR down.
+ *
+ * A negative percent/amount, or a lower "set to", records a reduction. The only
+ * value refused is one that changes nothing, or that would take the CTC below
+ * zero. Reductions used to be blocked, which meant HR edited the CTC by hand
+ * and the revision history lost the one thing it exists to record.
  * @route POST /api/payroll/employees/:id/hike  (HR/Admin)
  * @param {string} req.body.mode - 'percent' | 'amount' | 'set'
- * @param {number} req.body.value - the % (percent), ₹ increase (amount), or absolute CTC (set)
+ * @param {number} req.body.value - the % (percent), ₹ change (amount, may be negative), or absolute CTC (set)
  * @param {string} [req.body.newStructure] - optionally switch the salary structure
  * @param {number} req.body.effectiveYear / req.body.effectiveMonth
  * @param {string} [req.body.reason]
@@ -1843,22 +1849,33 @@ const giveHike = asyncHandler(async (req, res) => {
   const { mode, value, newStructure, effectiveYear, effectiveMonth, reason } = req.body;
   const prevCtc = profile.annualCtc || 0;
   const v = Number(value) || 0;
-  if (v <= 0) {
+
+  // A revision may go DOWN as well as up. Demotions, a corrected offer, a move
+  // to a shorter week — all are real, and refusing them forced HR to fix the
+  // CTC by hand, which left no record of what changed or why. So a negative
+  // percent/amount, or a lower "set to", is accepted; only a revision that
+  // changes nothing is refused, because it would be an empty history entry.
+  if (v === 0) {
     res.status(400);
-    throw new Error('Enter a positive hike value.');
+    throw new Error('Enter a value — a revision of zero changes nothing.');
   }
   if ((mode === 'percent' || mode === 'amount') && !prevCtc) {
     res.status(400);
-    throw new Error('Set a current CTC for this employee before applying a percentage/amount hike (or use "Set to" mode).');
+    throw new Error('Set a current CTC for this employee before applying a percentage/amount revision (or use "Set to" mode).');
   }
   let newCtc;
   if (mode === 'percent') newCtc = Math.round(prevCtc * (1 + v / 100));
   else if (mode === 'amount') newCtc = Math.round(prevCtc + v);
   else if (mode === 'set') newCtc = Math.round(v);
-  else { res.status(400); throw new Error('Invalid hike mode.'); }
-  if (newCtc <= prevCtc) {
+  else { res.status(400); throw new Error('Invalid revision mode.'); }
+
+  if (newCtc < 0) {
     res.status(400);
-    throw new Error('The new CTC must be higher than the current CTC.');
+    throw new Error(`That reduction would take the CTC below zero (${prevCtc.toLocaleString('en-IN')} → ${newCtc.toLocaleString('en-IN')}).`);
+  }
+  if (newCtc === prevCtc) {
+    res.status(400);
+    throw new Error('That leaves the CTC unchanged.');
   }
 
   const now = new Date();

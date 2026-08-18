@@ -96,16 +96,25 @@ export default function AdminPayrollRun() {
 
   // ----- salary hike / increment -----
   const openHike = () => setHike({
-    mode: 'percent', value: '',
+    // `direction` carries the sign so the amount field stays a plain positive
+    // magnitude — typing "-5000" to cut pay is easy to do by accident and easy
+    // to misread. Irrelevant in 'set' mode, where the value IS the new CTC.
+    mode: 'percent', direction: 'increase', value: '',
     effectiveYear: year, effectiveMonth: month,
     newStructure: '', reason: '', // '' = keep current structure
   });
+
+  /** The value actually sent: negative when this is a reduction. */
+  const signedHikeValue = (h) => {
+    const v = Number(h.value) || 0;
+    return h.mode !== 'set' && h.direction === 'decrease' ? -v : v;
+  };
 
   // Live preview of the resulting CTC from the current hike inputs.
   const hikePreviewCtc = (() => {
     if (!hike) return 0;
     const cur = Number(setup.annualCtc) || 0;
-    const v = Number(hike.value) || 0;
+    const v = signedHikeValue(hike);
     if (hike.mode === 'percent') return Math.round(cur * (1 + v / 100));
     if (hike.mode === 'amount') return Math.round(cur + v);
     return Math.round(v); // set
@@ -117,16 +126,17 @@ export default function AdminPayrollRun() {
     try {
       const { data } = await api.post(`/payroll/employees/${employee}/hike`, {
         mode: hike.mode,
-        value: Number(hike.value),
+        value: signedHikeValue(hike),
         newStructure: hike.newStructure || undefined,
         effectiveYear: Number(hike.effectiveYear),
         effectiveMonth: Number(hike.effectiveMonth),
         reason: hike.reason,
       });
       setHike(null);
+      const cut = data.entry.newCtc < data.entry.previousCtc;
       toast.success(data.applied
-        ? `Hike applied · new CTC ${inr(data.entry.newCtc)}`
-        : `Hike scheduled from ${MONTHS[(data.entry.effectiveMonth || 1) - 1]} ${data.entry.effectiveYear}`);
+        ? `${cut ? 'Reduction' : 'Hike'} applied · new CTC ${inr(data.entry.newCtc)}`
+        : `${cut ? 'Reduction' : 'Hike'} scheduled from ${MONTHS[(data.entry.effectiveMonth || 1) - 1]} ${data.entry.effectiveYear}`);
       await load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not apply the hike');
@@ -182,7 +192,7 @@ export default function AdminPayrollRun() {
                     className="border rounded-lg px-3 py-2 text-sm w-40" />
                   <button onClick={saveSetup} disabled={busy} className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">Save</button>
                   <button onClick={openHike} disabled={busy} title="Revise this employee's CTC (increment)"
-                    className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Give hike</button>
+                    className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Revise salary</button>
                 </div>
 
                 {run.employee?.ctcHistory?.length > 0 && (
@@ -266,22 +276,48 @@ export default function AdminPayrollRun() {
       {hike && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <h2 className="font-semibold text-gray-900 mb-1">Give hike · {fullName(run?.employee?.user)}</h2>
+            <h2 className="font-semibold text-gray-900 mb-1">Revise salary · {fullName(run?.employee?.user)}</h2>
             <p className="text-xs text-gray-500 mb-4">Current CTC: {inr(setup.annualCtc)}/yr</p>
             <form onSubmit={submitHike} className="space-y-3">
+              {/* Up or down. A separate toggle rather than expecting a minus
+                  sign in the amount — typing "-5000" is easy to do by accident
+                  and easy to misread on the way back out. */}
+              {hike.mode !== 'set' && (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Direction</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[['increase', 'Increase'], ['decrease', 'Decrease']].map(([v, label]) => (
+                      <button key={v} type="button"
+                        onClick={() => setHike({ ...hike, direction: v })}
+                        className={`px-3 py-2 rounded-lg border text-sm ${
+                          hike.direction === v
+                            ? (v === 'increase'
+                              ? 'border-emerald-600 bg-emerald-600 text-white'
+                              : 'border-rose-600 bg-rose-600 text-white')
+                            : 'border-gray-300 hover:bg-gray-50'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Hike type</label>
+                  <label className="block text-xs text-gray-600 mb-1">Revision type</label>
                   <select value={hike.mode} onChange={(e) => setHike({ ...hike, mode: e.target.value })}
                     className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
                     <option value="percent">Percentage (%)</option>
-                    <option value="amount">Increase by ₹</option>
+                    <option value="amount">By ₹</option>
                     <option value="set">Set new CTC to ₹</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">
-                    {hike.mode === 'percent' ? 'Percent (%)' : hike.mode === 'amount' ? 'Increase (₹/yr)' : 'New CTC (₹/yr)'}
+                    {hike.mode === 'percent' ? 'Percent (%)'
+                      : hike.mode === 'amount'
+                        ? `${hike.direction === 'decrease' ? 'Decrease' : 'Increase'} (₹/yr)`
+                        : 'New CTC (₹/yr)'}
                   </label>
                   <input type="number" min="0" required value={hike.value}
                     onChange={(e) => setHike({ ...hike, value: e.target.value })}
@@ -320,15 +356,25 @@ export default function AdminPayrollRun() {
                   placeholder="e.g. Annual appraisal 2026, promotion" className="block w-full border rounded-lg px-3 py-2 text-sm" />
               </div>
 
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-sm text-emerald-900 flex justify-between">
-                <span>New CTC</span>
-                <span className="font-semibold">
-                  {inr(setup.annualCtc)} → {inr(hikePreviewCtc)}
-                  {Number(setup.annualCtc) > 0 && hikePreviewCtc > Number(setup.annualCtc) && (
-                    <span className="text-emerald-600 ml-1">(+{Math.round((hikePreviewCtc / Number(setup.annualCtc) - 1) * 100)}%)</span>
-                  )}
-                </span>
-              </div>
+              {(() => {
+                const cur = Number(setup.annualCtc) || 0;
+                const down = hikePreviewCtc < cur;
+                const pct = cur > 0 ? Math.round((hikePreviewCtc / cur - 1) * 100) : 0;
+                return (
+                  <div className={`border rounded-lg px-3 py-2 text-sm flex justify-between ${
+                    down ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}`}>
+                    <span>New CTC</span>
+                    <span className="font-semibold">
+                      {inr(cur)} → {inr(hikePreviewCtc)}
+                      {cur > 0 && hikePreviewCtc !== cur && (
+                        <span className={`ml-1 ${down ? 'text-rose-600' : 'text-emerald-600'}`}>
+                          ({pct > 0 ? '+' : ''}{pct}%)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })()}
 
               <div className="flex justify-end gap-2 pt-1">
                 <button type="button" onClick={() => setHike(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>

@@ -69,7 +69,8 @@ export default function AdminSalaryStructures() {
 
   // Preview modal
   const [previewFor, setPreviewFor] = useState(null);
-  const [previewEmp, setPreviewEmp] = useState(null); // employee this structure is assigned to, if any
+  const [previewEmp, setPreviewEmp] = useState(null);      // whose CTC the preview is using
+  const [previewPeople, setPreviewPeople] = useState([]);  // everyone on this structure who has a CTC
   const [annualCtc, setAnnualCtc] = useState(1200000);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -118,8 +119,28 @@ export default function AdminSalaryStructures() {
       isActive: s.isActive,
       components: { ...blankComponents(), ...(s.components || {}) },
     });
-    setAssign({ employee: '', annualCtc: '' });
-    setSharedCount(0);
+
+    // Prefill the person already on this structure, and their CTC. Most
+    // structures here are per-employee, so opening Edit and finding the assign
+    // fields blank reads as "nobody is assigned" — and typing a CTC into an
+    // empty box felt like setting it from scratch every time. Only auto-fill
+    // when EXACTLY ONE employee is on it: on a shared template there is no
+    // single right answer, and guessing one would put a CTC on the wrong person.
+    const onThis = employees.filter(
+      (p) => String(p.salaryStructure?._id || p.salaryStructure || '') === String(s._id)
+    );
+    setSharedCount(Math.max(0, onThis.length - 1));
+
+    // Prefill when there is an unambiguous candidate: the only person on the
+    // structure, or — where several share it — the only one who actually has a
+    // CTC set. Anything more ambiguous is left for the picker, which now fills
+    // the CTC in as soon as somebody is chosen.
+    const withCtc = onThis.filter((p) => Number(p.annualCtc) > 0);
+    const only = onThis.length === 1 ? onThis[0] : (withCtc.length === 1 ? withCtc[0] : null);
+    setAssign(only
+      ? { employee: only._id, annualCtc: only.annualCtc ? String(only.annualCtc) : '' }
+      : { employee: '', annualCtc: '' });
+
     setError('');
     setShowModal(true);
   };
@@ -173,6 +194,23 @@ export default function AdminSalaryStructures() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignParam, loading, employees, structures]);
 
+  /**
+   * Choose who this structure is being assigned to, and bring their current CTC
+   * with them.
+   *
+   * Without this the CTC box stayed empty whoever you picked, so saving looked
+   * like setting a salary from scratch every time — and on a shared structure
+   * there was no way to see what the person was already on. Their existing
+   * figure is loaded as the starting point; typing over it is the edit.
+   */
+  const pickAssignee = (profileId) => {
+    const p = employees.find((x) => String(x._id) === String(profileId));
+    setAssign({
+      employee: profileId,
+      annualCtc: p?.annualCtc ? String(p.annualCtc) : '',
+    });
+  };
+
   const setPct = (key, value) =>
     setForm((f) => ({ ...f, components: { ...f.components, [key]: value } }));
 
@@ -223,17 +261,35 @@ export default function AdminSalaryStructures() {
     setPreviewFor(s);
     setPreview(null);
     setPreviewError('');
-    // Prefill with the real CTC of an employee actually on this structure (e.g. a
-    // per-person structure) so the preview shows their original salary, not the
-    // placeholder default. Falls back to the last-entered CTC when none is found.
-    const assigned = employees.find(
+
+    // EVERY employee on this structure who has a CTC, not just the first one.
+    // A shared template has several, and silently previewing whichever happened
+    // to come first showed one person's salary while you were thinking about
+    // another — the figures were right for somebody, just not the person you had
+    // in mind, which is the worst kind of wrong.
+    const onThis = employees.filter(
       (p) => String(p.salaryStructure?._id || p.salaryStructure || '') === String(s._id)
         && Number(p.annualCtc) > 0
     );
-    setPreviewEmp(assigned || null);
-    const ctc = assigned ? Number(assigned.annualCtc) : annualCtc;
+    setPreviewPeople(onThis);
+
+    const first = onThis[0] || null;
+    setPreviewEmp(first);
+    // Falls back to the last-entered figure only when nobody on this structure
+    // has a CTC at all; the UI then says so rather than passing it off as real.
+    const ctc = first ? Number(first.annualCtc) : annualCtc;
     setAnnualCtc(ctc);
     runPreview(s._id, ctc);
+  };
+
+  /** Switch the preview to another employee on the same structure. */
+  const previewAs = (profileId) => {
+    const p = previewPeople.find((x) => String(x._id) === String(profileId)) || null;
+    setPreviewEmp(p);
+    if (p) {
+      setAnnualCtc(Number(p.annualCtc));
+      runPreview(previewFor._id, Number(p.annualCtc));
+    }
   };
 
   const runPreview = async (id, ctc) => {
@@ -251,6 +307,9 @@ export default function AdminSalaryStructures() {
 
   const onCtcChange = (value) => {
     setAnnualCtc(value);
+    // Once it is hand-typed it is no longer anyone's real CTC, so stop
+    // attributing it to them.
+    if (previewEmp && Number(value) !== Number(previewEmp.annualCtc)) setPreviewEmp(null);
     if (previewFor) runPreview(previewFor._id, value);
   };
 
@@ -406,7 +465,7 @@ export default function AdminSalaryStructures() {
                     <span className="block mb-1 text-xs">Employee</span>
                     <SearchableSelect
                       value={assign.employee}
-                      onChange={(e) => setAssign({ ...assign, employee: e.target.value })}
+                      onChange={(e) => pickAssignee(e.target.value)}
                       className="block w-full border rounded-lg px-3 py-2 bg-white"
                     >
                       <option value="">— none —</option>
@@ -472,6 +531,26 @@ export default function AdminSalaryStructures() {
               Enter an annual CTC to see the monthly and annual breakdown.
             </p>
 
+            {previewPeople.length > 1 && (
+              <label className="block text-sm text-gray-700 mb-3">
+                <span className="block mb-1 text-xs">Preview for</span>
+                <select
+                  value={previewEmp?._id || ''}
+                  onChange={(e) => previewAs(e.target.value)}
+                  className="block w-full border rounded-lg px-3 py-2 bg-white"
+                >
+                  {previewPeople.map((p) => (
+                    <option key={p._id} value={p._id}>
+                      {fullName(p)} · ₹{Number(p.annualCtc).toLocaleString('en-IN')}
+                    </option>
+                  ))}
+                </select>
+                <span className="block mt-1 text-xs text-gray-500">
+                  {previewPeople.length} people share this structure on different CTCs.
+                </span>
+              </label>
+            )}
+
             <label className="block text-sm text-gray-700 mb-4">
               <span className="block mb-1 text-xs">Annual CTC (₹)</span>
               <input
@@ -481,10 +560,15 @@ export default function AdminSalaryStructures() {
                 onChange={(e) => onCtcChange(e.target.value)}
                 className="block w-full border rounded-lg px-3 py-2"
               />
-              {previewEmp && (
+              {previewEmp ? (
                 <span className="block mt-1 text-xs text-gray-500">
-                  Prefilled from {`${previewEmp.user?.firstName || ''} ${previewEmp.user?.lastName || ''}`.trim()}
-                  &rsquo;s current CTC (₹{Number(previewEmp.annualCtc).toLocaleString('en-IN')}).
+                  Showing {fullName(previewEmp) || 'this employee'}&rsquo;s current CTC
+                  (₹{Number(previewEmp.annualCtc).toLocaleString('en-IN')}).
+                </span>
+              ) : (
+                // Never let a placeholder read as somebody's real salary.
+                <span className="block mt-1 text-xs text-amber-700">
+                  Nobody on this structure has a CTC set, so this is an example figure — not anyone&rsquo;s real salary.
                 </span>
               )}
             </label>

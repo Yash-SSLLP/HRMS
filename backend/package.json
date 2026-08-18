@@ -12,7 +12,8 @@
     "seed:holidays": "node scripts/seedHolidays.js",
     "seed:departments": "node scripts/seedDepartments.js",
     "test:khata": "node scripts/testKhataLedger.js",
-    "test:khata:db": "node scripts/testKhataIntegration.js"
+    "test:khata:db": "node scripts/testKhataIntegration.js",
+    "test:salary": "node scripts/testSalaryRevision.js"
   },
   "keywords": [
     "hrms",

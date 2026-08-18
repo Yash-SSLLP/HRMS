@@ -178,13 +178,14 @@ const employeeProfileSchema = new mongoose.Schema(
     // the value effective *as of today*; each entry records one raise. The
     // monthly payroll run resolves the CTC effective for the run month from this
     // history (see resolveCtcForMonth in payrollController), so a future-dated
-    // hike only affects payroll from its effective month onward.
+    // revision only affects payroll from its effective month onward. An entry may
+    // record a DECREASE as well as a raise — `value` is signed for that reason.
     ctcHistory: [
       {
         previousCtc: { type: Number, min: 0 },
         newCtc: { type: Number, min: 0 },
         mode: { type: String, enum: ['percent', 'amount', 'set'] },
-        value: Number, // the % or ₹ the HR entered
+        value: Number, // the % or ₹ HR entered; NEGATIVE for a reduction
         previousStructure: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryStructure' },
         newStructure: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryStructure' },
         effectiveMonth: { type: Number, min: 1, max: 12 },
