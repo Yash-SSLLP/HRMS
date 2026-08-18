@@ -1,7 +1,9 @@
 /**
  * AdminPermissions — SuperAdmin-only access-control page (admin portal). Lists
  * users from GET /admin/users and grants module access: cashbook access for
- * anyone (PATCH /admin/users/:id/cashbook-access), work-from-home per employee
+ * anyone (PATCH /admin/users/:id/cashbook-access), khata access and the separate
+ * khata download grant (PATCH /admin/users/:id/khata-access and
+ * /khata-export-access), work-from-home per employee
  * (PATCH /admin/users/:id/wfh-access) and granular HR capabilities for HR
  * Managers (catalog from GET /admin/permissions/catalog, saved via
  * PATCH /admin/users/:id/permissions). Also hosts the org-wide feature switches
@@ -98,6 +100,19 @@ export default function AdminPermissions() {
     path: 'assets-access', enabled: !u.assetsAccess, errorText: 'Could not update assets access',
   });
 
+  // Two separate khata grants on purpose. The first opens the module so someone
+  // can hand cash to staff and settle it; the second lets them download every
+  // employee's ledger as a spreadsheet, which is data leaving the building and
+  // therefore its own decision. Granting the download alone is allowed — it just
+  // does nothing until the person can also reach the module.
+  const toggleKhata = (u) => toggleAccess(u, {
+    path: 'khata-access', enabled: !u.khataAccess, errorText: 'Could not update khata access',
+  });
+
+  const toggleKhataExport = (u) => toggleAccess(u, {
+    path: 'khata-export-access', enabled: !u.khataExportAccess, errorText: 'Could not update khata download access',
+  });
+
   // CEO/MD only: flip the account between view-only (the default) and edit mode.
   const toggleExecEdit = async (u) => {
     setBusyId(u._id || u.id); setError('');
@@ -168,7 +183,9 @@ export default function AdminPermissions() {
       <PageHeader title="Permissions" />
       <p className="text-sm text-gray-500 mb-4">
         Grant module access to any user or employee. <strong>Cashbook</strong> and <strong>Expenses</strong> access can
-        be given to anyone, whatever their role; <strong>Work from home</strong> is granted per employee;
+        be given to anyone, whatever their role; <strong>Khata</strong> likewise — with the separate
+        <strong>Export</strong> tick controlling who may download every employee&apos;s cash ledger as a
+        spreadsheet, which no role grants on its own; <strong>Work from home</strong> is granted per employee;
         {' '}<strong>Module permissions</strong> apply to HR Managers and Managers — an HR Manager with none set keeps
         full access, while a Manager starts with nothing and only sees the admin portal once granted something.
         {' '}<strong>CEO / MD access</strong> switches an executive account between view-only (the default) and edit
@@ -208,6 +225,7 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Cashbook</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Assets</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Khata</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Work from home</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">CEO / MD access</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">HR Permissions</th>
@@ -215,9 +233,9 @@ export default function AdminPermissions() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
             ) : filtered.map((u) => (
               <tr key={u._id || u.id}>
                 <td className="px-4 py-3">
@@ -244,6 +262,23 @@ export default function AdminPermissions() {
                     className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.assetsAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
                     {u.assetsAccess ? '✓ Granted' : 'Grant access'}
                   </button>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-col gap-1.5 items-start">
+                    <button onClick={() => toggleKhata(u)} disabled={busyId === (u._id || u.id)}
+                      title="Open the employee-khata module — give cash advances and settle them."
+                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.khataAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
+                      {u.khataAccess ? '✓ Granted' : 'Grant access'}
+                    </button>
+                    {/* Kept visible even for roles that already hold the module
+                        (Accounts Manager, HR) — none of them can download
+                        without this tick. */}
+                    <button onClick={() => toggleKhataExport(u)} disabled={busyId === (u._id || u.id)}
+                      title="Download the balances and the full ledger as an Excel file."
+                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.khataExportAccess ? 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700' : 'text-purple-700 border-purple-300 hover:bg-purple-50'}`}>
+                      {u.khataExportAccess ? '✓ Export' : 'Allow export'}
+                    </button>
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   {/* The flag lives on the employee profile, so accounts without

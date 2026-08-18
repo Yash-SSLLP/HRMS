@@ -5,7 +5,7 @@
  * settlements back, and a running "you will get / you will give" balance that
  * posts double-entry into the cashbook.
  *
- * TWO LAYERS OF ACCESS, and they are not the same thing:
+ * THREE LAYERS OF ACCESS, and they are not the same thing:
  *   1. `khata.manage` opens the module. A SuperAdmin has it implicitly; an
  *      Accounts Manager has it by role; anyone at all can be given it with the
  *      standalone `khataAccess` flag, no admin role required.
@@ -14,13 +14,16 @@
  *      entry parks for approval instead of paying out. Enforced in the
  *      controller via services/khataLedger.js → resolveDisburseRights, because
  *      it depends on which account the request names.
+ *   3. Downloading the whole thing as a spreadsheet needs a THIRD grant on top
+ *      of (1): `khataExportAccess`, which only a SuperAdmin can set and which
+ *      no role confers. See middleware/authMiddleware.js → canExportKhata.
  *
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
 const { createUpload } = require('../middleware/upload');
 const ctrl = require('../controllers/khataController');
-const { protect, protectMedia, restrictTo, requirePermission } = require('../middleware/authMiddleware');
+const { protect, protectMedia, restrictTo, requirePermission, requireKhataExport } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -89,8 +92,11 @@ router.post('/entries/:id/reverse', ctrl.reverseEntry);
 // ----- Reports -----
 // GET /reports/outstanding — who is holding company cash, with ageing bands; requires 'khata.manage'.
 router.get('/reports/outstanding', ctrl.outstandingReport);
-// GET /reports/export — balances + full ledger as .xlsx; requires 'khata.manage'.
-router.get('/reports/export', ctrl.exportExcel);
+// GET /reports/export — balances + full ledger as .xlsx; requires 'khata.manage'
+// PLUS the separate download grant (SuperAdmin, or User.khataExportAccess).
+// Reading the ledger on screen and walking out with a file of it are different
+// decisions, so the second one is its own tick — see middleware canExportKhata.
+router.get('/reports/export', requireKhataExport, ctrl.exportExcel);
 // POST /reports/remind — nudge everyone (or named people) holding company cash; requires 'khata.manage'.
 router.post('/reports/remind', ctrl.sendSettleReminders);
 

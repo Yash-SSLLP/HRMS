@@ -215,6 +215,37 @@ function hasPermission(user, cap) {
 }
 
 /**
+ * May this account download the khata as a spreadsheet?
+ *
+ * Deliberately NOT routed through hasPermission. Every branch in there ends in
+ * a role default — an HR Manager with no `permissions` array holds everything,
+ * an Accounts Manager holds the whole finance set — and a capability that fell
+ * through one of those would be held by people nobody consciously gave it to.
+ * Exporting means the entire ledger of who owes the company what leaves in a
+ * file, so the answer is only ever "a SuperAdmin, or someone a SuperAdmin
+ * explicitly ticked". Opening the module (khata.manage) does not imply it.
+ * @param {object|null} user - The User doc (needs role and khataExportAccess).
+ * @returns {boolean}
+ */
+function canExportKhata(user) {
+  if (!user) return false;
+  return user.role === 'SuperAdmin' || user.khataExportAccess === true;
+}
+
+/**
+ * Route guard for the khata export. No read-only-exec exemption: unlike the
+ * capability guards below, a CEO/MD does not get this for free on a GET — the
+ * grant is the whole point, and it can be given to an exec like anyone else.
+ * @returns {import('express').RequestHandler}
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
+const requireKhataExport = (req, res, next) => {
+  if (canExportKhata(req.user)) return next();
+  res.status(403);
+  return next(new Error('You do not have permission to download the khata. Ask a Super Admin to grant it.'));
+};
+
+/**
  * Build a capability gate. CEO/MD keep read-only access on safe methods;
  * otherwise the user must hold at least one of the given capabilities.
  * @param {string|string[]} caps - One capability key, or several (user needs ANY one).
@@ -261,4 +292,6 @@ module.exports = {
   hasPermission,
   requirePermission,
   requireAnyPermission,
+  canExportKhata,
+  requireKhataExport,
 };

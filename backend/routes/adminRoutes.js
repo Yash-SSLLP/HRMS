@@ -18,6 +18,8 @@ const {
   setCashbookAccess,
   setExpensesAccess,
   setAssetsAccess,
+  setKhataAccess,
+  setKhataExportAccess,
   setExecEditAccess,
   setWfhAccess,
   getOrgSettings,
@@ -68,6 +70,13 @@ router.patch('/users/:id/cashbook-access', restrictTo('SuperAdmin'), setCashbook
 router.patch('/users/:id/expenses-access', restrictTo('SuperAdmin'), setExpensesAccess);
 // PATCH /users/:id/assets-access — grant/revoke the assets register; protected, SuperAdmin only.
 router.patch('/users/:id/assets-access', restrictTo('SuperAdmin'), setAssetsAccess);
+// PATCH /users/:id/khata-access — grant/revoke the employee-khata module; protected, SuperAdmin only.
+router.patch('/users/:id/khata-access', restrictTo('SuperAdmin'), setKhataAccess);
+// Downloading the khata is its own grant, kept apart from the module grant
+// above: reading balances on screen and carrying every employee's ledger out in
+// a file are different decisions. No role confers it.
+// PATCH /users/:id/khata-export-access — grant/revoke the khata download; protected, SuperAdmin only.
+router.patch('/users/:id/khata-export-access', restrictTo('SuperAdmin'), setKhataExportAccess);
 // CEO/MD view-only ↔ edit mode — SuperAdmin only. Lifting the executive
 // read-only restriction is exactly the kind of decision that stays with the one
 // role that administers the system.

@@ -419,6 +419,49 @@ const setExpensesAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke the standalone Employee-khata grant — the module itself.
+ * Role-independent like cashbook and expenses above: the person who actually
+ * hands cash to staff (a site in-charge, a branch supervisor) is usually not an
+ * admin. It does NOT let them download the ledger; that is the separate grant
+ * below.
+ * @route PATCH /api/admin/users/:id/khata-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, khataAccess}}
+ */
+const setKhataAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.khataAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, khataAccess: user.khataAccess });
+});
+
+/**
+ * Grant or revoke permission to DOWNLOAD the khata as a spreadsheet.
+ *
+ * Its own grant rather than part of khata access, because an export takes every
+ * employee's borrowing history out of the system in a file that can be mailed
+ * on. No role confers it (see middleware canExportKhata) — a SuperAdmin names
+ * each person who may do it, and that person may be anyone at all.
+ * @route PATCH /api/admin/users/:id/khata-export-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, khataExportAccess}}
+ */
+const setKhataExportAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.khataExportAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, khataExportAccess: user.khataExportAccess });
+});
+
+/**
  * Grant/revoke the standalone Assets grant. Role-independent by design, like
  * cashbook and expenses above: the person who looks after company hardware is
  * usually an ordinary employee, not an admin.
@@ -715,6 +758,8 @@ module.exports = {
   setCashbookAccess,
   setExpensesAccess,
   setAssetsAccess,
+  setKhataAccess,
+  setKhataExportAccess,
   setExecEditAccess,
   setWfhAccess,
   getOrgSettings,

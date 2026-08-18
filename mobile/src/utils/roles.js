@@ -70,6 +70,21 @@ export function hasPermission(u, cap) {
   return false;
 }
 
+/**
+ * May this account download the khata (balances + full ledger) as a spreadsheet?
+ *
+ * Mirrors canExportKhata in the backend's authMiddleware, and like it answers on
+ * role and flag ALONE — never through hasPermission. Every branch in there ends
+ * in a role default (an HR Manager with no permissions array holds everything),
+ * so a capability key would have handed the download to people nobody chose.
+ * Opening the khata module does not include taking the data out of it; only a
+ * SuperAdmin grants this, per person, from the web Permissions page.
+ * @param {object|null} u - the user object
+ * @returns {boolean}
+ */
+export const canExportKhata = (u) => !!u && typeof u === 'object'
+  && (u.role === 'SuperAdmin' || u.khataExportAccess === true);
+
 /** True when the account holds ANY of the given capabilities. */
 export const hasAnyPermission = (u, caps = []) => caps.some((c) => hasPermission(u, c));
 

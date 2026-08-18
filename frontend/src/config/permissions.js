@@ -45,6 +45,17 @@ export function hasPermission(user, cap) {
 }
 
 /**
+ * May this account download the khata as a spreadsheet? Mirrors canExportKhata
+ * in the backend's authMiddleware — and, like it, deliberately answers on the
+ * flag alone rather than through hasPermission, so no role picks it up by
+ * default. Opening the khata module does not include taking the data out of it.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const canExportKhata = (user) => !!user
+  && (user.role === 'SuperAdmin' || user.khataExportAccess === true);
+
+/**
  * Can this account open the /admin portal at all?
  *
  * Role alone isn't the answer for a Manager: the role exists for team duties

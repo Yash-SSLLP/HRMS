@@ -6,21 +6,29 @@
  * above an operator's limit), and Accounts (what this operator may pay from).
  * Giving money is one sheet, reachable from anywhere on the screen.
  *
- * TWO GATES. Reaching this screen needs `khata.manage`. Actually paying someone
+ * THREE GATES. Reaching this screen needs `khata.manage`. Actually paying someone
  * additionally needs to be an operator on the chosen cash account, with a limit
  * above which the entry parks for approval rather than paying out. The server
  * decides both; this screen only offers accounts GET /khata/accounts returned,
- * and says up front when an amount is going to park instead of pay.
+ * and says up front when an amount is going to park instead of pay. Downloading
+ * the ledger as a spreadsheet is the third gate — a per-person grant only a
+ * SuperAdmin can give (`User.khataExportAccess`), so the Export button is hidden
+ * without it; see utils/roles.js → canExportKhata.
  *
  * Route: "KhataAdmin" (from the More/Menu admin section).
- * Backend: /khata/overview, /employees, /employee-options, /pending, /entries.
+ * Backend: /khata/overview, /employees, /employee-options, /pending, /entries,
+ * /reports/export.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
-import api, { errMsg } from '../../api/client';
+import api, { API_BASE, errMsg } from '../../api/client';
+import { useAuth } from '../../store/auth';
+import { canExportKhata } from '../../utils/roles';
 import { toast } from '../../components/Toast';
 import { colors, spacing, font } from '../../theme';
 import {
@@ -41,6 +49,12 @@ const STATUS_TONE = { Pending: 'warning', Approved: 'success', Rejected: 'danger
 const blankEntry = { employee: '', khata: '', direction: 'to_employee', amount: '', purpose: '', paymentMode: 'Cash', cashAccount: '' };
 
 export default function KhataAdminScreen() {
+  const me = useAuth((s) => s.user);
+  const token = useAuth((s) => s.token);
+  // The download is its own grant, separate from reaching this screen. Hidden
+  // when it is missing — the server refuses either way.
+  const mayExport = canExportKhata(me);
+
   const [tab, setTab] = useState('people');
   const [ov, setOv] = useState(null);
   const [accounts, setAccounts] = useState([]);
@@ -60,6 +74,7 @@ export default function KhataAdminScreen() {
   const [newKhata, setNewKhata] = useState(null);  // { employee, name, creditLimit }
   const [viewKhata, setViewKhata] = useState('');  // '' = all of their books
   const [entryKhatas, setEntryKhatas] = useState([]); // books offered in the entry sheet
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -83,6 +98,43 @@ export default function KhataAdminScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  // ---------- export ----------
+
+  /**
+   * Download the khata as .xlsx and hand it to the share sheet.
+   *
+   * The route sits behind `protect`, so it needs the bearer header — which a
+   * plain Linking.openURL cannot set. FileSystem.downloadAsync it is, matching
+   * the attendance and payroll exports. Unfiltered, like the web Overview
+   * button: two sheets, every balance and every ledger row.
+   */
+  const exportXlsx = async () => {
+    setExporting(true);
+    try {
+      const name = `employee_khata_${toYMD(new Date())}.xlsx`;
+      const fileUri = `${FileSystem.cacheDirectory}${name}`;
+      const res = await FileSystem.downloadAsync(`${API_BASE}/khata/reports/export`, fileUri, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      // downloadAsync writes the error BODY to the file on a non-200, so the
+      // status has to be checked or the user shares a file of JSON.
+      if (res.status === 403) throw new Error('You do not have permission to download the khata.');
+      if (res.status !== 200) throw new Error('Export not available');
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(res.uri, {
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          dialogTitle: 'Employee khata',
+        });
+      } else {
+        toast('Saved', name);
+      }
+    } catch (err) {
+      toast('Export failed', err.message || 'Please try again');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const openDetail = async (employeeId, keepFilter = false) => {
     try {
@@ -343,6 +395,16 @@ export default function KhataAdminScreen() {
         </View>
 
         <AppButton title="New entry" icon="add" onPress={() => openEntry('')} style={{ marginBottom: spacing(3) }} />
+
+        {mayExport && (
+          <AppButton
+            title="Export to Excel"
+            icon="download-outline"
+            variant="ghost"
+            loading={exporting}
+            onPress={exportXlsx}
+            style={{ marginBottom: spacing(3) }} />
+        )}
 
         <View style={styles.tabs}>
           {TABS.map(([key, label]) => (

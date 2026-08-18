@@ -78,6 +78,14 @@ const userSchema = new mongoose.Schema(
     // pay out of, and how much they may release without a second signature, is
     // set per account on CashAccount.operators.
     khataAccess: { type: Boolean, default: false },
+    // Permission to DOWNLOAD the khata (balances + the full ledger) as a
+    // spreadsheet. Deliberately separate from khataAccess: opening the module
+    // lets someone hand out and settle cash for the people they deal with,
+    // while an export puts every employee's borrowing history on a file that
+    // can leave the building. Only a SuperAdmin can grant it — and unlike the
+    // flags above it is NOT implied by any role, not even Accounts Manager, so
+    // the set of people who can take the data out stays an explicit list.
+    khataExportAccess: { type: Boolean, default: false },
     // Assets access — same standalone, role-independent grant. Switch it on for
     // the employee who actually looks after company hardware and they get the
     // Assets register in their own portal, without becoming an admin.

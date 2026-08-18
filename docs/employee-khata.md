@@ -53,7 +53,7 @@ they cannot drift apart on the most confusable thing in the module.
 
 ---
 
-## Who can give money — two gates, deliberately separate
+## Who can give money — three gates, deliberately separate
 
 Holding the capability opens the module. It pays nobody on its own.
 
@@ -78,6 +78,22 @@ So: *Amit can pay ₹5,000 out of Petty Cash directly, anything larger goes for
 approval, and he cannot touch the Main Bank account at all.*
 
 Managed at **Admin → Employee Khata → Accounts** (SuperAdmin only).
+
+**Gate 3 — `User.khataExportAccess`** decides who may *download* the khata. The
+**Export to Excel** buttons (Overview and Ledger tabs) and
+`GET /reports/export` need it on top of Gate 1. **No role confers it** — not
+Accounts Manager, not an HR Manager with every capability. Only a SuperAdmin
+grants it, per person, on the **Permissions** page, and it can be given to
+anyone at all.
+
+Its own gate because reading balances on screen and carrying every employee's
+borrowing history out in a file that can be mailed on are different decisions.
+Routing it through `hasPermission` would have got it wrong: an HR Manager whose
+`permissions` array was never configured holds *everything* by default, so the
+grant would have landed on people nobody consciously chose. `canExportKhata` in
+`backend/middleware/authMiddleware.js` therefore answers on role and flag alone,
+with no capability fallback — and, unlike the capability guards, gives a CEO/MD
+no free pass on the GET either.
 
 ---
 
@@ -157,7 +173,7 @@ Mounted at `/api/khata`. All routes authenticated.
 | `PATCH /entries/:id/approve` · `/reject` | Release · decline (approve needs `canApprove`) |
 | `POST /entries/:id/reverse` | Cancel with a mirror row; reason required |
 | `GET /reports/outstanding` | Who is holding cash, with ageing bands |
-| `GET /reports/export` | Balances + full ledger as `.xlsx` |
+| `GET /reports/export` | Balances + full ledger as `.xlsx` — **also needs `khataExportAccess`** (Gate 3) |
 | `POST /reports/remind` | Nudge everyone holding company cash |
 
 **SuperAdmin only**: `GET|PUT /accounts/:id/operators`,
@@ -223,7 +239,7 @@ replays, parked-until-approved payouts, reversals, and back-dated re-stamping.
 | Money rules | `backend/services/khataLedger.js` — the only place balance arithmetic happens |
 | Integrations | `backend/services/khataSync.js` |
 | API | `backend/controllers/khataController.js`, `backend/routes/khataRoutes.js` |
-| Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` on `User`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |
+| Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` and `khataExportAccess` on `User` (granted from `frontend/src/pages/AdminPermissions.jsx` via `PATCH /admin/users/:id/khata-access` and `/khata-export-access`); `canExportKhata` + `requireKhataExport` in `backend/middleware/authMiddleware.js`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |
 | Web | `frontend/src/pages/AdminKhata.jsx`, `EmployeeKhata.jsx` |
 | Mobile | `mobile/src/screens/KhataScreen.js`, `mobile/src/screens/admin/KhataAdminScreen.js` |
 
@@ -257,8 +273,10 @@ plainly that the old index is still there.
 
 ## Setting it up
 
-1. **Grant access** — Permissions page: switch on `khata.manage` for the HR
-   Managers who need it, or set `khataAccess` on whoever actually hands out cash.
+1. **Grant access** — Permissions page → *Khata* column: **Grant access** opens
+   the module for anyone (or switch on `khata.manage` for the HR Managers who
+   need it). **Allow export** is the separate download grant — give it only to
+   the people who should be able to take the whole ledger out as a spreadsheet.
 2. **Name the operators** — Admin → Employee Khata → Accounts → *Manage
    operators* on each cash account. Until you do, only a SuperAdmin can pay
    anyone from it. Set each person's direct-payout limit here.

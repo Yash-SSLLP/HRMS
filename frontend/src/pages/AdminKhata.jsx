@@ -6,12 +6,16 @@
  * Approvals (entries parked above an operator's limit), and Accounts
  * (SuperAdmin only — who may pay employees out of which cash account).
  *
- * TWO GATES, and the UI has to make the difference visible. Reaching this page
+ * THREE GATES, and the UI has to make the difference visible. Reaching this page
  * needs `khata.manage`. Actually paying someone additionally needs to be listed
  * as an operator on the chosen account, with a limit above which the entry is
  * accepted but parks for approval instead of paying out. The server decides all
  * of that; the form only ever offers accounts GET /khata/accounts returned, and
  * warns before submitting when an amount will park rather than pay.
+ *
+ * The third gate is downloading the ledger to a spreadsheet — a per-person
+ * grant only a SuperAdmin can give (User.khataExportAccess). The Export buttons
+ * are hidden without it; see config/permissions.js → canExportKhata.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -21,6 +25,7 @@ import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { useAuthStore } from '../store/authStore';
+import { canExportKhata } from '../config/permissions';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
@@ -93,6 +98,10 @@ function BalanceChip({ display }) {
 export default function AdminKhata() {
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.role === 'SuperAdmin';
+  // Downloading the ledger is a grant of its own, separate from reaching this
+  // page — a SuperAdmin ticks it per person on the Permissions page. Hiding the
+  // button when it is missing keeps the UI honest; the server refuses anyway.
+  const mayExport = canExportKhata(user);
 
   const [tab, setTab] = useTabParam('overview', TABS.map(([k]) => k));
   const [ov, setOv] = useState(null);
@@ -317,7 +326,12 @@ export default function AdminKhata() {
       const a = document.createElement('a');
       a.href = url; a.download = m ? m[1] : 'employee_khata.xlsx'; a.click();
       URL.revokeObjectURL(url);
-    } catch (err) { errToast(err, 'Could not export'); }
+    } catch (err) {
+      // A blob responseType means the 403 body arrives as a Blob, so the usual
+      // err.response.data.message is not there to read — say it plainly instead.
+      if (err.response?.status === 403) toast.error('You do not have permission to download the khata.');
+      else errToast(err, 'Could not export');
+    }
   };
 
   const remindEveryone = async () => {
@@ -430,10 +444,12 @@ export default function AdminKhata() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button onClick={exportXlsx}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                Export to Excel
-              </button>
+              {mayExport && (
+                <button onClick={exportXlsx}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                  Export to Excel
+                </button>
+              )}
               <button onClick={remindEveryone} disabled={!ov?.totalReceivable}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
                 Remind everyone holding cash
@@ -695,6 +711,15 @@ export default function AdminKhata() {
             <input type="date" value={ledgerFilter.to}
               onChange={(e) => setLedgerFilter({ ...ledgerFilter, to: e.target.value })}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            {/* Same download as the overview, but here the filters above are
+                already the ones the export honours — so what lands in the file
+                is what is on screen. */}
+            {mayExport && (
+              <button type="button" onClick={exportXlsx}
+                className="ml-auto px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                Export to Excel
+              </button>
+            )}
           </div>
           <EntryTable entries={entries} onReverse={reverse} showEmployee />
         </div>
