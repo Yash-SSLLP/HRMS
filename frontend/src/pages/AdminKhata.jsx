@@ -81,6 +81,18 @@ const blankEntry = {
   date: today(), purpose: '', paymentMode: 'Cash', referenceNo: '', cashAccount: '',
 };
 
+/**
+ * The marker on a label whose field must be filled. `aria-hidden` with a
+ * visually-hidden word beside it: a bare red asterisk is announced as "star" or
+ * skipped entirely by a screen reader.
+ */
+const Req = () => (
+  <>
+    <span aria-hidden="true" className="text-red-600 ml-0.5">*</span>
+    <span className="sr-only"> (required)</span>
+  </>
+);
+
 /** Small stat card used across the overview. */
 function Stat({ label, value, tone = 'gray', hint }) {
   const tones = {
@@ -149,6 +161,7 @@ export default function AdminKhata() {
   const [entries, setEntries] = useState([]);
   const [pending, setPending] = useState([]);
   const [sanctions, setSanctions] = useState([]);
+  const [expenses, setExpenses] = useState([]);   // auto-approved, awaiting review
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -180,19 +193,27 @@ export default function AdminKhata() {
     .then((r) => setPending(r.data.entries || [])).catch(() => {}), []);
   // Only the people who may act on it ask for it — everyone else gets a 403,
   // and a tab that is always empty for them would only be confusing.
+  // Employee expenses post on the spot, so they never reach /pending. This is
+  // the review surface that replaces the approval step: recent spend, newest
+  // first, each rejectable.
+  const loadExpenses = useCallback(() => api.get('/khata/entries', {
+    params: { type: 'expense', status: 'Approved', limit: 100 },
+  }).then((r) => setExpenses((r.data.entries || []).filter((e) => e.raisedByEmployee)))
+    .catch(() => {}), []);
   const loadSanctions = useCallback(() => (isApprover
     ? api.get('/khata/advance-approvals').then((r) => setSanctions(r.data.entries || [])).catch(() => {})
     : Promise.resolve()), [isApprover]);
 
   useEffect(() => {
-    Promise.all([loadOverview(), loadPeople(), loadPending(), loadSanctions()]).finally(() => setLoading(false));
-  }, [loadOverview, loadPeople, loadPending, loadSanctions]);
+    Promise.all([loadOverview(), loadPeople(), loadPending(), loadSanctions(), loadExpenses()])
+      .finally(() => setLoading(false));
+  }, [loadOverview, loadPeople, loadPending, loadSanctions, loadExpenses]);
   useEffect(() => { if (tab === 'people') loadRows(); }, [tab, loadRows]);
   useEffect(() => { if (tab === 'ledger') loadEntries(); }, [tab, loadEntries]);
 
   /** Reload whatever the current view shows, plus the headline figures. */
   const refresh = async () => {
-    await Promise.all([loadOverview(), loadPending(), loadSanctions(), loadRows(),
+    await Promise.all([loadOverview(), loadPending(), loadSanctions(), loadExpenses(), loadRows(),
       tab === 'ledger' ? loadEntries() : null]);
     if (detail) await openDetail(detail.employee._id, true);
   };
@@ -318,21 +339,45 @@ export default function AdminKhata() {
     } catch (err) { errToast(err, 'Could not decline'); }
   };
 
-  const reverse = async (entry) => {
+  /**
+   * Open an entry's bill. Fetched as a blob with the bearer header rather than
+   * linked with `?access_token=`, matching AdminCashbook — a token in a URL ends
+   * up in history, logs and referrers.
+   */
+  const viewReceipt = async (id) => {
+    try {
+      const res = await api.get(`/khata/entries/${id}/receipt`, { responseType: 'blob' });
+      window.open(URL.createObjectURL(res.data), '_blank', 'noopener');
+    } catch (err) { errToast(err, 'Could not open the bill'); }
+  };
+
+  /**
+   * Undo a posted entry. Worded as a REJECTION for an employee's expense, which
+   * self-approved and so was never "approved" by anybody — calling it a reversal
+   * would describe an act that never happened. Same endpoint either way: posted
+   * money is corrected with a mirror row, never deleted.
+   */
+  const reverse = async (entry, asRejection = false) => {
     const reason = await promptDialog({
-      title: `Reverse ${entry.code || 'this entry'}?`,
-      message: `${money(entry.amount)}. Nothing is deleted — a matching opposite entry is written, `
-        + 'and both stay on the record. Why is it being reversed?',
-      confirmText: 'Reverse',
+      title: asRejection
+        ? `Reject this ₹${Number(entry.amount).toLocaleString('en-IN')} expense?`
+        : `Reverse ${entry.code || 'this entry'}?`,
+      message: asRejection
+        ? `${entry.employee?.name || 'The employee'} recorded this against "${entry.khataName || 'their khata'}". `
+          + 'Rejecting adds it back to their advance and tells them why. Both rows stay on the record. '
+          + 'Why is it being rejected?'
+        : `${money(entry.amount)}. Nothing is deleted — a matching opposite entry is written, `
+          + 'and both stay on the record. Why is it being reversed?',
+      confirmText: asRejection ? 'Reject' : 'Reverse',
     });
     // promptDialog resolves null when cancelled.
     if (reason === null) return;
     if (!reason.trim()) { toast.error('A reason is required — it goes on the permanent record.'); return; }
     try {
-      await api.post(`/khata/entries/${entry._id}/reverse`, { reason });
-      toast.success('Reversed. Both entries stay on the record.');
+      const res = await api.post(`/khata/entries/${entry._id}/reverse`, { reason });
+      toast.success(res.data.message || 'Done. Both entries stay on the record.');
       await refresh();
-    } catch (err) { errToast(err, 'Could not reverse'); }
+    } catch (err) { errToast(err, asRejection ? 'Could not reject' : 'Could not reverse'); }
   };
 
   // ---------- executive sanction ----------
@@ -924,6 +969,57 @@ export default function AdminKhata() {
         </div>
       )}
 
+      {/* Employee expenses post immediately — the purchase already happened, and
+          holding the record only made the wallet lie about what was left. So
+          this is a review queue rather than an approval one: everything here has
+          already counted, and the action is to reject what should not stand. */}
+      {tab === 'approvals' && (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Recorded expenses</h3>
+          <p className="text-xs text-gray-500 mb-2">
+            Already counted against the employee&apos;s advance. Reject anything that should not stand — it goes
+            back onto their advance and they are told why.
+          </p>
+          <div className="bg-white shadow rounded-lg overflow-hidden">
+            {expenses.length === 0 ? (
+              <div className="px-4 py-8 text-center text-gray-500 text-sm">
+                No expenses recorded yet.
+              </div>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {expenses.map((e) => (
+                  <li key={e._id} className="px-4 py-3 flex flex-wrap justify-between items-start gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900">
+                        {e.employee?.name || 'Employee'} · {money(e.amount)}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {e.khataName ? `${e.khataName} · ` : ''}{fmtDate(e.date)} · {e.code}
+                      </p>
+                      {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
+                      {/* The bill is mandatory on these, so a row without one is
+                          worth noticing rather than passing over quietly. */}
+                      {e.hasAttachment ? (
+                        <button onClick={() => viewReceipt(e._id)}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 underline">
+                          View bill
+                        </button>
+                      ) : (
+                        <span className="text-xs text-amber-700">No bill attached</span>
+                      )}
+                    </div>
+                    <button onClick={() => reverse(e, true)}
+                      className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50 shrink-0">
+                      Reject
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ---------------- Accounts / operators (SuperAdmin) ---------------- */}
       {tab === 'accounts' && isSuperAdmin && (
         <div>
@@ -955,9 +1051,12 @@ export default function AdminKhata() {
       {entryModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submitEntry} className="bg-white rounded-xl shadow-xl w-full max-w-lg p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Record a khata entry</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Record a khata entry</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Fields marked <span aria-hidden="true" className="text-red-600">*</span> are required.
+            </p>
 
-            <label className="block text-sm text-gray-700 mb-1">Employee</label>
+            <label className="block text-sm text-gray-700 mb-1">Employee<Req /></label>
             <div className="mb-3">
               <SearchableSelect required
                 value={entryForm.employee}
@@ -1023,7 +1122,7 @@ export default function AdminKhata() {
                 amount. */}
             {isKhataEntry && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Khata</label>
+                <label className="block text-sm text-gray-700 mb-1">Khata<Req /></label>
                 <select value={entryForm.khata} required
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, khata: e.target.value } })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
@@ -1052,7 +1151,7 @@ export default function AdminKhata() {
 
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Amount</label>
+                <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
                 <input type="number" min="0.01" step="0.01" required value={entryForm.amount}
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, amount: e.target.value } })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-lg" placeholder="0.00" />
@@ -1067,7 +1166,7 @@ export default function AdminKhata() {
 
             {movesCash ? (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Company account</label>
+                <label className="block text-sm text-gray-700 mb-1">Company account<Req /></label>
                 <select value={entryForm.cashAccount} required
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, cashAccount: e.target.value } })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1">
@@ -1142,7 +1241,7 @@ export default function AdminKhata() {
 
             {approveModal.entry.affectsCompanyCash && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Pay from</label>
+                <label className="block text-sm text-gray-700 mb-1">Pay from<Req /></label>
                 <select value={approveModal.cashAccount} required
                   onChange={(e) => setApproveModal({ ...approveModal, cashAccount: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
@@ -1206,7 +1305,7 @@ export default function AdminKhata() {
               </>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">What is it for?</label>
+            <label className="block text-sm text-gray-700 mb-1">What is it for?<Req /></label>
             <input type="text" required maxLength={80} value={khataModal.name}
               onChange={(e) => setKhataModal({ ...khataModal, name: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
@@ -1238,7 +1337,7 @@ export default function AdminKhata() {
               person&apos;s wallet, not here — a book holds no money of its own.
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">Name</label>
+            <label className="block text-sm text-gray-700 mb-1">Name<Req /></label>
             <input type="text" required maxLength={80} value={settingsModal.name}
               onChange={(e) => setSettingsModal({ ...settingsModal, name: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
@@ -1371,7 +1470,7 @@ export default function AdminKhata() {
             </p>
 
             <label className="block text-sm text-gray-700 mb-1">
-              {sanctionModal.approve ? 'Note (optional)' : 'Why are you declining?'}
+              {sanctionModal.approve ? 'Note (optional)' : <>Why are you declining?<Req /></>}
             </label>
             <input type="text" autoFocus required={!sanctionModal.approve} value={sanctionModal.note}
               onChange={(e) => setSanctionModal({ ...sanctionModal, note: e.target.value })}

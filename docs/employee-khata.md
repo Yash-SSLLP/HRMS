@@ -78,6 +78,37 @@ they cannot drift apart on the most confusable thing in the module.
 
 ---
 
+## Recording an expense — approved by default, rejected on review
+
+An expense **posts on the spot**. The purchase already happened, at the shop,
+with money the employee was already holding; queueing the record changed nothing
+except to make the wallet lie about what was left in their pocket until somebody
+got round to it. So the entry counts immediately and the company reviews it
+afterwards.
+
+**The bill is therefore mandatory.** It is the only control left once the
+approval step is gone — nothing else stands between "I spent ₹5,000" and the
+wallet dropping by ₹5,000. `POST /me/expense` refuses without a file, checked
+*before* the entry posts, so a missing bill can never leave a posted row with no
+evidence behind it. Both clients block it too, so the failure is immediate
+rather than a round trip.
+
+**Rejecting is a reversal**, not a status change — posted money is never
+deleted. The mirror row puts the amount back on the employee's advance, takes
+the cost back off the book it was charged to, and both rows stay on the record.
+The employee is told it was *rejected* rather than *reversed*, because from
+their side nobody ever approved it.
+
+Any khata operator may reject one, not just a SuperAdmin. An expense
+self-approves, so this reversal **is** the company's review of it; reserving it
+for a SuperAdmin would leave the accounts team watching wrong entries they could
+not correct. Safe because no company cash moves either way — it only restores
+the employee's wallet.
+
+Find them under **Admin → Employee Khata → Approvals → Recorded expenses**
+(they never reach `/pending`, having never been pending). Rows with no bill are
+flagged there, since that should not be possible through either client.
+
 ## When the wallet goes negative
 
 Spending past the advance flips the wallet negative: the company now owes the
@@ -236,8 +267,11 @@ the company owes somebody else ₹2,000 is two separate facts; collapsing that t
   retry over a flaky link returns the original row instead of paying twice.
 - **Opening balance** is SuperAdmin-only. It is the one figure that moves a
   balance with no ledger row behind it.
-- **Employees never self-release.** `POST /khata/me/request`, `/me/expense` and
-  `/me/settle` always park, whatever permissions the caller holds.
+- **Employees never self-release.** `POST /khata/me/request`, `/me/reimbursement`
+  and `/me/settle` always park, whatever permissions the caller holds. `/me/expense`
+  is the deliberate exception — it accounts for money already spent rather than
+  asking for any, so it posts at once and is rejected on review instead. Its
+  mandatory bill is what replaces the approval.
 
 ---
 
@@ -251,7 +285,7 @@ Mounted at `/api/khata`. All routes authenticated.
 |---|---|
 | `GET /me` | My wallet, my books (each with its `spent`), the totals (including `claimable`), one statement, and whether a request will need a CEO/MD sanction |
 | `POST /me/request` | Ask for an advance into my wallet — no `khata`, there is one pot |
-| `POST /me/expense` | Log what I spent it on — `khata` **required**, optional receipt |
+| `POST /me/expense` | Log what I spent it on — `khata` **required**, receipt **required**. Posts immediately |
 | `POST /me/settle` | Declare unspent cash returned — no `khata`, optional receipt |
 | `POST /me/reimbursement` | Claim back what the company owes, when the wallet has gone negative. Amount defaults to everything outstanding and is capped at `totals.claimable` |
 | `POST /me/khatas` | Open an expense book on my own account |
@@ -278,7 +312,7 @@ Mounted at `/api/khata`. All routes authenticated.
 | `POST /entries` | Give an advance, record cash back, or file an expense (`type: 'expense'` ⇒ `khata` required) |
 | `GET /entries` · `GET /pending` | Ledger · the accounts team's queue |
 | `PATCH /entries/:id/approve` · `/reject` | Release · decline (approve needs `canApprove`) |
-| `POST /entries/:id/reverse` | Cancel with a mirror row; reason required |
+| `POST /entries/:id/reverse` | Cancel with a mirror row; reason required. Also how an employee expense is **rejected** — any `khata.manage` holder may do it for a cashless expense, SuperAdmin/`canApprove` otherwise |
 | `GET /reports/outstanding` | Who is holding cash, with ageing bands and what they have been spending on |
 | `GET /reports/export` | Wallets + books + full ledger as `.xlsx` — **also needs `khataExportAccess`** (Gate 4) |
 | `POST /reports/remind` | Nudge everyone holding company cash |

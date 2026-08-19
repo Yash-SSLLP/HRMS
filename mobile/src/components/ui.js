@@ -83,10 +83,20 @@ export function AppButton({ title, onPress, loading, disabled, variant = 'primar
 }
 
 /** Labeled form field wrapper with an optional validation error line. */
-export function Field({ label, error, children }) {
+export function Field({ label, error, children, required }) {
   return (
     <View style={{ marginBottom: spacing(4) }}>
-      {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
+      {label ? (
+        <Text style={styles.fieldLabel}>
+          {label}
+          {/* accessibilityLabel carries the word, because a bare asterisk is
+              announced as "star" or skipped entirely by a screen reader — which
+              tells somebody nothing about what is required of them. */}
+          {required ? (
+            <Text style={styles.fieldRequired} accessibilityLabel=" (required)"> *</Text>
+          ) : null}
+        </Text>
+      ) : null}
       {children}
       {error ? <Text style={styles.fieldError}>{error}</Text> : null}
     </View>
@@ -479,6 +489,7 @@ const styles = StyleSheet.create({
   btnInner: { flexDirection: 'row', alignItems: 'center' },
   btnText: { fontSize: 15, fontWeight: '700' },
   fieldLabel: { ...font.label, marginBottom: 6 },
+  fieldRequired: { color: colors.danger, fontWeight: '800' },
   fieldError: { color: colors.danger, fontSize: 12, marginTop: 4 },
   input: {
     backgroundColor: colors.surface,

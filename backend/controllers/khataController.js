@@ -474,16 +474,22 @@ const requestAdvance = asyncHandler(async (req, res) => {
  * comes out of the wallet, so the remaining figure drops whichever book it was
  * filed under.
  *
- * It parks for the company to confirm rather than posting on the spot, for the
- * same reason a declared settlement does: an entry that moves what the company
- * is owed should be seen by the company. The employee's screen shows the
- * waiting amount alongside the confirmed one, so nothing is hidden while it
- * waits.
+ * IT POSTS IMMEDIATELY, and the company REJECTS rather than approves. Money the
+ * employee is already holding has already been spent — the purchase happened at
+ * the shop, and no amount of queueing un-buys it. Parking the record only made
+ * the wallet lie about what was left in their pocket until somebody got round to
+ * it. So the entry posts on the spot and the company reviews it afterwards,
+ * reversing anything that should not stand (see reverseEntry).
+ *
+ * THE RECEIPT IS THEREFORE MANDATORY. It is the only control left once the
+ * approval step is gone: nothing else stands between "I spent ₹5,000" and the
+ * wallet dropping by ₹5,000. Checked BEFORE the entry posts, so a missing bill
+ * can never leave a posted row with no evidence behind it.
  * @route POST /api/khata/me/expense
  * @param {string} req.body.khata - Which book it belongs to.
  * @param {number} req.body.amount
  * @param {string} req.body.purpose - What was bought.
- * @param {file} [req.file] - Optional receipt (multer field 'receipt').
+ * @param {file} req.file - The bill; REQUIRED (multer field 'receipt').
  * @returns {{entry: object, message: string}} 201
  */
 const recordMyExpense = asyncHandler(async (req, res) => {
@@ -491,6 +497,9 @@ const recordMyExpense = asyncHandler(async (req, res) => {
   if (!Number.isFinite(amount) || amount <= 0) bad(res, 'Enter how much you spent');
   const purpose = String(req.body.purpose || '').trim();
   if (!purpose) bad(res, 'Say what you spent it on');
+  // Before anything posts — see above. An expense with no bill behind it is the
+  // one thing this flow cannot allow, now that it self-approves.
+  if (!req.file) bad(res, 'Attach the bill or receipt — it is required for an expense.');
 
   const { entry, khata } = await ledger.postEntry({
     employee: req.user._id,
@@ -508,26 +517,32 @@ const recordMyExpense = asyncHandler(async (req, res) => {
     // No company cash moves here — it left the tin when the advance was paid.
     // Recording the spend accounts for money already in the employee's hand.
     affectsCompanyCash: false,
-    autoApprove: false,
+    // Posts on the spot; the company reverses it if it should not stand.
+    autoApprove: true,
     raisedByEmployee: true,
     idempotencyKey: req.body.idempotencyKey,
   }, req.user);
 
   await attachReceipt(entry, req.file);
 
+  const wallet = await ledger.getOrCreateWallet(req.user._id);
+
   await notifyMany(await khataApproverIds(), {
     type: 'general',
     audience: 'admin',
     title: 'Expense recorded against an advance',
     body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
-      + ` logged ₹${amount.toLocaleString('en-IN')} on "${khata.name}" — ${purpose}`,
+      + ` spent ₹${amount.toLocaleString('en-IN')} on "${khata.name}" — ${purpose}. `
+      + 'It has come off their advance; reject it if it should not stand.',
     link: '/admin/khata',
   });
 
   res.status(201).json({
     entry: publicEntry(entry),
     khata: publicKhata(khata),
-    message: 'Recorded — it will come off your advance once the company confirms it.',
+    wallet: publicWallet(wallet),
+    message: `Recorded. ₹${ledger.round2(Math.abs(wallet.balance)).toLocaleString('en-IN')} `
+      + `${wallet.balance < 0 ? 'is now owed to you' : 'left in your wallet'}.`,
   });
 });
 
@@ -1355,6 +1370,15 @@ const reverseEntry = asyncHandler(async (req, res) => {
     if (entry.affectsCompanyCash && entry.cashAccount) {
       const { rights } = await requireOperableAccount(req.user, entry.cashAccount, res);
       if (!rights.canApprove) bad(res, 'Only an approver on this account can reverse a posted entry.', 403);
+    } else if (entry.type === 'expense') {
+      // Rejecting an employee's expense. Any khata operator may do it: an
+      // expense self-approves, so this reversal IS the company's review of it,
+      // and reserving that for a SuperAdmin would leave the accounts team
+      // watching wrong entries they could not correct. Safe because no company
+      // cash moves either way — it only restores the employee's wallet.
+      if (!hasPermission(req.user, 'khata.manage')) {
+        bad(res, 'You do not have permission to reject khata expenses', 403);
+      }
     } else {
       bad(res, 'Only a Super Admin can reverse this entry.', 403);
     }
@@ -1362,12 +1386,19 @@ const reverseEntry = asyncHandler(async (req, res) => {
 
   const { original, reversal, wallet, khata } = await ledger.reverseEntry(entry, req.user, req.body.reason);
 
+  // An expense that self-approved was never "approved" by anybody, so calling
+  // its reversal a reversal would puzzle the employee. From their side it was
+  // simply rejected, and the money is back in their wallet.
+  const wasExpense = original.type === 'expense';
   await notify({
     recipient: original.employee,
     type: 'general',
     audience: 'employee',
-    title: 'Khata entry reversed',
-    body: `${original.code || 'An entry'} of ₹${original.amount.toLocaleString('en-IN')} was reversed: ${req.body.reason}`,
+    title: wasExpense ? 'Expense rejected' : 'Khata entry reversed',
+    body: wasExpense
+      ? `Your ₹${original.amount.toLocaleString('en-IN')} expense (${original.code || 'entry'}) was rejected: `
+        + `${req.body.reason}. It has been added back to your advance.`
+      : `${original.code || 'An entry'} of ₹${original.amount.toLocaleString('en-IN')} was reversed: ${req.body.reason}`,
     link: '/employee/khata',
   });
 
@@ -1376,7 +1407,9 @@ const reverseEntry = asyncHandler(async (req, res) => {
     reversal: publicEntry(reversal),
     wallet: publicWallet(wallet),
     khata: khata ? publicKhata(khata) : null,
-    message: 'Reversed. Both entries stay on the record.',
+    message: wasExpense
+      ? 'Rejected. The expense and its reversal both stay on the record.'
+      : 'Reversed. Both entries stay on the record.',
   });
 });
 

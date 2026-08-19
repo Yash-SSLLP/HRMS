@@ -13,15 +13,20 @@
  *
  * Reads GET /khata/me and offers the three things an employee can start:
  *   - ask for an advance      → POST /khata/me/request   (may need CEO/MD sign-off)
- *   - record what they spent  → POST /khata/me/expense   (names a book, optional receipt)
+ *   - record what they spent  → POST /khata/me/expense   (names a book, receipt REQUIRED)
  *   - return unspent cash     → POST /khata/me/settle    (optional receipt)
  *   - claim what they are owed → POST /khata/me/reimbursement (only when the
  *     wallet has gone negative — they spent past the advance, so the money is
  *     running the other way and every other action here points the wrong way)
  *
- * All three park: an employee never releases company money to themselves, and
- * their wallet only moves once the company confirms. The wording deliberately
- * avoids debit/credit — see the backend's describeWalletForEmployee.
+ * Everything that asks the company FOR money parks — an employee never releases
+ * company money to themselves. An EXPENSE is the exception: it posts on the
+ * spot, because the purchase already happened and queueing the record only made
+ * the wallet lie about what was left. The company rejects it afterwards if it
+ * should not stand, which is why the bill is mandatory there.
+ *
+ * The wording deliberately avoids debit/credit — see the backend's
+ * describeWalletForEmployee.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -57,6 +62,20 @@ const blankClaim = { amount: '', purpose: '', date: today() };
 const BLANKS = {
   request: blankRequest, expense: blankExpense, settle: blankSettle, claim: blankClaim,
 };
+
+/**
+ * The marker on a label whose field must be filled.
+ *
+ * `aria-hidden` with a visually-hidden word beside it: a bare red asterisk is
+ * announced as "star" or skipped entirely by a screen reader, which tells
+ * somebody nothing about what is required of them.
+ */
+const Req = () => (
+  <>
+    <span aria-hidden="true" className="text-red-600 ml-0.5">*</span>
+    <span className="sr-only"> (required)</span>
+  </>
+);
 
 const TITLES = {
   request: 'Ask for an advance',
@@ -147,6 +166,10 @@ export default function EmployeeKhata() {
       toast.error(modal === 'request' ? 'Say what the advance is for' : 'Say what you spent it on');
       return;
     }
+    // The bill is the only control on an expense now that it posts on the spot.
+    // Checked here as well as on the server so the failure is immediate rather
+    // than a round trip after they hit Send.
+    if (modal === 'expense' && !receipt) { toast.error('Attach the bill or receipt — it is required for an expense'); return; }
 
     setSaving(true);
     try {
@@ -289,9 +312,10 @@ export default function EmployeeKhata() {
           {waiting.length > 0 && (
             <p className="text-xs text-gray-500 mt-3">
               Not counted above: {money(totals.awaitingAdvance + totals.pendingAdvance)} requested
-              and {money(totals.pendingSpend)} recorded
+              and {money(totals.pendingSpend)} declared
               across {waiting.length === 1 ? '1 entry' : `${waiting.length} entries`} still waiting on
-              the company. Nothing moves until they act.
+              the company. Nothing moves until they act. Expenses are not in this figure — those
+              count the moment you record them.
             </p>
           )}
         </div>
@@ -419,7 +443,7 @@ export default function EmployeeKhata() {
               no money of its own: expenses filed under it still come out of your one wallet.
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">What will you be spending on?</label>
+            <label className="block text-sm text-gray-700 mb-1">What will you be spending on?<Req /></label>
             <input type="text" required autoFocus maxLength={80} value={newKhata.name}
               onChange={(e) => setNewKhata({ ...newKhata, name: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
@@ -450,10 +474,16 @@ export default function EmployeeKhata() {
               {modal === 'request' && (data?.approvalRequired
                 ? 'Your request goes to the CEO/MD to approve, then to whoever handles company cash. Nothing is paid until both have acted.'
                 : 'Your request goes to whoever handles company cash. Nothing is paid until they approve it.')}
-              {modal === 'expense' && 'Log what you spent the advance on. It comes off your wallet once the company confirms it.'}
+              {modal === 'expense' && 'Log what you spent the advance on. It comes off your wallet straight away — the company can reject it afterwards if it should not stand, so attach the bill.'}
               {modal === 'settle' && 'Tell the company you have handed cash back. Your wallet updates once they confirm receiving it.'}
               {modal === 'claim' && 'You have spent more than you were advanced, so the company owes you the difference. '
                 + 'This asks them to pay it back; they choose which account it comes from.'}
+            </p>
+
+            {/* Which fields cannot be left blank, said once rather than only
+                implied by the markers. */}
+            <p className="text-xs text-gray-500 mb-3">
+              Fields marked <span aria-hidden="true" className="text-red-600">*</span> are required.
             </p>
 
             {modal === 'claim' && (
@@ -473,7 +503,7 @@ export default function EmployeeKhata() {
 
             {modal === 'expense' && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Which khata?</label>
+                <label className="block text-sm text-gray-700 mb-1">Which khata?<Req /></label>
                 <select value={form.khata} required
                   onChange={(e) => setForm({ ...form, khata: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1">
@@ -491,7 +521,7 @@ export default function EmployeeKhata() {
               </>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">Amount</label>
+            <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
             <input type="number" min="0.01" step="0.01" required autoFocus={modal !== 'expense'}
               value={form.amount}
               onChange={(e) => setForm({ ...form, amount: e.target.value })}
@@ -500,6 +530,7 @@ export default function EmployeeKhata() {
 
             <label className="block text-sm text-gray-700 mb-1">
               {modal === 'request' ? 'What is it for?' : modal === 'expense' ? 'What did you buy?' : 'Note (optional)'}
+              {(modal === 'request' || modal === 'expense') && <Req />}
             </label>
             <input type="text" required={modal === 'request' || modal === 'expense'}
               value={form.purpose}
@@ -533,7 +564,7 @@ export default function EmployeeKhata() {
                   placeholder="Bill / UPI / cheque number" />
 
                 <label className="block text-sm text-gray-700 mb-1">
-                  {modal === 'expense' ? 'Bill or receipt' : 'Receipt'} (optional)
+                  {modal === 'expense' ? <>Bill or receipt<Req /></> : 'Receipt (optional)'}
                 </label>
                 {/* Two ways in: attach a file already on the device, or take a
                     photo of the paper slip there and then. */}
@@ -558,7 +589,11 @@ export default function EmployeeKhata() {
                       className="ml-auto text-gray-500 hover:text-gray-800 shrink-0">Remove</button>
                   </div>
                 ) : (
-                  <p className="text-xs text-gray-500 mb-3">Image or PDF.</p>
+                  <p className={`text-xs mb-3 ${modal === 'expense' ? 'text-red-600' : 'text-gray-500'}`}>
+                    {modal === 'expense'
+                      ? 'Image or PDF. An expense cannot be recorded without the bill.'
+                      : 'Image or PDF.'}
+                  </p>
                 )}
               </>
             )}

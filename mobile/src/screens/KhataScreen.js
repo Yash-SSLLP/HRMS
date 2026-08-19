@@ -12,13 +12,16 @@
  *
  * The things an employee can start:
  *   - ask for an advance      → POST /khata/me/request  (may need CEO/MD sign-off)
- *   - record what they spent  → POST /khata/me/expense  (names a book, optional slip)
+ *   - record what they spent  → POST /khata/me/expense  (names a book, bill REQUIRED)
  *   - return unspent cash     → POST /khata/me/settle   (optional slip)
  *   - claim what they are owed → POST /khata/me/reimbursement, offered only when
  *     the wallet has gone negative: they spent past the advance, so the money is
  *     running the other way and every other action here points the wrong way
- * All of them park. An employee never releases company money to themselves, and
- * their wallet only moves once the company confirms.
+ * Everything that asks the company FOR money parks — an employee never releases
+ * company money to themselves. An EXPENSE is the exception: it posts on the
+ * spot, because the purchase already happened and queueing the record only made
+ * the wallet lie about what was left. The company rejects it afterwards if it
+ * should not stand, which is why the bill is mandatory there.
  *
  * Route: "Khata" (from the More/Menu list). Employee-facing (all roles).
  * Backend: GET /khata/me.
@@ -158,6 +161,13 @@ export default function KhataScreen() {
       toast('Almost there', sheet === 'request' ? 'Say what the advance is for.' : 'Say what you spent it on.');
       return;
     }
+    // The bill is the only control on an expense now that it posts on the spot.
+    // Checked here as well as on the server so the failure is immediate rather
+    // than a round trip after they hit Send.
+    if (sheet === 'expense' && !receipt) {
+      toast('Bill needed', 'Attach or photograph the bill — it is required for an expense.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -177,7 +187,8 @@ export default function KhataScreen() {
         if (sheet === 'expense') body.khata = khataId;
 
         if (receipt) {
-          // Multipart, because an expense bill or a return slip is worth attaching.
+          // Multipart. Always taken for an expense (the bill is compulsory) and
+          // whenever a return has a slip against it.
           const form = new FormData();
           Object.entries(body).forEach(([k, v]) => form.append(k, String(v)));
           form.append('receipt', { uri: receipt.uri, name: receipt.name || 'receipt', type: receipt.mimeType || 'application/octet-stream' });
@@ -296,8 +307,9 @@ export default function KhataScreen() {
           {waiting.length > 0 ? (
             <Text style={[styles.meta, { marginTop: spacing(2) }]}>
               Not counted above: {rupees((totals.awaitingAdvance || 0) + (totals.pendingAdvance || 0))} requested
-              and {rupees(totals.pendingSpend)} recorded
+              and {rupees(totals.pendingSpend)} declared
               across {waiting.length === 1 ? '1 entry' : `${waiting.length} entries`} still waiting on the company.
+              Expenses are not in this figure — those count the moment you record them.
             </Text>
           ) : null}
         </Card>
@@ -402,7 +414,7 @@ export default function KhataScreen() {
               A separate heading for a separate purpose — a site, a vehicle, a particular job. It holds no money
               of its own: expenses filed under it come out of your one wallet.
             </Text>
-            <Field label="What will you be spending on?">
+            <Field label="What will you be spending on?" required>
               <Input
                 value={newKhata.name}
                 onChangeText={(v) => setNewKhata({ ...newKhata, name: v })}
@@ -419,18 +431,21 @@ export default function KhataScreen() {
         title={TITLES[sheet] || ''}
         footer={<AppButton title="Send" onPress={submit} loading={submitting} />}>
 
+        <Text style={styles.fieldsNote}>Fields marked * are required.</Text>
+
         <Text style={styles.sheetIntro}>
           {sheet === 'request' && (data?.approvalRequired
             ? 'This goes to the CEO/MD to approve, then to whoever handles company cash. Nothing is paid until both have acted.'
             : 'This goes to whoever handles company cash. Nothing is paid until they approve it.')}
-          {sheet === 'expense' && `Log what you spent the advance on. It comes off your wallet once the company confirms it — ${rupees(display.amount)} left.`}
+          {sheet === 'expense' && `Log what you spent the advance on. It comes off your wallet straight away — ${rupees(display.amount)} left. `
+            + 'The company can reject it afterwards, so attach the bill.'}
           {sheet === 'settle' && 'Tell the company you handed cash back. Your wallet updates once they confirm receiving it.'}
           {sheet === 'claim' && `You have spent more than you were advanced, so the company owes you ${rupees(display.amount)}. `
             + 'This asks them to pay it back; they choose which account it comes from.'}
         </Text>
 
         {sheet === 'expense' && (
-          <Field label="Which khata?">
+          <Field label="Which khata?" required>
             <ChipSelect
               options={openKhatas}
               value={khataId}
@@ -440,7 +455,7 @@ export default function KhataScreen() {
           </Field>
         )}
 
-        <Field label="Amount">
+        <Field label="Amount" required>
           <Input
             value={amount}
             onChangeText={setAmount}
@@ -448,7 +463,9 @@ export default function KhataScreen() {
             placeholder="0.00" />
         </Field>
 
-        <Field label={sheet === 'request' ? 'What is it for?' : sheet === 'expense' ? 'What did you buy?' : 'Note (optional)'}>
+        <Field
+          label={sheet === 'request' ? 'What is it for?' : sheet === 'expense' ? 'What did you buy?' : 'Note (optional)'}
+          required={sheet === 'request' || sheet === 'expense'}>
           <Input
             value={purpose}
             onChangeText={setPurpose}
@@ -468,7 +485,7 @@ export default function KhataScreen() {
               <ChipSelect options={PAYMENT_MODES} value={paymentMode} onChange={setPaymentMode} />
             </Field>
 
-            <Field label={sheet === 'expense' ? 'Bill or receipt (optional)' : 'Receipt (optional)'}>
+            <Field label={sheet === 'expense' ? 'Bill or receipt' : 'Receipt (optional)'} required={sheet === 'expense'}>
               {/* Two ways in: photograph the paper slip, or attach a file
                   (a PDF invoice, or an image already on the phone). */}
               <View style={{ flexDirection: 'row', gap: spacing(2.5) }}>
@@ -489,6 +506,8 @@ export default function KhataScreen() {
                     <Ionicons name="close" size={16} color={colors.textMuted} />
                   </TouchableOpacity>
                 </View>
+              ) : sheet === 'expense' ? (
+                <Text style={styles.receiptRequired}>An expense cannot be recorded without the bill.</Text>
               ) : null}
             </Field>
           </>
@@ -516,6 +535,8 @@ const styles = StyleSheet.create({
   link: { color: colors.textMuted, fontSize: 12, textDecorationLine: 'underline' },
 
   sheetIntro: { color: colors.textMuted, fontSize: 12, marginBottom: spacing(4) },
+  fieldsNote: { color: colors.textFaint, fontSize: 11, marginBottom: spacing(2) },
+  receiptRequired: { color: colors.danger, fontSize: 11, marginTop: spacing(2) },
 
   sumRow: {
     flexDirection: 'row', alignItems: 'center',

@@ -96,6 +96,8 @@ export default function KhataAdminScreen() {
   const [people, setPeople] = useState([]);
   const [pending, setPending] = useState([]);
   const [sanctions, setSanctions] = useState([]);
+  const [expenses, setExpenses] = useState([]);   // auto-approved, awaiting review
+  const [rejecting, setRejecting] = useState(null); // { entry, reason }
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -114,7 +116,7 @@ export default function KhataAdminScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [o, k, p, q, a] = await Promise.all([
+      const [o, k, p, q, a, x] = await Promise.all([
         api.get('/khata/overview'),
         api.get('/khata/employees', { params: { filter } }),
         api.get('/khata/employee-options').catch(() => ({ data: {} })),
@@ -124,6 +126,10 @@ export default function KhataAdminScreen() {
         mayApproveAdvances
           ? api.get('/khata/advance-approvals').catch(() => ({ data: {} }))
           : Promise.resolve({ data: {} }),
+        // Employee expenses post on the spot, so they never reach /pending.
+        // This is the review surface that replaces the approval step.
+        api.get('/khata/entries', { params: { type: 'expense', status: 'Approved', limit: 100 } })
+          .catch(() => ({ data: {} })),
       ]);
       setOv(o.data);
       setAccounts(o.data.accounts || []);
@@ -131,6 +137,7 @@ export default function KhataAdminScreen() {
       setPeople(p.data.employees || []);
       setPending(q.data.entries || []);
       setSanctions(a.data.entries || []);
+      setExpenses((x.data.entries || []).filter((e) => e.raisedByEmployee));
     } catch (err) {
       toast('Could not load', errMsg(err));
     } finally {
@@ -335,6 +342,29 @@ export default function KhataAdminScreen() {
       await load();
     } catch (err) {
       toast('Could not record the decision', errMsg(err));
+    } finally { setSubmitting(false); }
+  };
+
+  /**
+   * Reject an employee's expense. It self-approved, so there was never an
+   * approval to withhold — this writes the mirror row that puts the money back
+   * on their advance, and tells them why. Posted money is corrected, never
+   * deleted.
+   *
+   * A sheet rather than an Alert because the reason is mandatory and Android's
+   * Alert has no text input (Alert.prompt is iOS-only).
+   */
+  const submitRejectExpense = async () => {
+    const { entry: e, reason } = rejecting;
+    if (!reason.trim()) { toast('Reason needed', 'It goes on the permanent record, and the employee sees it.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await api.post(`/khata/entries/${e._id}/reverse`, { reason: reason.trim() });
+      toast('Rejected', res.data.message || 'It is back on their advance.');
+      setRejecting(null);
+      await load();
+    } catch (err) {
+      toast('Could not reject', errMsg(err));
     } finally { setSubmitting(false); }
   };
 
@@ -600,6 +630,37 @@ export default function KhataAdminScreen() {
           ))
         )}
 
+        {/* Employee expenses post immediately, so this is a review queue rather
+            than an approval one: everything here has already counted against the
+            employee's advance, and the action is to reject what should not stand. */}
+        {tab === 'approvals' && (
+          <>
+            <SectionHeader title="Recorded expenses" />
+            {expenses.length === 0 ? (
+              <EmptyState
+                icon="receipt-outline"
+                title="No expenses recorded"
+                subtitle="Spending an employee logs against their advance shows here, already counted." />
+            ) : expenses.map((e) => (
+              <Card key={e._id} style={{ marginBottom: spacing(2) }}>
+                <Text style={font.body}>{e.employee?.name || 'Employee'} · {rupees(e.amount)}</Text>
+                <Text style={styles.meta}>
+                  {e.khataName ? `${e.khataName} · ` : ''}{fmtDate(e.date)}{e.code ? ` · ${e.code}` : ''}
+                </Text>
+                {e.purpose ? <Text style={[font.body, { marginTop: spacing(1) }]}>{e.purpose}</Text> : null}
+                {/* The bill is mandatory on these, so a row without one is worth
+                    noticing rather than passing over quietly. */}
+                {!e.hasAttachment ? <Text style={styles.warn}>No bill attached</Text> : null}
+                <AppButton
+                  title="Reject"
+                  variant="ghost"
+                  onPress={() => setRejecting({ entry: e, reason: '' })}
+                  style={{ marginTop: spacing(3) }} />
+              </Card>
+            ))}
+          </>
+        )}
+
         {tab === 'accounts' && (
           accounts.length === 0 ? (
             <EmptyState
@@ -644,7 +705,7 @@ export default function KhataAdminScreen() {
                 search-over-a-short-list as the entry sheet — a chip per employee
                 would be hundreds of chips in a real org. */}
             {!newKhata.employee ? (
-              <Field label="Employee">
+              <Field label="Employee" required>
                 <Input
                   value={personQuery}
                   onChangeText={setPersonQuery}
@@ -682,13 +743,38 @@ export default function KhataAdminScreen() {
               </Field>
             )}
 
-            <Field label="What is it for?">
+            <Field label="What is it for?" required>
               <Input
                 value={newKhata.name}
                 onChangeText={(v) => setNewKhata({ ...newKhata, name: v })}
                 placeholder="e.g. Site A — materials"
                 maxLength={80} />
             </Field>
+          </>
+        )}
+      </ModalSheet>
+
+      <ModalSheet
+        visible={!!rejecting}
+        onClose={() => setRejecting(null)}
+        title="Reject this expense?"
+        footer={<AppButton title="Reject" variant="danger" onPress={submitRejectExpense} loading={submitting} />}>
+        {rejecting && (
+          <>
+            <Text style={styles.sheetIntro}>
+              {rupees(rejecting.entry.amount)} · {rejecting.entry.employee?.name || 'Employee'}
+              {rejecting.entry.purpose ? ` — ${rejecting.entry.purpose}` : ''}.
+              {'\n\n'}
+              It has already come off their advance. Rejecting puts it back and tells them why. Both rows stay
+              on the record.
+            </Text>
+            <Field label="Why are you rejecting it?" required>
+              <Input
+                value={rejecting.reason}
+                onChangeText={(v) => setRejecting({ ...rejecting, reason: v })}
+                placeholder="e.g. personal purchase, not company spend" />
+            </Field>
+            <Text style={styles.meta}>The employee sees this.</Text>
           </>
         )}
       </ModalSheet>
@@ -714,7 +800,8 @@ export default function KhataAdminScreen() {
                   + 'comes out of — the cash leaves only when they do.'
                 : 'Nothing moves. The request is closed and the employee is told why.'}
             </Text>
-            <Field label={sanctioning.approve ? 'Note (optional)' : 'Why are you declining?'}>
+            <Field label={sanctioning.approve ? 'Note (optional)' : 'Why are you declining?'}
+              required={!sanctioning.approve}>
               <Input
                 value={sanctioning.note}
                 onChangeText={(v) => setSanctioning({ ...sanctioning, note: v })}
@@ -735,7 +822,7 @@ export default function KhataAdminScreen() {
             <Text style={styles.sheetIntro}>
               {rupees(approving.entry.amount)} — {approving.entry.employee?.name}. The cash moves as soon as you approve.
             </Text>
-            <Field label="Pay from">
+            <Field label="Pay from" required>
               <ChipSelect
                 options={accounts.filter((a) => a.canApprove)}
                 value={approving.cashAccount}
@@ -767,7 +854,7 @@ export default function KhataAdminScreen() {
             {/* A chip per employee would be hundreds of chips in a real org, so
                 this is a search box over a short list instead. Once somebody is
                 chosen the list collapses to just them, keeping the sheet short. */}
-            <Field label="Employee">
+            <Field label="Employee" required>
               {selectedPerson ? (
                 <TouchableOpacity
                   style={styles.chosen}
@@ -811,7 +898,7 @@ export default function KhataAdminScreen() {
 
             {/* What the entry is FOR decides everything below it — whether a
                 book is asked for, and whether an account is. */}
-            <Field label="What is this?">
+            <Field label="What is this?" required>
               <ChipSelect
                 options={ENTRY_KINDS}
                 value={entry.type}
@@ -828,7 +915,7 @@ export default function KhataAdminScreen() {
                 wallet, so asking which khata it belongs to would be a question
                 with no answer. */}
             {isKhataEntry ? (
-              <Field label="Khata">
+              <Field label="Khata" required>
                 {entryKhatas.length ? (
                   <ChipSelect
                     options={entryKhatas}
@@ -851,7 +938,7 @@ export default function KhataAdminScreen() {
               </Field>
             ) : null}
 
-            <Field label="Amount">
+            <Field label="Amount" required>
               <Input
                 value={entry.amount}
                 onChangeText={(v) => setEntry({ ...entry, amount: v })}
@@ -866,7 +953,7 @@ export default function KhataAdminScreen() {
               </Text>
             ) : (
               <>
-                <Field label="Company account">
+                <Field label="Company account" required>
                   <ChipSelect
                     options={accounts}
                     value={entry.cashAccount}
