@@ -889,7 +889,7 @@ export default function AdminKhata() {
                       </p>
                       <p className="text-xs text-gray-500">
                         {e.khataName ? `${e.khataName} · ` : ''}
-                        {e.direction === 'to_employee' ? 'Advance to pay out'
+                        {e.direction === 'to_employee' ? (e.type === 'reimbursement' ? 'Settlement to pay back' : 'Advance to pay out')
                           : e.type === 'expense' ? 'Expense to confirm' : 'Cash back to confirm'}
                         {e.raisedByEmployee ? ' · they raised it' : ' · above the operator limit'}
                         {' · '}{fmtDate(e.date)}

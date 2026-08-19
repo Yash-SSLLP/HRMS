@@ -78,6 +78,29 @@ they cannot drift apart on the most confusable thing in the module.
 
 ---
 
+## When the wallet goes negative
+
+Spending past the advance flips the wallet negative: the company now owes the
+employee. Every other self-service action moves money *towards* the company, so
+without one more the employee would have no way to ask for it back.
+
+`POST /me/reimbursement` is that action — **"Ask to be paid back"**, offered on
+the wallet card only when there is something to claim, and pre-filled with the
+whole outstanding amount. It parks as `Pending` for the accounts team, who pick
+the account it is paid from; approving posts the cash leg and lifts the wallet
+back towards zero.
+
+Deliberately **not** behind the CEO/MD gate. That gate asks "should this person
+be given company money?", which is not the question here: this money has already
+been spent on the company's behalf, and each expense behind it was confirmed one
+at a time.
+
+`GET /me` returns `totals.claimable` = what the wallet has gone negative by,
+**less anything already claimed and unpaid**. That subtraction is the guard: a
+second claim submitted before the accounts team has settled the first would
+otherwise ask to be paid the same debt twice, and both would look legitimate
+side by side in the queue.
+
 ## The life of an advance — two gates, two different questions
 
 ```
@@ -179,6 +202,14 @@ no free pass on the GET either.
 a cache, replayed from the ledger, and it goes down only when a row filed under
 it is reversed.
 
+`recomputeKhataSpent` filters on **type**, counting only spending and the
+reversals that cancel it, rather than summing everything in the book. A book can
+still contain rows that do not belong to it — a database migrated from the
+per-khata era has advances and settlements filed under one, and the module has
+to read correctly before anybody runs the migration. An advance counted there
+comes out *negative* under the sign flip and prints as "-₹4,500 spent", which is
+not a thing that can happen to a cost.
+
 **Both sides can open a book.** A khata operator opens one for anybody
 (`POST /khatas`); an employee opens one on their own account
 (`POST /me/khatas`, capped at 25). Deciding that spending needs its own heading
@@ -218,10 +249,11 @@ Mounted at `/api/khata`. All routes authenticated.
 
 | Route | Purpose |
 |---|---|
-| `GET /me` | My wallet, my books (each with its `spent`), the totals, one statement, and whether a request will need a CEO/MD sanction |
+| `GET /me` | My wallet, my books (each with its `spent`), the totals (including `claimable`), one statement, and whether a request will need a CEO/MD sanction |
 | `POST /me/request` | Ask for an advance into my wallet — no `khata`, there is one pot |
 | `POST /me/expense` | Log what I spent it on — `khata` **required**, optional receipt |
 | `POST /me/settle` | Declare unspent cash returned — no `khata`, optional receipt |
+| `POST /me/reimbursement` | Claim back what the company owes, when the wallet has gone negative. Amount defaults to everything outstanding and is capped at `totals.claimable` |
 | `POST /me/khatas` | Open an expense book on my own account |
 
 **Advance sanction** — SuperAdmin / CEO / MD only, **no** `khata.manage` needed
@@ -386,3 +418,8 @@ its own ledger — in which case the new figure is the correct one).
    any wallet, for money already in someone's hand before the module existed.
 6. **Let people open their own books** — employees name them from My Khata as
    they take on new work; everyone gets a "General" one automatically.
+
+> **A khata card reading a negative "spent" means the migration has not been
+> run** on that database. The books still contain advances filed under them from
+> the per-khata era; `migrateKhataWallet.js --apply` detaches those and replays
+> every total.

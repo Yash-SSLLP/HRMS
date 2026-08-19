@@ -19,6 +19,11 @@
  *     somebody a bigger allowance than anyone ever approved, purely because
  *     their spending was filed under several headings.
  *
+ *     Where a wallet ALREADY exists — which it will, for anyone who opened the
+ *     module after the new code went live and before this script was run — only
+ *     the fields still at their default are filled in. Its balance is already
+ *     right; a limit somebody has since set by hand is never overwritten.
+ *
  *  2. Detaches every non-expense row from its book (`khata: null`). Advances,
  *     settlements, reimbursements, recoveries and openings move the wallet and
  *     belong to no expense book. Reversals follow whatever they reverse.
@@ -73,9 +78,27 @@ async function run() {
     // approved to hold ₹15,000.
     const limit = ledger.round2(books.reduce((a, b) => Math.max(a, b.creditLimit || 0), 0));
 
+    // A wallet can already exist before this script is ever run: deploying the
+    // new code makes getOrCreateWallet open one the first time anybody opens the
+    // module. Such a wallet is correct on `balance` (it was replayed from the
+    // ledger) but knows nothing of the old books' opening balances and limits,
+    // so skipping it outright would silently drop both.
+    //
+    // Fill in only what is still at its default. A figure somebody has since
+    // set by hand is a deliberate decision and is never overwritten.
     const existing = await EmployeeWallet.findOne({ employee: employeeId });
     if (existing) {
-      console.log(`  wallet already exists for ${employeeId} (${money(existing.balance)}) — left alone`);
+      const patch = {};
+      if (!existing.openingBalance && opening) patch.openingBalance = opening;
+      if (!existing.creditLimit && limit) patch.creditLimit = limit;
+
+      if (Object.keys(patch).length) {
+        say(`wallet exists for ${employeeId} (${money(existing.balance)}) — carrying over `
+          + Object.entries(patch).map(([k, v]) => `${k} ${money(v)}`).join(', '));
+        if (APPLY) await EmployeeWallet.updateOne({ _id: existing._id }, { $set: patch });
+      } else {
+        console.log(`  wallet already exists for ${employeeId} (${money(existing.balance)}) — nothing to carry over`);
+      }
       continue;
     }
 
@@ -93,6 +116,13 @@ async function run() {
     opened += 1;
   }
   say(`${opened} wallet(s) to open`);
+
+  // A person's per-book `balance` fields are no longer written by the running
+  // code, so on a database where the new code has already posted an entry they
+  // are stale by design. The "old khata total" printed above is that stale
+  // cache; the figure in step 3 is replayed from the ledger and is the correct
+  // one. They differ exactly where an entry was posted after the new code went
+  // live, so a mismatch there is expected rather than alarming.
 
   // ---- 2. Detach every wallet-level row from its book ---------------------
   // Reversals stay where they are: a reversal is filed under whatever it

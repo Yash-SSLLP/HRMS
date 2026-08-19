@@ -317,6 +317,7 @@ function summariseEntries(entries = []) {
     awaitingAdvance: 0, // requested, not yet sanctioned
     pendingAdvance: 0,  // sanctioned, not yet paid
     pendingSpend: 0,    // expenses/returns awaiting the company's confirmation
+    pendingReimbursement: 0, // claimed back, not yet paid out
     waitingCount: 0,
   };
   for (const e of entries) {
@@ -328,7 +329,10 @@ function summariseEntries(entries = []) {
     } else if (e.status === 'AwaitingApproval' || e.status === 'Pending') {
       s.waitingCount += 1;
       if (e.direction === 'to_employee') {
-        if (e.status === 'AwaitingApproval') s.awaitingAdvance += amt;
+        // A claim is money coming back, not an advance going out; folding the
+        // two together would offer to pay somebody twice.
+        if (e.type === 'reimbursement') s.pendingReimbursement += amt;
+        else if (e.status === 'AwaitingApproval') s.awaitingAdvance += amt;
         else s.pendingAdvance += amt;
       } else {
         s.pendingSpend += amt;
@@ -380,6 +384,11 @@ const getMyKhata = asyncHandler(async (req, res) => {
     totals: {
       ...sums,
       remaining: ledger.round2(wallet.balance),
+      // What they could ask the company for right now: everything the wallet
+      // has gone negative by, less anything already claimed and unpaid. Sent
+      // from here so the button can be offered (and pre-filled) without the
+      // client re-deriving a money figure.
+      claimable: ledger.round2(Math.max(0, -(wallet.balance || 0) - sums.pendingReimbursement)),
     },
     // Whether a request of theirs will need an executive's sanction, so the
     // form can say so before they send it rather than after.
@@ -519,6 +528,91 @@ const recordMyExpense = asyncHandler(async (req, res) => {
     entry: publicEntry(entry),
     khata: publicKhata(khata),
     message: 'Recorded — it will come off your advance once the company confirms it.',
+  });
+});
+
+/**
+ * Ask the company to pay back what it owes you.
+ *
+ * The mirror image of returning unspent cash, and it only exists when the
+ * wallet has gone NEGATIVE — the employee spent past their advance, so the
+ * company is holding their money rather than the other way round. Without this
+ * they had no way to ask for it: every other self-service action moves money
+ * towards the company.
+ *
+ * Deliberately NOT behind the CEO/MD gate. That gate asks "should this person
+ * be given company money?", which is not the question here: this money has
+ * already been spent on the company's behalf and each expense behind it was
+ * confirmed one at a time. It parks with the accounts team, who choose the
+ * account to pay it from — the same second gate every payout passes.
+ * @route POST /api/khata/me/reimbursement
+ * @param {number} [req.body.amount] - Defaults to everything outstanding.
+ * @param {string} [req.body.purpose]
+ * @returns {{entry: object, message: string}} 201
+ */
+const requestReimbursement = asyncHandler(async (req, res) => {
+  const wallet = await ledger.getOrCreateWallet(req.user._id, req.user);
+  const owed = ledger.round2(-(wallet.balance || 0));
+  if (!(owed > 0)) {
+    bad(res, 'The company does not owe you anything right now. Record your expenses first — '
+      + 'you can claim once they take you past your advance.');
+  }
+
+  // Anything already asked for and not yet paid. Without this the same debt
+  // could be claimed twice over simply by submitting the form again before the
+  // accounts team had got to the first one.
+  const waiting = await KhataEntry.aggregate([
+    {
+      $match: {
+        employee: new mongoose.Types.ObjectId(String(req.user._id)),
+        type: 'reimbursement',
+        status: { $in: ['Pending', 'AwaitingApproval'] },
+      },
+    },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+  const pending = ledger.round2(waiting[0]?.total || 0);
+  const claimable = ledger.round2(owed - pending);
+  if (!(claimable > 0)) {
+    bad(res, `You have already claimed ₹${pending.toLocaleString('en-IN')}, which covers everything outstanding. `
+      + 'Wait for the company to settle it.');
+  }
+
+  // Claiming the lot is the normal case, so an omitted amount means "all of it".
+  const asked = req.body.amount === undefined || req.body.amount === '' ? claimable : toNum(req.body.amount);
+  if (!Number.isFinite(asked) || asked <= 0) bad(res, 'Enter how much you are claiming');
+  if (ledger.round2(asked) > claimable) {
+    bad(res, `You can claim up to ₹${claimable.toLocaleString('en-IN')}`
+      + (pending ? ` — ₹${pending.toLocaleString('en-IN')} of what you are owed is already waiting on the company.` : '.'));
+  }
+
+  const { entry } = await ledger.postEntry({
+    employee: req.user._id,
+    direction: 'to_employee',
+    type: 'reimbursement',
+    amount: asked,
+    purpose: String(req.body.purpose || 'Settlement of what the company owes').trim(),
+    category: req.body.category || 'Reimbursement',
+    paymentMode: req.body.paymentMode || 'Cash',
+    date: parseDate(req.body.date) || new Date(),
+    // The employee names no account: the accounts team decides which one pays.
+    autoApprove: false,
+    raisedByEmployee: true,
+    idempotencyKey: req.body.idempotencyKey,
+  }, req.user);
+
+  await notifyMany(await khataApproverIds(), {
+    type: 'general',
+    audience: 'admin',
+    title: 'Settlement claimed',
+    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+      + ` is owed ₹${asked.toLocaleString('en-IN')} for spending past their advance, and has asked to be paid it back.`,
+    link: '/admin/khata',
+  });
+
+  res.status(201).json({
+    entry: publicEntry(entry),
+    message: 'Claim sent. The company will pay it out once they confirm it.',
   });
 });
 
@@ -1812,7 +1906,7 @@ const getReceipt = asyncHandler(async (req, res) => {
 
 module.exports = {
   // employee self-service
-  getMyKhata, requestAdvance, recordMyExpense, declareSettlement,
+  getMyKhata, requestAdvance, recordMyExpense, declareSettlement, requestReimbursement,
   // operator lists
   overview, listMyAccounts, listKhatas, getKhata, employeeOptions, listEntries, listPending,
   // executive sanction

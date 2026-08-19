@@ -15,6 +15,9 @@
  *   - ask for an advance      → POST /khata/me/request   (may need CEO/MD sign-off)
  *   - record what they spent  → POST /khata/me/expense   (names a book, optional receipt)
  *   - return unspent cash     → POST /khata/me/settle    (optional receipt)
+ *   - claim what they are owed → POST /khata/me/reimbursement (only when the
+ *     wallet has gone negative — they spent past the advance, so the money is
+ *     running the other way and every other action here points the wrong way)
  *
  * All three park: an employee never releases company money to themselves, and
  * their wallet only moves once the company confirms. The wording deliberately
@@ -50,12 +53,16 @@ const WALLET_STYLES = {
 const blankRequest = { amount: '', purpose: '', date: today() };
 const blankExpense = { khata: '', amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
 const blankSettle = { amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
-const BLANKS = { request: blankRequest, expense: blankExpense, settle: blankSettle };
+const blankClaim = { amount: '', purpose: '', date: today() };
+const BLANKS = {
+  request: blankRequest, expense: blankExpense, settle: blankSettle, claim: blankClaim,
+};
 
 const TITLES = {
   request: 'Ask for an advance',
   expense: 'Record an expense',
   settle: 'Return unspent cash',
+  claim: 'Ask to be paid back',
 };
 
 export default function EmployeeKhata() {
@@ -105,6 +112,9 @@ export default function EmployeeKhata() {
     setForm({
       ...BLANKS[which],
       date: today(),
+      // A claim is almost always for the whole outstanding amount, so it is
+      // filled in rather than left for them to copy off the card above.
+      ...(which === 'claim' ? { amount: String(totals.claimable ?? '') } : null),
       // Pre-select the book they are already looking at, else their default.
       khata: viewKhata || openKhatas.find((k) => k.isDefault)?._id || openKhatas[0]?._id || '',
     });
@@ -133,7 +143,7 @@ export default function EmployeeKhata() {
     e.preventDefault();
     if (!(Number(form.amount) > 0)) { toast.error('Enter an amount greater than zero'); return; }
     if (modal === 'expense' && !form.khata) { toast.error('Choose which khata this expense belongs to'); return; }
-    if (modal !== 'settle' && !form.purpose.trim()) {
+    if ((modal === 'request' || modal === 'expense') && !form.purpose.trim()) {
       toast.error(modal === 'request' ? 'Say what the advance is for' : 'Say what you spent it on');
       return;
     }
@@ -143,6 +153,11 @@ export default function EmployeeKhata() {
       if (modal === 'request') {
         const res = await api.post('/khata/me/request', form);
         toast.success(res.data.message || 'Request sent for approval');
+      } else if (modal === 'claim') {
+        // No receipt on a claim: the bills went in with each expense, and this
+        // is a request against the total those expenses already produced.
+        const res = await api.post('/khata/me/reimbursement', form);
+        toast.success(res.data.message || 'Claim sent');
       } else {
         // Multipart, because a spend or a hand-back is worth a slip against it.
         const fd = new FormData();
@@ -191,9 +206,29 @@ export default function EmployeeKhata() {
             </p>
           )}
 
+          {/* Owed money, but nothing left to ask for: they have already claimed
+              it. Without this the button simply vanishes and it reads like a
+              bug. */}
+          {display.direction === 'owed' && !totals.claimable && totals.pendingReimbursement > 0 && (
+            <p className="text-xs text-emerald-700 mt-1">
+              You have claimed {money(totals.pendingReimbursement)} of this. The company will pay it out.
+            </p>
+          )}
+
           <div className="flex flex-wrap gap-2 mt-5">
+            {/* When the company owes THEM, asking to be paid back is the only
+                thing they actually want to do — so it leads, and asking for a
+                fresh advance steps aside. */}
+            {totals.claimable > 0 && (
+              <button onClick={() => open('claim')}
+                className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium">
+                Ask to be paid {money(totals.claimable)}
+              </button>
+            )}
             <button onClick={() => open('request')}
-              className="px-4 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm font-medium">
+              className={`px-4 py-2.5 rounded-lg text-sm font-medium ${totals.claimable > 0
+                ? 'bg-white border border-gray-300 text-gray-800 hover:bg-gray-50'
+                : 'bg-gray-900 text-white hover:bg-gray-700'}`}>
               Ask for an advance
             </button>
             <button onClick={() => open('expense')} disabled={openKhatas.length === 0}
@@ -417,7 +452,17 @@ export default function EmployeeKhata() {
                 : 'Your request goes to whoever handles company cash. Nothing is paid until they approve it.')}
               {modal === 'expense' && 'Log what you spent the advance on. It comes off your wallet once the company confirms it.'}
               {modal === 'settle' && 'Tell the company you have handed cash back. Your wallet updates once they confirm receiving it.'}
+              {modal === 'claim' && 'You have spent more than you were advanced, so the company owes you the difference. '
+                + 'This asks them to pay it back; they choose which account it comes from.'}
             </p>
+
+            {modal === 'claim' && (
+              <div className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg px-3 py-2 mb-3">
+                The company owes you {money(display.amount)}
+                {totals.pendingReimbursement > 0 && <> , of which {money(totals.pendingReimbursement)} is already claimed</>}
+                . You can ask for up to {money(totals.claimable)}.
+              </div>
+            )}
 
             {modal === 'request' && display.direction === 'holding' && (
               <div className="text-xs bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg px-3 py-2 mb-3">
@@ -456,20 +501,21 @@ export default function EmployeeKhata() {
             <label className="block text-sm text-gray-700 mb-1">
               {modal === 'request' ? 'What is it for?' : modal === 'expense' ? 'What did you buy?' : 'Note (optional)'}
             </label>
-            <input type="text" required={modal !== 'settle'}
+            <input type="text" required={modal === 'request' || modal === 'expense'}
               value={form.purpose}
               onChange={(e) => setForm({ ...form, purpose: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
               placeholder={modal === 'request' ? 'e.g. site material purchase'
                 : modal === 'expense' ? 'e.g. 20 bags of cement'
-                  : 'e.g. returned unspent cash'} />
+                  : modal === 'claim' ? 'e.g. please transfer to my salary account'
+                    : 'e.g. returned unspent cash'} />
 
             <label className="block text-sm text-gray-700 mb-1">Date</label>
             <input type="date" value={form.date}
               onChange={(e) => setForm({ ...form, date: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
 
-            {modal !== 'request' && (
+            {(modal === 'expense' || modal === 'settle') && (
               <>
                 <label className="block text-sm text-gray-700 mb-1">
                   {modal === 'expense' ? 'How did you pay?' : 'How did you return it?'}

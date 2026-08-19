@@ -56,6 +56,8 @@ router.get('/me', ctrl.getMyKhata);
 router.post('/me/request', ctrl.requestAdvance);
 // POST /me/expense — log what I spent the advance on, against one of my books; protected + multer single 'receipt'.
 router.post('/me/expense', receiptUpload.single('receipt'), ctrl.recordMyExpense);
+// POST /me/reimbursement — claim back what the company owes me, when I have spent past my advance; protected.
+router.post('/me/reimbursement', ctrl.requestReimbursement);
 // POST /me/settle — declare unspent cash returned to the company (always parks); protected + multer single 'receipt'.
 router.post('/me/settle', receiptUpload.single('receipt'), ctrl.declareSettlement);
 // POST /me/khatas — open an expense book on my own account; protected.

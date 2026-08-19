@@ -10,11 +10,14 @@
  * remaining figure is shown against each rather than a per-book balance —
  * because there isn't one.
  *
- * The three things an employee can start:
+ * The things an employee can start:
  *   - ask for an advance      → POST /khata/me/request  (may need CEO/MD sign-off)
  *   - record what they spent  → POST /khata/me/expense  (names a book, optional slip)
  *   - return unspent cash     → POST /khata/me/settle   (optional slip)
- * All three park. An employee never releases company money to themselves, and
+ *   - claim what they are owed → POST /khata/me/reimbursement, offered only when
+ *     the wallet has gone negative: they spent past the advance, so the money is
+ *     running the other way and every other action here points the wrong way
+ * All of them park. An employee never releases company money to themselves, and
  * their wallet only moves once the company confirms.
  *
  * Route: "Khata" (from the More/Menu list). Employee-facing (all roles).
@@ -49,6 +52,7 @@ const TITLES = {
   request: 'Ask for an advance',
   expense: 'Record an expense',
   settle: 'Return unspent cash',
+  claim: 'Ask to be paid back',
 };
 
 // How the wallet reads. `direction` comes from the server, so the app and the
@@ -64,7 +68,7 @@ export default function KhataScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [sheet, setSheet] = useState(null); // 'request' | 'expense' | 'settle'
+  const [sheet, setSheet] = useState(null); // 'request' | 'expense' | 'settle' | 'claim'
   const [amount, setAmount] = useState('');
   const [purpose, setPurpose] = useState('');
   const [date, setDate] = useState('');
@@ -90,7 +94,11 @@ export default function KhataScreen() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const openSheet = (which) => {
-    setAmount(''); setPurpose(''); setPaymentMode('Cash'); setReceipt(null);
+    // A claim is almost always for the whole outstanding amount, so it is filled
+    // in rather than left for them to copy off the card above.
+    const claimable = data?.totals?.claimable || 0;
+    setAmount(which === 'claim' && claimable > 0 ? String(claimable) : '');
+    setPurpose(''); setPaymentMode('Cash'); setReceipt(null);
     setDate(toYMD(new Date()));
     // Whatever book they are already looking at, else their default.
     const open = (data?.khatas || []).filter((k) => k.isActive);
@@ -146,7 +154,7 @@ export default function KhataScreen() {
   const submit = async () => {
     if (!amount || Number(amount) <= 0) { toast('Invalid', 'Enter an amount greater than zero.'); return; }
     if (sheet === 'expense' && !khataId) { toast('Choose a khata', 'Pick which book this expense belongs to.'); return; }
-    if (sheet !== 'settle' && !purpose.trim()) {
+    if ((sheet === 'request' || sheet === 'expense') && !purpose.trim()) {
       toast('Almost there', sheet === 'request' ? 'Say what the advance is for.' : 'Say what you spent it on.');
       return;
     }
@@ -156,6 +164,11 @@ export default function KhataScreen() {
       if (sheet === 'request') {
         const res = await api.post('/khata/me/request', { amount: Number(amount), purpose, date });
         toast('Sent', res.data.message || 'Your request has gone for approval.');
+      } else if (sheet === 'claim') {
+        // No receipt on a claim: the bills went in with each expense, and this
+        // is a request against the total those expenses already produced.
+        const res = await api.post('/khata/me/reimbursement', { amount: Number(amount), purpose, date });
+        toast('Sent', res.data.message || 'Your claim has gone to the company.');
       } else {
         const path = sheet === 'expense' ? '/khata/me/expense' : '/khata/me/settle';
         const body = { amount: Number(amount), purpose, date, paymentMode };
@@ -215,8 +228,26 @@ export default function KhataScreen() {
             <Text style={styles.heroHint}>You may hold up to {rupees(wallet.creditLimit)} at a time.</Text>
           ) : null}
 
+          {/* Owed money, but nothing left to ask for: they have already claimed
+              it. Without this the button simply vanishes and it reads like a bug. */}
+          {display.direction === 'owed' && !(totals.claimable > 0) && totals.pendingReimbursement > 0 ? (
+            <Text style={[styles.heroHint, { color: colors.success }]}>
+              You have claimed {rupees(totals.pendingReimbursement)} of this. The company will pay it out.
+            </Text>
+          ) : null}
+
+          {/* When the company owes THEM, asking to be paid back is the only thing
+              they actually want to do — so it leads and takes the full width. */}
+          {totals.claimable > 0 ? (
+            <AppButton
+              title={`Ask to be paid ${rupees(totals.claimable)}`}
+              onPress={() => openSheet('claim')}
+              style={{ marginTop: spacing(4) }} />
+          ) : null}
+
           <View style={styles.heroActions}>
-            <AppButton title="Ask for advance" onPress={() => openSheet('request')} style={{ flex: 1 }} />
+            <AppButton title="Ask for advance" variant={totals.claimable > 0 ? 'ghost' : 'primary'}
+              onPress={() => openSheet('request')} style={{ flex: 1 }} />
             <View style={{ width: spacing(2) }} />
             <AppButton title="Add expense" variant="ghost" onPress={() => openSheet('expense')}
               disabled={openKhatas.length === 0} style={{ flex: 1 }} />
@@ -394,6 +425,8 @@ export default function KhataScreen() {
             : 'This goes to whoever handles company cash. Nothing is paid until they approve it.')}
           {sheet === 'expense' && `Log what you spent the advance on. It comes off your wallet once the company confirms it — ${rupees(display.amount)} left.`}
           {sheet === 'settle' && 'Tell the company you handed cash back. Your wallet updates once they confirm receiving it.'}
+          {sheet === 'claim' && `You have spent more than you were advanced, so the company owes you ${rupees(display.amount)}. `
+            + 'This asks them to pay it back; they choose which account it comes from.'}
         </Text>
 
         {sheet === 'expense' && (
@@ -421,14 +454,15 @@ export default function KhataScreen() {
             onChangeText={setPurpose}
             placeholder={sheet === 'request' ? 'e.g. site material purchase'
               : sheet === 'expense' ? 'e.g. 20 bags of cement'
-                : 'e.g. returned unspent cash'} />
+                : sheet === 'claim' ? 'e.g. please transfer to my salary account'
+                  : 'e.g. returned unspent cash'} />
         </Field>
 
         <Field label="Date">
           <DateField value={date} onChange={setDate} maximumDate={new Date()} />
         </Field>
 
-        {sheet !== 'request' && (
+        {(sheet === 'expense' || sheet === 'settle') && (
           <>
             <Field label={sheet === 'expense' ? 'How did you pay?' : 'How did you return it?'}>
               <ChipSelect options={PAYMENT_MODES} value={paymentMode} onChange={setPaymentMode} />

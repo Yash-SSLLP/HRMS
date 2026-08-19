@@ -575,7 +575,7 @@ export default function KhataAdminScreen() {
               <Text style={font.body}>{e.employee?.name || 'Employee'} · {rupees(e.amount)}</Text>
               <Text style={styles.meta}>
                 {e.khataName ? `${e.khataName} · ` : ''}
-                {e.direction === 'to_employee' ? 'Advance to pay out'
+                {e.direction === 'to_employee' ? (e.type === 'reimbursement' ? 'Settlement to pay back' : 'Advance to pay out')
                   : e.type === 'expense' ? 'Expense to confirm' : 'Cash back to confirm'}
                 {e.raisedByEmployee ? ' · they raised it' : ' · above the operator limit'} · {fmtDate(e.date)}
               </Text>

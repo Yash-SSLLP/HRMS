@@ -374,12 +374,19 @@ async function recomputeWalletBalance(employeeId) {
 }
 
 /**
- * Replay one expense book's total from the rows filed under it.
+ * Replay one expense book's total from the spending filed under it.
  *
  * `spent` is a TOTAL, not a balance, so it is summed rather than run: what did
- * this book cost. A reimbursement or a reversal filed under the book nets back
- * off it, which is why the sum is signed rather than a plain addition of
- * amounts.
+ * this book cost. A reversal filed under the book nets back off it, which is why
+ * the sum is signed rather than a plain addition of amounts.
+ *
+ * ONLY SPENDING COUNTS. The query filters on type rather than taking everything
+ * in the book, because a book can still contain rows that do not belong to it:
+ * a database migrated from the per-khata era has advances and settlements filed
+ * under one (scripts/migrateKhataWallet.js detaches them, but the module has to
+ * read correctly before anybody runs it), and an advance counted here would come
+ * out NEGATIVE under the sign flip below and print as "-₹4,500 spent", which is
+ * not a thing that can happen to a cost.
  * @param {string|import('mongoose').Types.ObjectId} khataId
  * @returns {Promise<number|null>} The recomputed total, or null if no such book.
  * @sideeffect Writes `spent`/`entryCount`/`lastEntryAt` on the khata.
@@ -389,7 +396,14 @@ async function recomputeKhataSpent(khataId) {
   const khata = await EmployeeKhata.findById(khataId);
   if (!khata) return null;
 
-  const entries = await KhataEntry.find({ khata: khata._id, status: 'Approved' })
+  const entries = await KhataEntry.find({
+    khata: khata._id,
+    status: 'Approved',
+    // Spending, plus the reversals that cancel it — a reversal is filed under
+    // whatever it reverses, so one against an expense has to come back off the
+    // book it was charged to.
+    type: { $in: [...KHATA_TYPES, 'reversal'] },
+  })
     .sort({ date: 1, createdAt: 1 })
     .select('direction amount date');
 
