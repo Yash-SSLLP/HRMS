@@ -543,6 +543,9 @@ const orgSettingsPayload = (s) => {
   return {
     includeExecutivesInLists: !!s.includeExecutivesInLists,
     chatEnabled: !!s.chatEnabled,
+    // Does a cash-advance request need a CEO/MD sanction before the accounts
+    // team sees it? Defaults ON, so an untouched deployment gains the gate.
+    khataAdvanceApprovalRequired: s.khataAdvanceApprovalRequired !== false,
     branding: {
       hasLogo: !!s.branding?.logoPath,
       signatures: SIGNATURE_KEYS.map((key) => {
@@ -714,7 +717,7 @@ const getBrandingSignature = asyncHandler(async (req, res) => {
 /**
  * Read org-wide settings a SuperAdmin controls.
  * @route GET /api/admin/org-settings  (SuperAdmin)
- * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean}}
+ * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean, khataAdvanceApprovalRequired: boolean}}
  */
 // GET /api/admin/org-settings  (SuperAdmin)
 // Org-wide preferences a SuperAdmin controls: whether CEO/MD show up in
@@ -729,7 +732,8 @@ const getOrgSettings = asyncHandler(async (req, res) => {
  * @route PUT /api/admin/org-settings  (SuperAdmin)
  * @param {boolean} [req.body.includeExecutivesInLists]
  * @param {boolean} [req.body.chatEnabled]
- * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean}}
+ * @param {boolean} [req.body.khataAdvanceApprovalRequired]
+ * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean, khataAdvanceApprovalRequired: boolean}}
  */
 // PUT /api/admin/org-settings  (SuperAdmin)
 const updateOrgSettings = asyncHandler(async (req, res) => {
@@ -740,6 +744,9 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   }
   if (req.body.chatEnabled !== undefined) {
     s.chatEnabled = !!req.body.chatEnabled;
+  }
+  if (req.body.khataAdvanceApprovalRequired !== undefined) {
+    s.khataAdvanceApprovalRequired = !!req.body.khataAdvanceApprovalRequired;
   }
   await s.save();
   res.json(orgSettingsPayload(s));

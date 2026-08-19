@@ -164,6 +164,9 @@ export default function MenuScreen() {
     // SuperAdmin-only — the same gate the server applies.
     if (me?.role === 'SuperAdmin') {
       adminItems.push({ key: 'PushNotification', label: 'Push Notification', icon: 'notifications', tint: '#7c3aed' });
+      // When a check-in counts as late — same gate, and for the same reason: it
+      // applies to everyone and it decides money.
+      adminItems.push({ key: 'LateMarking', label: 'Late Marking', icon: 'alarm', tint: '#dc2626' });
     }
     // Bulk calendar upload rides on the same capability the server enforces for
     // /holidays/import ('leave.manage'), not on events.manage — the workbook is

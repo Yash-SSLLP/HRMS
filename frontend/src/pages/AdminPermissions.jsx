@@ -6,8 +6,9 @@
  * /khata-export-access), work-from-home per employee
  * (PATCH /admin/users/:id/wfh-access) and granular HR capabilities for HR
  * Managers (catalog from GET /admin/permissions/catalog, saved via
- * PATCH /admin/users/:id/permissions). Also hosts the org-wide feature switches
- * from GET/PUT /admin/org-settings.
+ * PATCH /admin/users/:id/permissions). Also hosts the org-wide switches from
+ * GET/PUT /admin/org-settings — the chat module, and whether a cash-advance
+ * request needs a CEO/MD approval before the accounts team can pay it.
  */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
@@ -35,8 +36,8 @@ export default function AdminPermissions() {
   const [permSaving, setPermSaving] = useState(false);
   const allKeys = catalog.map((p) => p.key);
 
-  // Org-wide feature switches (currently just chat).
-  const [org, setOrg] = useState({ chatEnabled: false });
+  // Org-wide feature switches.
+  const [org, setOrg] = useState({ chatEnabled: false, khataAdvanceApprovalRequired: true });
   const [orgBusy, setOrgBusy] = useState(false);
 
   const load = async () => {
@@ -49,7 +50,12 @@ export default function AdminPermissions() {
       ]);
       setUsers(u.data.users || []);
       setCatalog(c.data.permissions || []);
-      setOrg({ chatEnabled: !!o.data.chatEnabled });
+      setOrg({
+        chatEnabled: !!o.data.chatEnabled,
+        // Absent means the server has not been upgraded yet; the gate is on by
+        // default there too, so assume on rather than showing it as disabled.
+        khataAdvanceApprovalRequired: o.data.khataAdvanceApprovalRequired !== false,
+      });
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -58,17 +64,22 @@ export default function AdminPermissions() {
   };
   useEffect(() => { load(); }, []);
 
-  // Optimistic toggle that reverts if the save fails.
-  const toggleChat = async () => {
-    const next = !org.chatEnabled;
+  // Optimistic toggle that reverts if the save fails. One handler for every
+  // org switch, keyed by field, so adding another is one line rather than a
+  // second copy of the same optimistic-update dance.
+  const toggleOrg = async (field, errorText) => {
+    const next = !org[field];
     setOrgBusy(true); setError('');
-    setOrg({ chatEnabled: next });
+    setOrg({ ...org, [field]: next });
     try {
-      const { data } = await api.put('/admin/org-settings', { chatEnabled: next });
-      setOrg({ chatEnabled: !!data.chatEnabled });
+      const { data } = await api.put('/admin/org-settings', { [field]: next });
+      setOrg({
+        chatEnabled: !!data.chatEnabled,
+        khataAdvanceApprovalRequired: data.khataAdvanceApprovalRequired !== false,
+      });
     } catch (err) {
-      setOrg({ chatEnabled: !next });
-      setError(err.response?.data?.message || 'Could not update the chat setting');
+      setOrg({ ...org, [field]: !next });
+      setError(err.response?.data?.message || errorText);
     } finally {
       setOrgBusy(false);
     }
@@ -206,9 +217,25 @@ export default function AdminPermissions() {
               Existing conversations are kept and come back untouched if you switch it on again.
             </p>
           </div>
-          <button onClick={toggleChat} disabled={orgBusy}
+          <button onClick={() => toggleOrg('chatEnabled', 'Could not update the chat setting')} disabled={orgBusy}
             className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${org.chatEnabled ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
             {org.chatEnabled ? '✓ Enabled' : 'Disabled'}
+          </button>
+        </div>
+
+        <div className="flex items-start justify-between gap-4 mt-4 pt-4 border-t border-gray-100">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-gray-900">CEO / MD approval for cash advances</div>
+            <p className="text-xs text-gray-500 mt-0.5">
+              When on, an employee&apos;s advance request waits for a CEO, MD or Super Admin to approve it before
+              the accounts team can pay it. When off, requests go straight to the accounts team, who still decide
+              which account the money comes out of. Requests already waiting on an executive stay there either way.
+            </p>
+          </div>
+          <button onClick={() => toggleOrg('khataAdvanceApprovalRequired', 'Could not update the advance-approval setting')}
+            disabled={orgBusy}
+            className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${org.khataAdvanceApprovalRequired ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+            {org.khataAdvanceApprovalRequired ? '✓ Required' : 'Not required'}
           </button>
         </div>
       </div>

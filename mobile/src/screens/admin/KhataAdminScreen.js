@@ -1,23 +1,33 @@
 /**
- * KhataAdminScreen — the company side of the employee cash ledger, on mobile.
+ * KhataAdminScreen — the company side of the employee cash module, on mobile.
  *
- * Built for the person actually standing in front of the employee: three tabs,
- * People (who owes what, tap for their statement), Approvals (entries parked
- * above an operator's limit), and Accounts (what this operator may pay from).
- * Giving money is one sheet, reachable from anywhere on the screen.
+ * WHAT THE MODULE IS. Each employee has ONE wallet, which advances are paid
+ * into, and as many khatas as they like, which are expense books saying what
+ * the money went on. A person's position is one figure — their wallet — and
+ * their books are a breakdown of spending underneath it, never balances of
+ * their own.
  *
- * THREE GATES. Reaching this screen needs `khata.manage`. Actually paying someone
- * additionally needs to be an operator on the chosen cash account, with a limit
- * above which the entry parks for approval rather than paying out. The server
- * decides both; this screen only offers accounts GET /khata/accounts returned,
- * and says up front when an amount is going to park instead of pay. Downloading
- * the ledger as a spreadsheet is the third gate — a per-person grant only a
- * SuperAdmin can give (`User.khataExportAccess`), so the Export button is hidden
- * without it; see utils/roles.js → canExportKhata.
+ * Built for the person actually standing in front of the employee: People (who
+ * is holding what, tap for their statement), Sanctions (advance requests
+ * awaiting a CEO/MD decision, shown only to those who may decide them),
+ * Approvals (what the accounts team must pay or confirm), and Accounts (what
+ * this operator may pay from). Giving money is one sheet, reachable from
+ * anywhere on the screen.
+ *
+ * FOUR GATES. Reaching this screen needs `khata.manage`. SANCTIONING an advance
+ * needs SuperAdmin/CEO/MD instead — a separate, narrower grant. Actually paying
+ * someone additionally needs to be an operator on the chosen cash account, with
+ * a limit above which the entry parks for approval rather than paying out. The
+ * server decides all of that; this screen only offers accounts
+ * GET /khata/accounts returned, and says up front when an amount is going to
+ * park instead of pay. Downloading the ledger as a spreadsheet is the fourth
+ * gate — a per-person grant only a SuperAdmin can give
+ * (`User.khataExportAccess`), so the Export button is hidden without it; see
+ * utils/roles.js → canExportKhata.
  *
  * Route: "KhataAdmin" (from the More/Menu admin section).
- * Backend: /khata/overview, /employees, /employee-options, /pending, /entries,
- * /reports/export.
+ * Backend: /khata/overview, /employees, /employee-options, /pending,
+ * /advance-approvals, /entries, /reports/export.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
@@ -28,7 +38,7 @@ import * as Sharing from 'expo-sharing';
 
 import api, { API_BASE, errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canExportKhata } from '../../utils/roles';
+import { canExportKhata, isExec, isSuperAdmin } from '../../utils/roles';
 import { toast } from '../../components/Toast';
 import { colors, spacing, font } from '../../theme';
 import {
@@ -37,16 +47,37 @@ import {
 } from '../../components/ui';
 import { fmtDate, rupees, toYMD } from '../../utils/format';
 
-const TABS = [['people', 'People'], ['approvals', 'Approvals'], ['accounts', 'Accounts']];
+const TABS = [
+  ['people', 'People'],
+  ['sanctions', 'Advances'],
+  ['approvals', 'Approvals'],
+  ['accounts', 'Accounts'],
+];
 const FILTERS = [
   { value: 'all', label: 'All' },
-  { value: 'outstanding', label: 'Owes us' },
+  { value: 'outstanding', label: 'Holding cash' },
   { value: 'payable', label: 'We owe' },
 ];
 const PAYMENT_MODES = ['Cash', 'Bank', 'UPI', 'Cheque', 'Card'];
-const STATUS_TONE = { Pending: 'warning', Approved: 'success', Rejected: 'danger', Reversed: 'neutral' };
+const STATUS_TONE = {
+  AwaitingApproval: 'warning', Pending: 'warning', Approved: 'success',
+  Rejected: 'danger', Reversed: 'neutral',
+};
+// 'AwaitingApproval' is accurate and unreadable; say who it is actually with.
+const STATUS_LABEL = { AwaitingApproval: 'With CEO/MD' };
 
-const blankEntry = { employee: '', khata: '', direction: 'to_employee', amount: '', purpose: '', paymentMode: 'Cash', cashAccount: '' };
+// What an entry is FOR. Only 'expense' is filed against a book — mirrors
+// KHATA_TYPES on the server.
+const ENTRY_KINDS = [
+  { value: 'advance', label: 'Advance out', direction: 'to_employee' },
+  { value: 'expense', label: 'Expense on a khata', direction: 'from_employee' },
+  { value: 'settlement', label: 'Cash back', direction: 'from_employee' },
+];
+
+const blankEntry = {
+  employee: '', khata: '', type: 'advance', direction: 'to_employee',
+  amount: '', purpose: '', paymentMode: 'Cash', cashAccount: '',
+};
 
 export default function KhataAdminScreen() {
   const me = useAuth((s) => s.user);
@@ -54,6 +85,9 @@ export default function KhataAdminScreen() {
   // The download is its own grant, separate from reaching this screen. Hidden
   // when it is missing — the server refuses either way.
   const mayExport = canExportKhata(me);
+  // Sanctioning an advance is the executives' call. Mirrors
+  // requireAdvanceApprover on the server, which is what actually enforces it.
+  const mayApproveAdvances = isSuperAdmin(me) || isExec(me);
 
   const [tab, setTab] = useState('people');
   const [ov, setOv] = useState(null);
@@ -61,6 +95,7 @@ export default function KhataAdminScreen() {
   const [rows, setRows] = useState([]);          // one per employee, each with their khatas[]
   const [people, setPeople] = useState([]);
   const [pending, setPending] = useState([]);
+  const [sanctions, setSanctions] = useState([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -71,30 +106,37 @@ export default function KhataAdminScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(null); // { entry, cashAccount }
   const [personQuery, setPersonQuery] = useState('');
-  const [newKhata, setNewKhata] = useState(null);  // { employee, name, creditLimit }
+  const [newKhata, setNewKhata] = useState(null);  // { employee, name }
+  const [sanctioning, setSanctioning] = useState(null); // { entry, approve, note }
   const [viewKhata, setViewKhata] = useState('');  // '' = all of their books
   const [entryKhatas, setEntryKhatas] = useState([]); // books offered in the entry sheet
   const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [o, k, p, q] = await Promise.all([
+      const [o, k, p, q, a] = await Promise.all([
         api.get('/khata/overview'),
         api.get('/khata/employees', { params: { filter } }),
         api.get('/khata/employee-options').catch(() => ({ data: {} })),
         api.get('/khata/pending').catch(() => ({ data: {} })),
+        // Only the people who may act on it ask for it — everyone else gets a
+        // 403, and a tab that is always empty for them would only confuse.
+        mayApproveAdvances
+          ? api.get('/khata/advance-approvals').catch(() => ({ data: {} }))
+          : Promise.resolve({ data: {} }),
       ]);
       setOv(o.data);
       setAccounts(o.data.accounts || []);
       setRows(k.data.rows || []);
       setPeople(p.data.employees || []);
       setPending(q.data.entries || []);
+      setSanctions(a.data.entries || []);
     } catch (err) {
       toast('Could not load', errMsg(err));
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, mayApproveAdvances]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
@@ -146,14 +188,15 @@ export default function KhataAdminScreen() {
 
   // ---------- give / record money ----------
 
-  const openEntry = (employeeId, direction = 'to_employee', khataId = '') => {
+  const openEntry = (employeeId, type = 'advance', khataId = '') => {
     setDate(toYMD(new Date()));
     setPersonQuery('');
     setEntry({
       ...blankEntry,
       employee: employeeId || '',
       khata: khataId,
-      direction,
+      type,
+      direction: ENTRY_KINDS.find((k) => k.value === type)?.direction || 'to_employee',
       cashAccount: accounts.find((a) => a.canDisburse)?._id || accounts[0]?._id || '',
     });
     // Which books to offer. Already loaded when we came from their detail view;
@@ -196,24 +239,31 @@ export default function KhataAdminScreen() {
 
   // Mirrors the server's willAutoApprove purely so the operator is told what is
   // about to happen. The server still decides.
+  // Spending an advance moves no company cash — it left the tin when the
+  // advance was paid — so those entries need no account and never park.
+  const isKhataEntry = entry?.type === 'expense';
+
   const willPark = useMemo(() => {
-    if (!entry || !chosenAccount) return false;
+    if (!entry || isKhataEntry || !chosenAccount) return false;
     if (!chosenAccount.canDisburse) return true;
     return chosenAccount.threshold > 0 && (Number(entry.amount) || 0) > chosenAccount.threshold;
-  }, [entry, chosenAccount]);
+  }, [entry, chosenAccount, isKhataEntry]);
 
   const submitEntry = async () => {
     if (!entry.employee) { toast('Choose an employee', 'Pick who the money is for.'); return; }
     if (!entry.amount || Number(entry.amount) <= 0) { toast('Invalid', 'Enter an amount greater than zero.'); return; }
-    if (!entry.cashAccount) { toast('Choose an account', 'Say which company account the cash moves through.'); return; }
-    if (!entry.khata) { toast('Choose a khata', 'Pick which of their books this belongs to.'); return; }
+    if (isKhataEntry && !entry.khata) { toast('Choose a khata', 'Pick which book this expense belongs to.'); return; }
+    if (!isKhataEntry && !entry.cashAccount) { toast('Choose an account', 'Say which company account the cash moves through.'); return; }
 
     setSubmitting(true);
     try {
       const res = await api.post('/khata/entries', {
         ...entry,
+        // An advance or a return belongs to the wallet, not to any one book.
+        khata: isKhataEntry ? entry.khata : undefined,
+        cashAccount: isKhataEntry ? undefined : entry.cashAccount,
+        affectsCompanyCash: !isKhataEntry,
         amount: Number(entry.amount),
-        type: entry.direction === 'to_employee' ? 'advance' : 'settlement',
         date,
       });
       toast(res.data.posted ? 'Recorded' : 'Sent for approval', res.data.message || '');
@@ -237,7 +287,6 @@ export default function KhataAdminScreen() {
       const res = await api.post('/khata/khatas', {
         employee: newKhata.employee,
         name: newKhata.name,
-        creditLimit: Number(newKhata.creditLimit) || 0,
       });
       toast('Opened', res.data.message || '');
       const created = res.data.khata;
@@ -271,6 +320,24 @@ export default function KhataAdminScreen() {
     } finally { setSubmitting(false); }
   };
 
+  // ---------- executive sanction ----------
+
+  const submitSanction = async () => {
+    const { entry: e, approve, note } = sanctioning;
+    if (!approve && !note.trim()) { toast('Say why', 'The employee sees this.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await api.patch(`/khata/entries/${e._id}/exec-decision`, {
+        approve, note: note.trim() || undefined,
+      });
+      toast(approve ? 'Approved' : 'Declined', res.data.message || '');
+      setSanctioning(null);
+      await load();
+    } catch (err) {
+      toast('Could not record the decision', errMsg(err));
+    } finally { setSubmitting(false); }
+  };
+
   const decline = async (e) => {
     try {
       await api.patch(`/khata/entries/${e._id}/reject`, {});
@@ -296,45 +363,30 @@ export default function KhataAdminScreen() {
             <Text style={styles.meta}>
               {[detail.employee.employeeCode, detail.employee.designation].filter(Boolean).join(' · ') || detail.employee.email}
             </Text>
-            {detail.totals?.get > 0 && detail.totals?.give > 0 ? (
-              <>
-                {/* Both sides in full — a single netted figure would hide that
-                    the company owes them anything. */}
-                <View style={styles.twoWay}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.twoWayLabel}>You will get</Text>
-                    <Text style={[styles.twoWayAmount, { color: colors.danger }]}>{rupees(detail.totals.get)}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.twoWayLabel}>You will give</Text>
-                    <Text style={[styles.twoWayAmount, { color: colors.success }]}>{rupees(detail.totals.give)}</Text>
-                  </View>
-                </View>
-                <Text style={styles.meta}>
-                  Net {rupees(Math.abs(detail.totals.net))} — each khata settles on its own, so these do not cancel out.
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={[styles.bigAmount, { color: toneFor(detail.balance.direction) }]}>
-                  {rupees(detail.balance.amount)}
-                </Text>
-                <Text style={styles.meta}>{detail.balance.label}</Text>
-              </>
-            )}
+            {/* One figure, because there is one pot. */}
+            <Text style={[styles.bigAmount, { color: toneFor(detail.balance.direction) }]}>
+              {rupees(detail.balance.amount)}
+            </Text>
+            <Text style={styles.meta}>{detail.balance.label}</Text>
+            <Text style={[styles.meta, { marginTop: spacing(2) }]}>
+              {rupees(detail.totals?.advanced)} advanced · {rupees(detail.totals?.spent)} spent
+              · {rupees(detail.totals?.returned)} returned
+              {detail.wallet?.creditLimit > 0 ? ` · limit ${rupees(detail.wallet.creditLimit)}` : ''}
+            </Text>
 
             <View style={{ flexDirection: 'row', marginTop: spacing(4) }}>
-              <AppButton title="Give money" onPress={() => openEntry(detail.employee._id, 'to_employee')} style={{ flex: 1 }} />
+              <AppButton title="Give advance" onPress={() => openEntry(detail.employee._id, 'advance')} style={{ flex: 1 }} />
               <View style={{ width: spacing(2) }} />
-              <AppButton title="Money back" variant="ghost" onPress={() => openEntry(detail.employee._id, 'from_employee')} style={{ flex: 1 }} />
+              <AppButton title="Cash back" variant="ghost" onPress={() => openEntry(detail.employee._id, 'settlement')} style={{ flex: 1 }} />
             </View>
           </Card>
 
-          {/* Their books. Each is given to and settled on its own. */}
+          {/* Their books — a breakdown of where the one wallet went, not
+              balances of their own. */}
           <SectionHeader
             title="Khatas"
             action="+ New"
-            onAction={() => setNewKhata({ employee: detail.employee._id, name: '', creditLimit: '' })} />
+            onAction={() => setNewKhata({ employee: detail.employee._id, name: '' })} />
           {(detail.khatas || []).map((k) => {
             const active = viewKhata === k._id;
             return (
@@ -345,17 +397,17 @@ export default function KhataAdminScreen() {
                 <View style={{ flex: 1, paddingRight: spacing(2) }}>
                   <Text style={font.body} numberOfLines={1}>{k.name}</Text>
                   <Text style={styles.meta}>
-                    {k.isDefault ? 'Default · ' : ''}{k.isActive ? k.display.label : 'Closed'}
-                    {k.creditLimit > 0 ? ` · limit ${rupees(k.creditLimit)}` : ''}
+                    {k.isDefault ? 'Default · ' : ''}
+                    {k.isActive ? `${k.entryCount || 0} ${k.entryCount === 1 ? 'entry' : 'entries'}` : 'Closed'}
+                    {k.lastEntryAt ? ` · last ${fmtDate(k.lastEntryAt)}` : ''}
                   </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[styles.rowAmount, { color: toneFor(k.display.direction) }]}>
-                    {rupees(k.display.amount)}
-                  </Text>
+                  <Text style={styles.rowAmount}>{rupees(k.spent)}</Text>
+                  <Text style={styles.meta}>spent</Text>
                   {k.isActive && (
-                    <TouchableOpacity onPress={() => openEntry(detail.employee._id, 'to_employee', k._id)}>
-                      <Text style={styles.link}>Give money</Text>
+                    <TouchableOpacity onPress={() => openEntry(detail.employee._id, 'expense', k._id)}>
+                      <Text style={styles.link}>Add expense</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -390,11 +442,11 @@ export default function KhataAdminScreen() {
         refreshControl={refresher(refreshing, onRefresh)}>
 
         <View style={styles.tiles}>
-          <StatTile icon="arrow-up-circle" label="You will get" value={rupees(ov?.totalReceivable)} tint={colors.danger} />
+          <StatTile icon="wallet-outline" label="In staff hands" value={rupees(ov?.totalReceivable)} tint={colors.danger} />
           <StatTile icon="arrow-down-circle" label="You will give" value={rupees(ov?.totalPayable)} tint={colors.success} />
         </View>
 
-        <AppButton title="New entry" icon="add" onPress={() => openEntry('')} style={{ marginBottom: spacing(3) }} />
+        <AppButton title="New entry" icon="add" onPress={() => openEntry('', 'advance')} style={{ marginBottom: spacing(3) }} />
 
         {mayExport && (
           <AppButton
@@ -407,10 +459,12 @@ export default function KhataAdminScreen() {
         )}
 
         <View style={styles.tabs}>
-          {TABS.map(([key, label]) => (
+          {TABS.filter(([k]) => k !== 'sanctions' || mayApproveAdvances).map(([key, label]) => (
             <TouchableOpacity key={key} onPress={() => setTab(key)} style={[styles.tab, tab === key && styles.tabActive]}>
               <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>
-                {label}{key === 'approvals' && pending.length ? ` (${pending.length})` : ''}
+                {label}
+                {key === 'approvals' && pending.length ? ` (${pending.length})` : ''}
+                {key === 'sanctions' && sanctions.length ? ` (${sanctions.length})` : ''}
               </Text>
             </TouchableOpacity>
           ))}
@@ -434,17 +488,17 @@ export default function KhataAdminScreen() {
               title="New khata"
               icon="add"
               variant="ghost"
-              onPress={() => { setPersonQuery(''); setNewKhata({ employee: '', name: '', creditLimit: '' }); }}
+              onPress={() => { setPersonQuery(''); setNewKhata({ employee: '', name: '' }); }}
               style={{ marginBottom: spacing(3) }} />
 
             {rows.length === 0 ? (
               <EmptyState
                 icon="people-outline"
-                title="No khatas yet"
-                subtitle="A khata opens itself the first time you give someone money." />
+                title="Nobody holds a wallet yet"
+                subtitle="A wallet opens itself the first time you give someone money." />
             ) : rows.map((r) => (
-              /* One row per PERSON, showing their combined position. Chasing is
-                 per person; settling is per book, so both are on the row. */
+              /* One row per PERSON — which is simply what the data is now, one
+                 wallet each, with their books as a breakdown beneath. */
               <Card key={r.employee._id} onPress={() => openDetail(r.employee._id)} style={{ marginBottom: spacing(2) }}>
                 <View style={styles.row}>
                   <View style={{ flex: 1, paddingRight: spacing(2) }}>
@@ -454,27 +508,57 @@ export default function KhataAdminScreen() {
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    {r.totals?.get > 0 && r.totals?.give > 0 ? (
-                      <>
-                        <Text style={[styles.rowAmount, { color: colors.danger }]}>{rupees(r.totals.get)}</Text>
-                        <Text style={[styles.rowAmount, { color: colors.success }]}>{rupees(r.totals.give)}</Text>
-                        <Text style={styles.meta}>get / give</Text>
-                      </>
-                    ) : (
-                      <>
-                        <Text style={[styles.rowAmount, { color: toneFor(r.display.direction) }]}>
-                          {rupees(r.display.amount)}
-                        </Text>
-                        <Text style={styles.meta}>{r.display.label}</Text>
-                      </>
-                    )}
+                    <Text style={[styles.rowAmount, { color: toneFor(r.display.direction) }]}>
+                      {rupees(r.display.amount)}
+                    </Text>
+                    <Text style={styles.meta}>{r.display.label}</Text>
                   </View>
                 </View>
-                {r.khatas.length > 1 && (
+                {r.khatas.length > 0 && (
+                  /* What each book has COST. Books hold no balance of their
+                     own, so there is no sign to colour by. */
                   <Text style={[styles.meta, { marginTop: spacing(2) }]} numberOfLines={2}>
-                    {r.khatas.map((k) => `${k.name} ${rupees(Math.abs(k.balance))}`).join('  ·  ')}
+                    {r.khatas.map((k) => `${k.name} ${rupees(k.spent)}`).join('  ·  ')}
                   </Text>
                 )}
+              </Card>
+            ))}
+          </>
+        )}
+
+        {/* The executives' queue. Sanctioning decides WHETHER somebody should
+            have the money; it moves none — an approved request drops into the
+            accounts team's queue, where the account is chosen. */}
+        {tab === 'sanctions' && mayApproveAdvances && (
+          <>
+            {ov && !ov.approvalRequired ? (
+              <Card style={{ marginBottom: spacing(2) }}>
+                <Text style={styles.warn}>
+                  CEO/MD approval is currently switched off, so new requests go straight to the accounts team.
+                  A Super Admin can turn it back on. Anything listed here still needs deciding.
+                </Text>
+              </Card>
+            ) : null}
+            {sanctions.length === 0 ? (
+              <EmptyState
+                icon="shield-checkmark-outline"
+                title="No advance requests waiting"
+                subtitle="A request waits here for your decision before the accounts team sees it." />
+            ) : sanctions.map((e) => (
+              <Card key={e._id} style={{ marginBottom: spacing(2) }}>
+                <Text style={font.body}>{e.employee?.name || 'Employee'} · {rupees(e.amount)}</Text>
+                {e.purpose ? <Text style={[font.body, { marginTop: spacing(1) }]}>{e.purpose}</Text> : null}
+                {/* What they are already carrying. Without it the decision is
+                    being made blind. */}
+                <Text style={styles.meta}>
+                  Asked {fmtDate(e.date)} · already holding {rupees(e.employeeBalance)}
+                  {e.employeeCreditLimit > 0 ? ` of a ${rupees(e.employeeCreditLimit)} limit` : ''}
+                </Text>
+                <View style={{ flexDirection: 'row', marginTop: spacing(3) }}>
+                  <AppButton title="Approve" onPress={() => setSanctioning({ entry: e, approve: true, note: '' })} style={{ flex: 1 }} />
+                  <View style={{ width: spacing(2) }} />
+                  <AppButton title="Decline" variant="ghost" onPress={() => setSanctioning({ entry: e, approve: false, note: '' })} style={{ flex: 1 }} />
+                </View>
               </Card>
             ))}
           </>
@@ -485,15 +569,24 @@ export default function KhataAdminScreen() {
             <EmptyState
               icon="checkmark-done-outline"
               title="Nothing waiting"
-              subtitle="Staff requests, and payouts above an operator's limit, land here." />
+              subtitle="Approved advances to pay out, expenses to confirm, and payouts above an operator's limit land here." />
           ) : pending.map((e) => (
             <Card key={e._id} style={{ marginBottom: spacing(2) }}>
               <Text style={font.body}>{e.employee?.name || 'Employee'} · {rupees(e.amount)}</Text>
               <Text style={styles.meta}>
                 {e.khataName ? `${e.khataName} · ` : ''}
-                {e.direction === 'to_employee' ? 'Money out to them' : 'Money back from them'}
-                {e.raisedByEmployee ? ' · they asked' : ' · above the operator limit'} · {fmtDate(e.date)}
+                {e.direction === 'to_employee' ? 'Advance to pay out'
+                  : e.type === 'expense' ? 'Expense to confirm' : 'Cash back to confirm'}
+                {e.raisedByEmployee ? ' · they raised it' : ' · above the operator limit'} · {fmtDate(e.date)}
               </Text>
+              {/* Sanctioned already: say so, or an operator has no way to tell an
+                  approved advance from an unvetted one. */}
+              {e.execApprovedAt ? (
+                <Text style={styles.meta}>
+                  Approved by {e.execApprovedBy?.name || 'an executive'}
+                  {e.execApprovedBy?.role ? ` (${e.execApprovedBy.role})` : ''} on {fmtDate(e.execApprovedAt)}
+                </Text>
+              ) : null}
               {e.purpose ? <Text style={[font.body, { marginTop: spacing(1) }]}>{e.purpose}</Text> : null}
               <View style={{ flexDirection: 'row', marginTop: spacing(3) }}>
                 <AppButton
@@ -544,8 +637,8 @@ export default function KhataAdminScreen() {
         {newKhata && (
           <>
             <Text style={styles.sheetIntro}>
-              A separate book for a separate purpose — a site float, a vehicle float, a salary advance.
-              Money is given to and settled against one book at a time.
+              A separate heading for spending — a site, a vehicle, a particular job. It holds no money of its
+              own: expenses filed under it come out of the employee&apos;s one wallet.
             </Text>
             {/* Opened from the People list, so nobody is chosen yet. Same
                 search-over-a-short-list as the entry sheet — a chip per employee
@@ -596,13 +689,38 @@ export default function KhataAdminScreen() {
                 placeholder="e.g. Site A — materials"
                 maxLength={80} />
             </Field>
-            <Field label="Khata limit (optional)">
+          </>
+        )}
+      </ModalSheet>
+
+      <ModalSheet
+        visible={!!sanctioning}
+        onClose={() => setSanctioning(null)}
+        title={sanctioning?.approve ? 'Approve this advance?' : 'Decline this advance?'}
+        footer={(
+          <AppButton
+            title={sanctioning?.approve ? 'Approve' : 'Decline'}
+            onPress={submitSanction}
+            loading={submitting} />
+        )}>
+        {sanctioning && (
+          <>
+            <Text style={styles.sheetIntro}>
+              {rupees(sanctioning.entry.amount)} for {sanctioning.entry.employee?.name}
+              {sanctioning.entry.purpose ? ` — ${sanctioning.entry.purpose}` : ''}.
+              {'\n\n'}
+              {sanctioning.approve
+                ? 'No money moves yet. Approving passes it to the accounts team, who choose which account it '
+                  + 'comes out of — the cash leaves only when they do.'
+                : 'Nothing moves. The request is closed and the employee is told why.'}
+            </Text>
+            <Field label={sanctioning.approve ? 'Note (optional)' : 'Why are you declining?'}>
               <Input
-                value={String(newKhata.creditLimit)}
-                onChangeText={(v) => setNewKhata({ ...newKhata, creditLimit: v })}
-                keyboardType="decimal-pad"
-                placeholder="0 = no limit" />
+                value={sanctioning.note}
+                onChangeText={(v) => setSanctioning({ ...sanctioning, note: v })}
+                placeholder={sanctioning.approve ? 'Anything they should know' : 'e.g. settle the last advance first'} />
             </Field>
+            <Text style={styles.meta}>The employee sees this.</Text>
           </>
         )}
       </ModalSheet>
@@ -691,41 +809,47 @@ export default function KhataAdminScreen() {
               )}
             </Field>
 
-            {/* Which of their books. An advance on the wrong float is as bad as
-                a wrong amount, so this sits directly under the person. */}
-            <Field label="Khata">
-              {entryKhatas.length ? (
-                <ChipSelect
-                  options={entryKhatas}
-                  value={entry.khata}
-                  onChange={(v) => setEntry({ ...entry, khata: v })}
-                  getLabel={(k) => `${k.name} · ${rupees(Math.abs(k.balance))}`}
-                  getValue={(k) => k._id} />
-              ) : (
-                <Text style={styles.meta}>
-                  {entry.employee ? 'Loading their khatas…' : 'Choose an employee first.'}
-                </Text>
-              )}
-              {entry.employee ? (
-                <TouchableOpacity
-                  style={{ marginTop: spacing(2) }}
-                  onPress={() => setNewKhata({ employee: entry.employee, name: '', creditLimit: '', fromEntry: true })}>
-                  <Text style={styles.link}>+ Open a new khata for them</Text>
-                </TouchableOpacity>
-              ) : null}
-            </Field>
-
-            <Field label="Which way did the money go?">
+            {/* What the entry is FOR decides everything below it — whether a
+                book is asked for, and whether an account is. */}
+            <Field label="What is this?">
               <ChipSelect
-                options={[
-                  { value: 'to_employee', label: 'Company → employee' },
-                  { value: 'from_employee', label: 'Employee → company' },
-                ]}
-                value={entry.direction}
-                onChange={(v) => setEntry({ ...entry, direction: v })}
+                options={ENTRY_KINDS}
+                value={entry.type}
+                onChange={(v) => setEntry({
+                  ...entry,
+                  type: v,
+                  direction: ENTRY_KINDS.find((k) => k.value === v)?.direction || 'to_employee',
+                })}
                 getLabel={(o) => o.label}
                 getValue={(o) => o.value} />
             </Field>
+
+            {/* Only spending is filed under a book. An advance goes into the one
+                wallet, so asking which khata it belongs to would be a question
+                with no answer. */}
+            {isKhataEntry ? (
+              <Field label="Khata">
+                {entryKhatas.length ? (
+                  <ChipSelect
+                    options={entryKhatas}
+                    value={entry.khata}
+                    onChange={(v) => setEntry({ ...entry, khata: v })}
+                    getLabel={(k) => `${k.name} · ${rupees(k.spent)}`}
+                    getValue={(k) => k._id} />
+                ) : (
+                  <Text style={styles.meta}>
+                    {entry.employee ? 'Loading their khatas…' : 'Choose an employee first.'}
+                  </Text>
+                )}
+                {entry.employee ? (
+                  <TouchableOpacity
+                    style={{ marginTop: spacing(2) }}
+                    onPress={() => setNewKhata({ employee: entry.employee, name: '', fromEntry: true })}>
+                    <Text style={styles.link}>+ Open a new khata for them</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </Field>
+            ) : null}
 
             <Field label="Amount">
               <Input
@@ -735,27 +859,36 @@ export default function KhataAdminScreen() {
                 placeholder="0.00" />
             </Field>
 
-            <Field label="Company account">
-              <ChipSelect
-                options={accounts}
-                value={entry.cashAccount}
-                onChange={(v) => setEntry({ ...entry, cashAccount: v })}
-                getLabel={(a) => a.name}
-                getValue={(a) => a._id} />
-            </Field>
+            {isKhataEntry ? (
+              <Text style={styles.meta}>
+                No company account is involved: the cash left the tin when the advance was paid. This records
+                what it was spent on and takes it off what they are holding.
+              </Text>
+            ) : (
+              <>
+                <Field label="Company account">
+                  <ChipSelect
+                    options={accounts}
+                    value={entry.cashAccount}
+                    onChange={(v) => setEntry({ ...entry, cashAccount: v })}
+                    getLabel={(a) => a.name}
+                    getValue={(a) => a._id} />
+                </Field>
 
-            {/* Tell them what will happen before they commit to it. */}
-            <Text style={willPark ? styles.warn : styles.meta}>
-              {willPark
-                ? 'This is above your limit on that account, so it will be sent for approval. No cash moves yet.'
-                : 'This will post immediately and move the cash.'}
-            </Text>
+                {/* Tell them what will happen before they commit to it. */}
+                <Text style={willPark ? styles.warn : styles.meta}>
+                  {willPark
+                    ? 'This is above your limit on that account, so it will be sent for approval. No cash moves yet.'
+                    : 'This will post immediately and move the cash.'}
+                </Text>
+              </>
+            )}
 
-            <Field label="What is it for?">
+            <Field label={isKhataEntry ? 'What was bought?' : 'What is it for?'}>
               <Input
                 value={entry.purpose}
                 onChangeText={(v) => setEntry({ ...entry, purpose: v })}
-                placeholder="e.g. site material purchase" />
+                placeholder={isKhataEntry ? 'e.g. 20 bags of cement' : 'e.g. site material purchase'} />
             </Field>
 
             <Field label="Date">
@@ -775,9 +908,14 @@ export default function KhataAdminScreen() {
   }
 }
 
-/** Company-side colour for a balance direction: red = owed to us, green = we owe. */
+/**
+ * Colour for a balance direction. Red = staff are holding our cash, green = we
+ * owe them. Takes both the company-side words ('get'/'give') and the
+ * employee-side ones ('holding'/'owed'), so the same helper serves either
+ * payload without a caller having to know which it got.
+ */
 function toneFor(direction) {
-  if (direction === 'get' || direction === 'owe') return colors.danger;
+  if (direction === 'get' || direction === 'holding') return colors.danger;
   if (direction === 'give' || direction === 'owed') return colors.success;
   return colors.textMuted;
 }
@@ -806,10 +944,10 @@ function EntryRow({ entry }) {
           {entry.direction === 'to_employee' ? '+' : '−'}{rupees(entry.amount)}
         </Text>
         {entry.status === 'Approved' ? (
-          <Text style={styles.meta}>Bal {rupees(entry.balanceAfter)}</Text>
+          <Text style={styles.meta}>In hand {rupees(entry.balanceAfter)}</Text>
         ) : (
           <View style={{ marginTop: 2 }}>
-            <Pill label={entry.status} tone={STATUS_TONE[entry.status] || 'neutral'} />
+            <Pill label={STATUS_LABEL[entry.status] || entry.status} tone={STATUS_TONE[entry.status] || 'neutral'} />
           </View>
         )}
       </View>

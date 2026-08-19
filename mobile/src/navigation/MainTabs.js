@@ -72,6 +72,7 @@ import AddEmployeeScreen from '../screens/admin/AddEmployeeScreen';
 import WorkLocationsScreen from '../screens/admin/WorkLocationsScreen';
 import KhataAdminScreen from '../screens/admin/KhataAdminScreen';
 import PushNotificationScreen from '../screens/admin/PushNotificationScreen';
+import LateMarkingScreen from '../screens/admin/LateMarkingScreen';
 import BrandingScreen from '../screens/admin/BrandingScreen';
 import PayrollScreen from '../screens/admin/PayrollScreen';
 import RnrScreen from '../screens/admin/RnrScreen';
@@ -146,6 +147,8 @@ function HomeStack() {
       <HomeStackNav.Screen name="KhataAdmin" component={KhataAdminScreen} options={{ title: 'Employee Khata' }} />
       {/* SuperAdmin-only in practice; the screen and the server both gate it. */}
       <HomeStackNav.Screen name="PushNotification" component={PushNotificationScreen} options={{ title: 'Push Notification' }} />
+      {/* SuperAdmin-only too — the server drops the late policy from anyone else. */}
+      <HomeStackNav.Screen name="LateMarking" component={LateMarkingScreen} options={{ title: 'Late Marking' }} />
       <HomeStackNav.Screen name="Branding" component={BrandingScreen} options={{ title: 'Logo & Signatures' }} />
       <HomeStackNav.Screen name="PayrollAdmin" component={PayrollScreen} options={{ title: 'Payroll' }} />
       <HomeStackNav.Screen name="RnrAdmin" component={RnrScreen} options={{ title: 'Rewards & Recognition' }} />

@@ -132,7 +132,7 @@ async function syncLoanRepayment(loan, amount, actor, opts = {}) {
  *
  * No company cash moves at approval — the money left the EMPLOYEE's pocket, at
  * the shop, before any of this. So `affectsCompanyCash` is false and only the
- * khata balance shifts, into "you will give".
+ * wallet balance shifts, into "the company owes you".
  * @param {object} expense - The Expense document.
  * @param {object} actor - The approving user.
  * @returns {Promise<object|null>}
@@ -142,7 +142,13 @@ async function syncExpenseApproved(expense, actor) {
   return safePost({
     employee: expense.employee._id || expense.employee,
     direction: 'from_employee',
-    type: 'expense',
+    // 'settlement', not 'expense'. An expense CLAIM is money the employee spent
+    // out of their OWN pocket, so it is not spending down an advance and does
+    // not belong in any expense book — it simply moves their wallet, exactly
+    // as handing cash back does. Filing it as 'expense' would demand a khata
+    // and would double-count it against a site or vehicle budget that never
+    // paid for it.
+    type: 'settlement',
     amount: expense.amount,
     date: expense.expenseDate || expense.createdAt || new Date(),
     purpose: `Own spend — ${expense.category}${expense.merchant ? ` (${expense.merchant})` : ''}`,

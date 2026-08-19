@@ -1,59 +1,125 @@
-# Employee Khata — company ↔ employee cash ledger
+# Employee Khata — one advance wallet per person, and the books they spend it under
 
-Khatabook-style running accounts between the company and each member of staff:
-advances handed out, cash settled back, and a balance that says, in plain words,
-whether they owe the company or the company owes them.
+Khatabook-style cash accounting between the company and each member of staff.
+The company advances money into an employee's **wallet**; the employee then
+records what they spent it on against whichever **khata** (expense book) the
+spend belongs to. What is left over is one figure, and it reads the same
+whichever book you have open.
 
-**An employee can hold several named khatas.** A site supervisor might carry a
-float for "Site A — materials", another for "Vehicle & fuel", and a salary
-advance besides. Lumping those into one number would make it impossible to say
-what any of it was for, or to close one off on its own. So money is always given
-to and settled against a *specific* book; a person's overall position is the sum
-of theirs.
+**One wallet. Many khatas.** A site supervisor holds one advance and files their
+purchases under "Site A — materials", "Vehicle & fuel", "Client hospitality".
+The books say what the money went *on*; the wallet says how much is *left*.
 
 It sits **on top of** the existing cashbook rather than replacing it. The
-cashbook answers *"how much is in the tin?"*. The khata answers *"how much is
-Rahul holding right now, and what has he settled?"* — a question the cashbook
-could never answer, because there a payout is just a flat line with a party name
-on it.
+cashbook answers *"how much is in the tin?"*. The wallet answers *"how much is
+Rahul holding right now?"* — a question the cashbook could never answer, because
+there a payout is just a flat line with a party name on it. The khatas answer
+*"and what did he spend it on?"*.
+
+> **Why it works this way.** Advances used to be given to a *specific khata*, so
+> an employee with three books had three separate pots and had to ask for money
+> against the right one — and could be flush on one while unable to spend on
+> another. That is not how carrying cash works: notes in a pocket are fungible,
+> and only the *reason* they were spent needs separating. So the balance moved
+> to the wallet and the khata kept the categorisation, which was the genuinely
+> useful half. See **Migration** below.
 
 ---
 
 ## The one rule everything rests on
 
-Balances are held from the **company's** point of view, and the direction of the
-money is the only thing that sets the sign:
+The wallet balance is held from the **company's** point of view, and the
+direction of the money is the only thing that sets the sign:
 
 | Direction | Meaning | Effect | Company sees | Employee sees |
 |---|---|---|---|---|
-| `to_employee` | company → employee | `balance += amount` | **You will get** | You owe the company |
-| `from_employee` | employee → company | `balance -= amount` | **You will give** | The company owes you |
+| `to_employee` | company → employee | `wallet += amount` | **You will get** | Advance in hand |
+| `from_employee` | employee → company | `wallet -= amount` | **You will give** | (reduces what they hold) |
+
+A negative wallet means the employee spent past their advance, so the company
+owes them the difference.
 
 `type` (`advance`, `settlement`, `expense`, `reimbursement`, `salary_recovery`,
-`opening`, `reversal`, `other`) is only ever a reporting label — it never
-changes the arithmetic.
+`opening`, `reversal`, `other`) is a reporting label and never changes the
+arithmetic — but it *does* decide which book a row is filed under:
+
+| `type` | `khata` | Because |
+|---|---|---|
+| `expense` | **required** | Spending is the thing that needs a heading. |
+| everything else | `null` | An advance, a return, a reimbursement or a payroll recovery moves the pot itself and belongs to no one book. |
+
+`KhataEntry.balanceAfter` is therefore always the **wallet** balance after that
+row, even on a row filed under a khata — the wallet is the only thing that has a
+balance.
 
 The words "debit" and "credit" appear nowhere in the UI. Both apps take their
-wording from the server (`describeBalance` / `describeBalanceForEmployee`) so
+wording from the server (`describeBalance` / `describeWalletForEmployee`) so
 they cannot drift apart on the most confusable thing in the module.
 
-## Three guarantees
+## Four guarantees
 
 1. **The balance cannot drift.** It is never incremented in place. After any
-   change the whole ledger is replayed from the opening balance
-   (`replayBalance` → `recomputeKhataBalance`), so a back-dated entry also
+   change the employee's whole ledger is replayed from the opening balance
+   (`replayBalance` → `recomputeWalletBalance`), so a back-dated entry also
    re-stamps every later running balance.
-2. **Company cash and the employee ledger move together.** An advance leaving
+2. **The books add up to the pot.** A khata's `spent` is replayed from the same
+   rows (`recomputeKhataSpent`), so "what is left" and "what it went on" can
+   never tell two different stories. Both are driven from one call,
+   `recomputeFor(entry)`, so a new posting path cannot update one and forget the
+   other.
+3. **Company cash and the employee ledger move together.** An advance leaving
    the petty-cash tin also posts a `CashbookEntry`, cross-linked both ways
    (`KhataEntry.cashbookEntry` ↔ `CashbookEntry.sourceKhataEntry`).
-3. **Posted money is never deleted.** A correction is a *reversal*: the original
+4. **Posted money is never deleted.** A correction is a *reversal*: the original
    is marked `Reversed` and a mirror row is written against it, on both books.
    The ledger reads `₹5,000 out, ₹5,000 back, ₹4,500 out` — never a row that
-   silently changed.
+   silently changed. A reversal is filed under whatever it cancels, so undoing
+   an expense also takes the cost back off the book it was charged to.
 
 ---
 
-## Who can give money — three gates, deliberately separate
+## The life of an advance — two gates, two different questions
+
+```
+employee asks  →  AwaitingApproval  →  Pending  →  Approved
+                  "should they         "which      cash moves,
+                   have it?"            account?"   wallet rises
+                  CEO / MD             accounts team
+```
+
+**Gate A — should they have it?** `POST /me/request` parks the request as
+`AwaitingApproval`, and only a **SuperAdmin, CEO or MD** can decide it
+(`requireAdvanceApprover`). Approving moves **no money**: it drops the request
+into the accounts team's queue. Declining closes it, with a reason the employee
+sees.
+
+A SuperAdmin can switch this gate off org-wide — **Permissions → CEO / MD
+approval for cash advances**. With it off, requests park as `Pending` and go
+straight to the accounts team, exactly as they used to.
+
+> The requirement is read when a request is **raised** and stamped onto the row
+> (`KhataEntry.execApprovalRequired`). Turning the gate off later therefore does
+> not strand requests already sitting with an executive, and turning it on does
+> not retroactively invalidate ones raised while it was off.
+
+**Gate B — where does the cash come from?** An operator picks the cash account
+and approves; only then does money leave the tin and the wallet rise. This is
+the pre-existing operator/threshold machinery, unchanged.
+
+The two queues are deliberately separate endpoints with separate audiences.
+`GET /pending` never shows an executive's queue to an operator who cannot act on
+it, and `GET /advance-approvals` needs no `khata.manage` — which is what lets a
+read-only CEO/MD account act there and nowhere else.
+
+**Sanctioning is the one write a read-only executive may make here.** Everywhere
+else a CEO/MD is view-only unless a SuperAdmin has switched them into edit mode;
+this decision is the reason the approval step exists, so gating it behind a
+second unrelated grant would mean the person the request is addressed to could
+not answer it.
+
+---
+
+## Who can move money — four gates, deliberately separate
 
 Holding the capability opens the module. It pays nobody on its own.
 
@@ -62,7 +128,9 @@ Holding the capability opens the module. It pays nobody on its own.
 capability, or **anyone at all** via the standalone `User.khataAccess` flag — so
 the branch supervisor who actually hands out cash needs no admin role.
 
-**Gate 2 — `CashAccount.operators`** decides whose money you may touch. Each
+**Gate 2 — SuperAdmin / CEO / MD** sanction advance requests. See above.
+
+**Gate 3 — `CashAccount.operators`** decides whose money you may touch. Each
 account carries a list of operators, each with:
 
 | Field | Meaning |
@@ -79,7 +147,7 @@ approval, and he cannot touch the Main Bank account at all.*
 
 Managed at **Admin → Employee Khata → Accounts** (SuperAdmin only).
 
-**Gate 3 — `User.khataExportAccess`** decides who may *download* the khata. The
+**Gate 4 — `User.khataExportAccess`** decides who may *download* the khata. The
 **Export to Excel** buttons (Overview and Ledger tabs) and
 `GET /reports/export` need it on top of Gate 1. **No role confers it** — not
 Accounts Manager, not an HR Manager with every capability. Only a SuperAdmin
@@ -97,50 +165,48 @@ no free pass on the GET either.
 
 ---
 
-## Several books per person
+## Expense books
 
 | Rule | Why |
 |---|---|
 | Names are unique per employee | "Site A" must mean one thing for one person. A duplicate is rejected, not silently created alongside. |
-| Exactly one `isDefault` book | Where self-service lands when no book is named. Opened lazily as **"General"** on first use, so an employee can ask for ₹500 before anyone has organised anything. |
-| A book with a balance cannot be closed | Closing would hide a live balance from the outstanding list and quietly write off what is owed. Settle first. |
-| The default book cannot be closed | Self-service would have nowhere to put a request. Promote another book first. |
-| An entry naming another employee's book is refused | Without this check, a request carrying somebody else's khata id would post one person's advance onto another person's ledger. |
+| Exactly one `isDefault` book | Where an expense lands when no book is named. Opened lazily as **"General"** on first use, so an employee can file a purchase before anyone has organised anything. |
+| A book **with spend on it can** be closed | `spent` is history, not an outstanding amount, and the money itself is on the wallet where closing a folder cannot hide it. (This is the opposite of the old rule, and the reason the old rule existed is gone.) |
+| The default book cannot be closed | Self-service would have nowhere to file an expense. Promote another book first. |
+| An entry naming another employee's book is refused | Without this check, a request carrying somebody else's khata id would file one person's spending under another person's book. |
 
-Limits are **per book**, not per person — a ₹50,000 site float and a ₹5,000
-petty float want very different ceilings.
+`spent` is a running **total**, not a balance: what this heading has cost. It is
+a cache, replayed from the ledger, and it goes down only when a row filed under
+it is reversed.
 
 **Both sides can open a book.** A khata operator opens one for anybody
 (`POST /khatas`); an employee opens one on their own account
-(`POST /me/khatas`, capped at 25). Deciding that a float needs its own ledger is
-part of doing the job, and opening a book moves no money — so it needs no
-approval. What an employee still cannot do is put cash on it, set its limit, or
-make it the default; and an operator still cannot exceed their own account
-limits. An employee opening a book notifies the khata operators so a limit can
-be set if it needs one.
+(`POST /me/khatas`, capped at 25). Deciding that spending needs its own heading
+is part of doing the job, and a book holds no money — so it needs no approval and
+carries no limit of its own.
 
-### Totals are never netted
+### Totals are never netted across people
 
-Both sides are always carried in full — `splitTotals` returns `{ get, give, net }`
-and the screens show `get` and `give` side by side whenever both are non-zero.
-Somebody owing ₹5,000 on a site float while the company owes them ₹2,000 for
-their own spend genuinely has both; collapsing that to "₹3,000 receivable" is how
-a company forgets to pay somebody back. Each khata settles on its own, so the two
-figures do not cancel out.
+`splitTotals` returns `{ get, give, net }` over a set of wallets and the screens
+show `get` and `give` side by side. One person holding ₹5,000 of our cash while
+the company owes somebody else ₹2,000 is two separate facts; collapsing that to
+"₹3,000 receivable" is how a company forgets to pay somebody back.
 
 ## Guard rails
 
-- **Credit limit** (`EmployeeKhata.creditLimit`, `0` = none) — an advance that
-  would take that *book* past it is refused. Re-checked at approval time, not
-  trusted from submission, because a request can sit in the queue while other
-  entries move the balance. Settlements are **never** blocked: nobody should be
-  stopped from handing money back.
+- **Advance limit** (`EmployeeWallet.creditLimit`, `0` = none) — an advance that
+  would take that *person* past it is refused. Per person rather than per book,
+  because the pot is the person's: a per-book limit could be walked around
+  simply by opening another book. Re-checked at approval time, not trusted from
+  submission, because a request can sit in the queue while other entries move
+  the balance. Settlements and expenses are **never** blocked: nobody should be
+  stopped from accounting for money they already hold.
 - **Idempotency** — `KhataEntry.idempotencyKey` means a double tap or a mobile
   retry over a flaky link returns the original row instead of paying twice.
 - **Opening balance** is SuperAdmin-only. It is the one figure that moves a
   balance with no ledger row behind it.
-- **Employees never self-release.** `POST /khata/me/request` and `/me/settle`
-  always park as `Pending`, whatever permissions the caller holds.
+- **Employees never self-release.** `POST /khata/me/request`, `/me/expense` and
+  `/me/settle` always park, whatever permissions the caller holds.
 
 ---
 
@@ -148,37 +214,47 @@ figures do not cancel out.
 
 Mounted at `/api/khata`. All routes authenticated.
 
-**Employee self-service** — any user, own khata only
+**Employee self-service** — any user, own wallet only
 
 | Route | Purpose |
 |---|---|
-| `GET /me` | All my books, each balance, the combined total, and one statement |
-| `POST /me/request` | Ask for an advance — body `khata` picks the book |
-| `POST /me/settle` | Declare cash returned — body `khata` picks the book |
-| `POST /me/khatas` | Open a book on my own account (name only — the limit stays the company's call) |
+| `GET /me` | My wallet, my books (each with its `spent`), the totals, one statement, and whether a request will need a CEO/MD sanction |
+| `POST /me/request` | Ask for an advance into my wallet — no `khata`, there is one pot |
+| `POST /me/expense` | Log what I spent it on — `khata` **required**, optional receipt |
+| `POST /me/settle` | Declare unspent cash returned — no `khata`, optional receipt |
+| `POST /me/khatas` | Open an expense book on my own account |
+
+**Advance sanction** — SuperAdmin / CEO / MD only, **no** `khata.manage` needed
+
+| Route | Purpose |
+|---|---|
+| `GET /advance-approvals` | Requests awaiting a decision, each with what the asker is already holding |
+| `PATCH /entries/:id/exec-decision` | `{ approve, note }` — moves no money either way |
 
 **Operators** — all require `khata.manage`
 
 | Route | Purpose |
 |---|---|
-| `GET /overview` | Receivable / payable totals, pending count, my accounts |
+| `GET /overview` | Receivable / payable totals, **both** queue counts, my accounts |
 | `GET /accounts` | Accounts I may pay from, with my limits |
 | `GET /employee-options` | Thin employee picker (no salary or personal data) |
-| `GET /employees` | **One row per person** — combined total plus their per-book breakdown |
-| `GET /employees/:id` | One person's books and statement (`?khata=` narrows it) |
-| `POST /khatas` | Open a new named book for someone |
-| `PUT /khatas/:khataId` | Rename, limit, note, make default, close/re-open (opening balance ⇒ SuperAdmin) |
-| `POST /entries` | Give an advance / record a settlement — body `khata` picks the book |
-| `GET /entries` · `GET /pending` | Ledger · approvals queue |
+| `GET /employees` | One row per person — their wallet plus their books |
+| `GET /employees/:id` | One person's wallet, books and statement (`?khata=` narrows it) |
+| `PUT /wallets/:employeeId` | Advance limit and note (opening balance ⇒ SuperAdmin) |
+| `POST /khatas` | Open a new named expense book for someone |
+| `PUT /khatas/:khataId` | Rename, note, make default, close / re-open |
+| `POST /entries` | Give an advance, record cash back, or file an expense (`type: 'expense'` ⇒ `khata` required) |
+| `GET /entries` · `GET /pending` | Ledger · the accounts team's queue |
 | `PATCH /entries/:id/approve` · `/reject` | Release · decline (approve needs `canApprove`) |
 | `POST /entries/:id/reverse` | Cancel with a mirror row; reason required |
-| `GET /reports/outstanding` | Who is holding cash, with ageing bands |
-| `GET /reports/export` | Balances + full ledger as `.xlsx` — **also needs `khataExportAccess`** (Gate 3) |
+| `GET /reports/outstanding` | Who is holding cash, with ageing bands and what they have been spending on |
+| `GET /reports/export` | Wallets + books + full ledger as `.xlsx` — **also needs `khataExportAccess`** (Gate 4) |
 | `POST /reports/remind` | Nudge everyone holding company cash |
 
 **SuperAdmin only**: `GET|PUT /accounts/:id/operators`,
-`POST /khatas/:khataId/recompute` (repair tool — rebuild one book's balance from
-its ledger, for use after a direct database edit or a restored backup).
+`POST /wallets/:employeeId/recompute` (repair tool — rebuild one person's books
+and wallet from the ledger, for use after a direct database edit or a restored
+backup).
 
 ---
 
@@ -188,12 +264,18 @@ Auto-posted through `services/khataSync.js`. Every hook is idempotent, records
 company cash exactly once, and is best-effort — a failure never voids the loan
 approval or reimbursement it mirrors.
 
-| Source event | Khata row | Company cash |
+| Source event | Ledger row | Company cash |
 |---|---|---|
-| Loan becomes `Active` | `to_employee` for the principal | only if the reviewer names a `cashAccount` |
-| Loan repayment recorded | `from_employee` | only if a `cashAccount` is named |
-| Expense **Approved** | `from_employee` — company now owes them | none; the money left the *employee's* pocket |
-| Expense **Reimbursed** | `to_employee` — squares it off | none; `expenseController` already posted the cashbook entry |
+| Loan becomes `Active` | `to_employee` `advance` — wallet rises | only if the reviewer names a `cashAccount` |
+| Loan repayment recorded | `from_employee` `salary_recovery` | only if a `cashAccount` is named |
+| Expense **Approved** | `from_employee` `settlement` — company now owes them | none; the money left the *employee's* pocket |
+| Expense **Reimbursed** | `to_employee` `reimbursement` — squares it off | none; `expenseController` already posted the cashbook entry |
+
+> An expense **claim** posts as `settlement`, not `expense`. A claim is money the
+> employee spent out of their *own* pocket, so it is not spending down an
+> advance and belongs in no expense book — filing it as `expense` would demand a
+> khata and would charge a site or a vehicle for something it never paid for.
+> The wallet effect is identical either way.
 
 The two expense legs net to zero. The reimbursement hook posts the approval leg
 first if it is missing, so a claim taken straight to `Reimbursed` can never read
@@ -223,7 +305,8 @@ KHATA_TEST_MONGO_URI="mongodb://127.0.0.1:27017/hrms_khata_test" npm run test:kh
 ```
 
 End-to-end against a real database: double-entry into the cashbook, idempotent
-replays, parked-until-approved payouts, reversals, and back-dated re-stamping.
+replays, parked-until-approved payouts, several books spending from one wallet,
+reversals, back-dated re-stamping, and the executive sanction gate.
 
 > It **refuses to run** unless `KHATA_TEST_MONGO_URI` is set to something other
 > than `MONGO_URI`, because it creates and deletes data and this project's
@@ -235,41 +318,55 @@ replays, parked-until-approved payouts, reversals, and back-dated re-stamping.
 
 | Layer | Files |
 |---|---|
-| Models | `backend/models/EmployeeKhata.js`, `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` on `CashbookEntry.js` |
+| Models | `backend/models/EmployeeWallet.js` (the pot), `EmployeeKhata.js` (the books), `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` on `CashbookEntry.js`; `khataAdvanceApprovalRequired` on `Setting.js` |
 | Money rules | `backend/services/khataLedger.js` — the only place balance arithmetic happens |
 | Integrations | `backend/services/khataSync.js` |
 | API | `backend/controllers/khataController.js`, `backend/routes/khataRoutes.js` |
-| Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` and `khataExportAccess` on `User` (granted from `frontend/src/pages/AdminPermissions.jsx` via `PATCH /admin/users/:id/khata-access` and `/khata-export-access`); `canExportKhata` + `requireKhataExport` in `backend/middleware/authMiddleware.js`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |
-| Web | `frontend/src/pages/AdminKhata.jsx`, `EmployeeKhata.jsx` |
+| Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` and `khataExportAccess` on `User`; `canExportKhata` + `requireKhataExport` + `canApproveAdvances` + `requireAdvanceApprover` in `backend/middleware/authMiddleware.js`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |
+| Web | `frontend/src/pages/AdminKhata.jsx`, `EmployeeKhata.jsx`; the org switch on `AdminPermissions.jsx` |
 | Mobile | `mobile/src/screens/KhataScreen.js`, `mobile/src/screens/admin/KhataAdminScreen.js` |
 
 ---
 
-## Migration (self-healing, but the script is still there)
+## Migration
 
-The creation paths call `ensureMultiKhataIndexes()`, which drops the obsolete
-index automatically on first use and logs when it does. So an existing database
-fixes itself the first time anyone opens a khata. The script below does the same
-thing deliberately, plus the naming and default-marking, and is worth running on
-a database that predates this change:
+Two scripts, in order. Both are dry-run by default and safe to re-run.
 
 ```bash
 cd backend
-node scripts/migrateMultiKhata.js          # report what it would do
-node scripts/migrateMultiKhata.js --apply  # do it
+node scripts/migrateMultiKhata.js --apply    # only if the database predates multi-khata
+node scripts/migrateKhataWallet.js           # report what it would do
+node scripts/migrateKhataWallet.js --apply   # do it
 ```
 
-`EmployeeKhata.employee` used to be `unique: true`. **Removing that from the
-schema does not remove the index from MongoDB** — Mongoose only ever creates
-indexes, never drops them. Left in place, it rejects an employee's *second* khata
-with a duplicate-key error that looks like a name clash and is nothing of the
-kind. The script drops it, names any unnamed book "General", marks one default
-per employee, and builds the new `{ employee, name }` unique key. Safe to run
-more than once.
+`migrateMultiKhata.js` drops the obsolete `{ employee: 1 }` unique index (which
+Mongoose creates but never removes, and which rejects an employee's *second*
+book with an error that looks like a name clash and is nothing of the kind),
+names any unnamed book "General", and marks one default per employee. The
+creation paths call `ensureKhataIntegrity()` which does the same repair
+automatically on first use, so an existing database heals itself — the script is
+the deliberate version.
 
-If the automatic drop ever fails (no permission, say), `openKhata` checks whether
-a book of that name actually exists before blaming the name, and otherwise says
-plainly that the old index is still there.
+`migrateKhataWallet.js` is the one that matters for this change:
+
+1. Opens an `EmployeeWallet` for everyone who has a khata, carrying in the **sum**
+   of their old per-book opening balances and the **largest** limit any of their
+   books carried. Summed because every one of those openings was money genuinely
+   in that person's hand; the limit is a maximum rather than a total because
+   adding them would hand somebody a bigger allowance than anyone ever approved,
+   purely because their spending was filed under several headings.
+2. Detaches every wallet-level row from its book — advances, settlements,
+   reimbursements, recoveries, openings, and expense-*claim* mirrors. Reversals
+   follow whatever they reverse.
+3. Replays every book's `spent` and every wallet's `balance` from the ledger, so
+   the new figures are **derived** rather than copied.
+
+**The total is preserved.** A person's new wallet balance is the sum of their old
+khata balances, because the same rows are being replayed — just against one pot
+instead of several. The script prints both figures per person, so the dry run
+shows you that before you commit to `--apply`, and flags anyone who comes out
+different (which happens only where an old per-khata balance had drifted from
+its own ledger — in which case the new figure is the correct one).
 
 ## Setting it up
 
@@ -277,13 +374,15 @@ plainly that the old index is still there.
    the module for anyone (or switch on `khata.manage` for the HR Managers who
    need it). **Allow export** is the separate download grant — give it only to
    the people who should be able to take the whole ledger out as a spreadsheet.
-2. **Name the operators** — Admin → Employee Khata → Accounts → *Manage
+2. **Decide on the approval gate** — Permissions page → **CEO / MD approval for
+   cash advances**. On by default. Turn it off if the accounts team should
+   handle requests directly.
+3. **Name the operators** — Admin → Employee Khata → Accounts → *Manage
    operators* on each cash account. Until you do, only a SuperAdmin can pay
    anyone from it. Set each person's direct-payout limit here.
-3. **Open the books people need** — Admin → Employee Khata → People → **+ New
-   khata**, from inside a person, or straight from the give-money form.
-   Employees can open their own from My Khata. Everyone gets a "General" book
-   automatically; name the others after what they are for.
-4. **Set limits** (optional) — per book, under *Settings* on that book.
+4. **Set advance limits** (optional) — Admin → Employee Khata → People → a
+   person → **Wallet settings**. Per person, across all their books.
 5. **Carry balances in** (optional) — a SuperAdmin can set an opening balance on
-   any book, for money already owed before the module existed.
+   any wallet, for money already in someone's hand before the module existed.
+6. **Let people open their own books** — employees name them from My Khata as
+   they take on new work; everyone gets a "General" one automatically.

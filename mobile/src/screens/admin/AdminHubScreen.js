@@ -94,6 +94,9 @@ export default function AdminHubScreen() {
   // capability: the org-settings endpoints are restrictTo('SuperAdmin') and 403
   // for everyone else, so anything looser would show a tile that cannot load.
   tiles.push({ key: 'Branding', label: 'Logo & Signatures', icon: 'color-palette', tint: '#C7A24C', show: me?.role === 'SuperAdmin' });
+  // Same hard role check: updateSettings ignores the late policy from anyone
+  // who is not a SuperAdmin, so a looser gate would show an inert screen.
+  tiles.push({ key: 'LateMarking', label: 'Late Marking', icon: 'alarm', tint: '#dc2626', show: me?.role === 'SuperAdmin' });
   const visibleTiles = tiles.filter((t) => t.show);
 
   if (loading) return <Screen><SkeletonScreen /></Screen>;

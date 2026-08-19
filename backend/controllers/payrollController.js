@@ -21,7 +21,7 @@ const Holiday = require('../models/Holiday');
 const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
-const { lateMinutes } = require('../utils/workday');
+const { lateMinutes, getLatePolicy } = require('../utils/workday');
 const { compOffKeysFor, isRestDayRecord, approvedDoublePayDays, doublePayState } = require('../utils/restDay');
 const { renderPayslip } = require('../services/payslipPdf');
 const { buildPayslipLines } = require('../services/payslipLines');
@@ -1180,6 +1180,9 @@ async function computeEmployeeRun(profile, year, month) {
       doubleDayPay,
       lateAllowance,        // prorated for a mid-month joiner / leaver
       fullLateAllowance: LATE_ALLOWANCE,
+      // The cut-off these late days were judged against, so the employee's own
+      // summary can state the rule instead of assuming 10:00 AM.
+      latePolicy: getLatePolicy(),
       lateDays,
       excessLate,           // late days beyond the allowance → penalised
       lateRate,

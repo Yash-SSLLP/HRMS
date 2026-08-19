@@ -1,21 +1,31 @@
 /**
- * AdminKhata — the company side of the employee cash ledger.
+ * AdminKhata — the company side of the employee cash module.
  *
- * Tabbed over /khata/*: Overview (what is owed each way), People (every
- * employee's balance, opening into their statement), Ledger (every entry),
- * Approvals (entries parked above an operator's limit), and Accounts
- * (SuperAdmin only — who may pay employees out of which cash account).
+ * WHAT THE MODULE IS. Each employee has ONE wallet, which advances are paid
+ * into, and as many khatas as they like, which are expense books saying what
+ * the money went on. A person's position is therefore one figure — their wallet
+ * — and their books are a breakdown of spending underneath it, never balances
+ * of their own.
  *
- * THREE GATES, and the UI has to make the difference visible. Reaching this page
- * needs `khata.manage`. Actually paying someone additionally needs to be listed
- * as an operator on the chosen account, with a limit above which the entry is
- * accepted but parks for approval instead of paying out. The server decides all
- * of that; the form only ever offers accounts GET /khata/accounts returned, and
- * warns before submitting when an amount will park rather than pay.
+ * Tabbed over /khata/*: Overview (what is out and what is owed), People (every
+ * wallet, opening into that person's statement), Ledger (every entry),
+ * Sanctions (advance requests awaiting a CEO/MD decision), Approvals (what the
+ * accounts team must pay or confirm), and Accounts (SuperAdmin only — who may
+ * pay employees out of which cash account).
  *
- * The third gate is downloading the ledger to a spreadsheet — a per-person
- * grant only a SuperAdmin can give (User.khataExportAccess). The Export buttons
- * are hidden without it; see config/permissions.js → canExportKhata.
+ * FOUR GATES, and the UI has to make the differences visible.
+ *   1. Reaching this page needs `khata.manage`.
+ *   2. SANCTIONING an advance needs SuperAdmin/CEO/MD instead — a separate,
+ *      narrower grant, which is why the Sanctions tab is the one thing a
+ *      read-only executive can act on here.
+ *   3. Actually paying someone additionally needs to be listed as an operator
+ *      on the chosen account, with a limit above which the entry is accepted
+ *      but parks for approval instead of paying out. The server decides that;
+ *      the form only ever offers accounts GET /khata/accounts returned, and
+ *      warns before submitting when an amount will park rather than pay.
+ *   4. Downloading the ledger to a spreadsheet is a per-person grant only a
+ *      SuperAdmin can give (User.khataExportAccess). The Export buttons are
+ *      hidden without it; see config/permissions.js → canExportKhata.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -25,7 +35,7 @@ import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { useAuthStore } from '../store/authStore';
-import { canExportKhata } from '../config/permissions';
+import { canExportKhata, isExecViewer } from '../config/permissions';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
@@ -34,16 +44,20 @@ const today = () => new Date().toISOString().slice(0, 10);
 const clean = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v != null));
 
 const STATUS_STYLES = {
+  AwaitingApproval: 'bg-violet-100 text-violet-800',
   Pending: 'bg-amber-100 text-amber-800',
   Approved: 'bg-green-100 text-green-800',
   Rejected: 'bg-red-100 text-red-800',
   Reversed: 'bg-gray-200 text-gray-700',
 };
+// 'AwaitingApproval' is accurate and unreadable; say who it is actually with.
+const STATUS_LABELS = { AwaitingApproval: 'With CEO/MD' };
 
 const TABS = [
   ['overview', 'Overview'],
   ['people', 'People'],
   ['ledger', 'Ledger'],
+  ['sanctions', 'Advance approvals'],
   ['approvals', 'Approvals'],
   ['accounts', 'Accounts'],
 ];
@@ -51,14 +65,16 @@ const TABS = [
 const ENTRY_TYPES = [
   ['advance', 'Advance given'],
   ['settlement', 'Cash returned'],
-  ['expense', 'Employee spent their own money'],
+  ['expense', 'Expense against a khata'],
   ['reimbursement', 'Reimbursed to employee'],
   ['other', 'Other'],
 ];
 
-// Types where money leaves or enters a company account, versus types that only
-// move what is owed. The form uses this to decide whether to demand an account.
-const CASHLESS_TYPES = new Set(['expense']);
+// Types filed against an expense book rather than moving the wallet on its own.
+// Mirrors KHATA_TYPES on the server; the form uses it to decide whether to ask
+// which book, and (because spending an advance moves no company cash) whether
+// to demand an account.
+const KHATA_TYPES = new Set(['expense']);
 
 const blankEntry = {
   employee: '', khata: '', direction: 'to_employee', type: 'advance', amount: '',
@@ -89,7 +105,7 @@ function Stat({ label, value, tone = 'gray', hint }) {
  */
 function netStat(ov) {
   const net = Number(ov?.net) || 0;
-  const across = `across ${ov?.activeKhatas || 0} khatas`;
+  const across = `across ${ov?.peopleWithKhatas || 0} people`;
   const value = money(Math.abs(net));
   if (net > 0) {
     return { label: 'Net — you will get', tone: 'rose', value, hint: `Staff owe the company this much more than it owes them, ${across}` };
@@ -116,6 +132,10 @@ function BalanceChip({ display }) {
 export default function AdminKhata() {
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.role === 'SuperAdmin';
+  // Sanctioning an advance is the executives' call, and the one write a
+  // read-only CEO/MD account may make here. Mirrors requireAdvanceApprover on
+  // the server, which is what actually enforces it.
+  const isApprover = isSuperAdmin || isExecViewer(user);
   // Downloading the ledger is a grant of its own, separate from reaching this
   // page — a SuperAdmin ticks it per person on the Permissions page. Hiding the
   // button when it is missing keeps the UI honest; the server refuses anyway.
@@ -128,6 +148,7 @@ export default function AdminKhata() {
   const [people, setPeople] = useState([]);
   const [entries, setEntries] = useState([]);
   const [pending, setPending] = useState([]);
+  const [sanctions, setSanctions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -138,7 +159,9 @@ export default function AdminKhata() {
   const [entryModal, setEntryModal] = useState(null); // { data, file }
   const [approveModal, setApproveModal] = useState(null); // { entry, cashAccount, note }
   const [settingsModal, setSettingsModal] = useState(null); // one khata's settings
-  const [khataModal, setKhataModal] = useState(null);       // { employee, name, creditLimit, note }
+  const [walletModal, setWalletModal] = useState(null);     // one employee's wallet settings
+  const [sanctionModal, setSanctionModal] = useState(null); // { entry, approve, note }
+  const [khataModal, setKhataModal] = useState(null);       // { employee, name, note }
   const [viewKhata, setViewKhata] = useState('');           // '' = every book of theirs
   const [operatorsFor, setOperatorsFor] = useState(null); // { account, operators[] }
 
@@ -155,16 +178,22 @@ export default function AdminKhata() {
     .then((r) => setEntries(r.data.entries || [])).catch(() => {}), [ledgerFilter]);
   const loadPending = useCallback(() => api.get('/khata/pending')
     .then((r) => setPending(r.data.entries || [])).catch(() => {}), []);
+  // Only the people who may act on it ask for it — everyone else gets a 403,
+  // and a tab that is always empty for them would only be confusing.
+  const loadSanctions = useCallback(() => (isApprover
+    ? api.get('/khata/advance-approvals').then((r) => setSanctions(r.data.entries || [])).catch(() => {})
+    : Promise.resolve()), [isApprover]);
 
   useEffect(() => {
-    Promise.all([loadOverview(), loadPeople(), loadPending()]).finally(() => setLoading(false));
-  }, [loadOverview, loadPeople, loadPending]);
+    Promise.all([loadOverview(), loadPeople(), loadPending(), loadSanctions()]).finally(() => setLoading(false));
+  }, [loadOverview, loadPeople, loadPending, loadSanctions]);
   useEffect(() => { if (tab === 'people') loadRows(); }, [tab, loadRows]);
   useEffect(() => { if (tab === 'ledger') loadEntries(); }, [tab, loadEntries]);
 
   /** Reload whatever the current view shows, plus the headline figures. */
   const refresh = async () => {
-    await Promise.all([loadOverview(), loadPending(), loadRows(), tab === 'ledger' ? loadEntries() : null]);
+    await Promise.all([loadOverview(), loadPending(), loadSanctions(), loadRows(),
+      tab === 'ledger' ? loadEntries() : null]);
     if (detail) await openDetail(detail.employee._id, true);
   };
 
@@ -178,7 +207,7 @@ export default function AdminKhata() {
 
   // ---------- give / record money ----------
 
-  const openEntry = (employeeId, direction = 'to_employee', khataId = '') => {
+  const openEntry = (employeeId, direction = 'to_employee', khataId = '', type = null) => {
     setEntryModal({
       file: null,
       // The books this person holds, loaded on demand so the picker can offer
@@ -189,7 +218,7 @@ export default function AdminKhata() {
         employee: employeeId || '',
         khata: khataId,
         direction,
-        type: direction === 'to_employee' ? 'advance' : 'settlement',
+        type: type || (direction === 'to_employee' ? 'advance' : 'settlement'),
         cashAccount: accounts.find((a) => a.canDisburse)?._id || accounts[0]?._id || '',
       },
     });
@@ -220,7 +249,10 @@ export default function AdminKhata() {
     () => accounts.find((a) => a._id === entryForm?.cashAccount),
     [accounts, entryForm?.cashAccount]
   );
-  const movesCash = entryForm && !CASHLESS_TYPES.has(entryForm.type);
+  // Spending an advance moves no company cash — it left the tin when the
+  // advance was paid — so those entries need no account and no operator rights.
+  const isKhataEntry = entryForm && KHATA_TYPES.has(entryForm.type);
+  const movesCash = entryForm && !isKhataEntry;
 
   // Mirror of the server's willAutoApprove, purely so the operator is told what
   // will happen BEFORE they submit. The server still decides.
@@ -236,7 +268,8 @@ export default function AdminKhata() {
     const data = entryModal.data;
     if (!data.employee) { toast.error('Choose an employee'); return; }
     if (!(Number(data.amount) > 0)) { toast.error('Enter an amount greater than zero'); return; }
-    const cashless = CASHLESS_TYPES.has(data.type);
+    const cashless = KHATA_TYPES.has(data.type);
+    if (cashless && !data.khata) { toast.error('Choose which khata this expense belongs to'); return; }
     if (!cashless && !data.cashAccount) { toast.error('Choose which company account the money moves through'); return; }
 
     setSaving(true);
@@ -302,6 +335,23 @@ export default function AdminKhata() {
     } catch (err) { errToast(err, 'Could not reverse'); }
   };
 
+  // ---------- executive sanction ----------
+
+  const submitSanction = async (e) => {
+    e.preventDefault();
+    const { entry, approve, note } = sanctionModal;
+    if (!approve && !note.trim()) { toast.error('Give a reason — the employee sees it.'); return; }
+    setSaving(true);
+    try {
+      const res = await api.patch(`/khata/entries/${entry._id}/exec-decision`, {
+        approve, note: note.trim() || undefined,
+      });
+      toast.success(res.data.message || 'Saved');
+      setSanctionModal(null);
+      await refresh();
+    } catch (err) { errToast(err, 'Could not record the decision'); } finally { setSaving(false); }
+  };
+
   // ---------- opening a new khata ----------
 
   const submitKhata = async (e) => {
@@ -313,7 +363,6 @@ export default function AdminKhata() {
       const res = await api.post('/khata/khatas', {
         employee: khataModal.employee,
         name: khataModal.name,
-        creditLimit: khataModal.creditLimit || 0,
         note: khataModal.note || undefined,
       });
       toast.success(res.data.message || 'Khata opened');
@@ -371,21 +420,30 @@ export default function AdminKhata() {
     e.preventDefault();
     setSaving(true);
     try {
-      const body = {
-        name: settingsModal.name,
-        creditLimit: settingsModal.creditLimit,
-        note: settingsModal.note,
-      };
+      const body = { name: settingsModal.name, note: settingsModal.note };
       // Only send the switches the user actually touched, so saving a rename
       // never silently closes or re-opens a book.
       if (settingsModal.makeDefault) body.isDefault = true;
       if (settingsModal.close) body.isActive = false;
       if (settingsModal.reopen) body.isActive = true;
-      // Opening balance is SuperAdmin-only server-side; only send it if shown.
-      if (isSuperAdmin) body.openingBalance = settingsModal.openingBalance;
       await api.put(`/khata/khatas/${settingsModal.khataId}`, body);
       toast.success('Saved');
       setSettingsModal(null);
+      await refresh();
+    } catch (err) { errToast(err, 'Could not save'); } finally { setSaving(false); }
+  };
+
+  /** The advance limit and opening balance now live on the PERSON's wallet. */
+  const saveWallet = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const body = { creditLimit: walletModal.creditLimit, note: walletModal.note };
+      // Opening balance is SuperAdmin-only server-side; only send it if shown.
+      if (isSuperAdmin) body.openingBalance = walletModal.openingBalance;
+      await api.put(`/khata/wallets/${walletModal.employee}`, body);
+      toast.success('Saved');
+      setWalletModal(null);
       await refresh();
     } catch (err) { errToast(err, 'Could not save'); } finally { setSaving(false); }
   };
@@ -430,21 +488,27 @@ export default function AdminKhata() {
       </PageHeader>
 
       <p className="text-sm text-gray-500 mb-4">
-        Every rupee moving between the company and its people. Each entry also posts to the cashbook, so the
-        company&apos;s cash and each person&apos;s balance can never disagree.
+        Every rupee moving between the company and its people. Each person has one wallet that advances are paid
+        into, and as many khatas as they need to record what they spent it on. Money movements also post to the
+        cashbook, so the company&apos;s cash and each person&apos;s wallet can never disagree.
       </p>
 
       <div className="flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
-        {TABS.filter(([k]) => k !== 'accounts' || isSuperAdmin).map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px ${
-              tab === key ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {label}
-            {key === 'approvals' && pending.length > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs">{pending.length}</span>
-            )}
-          </button>
-        ))}
+        {TABS
+          .filter(([k]) => (k !== 'accounts' || isSuperAdmin) && (k !== 'sanctions' || isApprover))
+          .map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)}
+              className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px ${
+                tab === key ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              {label}
+              {key === 'approvals' && pending.length > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs">{pending.length}</span>
+              )}
+              {key === 'sanctions' && sanctions.length > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-800 text-xs">{sanctions.length}</span>
+              )}
+            </button>
+          ))}
       </div>
 
       {/* ---------------- Overview ---------------- */}
@@ -452,15 +516,20 @@ export default function AdminKhata() {
         loading ? <div className="skeleton h-40 rounded-xl" /> : (
           <div className="space-y-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <Stat label="You will get" tone="rose" value={money(ov?.totalReceivable)}
-                hint="Advances staff hold and have not settled" />
+              <Stat label="Advance in staff hands" tone="rose" value={money(ov?.totalReceivable)}
+                hint="Paid out and not yet accounted for" />
               <Stat label="You will give" tone="emerald" value={money(ov?.totalPayable)}
-                hint="Money staff spent that is not paid back" />
+                hint="Staff who have spent past their advance" />
               {/* A bare net figure reads identically whether the company is owed
                   or owing, so the tile names the direction and drops the sign. */}
               <Stat {...netStat(ov)} />
-              <Stat label="Waiting on approval" tone={ov?.pendingCount ? 'amber' : 'gray'}
-                value={ov?.pendingCount || 0} hint="No cash has moved for these" />
+              {/* The two queues are two different people's work, so they are two
+                  tiles — one number covering both would be actionable by nobody. */}
+              <Stat label="Waiting" tone={(ov?.pendingCount || ov?.awaitingApprovalCount) ? 'amber' : 'gray'}
+                value={`${ov?.awaitingApprovalCount || 0} + ${ov?.pendingCount || 0}`}
+                hint={ov?.approvalRequired
+                  ? 'With the CEO/MD + with accounts. No cash has moved for either.'
+                  : 'With accounts. CEO/MD approval is currently switched off.'} />
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -523,14 +592,14 @@ export default function AdminKhata() {
             <select value={peopleFilter.filter}
               onChange={(e) => setPeopleFilter({ ...peopleFilter, filter: e.target.value })}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-              <option value="all">All khatas</option>
-              <option value="outstanding">Owes the company</option>
+              <option value="all">Everyone</option>
+              <option value="outstanding">Holding company cash</option>
               <option value="payable">Company owes them</option>
               <option value="settled">Settled up</option>
             </select>
             {/* Also reachable from inside a person, but most people look for it
                 here first — so it is on the list as well. */}
-            <button onClick={() => setKhataModal({ employee: '', name: '', creditLimit: 0, note: '' })}
+            <button onClick={() => setKhataModal({ employee: '', name: '', note: '' })}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">
               + New khata
             </button>
@@ -539,16 +608,16 @@ export default function AdminKhata() {
           <div className="bg-white shadow rounded-lg overflow-hidden">
             {rows.length === 0 ? (
               <div className="px-4 py-10 text-center">
-                <p className="text-gray-700 font-medium">No khatas yet</p>
+                <p className="text-gray-700 font-medium">Nobody holds a wallet yet</p>
                 <p className="text-gray-500 text-xs mt-1">
-                  A khata opens itself the first time you give someone money. Use “New entry” above.
+                  A wallet opens itself the first time you give someone money. Use “New entry” above.
                 </p>
               </div>
             ) : (
               <ul className="divide-y divide-gray-100">
-                {/* One row per PERSON, showing their combined position. The books
-                    they hold are listed beneath, since chasing is per person but
-                    settling is per book. */}
+                {/* One row per PERSON — which is simply what the data is now, one
+                    wallet each. Their expense books are listed beneath as a
+                    breakdown of where the money went. */}
                 {rows.map((r) => (
                   <li key={r.employee._id}>
                     <button onClick={() => openDetail(r.employee._id)}
@@ -559,27 +628,18 @@ export default function AdminKhata() {
                           {[r.employee.employeeCode, r.employee.designation, r.employee.department].filter(Boolean).join(' · ') || r.employee.email}
                         </p>
                         <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {r.khatas.map((k) => (
+                          {/* What each book has COST — books hold no balance of
+                              their own, so a colour-by-sign would be a lie. */}
+                          {r.khatas.filter((k) => k.spent > 0 || k.isActive).map((k) => (
                             <span key={k._id}
-                              className={`text-xs px-2 py-0.5 rounded-full border ${
-                                k.balance > 0 ? 'border-rose-200 bg-rose-50 text-rose-700'
-                                  : k.balance < 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                    : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
-                              {k.name} {money(Math.abs(k.balance))}
+                              className="text-xs px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600">
+                              {k.name} {money(k.spent)}
                             </span>
                           ))}
                         </div>
                         {r.lastEntryAt && <p className="text-xs text-gray-400 mt-1">Last entry {fmtDate(r.lastEntryAt)}</p>}
                       </div>
-                      {r.totals?.get > 0 && r.totals?.give > 0 ? (
-                        <div className="text-right shrink-0">
-                          <p className="font-semibold text-rose-700">{money(r.totals.get)}</p>
-                          <p className="font-semibold text-emerald-700">{money(r.totals.give)}</p>
-                          <p className="text-xs text-gray-500">get / give</p>
-                        </div>
-                      ) : (
-                        <BalanceChip display={r.display} />
-                      )}
+                      <BalanceChip display={r.display} />
                     </button>
                   </li>
                 ))}
@@ -589,7 +649,7 @@ export default function AdminKhata() {
         </div>
       )}
 
-      {/* ---------------- One employee's khatas ---------------- */}
+      {/* ---------------- One employee: their wallet and books ---------------- */}
       {tab === 'people' && detail && (
         <div>
           <button onClick={() => setDetail(null)} className="text-sm text-gray-500 hover:text-gray-800 mb-3">
@@ -604,48 +664,50 @@ export default function AdminKhata() {
                   {[detail.employee.employeeCode, detail.employee.designation, detail.employee.department].filter(Boolean).join(' · ') || detail.employee.email}
                 </p>
               </div>
-              {/* Both sides in full when money runs both ways — a single netted
-                  figure would hide that we owe them anything. */}
-              {detail.totals?.get > 0 && detail.totals?.give > 0 ? (
-                <div className="flex gap-6 text-right">
-                  <div>
-                    <p className="font-semibold text-rose-700">{money(detail.totals.get)}</p>
-                    <p className="text-xs text-gray-500">You will get</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-emerald-700">{money(detail.totals.give)}</p>
-                    <p className="text-xs text-gray-500">You will give</p>
-                  </div>
-                </div>
-              ) : (
-                <BalanceChip display={detail.balance} />
-              )}
+              <BalanceChip display={detail.balance} />
             </div>
 
-            {detail.totals?.get > 0 && detail.totals?.give > 0 && (
-              <p className="text-xs text-gray-500 mt-2">
-                Net {money(Math.abs(detail.totals.net))} {detail.totals.net > 0 ? 'in your favour' : 'in theirs'} —
-                but each khata settles on its own, so the two do not cancel out.
-              </p>
-            )}
+            {/* The wallet arithmetic in one line: what went out, what came back
+                as spending or cash, and what is still in their hand. */}
+            <p className="text-xs text-gray-500 mt-2">
+              {money(detail.totals?.advanced)} advanced · {money(detail.totals?.spent)} spent
+              · {money(detail.totals?.returned)} returned
+              {detail.wallet?.creditLimit > 0 && ` · limit ${money(detail.wallet.creditLimit)}`}
+            </p>
 
             <div className="flex flex-wrap gap-2 mt-4">
               <button onClick={() => openEntry(detail.employee._id, 'to_employee')}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-                Give money
+                Give advance
+              </button>
+              <button onClick={() => openEntry(detail.employee._id, 'from_employee', '', 'expense')}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
+                Record an expense
               </button>
               <button onClick={() => openEntry(detail.employee._id, 'from_employee')}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
-                Record money back
+                Record cash back
               </button>
-              <button onClick={() => setKhataModal({ employee: detail.employee._id, name: '', creditLimit: 0, note: '' })}
+              <button onClick={() => setKhataModal({ employee: detail.employee._id, name: '', note: '' })}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
                 + New khata
+              </button>
+              <button onClick={() => setWalletModal({
+                employee: detail.employee._id,
+                name: detail.employee.name,
+                balance: detail.wallet?.balance || 0,
+                creditLimit: detail.wallet?.creditLimit || 0,
+                openingBalance: detail.wallet?.openingBalance || 0,
+                note: detail.wallet?.note || '',
+              })}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
+                Wallet settings
               </button>
             </div>
           </div>
 
-          {/* Their books. Each is settled, limited and closed on its own. */}
+          {/* Their books — a breakdown of where the one wallet went, not
+              balances of their own. */}
           <h3 className="text-sm font-semibold text-gray-700 mb-2">Khatas</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
             {(detail.khatas || []).map((k) => {
@@ -660,30 +722,30 @@ export default function AdminKhata() {
                         {k.isDefault ? 'Default · ' : ''}{k.isActive ? 'Open' : 'Closed'}
                       </p>
                     </div>
-                    <BalanceChip display={k.display} />
+                    <div className="text-right shrink-0">
+                      <p className="font-semibold text-gray-900">{money(k.spent)}</p>
+                      <p className="text-xs text-gray-500">spent</p>
+                    </div>
                   </div>
-                  {k.creditLimit > 0 && (
-                    <p className="text-xs text-gray-400 mt-2">
-                      Limit {money(k.creditLimit)} — an advance past it is refused.
-                    </p>
-                  )}
+                  <p className="text-xs text-gray-400 mt-2">
+                    {k.entryCount === 1 ? '1 entry' : `${k.entryCount || 0} entries`}
+                    {k.lastEntryAt ? ` · last ${fmtDate(k.lastEntryAt)}` : ''}
+                  </p>
                   <div className="flex flex-wrap gap-2 mt-3">
                     <button onClick={() => setViewKhata(active ? '' : k._id)}
                       className="text-xs text-gray-600 hover:text-gray-900 underline">
                       {active ? 'Show all entries' : 'Show only this'}
                     </button>
-                    <button onClick={() => openEntry(detail.employee._id, 'to_employee', k._id)}
+                    <button onClick={() => openEntry(detail.employee._id, 'from_employee', k._id, 'expense')}
                       className="text-xs text-gray-600 hover:text-gray-900 underline">
-                      Give money
+                      Add expense
                     </button>
                     <button onClick={() => setSettingsModal({
                       khataId: k._id,
                       name: k.name,
                       isDefault: k.isDefault,
                       isActive: k.isActive,
-                      balance: k.balance,
-                      creditLimit: k.creditLimit || 0,
-                      openingBalance: k.openingBalance || 0,
+                      spent: k.spent,
                       note: k.note || '',
                     })}
                       className="text-xs text-gray-600 hover:text-gray-900 underline">
@@ -723,7 +785,9 @@ export default function AdminKhata() {
               onChange={(e) => setLedgerFilter({ ...ledgerFilter, status: e.target.value })}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
               <option value="">Any status</option>
-              {['Pending', 'Approved', 'Rejected', 'Reversed'].map((s) => <option key={s} value={s}>{s}</option>)}
+              {['AwaitingApproval', 'Pending', 'Approved', 'Rejected', 'Reversed'].map((v) => (
+                <option key={v} value={v}>{STATUS_LABELS[v] || v}</option>
+              ))}
             </select>
             <input type="date" value={ledgerFilter.from}
               onChange={(e) => setLedgerFilter({ ...ledgerFilter, from: e.target.value })}
@@ -745,6 +809,64 @@ export default function AdminKhata() {
         </div>
       )}
 
+      {/* ---------------- Advance approvals (SuperAdmin / CEO / MD) ----------------
+          The executives' queue. Sanctioning decides WHETHER somebody should have
+          the money; it moves none — an approved request drops into the accounts
+          team's queue below, where the account it comes out of is chosen. */}
+      {tab === 'sanctions' && isApprover && (
+        <div>
+          {ov && !ov.approvalRequired && (
+            <div className="mb-3 text-sm bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-lg">
+              CEO/MD approval is currently switched <strong>off</strong>, so new advance requests go straight to the
+              accounts team. A Super Admin can turn it back on from Permissions. Anything already listed here still
+              needs deciding.
+            </div>
+          )}
+          <div className="bg-white shadow rounded-lg overflow-hidden">
+            {sanctions.length === 0 ? (
+              <div className="px-4 py-10 text-center">
+                <p className="text-gray-700 font-medium">No advance requests waiting</p>
+                <p className="text-gray-500 text-xs mt-1">
+                  When somebody asks for an advance, it waits here for your decision before the accounts team sees it.
+                </p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {sanctions.map((e) => (
+                  <li key={e._id} className="px-4 py-3">
+                    <div className="flex flex-wrap justify-between items-start gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900">
+                          {e.employee?.name || 'Employee'} · {money(e.amount)}
+                        </p>
+                        {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
+                        {/* What they are already carrying. Without it the
+                            decision is being made blind. */}
+                        <p className="text-xs text-gray-500 mt-1">
+                          Asked {fmtDate(e.date)} · already holding {money(e.employeeBalance)}
+                          {e.employeeCreditLimit > 0 && ` of a ${money(e.employeeCreditLimit)} limit`}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button onClick={() => setSanctionModal({ entry: e, approve: true, note: '' })}
+                          className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
+                          Approve
+                        </button>
+                        <button onClick={() => setSanctionModal({ entry: e, approve: false, note: '' })}
+                          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                          Decline
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ---------------- Approvals ---------------- */}
       {tab === 'approvals' && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -752,7 +874,8 @@ export default function AdminKhata() {
             <div className="px-4 py-10 text-center">
               <p className="text-gray-700 font-medium">Nothing waiting</p>
               <p className="text-gray-500 text-xs mt-1">
-                Requests from staff, and payouts above an operator&apos;s limit, land here.
+                Approved advances to pay out, expenses to confirm, and payouts above an operator&apos;s limit
+                land here.
               </p>
             </div>
           ) : (
@@ -766,10 +889,20 @@ export default function AdminKhata() {
                       </p>
                       <p className="text-xs text-gray-500">
                         {e.khataName ? `${e.khataName} · ` : ''}
-                        {e.direction === 'to_employee' ? 'Money out to them' : 'Money back from them'}
-                        {e.raisedByEmployee ? ' · they asked' : ' · above the operator limit'}
+                        {e.direction === 'to_employee' ? 'Advance to pay out'
+                          : e.type === 'expense' ? 'Expense to confirm' : 'Cash back to confirm'}
+                        {e.raisedByEmployee ? ' · they raised it' : ' · above the operator limit'}
                         {' · '}{fmtDate(e.date)}
                       </p>
+                      {/* Sanctioned already: say so, or an operator has no way to
+                          tell an approved advance from an unvetted one. */}
+                      {e.execApprovedAt && (
+                        <p className="text-xs text-violet-700 mt-0.5">
+                          Approved by {e.execApprovedBy?.name || 'an executive'}
+                          {e.execApprovedBy?.role ? ` (${e.execApprovedBy.role})` : ''} on {fmtDate(e.execApprovedAt)}
+                          {e.execNote ? ` — ${e.execNote}` : ''}
+                        </p>
+                      )}
                       {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
                       <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
                     </div>
@@ -845,40 +978,15 @@ export default function AdminKhata() {
               </SearchableSelect>
             </div>
 
-            {/* Which of their books. An employee may hold several floats, and an
-                advance recorded against the wrong one is as bad as a wrong amount. */}
-            <label className="block text-sm text-gray-700 mb-1">Khata</label>
-            <select value={entryForm.khata}
-              onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, khata: e.target.value } })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
-              disabled={!entryForm.employee}>
-              <option value="">
-                {entryForm.employee ? 'Their default khata' : 'Choose an employee first'}
-              </option>
-              {(entryModal.khatas || []).map((k) => (
-                <option key={k._id} value={k._id}>
-                  {k.name}{k.isDefault ? ' (default)' : ''} — {k.display?.label?.toLowerCase() || 'balance'} {money(Math.abs(k.balance))}
-                </option>
-              ))}
-            </select>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs text-gray-500">Which of their books this money belongs to.</p>
-              {entryForm.employee && (
-                <button type="button"
-                  onClick={() => setKhataModal({ employee: entryForm.employee, name: '', creditLimit: 0, note: '', fromEntry: true })}
-                  className="text-xs text-gray-600 hover:text-gray-900 underline">
-                  + New khata
-                </button>
-              )}
-            </div>
-
             <label className="block text-sm text-gray-700 mb-1">Which way did the money go?</label>
             <div className="grid grid-cols-2 gap-2 mb-3">
               {[['to_employee', 'Company → employee'], ['from_employee', 'Employee → company']].map(([v, label]) => (
                 <button key={v} type="button"
                   onClick={() => setEntryModal({
                     ...entryModal,
-                    data: { ...entryForm, direction: v, type: v === 'to_employee' ? 'advance' : 'settlement' },
+                    // Switching direction resets the reason, because half the
+                    // reasons only make sense one way round.
+                    data: { ...entryForm, direction: v, type: v === 'to_employee' ? 'advance' : 'settlement', khata: '' },
                   })}
                   className={`px-3 py-2 rounded-lg border text-sm ${
                     entryForm.direction === v ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 hover:bg-gray-50'}`}>
@@ -889,10 +997,58 @@ export default function AdminKhata() {
 
             <label className="block text-sm text-gray-700 mb-1">Reason</label>
             <select value={entryForm.type}
-              onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, type: e.target.value } })}
+              onChange={(e) => {
+                const type = e.target.value;
+                setEntryModal({
+                  ...entryModal,
+                  data: {
+                    ...entryForm,
+                    type,
+                    // An expense is always money leaving the wallet. Letting the
+                    // two disagree would ADD to somebody's advance while
+                    // charging the cost to a book — wrong both ways at once,
+                    // and the server refuses it, so fix it here rather than
+                    // letting them submit into an error.
+                    direction: KHATA_TYPES.has(type) ? 'from_employee' : entryForm.direction,
+                  },
+                });
+              }}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
               {ENTRY_TYPES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
+
+            {/* Only spending is filed under a book. An advance goes into the one
+                wallet, so asking which khata it belongs to would be a question
+                with no answer — and a wrong one recorded is as bad as a wrong
+                amount. */}
+            {isKhataEntry && (
+              <>
+                <label className="block text-sm text-gray-700 mb-1">Khata</label>
+                <select value={entryForm.khata} required
+                  onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, khata: e.target.value } })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
+                  disabled={!entryForm.employee}>
+                  <option value="">
+                    {entryForm.employee ? 'Choose a khata…' : 'Choose an employee first'}
+                  </option>
+                  {(entryModal.khatas || []).map((k) => (
+                    <option key={k._id} value={k._id}>
+                      {k.name}{k.isDefault ? ' (default)' : ''}{k.spent ? ` — ${money(k.spent)} so far` : ''}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs text-gray-500">Which book this spend is filed under.</p>
+                  {entryForm.employee && (
+                    <button type="button"
+                      onClick={() => setKhataModal({ employee: entryForm.employee, name: '', note: '', fromEntry: true })}
+                      className="text-xs text-gray-600 hover:text-gray-900 underline">
+                      + New khata
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
 
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
@@ -931,8 +1087,8 @@ export default function AdminKhata() {
               </>
             ) : (
               <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 mb-3">
-                The employee paid with their own money, so no company account is involved — this only records
-                what the company now owes them.
+                No company account is involved: the cash left the tin when the advance was paid. This records
+                what the advance was spent on and takes it off what they are holding.
               </p>
             )}
 
@@ -1025,8 +1181,8 @@ export default function AdminKhata() {
           <form onSubmit={submitKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
             <h3 className="text-lg font-semibold text-gray-900">Open a new khata</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              A separate book for a separate purpose — a site float, a vehicle float, a salary advance.
-              Money is given to and settled against one book at a time.
+              A separate heading for spending — a site, a vehicle, a particular job. It holds no money of its
+              own: expenses filed under it come out of the employee&apos;s one wallet, like every other book.
             </p>
 
             {/* Opened from the People list rather than from inside a person,
@@ -1056,14 +1212,6 @@ export default function AdminKhata() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
               placeholder="e.g. Site A — materials" />
 
-            <label className="block text-sm text-gray-700 mb-1">Khata limit (optional)</label>
-            <input type="number" min="0" step="100" value={khataModal.creditLimit}
-              onChange={(e) => setKhataModal({ ...khataModal, creditLimit: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
-            <p className="text-xs text-gray-500 mb-3">
-              The most they may hold on this book at once. 0 means no limit.
-            </p>
-
             <label className="block text-sm text-gray-700 mb-1">Note (optional)</label>
             <input type="text" value={khataModal.note}
               onChange={(e) => setKhataModal({ ...khataModal, note: e.target.value })}
@@ -1084,22 +1232,17 @@ export default function AdminKhata() {
       {settingsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <form onSubmit={saveSettings} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Khata settings</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Khata settings</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              {money(settingsModal.spent)} spent under this heading so far. The advance limit is set on the
+              person&apos;s wallet, not here — a book holds no money of its own.
+            </p>
 
             <label className="block text-sm text-gray-700 mb-1">Name</label>
             <input type="text" required maxLength={80} value={settingsModal.name}
               onChange={(e) => setSettingsModal({ ...settingsModal, name: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
               placeholder="e.g. Site A — materials" />
-
-            <label className="block text-sm text-gray-700 mb-1">Khata limit</label>
-            <input type="number" min="0" step="1" value={settingsModal.creditLimit}
-              onChange={(e) => setSettingsModal({ ...settingsModal, creditLimit: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
-            <p className="text-xs text-gray-500 mb-3">
-              The most they may hold <em>on this khata</em> at once. An advance taking it past this is refused.
-              0 means no limit.
-            </p>
 
             {/* The fallback book for self-service. Exactly one per person, so
                 promoting this one demotes whichever held it. */}
@@ -1117,22 +1260,21 @@ export default function AdminKhata() {
               </label>
             )}
 
-            {/* Closing is refused server-side while money is on the book — say so
-                here rather than letting them find out by being rejected. */}
+            {/* A book carrying spend CAN be closed: `spent` is history, and the
+                money itself is on the wallet where closing a folder cannot hide
+                it. Only the fallback book has to stay open. */}
             {settingsModal.isActive ? (
               <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
                 <input type="checkbox" className="mt-1"
-                  disabled={settingsModal.balance !== 0 || settingsModal.isDefault}
+                  disabled={settingsModal.isDefault}
                   checked={settingsModal.close === true}
                   onChange={(e) => setSettingsModal({ ...settingsModal, close: e.target.checked })} />
                 <span>
                   Close this khata
                   <span className="block text-xs text-gray-500">
-                    {settingsModal.balance !== 0
-                      ? `Not yet — it still holds ${money(Math.abs(settingsModal.balance))}. Settle it first.`
-                      : settingsModal.isDefault
-                        ? 'The default khata cannot be closed. Make another one the default first.'
-                        : 'It stays readable, but takes no new entries.'}
+                    {settingsModal.isDefault
+                      ? 'The default khata cannot be closed. Make another one the default first.'
+                      : 'It stays readable, with its spending on the record, but takes no new entries.'}
                   </span>
                 </span>
               </label>
@@ -1143,19 +1285,6 @@ export default function AdminKhata() {
                   onChange={(e) => setSettingsModal({ ...settingsModal, reopen: e.target.checked })} />
                 <span>Re-open this khata</span>
               </label>
-            )}
-
-            {isSuperAdmin && (
-              <>
-                <label className="block text-sm text-gray-700 mb-1">Opening balance</label>
-                <input type="number" step="0.01" value={settingsModal.openingBalance}
-                  onChange={(e) => setSettingsModal({ ...settingsModal, openingBalance: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
-                <p className="text-xs text-gray-500 mb-3">
-                  What they already owed before this khata existed. Positive means they owe the company.
-                  This is the only figure that moves a balance with no entry behind it, so it is Super Admin only.
-                </p>
-              </>
             )}
 
             <label className="block text-sm text-gray-700 mb-1">Note</label>
@@ -1169,6 +1298,94 @@ export default function AdminKhata() {
               <button type="submit" disabled={saving}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
                 {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {walletModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <form onSubmit={saveWallet} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Wallet — {walletModal.name}</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              The one pot advances are paid into. They are currently holding {money(Math.abs(walletModal.balance))}.
+            </p>
+
+            <label className="block text-sm text-gray-700 mb-1">Advance limit</label>
+            <input type="number" min="0" step="100" value={walletModal.creditLimit}
+              onChange={(e) => setWalletModal({ ...walletModal, creditLimit: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
+            <p className="text-xs text-gray-500 mb-3">
+              The most this person may hold at any one time, across every khata. An advance taking them past it
+              is refused. 0 means no limit.
+            </p>
+
+            {isSuperAdmin && (
+              <>
+                <label className="block text-sm text-gray-700 mb-1">Opening balance</label>
+                <input type="number" step="0.01" value={walletModal.openingBalance}
+                  onChange={(e) => setWalletModal({ ...walletModal, openingBalance: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
+                <p className="text-xs text-gray-500 mb-3">
+                  What they were already holding before this module existed. Positive means they hold company
+                  cash. This is the only figure that moves a balance with no entry behind it, so it is
+                  Super Admin only.
+                </p>
+              </>
+            )}
+
+            <label className="block text-sm text-gray-700 mb-1">Note</label>
+            <input type="text" value={walletModal.note}
+              onChange={(e) => setWalletModal({ ...walletModal, note: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4" />
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setWalletModal(null)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+              <button type="submit" disabled={saving}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {sanctionModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <form onSubmit={submitSanction} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+            <h3 className="text-lg font-semibold text-gray-900">
+              {sanctionModal.approve ? 'Approve this advance?' : 'Decline this advance?'}
+            </h3>
+            <p className="text-sm text-gray-600 mt-1 mb-4">
+              {money(sanctionModal.entry.amount)} for {sanctionModal.entry.employee?.name}
+              {sanctionModal.entry.purpose ? ` — ${sanctionModal.entry.purpose}` : ''}.
+            </p>
+
+            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4">
+              {sanctionModal.approve
+                ? 'No money moves yet. Approving passes it to the accounts team, who choose which account to pay '
+                  + 'it out of — the cash leaves only when they do.'
+                : 'Nothing moves. The request is closed and the employee is told why.'}
+            </p>
+
+            <label className="block text-sm text-gray-700 mb-1">
+              {sanctionModal.approve ? 'Note (optional)' : 'Why are you declining?'}
+            </label>
+            <input type="text" autoFocus required={!sanctionModal.approve} value={sanctionModal.note}
+              onChange={(e) => setSanctionModal({ ...sanctionModal, note: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
+              placeholder={sanctionModal.approve ? 'Anything the employee should know' : 'e.g. settle the last advance first'} />
+            <p className="text-xs text-gray-500 mb-4">The employee sees this.</p>
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setSanctionModal(null)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+              <button type="submit" disabled={saving}
+                className={`px-4 py-2 rounded-lg text-sm text-white disabled:opacity-50 ${
+                  sanctionModal.approve ? 'bg-gray-900 hover:bg-gray-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                {saving ? 'Saving…' : sanctionModal.approve ? 'Approve' : 'Decline'}
               </button>
             </div>
           </form>
@@ -1297,8 +1514,8 @@ function EntryTable({ entries, onReverse, showEmployee }) {
               {showEmployee && <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>}
               <th className="px-4 py-3 text-left font-medium text-gray-700">Details</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Given</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Returned</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Balance</th>
+              <th className="px-4 py-3 text-right font-medium text-gray-700">Spent / returned</th>
+              <th className="px-4 py-3 text-right font-medium text-gray-700">In hand</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               <th className="px-4 py-3" />
             </tr>
@@ -1317,8 +1534,8 @@ function EntryTable({ entries, onReverse, showEmployee }) {
                     {e.purpose || e.category}
                   </p>
                   <p className="text-xs text-gray-400">
-                    {/* The book first — a row means nothing once somebody
-                        holds more than one. */}
+                    {/* The book first, where there is one — an advance belongs to
+                        the wallet and to no book at all. */}
                     {e.khataName ? `${e.khataName} · ` : ''}{e.code}
                     {e.cashAccountName ? ` · ${e.cashAccountName}` : ''}
                     {!e.affectsCompanyCash ? ' · no company cash' : ''}
@@ -1334,8 +1551,8 @@ function EntryTable({ entries, onReverse, showEmployee }) {
                   {e.status === 'Approved' ? money(e.balanceAfter) : '—'}
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_STYLES[e.status] || 'bg-gray-100 text-gray-700'}`}>
-                    {e.status}
+                  <span className={`px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${STATUS_STYLES[e.status] || 'bg-gray-100 text-gray-700'}`}>
+                    {STATUS_LABELS[e.status] || e.status}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">

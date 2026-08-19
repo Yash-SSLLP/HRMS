@@ -26,6 +26,20 @@ const settingSchema = new mongoose.Schema(
     // "select an employee" pickers that opt in (?excludeExecutives=true). A
     // SuperAdmin can flip this on to make them selectable everywhere.
     includeExecutivesInLists: { type: Boolean, default: false },
+    // Does an employee's cash-advance request need an executive sanction before
+    // it reaches the people who handle cash?
+    //
+    // On (the default) a request parks as 'AwaitingApproval' and only a CEO, MD
+    // or SuperAdmin can release it into the operators' queue. Off, it goes
+    // straight to the operators exactly as it used to. A SuperAdmin flips this
+    // from Admin -> Permissions.
+    //
+    // The flag is read when a request is RAISED and stamped onto the entry
+    // (KhataEntry.execApprovalRequired), so turning it off does not silently
+    // strand requests already sitting with an executive, and turning it on does
+    // not retroactively invalidate ones raised while it was off.
+    khataAdvanceApprovalRequired: { type: Boolean, default: true },
+
     // Org-wide switch for the chat module. Off by default: the launcher, dock
     // and mobile Chat tab are hidden and the chat endpoints refuse writes.
     // Conversations are never deleted — turning it back on restores everything.

@@ -67,7 +67,7 @@ Attendance is the record that you were at work, and it feeds directly into your 
 
 Your history sits below, filtered by month: status for each day (Present, Absent, Half Day, Weekly Off, Holiday, On Leave), your in and out times, hours worked, how late you were, and any remarks.
 
-[!WARNING] "Late" means checking in after **10:00 AM**. This affects your pay — see section 5.
+[!WARNING] "Late" means checking in after the company's start time — **10:00 AM** unless HR has changed it — plus any grace window they allow. Inside the grace window you are on time; past it, the day is late and counted from the start time itself. The exact rule in force is shown on the "Lateness and leave" card on your Attendance screen. This affects your pay — see section 5.
 
 ### 4.2 Working on a day you are on leave
 
@@ -130,7 +130,7 @@ How it plays out:
 
 ### Rule two — five free late arrivals a month
 
-A late arrival is a check-in after **10:00 AM**. The first **five each month are free**. From the sixth onward, each late day costs:
+A late arrival is a check-in after the company's start time — **10:00 AM** by default — plus any grace window. A Super Admin can move both, and the current rule is shown on the "Lateness and leave" card on your Attendance screen. The first **five late days each month are free**. From the sixth onward, each late day costs:
 
 - **₹200 per day** if your monthly Basic salary is below ₹25,000, or
 - **₹400 per day** if your monthly Basic is ₹25,000 or more.
@@ -341,7 +341,7 @@ Almost everything above is in the Android app, organised under a **Menu**:
 ## 15. Quick answers
 
 - **How do I mark attendance?** Attendance, then Check In with a selfie, and Check Out when you leave.
-- **When am I late?** Any check-in after 10:00 AM.
+- **When am I late?** Any check-in past the company start time (10:00 AM unless it has been changed) and its grace window. The rule in force is on the "Lateness and leave" card on the Attendance screen.
 - **How many free late arrivals?** Five a month. After that, ₹200 or ₹400 a day depending on your Basic.
 - **How much paid leave?** Two days a month. Unused days become extra pay; extra days are unpaid. Nothing carries forward.
 - **Where do I see what this month will cost me?** The "Lateness and leave" card on the Attendance screen.

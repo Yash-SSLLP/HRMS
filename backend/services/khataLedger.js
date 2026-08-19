@@ -1,34 +1,50 @@
 /**
- * The employee-khata ledger engine.
+ * The employee cash-ledger engine — wallets, expense books, and the money rules.
  *
  * Everything that can change an employee's balance goes through here, so there
  * is exactly one place where the money rules live. Controllers validate input
  * and shape responses; they never do balance arithmetic themselves.
  *
- * Three guarantees this file exists to provide:
+ * THE SHAPE OF THE MODULE, in one paragraph. Each employee has ONE wallet
+ * (EmployeeWallet) — the pot the company pays advances into. They also open as
+ * many khatas (EmployeeKhata) as they like, which are expense books: folders
+ * that say what the money went on. Spending is filed against a khata and comes
+ * out of the wallet, so the remaining advance reads the same whichever book you
+ * have open. Only expenses carry a khata; advances, settlements, reimbursements
+ * and recoveries move the wallet on its own.
+ *
+ * Four guarantees this file exists to provide:
  *
  *  1. THE BALANCE CANNOT DRIFT. It is never incremented in place. After any
- *     change the whole ledger is replayed from the opening balance and the
- *     result is written back, exactly as the cashbook does for cash accounts.
- *     A back-dated entry therefore also re-stamps every later running balance.
+ *     change the employee's whole ledger is replayed from the opening balance
+ *     and the result is written back, exactly as the cashbook does for cash
+ *     accounts. A back-dated entry therefore also re-stamps every later running
+ *     balance.
  *
- *  2. COMPANY CASH AND THE EMPLOYEE LEDGER MOVE TOGETHER. An advance that
+ *  2. THE BOOKS ADD UP TO THE POT. A khata's `spent` is replayed from the same
+ *     rows as the wallet, so "what is left" and "what it went on" can never
+ *     tell two different stories.
+ *
+ *  3. COMPANY CASH AND THE EMPLOYEE LEDGER MOVE TOGETHER. An advance that
  *     leaves the petty-cash tin posts a CashbookEntry as well, cross-linked in
  *     both directions. Neither book can be updated without the other.
  *
- *  3. POSTED MONEY IS NEVER DELETED. Corrections are reversals — the original
+ *  4. POSTED MONEY IS NEVER DELETED. Corrections are reversals — the original
  *     is marked Reversed and a mirror row is written against it, on both the
- *     khata and the cashbook.
+ *     wallet and the cashbook.
  *
  * SIGN RULE (repeated here because everything below depends on it):
- *   direction 'to_employee'   → balance += amount   (they owe the company more)
- *   direction 'from_employee' → balance -= amount   (they owe the company less)
- * A positive balance means "You will get"; a negative one means "You will give".
+ *   direction 'to_employee'   → wallet += amount   (they hold more of our cash)
+ *   direction 'from_employee' → wallet -= amount   (they hold less of it)
+ * A positive wallet means the employee is holding company money; a negative one
+ * means they spent past the advance and the company owes them.
  */
 const mongoose = require('mongoose');
 const EmployeeKhata = require('../models/EmployeeKhata');
 const { DEFAULT_KHATA_NAME } = require('../models/EmployeeKhata');
+const EmployeeWallet = require('../models/EmployeeWallet');
 const KhataEntry = require('../models/KhataEntry');
+const { KHATA_TYPES } = require('../models/KhataEntry');
 const CashAccount = require('../models/CashAccount');
 const CashbookEntry = require('../models/CashbookEntry');
 const User = require('../models/User');
@@ -52,6 +68,17 @@ const CASH_CATEGORY = {
 const signedAmount = (entry) => (entry.direction === 'to_employee' ? entry.amount : -entry.amount);
 
 /**
+ * Does this kind of movement belong to an expense book, or to the wallet alone?
+ *
+ * The one question the whole wallet/khata split turns on, so it is answered
+ * here and nowhere else. Spending is filed under a book; money entering or
+ * leaving the pot is not.
+ * @param {string} type - A KhataEntry.ENTRY_TYPES value.
+ * @returns {boolean}
+ */
+const needsKhata = (type) => KHATA_TYPES.includes(type);
+
+/**
  * Human name for a user doc or id, for the `party` column on the cashbook leg.
  * @param {object|null} user - A populated User doc, or null.
  * @returns {string}
@@ -59,8 +86,31 @@ const signedAmount = (entry) => (entry.direction === 'to_employee' ? entry.amoun
 const nameOf = (user) => (user && user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Employee');
 
 // ---------------------------------------------------------------------------
-// Khata lookup
+// Wallet and khata lookup
 // ---------------------------------------------------------------------------
+
+/**
+ * Fetch an employee's wallet, opening it on first use.
+ *
+ * Lazily rather than one-per-employee up front, because most staff never hold
+ * company cash and an empty wallet each would only clutter the outstanding
+ * list.
+ * @param {string|import('mongoose').Types.ObjectId} employeeId
+ * @param {object} [actor] - The acting user, recorded as creator on first open.
+ * @returns {Promise<object>} The EmployeeWallet document.
+ */
+async function getOrCreateWallet(employeeId, actor) {
+  const existing = await EmployeeWallet.findOne({ employee: employeeId });
+  if (existing) return existing;
+  try {
+    return await EmployeeWallet.create({ employee: employeeId, createdBy: actor?._id });
+  } catch (err) {
+    // Unique index on `employee` — two concurrent first entries raced. The
+    // other one won; use it.
+    if (err.code === 11000) return EmployeeWallet.findOne({ employee: employeeId });
+    throw err;
+  }
+}
 
 /**
  * Repair anything a database carried over from before multi-khata, once per
@@ -174,14 +224,14 @@ async function getOrCreateDefaultKhata(employeeId, actor) {
 }
 
 /**
- * Resolve which khata a movement belongs to, and confirm it can take entries.
+ * Resolve which expense book a spend belongs to, and confirm it can take entries.
  *
  * Every posting path goes through this so the rules are stated once: a named
- * khata must exist, must belong to the employee whose money is moving, and must
+ * book must exist, must belong to the employee whose money is moving, and must
  * still be open. Naming nothing falls back to their default.
  *
  * The ownership check is the important one — without it, a request naming
- * somebody else's khata id would post one person's advance onto another
+ * somebody else's khata id would file one person's spending under another
  * person's book.
  * @param {string|import('mongoose').Types.ObjectId} employeeId
  * @param {string|import('mongoose').Types.ObjectId} [khataId] - Omit for the default.
@@ -220,7 +270,7 @@ async function resolveKhata(employeeId, khataId, actor) {
 }
 
 /**
- * Every khata an employee holds, newest activity first, with the default first.
+ * Every expense book an employee holds, with the default first.
  * @param {string|import('mongoose').Types.ObjectId} employeeId
  * @param {boolean} [includeClosed=false]
  * @returns {Promise<object[]>}
@@ -232,20 +282,20 @@ async function listKhatasOf(employeeId, includeClosed = false) {
 }
 
 /**
- * Split a set of khatas into the two figures people actually ask for.
+ * Split a set of wallets into the two figures people actually ask for.
  *
- * NOT a net. Somebody owing ₹5,000 on a site float while the company owes them
- * ₹2,000 for their own spend genuinely has both, and netting to "₹3,000
+ * NOT a net across people. Somebody holding ₹5,000 of our cash while we owe
+ * somebody else ₹2,000 is two separate facts, and netting them to "₹3,000
  * receivable" hides the payable entirely — which is how a company forgets to
  * pay somebody back. So both sides are carried in full, with the net alongside
  * for the one-line summary.
- * @param {Array<{balance: number}>} khatas
- * @returns {{get: number, give: number, net: number}} `get` = owed to the company, `give` = owed by it.
+ * @param {Array<{balance: number}>} wallets
+ * @returns {{get: number, give: number, net: number}} `get` = held by staff, `give` = owed to them.
  */
-function splitTotals(khatas = []) {
+function splitTotals(wallets = []) {
   let get = 0;
   let give = 0;
-  for (const k of khatas) {
+  for (const k of wallets) {
     const balance = Number(k.balance) || 0;
     if (balance > 0) get += balance;
     else if (balance < 0) give += Math.abs(balance);
@@ -261,7 +311,7 @@ function splitTotals(khatas = []) {
  * Walk a list of entries and produce the running balance after each one.
  *
  * The whole of the money arithmetic, with no database in sight, so it can be
- * exercised directly by scripts/testKhataLedger.js. recomputeKhataBalance is
+ * exercised directly by scripts/testKhataLedger.js. recomputeWalletBalance is
  * just this function plus the loading and saving around it.
  * @param {number} openingBalance - Where the ledger starts.
  * @param {Array<{direction: string, amount: number}>} entries - In posting order.
@@ -278,30 +328,35 @@ function replayBalance(openingBalance, entries) {
 }
 
 /**
- * Replay an employee's whole ledger and write back the balance, plus the
+ * Replay an employee's whole ledger and write back the wallet balance, plus the
  * running-balance column on every row.
  *
- * Called after ANY change to that khata's entries. Deliberately a full replay
- * rather than a delta: a back-dated or reversed entry changes the running
- * balance of every row after it, and an incremental update would leave those
- * stale. Ledgers are per-employee and short — a few hundred rows at most — so
- * the cost is trivial next to the risk of a wrong number.
+ * Called after ANY change to that employee's entries. Deliberately a full
+ * replay rather than a delta: a back-dated or reversed entry changes the
+ * running balance of every row after it, and an incremental update would leave
+ * those stale. Ledgers are per-employee and short — a few hundred rows at most
+ * — so the cost is trivial next to the risk of a wrong number.
  *
- * Only 'Approved' rows count. Pending ones have not happened yet; Rejected ones
- * never did; Reversed ones did but have been cancelled by their mirror row.
- * @param {string|import('mongoose').Types.ObjectId} khataId
- * @returns {Promise<number|null>} The recomputed balance, or null if no khata.
- * @sideeffect Writes `balance`/`lastEntryAt` on the khata and `balanceAfter` on its entries.
+ * Note this replays the whole PERSON, not one book: the wallet is the only
+ * thing that carries a balance, and every row of theirs moves it whichever book
+ * it was filed under.
+ *
+ * Only 'Approved' rows count. AwaitingApproval and Pending ones have not
+ * happened yet; Rejected ones never did; Reversed ones did but have been
+ * cancelled by their mirror row.
+ * @param {string|import('mongoose').Types.ObjectId} employeeId
+ * @returns {Promise<number|null>} The recomputed wallet balance, or null if none.
+ * @sideeffect Writes `balance`/`lastEntryAt` on the wallet and `balanceAfter` on the entries.
  */
-async function recomputeKhataBalance(khataId) {
-  const khata = await EmployeeKhata.findById(khataId);
-  if (!khata) return null;
+async function recomputeWalletBalance(employeeId) {
+  const wallet = await getOrCreateWallet(employeeId);
+  if (!wallet) return null;
 
-  const entries = await KhataEntry.find({ khata: khata._id, status: 'Approved' })
+  const entries = await KhataEntry.find({ employee: wallet.employee, status: 'Approved' })
     .sort({ date: 1, createdAt: 1 })
     .select('direction amount balanceAfter date');
 
-  const { closing, running } = replayBalance(khata.openingBalance, entries);
+  const { closing, running } = replayBalance(wallet.openingBalance, entries);
 
   // Only write rows whose stamped running balance actually moved.
   const writes = [];
@@ -312,10 +367,57 @@ async function recomputeKhataBalance(khataId) {
   });
   if (writes.length) await KhataEntry.bulkWrite(writes, { ordered: false });
 
-  khata.balance = closing;
+  wallet.balance = closing;
+  wallet.lastEntryAt = entries.length ? entries[entries.length - 1].date : null;
+  await wallet.save();
+  return wallet.balance;
+}
+
+/**
+ * Replay one expense book's total from the rows filed under it.
+ *
+ * `spent` is a TOTAL, not a balance, so it is summed rather than run: what did
+ * this book cost. A reimbursement or a reversal filed under the book nets back
+ * off it, which is why the sum is signed rather than a plain addition of
+ * amounts.
+ * @param {string|import('mongoose').Types.ObjectId} khataId
+ * @returns {Promise<number|null>} The recomputed total, or null if no such book.
+ * @sideeffect Writes `spent`/`entryCount`/`lastEntryAt` on the khata.
+ */
+async function recomputeKhataSpent(khataId) {
+  if (!khataId) return null;
+  const khata = await EmployeeKhata.findById(khataId);
+  if (!khata) return null;
+
+  const entries = await KhataEntry.find({ khata: khata._id, status: 'Approved' })
+    .sort({ date: 1, createdAt: 1 })
+    .select('direction amount date');
+
+  // Spending is 'from_employee', so it is NEGATIVE under the wallet sign rule.
+  // Flip it: a book's total reads as a positive cost, which is the only way
+  // anybody ever talks about what a site or a vehicle has run to.
+  const spent = round2(entries.reduce((sum, e) => sum - signedAmount(e), 0));
+
+  khata.spent = spent;
+  khata.entryCount = entries.length;
   khata.lastEntryAt = entries.length ? entries[entries.length - 1].date : null;
   await khata.save();
-  return khata.balance;
+  return spent;
+}
+
+/**
+ * Recompute everything one entry touches: the employee's wallet always, and the
+ * expense book it was filed under when it had one.
+ *
+ * Every posting path ends here rather than calling the two by hand, so a new
+ * one cannot update the pot and forget the book (or the reverse) and leave the
+ * two disagreeing.
+ * @param {{employee: any, khata: any}} entry - A saved KhataEntry.
+ * @returns {Promise<number|null>} The recomputed wallet balance.
+ */
+async function recomputeFor(entry) {
+  if (entry.khata) await recomputeKhataSpent(entry.khata);
+  return recomputeWalletBalance(entry.employee);
 }
 
 /**
@@ -418,23 +520,27 @@ async function listOperableAccounts(user) {
 }
 
 /**
- * Refuse an advance that would push the employee past their credit limit.
+ * Refuse an advance that would push the employee past their wallet limit.
  *
  * Only outbound money is checked, and only against a limit that has been set
- * (0 = no limit). Settlements always go through — nobody should ever be blocked
- * from GIVING money back.
- * @param {object} khata - The EmployeeKhata document.
+ * (0 = no limit). Settlements and expenses always go through — nobody should
+ * ever be blocked from accounting for money they already hold.
+ *
+ * The limit is per PERSON, on the wallet, because the pot is the person's. It
+ * used to sit on each khata, which meant somebody could quietly hold more than
+ * anybody intended simply by opening a second book.
+ * @param {object} wallet - The EmployeeWallet document.
  * @param {{direction: string, amount: number}} entry
  * @throws {Error} With `.statusCode = 400` when the limit would be breached.
  */
-function assertWithinCreditLimit(khata, entry) {
+function assertWithinCreditLimit(wallet, entry) {
   if (entry.direction !== 'to_employee') return;
-  const limit = Number(khata.creditLimit) || 0;
+  const limit = Number(wallet?.creditLimit) || 0;
   if (!limit) return;
-  const projected = round2((khata.balance || 0) + entry.amount);
+  const projected = round2((wallet.balance || 0) + entry.amount);
   if (projected > limit) {
     const err = new Error(
-      `This would take the employee to ₹${projected.toLocaleString('en-IN')}, over their ₹${limit.toLocaleString('en-IN')} khata limit. `
+      `This would take the employee to ₹${projected.toLocaleString('en-IN')} in hand, over their ₹${limit.toLocaleString('en-IN')} advance limit. `
       + 'Collect a settlement first, or ask a Super Admin to raise the limit.'
     );
     err.statusCode = 400;
@@ -502,10 +608,11 @@ async function postCashLeg(entry, actor, employee) {
  * and expense modules post automatically.
  *
  * @param {object} input
- * @param {string|object} input.employee - The employee this khata belongs to.
+ * @param {string|object} input.employee - Whose wallet this moves.
  * @param {'to_employee'|'from_employee'} input.direction - Which way the money went.
  * @param {number} input.amount - Positive amount; the sign comes from `direction`.
  * @param {string} [input.type='other'] - Reporting label (see KhataEntry.ENTRY_TYPES).
+ * @param {string} [input.khata] - The expense book, for an 'expense'; ignored otherwise.
  * @param {Date} [input.date]
  * @param {string} [input.purpose]
  * @param {string} [input.category]
@@ -513,12 +620,13 @@ async function postCashLeg(entry, actor, employee) {
  * @param {string} [input.referenceNo]
  * @param {string} [input.cashAccount] - Required when the entry moves company cash.
  * @param {boolean} [input.affectsCompanyCash=true]
- * @param {boolean} [input.autoApprove=false] - Post now, or leave Pending for a reviewer.
+ * @param {boolean} [input.autoApprove=false] - Post now, or leave for a reviewer.
+ * @param {string} [input.status] - Park in a specific waiting state ('AwaitingApproval'); ignored when autoApprove.
  * @param {boolean} [input.raisedByEmployee=false]
  * @param {string} [input.idempotencyKey] - Replays return the original row instead of paying twice.
  * @param {object} [input.source] - {sourceLoan, sourceExpense, sourcePayroll} back-references.
  * @param {object} actor - The acting user.
- * @returns {Promise<{entry: object, khata: object, cashEntry: object|null, duplicate: boolean}>}
+ * @returns {Promise<{entry: object, wallet: object, khata: object|null, cashEntry: object|null, duplicate: boolean}>}
  * @throws {Error} `.statusCode = 400` on a credit-limit breach or a missing account.
  */
 async function postEntry(input, actor) {
@@ -534,15 +642,27 @@ async function postEntry(input, actor) {
   if (input.idempotencyKey) {
     const prior = await KhataEntry.findOne({ idempotencyKey: input.idempotencyKey });
     if (prior) {
-      const khata = await EmployeeKhata.findById(prior.khata);
-      return { entry: prior, khata, cashEntry: null, duplicate: true };
+      return {
+        entry: prior,
+        wallet: await getOrCreateWallet(prior.employee),
+        khata: prior.khata ? await EmployeeKhata.findById(prior.khata) : null,
+        cashEntry: null,
+        duplicate: true,
+      };
     }
   }
 
   const employeeId = input.employee?._id || input.employee;
-  // Which of the employee's books this lands on. Validates ownership and that
-  // the khata is still open; falls back to their default when none is named.
-  const khata = await resolveKhata(employeeId, input.khata, actor);
+  const type = input.type || 'other';
+
+  // Spending is filed under an expense book; everything else moves the wallet
+  // on its own and carries no khata at all. resolveKhata validates ownership
+  // and that the book is still open, and falls back to their default when none
+  // is named — so filing an expense never fails for want of setup.
+  const khata = needsKhata(type) ? await resolveKhata(employeeId, input.khata, actor) : null;
+
+  // The pot every row moves, opened on first use.
+  const wallet = await getOrCreateWallet(employeeId, actor);
 
   const affectsCompanyCash = input.affectsCompanyCash !== false;
   const autoApprove = input.autoApprove === true;
@@ -557,15 +677,20 @@ async function postEntry(input, actor) {
   }
 
   const draft = { direction: input.direction, amount };
-  // Only enforce the limit for money actually going out now. A Pending request
+  // Only enforce the limit for money actually going out now. A parked request
   // is re-checked at approval time, when the balance may well have changed.
-  if (autoApprove) assertWithinCreditLimit(khata, draft);
+  if (autoApprove) assertWithinCreditLimit(wallet, draft);
+
+  // Where an unposted row waits. Callers pass 'AwaitingApproval' for an advance
+  // request that still needs an executive's sanction; everything else parks
+  // with the cash operators.
+  const parkedStatus = input.status === 'AwaitingApproval' ? 'AwaitingApproval' : 'Pending';
 
   const entry = await KhataEntry.create({
     employee: employeeId,
-    khata: khata._id,
+    khata: khata ? khata._id : null,
     direction: input.direction,
-    type: input.type || 'other',
+    type,
     amount,
     date: input.date || new Date(),
     purpose: input.purpose,
@@ -574,7 +699,8 @@ async function postEntry(input, actor) {
     referenceNo: input.referenceNo,
     affectsCompanyCash,
     cashAccount: input.cashAccount || undefined,
-    status: autoApprove ? 'Approved' : 'Pending',
+    status: autoApprove ? 'Approved' : parkedStatus,
+    execApprovalRequired: input.execApprovalRequired === true,
     raisedByEmployee: input.raisedByEmployee === true,
     createdBy: actor?._id,
     reviewedBy: autoApprove ? actor?._id : undefined,
@@ -589,10 +715,52 @@ async function postEntry(input, actor) {
   if (autoApprove) {
     const employee = await User.findById(employeeId).select('firstName lastName');
     cashEntry = await postCashLeg(entry, actor, employee);
-    await recomputeKhataBalance(khata._id);
+    await recomputeFor(entry);
   }
 
-  return { entry, khata: await EmployeeKhata.findById(khata._id), cashEntry, duplicate: false };
+  return {
+    entry,
+    wallet: await getOrCreateWallet(employeeId),
+    khata: khata ? await EmployeeKhata.findById(khata._id) : null,
+    cashEntry,
+    duplicate: false,
+  };
+}
+
+/**
+ * Sanction (or decline) an advance request that was waiting on an executive.
+ *
+ * This is the FIRST of the two decisions an advance passes through, and the
+ * only one about whether the person should have the money at all. It moves no
+ * cash and touches no balance: approving simply hands the request on to the
+ * people who keep the accounts, who then choose which one to pay it from.
+ * @param {object} entry - An 'AwaitingApproval' KhataEntry document.
+ * @param {object} actor - The CEO/MD/SuperAdmin deciding.
+ * @param {boolean} approve - True to sanction, false to decline.
+ * @param {string} [note] - Their reason; shown to the employee either way.
+ * @returns {Promise<object>} The updated entry.
+ * @throws {Error} `.statusCode = 400` if it is not waiting on an executive.
+ */
+async function decideExecApproval(entry, actor, approve, note) {
+  if (entry.status !== 'AwaitingApproval') {
+    const err = new Error(`This request is already ${entry.status === 'Pending' ? 'approved and with the accounts team' : entry.status.toLowerCase()}.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  entry.execApprovedBy = actor?._id;
+  entry.execApprovedAt = new Date();
+  if (note) entry.execNote = String(note).slice(0, 500);
+  // Sanctioned money still has to come OUT of somewhere, so an approval hands
+  // the request on to the operators rather than paying it.
+  entry.status = approve ? 'Pending' : 'Rejected';
+  if (!approve) {
+    entry.reviewedBy = actor?._id;
+    entry.reviewedAt = new Date();
+    entry.reviewNote = note;
+  }
+  await entry.save();
+  return entry;
 }
 
 /**
@@ -610,6 +778,11 @@ async function postEntry(input, actor) {
  * @throws {Error} `.statusCode = 400` if not Pending, no account chosen, or over the limit.
  */
 async function approveEntry(entry, actor, opts = {}) {
+  if (entry.status === 'AwaitingApproval') {
+    const err = new Error('This advance still needs a CEO/MD sanction before it can be paid.');
+    err.statusCode = 400;
+    throw err;
+  }
   if (entry.status !== 'Pending') {
     const err = new Error(`This entry is already ${entry.status.toLowerCase()} and cannot be approved again.`);
     err.statusCode = 400;
@@ -622,8 +795,7 @@ async function approveEntry(entry, actor, opts = {}) {
     throw err;
   }
 
-  const khata = await EmployeeKhata.findById(entry.khata);
-  assertWithinCreditLimit(khata, entry);
+  assertWithinCreditLimit(await getOrCreateWallet(entry.employee), entry);
 
   entry.status = 'Approved';
   entry.reviewedBy = actor?._id;
@@ -633,9 +805,14 @@ async function approveEntry(entry, actor, opts = {}) {
 
   const employee = await User.findById(entry.employee).select('firstName lastName');
   const cashEntry = await postCashLeg(entry, actor, employee);
-  await recomputeKhataBalance(entry.khata);
+  await recomputeFor(entry);
 
-  return { entry, khata: await EmployeeKhata.findById(entry.khata), cashEntry };
+  return {
+    entry,
+    wallet: await getOrCreateWallet(entry.employee),
+    khata: entry.khata ? await EmployeeKhata.findById(entry.khata) : null,
+    cashEntry,
+  };
 }
 
 /**
@@ -647,7 +824,7 @@ async function approveEntry(entry, actor, opts = {}) {
  * @throws {Error} `.statusCode = 400` if the entry is not Pending.
  */
 async function rejectEntry(entry, actor, note) {
-  if (entry.status !== 'Pending') {
+  if (!['Pending', 'AwaitingApproval'].includes(entry.status)) {
     const err = new Error(`This entry is already ${entry.status.toLowerCase()} and cannot be rejected.`);
     err.statusCode = 400;
     throw err;
@@ -693,7 +870,9 @@ async function reverseEntry(entry, actor, reason) {
 
   const reversal = await KhataEntry.create({
     employee: entry.employee,
-    khata: entry.khata,
+    // A reversal is filed under whatever the original was, so cancelling an
+    // expense takes the cost back off the book it was charged to.
+    khata: entry.khata || null,
     // The mirror image: money that went out now comes back, and vice versa.
     direction: entry.direction === 'to_employee' ? 'from_employee' : 'to_employee',
     type: 'reversal',
@@ -722,22 +901,31 @@ async function reverseEntry(entry, actor, reason) {
 
   // The original's cash leg stays on the cashbook as a historical fact; the
   // reversal's own leg is what squares the account. Both books now balance.
-  await recomputeKhataBalance(entry.khata);
+  await recomputeFor(entry);
 
-  return { original: entry, reversal, khata: await EmployeeKhata.findById(entry.khata) };
+  return {
+    original: entry,
+    reversal,
+    wallet: await getOrCreateWallet(entry.employee),
+    khata: entry.khata ? await EmployeeKhata.findById(entry.khata) : null,
+  };
 }
 
 module.exports = {
   round2,
   splitTotals,
   signedAmount,
+  needsKhata,
   nameOf,
   ensureKhataIntegrity,
+  getOrCreateWallet,
   getOrCreateDefaultKhata,
   resolveKhata,
   listKhatasOf,
   replayBalance,
-  recomputeKhataBalance,
+  recomputeWalletBalance,
+  recomputeKhataSpent,
+  recomputeFor,
   recomputeCashAccount,
   resolveDisburseRights,
   willAutoApprove,
@@ -745,6 +933,7 @@ module.exports = {
   assertWithinCreditLimit,
   postCashLeg,
   postEntry,
+  decideExecApproval,
   approveEntry,
   rejectEntry,
   reverseEntry,

@@ -134,9 +134,19 @@ The probation lifecycle. The due date is the date of joining plus the probation 
 
 ### Presence and records
 
-The presence board gives one row per active employee, split into present, on leave and absent for today, with selfie flags, lateness, WFH tags and hours. The attendance screen shows any employee's month with per-punch geofence distance, lets you add, edit and delete records by hand, and shows the punch selfies. Settings define the office location and the geofence threshold.
+The presence board gives one row per active employee, split into present, on leave and absent for today, with selfie flags, lateness, WFH tags and hours. The attendance screen shows any employee's month with per-punch geofence distance, lets you add, edit and delete records by hand, and shows the punch selfies. Settings define the office location, the geofence threshold and when a check-in starts counting as late.
 
-Punches capture GPS but are never blocked; an out-of-range punch is flagged, not refused, and WFH punches are exempt. Late means a check-in after 10:00 AM.
+Punches capture GPS but are never blocked; an out-of-range punch is flagged, not refused, and WFH punches are exempt.
+
+### When a check-in counts as late
+
+Attendance, then Settings, holds a **Late marking** block: the time the workday starts and a **grace window** in minutes. Out of the box it is 10:00 AM with no grace, which is the rule the company ran on before it became a setting.
+
+The grace window is forgiveness, not a later start time. With a start of 10:00 AM and a ten-minute window, arriving at 10:08 is on time; arriving at 10:12 is late by twelve minutes, not two — the "late by" figure always counts from the start time, so it answers how late someone actually was.
+
+[!IMPORTANT] Only a **Super Admin** can change this. Everyone else with attendance access sees the block but cannot edit it, because the rule applies to the whole company and decides money — payroll charges ₹200 or ₹400 for every late day past the monthly allowance of five.
+
+A change applies to how days are judged from that moment, including days already recorded: lateness is worked out from the punch time whenever it is displayed or paid, not frozen into the record. So a payroll run for a past month after a change uses the new rule for that month too. Move the cut-off between the month ending and payroll being run and the late counts for that month will move with it.
 
 [!IMPORTANT] A day worth under six hours is recorded as a half day. When someone forgets to punch out, the day is counted from their check-in to 7:00 PM and the same rule applies, with the reason written into the record's remarks. Approving a regularization recalculates the day from the corrected times. A status you set by hand always wins. Each half day counts as half a paid day in payroll.
 

@@ -17,6 +17,21 @@ import { Screen, Card, AppButton, Pill, Loader, refresher, SectionHeader, Ionico
 import { fmtDate, fmtTime, fmtHours, rupees } from '../utils/format';
 import { getPunchLocation, submitPunch, markPunchPending, clearPunchPending } from '../utils/punch';
 
+// The late rule in force, as a sentence: "10:00 AM (10 min grace, so late from
+// 10:10 AM)". Comes from the payroll policy roll-up, so it always states the
+// SuperAdmin's current setting rather than assuming the old 10:00 AM constant.
+const lateRuleText = (lp) => {
+  if (!lp) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  const at = (h, m) => `${h % 12 || 12}:${pad(m)} ${h >= 12 ? 'PM' : 'AM'}`;
+  const start = at(Number(lp.hour) || 0, Number(lp.minute) || 0);
+  const grace = Number(lp.graceMinutes) || 0;
+  if (!grace) return `A check-in after ${start} is late.`;
+  const total = ((Number(lp.hour) || 0) * 60 + (Number(lp.minute) || 0) + grace) % (24 * 60);
+  return `The day starts at ${start} with a ${grace} min grace window, so a check-in after `
+    + `${at(Math.floor(total / 60), total % 60)} is late.`;
+};
+
 const STATUS_TONE = { Present: 'success', HalfDay: 'warning', Absent: 'danger', Leave: 'info', Holiday: 'neutral', WeekOff: 'neutral' };
 // Rest-day duty (a Sunday / company comp-off day that was worked): paid double
 // once HR or the reporting manager approves it, so the day carries its state.
@@ -384,6 +399,7 @@ export default function AttendanceScreen() {
                   )}
                 </View>
                 <Text style={[font.small, { marginTop: spacing(3) }]}>
+                  {lateRuleText(p.latePolicy) ? `${lateRuleText(p.latePolicy)} ` : ''}
                   First {p.lateAllowance} late arrivals each month are free; beyond that every late day is
                   deducted at {rupees(p.lateRate)}/day. {p.paidLeaveQuota} paid leaves each month — unused
                   days are added to your pay, extra days are unpaid (LOP). A working day with no punch-in

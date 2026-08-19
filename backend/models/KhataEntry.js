@@ -1,20 +1,30 @@
 const mongoose = require('mongoose');
 
 /**
- * One line of an employee's khata — a single movement of money between the
- * company and that employee.
+ * One line of an employee's cash ledger — a single movement of money between
+ * the company and that employee.
+ *
+ * WHICH BOOK A ROW BELONGS TO. Every row moves the employee's WALLET (see
+ * models/EmployeeWallet.js) — that is the pot, and `balanceAfter` is always the
+ * wallet balance after this row. `khata` is the *expense book* it is filed
+ * under, and only spending has one:
+ *
+ *   khata set   → an expense. "₹3,000 of the advance went on Site A materials."
+ *   khata null  → money in or out of the wallet itself: an advance paid, cash
+ *                 returned, a reimbursement, a payroll recovery, an opening
+ *                 balance. None of those belong to any one expense book.
  *
  * DIRECTION IS THE ONLY THING THAT SETS THE SIGN.
  * Forget "debit"/"credit"; ask only which way the money went:
  *
- *   'to_employee'    company → employee.  balance += amount
- *                    The employee now holds (or owes) more company money.
+ *   'to_employee'    company → employee.  wallet += amount
+ *                    The employee now holds more company money.
  *                    e.g. an advance paid out, a reimbursement handed over.
  *
- *   'from_employee'  employee → company.  balance -= amount
- *                    The employee's debt shrinks, or the company's debt to them
- *                    grows. e.g. returning unspent float, repaying an advance,
- *                    or spending their own cash on a company purchase.
+ *   'from_employee'  employee → company.  wallet -= amount
+ *                    The advance in their hand shrinks, or the company's debt
+ *                    to them grows. e.g. an expense filed against a khata,
+ *                    unspent cash returned, an advance recovered from payroll.
  *
  * That single rule covers every type below, which is why `type` is only ever a
  * label for reporting — it never changes the arithmetic.
@@ -38,20 +48,36 @@ const DIRECTIONS = ['to_employee', 'from_employee'];
 
 // Why it moved. Reporting label only — never affects the balance arithmetic.
 const ENTRY_TYPES = [
-  'advance',        // to_employee   — cash float / advance paid out
-  'settlement',     // from_employee — employee hands unspent or owed cash back
-  'expense',        // from_employee — employee spent their own money for the company
-  'reimbursement',  // to_employee   — company pays that spend back
+  'advance',        // to_employee   — advance paid into the employee's wallet
+  'settlement',     // from_employee — employee hands unspent cash back
+  'expense',        // from_employee — spend filed against a khata (needs `khata`)
+  'reimbursement',  // to_employee   — company pays back spend the employee funded
   'salary_recovery',// from_employee — outstanding advance recovered via payroll
-  'opening',        // either        — balance carried in when the khata was opened
+  'opening',        // either        — balance carried in when the wallet was opened
   'reversal',       // either        — the mirror row that cancels another entry
   'other',
 ];
 
-// Pending -> submitted, no balance effect yet. Approved -> posted, counts into
-// the balance. Rejected -> declined, never counts. Reversed -> it DID post, was
+/**
+ * The one type that is filed against an expense book. Everything else moves the
+ * wallet on its own. Stated once here so the ledger, the controller and the
+ * migration cannot disagree about it.
+ */
+const KHATA_TYPES = ['expense'];
+
+// AwaitingApproval -> an advance request waiting on a CEO/MD decision; it has
+// not reached the people who handle cash yet. Pending -> with the cash
+// operators, no balance effect yet. Approved -> posted, counts into the
+// balance. Rejected -> declined, never counts. Reversed -> it DID post, was
 // later cancelled by a reversal row, and no longer counts.
-const ENTRY_STATUS = ['Pending', 'Approved', 'Rejected', 'Reversed'];
+//
+// The two waiting states are separate because they are two different decisions
+// by two different people: "should this person get an advance at all?" is the
+// executive's call, "which account does it come out of, and has the cash
+// actually left?" is the operator's. Collapsing them would put the operators'
+// queue in front of an executive who has no business seeing it, and would let a
+// request be paid before it had been sanctioned.
+const ENTRY_STATUS = ['AwaitingApproval', 'Pending', 'Approved', 'Rejected', 'Reversed'];
 
 const PAYMENT_MODES = ['Cash', 'Bank', 'UPI', 'Cheque', 'Card', 'Adjustment', 'Other'];
 
@@ -68,7 +94,9 @@ const khataEntrySchema = new mongoose.Schema(
 
     // Whose khata this line belongs to.
     employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    khata: { type: mongoose.Schema.Types.ObjectId, ref: 'EmployeeKhata', required: true, index: true },
+    // The expense book this spend is filed under. NULL for everything that
+    // moves the wallet itself — see the note at the top of this file.
+    khata: { type: mongoose.Schema.Types.ObjectId, ref: 'EmployeeKhata', default: null, index: true },
 
     direction: { type: String, enum: DIRECTIONS, required: true },
     type: { type: String, enum: ENTRY_TYPES, default: 'other', index: true },
@@ -103,9 +131,22 @@ const khataEntrySchema = new mongoose.Schema(
     reviewedAt: Date,
     reviewNote: { type: String, trim: true, maxlength: 500 },
 
-    // Snapshot of the employee's khata balance immediately after this row posted
-    // — the statement's running-balance column. Recomputed whenever the ledger
-    // is rebuilt, so it stays correct even after a back-dated insert.
+    // ----- executive sanction (advance requests only) -----
+    // Whether this row had to be sanctioned by a CEO/MD before it could reach
+    // the cash operators. Stamped from the org setting AT REQUEST TIME rather
+    // than read live, so switching the requirement off later does not rewrite
+    // the history of a request that genuinely went through an executive — and
+    // switching it on does not strand requests raised while it was off.
+    execApprovalRequired: { type: Boolean, default: false },
+    execApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    execApprovedAt: { type: Date, default: null },
+    execNote: { type: String, trim: true, maxlength: 500 },
+
+    // Snapshot of the employee's WALLET balance immediately after this row
+    // posted — the statement's running-balance column. Always the wallet, even
+    // on a row filed against a khata, because the wallet is the only thing that
+    // has a balance. Recomputed whenever the ledger is rebuilt, so it stays
+    // correct even after a back-dated insert.
     balanceAfter: Number,
 
     // ----- reversal chain (never delete a posted financial row) -----
@@ -130,11 +171,12 @@ const khataEntrySchema = new mongoose.Schema(
 
 // The statement query: one employee's rows in date order.
 khataEntrySchema.index({ employee: 1, date: 1, createdAt: 1 });
-// The approvals queue.
+// The two approval queues — the executive one and the operators' one — are
+// both read by status, oldest first.
 khataEntrySchema.index({ status: 1, date: -1 });
 
 /**
- * Signed effect this row has on the khata balance, from the company's side.
+ * Signed effect this row has on the wallet balance, from the company's side.
  * Positive = the employee owes the company more.
  * @returns {number}
  */
@@ -151,5 +193,6 @@ khataEntrySchema.plugin(require('./plugins/auditStatus'));
 module.exports = mongoose.model('KhataEntry', khataEntrySchema);
 module.exports.DIRECTIONS = DIRECTIONS;
 module.exports.ENTRY_TYPES = ENTRY_TYPES;
+module.exports.KHATA_TYPES = KHATA_TYPES;
 module.exports.ENTRY_STATUS = ENTRY_STATUS;
 module.exports.PAYMENT_MODES = PAYMENT_MODES;

@@ -281,6 +281,37 @@ const requirePermission = (cap) => makePermissionGuard(cap);
 // Gate satisfied by holding ANY of the listed capabilities.
 const requireAnyPermission = (...caps) => makePermissionGuard(caps);
 
+/**
+ * May this account sanction an employee's cash-advance request?
+ *
+ * SuperAdmin, CEO or MD, and nobody else. Deliberately NOT routed through
+ * hasPermission: every branch in there ends in a role default, and an approval
+ * that fell through one of those would be held by people nobody consciously
+ * gave it to. Sanctioning an advance is meant to be the executive's call.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+function canApproveAdvances(user) {
+  return !!user && ['SuperAdmin', 'CEO', 'MD'].includes(user.role);
+}
+
+/**
+ * Route guard for the advance-approval queue.
+ *
+ * The ONE write a read-only CEO/MD account is allowed. Everywhere else an
+ * executive is view-only unless a SuperAdmin has switched them into edit mode
+ * (see restrictTo), but this decision is the reason the approval step exists at
+ * all — gating it behind a second, unrelated grant would mean the person the
+ * request is addressed to could not answer it.
+ * @returns {import('express').RequestHandler}
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
+const requireAdvanceApprover = (req, res, next) => {
+  if (canApproveAdvances(req.user)) return next();
+  res.status(403);
+  return next(new Error('Only a CEO, MD or Super Admin can decide advance requests.'));
+};
+
 module.exports = {
   protect,
   protectMedia,
@@ -294,4 +325,6 @@ module.exports = {
   requireAnyPermission,
   canExportKhata,
   requireKhataExport,
+  canApproveAdvances,
+  requireAdvanceApprover,
 };

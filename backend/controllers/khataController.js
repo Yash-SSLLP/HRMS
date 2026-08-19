@@ -1,26 +1,37 @@
 /**
- * Employee-khata controller — the per-employee cash ledger between the company
- * and its staff.
+ * Employee khatabook — the wallet each employee holds, and the expense books
+ * they file spending under.
  *
- * The cashbook answers "how much is in the tin?"; the khata answers "how much
- * is Rahul holding, and what has he settled?". Every balance-changing operation
- * is delegated to services/khataLedger.js, which owns the money rules and the
- * double-entry link into the cashbook. This file validates input, enforces who
- * may act on whom, and shapes responses — it never does balance arithmetic.
+ * THE MODEL, because every endpoint below assumes it. One employee has ONE
+ * wallet: the pot the company pays advances into. They open as many khatas as
+ * they like — "Site A — materials", "Vehicle & fuel" — and each is an expense
+ * book, not a pot of its own. Every expense comes out of the same wallet, so
+ * the remaining advance reads identically whichever book you have open, and a
+ * person is never flush on one book and stuck on another.
  *
- * Two audiences share the router:
- *   - every employee, for their own khata (view, request an advance, declare a
- *     return of cash);
- *   - khata operators, gated by the `khata.manage` capability AND, for anything
- *     that actually moves money, by being listed on the specific CashAccount.
+ * TWO GATES ON AN ADVANCE, and they answer different questions.
+ *   1. SHOULD THEY HAVE IT? A request parks as 'AwaitingApproval' for a CEO/MD
+ *      to sanction. A SuperAdmin can switch this requirement off org-wide
+ *      (Setting.khataAdvanceApprovalRequired), after which requests go straight
+ *      to the accounts team as they used to.
+ *   2. WHERE DOES THE CASH COME FROM? Once sanctioned it parks as 'Pending' for
+ *      an operator, who names the cash account it is paid out of. Only then
+ *      does any money move.
+ * An employee can never release money to themselves at either gate, whatever
+ * permissions they hold.
+ *
+ * Balance arithmetic lives entirely in services/khataLedger.js — this file
+ * validates input, decides who may do what, and shapes responses.
  */
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const ExcelJS = require('exceljs');
 const EmployeeKhata = require('../models/EmployeeKhata');
+const EmployeeWallet = require('../models/EmployeeWallet');
 const KhataEntry = require('../models/KhataEntry');
 const { ENTRY_TYPES, PAYMENT_MODES } = require('../models/KhataEntry');
 const CashAccount = require('../models/CashAccount');
+const Setting = require('../models/Setting');
 const User = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
@@ -31,7 +42,7 @@ const { hasPermission } = require('../middleware/authMiddleware');
 const USER_FIELDS = 'firstName lastName email role photo';
 
 // ---------------------------------------------------------------------------
-// helpers
+// Small shared helpers
 // ---------------------------------------------------------------------------
 
 const toNum = (v) => (v === undefined || v === null || v === '' ? NaN : Number(v));
@@ -45,11 +56,13 @@ function bad(res, message, status = 400) {
 }
 
 /**
- * Format a balance the way the UI must speak about it — never "debit"/"credit".
+ * Format a wallet the way the company's own screens must speak about it —
+ * never "debit"/"credit".
  *
- * Positive means the employee owes the company, which from the company's side
- * reads "you will get". This mapping lives here so the web and the mobile app
- * cannot drift apart on the single most confusable thing in the module.
+ * Positive means the employee is holding company cash they have not yet
+ * accounted for, which from the company's side reads "you will get". This
+ * mapping lives here so the web and the mobile app cannot drift apart on the
+ * single most confusable thing in the module.
  * @param {number} balance - Signed balance, company's point of view.
  * @returns {{amount: number, direction: 'get'|'give'|'settled', label: string}}
  */
@@ -60,12 +73,19 @@ function describeBalance(balance) {
   return { amount: 0, direction: 'settled', label: 'Settled up' };
 }
 
-/** The same balance seen from the EMPLOYEE's side, for their own screens. */
-function describeBalanceForEmployee(balance) {
+/**
+ * The same wallet seen from the EMPLOYEE's side.
+ *
+ * Worded as "in hand" rather than "you owe", because that is what it is: money
+ * they are carrying and have yet to account for, not a debt they have run up.
+ * @param {number} balance
+ * @returns {{amount: number, direction: 'holding'|'owed'|'settled', label: string}}
+ */
+function describeWalletForEmployee(balance) {
   const value = ledger.round2(balance || 0);
-  if (value > 0) return { amount: value, direction: 'owe', label: 'You owe the company' };
+  if (value > 0) return { amount: value, direction: 'holding', label: 'Advance in hand' };
   if (value < 0) return { amount: Math.abs(value), direction: 'owed', label: 'The company owes you' };
-  return { amount: 0, direction: 'settled', label: 'Settled up' };
+  return { amount: 0, direction: 'settled', label: 'Nothing in hand' };
 }
 
 /**
@@ -78,8 +98,8 @@ const publicEntry = (e) => ({
   employee: e.employee && e.employee.firstName
     ? { _id: e.employee._id, name: `${e.employee.firstName} ${e.employee.lastName || ''}`.trim(), email: e.employee.email }
     : (e.employee?._id || e.employee || null),
-  // Which of the employee's books this landed on — an entry is meaningless
-  // without it once somebody holds more than one.
+  // Which expense book this was filed under. Null for anything that moves the
+  // wallet itself — an advance, a settlement, a reimbursement.
   khata: e.khata?._id || e.khata || null,
   khataName: e.khata?.name || undefined,
   direction: e.direction,
@@ -108,40 +128,69 @@ const publicEntry = (e) => ({
   reviewedBy: e.reviewedBy && e.reviewedBy.firstName
     ? { _id: e.reviewedBy._id, name: `${e.reviewedBy.firstName} ${e.reviewedBy.lastName || ''}`.trim() }
     : (e.reviewedBy?._id || e.reviewedBy || null),
+  // The executive gate, so a queue can show who sanctioned what and when.
+  execApprovalRequired: !!e.execApprovalRequired,
+  execNote: e.execNote,
+  execApprovedAt: e.execApprovedAt || null,
+  execApprovedBy: e.execApprovedBy && e.execApprovedBy.firstName
+    ? { _id: e.execApprovedBy._id, name: `${e.execApprovedBy.firstName} ${e.execApprovedBy.lastName || ''}`.trim(), role: e.execApprovedBy.role }
+    : (e.execApprovedBy?._id || e.execApprovedBy || null),
   createdAt: e.createdAt,
 });
 
-/** Allowlist mapper for one khata. */
+/** Allowlist mapper for one expense book. `spent` is a total, not a balance. */
 const publicKhata = (k) => ({
   _id: k._id,
   name: k.name,
   isDefault: k.isDefault,
-  balance: k.balance,
-  openingBalance: k.openingBalance,
-  creditLimit: k.creditLimit,
+  spent: ledger.round2(k.spent || 0),
+  entryCount: k.entryCount || 0,
   lastEntryAt: k.lastEntryAt,
   isActive: k.isActive,
   note: k.note,
-  display: describeBalance(k.balance),
+});
+
+/** Allowlist mapper for a wallet, from the company's side. */
+const publicWallet = (w) => ({
+  balance: ledger.round2(w?.balance || 0),
+  openingBalance: ledger.round2(w?.openingBalance || 0),
+  creditLimit: ledger.round2(w?.creditLimit || 0),
+  lastEntryAt: w?.lastEntryAt || null,
+  note: w?.note,
+  display: describeBalance(w?.balance || 0),
 });
 
 /**
- * Open a named khata, shared by the operator and self-service routes.
+ * Is a CEO/MD sanction currently required before an advance reaches accounts?
+ *
+ * Read fresh rather than cached: it is one indexed lookup on a singleton, and a
+ * SuperAdmin turning the gate on expects the very next request to go through
+ * it.
+ * @returns {Promise<boolean>}
+ */
+async function advanceApprovalRequired() {
+  const s = await Setting.getSettings().catch(() => null);
+  // Default ON when the settings document cannot be read: a missing setting
+  // must not quietly remove an approval gate.
+  return s ? s.khataAdvanceApprovalRequired !== false : true;
+}
+
+/**
+ * Open a named expense book, shared by the operator and self-service routes.
  *
  * Both paths need identical validation and identical duplicate handling, and
  * the duplicate handling is the fiddly part — see below.
  * @param {object} input
  * @param {string} input.employee - Whose book.
  * @param {string} input.name - What it is for.
- * @param {number} [input.creditLimit]
  * @param {string} [input.note]
  * @param {object} input.actor - The acting user.
  * @param {object} input.res - For setting the status before throwing.
  * @returns {Promise<object>} The new EmployeeKhata document.
  */
-async function openKhata({ employee, name: rawName, creditLimit, note, actor, res }) {
+async function openKhata({ employee, name: rawName, note, actor, res }) {
   const name = String(rawName || '').trim();
-  if (!name) bad(res, 'Give the khata a name — what is this money for?');
+  if (!name) bad(res, 'Give the khata a name — what will you be spending on?');
   if (name.length > 80) bad(res, 'That name is too long (80 characters max)');
 
   // Make sure their default exists first, so the FIRST book somebody opens by
@@ -149,12 +198,10 @@ async function openKhata({ employee, name: rawName, creditLimit, note, actor, re
   // runs the one-time integrity repair (see khataLedger.ensureKhataIntegrity).
   await ledger.getOrCreateDefaultKhata(employee, actor);
 
-  const limit = toNum(creditLimit);
   try {
     return await EmployeeKhata.create({
       employee,
       name,
-      creditLimit: Number.isFinite(limit) && limit >= 0 ? ledger.round2(limit) : 0,
       note: note ? String(note).slice(0, 300) : undefined,
       createdBy: actor?._id,
     });
@@ -216,7 +263,7 @@ async function requireOperableAccount(user, accountId, res) {
   return { account, rights };
 }
 
-/** Who should hear about a new khata request: SuperAdmins + Accounts Managers. */
+/** Who handles the cash: SuperAdmins, Accounts Managers, khata-grant holders. */
 async function khataApproverIds() {
   const users = await User.find({
     isActive: true,
@@ -226,9 +273,23 @@ async function khataApproverIds() {
 }
 
 /**
- * Attach employee-code/designation to a set of khatas for the admin list.
+ * Who may sanction an advance: the executives, plus SuperAdmins.
+ *
+ * SuperAdmin is included because somebody has to be able to unblock the queue
+ * when no CEO/MD account is set up or available, and a SuperAdmin can already
+ * turn the requirement off entirely — so excluding them would buy no safety and
+ * only strand requests.
+ * @returns {Promise<Array<import('mongoose').Types.ObjectId>>}
+ */
+async function execApproverIds() {
+  const users = await User.find({ isActive: true, role: { $in: ['CEO', 'MD', 'SuperAdmin'] } }).select('_id');
+  return users.map((u) => u._id);
+}
+
+/**
+ * Attach employee-code/designation to a set of rows for the admin lists.
  * One query for the lot rather than one per row.
- * @param {Array<object>} khatas - Lean EmployeeKhata docs with `employee` populated.
+ * @param {Array<object>} userIds
  * @returns {Promise<Map<string, object>>} Keyed by user id.
  */
 async function profilesFor(userIds) {
@@ -238,21 +299,65 @@ async function profilesFor(userIds) {
   return new Map(profiles.map((p) => [String(p.user), p]));
 }
 
+/**
+ * Add up an employee's ledger into the figures both portals show.
+ *
+ * Approved rows only for the money that has actually moved; the waiting ones
+ * are counted separately rather than folded in, because a request nobody has
+ * acted on has not changed anybody's position and showing it as though it had
+ * is how an employee ends up spending money they were never given.
+ * @param {Array<object>} entries - The employee's KhataEntry rows.
+ * @returns {object} advanced/spent/returned/reimbursed and the waiting counts.
+ */
+function summariseEntries(entries = []) {
+  const s = {
+    advanced: 0,      // approved money paid into the wallet
+    spent: 0,         // approved expenses filed against books
+    returned: 0,      // approved cash handed back / recovered
+    awaitingAdvance: 0, // requested, not yet sanctioned
+    pendingAdvance: 0,  // sanctioned, not yet paid
+    pendingSpend: 0,    // expenses/returns awaiting the company's confirmation
+    waitingCount: 0,
+  };
+  for (const e of entries) {
+    const amt = Number(e.amount) || 0;
+    if (e.status === 'Approved') {
+      if (e.direction === 'to_employee') s.advanced += amt;
+      else if (e.type === 'expense') s.spent += amt;
+      else s.returned += amt;
+    } else if (e.status === 'AwaitingApproval' || e.status === 'Pending') {
+      s.waitingCount += 1;
+      if (e.direction === 'to_employee') {
+        if (e.status === 'AwaitingApproval') s.awaitingAdvance += amt;
+        else s.pendingAdvance += amt;
+      } else {
+        s.pendingSpend += amt;
+      }
+    }
+  }
+  for (const k of Object.keys(s)) s[k] = k.endsWith('Count') ? s[k] : ledger.round2(s[k]);
+  return s;
+}
+
 // ============================ Employee self-service ============================
 
 /**
- * All of the caller's own khatas: one balance each, plus a combined position
- * and a single statement across the lot.
+ * The employee's own khatabook: one wallet, their expense books, one statement.
  *
- * The combined figure is what answers "am I square with the company?"; the
- * per-khata figures answer "which of my books is the money sitting on?". Both
- * are needed, so both are returned rather than making the client add them up.
+ * The wallet is the headline — "how much of the company's money am I holding?"
+ * — and the books below it answer "and what has it gone on?". The same
+ * remaining figure applies to every book, which is exactly the point: the money
+ * is one pot however many ways the spending is filed.
  * @route GET /api/khata/me
- * @returns {{khatas: Object[], balance: object, total: number, entries: Object[]}}
+ * @returns {{wallet: object, khatas: Object[], totals: object, entries: Object[]}}
  */
 const getMyKhata = asyncHandler(async (req, res) => {
-  // Opens their default on first visit, so the screen is never empty-handed.
-  await ledger.getOrCreateDefaultKhata(req.user._id, req.user);
+  // Opens their wallet and first book on first visit, so the screen is never
+  // empty-handed and the first expense has somewhere to land.
+  const [wallet] = await Promise.all([
+    ledger.getOrCreateWallet(req.user._id, req.user),
+    ledger.getOrCreateDefaultKhata(req.user._id, req.user),
+  ]);
   const khatas = await ledger.listKhatasOf(req.user._id, true);
 
   const entries = await KhataEntry.find({ employee: req.user._id })
@@ -261,32 +366,38 @@ const getMyKhata = asyncHandler(async (req, res) => {
     .sort({ date: -1, createdAt: -1 })
     .limit(400);
 
-  // BOTH sides, not just the net. Somebody owing ₹5,000 on a site float while
-  // the company owes them ₹2,000 for their own spend has both, and showing only
-  // "₹3,000" hides the fact that they are owed anything at all.
-  const totals = ledger.splitTotals(khatas);
+  const sums = summariseEntries(entries);
 
   res.json({
-    khatas: khatas.map((k) => ({
-      ...publicKhata(k),
-      // Worded from the employee's side: "you owe" / "the company owes you".
-      display: describeBalanceForEmployee(k.balance),
-    })),
-    totals: {
-      owe: totals.get,        // what the employee owes the company
-      owed: totals.give,      // what the company owes the employee
-      net: totals.net,
+    wallet: {
+      ...publicWallet(wallet),
+      // Worded from the employee's side: "advance in hand" / "the company owes you".
+      display: describeWalletForEmployee(wallet.balance),
     },
-    total: totals.net,
-    balance: describeBalanceForEmployee(totals.net),
+    // Every book, each with what it has cost — and the SAME remaining advance,
+    // because there is only one pot behind all of them.
+    khatas: khatas.map(publicKhata),
+    totals: {
+      ...sums,
+      remaining: ledger.round2(wallet.balance),
+    },
+    // Whether a request of theirs will need an executive's sanction, so the
+    // form can say so before they send it rather than after.
+    approvalRequired: await advanceApprovalRequired(),
     count: entries.length,
     entries: entries.map(publicEntry),
   });
 });
 
 /**
- * Ask for a cash advance. Always parks as Pending — an employee can never
- * release company money to themselves, whatever permissions they hold.
+ * Ask for a cash advance into your wallet.
+ *
+ * Never tied to a khata: the money goes into the one pot, and which book it
+ * ends up spent against is decided later, purchase by purchase. Always parks —
+ * an employee can never release company money to themselves, whatever
+ * permissions they hold — but WHERE it parks depends on the org setting: with
+ * the executive gate on it waits for a CEO/MD, otherwise it goes straight to
+ * whoever handles the cash.
  * @route POST /api/khata/me/request
  * @param {number} req.body.amount
  * @param {string} req.body.purpose - Required; what the money is for.
@@ -298,11 +409,10 @@ const requestAdvance = asyncHandler(async (req, res) => {
   const purpose = String(req.body.purpose || '').trim();
   if (!purpose) bad(res, 'Say what the advance is for');
 
+  const needsExec = await advanceApprovalRequired();
+
   const { entry } = await ledger.postEntry({
     employee: req.user._id,
-    // Which book they want it on. Omitted (or an unknown id) falls back to
-    // their default; the ledger refuses one that is not theirs.
-    khata: isId(req.body.khata) ? req.body.khata : undefined,
     direction: 'to_employee',
     type: 'advance',
     amount,
@@ -310,27 +420,114 @@ const requestAdvance = asyncHandler(async (req, res) => {
     category: req.body.category || 'Advance Request',
     paymentMode: req.body.paymentMode || 'Cash',
     date: parseDate(req.body.date) || new Date(),
-    // The employee names no account and approves nothing: the reviewer decides
-    // which book it comes out of, and only then does any cash move.
+    // The employee names no account and approves nothing: an executive decides
+    // whether they should have it, an operator decides which book it comes out
+    // of, and only then does any cash move.
+    autoApprove: false,
+    status: needsExec ? 'AwaitingApproval' : 'Pending',
+    execApprovalRequired: needsExec,
+    raisedByEmployee: true,
+    idempotencyKey: req.body.idempotencyKey,
+  }, req.user);
+
+  const who = `${req.user.firstName} ${req.user.lastName || ''}`.trim();
+  if (needsExec) {
+    await notifyMany(await execApproverIds(), {
+      type: 'general',
+      audience: 'admin',
+      title: 'Advance request needs your approval',
+      body: `${who} requested ₹${amount.toLocaleString('en-IN')} — ${purpose}`,
+      link: '/admin/khata',
+    });
+  } else {
+    await notifyMany(await khataApproverIds(), {
+      type: 'general',
+      audience: 'admin',
+      title: 'Cash advance requested',
+      body: `${who} requested ₹${amount.toLocaleString('en-IN')} — ${purpose}`,
+      link: '/admin/khata',
+    });
+  }
+
+  res.status(201).json({
+    entry: publicEntry(entry),
+    message: needsExec
+      ? 'Request sent to the CEO/MD for approval.'
+      : 'Request sent for approval',
+  });
+});
+
+/**
+ * Record something you spent the advance on, filed against one of your books.
+ *
+ * This is the everyday action of the whole module: the employee holds one
+ * advance and logs purchases against whichever book they belong to. The spend
+ * comes out of the wallet, so the remaining figure drops whichever book it was
+ * filed under.
+ *
+ * It parks for the company to confirm rather than posting on the spot, for the
+ * same reason a declared settlement does: an entry that moves what the company
+ * is owed should be seen by the company. The employee's screen shows the
+ * waiting amount alongside the confirmed one, so nothing is hidden while it
+ * waits.
+ * @route POST /api/khata/me/expense
+ * @param {string} req.body.khata - Which book it belongs to.
+ * @param {number} req.body.amount
+ * @param {string} req.body.purpose - What was bought.
+ * @param {file} [req.file] - Optional receipt (multer field 'receipt').
+ * @returns {{entry: object, message: string}} 201
+ */
+const recordMyExpense = asyncHandler(async (req, res) => {
+  const amount = toNum(req.body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) bad(res, 'Enter how much you spent');
+  const purpose = String(req.body.purpose || '').trim();
+  if (!purpose) bad(res, 'Say what you spent it on');
+
+  const { entry, khata } = await ledger.postEntry({
+    employee: req.user._id,
+    // Which book it belongs to. The ledger refuses one that is not theirs or
+    // has been closed, and falls back to their default when none is named.
+    khata: isId(req.body.khata) ? req.body.khata : undefined,
+    direction: 'from_employee',
+    type: 'expense',
+    amount,
+    purpose,
+    category: req.body.category || 'Expense',
+    paymentMode: req.body.paymentMode || 'Cash',
+    referenceNo: req.body.referenceNo,
+    date: parseDate(req.body.date) || new Date(),
+    // No company cash moves here — it left the tin when the advance was paid.
+    // Recording the spend accounts for money already in the employee's hand.
+    affectsCompanyCash: false,
     autoApprove: false,
     raisedByEmployee: true,
     idempotencyKey: req.body.idempotencyKey,
   }, req.user);
 
+  await attachReceipt(entry, req.file);
+
   await notifyMany(await khataApproverIds(), {
     type: 'general',
     audience: 'admin',
-    title: 'Cash advance requested',
-    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim() + ` requested ₹${amount.toLocaleString('en-IN')} — ${purpose}`,
+    title: 'Expense recorded against an advance',
+    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+      + ` logged ₹${amount.toLocaleString('en-IN')} on "${khata.name}" — ${purpose}`,
     link: '/admin/khata',
   });
 
-  res.status(201).json({ entry: publicEntry(entry), message: 'Request sent for approval' });
+  res.status(201).json({
+    entry: publicEntry(entry),
+    khata: publicKhata(khata),
+    message: 'Recorded — it will come off your advance once the company confirms it.',
+  });
 });
 
 /**
- * Declare cash handed back to the company. Also parks as Pending — the company
- * confirms it actually received the money before the employee's balance drops.
+ * Declare unspent cash handed back to the company.
+ *
+ * Wallet-level, like the advance it reverses: you are returning money from the
+ * pot, not from any one book. Parks as Pending — the company confirms it
+ * actually received the money before the employee's advance drops.
  * @route POST /api/khata/me/settle
  * @param {number} req.body.amount
  * @param {file} [req.file] - Optional receipt (multer field 'receipt').
@@ -342,7 +539,6 @@ const declareSettlement = asyncHandler(async (req, res) => {
 
   const { entry } = await ledger.postEntry({
     employee: req.user._id,
-    khata: isId(req.body.khata) ? req.body.khata : undefined,
     direction: 'from_employee',
     type: 'settlement',
     amount,
@@ -362,7 +558,7 @@ const declareSettlement = asyncHandler(async (req, res) => {
     type: 'general',
     audience: 'admin',
     title: 'Cash returned by employee',
-    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim() + ` says they returned ₹${amount.toLocaleString('en-IN')} — confirm to update their khata`,
+    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim() + ` says they returned ₹${amount.toLocaleString('en-IN')} — confirm to update their wallet`,
     link: '/admin/khata',
   });
 
@@ -374,39 +570,41 @@ const declareSettlement = asyncHandler(async (req, res) => {
 /**
  * Headline figures for the khata dashboard.
  * @route GET /api/khata/overview  (khata.manage)
- * @returns {{totalReceivable: number, totalPayable: number, employeesOutstanding: number, pendingCount: number, accounts: Object[]}}
+ * @returns {{totalReceivable: number, totalPayable: number, employeesOutstanding: number, pendingCount: number, awaitingApprovalCount: number, accounts: Object[]}}
  */
 const overview = asyncHandler(async (req, res) => {
   // Usually the first khata screen anyone opens, so it is where a database that
-  // predates multi-khata gets repaired. Memoized — this costs one check per process.
+  // predates multi-khata gets repaired. Memoized — one check per process.
   await ledger.ensureKhataIntegrity();
-  const khatas = await EmployeeKhata.find({ isActive: true }).select('balance employee').lean();
+  const wallets = await EmployeeWallet.find({}).select('balance employee').lean();
 
-  // Split the signed balances into the two things a manager actually asks:
-  // what is owed to us, and what we owe out. Both are summed PER BOOK, because
-  // a person owing ₹5,000 on one float and owed ₹2,000 on another genuinely has
-  // both — netting them to ₹3,000 receivable would hide the payable entirely.
+  // The two things a manager actually asks: what is out with staff, and what do
+  // we owe them. Never netted — a person holding ₹5,000 while somebody else is
+  // owed ₹2,000 is two facts, and one ₹3,000 figure hides the payable entirely.
   let totalReceivable = 0;
   let totalPayable = 0;
-  // ...but the headcount is per PERSON, or somebody holding three floats would
-  // be counted three times over.
-  const outstandingPeople = new Set();
-  for (const k of khatas) {
-    if (k.balance > 0) { totalReceivable += k.balance; outstandingPeople.add(String(k.employee)); }
-    else if (k.balance < 0) { totalPayable += Math.abs(k.balance); outstandingPeople.add(String(k.employee)); }
+  let employeesOutstanding = 0;
+  for (const w of wallets) {
+    if (w.balance > 0) { totalReceivable += w.balance; employeesOutstanding += 1; }
+    else if (w.balance < 0) { totalPayable += Math.abs(w.balance); employeesOutstanding += 1; }
   }
-  const employeesOutstanding = outstandingPeople.size;
 
-  const pendingCount = await KhataEntry.countDocuments({ status: 'Pending' });
+  const [pendingCount, awaitingApprovalCount, activeKhatas] = await Promise.all([
+    KhataEntry.countDocuments({ status: 'Pending' }),
+    KhataEntry.countDocuments({ status: 'AwaitingApproval' }),
+    EmployeeKhata.countDocuments({ isActive: true }),
+  ]);
 
   res.json({
     totalReceivable: ledger.round2(totalReceivable),
     totalPayable: ledger.round2(totalPayable),
     net: ledger.round2(totalReceivable - totalPayable),
     employeesOutstanding,
-    activeKhatas: khatas.length,
-    peopleWithKhatas: new Set(khatas.map((k) => String(k.employee))).size,
+    activeKhatas,
+    peopleWithKhatas: wallets.length,
     pendingCount,
+    awaitingApprovalCount,
+    approvalRequired: await advanceApprovalRequired(),
     // Only the accounts this operator may actually pay from.
     accounts: await ledger.listOperableAccounts(req.user),
   });
@@ -423,74 +621,65 @@ const listMyAccounts = asyncHandler(async (req, res) => {
 });
 
 /**
- * Every employee khata, for the "who owes what" list.
+ * Every employee's wallet, for the "who is holding what" list.
+ *
+ * One row per PERSON, which is now simply what the data is: one wallet each.
+ * Each row carries their expense books alongside, so the list can expand into
+ * "and what have they spent it on?".
  * @route GET /api/khata/employees  (khata.manage)
- * @param {string} [req.query.q] - Name/email search.
+ * @param {string} [req.query.q] - Name/email/book search.
  * @param {string} [req.query.filter] - 'outstanding' | 'payable' | 'settled' | 'all'.
- * @returns {{count: number, khatas: Object[]}}
+ * @returns {{count: number, rows: Object[]}}
  */
 const listKhatas = asyncHandler(async (req, res) => {
   await ledger.ensureKhataIntegrity();
-  const query = {};
-  if (req.query.includeArchived !== 'true') query.isActive = true;
 
-  let khatas = await EmployeeKhata.find(query)
+  const wallets = await EmployeeWallet.find({})
     .populate('employee', USER_FIELDS)
-    .sort({ isDefault: -1, name: 1 })
     .lean();
 
-  // Drop khatas whose user was deleted, so the list never shows an orphan row.
-  khatas = khatas.filter((k) => k.employee);
+  // Drop wallets whose user was deleted, so the list never shows an orphan row.
+  const live = wallets.filter((w) => w.employee);
+  const ids = live.map((w) => w.employee._id);
 
-  const profiles = await profilesFor(khatas.map((k) => k.employee._id));
+  const [profiles, khatas] = await Promise.all([
+    profilesFor(ids),
+    EmployeeKhata.find({ employee: { $in: ids } }).sort({ isDefault: -1, name: 1 }).lean(),
+  ]);
 
-  // ONE ROW PER PERSON, not per khata. Somebody carrying a site float, a
-  // vehicle float and a salary advance is still one person to chase, and three
-  // separate rows for them would bury that. Each row carries the breakdown so
-  // the list can expand into "which book is it sitting on?".
-  const byEmployee = new Map();
+  const booksByEmployee = new Map();
   for (const k of khatas) {
-    const id = String(k.employee._id);
-    if (!byEmployee.has(id)) {
-      const profile = profiles.get(id);
-      byEmployee.set(id, {
-        employee: {
-          _id: k.employee._id,
-          name: `${k.employee.firstName} ${k.employee.lastName || ''}`.trim(),
-          email: k.employee.email,
-          photo: k.employee.photo || null,
-          employeeCode: profile?.employeeCode,
-          designation: profile?.designation,
-          department: profile?.department,
-        },
-        total: 0,
-        lastEntryAt: null,
-        khatas: [],
-      });
-    }
-    const row = byEmployee.get(id);
-    row.total = ledger.round2(row.total + (k.balance || 0));
-    // The person's staleness is their MOST RECENT movement on any book: someone
-    // settling one khata weekly is not stale because another sat untouched.
-    if (k.lastEntryAt && (!row.lastEntryAt || k.lastEntryAt > row.lastEntryAt)) {
-      row.lastEntryAt = k.lastEntryAt;
-    }
-    row.khatas.push({
-      _id: k._id,
-      name: k.name,
-      isDefault: k.isDefault,
-      balance: k.balance,
-      display: describeBalance(k.balance),
-      creditLimit: k.creditLimit,
-      lastEntryAt: k.lastEntryAt,
-      isActive: k.isActive,
-    });
+    const id = String(k.employee);
+    if (!booksByEmployee.has(id)) booksByEmployee.set(id, []);
+    booksByEmployee.get(id).push(publicKhata(k));
   }
 
-  let rows = [...byEmployee.values()];
+  let rows = live.map((w) => {
+    const id = String(w.employee._id);
+    const profile = profiles.get(id);
+    const books = booksByEmployee.get(id) || [];
+    return {
+      employee: {
+        _id: w.employee._id,
+        name: `${w.employee.firstName} ${w.employee.lastName || ''}`.trim(),
+        email: w.employee.email,
+        photo: w.employee.photo || null,
+        employeeCode: profile?.employeeCode,
+        designation: profile?.designation,
+        department: profile?.department,
+      },
+      // The wallet is the position; `total` keeps the old key so nothing that
+      // sorted or filtered on it has to change.
+      total: ledger.round2(w.balance || 0),
+      wallet: publicWallet(w),
+      display: describeBalance(w.balance),
+      creditLimit: ledger.round2(w.creditLimit || 0),
+      lastEntryAt: w.lastEntryAt || null,
+      khatas: books,
+      totalSpent: ledger.round2(books.reduce((a, b) => a + (b.spent || 0), 0)),
+    };
+  });
 
-  // Filtering and searching happen on the PERSON's combined position, so
-  // "owes us" means the person is net owing — not that one of their books is.
   const filter = req.query.filter || 'all';
   if (filter === 'outstanding') rows = rows.filter((r) => r.total > 0);
   else if (filter === 'payable') rows = rows.filter((r) => r.total < 0);
@@ -501,25 +690,19 @@ const listKhatas = asyncHandler(async (req, res) => {
     rows = rows.filter((r) => r.employee.name.toLowerCase().includes(q)
       || String(r.employee.email || '').toLowerCase().includes(q)
       || String(r.employee.employeeCode || '').toLowerCase().includes(q)
-      // Searching a book name is how you find "who is holding the Site A float".
+      // Searching a book name is how you find "who is spending on Site A".
       || r.khatas.some((k) => k.name.toLowerCase().includes(q)));
   }
 
   rows.sort((a, b) => b.total - a.total);
-  rows.forEach((r) => {
-    r.display = describeBalance(r.total);
-    // Both sides for this person, so a row can show "owes 5,000 / owed 2,000"
-    // rather than collapsing to a single misleading 3,000.
-    r.totals = ledger.splitTotals(r.khatas);
-  });
 
-  res.json({ count: rows.length, rows });
+  res.json({ count: rows.length, rows, totals: ledger.splitTotals(live) });
 });
 
 /**
- * One employee's khata with their full statement.
+ * One employee's wallet, their expense books, and their full statement.
  * @route GET /api/khata/employees/:employeeId  (khata.manage)
- * @returns {{khata: object, balance: object, entries: Object[]}}
+ * @returns {{wallet: object, khatas: Object[], entries: Object[]}}
  */
 const getKhata = asyncHandler(async (req, res) => {
   const { employeeId } = req.params;
@@ -528,17 +711,20 @@ const getKhata = asyncHandler(async (req, res) => {
   const employee = await User.findById(employeeId).select(USER_FIELDS);
   if (!employee) bad(res, 'Employee not found', 404);
 
-  // Opens their default on first view, so a person with no books yet still has
-  // somewhere for the first advance to land.
-  await ledger.getOrCreateDefaultKhata(employeeId, req.user);
+  // Opens the wallet and their first book on first view, so a person with
+  // nothing yet still has somewhere for the first advance to land.
+  const [wallet] = await Promise.all([
+    ledger.getOrCreateWallet(employeeId, req.user),
+    ledger.getOrCreateDefaultKhata(employeeId, req.user),
+  ]);
   const khatas = await ledger.listKhatasOf(employeeId, true);
 
   const profile = await EmployeeProfile.findOne({ user: employeeId })
     .select('employeeCode designation department').lean();
 
   const filter = { employee: employeeId };
-  // Narrow to a single book when one is named; otherwise show everything they
-  // hold, which is the view that answers "what is going on with this person?".
+  // Narrow to a single book when one is named; otherwise show everything,
+  // which is the view that answers "what is going on with this person?".
   if (isId(req.query.khata)) filter.khata = req.query.khata;
 
   const from = parseDate(req.query.from);
@@ -554,15 +740,13 @@ const getKhata = asyncHandler(async (req, res) => {
     .populate('cashAccount', 'name')
     .populate('khata', 'name')
     .populate('reviewedBy', 'firstName lastName')
+    .populate('execApprovedBy', 'firstName lastName role')
     .sort({ date: -1, createdAt: -1 })
     .limit(1000);
 
-  const totals = ledger.splitTotals(khatas);
-
   res.json({
+    wallet: publicWallet(wallet),
     khatas: khatas.map(publicKhata),
-    // Both sides in full — see splitTotals.
-    totals,
     employee: {
       _id: employee._id,
       name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
@@ -572,24 +756,25 @@ const getKhata = asyncHandler(async (req, res) => {
       designation: profile?.designation,
       department: profile?.department,
     },
-    total: totals.net,
-    balance: describeBalance(totals.net),
+    total: ledger.round2(wallet.balance || 0),
+    balance: describeBalance(wallet.balance),
+    // Summed over the WHOLE ledger, not the filtered slice, so narrowing to one
+    // book never makes the headline figures disagree with the wallet.
+    totals: summariseEntries(await KhataEntry.find({ employee: employeeId }).select('status direction type amount').lean()),
     count: entries.length,
     entries: entries.map(publicEntry),
   });
 });
 
 /**
- * Open a new khata for an employee.
+ * Open a new expense book for an employee.
  *
- * This is how a second (or fifth) book gets created — "Site A — materials",
- * "Vehicle & fuel". Any khata operator can open one, because deciding that a
- * float needs its own book is part of running the cash, not an admin act. What
- * they still cannot do is put money on it beyond their account limits.
+ * Any khata operator can open one, because deciding that spending needs its own
+ * heading is part of running the cash, not an admin act. Opening a book moves
+ * no money at all — it is a folder.
  * @route POST /api/khata/khatas  (khata.manage)
  * @param {string} req.body.employee - Whose book.
  * @param {string} req.body.name - What it is for.
- * @param {number} [req.body.creditLimit]
  * @param {string} [req.body.note]
  * @returns {{khata: object, message: string}} 201
  */
@@ -604,20 +789,17 @@ const createKhata = asyncHandler(async (req, res) => {
   const khata = await openKhata({
     employee,
     name: req.body.name,
-    creditLimit: req.body.creditLimit,
     note: req.body.note,
     actor: req.user,
     res,
   });
 
-  // Tell the employee a book was opened in their name — they can request
-  // against it, so they should not first meet it as a surprise entry.
   await notify({
     recipient: employee,
     type: 'general',
     audience: 'employee',
     title: 'New khata opened',
-    body: `A khata called "${khata.name}" was opened for you. You can request money against it from My Khata.`,
+    body: `A khata called "${khata.name}" was opened for you. You can record expenses against it from My Khata.`,
     link: '/employee/khata',
   });
 
@@ -625,13 +807,11 @@ const createKhata = asyncHandler(async (req, res) => {
 });
 
 /**
- * Open a khata on your own account.
+ * Open an expense book on your own account.
  *
- * An employee taking on a new job — a second site, a vehicle — knows they need
- * a separate book before finance does, and making them wait on an operator just
- * to name one is friction with no safety value: opening a book moves no money.
- * They can name it and use it; only an operator can put cash on it, set its
- * limit, or make it the default.
+ * The employee taking on a new job — a second site, a vehicle — knows they need
+ * a separate heading before finance does, and making them wait on an operator
+ * just to name one is friction with no safety value: a book holds no money.
  * @route POST /api/khata/me/khatas
  * @param {string} req.body.name - What the book is for.
  * @param {string} [req.body.note]
@@ -639,7 +819,7 @@ const createKhata = asyncHandler(async (req, res) => {
  */
 const createMyKhata = asyncHandler(async (req, res) => {
   // A soft cap. Opening a book is harmless, but a runaway loop or a bored
-  // tester should not be able to fill the outstanding list with hundreds.
+  // tester should not be able to fill the list with hundreds.
   const existing = await EmployeeKhata.countDocuments({ employee: req.user._id });
   if (existing >= 25) {
     bad(res, 'You already have 25 khatas. Close one you have finished with before opening another.');
@@ -648,29 +828,16 @@ const createMyKhata = asyncHandler(async (req, res) => {
   const khata = await openKhata({
     employee: req.user._id,
     name: req.body.name,
-    // Deliberately NOT taken from the request: a spending limit is the
-    // company's decision about how much cash this person may hold, and letting
-    // them set their own would make it meaningless. An operator sets it after.
-    creditLimit: 0,
     note: req.body.note,
     actor: req.user,
     res,
-  });
-
-  await notifyMany(await khataApproverIds(), {
-    type: 'general',
-    audience: 'admin',
-    title: 'Employee opened a khata',
-    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
-      + ` opened a khata called "${khata.name}". Set a limit on it if it needs one.`,
-    link: '/admin/khata',
   });
 
   res.status(201).json({ khata: publicKhata(khata), message: `"${khata.name}" opened.` });
 });
 
 /**
- * Employees available to open a khata for — the give-advance picker.
+ * Employees available to give an advance to — the give-advance picker.
  *
  * Exposed here rather than reusing /api/employees because a khata operator is
  * often not an HR admin and will not hold `employees.manage`. Deliberately thin:
@@ -684,21 +851,18 @@ const employeeOptions = asyncHandler(async (req, res) => {
     .sort({ firstName: 1 })
     .lean();
 
-  const profiles = await profilesFor(users.map((u) => u._id));
-  // A person's figure here is the sum across every book they hold, since the
-  // picker is answering "how exposed are we to this person already?".
-  const khatas = await EmployeeKhata.find({ employee: { $in: users.map((u) => u._id) } })
-    .select('employee balance').lean();
-  const balances = new Map();
-  for (const k of khatas) {
-    const id = String(k.employee);
-    balances.set(id, ledger.round2((balances.get(id) || 0) + (k.balance || 0)));
-  }
+  const ids = users.map((u) => u._id);
+  const [profiles, wallets] = await Promise.all([
+    profilesFor(ids),
+    EmployeeWallet.find({ employee: { $in: ids } }).select('employee balance creditLimit').lean(),
+  ]);
+  const walletBy = new Map(wallets.map((w) => [String(w.employee), w]));
 
   res.json({
     count: users.length,
     employees: users.map((u) => {
       const profile = profiles.get(String(u._id));
+      const wallet = walletBy.get(String(u._id));
       return {
         _id: u._id,
         name: `${u.firstName} ${u.lastName || ''}`.trim(),
@@ -708,7 +872,8 @@ const employeeOptions = asyncHandler(async (req, res) => {
         designation: profile?.designation,
         department: profile?.department,
         // So the picker can warn "already holds ₹4,000" before a second advance.
-        balance: balances.get(String(u._id)) || 0,
+        balance: ledger.round2(wallet?.balance || 0),
+        creditLimit: ledger.round2(wallet?.creditLimit || 0),
       };
     }),
   });
@@ -717,19 +882,22 @@ const employeeOptions = asyncHandler(async (req, res) => {
 // ============================ Operator: posting money ============================
 
 /**
- * Post a khata entry — give an advance, or record cash taken back.
+ * Post an entry on the company's behalf — give an advance, take cash back, or
+ * record a spend against one of the employee's books.
  *
- * Whether the money moves now or parks for approval is decided by the operator's
- * own limit on the chosen account (CashAccount.operators), never by anything the
- * client sends. An operator can therefore always ask, and never over-release.
+ * Whether the money moves now or parks for approval is decided by the
+ * operator's own limit on the chosen account (CashAccount.operators), never by
+ * anything the client sends. An operator can therefore always ask, and never
+ * over-release.
  * @route POST /api/khata/entries  (khata.manage)
- * @param {string} req.body.employee - Whose khata.
+ * @param {string} req.body.employee - Whose wallet.
  * @param {'to_employee'|'from_employee'} req.body.direction
  * @param {number} req.body.amount
+ * @param {string} [req.body.khata] - Required when `type` is 'expense'.
  * @param {string} req.body.cashAccount - Which company book the cash moves through.
- * @param {boolean} [req.body.affectsCompanyCash=true] - False for an employee's own spend.
+ * @param {boolean} [req.body.affectsCompanyCash=true] - False when no company cash moves.
  * @param {file} [req.file] - Optional receipt (multer field 'receipt').
- * @returns {{entry: object, khata: object, posted: boolean, message: string}} 201
+ * @returns {{entry: object, wallet: object, posted: boolean, message: string}} 201
  */
 const createEntry = asyncHandler(async (req, res) => {
   const { employee, direction } = req.body;
@@ -748,10 +916,26 @@ const createEntry = asyncHandler(async (req, res) => {
   // A reversal row is only ever written by the reverse endpoint, so that the
   // original it cancels is always updated in the same breath.
   if (type === 'reversal') bad(res, 'Use the reverse action to cancel an entry');
+  // Spending has to say what it was for. Everything else is wallet-level and a
+  // khata id sent alongside it would be silently dropped, so refuse it loudly
+  // rather than record something the operator did not mean.
+  if (ledger.needsKhata(type)) {
+    if (!isId(req.body.khata)) bad(res, 'Choose which khata this expense belongs to.');
+    // Spending only ever reduces what somebody is holding. A row typed as an
+    // expense but pointed the other way would ADD to their advance while
+    // charging the cost to a book — wrong in both directions at once, and
+    // silently so, since nothing else about it would look unusual.
+    if (direction !== 'from_employee') {
+      bad(res, 'An expense is money going out of the advance. Record money out to an employee as an advance instead.');
+    }
+  }
 
-  // An employee's own spend, or a payroll recovery, moves no company cash and so
-  // needs no account and no operator rights — it only shifts what is owed.
-  const affectsCompanyCash = String(req.body.affectsCompanyCash) !== 'false';
+  // An employee's own spend, an expense against an advance, or a payroll
+  // recovery moves no company cash and so needs no account and no operator
+  // rights — it only shifts what is owed.
+  const affectsCompanyCash = ledger.needsKhata(type)
+    ? false
+    : String(req.body.affectsCompanyCash) !== 'false';
 
   let autoApprove = true;
   let accountId;
@@ -764,11 +948,8 @@ const createEntry = asyncHandler(async (req, res) => {
 
   const paymentMode = PAYMENT_MODES.includes(req.body.paymentMode) ? req.body.paymentMode : 'Cash';
 
-  const { entry, khata, duplicate } = await ledger.postEntry({
+  const { entry, wallet, khata, duplicate } = await ledger.postEntry({
     employee,
-    // Which of this employee's books the money lands on. The ledger refuses a
-    // khata belonging to somebody else, or one that has been closed; omitting
-    // it falls back to their default.
     khata: isId(req.body.khata) ? req.body.khata : undefined,
     direction,
     type,
@@ -787,7 +968,8 @@ const createEntry = asyncHandler(async (req, res) => {
   if (duplicate) {
     return res.status(200).json({
       entry: publicEntry(entry),
-      khata: { _id: khata._id, name: khata.name, balance: khata.balance, display: describeBalance(khata.balance) },
+      wallet: publicWallet(wallet),
+      khata: khata ? publicKhata(khata) : null,
       posted: entry.status === 'Approved',
       message: 'Already recorded — this entry was submitted before.',
     });
@@ -796,16 +978,17 @@ const createEntry = asyncHandler(async (req, res) => {
   await attachReceipt(entry, req.file);
 
   if (autoApprove) {
-    // Tell the employee their own khata moved, in their own words.
+    // Tell the employee their own wallet moved, in their own words.
+    const inHand = Math.abs(wallet.balance).toLocaleString('en-IN');
     await notify({
       recipient: employee,
       type: 'general',
       audience: 'employee',
-      title: direction === 'to_employee' ? 'Cash advance received' : 'Cash return recorded',
+      title: direction === 'to_employee' ? 'Cash advance received' : 'Khata entry recorded',
       body: direction === 'to_employee'
-        ? `₹${amount.toLocaleString('en-IN')} was given to you on "${khata.name}". `
-          + `That khata now stands at ₹${Math.abs(khata.balance).toLocaleString('en-IN')}.`
-        : `₹${amount.toLocaleString('en-IN')} was recorded against your "${khata.name}" khata.`,
+        ? `₹${amount.toLocaleString('en-IN')} was added to your advance. You now have ₹${inHand} in hand.`
+        : `₹${amount.toLocaleString('en-IN')} was recorded${khata ? ` against "${khata.name}"` : ''}. `
+          + `You now have ₹${inHand} in hand.`,
       link: '/employee/khata',
     });
   } else {
@@ -820,7 +1003,8 @@ const createEntry = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     entry: publicEntry(entry),
-    khata: { _id: khata._id, name: khata.name, balance: khata.balance, display: describeBalance(khata.balance) },
+    wallet: publicWallet(wallet),
+    khata: khata ? publicKhata(khata) : null,
     posted: autoApprove,
     message: autoApprove
       ? 'Recorded — the money has moved.'
@@ -856,6 +1040,7 @@ const listEntries = asyncHandler(async (req, res) => {
     .populate('khata', 'name')
     .populate('cashAccount', 'name')
     .populate('reviewedBy', 'firstName lastName')
+    .populate('execApprovedBy', 'firstName lastName role')
     .sort({ date: -1, createdAt: -1 })
     .limit(limit);
 
@@ -863,7 +1048,11 @@ const listEntries = asyncHandler(async (req, res) => {
 });
 
 /**
- * Everything waiting on a decision — the khata approvals queue.
+ * Everything waiting on the ACCOUNTS team — sanctioned advances to pay out,
+ * expenses and returns to confirm.
+ *
+ * Deliberately excludes anything still with an executive: an operator cannot
+ * act on it, and a queue full of rows you must not touch is worse than no queue.
  * @route GET /api/khata/pending  (khata.manage)
  * @returns {{count: number, entries: Object[]}}
  */
@@ -872,9 +1061,102 @@ const listPending = asyncHandler(async (req, res) => {
     .populate('employee', USER_FIELDS)
     .populate('khata', 'name')
     .populate('cashAccount', 'name')
+    .populate('execApprovedBy', 'firstName lastName role')
     .sort({ createdAt: 1 });
   res.json({ count: entries.length, entries: entries.map(publicEntry) });
 });
+
+// ============================ Executive sanction ============================
+
+/**
+ * Advance requests waiting on a CEO/MD decision.
+ *
+ * Its own endpoint rather than a filter on /pending because it has its own
+ * audience: an executive holds no khata capability and has no business in the
+ * operators' queue, and vice versa.
+ * @route GET /api/khata/advance-approvals  (SuperAdmin/CEO/MD)
+ * @returns {{count: number, entries: Object[], approvalRequired: boolean}}
+ */
+const listAdvanceApprovals = asyncHandler(async (req, res) => {
+  const entries = await KhataEntry.find({ status: 'AwaitingApproval' })
+    .populate('employee', USER_FIELDS)
+    .populate('khata', 'name')
+    .sort({ createdAt: 1 });
+
+  // The requester's current position, so the decision is not made blind — "they
+  // already hold ₹8,000 and want ₹5,000 more" is the whole question.
+  const wallets = await EmployeeWallet.find({ employee: { $in: entries.map((e) => e.employee?._id || e.employee) } })
+    .select('employee balance creditLimit').lean();
+  const walletBy = new Map(wallets.map((w) => [String(w.employee), w]));
+
+  res.json({
+    count: entries.length,
+    approvalRequired: await advanceApprovalRequired(),
+    entries: entries.map((e) => {
+      const w = walletBy.get(String(e.employee?._id || e.employee));
+      return {
+        ...publicEntry(e),
+        employeeBalance: ledger.round2(w?.balance || 0),
+        employeeCreditLimit: ledger.round2(w?.creditLimit || 0),
+      };
+    }),
+  });
+});
+
+/**
+ * Sanction or decline an advance request.
+ *
+ * Sanctioning moves NO money — it releases the request into the accounts
+ * team's queue, where somebody decides which account it is paid from. That
+ * separation is the point: the person who says "yes, they should have it" is
+ * not the person holding the cash box.
+ * @route PATCH /api/khata/entries/:id/exec-decision  (SuperAdmin/CEO/MD)
+ * @param {boolean} req.body.approve
+ * @param {string} [req.body.note] - Shown to the employee either way.
+ * @returns {{entry: object, message: string}}
+ */
+const decideAdvanceApproval = asyncHandler(async (req, res) => {
+  const entry = await KhataEntry.findById(req.params.id).populate('employee', USER_FIELDS);
+  if (!entry) bad(res, 'Request not found', 404);
+  if (entry.direction !== 'to_employee') bad(res, 'Only an advance request goes through this approval.');
+
+  const approve = req.body.approve === true || req.body.approve === 'true';
+  const note = req.body.note ? String(req.body.note).trim() : '';
+  if (!approve && !note) bad(res, 'Give a reason for declining — the employee sees it.');
+
+  const saved = await ledger.decideExecApproval(entry, req.user, approve, note);
+
+  const amount = saved.amount.toLocaleString('en-IN');
+  await notify({
+    recipient: saved.employee?._id || saved.employee,
+    type: 'general',
+    audience: 'employee',
+    title: approve ? 'Advance approved' : 'Advance request declined',
+    body: approve
+      ? `Your ₹${amount} advance was approved. The accounts team will pay it out.`
+      : `Your ₹${amount} advance request was declined: ${note}`,
+    link: '/employee/khata',
+  });
+
+  if (approve) {
+    await notifyMany(await khataApproverIds(), {
+      type: 'general',
+      audience: 'admin',
+      title: 'Approved advance ready to pay',
+      body: `₹${amount} for ${saved.employee?.firstName || 'an employee'} was approved by ${req.user.role}. Choose an account and pay it out.`,
+      link: '/admin/khata',
+    });
+  }
+
+  res.json({
+    entry: publicEntry(saved),
+    message: approve
+      ? 'Approved — it is now with the accounts team to pay out.'
+      : 'Declined. Nothing has moved.',
+  });
+});
+
+// ============================ Operator: deciding parked entries ============================
 
 /**
  * Approve a parked entry — the cash moves now.
@@ -886,11 +1168,14 @@ const listPending = asyncHandler(async (req, res) => {
  * @route PATCH /api/khata/entries/:id/approve  (khata.manage)
  * @param {string} [req.body.cashAccount] - Which book to pay from.
  * @param {string} [req.body.note]
- * @returns {{entry: object, khata: object, message: string}}
+ * @returns {{entry: object, wallet: object, message: string}}
  */
 const approveEntry = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'Entry not found', 404);
+  if (entry.status === 'AwaitingApproval') {
+    bad(res, 'This advance still needs a CEO/MD approval before it can be paid.');
+  }
   if (entry.status !== 'Pending') bad(res, `This entry is already ${entry.status.toLowerCase()}.`);
 
   const accountId = req.body.cashAccount || entry.cashAccount;
@@ -903,7 +1188,7 @@ const approveEntry = asyncHandler(async (req, res) => {
     bad(res, 'You do not have permission to approve khata entries', 403);
   }
 
-  const { entry: saved, khata } = await ledger.approveEntry(entry, req.user, {
+  const { entry: saved, wallet, khata } = await ledger.approveEntry(entry, req.user, {
     cashAccount: accountId,
     note: req.body.note,
   });
@@ -912,14 +1197,18 @@ const approveEntry = asyncHandler(async (req, res) => {
     recipient: saved.employee,
     type: 'general',
     audience: 'employee',
-    title: 'Khata entry approved',
-    body: `₹${saved.amount.toLocaleString('en-IN')} has been posted to your khata (${saved.code || 'entry'}).`,
+    title: saved.type === 'expense' ? 'Expense confirmed' : 'Khata entry approved',
+    body: saved.type === 'expense'
+      ? `₹${saved.amount.toLocaleString('en-IN')} on "${khata?.name || 'your khata'}" was confirmed. `
+        + `You have ₹${Math.abs(wallet.balance).toLocaleString('en-IN')} in hand.`
+      : `₹${saved.amount.toLocaleString('en-IN')} has been posted to your khata (${saved.code || 'entry'}).`,
     link: '/employee/khata',
   });
 
   res.json({
     entry: publicEntry(saved),
-    khata: { _id: khata._id, name: khata.name, balance: khata.balance, display: describeBalance(khata.balance) },
+    wallet: publicWallet(wallet),
+    khata: khata ? publicKhata(khata) : null,
     message: 'Approved — the money has moved.',
   });
 });
@@ -933,6 +1222,11 @@ const approveEntry = asyncHandler(async (req, res) => {
 const rejectEntry = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'Entry not found', 404);
+  // An advance still with an executive is theirs to decline, not the operators'
+  // — otherwise the accounts team could quietly overrule a pending sanction.
+  if (entry.status === 'AwaitingApproval') {
+    bad(res, 'This request is with the CEO/MD. They decide it.');
+  }
 
   const saved = await ledger.rejectEntry(entry, req.user, req.body.note);
 
@@ -942,8 +1236,8 @@ const rejectEntry = asyncHandler(async (req, res) => {
     audience: 'employee',
     title: 'Khata request declined',
     body: req.body.note
-      ? `Your ₹${saved.amount.toLocaleString('en-IN')} request was declined: ${req.body.note}`
-      : `Your ₹${saved.amount.toLocaleString('en-IN')} request was declined.`,
+      ? `Your ₹${saved.amount.toLocaleString('en-IN')} entry was declined: ${req.body.note}`
+      : `Your ₹${saved.amount.toLocaleString('en-IN')} entry was declined.`,
     link: '/employee/khata',
   });
 
@@ -957,7 +1251,7 @@ const rejectEntry = asyncHandler(async (req, res) => {
  * unwinding money that has already moved is a heavier act than paying it out.
  * @route POST /api/khata/entries/:id/reverse  (khata.manage)
  * @param {string} req.body.reason - Required; stored permanently on both rows.
- * @returns {{original: object, reversal: object, khata: object, message: string}}
+ * @returns {{original: object, reversal: object, wallet: object, message: string}}
  */
 const reverseEntry = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id);
@@ -972,7 +1266,7 @@ const reverseEntry = asyncHandler(async (req, res) => {
     }
   }
 
-  const { original, reversal, khata } = await ledger.reverseEntry(entry, req.user, req.body.reason);
+  const { original, reversal, wallet, khata } = await ledger.reverseEntry(entry, req.user, req.body.reason);
 
   await notify({
     recipient: original.employee,
@@ -986,20 +1280,68 @@ const reverseEntry = asyncHandler(async (req, res) => {
   res.json({
     original: publicEntry(original),
     reversal: publicEntry(reversal),
-    khata: { _id: khata._id, name: khata.name, balance: khata.balance, display: describeBalance(khata.balance) },
+    wallet: publicWallet(wallet),
+    khata: khata ? publicKhata(khata) : null,
     message: 'Reversed. Both entries stay on the record.',
   });
 });
 
-// ============================ Khata settings ============================
+// ============================ Wallet & khata settings ============================
 
 /**
- * Set an employee's khata limit, opening balance, note, or archive it.
+ * Set an employee's advance limit, opening balance or note.
+ *
+ * The limit lives on the WALLET rather than on each book, because the pot is
+ * the person's: a per-book limit could be walked around simply by opening
+ * another book.
  *
  * The opening balance is SuperAdmin-only: it is the one number that changes the
- * balance without any ledger row behind it, so it must not be reachable by an
+ * balance with no ledger row behind it, so it must not be reachable by an
  * ordinary operator.
- * @route PUT /api/khata/employees/:employeeId  (khata.manage)
+ * @route PUT /api/khata/wallets/:employeeId  (khata.manage)
+ * @param {number} [req.body.creditLimit]
+ * @param {number} [req.body.openingBalance] - SuperAdmin only.
+ * @param {string} [req.body.note]
+ * @returns {{wallet: object, message: string}}
+ */
+const updateWalletSettings = asyncHandler(async (req, res) => {
+  const { employeeId } = req.params;
+  if (!isId(employeeId)) bad(res, 'Invalid employee');
+
+  const wallet = await ledger.getOrCreateWallet(employeeId, req.user);
+
+  if (req.body.creditLimit !== undefined) {
+    const limit = toNum(req.body.creditLimit);
+    if (!Number.isFinite(limit) || limit < 0) bad(res, 'The advance limit must be zero or more');
+    wallet.creditLimit = ledger.round2(limit);
+  }
+  if (req.body.note !== undefined) wallet.note = String(req.body.note).slice(0, 300);
+
+  let recompute = false;
+  if (req.body.openingBalance !== undefined) {
+    if (req.user.role !== 'SuperAdmin') {
+      bad(res, 'Only a Super Admin can set an opening balance — it moves the balance with no ledger entry behind it.', 403);
+    }
+    const opening = toNum(req.body.openingBalance);
+    if (!Number.isFinite(opening)) bad(res, 'Enter a valid opening balance');
+    wallet.openingBalance = ledger.round2(opening);
+    recompute = true;
+  }
+
+  await wallet.save();
+  if (recompute) await ledger.recomputeWalletBalance(employeeId);
+
+  const fresh = await EmployeeWallet.findOne({ employee: employeeId });
+  res.json({ wallet: publicWallet(fresh), display: describeBalance(fresh.balance), message: 'Saved' });
+});
+
+/**
+ * Rename, re-note, re-default or close one expense book.
+ *
+ * A book carrying spend CAN be closed, unlike the old balance-carrying khata:
+ * `spent` is history, not an outstanding amount, and the money itself lives on
+ * the wallet where closing a folder cannot hide it.
+ * @route PUT /api/khata/khatas/:khataId  (khata.manage)
  * @returns {{khata: object, message: string}}
  */
 const updateKhataSettings = asyncHandler(async (req, res) => {
@@ -1015,24 +1357,12 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
     if (name.length > 80) bad(res, 'That name is too long (80 characters max)');
     khata.name = name;
   }
-  if (req.body.creditLimit !== undefined) {
-    const limit = toNum(req.body.creditLimit);
-    if (!Number.isFinite(limit) || limit < 0) bad(res, 'The khata limit must be zero or more');
-    khata.creditLimit = ledger.round2(limit);
-  }
   if (req.body.note !== undefined) khata.note = String(req.body.note).slice(0, 300);
 
   if (req.body.isActive !== undefined) {
     const nextActive = req.body.isActive === true || req.body.isActive === 'true';
-    // A book still carrying money cannot be closed: closing it would hide a
-    // live balance from the outstanding list and quietly write off whatever is
-    // owed. Settle it first, then close it.
-    if (!nextActive && khata.balance !== 0) {
-      bad(res, `"${khata.name}" still has a balance of ₹${Math.abs(khata.balance).toLocaleString('en-IN')}. `
-        + 'Settle it before closing the khata.');
-    }
-    // Likewise the fallback book has to stay open, or self-service has nowhere
-    // to put a request from someone with no other khata.
+    // The fallback book has to stay open, or self-service has nowhere to file
+    // an expense from somebody with no other book.
     if (!nextActive && khata.isDefault) {
       bad(res, 'This is the default khata and cannot be closed. Make another one the default first.');
     }
@@ -1049,53 +1379,34 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
     khata.isDefault = true;
   }
 
-  let recompute = false;
-  if (req.body.openingBalance !== undefined) {
-    if (req.user.role !== 'SuperAdmin') {
-      bad(res, 'Only a Super Admin can set an opening balance — it moves the balance with no ledger entry behind it.', 403);
-    }
-    const opening = toNum(req.body.openingBalance);
-    if (!Number.isFinite(opening)) bad(res, 'Enter a valid opening balance');
-    khata.openingBalance = ledger.round2(opening);
-    recompute = true;
-  }
-
   await khata.save();
-  if (recompute) await ledger.recomputeKhataBalance(khata._id);
-
-  const fresh = await EmployeeKhata.findById(khata._id);
-  res.json({
-    khata: {
-      _id: fresh._id,
-      name: fresh.name,
-      isDefault: fresh.isDefault,
-      balance: fresh.balance,
-      openingBalance: fresh.openingBalance,
-      creditLimit: fresh.creditLimit,
-      isActive: fresh.isActive,
-      note: fresh.note,
-      display: describeBalance(fresh.balance),
-    },
-    display: describeBalance(fresh.balance),
-    message: 'Saved',
-  });
+  res.json({ khata: publicKhata(khata), message: 'Saved' });
 });
 
 /**
- * Rebuild an employee's balance from their ledger.
+ * Rebuild an employee's wallet and books from their ledger.
  *
- * The balance is already recomputed after every change, so this is a repair
- * tool rather than part of any normal flow — for use after a direct database
- * edit or a restored backup.
- * @route POST /api/khata/employees/:employeeId/recompute  (SuperAdmin)
+ * Balances are already recomputed after every change, so this is a repair tool
+ * rather than part of any normal flow — for use after a direct database edit or
+ * a restored backup.
+ * @route POST /api/khata/wallets/:employeeId/recompute  (SuperAdmin)
  * @returns {{balance: number, message: string}}
  */
-const recomputeKhata = asyncHandler(async (req, res) => {
-  if (!isId(req.params.khataId)) bad(res, 'Invalid khata');
-  const khata = await EmployeeKhata.findById(req.params.khataId);
-  if (!khata) bad(res, 'Khata not found', 404);
-  const balance = await ledger.recomputeKhataBalance(khata._id);
-  res.json({ balance, display: describeBalance(balance), message: `"${khata.name}" rebuilt from its ledger` });
+const recomputeWallet = asyncHandler(async (req, res) => {
+  const { employeeId } = req.params;
+  if (!isId(employeeId)) bad(res, 'Invalid employee');
+
+  // Rebuild every book first, then the pot: the pot is what people read off the
+  // screen, so it should be the figure computed against a settled set of books.
+  const khatas = await EmployeeKhata.find({ employee: employeeId }).select('_id');
+  for (const k of khatas) await ledger.recomputeKhataSpent(k._id);
+  const balance = await ledger.recomputeWalletBalance(employeeId);
+
+  res.json({
+    balance,
+    display: describeBalance(balance),
+    message: `Rebuilt from the ledger — ${khatas.length} khata(s) and the wallet.`,
+  });
 });
 
 // ============================ Account operators ============================
@@ -1184,12 +1495,12 @@ const setOperators = asyncHandler(async (req, res) => {
 // ============================ Reports ============================
 
 /**
- * Outstanding balances, oldest-first, with an ageing band per employee.
+ * Who is holding company cash, oldest-first, with an ageing band each.
  *
  * The question this answers is not "how much is out?" but "who has been sitting
  * on it, and for how long?" — which is what actually drives a collection chase.
- * Ageing is measured from the last movement on the khata: somebody settling
- * weekly is not stale even if their balance is large.
+ * Ageing is measured from the last movement on the wallet: somebody settling
+ * weekly is not stale even if their advance is large.
  * @route GET /api/khata/reports/outstanding  (khata.manage)
  * @param {string} [req.query.minAmount] - Hide balances below this.
  * @returns {{count: number, total: number, buckets: object, rows: Object[]}}
@@ -1197,42 +1508,52 @@ const setOperators = asyncHandler(async (req, res) => {
 const outstandingReport = asyncHandler(async (req, res) => {
   const minAmount = Number(req.query.minAmount) || 0;
 
-  const khatas = await EmployeeKhata.find({ isActive: true, balance: { $gt: minAmount } })
+  const wallets = await EmployeeWallet.find({ balance: { $gt: minAmount } })
     .populate('employee', USER_FIELDS)
     .sort({ lastEntryAt: 1 })
     .lean();
 
-  const rows = khatas.filter((k) => k.employee);
-  const profiles = await profilesFor(rows.map((k) => k.employee._id));
+  const live = wallets.filter((w) => w.employee);
+  const [profiles, khatas] = await Promise.all([
+    profilesFor(live.map((w) => w.employee._id)),
+    EmployeeKhata.find({ employee: { $in: live.map((w) => w.employee._id) }, isActive: true })
+      .select('employee name spent').lean(),
+  ]);
+  const booksBy = new Map();
+  for (const k of khatas) {
+    const id = String(k.employee);
+    if (!booksBy.has(id)) booksBy.set(id, []);
+    booksBy.get(id).push({ _id: k._id, name: k.name, spent: ledger.round2(k.spent || 0) });
+  }
 
   const now = Date.now();
   const DAY = 24 * 60 * 60 * 1000;
   const buckets = { current: 0, days30: 0, days60: 0, days90plus: 0 };
 
-  const out = rows.map((k) => {
-    // No movement at all means the opening balance has never been touched, which
-    // is the stalest case there is — treat it as the oldest band, not the newest.
-    const days = k.lastEntryAt ? Math.floor((now - new Date(k.lastEntryAt).getTime()) / DAY) : 9999;
+  const out = live.map((w) => {
+    // No movement at all means the opening balance has never been touched,
+    // which is the stalest case there is — the oldest band, not the newest.
+    const days = w.lastEntryAt ? Math.floor((now - new Date(w.lastEntryAt).getTime()) / DAY) : 9999;
     const band = days <= 30 ? 'current' : days <= 60 ? 'days30' : days <= 90 ? 'days60' : 'days90plus';
-    buckets[band] = ledger.round2(buckets[band] + k.balance);
+    buckets[band] = ledger.round2(buckets[band] + w.balance);
 
-    const profile = profiles.get(String(k.employee._id));
+    const profile = profiles.get(String(w.employee._id));
     return {
       employee: {
-        _id: k.employee._id,
-        name: `${k.employee.firstName} ${k.employee.lastName || ''}`.trim(),
-        email: k.employee.email,
+        _id: w.employee._id,
+        name: `${w.employee.firstName} ${w.employee.lastName || ''}`.trim(),
+        email: w.employee.email,
         employeeCode: profile?.employeeCode,
         designation: profile?.designation,
         department: profile?.department,
       },
-      // One row per BOOK here, unlike the people list — a collection chase is
-      // per float ("the Site A money is 90 days old"), not per person.
-      khata: { _id: k._id, name: k.name },
-      balance: k.balance,
-      creditLimit: k.creditLimit,
-      lastEntryAt: k.lastEntryAt,
-      daysSinceLastEntry: k.lastEntryAt ? days : null,
+      balance: ledger.round2(w.balance),
+      creditLimit: ledger.round2(w.creditLimit || 0),
+      // What they have been spending it on, so the chase can start with a
+      // question rather than an accusation.
+      khatas: booksBy.get(String(w.employee._id)) || [],
+      lastEntryAt: w.lastEntryAt,
+      daysSinceLastEntry: w.lastEntryAt ? days : null,
       ageing: band,
     };
   });
@@ -1248,9 +1569,10 @@ const outstandingReport = asyncHandler(async (req, res) => {
 /**
  * Nudge employees who are holding company cash.
  *
- * Sends one notification per outstanding employee, worded from their side.
- * Deliberately a manual action rather than a cron: a reminder is a relationship
- * event, and finance should choose when to send it, not have it fire nightly.
+ * One notification per person — the wallet is per person, so there is exactly
+ * one figure to quote. Deliberately a manual action rather than a cron: a
+ * reminder is a relationship event, and finance should choose when to send it
+ * rather than have it fire nightly.
  * @route POST /api/khata/reports/remind  (khata.manage)
  * @param {string[]} [req.body.employees] - Specific people; omit for everyone outstanding.
  * @param {number} [req.body.minAmount=1] - Skip trivial balances.
@@ -1258,47 +1580,43 @@ const outstandingReport = asyncHandler(async (req, res) => {
  */
 const sendSettleReminders = asyncHandler(async (req, res) => {
   const minAmount = Number(req.body.minAmount) > 0 ? Number(req.body.minAmount) : 1;
-  const filter = { isActive: true, balance: { $gte: minAmount } };
+  const filter = { balance: { $gte: minAmount } };
   if (Array.isArray(req.body.employees) && req.body.employees.length) {
     filter.employee = { $in: req.body.employees.filter(isId) };
   }
 
-  const khatas = await EmployeeKhata.find(filter).select('employee balance name').lean();
-  if (!khatas.length) {
+  const wallets = await EmployeeWallet.find(filter).select('employee balance').lean();
+  if (!wallets.length) {
     return res.json({ sent: 0, message: 'Nobody is holding company cash right now.' });
   }
 
-  // One notify per person, because each carries their own figure.
-  // Someone holding three floats gets one message per float rather than a
-  // single lump sum, because "settle ₹18,000" is not actionable while
-  // "settle ₹4,000 on Site A" is.
-  await Promise.all(khatas.map((k) => notify({
-    recipient: k.employee,
+  await Promise.all(wallets.map((w) => notify({
+    recipient: w.employee,
     type: 'general',
     audience: 'employee',
-    title: 'Please settle your khata',
-    body: `You are holding ₹${k.balance.toLocaleString('en-IN')} of company cash on "${k.name}". `
-      + 'Settle it, or record what you have already returned.',
+    title: 'Please account for your advance',
+    body: `You are holding ₹${w.balance.toLocaleString('en-IN')} of company cash. `
+      + 'Record what you have spent it on, or return what is left.',
     link: '/employee/khata',
   })));
 
-  const people = new Set(khatas.map((k) => String(k.employee))).size;
   res.json({
-    sent: khatas.length,
-    people,
-    message: `Reminded ${people} ${people === 1 ? 'person' : 'people'} across ${khatas.length} khata(s).`,
+    sent: wallets.length,
+    people: wallets.length,
+    message: `Reminded ${wallets.length} ${wallets.length === 1 ? 'person' : 'people'}.`,
   });
 });
 
 /**
- * Export the khata to .xlsx — one sheet of balances, one of every entry.
+ * Export to .xlsx — wallets, expense books, and every ledger row.
  *
- * Two sheets rather than one because they answer different questions: the
- * balances sheet is what a manager reviews, the ledger sheet is what an auditor
- * reconciles against the cashbook. Every row carries its KHT code and, where
- * one exists, the cash account it moved through, so a line can be traced back
- * to the record months later.
- * @route GET /api/khata/reports/export  (khata.manage)
+ * Three sheets because they answer three questions: the wallets sheet is what a
+ * manager reviews ("who is holding what"), the khatas sheet is what a budget
+ * holder reads ("what has each job cost"), and the ledger sheet is what an
+ * auditor reconciles against the cashbook. Every ledger row carries its KHT
+ * code and, where one exists, the cash account it moved through, so a line can
+ * be traced back to the record months later.
+ * @route GET /api/khata/reports/export  (khata.manage + khataExportAccess)
  * @param {string} [req.query.employee] [req.query.from] [req.query.to] [req.query.status]
  * @returns {binary} An .xlsx stream.
  */
@@ -1314,16 +1632,18 @@ const exportExcel = asyncHandler(async (req, res) => {
     if (to) { to.setHours(23, 59, 59, 999); filter.date.$lte = to; }
   }
 
-  const [entries, khatas] = await Promise.all([
+  const [entries, wallets, khatas] = await Promise.all([
     KhataEntry.find(filter)
       .populate('employee', USER_FIELDS)
       .populate('khata', 'name')
       .populate('cashAccount', 'name')
       .populate('createdBy', USER_FIELDS)
       .populate('reviewedBy', USER_FIELDS)
+      .populate('execApprovedBy', USER_FIELDS)
       .sort({ date: 1, createdAt: 1 })
       .lean(),
-    EmployeeKhata.find({ isActive: true }).populate('employee', USER_FIELDS).sort({ balance: -1 }).lean(),
+    EmployeeWallet.find({}).populate('employee', USER_FIELDS).sort({ balance: -1 }).lean(),
+    EmployeeKhata.find({}).populate('employee', USER_FIELDS).sort({ spent: -1 }).lean(),
   ]);
 
   const MONEY = '#,##0.00';
@@ -1347,34 +1667,55 @@ const exportExcel = asyncHandler(async (req, res) => {
     ws.views = [{ state: 'frozen', ySplit: 1 }];
   };
 
-  // ---- Sheet 1: balances ----
-  const bs = wb.addWorksheet('Balances');
+  // ---- Sheet 1: wallets ----
+  const bs = wb.addWorksheet('Wallets');
   bs.columns = [
     { header: 'Employee', key: 'employee', width: 26 },
-    { header: 'Khata', key: 'khata', width: 24 },
     { header: 'Email', key: 'email', width: 26 },
     { header: 'You Will Get', key: 'get', width: 14 },
     { header: 'You Will Give', key: 'give', width: 14 },
-    { header: 'Khata Limit', key: 'limit', width: 14 },
+    { header: 'Advance Limit', key: 'limit', width: 14 },
     { header: 'Last Entry', key: 'last', width: 14 },
   ];
   styleHead(bs);
-  for (const k of khatas.filter((x) => x.employee)) {
+  for (const w of wallets.filter((x) => x.employee)) {
     const row = bs.addRow({
-      employee: name(k.employee),
-      khata: k.name,
-      email: k.employee.email || '',
+      employee: name(w.employee),
+      email: w.employee.email || '',
       // Split into two columns rather than one signed number, so the sheet reads
       // the same way the screens do and needs no sign convention explained.
-      get: k.balance > 0 ? k.balance : null,
-      give: k.balance < 0 ? Math.abs(k.balance) : null,
-      limit: k.creditLimit || null,
-      last: day(k.lastEntryAt),
+      get: w.balance > 0 ? w.balance : null,
+      give: w.balance < 0 ? Math.abs(w.balance) : null,
+      limit: w.creditLimit || null,
+      last: day(w.lastEntryAt),
     });
     ['get', 'give', 'limit'].forEach((c) => { row.getCell(c).numFmt = MONEY; });
   }
 
-  // ---- Sheet 2: the ledger ----
+  // ---- Sheet 2: expense books ----
+  const ks = wb.addWorksheet('Khatas');
+  ks.columns = [
+    { header: 'Employee', key: 'employee', width: 26 },
+    { header: 'Khata', key: 'khata', width: 28 },
+    { header: 'Spent', key: 'spent', width: 14 },
+    { header: 'Entries', key: 'entries', width: 10 },
+    { header: 'Last Entry', key: 'last', width: 14 },
+    { header: 'Status', key: 'status', width: 10 },
+  ];
+  styleHead(ks);
+  for (const k of khatas.filter((x) => x.employee)) {
+    const row = ks.addRow({
+      employee: name(k.employee),
+      khata: k.name,
+      spent: k.spent || 0,
+      entries: k.entryCount || 0,
+      last: day(k.lastEntryAt),
+      status: k.isActive ? 'Open' : 'Closed',
+    });
+    row.getCell('spent').numFmt = MONEY;
+  }
+
+  // ---- Sheet 3: the ledger ----
   const ls = wb.addWorksheet('Ledger');
   ls.columns = [
     { header: 'Code', key: 'code', width: 18 },
@@ -1384,15 +1725,16 @@ const exportExcel = asyncHandler(async (req, res) => {
     { header: 'Reason', key: 'type', width: 16 },
     { header: 'Purpose', key: 'purpose', width: 34 },
     { header: 'Given To Employee', key: 'given', width: 18 },
-    { header: 'Returned By Employee', key: 'returned', width: 20 },
-    { header: 'Balance After', key: 'balanceAfter', width: 14 },
+    { header: 'Spent / Returned', key: 'returned', width: 18 },
+    { header: 'In Hand After', key: 'balanceAfter', width: 14 },
     { header: 'Cash Account', key: 'account', width: 18 },
     { header: 'Moves Company Cash', key: 'movesCash', width: 18 },
     { header: 'Mode', key: 'mode', width: 12 },
     { header: 'Reference', key: 'reference', width: 16 },
-    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Status', key: 'status', width: 16 },
     { header: 'Recorded By', key: 'createdBy', width: 20 },
-    { header: 'Approved By', key: 'reviewedBy', width: 20 },
+    { header: 'Approved By (CEO/MD)', key: 'execBy', width: 20 },
+    { header: 'Posted By', key: 'reviewedBy', width: 20 },
   ];
   styleHead(ls);
   for (const e of entries) {
@@ -1412,6 +1754,7 @@ const exportExcel = asyncHandler(async (req, res) => {
       reference: e.referenceNo || '',
       status: e.status,
       createdBy: name(e.createdBy),
+      execBy: name(e.execApprovedBy),
       reviewedBy: name(e.reviewedBy),
     });
     ['given', 'returned', 'balanceAfter'].forEach((c) => { row.getCell(c).numFmt = MONEY; });
@@ -1469,13 +1812,15 @@ const getReceipt = asyncHandler(async (req, res) => {
 
 module.exports = {
   // employee self-service
-  getMyKhata, requestAdvance, declareSettlement,
+  getMyKhata, requestAdvance, recordMyExpense, declareSettlement,
   // operator lists
   overview, listMyAccounts, listKhatas, getKhata, employeeOptions, listEntries, listPending,
+  // executive sanction
+  listAdvanceApprovals, decideAdvanceApproval,
   // money movement
   createEntry, approveEntry, rejectEntry, reverseEntry,
   // settings
-  createKhata, createMyKhata, updateKhataSettings, recomputeKhata,
+  createKhata, createMyKhata, updateKhataSettings, updateWalletSettings, recomputeWallet,
   // reports
   outstandingReport, sendSettleReminders, exportExcel,
   // account operators

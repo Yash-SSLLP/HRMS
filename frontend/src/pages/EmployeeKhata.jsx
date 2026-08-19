@@ -1,20 +1,24 @@
 /**
- * EmployeeKhata — "My Khata", the employee's own cash accounts with the company.
+ * EmployeeKhata — "My Khata": one advance wallet, and the books you file
+ * spending under.
  *
- * An employee can hold several named books — a site float, a vehicle float, a
- * salary advance — so the page answers two questions at once: the combined
- * position ("am I square with the company?") and the per-book breakdown
- * ("which float is the money sitting on?"). Every request and every settlement
- * names a specific book, because "I'm returning ₹2,000" is meaningless when
- * three floats are open.
+ * THE SHAPE OF THE PAGE follows the shape of the money. At the top is the
+ * WALLET — the single pot the company pays advances into, and the one number
+ * that answers "how much of theirs am I still carrying?". Below it are the
+ * employee's KHATAS: expense books ("Site A — materials", "Vehicle & fuel")
+ * that say what the money went on. Every book spends out of the same wallet, so
+ * the remaining figure is shown against each one rather than a per-book balance
+ * — because there isn't one, and pretending otherwise was the flaw in the
+ * design this replaced.
  *
- * Reads GET /khata/me and offers the two things an employee can start:
- *   - request a cash advance   → POST /khata/me/request
- *   - declare cash handed back → POST /khata/me/settle  (optional receipt)
+ * Reads GET /khata/me and offers the three things an employee can start:
+ *   - ask for an advance      → POST /khata/me/request   (may need CEO/MD sign-off)
+ *   - record what they spent  → POST /khata/me/expense   (names a book, optional receipt)
+ *   - return unspent cash     → POST /khata/me/settle    (optional receipt)
  *
- * Both park as Pending: an employee never releases company money to themselves,
- * and their balance only drops once the company confirms it got the cash back.
- * The wording deliberately avoids debit/credit — see the backend's describeBalance.
+ * All three park: an employee never releases company money to themselves, and
+ * their wallet only moves once the company confirms. The wording deliberately
+ * avoids debit/credit — see the backend's describeWalletForEmployee.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -27,28 +31,38 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-di
 const today = () => new Date().toISOString().slice(0, 10);
 
 const STATUS_STYLES = {
+  AwaitingApproval: 'bg-violet-100 text-violet-800',
   Pending: 'bg-amber-100 text-amber-800',
   Approved: 'bg-green-100 text-green-800',
   Rejected: 'bg-red-100 text-red-800',
   Reversed: 'bg-gray-200 text-gray-700',
 };
+const STATUS_LABELS = { AwaitingApproval: 'With CEO/MD' };
 
-// How a balance reads. `direction` comes from the server so the web and mobile
+// How the wallet reads. `direction` comes from the server so the web and mobile
 // apps can never word the same balance differently.
-const BALANCE_STYLES = {
-  owe: { card: 'bg-rose-50 border-rose-200', amount: 'text-rose-700', hint: 'Cash the company has given you that is not yet settled.' },
-  owed: { card: 'bg-emerald-50 border-emerald-200', amount: 'text-emerald-700', hint: 'Money you spent for the company that has not been paid back yet.' },
-  settled: { card: 'bg-gray-50 border-gray-200', amount: 'text-gray-700', hint: 'Nothing outstanding either way.' },
+const WALLET_STYLES = {
+  holding: { card: 'bg-indigo-50 border-indigo-200', amount: 'text-indigo-700', hint: 'Company cash you are carrying. Record what you spend it on, or return what is left.' },
+  owed: { card: 'bg-emerald-50 border-emerald-200', amount: 'text-emerald-700', hint: 'You have spent more than you were advanced, so the company owes you the difference.' },
+  settled: { card: 'bg-gray-50 border-gray-200', amount: 'text-gray-700', hint: 'You are not carrying any company cash right now.' },
 };
 
-const blankRequest = { khata: '', amount: '', purpose: '', date: today() };
-const blankSettle = { khata: '', amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
+const blankRequest = { amount: '', purpose: '', date: today() };
+const blankExpense = { khata: '', amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
+const blankSettle = { amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
+const BLANKS = { request: blankRequest, expense: blankExpense, settle: blankSettle };
+
+const TITLES = {
+  request: 'Ask for an advance',
+  expense: 'Record an expense',
+  settle: 'Return unspent cash',
+};
 
 export default function EmployeeKhata() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [modal, setModal] = useState(null); // 'request' | 'settle'
+  const [modal, setModal] = useState(null); // 'request' | 'expense' | 'settle'
   const [form, setForm] = useState(blankRequest);
   const [receipt, setReceipt] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -77,36 +91,21 @@ export default function EmployeeKhata() {
   const khatas = data?.khatas || [];
   const openKhatas = khatas.filter((k) => k.isActive);
   const entries = data?.entries || [];
+  const totals = data?.totals || {};
+  const wallet = data?.wallet || { balance: 0, display: { amount: 0, direction: 'settled', label: 'Nothing in hand' } };
+  const display = wallet.display || { amount: 0, direction: 'settled', label: 'Nothing in hand' };
+  const style = WALLET_STYLES[display.direction] || WALLET_STYLES.settled;
 
   const visibleEntries = useMemo(
     () => (viewKhata ? entries.filter((e) => String(e.khata) === viewKhata) : entries),
     [entries, viewKhata]
   );
 
-  // The arithmetic behind the headline: what came to you, what went back, and
-  // what is still only proposed. Only Approved rows move a balance, so pending
-  // and reversed ones are counted separately rather than folded in — otherwise
-  // the figures here would not reconcile with the statement's running balance.
-  const sums = useMemo(() => {
-    const s = { given: 0, settled: 0, pendingIn: 0, pendingOut: 0, pendingCount: 0 };
-    for (const e of entries) {
-      const amt = Number(e.amount) || 0;
-      if (e.status === 'Approved') {
-        if (e.direction === 'to_employee') s.given += amt; else s.settled += amt;
-      } else if (e.status === 'Pending') {
-        if (e.direction === 'to_employee') s.pendingIn += amt; else s.pendingOut += amt;
-        s.pendingCount += 1;
-      }
-    }
-    return s;
-  }, [entries]);
-
   const open = (which) => {
-    const blank = which === 'request' ? blankRequest : blankSettle;
     setForm({
-      ...blank,
+      ...BLANKS[which],
       date: today(),
-      // Pre-select what they are already looking at, else their default book.
+      // Pre-select the book they are already looking at, else their default.
       khata: viewKhata || openKhatas.find((k) => k.isDefault)?._id || openKhatas[0]?._id || '',
     });
     setReceipt(null);
@@ -133,21 +132,24 @@ export default function EmployeeKhata() {
   const submit = async (e) => {
     e.preventDefault();
     if (!(Number(form.amount) > 0)) { toast.error('Enter an amount greater than zero'); return; }
-    if (!form.khata) { toast.error('Choose which khata this is for'); return; }
-    if (modal === 'request' && !form.purpose.trim()) { toast.error('Say what the advance is for'); return; }
+    if (modal === 'expense' && !form.khata) { toast.error('Choose which khata this expense belongs to'); return; }
+    if (modal !== 'settle' && !form.purpose.trim()) {
+      toast.error(modal === 'request' ? 'Say what the advance is for' : 'Say what you spent it on');
+      return;
+    }
 
     setSaving(true);
     try {
       if (modal === 'request') {
-        await api.post('/khata/me/request', form);
-        toast.success('Request sent for approval');
+        const res = await api.post('/khata/me/request', form);
+        toast.success(res.data.message || 'Request sent for approval');
       } else {
-        // Multipart, because a returned-cash slip is worth attaching.
+        // Multipart, because a spend or a hand-back is worth a slip against it.
         const fd = new FormData();
         Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
         if (receipt) fd.append('receipt', receipt);
-        await api.post('/khata/me/settle', fd);
-        toast.success('Sent to the company to confirm');
+        const res = await api.post(modal === 'expense' ? '/khata/me/expense' : '/khata/me/settle', fd);
+        toast.success(res.data.message || 'Sent to the company to confirm');
       }
       setModal(null);
       await load();
@@ -158,77 +160,49 @@ export default function EmployeeKhata() {
     }
   };
 
-  const balance = data?.balance || { amount: 0, direction: 'settled', label: 'Settled up' };
-  const style = BALANCE_STYLES[balance.direction] || BALANCE_STYLES.settled;
-  const totals = data?.totals || { owe: 0, owed: 0, net: 0 };
-  // Money running both ways at once is the case a single netted figure ruins.
-  const bothWays = totals.owe > 0 && totals.owed > 0;
-  const pending = entries.filter((e) => e.status === 'Pending');
-  // Which books each side of the split is actually sitting on — without this the
-  // two chips would just repeat the headline above them.
-  const bookCount = (direction) => {
-    const n = khatas.filter((k) => k.display?.direction === direction).length;
-    return n === 1 ? '1 khata' : `${n} khatas`;
-  };
+  const waiting = entries.filter((e) => e.status === 'Pending' || e.status === 'AwaitingApproval');
+  const totalSpent = khatas.reduce((a, k) => a + (k.spent || 0), 0);
 
   return (
     <div>
       <PageHeader title="My Khata" />
 
       <p className="text-sm text-gray-500 mb-4">
-        Your running cash accounts with the company — advances you have been given, and cash you have settled back.
+        The company advances money into your wallet; you then record what you spend it on against
+        whichever khata it belongs to. Every khata spends from the same wallet.
       </p>
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
-      {/* The headline: everything across every book. */}
+      {/* The wallet: the one pot behind every book below. */}
       {loading ? (
-        <div className="skeleton h-36 rounded-xl mb-5" />
+        <div className="skeleton h-40 rounded-xl mb-5" />
       ) : (
-        <div className={`border rounded-xl p-6 mb-5 ${bothWays ? 'bg-gray-50 border-gray-200' : style.card}`}>
-          {/* When money runs BOTH ways across your books, one netted number
-              hides half the picture — so both are shown in full. */}
-          {bothWays ? (
-            <>
-              <p className="text-sm font-medium text-gray-600">
-                Across {khatas.length} khatas
-              </p>
-              <div className="flex flex-wrap gap-x-10 gap-y-3 mt-2">
-                <div>
-                  <p className="text-xs text-gray-500">You owe the company</p>
-                  <p className="text-3xl sm:text-4xl font-semibold text-rose-700">{money(totals.owe)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">The company owes you</p>
-                  <p className="text-3xl sm:text-4xl font-semibold text-emerald-700">{money(totals.owed)}</p>
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-3">
-                Net: {balance.label.toLowerCase()} <strong>{money(balance.amount)}</strong>. Each khata is
-                settled on its own, so the two figures do not cancel out.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-sm font-medium text-gray-600">
-                {balance.label}
-                {khatas.length > 1 && <span className="text-gray-500"> · across {khatas.length} khatas</span>}
-              </p>
-              <p className={`text-4xl sm:text-5xl font-semibold mt-1 ${style.amount}`}>{money(balance.amount)}</p>
-              <p className="text-xs text-gray-500 mt-2">{style.hint}</p>
-            </>
+        <div className={`border rounded-xl p-6 mb-5 ${style.card}`}>
+          <p className="text-sm font-medium text-gray-600">{display.label}</p>
+          <p className={`text-4xl sm:text-5xl font-semibold mt-1 ${style.amount}`}>{money(display.amount)}</p>
+          <p className="text-xs text-gray-500 mt-2">{style.hint}</p>
+
+          {wallet.creditLimit > 0 && (
+            <p className="text-xs text-gray-500 mt-1">
+              You may hold up to {money(wallet.creditLimit)} at a time.
+            </p>
           )}
 
           <div className="flex flex-wrap gap-2 mt-5">
-            <button onClick={() => open('request')} disabled={openKhatas.length === 0}
-              className="px-4 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm font-medium disabled:opacity-50">
-              Request an advance
+            <button onClick={() => open('request')}
+              className="px-4 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm font-medium">
+              Ask for an advance
             </button>
-            <button onClick={() => open('settle')} disabled={openKhatas.length === 0}
+            <button onClick={() => open('expense')} disabled={openKhatas.length === 0}
               className="px-4 py-2.5 bg-white border border-gray-300 text-gray-800 rounded-lg hover:bg-gray-50 text-sm font-medium disabled:opacity-50">
-              Return/Expense
+              Record an expense
+            </button>
+            <button onClick={() => open('settle')}
+              className="px-4 py-2.5 bg-white border border-gray-300 text-gray-800 rounded-lg hover:bg-gray-50 text-sm font-medium">
+              Return cash
             </button>
             <button onClick={() => setNewKhata({ name: '', note: '' })}
               className="px-4 py-2.5 bg-white border border-gray-300 text-gray-800 rounded-lg hover:bg-gray-50 text-sm font-medium">
@@ -238,9 +212,7 @@ export default function EmployeeKhata() {
         </div>
       )}
 
-      {/* The calculation behind the headline — the two sides in full, and how
-          they arrive at the net. Shown even when money runs only one way, so
-          the same figures are always in the same place. */}
+      {/* The arithmetic behind the wallet, in the order it happens. */}
       {!loading && (
         <div className="bg-white shadow rounded-lg p-4 sm:p-5 mb-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-3">How this adds up</h2>
@@ -248,79 +220,75 @@ export default function EmployeeKhata() {
           <dl className="divide-y divide-gray-100 text-sm">
             <div className="flex items-center justify-between py-2">
               <dt className="text-gray-600">
-                Cash the company gave you
-                <span className="block text-xs text-gray-400">Advances paid out to you, approved</span>
+                Advanced to you
+                <span className="block text-xs text-gray-400">Money paid into your wallet, confirmed</span>
               </dt>
-              <dd className="font-medium text-rose-700 whitespace-nowrap">+ {money(sums.given)}</dd>
+              <dd className="font-medium text-indigo-700 whitespace-nowrap">+ {money(totals.advanced)}</dd>
             </div>
 
             <div className="flex items-center justify-between py-2">
               <dt className="text-gray-600">
-                Returned or spent for the company
-                <span className="block text-xs text-gray-400">Cash handed back and expenses accepted</span>
+                Spent, across all khatas
+                <span className="block text-xs text-gray-400">Expenses the company has confirmed</span>
               </dt>
-              <dd className="font-medium text-emerald-700 whitespace-nowrap">− {money(sums.settled)}</dd>
+              <dd className="font-medium text-emerald-700 whitespace-nowrap">− {money(totals.spent)}</dd>
+            </div>
+
+            <div className="flex items-center justify-between py-2">
+              <dt className="text-gray-600">
+                Returned
+                <span className="block text-xs text-gray-400">Unspent cash handed back, and payroll recoveries</span>
+              </dt>
+              <dd className="font-medium text-emerald-700 whitespace-nowrap">− {money(totals.returned)}</dd>
             </div>
 
             <div className="flex items-center justify-between py-2.5 border-t-2 border-gray-200">
               <dt className="font-medium text-gray-800">
-                {balance.label}
-                <span className="block text-xs text-gray-400">
-                  {balance.direction === 'settled' ? 'Nothing outstanding either way' : style.hint}
-                </span>
+                {display.label}
+                <span className="block text-xs text-gray-400">{style.hint}</span>
               </dt>
-              <dd className={`text-lg font-semibold whitespace-nowrap ${style.amount}`}>{money(balance.amount)}</dd>
+              <dd className={`text-lg font-semibold whitespace-nowrap ${style.amount}`}>{money(display.amount)}</dd>
             </div>
           </dl>
 
-          {/* With several books the two sides genuinely coexist, and a single
-              netted figure would hide one of them entirely. */}
-          {bothWays && (
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="border border-rose-200 bg-rose-50 rounded-lg px-3 py-2">
-                <p className="text-xs text-rose-800">You owe the company</p>
-                <p className="text-lg font-semibold text-rose-700">{money(totals.owe)}</p>
-                <p className="text-xs text-rose-800/70">on {bookCount('owe')}</p>
-              </div>
-              <div className="border border-emerald-200 bg-emerald-50 rounded-lg px-3 py-2">
-                <p className="text-xs text-emerald-800">The company owes you</p>
-                <p className="text-lg font-semibold text-emerald-700">{money(totals.owed)}</p>
-                <p className="text-xs text-emerald-800/70">on {bookCount('owed')}</p>
-              </div>
-            </div>
-          )}
-
-          {sums.pendingCount > 0 && (
+          {waiting.length > 0 && (
             <p className="text-xs text-gray-500 mt-3">
-              Not counted above: {money(sums.pendingIn)} requested and {money(sums.pendingOut)} declared
-              across {sums.pendingCount === 1 ? '1 entry' : `${sums.pendingCount} entries`} still waiting on
+              Not counted above: {money(totals.awaitingAdvance + totals.pendingAdvance)} requested
+              and {money(totals.pendingSpend)} recorded
+              across {waiting.length === 1 ? '1 entry' : `${waiting.length} entries`} still waiting on
               the company. Nothing moves until they act.
             </p>
           )}
         </div>
       )}
 
-      {/* Per-book breakdown. Only worth the space once there is more than one. */}
-      {!loading && khatas.length > 1 && (
+      {/* The books. Each shows what it has cost — and the SAME remaining
+          advance, because there is one pot behind all of them. */}
+      {!loading && (
         <div className="mb-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">Your khatas</h2>
+          <div className="flex items-baseline justify-between mb-2">
+            <h2 className="text-sm font-semibold text-gray-700">Your khatas</h2>
+            <span className="text-xs text-gray-500">{money(totalSpent)} spent in total</span>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {khatas.map((k) => {
-              const s = BALANCE_STYLES[k.display.direction] || BALANCE_STYLES.settled;
               const active = viewKhata === k._id;
               return (
                 <button key={k._id}
                   onClick={() => setViewKhata(active ? '' : k._id)}
-                  className={`text-left border rounded-xl p-4 transition ${s.card} ${active ? 'ring-2 ring-gray-900' : 'hover:opacity-80'}`}>
+                  className={`text-left border rounded-xl p-4 transition bg-white ${active ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-200 hover:border-gray-400'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-medium text-gray-900 truncate">{k.name}</p>
                     {!k.isActive && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600 shrink-0">Closed</span>}
                   </div>
-                  <p className={`text-xl font-semibold mt-1 ${s.amount}`}>{money(k.display.amount)}</p>
-                  <p className="text-xs text-gray-500">{k.display.label}</p>
-                  {k.creditLimit > 0 && (
-                    <p className="text-xs text-gray-400 mt-1">Limit {money(k.creditLimit)}</p>
-                  )}
+                  <p className="text-xl font-semibold mt-1 text-gray-900">{money(k.spent)}</p>
+                  <p className="text-xs text-gray-500">
+                    spent · {k.entryCount === 1 ? '1 entry' : `${k.entryCount || 0} entries`}
+                  </p>
+                  {/* The same figure on every card, deliberately: one wallet. */}
+                  <p className="text-xs text-indigo-700 mt-2 pt-2 border-t border-gray-100">
+                    {money(display.amount)} {display.direction === 'owed' ? 'owed to you' : 'left in your wallet'}
+                  </p>
                 </button>
               );
             })}
@@ -333,10 +301,10 @@ export default function EmployeeKhata() {
         </div>
       )}
 
-      {pending.length > 0 && (
+      {waiting.length > 0 && (
         <div className="mb-4 text-sm bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-lg">
-          {pending.length === 1 ? '1 entry is' : `${pending.length} entries are`} waiting for the company to act.
-          Nothing has moved on your balance yet.
+          {waiting.length === 1 ? '1 entry is' : `${waiting.length} entries are`} waiting for a decision.
+          Nothing has moved on your wallet yet.
         </div>
       )}
 
@@ -348,9 +316,9 @@ export default function EmployeeKhata() {
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-700">Details</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-700">Given to me</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-700">Settled</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-700">Balance</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-700">Advanced</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-700">Spent / returned</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-700">In hand</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
               </tr>
             </thead>
@@ -367,7 +335,7 @@ export default function EmployeeKhata() {
                 <tr><td colSpan={6} className="px-4 py-10 text-center">
                   <p className="text-gray-700 font-medium">Nothing here yet</p>
                   <p className="text-gray-500 text-xs mt-1">
-                    When the company gives you cash, or you settle some back, it will show here.
+                    Ask for an advance, then record what you spend it on. Both will show here.
                   </p>
                 </td></tr>
               ) : visibleEntries.map((e) => (
@@ -378,25 +346,26 @@ export default function EmployeeKhata() {
                       {e.purpose || e.category}
                     </p>
                     <p className="text-xs text-gray-400">
-                      {/* Which book, first — without it a row means nothing once
-                          somebody holds more than one. */}
+                      {/* Which book, where there is one — an advance belongs to
+                          the wallet and to no book at all. */}
                       {e.khataName ? `${e.khataName} · ` : ''}{e.code}
                       {e.reviewNote ? ` · ${e.reviewNote}` : ''}
+                      {e.execNote ? ` · ${e.execNote}` : ''}
                     </p>
                   </td>
-                  <td className="px-4 py-3 text-right text-rose-700">
+                  <td className="px-4 py-3 text-right text-indigo-700">
                     {e.direction === 'to_employee' ? money(e.amount) : ''}
                   </td>
                   <td className="px-4 py-3 text-right text-emerald-700">
                     {e.direction === 'from_employee' ? money(e.amount) : ''}
                   </td>
-                  {/* Only posted rows carry a running balance; a pending one has not happened. */}
+                  {/* Only posted rows carry a running balance; a waiting one has not happened. */}
                   <td className="px-4 py-3 text-right text-gray-700">
                     {e.status === 'Approved' ? money(e.balanceAfter) : '—'}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_STYLES[e.status] || 'bg-gray-100 text-gray-700'}`}>
-                      {e.status}
+                    <span className={`px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${STATUS_STYLES[e.status] || 'bg-gray-100 text-gray-700'}`}>
+                      {STATUS_LABELS[e.status] || e.status}
                     </span>
                   </td>
                 </tr>
@@ -411,11 +380,11 @@ export default function EmployeeKhata() {
           <form onSubmit={createKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
             <h3 className="text-lg font-semibold text-gray-900">Open a new khata</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              A separate book for a separate purpose — a site, a vehicle, a particular job. Opening one
-              moves no money; you can then request against it, and the company sets any limit.
+              A separate heading for a separate purpose — a site, a vehicle, a particular job. It holds
+              no money of its own: expenses filed under it still come out of your one wallet.
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">What is it for?</label>
+            <label className="block text-sm text-gray-700 mb-1">What will you be spending on?</label>
             <input type="text" required autoFocus maxLength={80} value={newKhata.name}
               onChange={(e) => setNewKhata({ ...newKhata, name: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
@@ -441,56 +410,70 @@ export default function EmployeeKhata() {
       {modal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {modal === 'request' ? 'Request a cash advance' : 'Record return / expense'}
-            </h3>
+            <h3 className="text-lg font-semibold text-gray-900">{TITLES[modal]}</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              {modal === 'request'
-                ? 'Your request goes to whoever handles company cash. Nothing is paid until they approve it.'
-                : 'Tell the company you have handed cash back. Your balance updates once they confirm receiving it.'}
+              {modal === 'request' && (data?.approvalRequired
+                ? 'Your request goes to the CEO/MD to approve, then to whoever handles company cash. Nothing is paid until both have acted.'
+                : 'Your request goes to whoever handles company cash. Nothing is paid until they approve it.')}
+              {modal === 'expense' && 'Log what you spent the advance on. It comes off your wallet once the company confirms it.'}
+              {modal === 'settle' && 'Tell the company you have handed cash back. Your wallet updates once they confirm receiving it.'}
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">Which khata?</label>
-            <select value={form.khata} required
-              onChange={(e) => setForm({ ...form, khata: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1">
-              <option value="">Choose a khata…</option>
-              {openKhatas.map((k) => (
-                <option key={k._id} value={k._id}>
-                  {k.name}{k.balance ? ` — ${k.display.label.toLowerCase()} ${money(k.display.amount)}` : ' — settled up'}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500 mb-3">
-              {modal === 'request'
-                ? 'The book this advance should be recorded against.'
-                : 'The book you are settling money back on.'}
-            </p>
+            {modal === 'request' && display.direction === 'holding' && (
+              <div className="text-xs bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg px-3 py-2 mb-3">
+                You are already carrying {money(display.amount)}. Record what you have spent it on
+                before asking for more, where you can.
+              </div>
+            )}
+
+            {modal === 'expense' && (
+              <>
+                <label className="block text-sm text-gray-700 mb-1">Which khata?</label>
+                <select value={form.khata} required
+                  onChange={(e) => setForm({ ...form, khata: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1">
+                  <option value="">Choose a khata…</option>
+                  {openKhatas.map((k) => (
+                    <option key={k._id} value={k._id}>
+                      {k.name}{k.spent ? ` — ${money(k.spent)} so far` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mb-3">
+                  Which heading this purchase belongs under. The money comes out of your one wallet
+                  either way — {money(display.amount)} left.
+                </p>
+              </>
+            )}
 
             <label className="block text-sm text-gray-700 mb-1">Amount</label>
-            <input type="number" min="0.01" step="0.01" required autoFocus
+            <input type="number" min="0.01" step="0.01" required autoFocus={modal !== 'expense'}
               value={form.amount}
               onChange={(e) => setForm({ ...form, amount: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3 text-lg"
               placeholder="0.00" />
 
             <label className="block text-sm text-gray-700 mb-1">
-              {modal === 'request' ? 'What is it for?' : 'Note (optional)'}
+              {modal === 'request' ? 'What is it for?' : modal === 'expense' ? 'What did you buy?' : 'Note (optional)'}
             </label>
-            <input type="text" required={modal === 'request'}
+            <input type="text" required={modal !== 'settle'}
               value={form.purpose}
               onChange={(e) => setForm({ ...form, purpose: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
-              placeholder={modal === 'request' ? 'e.g. site material purchase' : 'e.g. returned unspent cash'} />
+              placeholder={modal === 'request' ? 'e.g. site material purchase'
+                : modal === 'expense' ? 'e.g. 20 bags of cement'
+                  : 'e.g. returned unspent cash'} />
 
             <label className="block text-sm text-gray-700 mb-1">Date</label>
             <input type="date" value={form.date}
               onChange={(e) => setForm({ ...form, date: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
 
-            {modal === 'settle' && (
+            {modal !== 'request' && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">How did you return or spend it?</label>
+                <label className="block text-sm text-gray-700 mb-1">
+                  {modal === 'expense' ? 'How did you pay?' : 'How did you return it?'}
+                </label>
                 <select value={form.paymentMode}
                   onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
@@ -501,9 +484,11 @@ export default function EmployeeKhata() {
                 <input type="text" value={form.referenceNo}
                   onChange={(e) => setForm({ ...form, referenceNo: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
-                  placeholder="UPI / cheque / slip number" />
+                  placeholder="Bill / UPI / cheque number" />
 
-                <label className="block text-sm text-gray-700 mb-1">Receipt (optional)</label>
+                <label className="block text-sm text-gray-700 mb-1">
+                  {modal === 'expense' ? 'Bill or receipt' : 'Receipt'} (optional)
+                </label>
                 {/* Two ways in: attach a file already on the device, or take a
                     photo of the paper slip there and then. */}
                 <div className="flex flex-wrap gap-2 mb-2">
