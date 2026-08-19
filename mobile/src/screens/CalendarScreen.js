@@ -231,8 +231,11 @@ export default function CalendarScreen() {
   const selectedEntries = byDay[selected] || [];
   const onToday = sameMonth(today, year, month) && selected === today.getDate();
 
+  // A tab root with no navigator header, so the status-bar inset is this
+  // screen's own to apply — hence the default `edges`, matching Dashboard and
+  // Profile. `edges={[]}` here ran the month switcher up under the clock.
   return (
-    <Screen edges={[]}>
+    <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }} refreshControl={refresher(refreshing, onRefresh)}>
         {/* Month switcher */}
         <View style={styles.monthBar}>
