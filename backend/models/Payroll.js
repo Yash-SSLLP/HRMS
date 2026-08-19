@@ -122,7 +122,7 @@ const payrollSchema = new mongoose.Schema(
     lopDays: { type: Number, default: 0, min: 0 }, // Loss of Pay
     // Day counts printed on the salary slip alongside the three above.
     halfDays: { type: Number, default: 0, min: 0 },
-    lateDays: { type: Number, default: 0, min: 0 },            // check-ins after 10:00 IST
+    lateDays: { type: Number, default: 0, min: 0 },            // check-ins past the late cut-off
     additionalPaidDays: { type: Number, default: 0, min: 0 },  // unused paid-leave quota, paid out
 
     // Salary in force for THIS pay month, frozen onto the payslip. CTC is

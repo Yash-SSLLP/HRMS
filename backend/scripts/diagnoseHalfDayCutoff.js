@@ -33,6 +33,10 @@ const time = (d) => (d
 (async () => {
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is not set — run this from the backend folder.');
   await mongoose.connect(process.env.MONGO_URI);
+  // lateMinutes() judges against a cached policy the API process normally
+  // loads at boot; a standalone script has to load it too or it would report
+  // lateness against the 10:00 AM default instead of the configured cut-off.
+  await require('../services/latePolicy').refreshLatePolicy();
 
   const filter = { checkIn: { $ne: null } };
   if (YEAR) {

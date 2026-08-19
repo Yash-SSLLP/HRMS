@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const OFFICE = require('../config/office');
+const { DEFAULT_LATE_POLICY, MAX_GRACE_MINUTES } = require('../utils/workday');
 
 // The signature slots a letter can carry. Fixed rather than free-form so a
 // renderer can ask for a specific one ("the CEO signs appointment letters")
@@ -47,6 +48,23 @@ const settingSchema = new mongoose.Schema(
         hour: { type: Number, default: 19, min: 0, max: 23 },
         minute: { type: Number, default: 0, min: 0, max: 59 },
       },
+    },
+
+    // When a check-in starts counting as late. SuperAdmin-only (it decides
+    // money — payroll charges ₹200/₹400 for every late day past the monthly
+    // allowance), edited from Admin → Attendance → Office & Geofence.
+    //
+    // `graceMinutes` is a forgiveness window on top of hour:minute, not a later
+    // start time: arriving inside it is not late, arriving past it is late from
+    // hour:minute. Defaults reproduce the old hard-coded 10:00 AM / no grace, so
+    // an untouched deployment keeps behaving exactly as before.
+    //
+    // utils/workday.js holds the copy this process actually reads; see
+    // services/latePolicy.js for how the two are kept in step.
+    latePolicy: {
+      hour: { type: Number, default: DEFAULT_LATE_POLICY.hour, min: 0, max: 23 },
+      minute: { type: Number, default: DEFAULT_LATE_POLICY.minute, min: 0, max: 59 },
+      graceMinutes: { type: Number, default: DEFAULT_LATE_POLICY.graceMinutes, min: 0, max: MAX_GRACE_MINUTES },
     },
 
     // Letterhead branding, uploaded by a SuperAdmin from Admin → Email & Letter

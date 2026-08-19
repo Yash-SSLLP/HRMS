@@ -14,8 +14,9 @@
  *
  * Mounted route groups: everything under /api/*
  *
- * Startup (after connectDB): email, celebration, attendance, push-reminder
- * and exit workers; a one-off HR-profile backfill; then app.listen on PORT (default 5000).
+ * Startup (after connectDB): email, celebration, attendance, push-reminder,
+ * exit and late-policy workers; a one-off HR-profile backfill; then app.listen
+ * on PORT (default 5000).
  * The workers own their own cron schedules internally.
  */
 
@@ -32,6 +33,7 @@ const { startWorker: startCelebrationWorker } = require('./services/celebrationW
 const { startWorker: startAttendanceWorker } = require('./services/attendanceWorker');
 const { startWorker: startPushReminderWorker } = require('./services/pushReminderWorker');
 const { startWorker: startExitWorker } = require('./services/exitWorker');
+const { startWorker: startLatePolicySync } = require('./services/latePolicy');
 
 const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
@@ -202,6 +204,9 @@ connectDB()
     startAttendanceWorker();
     startPushReminderWorker();
     startExitWorker();
+    // Loads the SuperAdmin-set late-marking cut-off into utils/workday's cache
+    // and keeps it refreshed; until it lands, lateness uses the 10:00 AM default.
+    startLatePolicySync();
 
     // One-time HR profile backfill
     backfillHrProfiles().catch((err) => {

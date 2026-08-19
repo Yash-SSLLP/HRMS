@@ -2,8 +2,11 @@
  * AdminAttendance — attendance records administration (admin portal). Lists/
  * filters records from GET /attendance (with punch photos, GPS distance and
  * geofence flags), supports manual entry/edit/delete via /attendance, CSV export
- * (GET /attendance/export), and editing the office location + geofence threshold
- * via PUT /attendance/settings. Employee list from GET /employees.
+ * (GET /attendance/export), and editing the office location, geofence threshold
+ * and late-marking cut-off via PUT /attendance/settings. Employee list from
+ * GET /employees. The late-marking block is SuperAdmin-only — the server drops
+ * it from anyone else — so it renders read-only for HR rather than offering a
+ * control that would silently do nothing.
  */
 import { useEffect, useState } from 'react';
 import { useDateSort, DateSortButton } from '../components/DateSort';
@@ -15,6 +18,7 @@ import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import { formatHours, formatTime12 } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
+import { useAuthStore } from '../store/authStore';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -34,6 +38,21 @@ const STATUS_COLORS = {
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const fmtTime = (d) => formatTime12(d) || '-';
+
+const pad2 = (n) => String(n).padStart(2, '0');
+// The late cut-off as "HH:MM" for an <input type="time">, which is 24-hour
+// regardless of locale, and as 12-hour text for everything we display.
+const toTimeInput = (p) => `${pad2(p?.hour ?? 10)}:${pad2(p?.minute ?? 0)}`;
+const lateTime12 = (p) => {
+  const h = Number(p?.hour ?? 10);
+  return `${h % 12 || 12}:${pad2(p?.minute ?? 0)} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+// The moment lateness actually starts = cut-off + grace window, shown so nobody
+// has to do the arithmetic in their head before saving.
+const graceEnds12 = (p) => {
+  const total = (Number(p?.hour ?? 10) * 60 + Number(p?.minute ?? 0) + Number(p?.graceMinutes || 0)) % (24 * 60);
+  return lateTime12({ hour: Math.floor(total / 60), minute: total % 60 });
+};
 
 // Distance of a punch from the office: metres under 1 km, else km.
 const fmtDist = (m) => (m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
@@ -121,9 +140,15 @@ export default function AdminAttendance() {
   const [exportDay, setExportDay] = useState(new Date().toISOString().slice(0, 10));
 
   // Office / geofence settings (editable by SuperAdmin & HR)
-  const [settings, setSettings] = useState({ office: { lat: 0, lng: 0, label: '' }, geofenceThresholdM: 200 });
+  const [settings, setSettings] = useState({
+    office: { lat: 0, lng: 0, label: '' },
+    geofenceThresholdM: 200,
+    latePolicy: { hour: 10, minute: 0, graceMinutes: 0 },
+  });
   const [settingsForm, setSettingsForm] = useState(null); // non-null while the editor is open
   const [savingSettings, setSavingSettings] = useState(false);
+  // Only a SuperAdmin may move the late cut-off; HR sees it, greyed out.
+  const isSuperAdmin = useAuthStore((st) => st.user)?.role === 'SuperAdmin';
 
   // Sunday / comp-off days that were worked. Each is a claim for double pay
   // until HR (or the reporting manager) approves or rejects it.
@@ -215,6 +240,7 @@ export default function AdminAttendance() {
     setSettingsForm({
       office: { ...settings.office },
       geofenceThresholdM: settings.geofenceThresholdM,
+      latePolicy: { hour: 10, minute: 0, graceMinutes: 0, ...(settings.latePolicy || {}) },
     });
 
   const useMyLocation = () => {
@@ -245,6 +271,15 @@ export default function AdminAttendance() {
           label: settingsForm.office.label,
         },
         geofenceThresholdM: Number(settingsForm.geofenceThresholdM),
+        // Sent only by a SuperAdmin — the server ignores it from anyone else,
+        // and sending it anyway would make a disabled field look editable.
+        ...(isSuperAdmin ? {
+          latePolicy: {
+            hour: Number(settingsForm.latePolicy.hour),
+            minute: Number(settingsForm.latePolicy.minute),
+            graceMinutes: Number(settingsForm.latePolicy.graceMinutes) || 0,
+          },
+        } : {}),
       });
       setSettings(data);
       setSettingsForm(null);
@@ -553,8 +588,8 @@ export default function AdminAttendance() {
 
       {settingsForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
-            <h2 className="card-title mb-1">Office &amp; Geofence</h2>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="card-title mb-1">Attendance Settings</h2>
             <p className="text-xs text-gray-500 mb-4">
               Punch distances are measured from this office location. Punches farther than the
               threshold are flagged for review.
@@ -593,6 +628,50 @@ export default function AdminAttendance() {
                 <input type="number" min="0" required value={settingsForm.geofenceThresholdM}
                   onChange={(e) => setSettingsForm({ ...settingsForm, geofenceThresholdM: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
+              </div>
+
+              {/* ---- Late marking (SuperAdmin only) ---- */}
+              <div className="pt-3 border-t">
+                <div className="flex items-baseline justify-between">
+                  <h3 className="text-sm font-semibold text-gray-800">Late marking</h3>
+                  {!isSuperAdmin && <span className="text-[11px] text-amber-700">Super Admin only</span>}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  When a punch-in starts counting as late. The grace window is forgiveness, not a
+                  later start: arriving inside it is on time, and past it the day is late measured
+                  from the start time.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                  <div>
+                    <label className="block text-sm text-gray-700">Workday starts (IST)</label>
+                    <input type="time" required disabled={!isSuperAdmin}
+                      value={toTimeInput(settingsForm.latePolicy)}
+                      onChange={(e) => {
+                        const [h, m] = e.target.value.split(':').map(Number);
+                        setSettingsForm((f) => ({
+                          ...f,
+                          latePolicy: { ...f.latePolicy, hour: h || 0, minute: m || 0 },
+                        }));
+                      }}
+                      className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:opacity-60 disabled:bg-gray-50" />
+                    <div className="text-[11px] text-gray-400 mt-1">{lateTime12(settingsForm.latePolicy)}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-700">Grace window (minutes)</label>
+                    <input type="number" min="0" max="240" step="1" disabled={!isSuperAdmin}
+                      value={settingsForm.latePolicy.graceMinutes}
+                      onChange={(e) => setSettingsForm((f) => ({
+                        ...f,
+                        latePolicy: { ...f.latePolicy, graceMinutes: e.target.value },
+                      }))}
+                      className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:opacity-60 disabled:bg-gray-50" />
+                    <div className="text-[11px] text-gray-400 mt-1">0 = no window</div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
+                  A check-in after <b>{graceEnds12(settingsForm.latePolicy)}</b> is marked late.
+                  {' '}Payroll allows five late days a month; each one beyond that costs ₹200 or ₹400.
+                </p>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

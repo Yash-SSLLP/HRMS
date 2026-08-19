@@ -824,8 +824,9 @@ const runPayroll = asyncHandler(async (req, res) => {
 // worked (derived from their punch-in/out records) are recovered as the
 // `lopDeduction`, alongside the late penalty and active loan/advance EMIs.
 
-// Attendance policy constants. WORKDAY_START_HOUR and the lateness arithmetic
-// come from utils/workday.js, shared with the attendance + manager controllers.
+// Attendance policy constants. The lateness arithmetic — including the
+// SuperAdmin-set cut-off time and grace window it judges against — comes from
+// utils/workday.js, shared with the attendance + manager controllers.
 // Both monthly allowances below are a full month's entitlement and are prorated
 // by the days an employee was actually on the payroll that month (see
 // prorateAllowance in computeEmployeeRun) — a mid-month joiner gets a part quota.
@@ -1036,7 +1037,7 @@ async function computeEmployeeRun(profile, year, month) {
   const pendingDoublePayDays = +records
     .reduce((a, r) => a + (doublePayState(r, compOffKeys) === 'Pending' ? 1 : 0), 0).toFixed(1);
 
-  // ----- Late arrivals (check-in after the workday start) on worked days -----
+  // ----- Late arrivals (check-in past the late cut-off) on worked days -----
   const lateDays = records.filter(
     (r) => ['Present', 'HalfDay'].includes(r.status) && lateMinutes(r) > 0
   ).length;

@@ -19,7 +19,7 @@ const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
 const { formatDuration } = require('../utils/duration');
 const {
-  WORKDAY_START_HOUR, HALF_DAY_CUTOFF_HOUR,
+  HALF_DAY_CUTOFF_HOUR, lateCutoff, getLatePolicy, setLatePolicy, normalizeLatePolicy,
   lateMinutes, statusFromHours, effectiveHours, halfDayCutoffPassed,
 } = require('../utils/workday');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
@@ -786,7 +786,7 @@ const myHeatmap = asyncHandler(async (req, res) => {
         if (rec.checkInWfh || rec.checkOutWfh) day.wfh = true;
         if (rec.remarks) day.remarks = rec.remarks;
         // Flag a late arrival on an otherwise full day (checked in after the
-        // WORKDAY_START_HOUR grace cut-off). Kept as a flag on category 'full'
+        // configured late cut-off). Kept as a flag on category 'full'
         // so clients unaware of "late" still render it as a normal full day.
         if (category === 'full' && lateMinutes(rec) > 0) day.late = true;
       }
@@ -810,8 +810,8 @@ const myHeatmap = asyncHandler(async (req, res) => {
 // Shared aggregation for the org/team heatmap. `empIds` scopes it to a set of
 // EmployeeProfile ids (a manager's direct reports); pass null for the whole org.
 // One category per (employee, day); intensity = present (full + half). `late` is
-// a sub-count of full days where the check-in was after the WORKDAY_START_HOUR
-// grace cut-off (present people who arrived late).
+// a sub-count of full days where the check-in was after the configured late
+// cut-off (present people who arrived late).
 const computeHeatmapWindow = async ({ empIds, span }) => {
   const { LeaveRequest } = require('../models/Leave');
   const CompOff = require('../models/CompOff');
@@ -911,7 +911,8 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
   const day = new Date(`${dateStr}T00:00:00+05:30`); // IST midnight of that day
   const next = new Date(day);
   next.setDate(day.getDate() + 1);
-  const cutoff = new Date(day.getTime() + WORKDAY_START_HOUR * 60 * 60 * 1000);
+  // Same cut-off lateMinutes() judges by, grace window included.
+  const cutoff = lateCutoff(day);
 
   const profiles = await EmployeeProfile.find(empIds ? { _id: { $in: empIds } } : {})
     .select('_id user employeeCode designation department dateOfJoining dateOfExit')
@@ -1182,7 +1183,13 @@ const listAll = asyncHandler(async (req, res) => {
     month,
     count: out.length,
     records: out,
-    settings: { office, geofenceThresholdM: settings.geofenceThresholdM },
+    settings: {
+      office,
+      geofenceThresholdM: settings.geofenceThresholdM,
+      // The admin page edits this in the same modal as the geofence, so it
+      // travels with the records rather than costing a second round trip.
+      latePolicy: settings.latePolicy,
+    },
   });
 });
 
@@ -1903,9 +1910,9 @@ const updateRecord = asyncHandler(async (req, res) => {
 });
 
 /**
- * Get the office location and geofence threshold used for punch distances.
+ * Get the office location, geofence threshold and late-marking policy.
  * @route GET /api/attendance/settings  (HR/Admin)
- * @returns {{office, geofenceThresholdM}}
+ * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy}}
  */
 // GET /api/attendance/settings  (HR/Admin)
 // Returns the office location + geofence threshold used for punch distances.
@@ -1915,15 +1922,18 @@ const getSettings = asyncHandler(async (req, res) => {
     office: s.office,
     geofenceThresholdM: s.geofenceThresholdM,
     attendanceReminders: s.attendanceReminders,
+    latePolicy: s.latePolicy,
   });
 });
 
 /**
- * Update the office coordinates/label and/or geofence threshold.
+ * Update the office coordinates/label, geofence threshold and/or the
+ * late-marking policy (SuperAdmin only for the last two blocks).
  * @route PUT /api/attendance/settings  (HR/Admin)
  * @param {Object} [req.body.office] - {lat, lng, label}
  * @param {number} [req.body.geofenceThresholdM] - clamped >= 0
- * @returns {{office, geofenceThresholdM}}
+ * @param {Object} [req.body.latePolicy] - {hour, minute, graceMinutes}; SuperAdmin only
+ * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy}}
  */
 // PUT /api/attendance/settings  (HR/Admin)
 // Update the office coordinates/label and/or the geofence threshold (metres).
@@ -1958,11 +1968,26 @@ const updateSettings = asyncHandler(async (req, res) => {
     }
   }
 
+  // When lateness starts is a SuperAdmin decision for the same reason the
+  // reminders above are: it applies to everyone and it costs money — payroll
+  // charges ₹200/₹400 a day past the monthly late allowance. Ignored for anyone
+  // else rather than refused, matching the block above.
+  if (req.body.latePolicy && req.user.role === 'SuperAdmin') {
+    // Clamped by normalizeLatePolicy as well as by the schema: an hour of 25 or
+    // a NaN would either make every arrival late or none of them, silently.
+    s.latePolicy = normalizeLatePolicy({ ...(s.latePolicy || {}), ...req.body.latePolicy });
+  }
+
   await s.save();
+  // Push the change into this process's cache immediately — services/latePolicy
+  // would otherwise take up to five minutes to notice, and the admin who just
+  // saved would see the old rule in the records they are looking at.
+  setLatePolicy(s.latePolicy);
   res.json({
     office: s.office,
     geofenceThresholdM: s.geofenceThresholdM,
     attendanceReminders: s.attendanceReminders,
+    latePolicy: getLatePolicy(),
   });
 });
 
