@@ -1916,6 +1916,185 @@ const exportExcel = asyncHandler(async (req, res) => {
 
 // ============================ Receipts ============================
 
+// ---------------------------------------------------------------------------
+// Statement PDF
+// ---------------------------------------------------------------------------
+
+/**
+ * How many bills one statement embeds, and how many bytes of them.
+ *
+ * A year of a busy site book is a few hundred phone photos at up to 5 MB each —
+ * embedding all of them would build a document nobody can email, and would hold
+ * the request (and that much memory) open while it did. There is no image
+ * library in this service to downscale with, so the only honest guard is to stop
+ * at a budget.
+ *
+ * BOTH caps are needed: the count bounds the page-turning, the byte budget
+ * bounds the memory, and either alone lets the other run away. Whatever is left
+ * off is COUNTED and printed on the statement — a document that quietly drops
+ * bills reads exactly like one that had none.
+ */
+const RECEIPT_PAGE_CAP = 60;
+const RECEIPT_BYTES_CAP = 24 * 1024 * 1024;
+
+/** Rows a statement is built from: the posted money, plus the cancelled rows
+ *  it keeps on the record. Reversed rows print greyed and count for nothing —
+ *  see services/khataStatementPdf.js. */
+const STATEMENT_STATUSES = ['Approved', 'Reversed'];
+
+/**
+ * Gather everything one statement needs and render it.
+ *
+ * Shared by the operator route and the employee's own-statement route; the
+ * two differ only in who they are allowed to ask about, which the callers
+ * settle before they get here.
+ * @param {object} req
+ * @param {object} res
+ * @param {string} employeeId
+ * @sideEffects Reads GridFS for the logo and every embedded bill; writes the PDF to `res`.
+ */
+async function streamStatement(req, res, employeeId) {
+  const employee = await User.findById(employeeId).select(USER_FIELDS);
+  if (!employee) bad(res, 'Employee not found', 404);
+
+  // A named book must belong to the person the statement is about, or an id
+  // guessed from another employee's page would print their spending here.
+  let khata = null;
+  if (req.query.khata) {
+    if (!isId(req.query.khata)) bad(res, 'Invalid khata', 400);
+    khata = await EmployeeKhata.findById(req.query.khata).lean();
+    if (!khata || String(khata.employee) !== String(employeeId)) bad(res, 'Khata not found', 404);
+  }
+
+  const from = parseDate(req.query.from);
+  const to = parseDate(req.query.to);
+  if (to) to.setHours(23, 59, 59, 999);
+
+  const base = { employee: employeeId, status: { $in: STATEMENT_STATUSES } };
+  if (khata) base.khata = khata._id;
+
+  const inRange = { ...base };
+  if (from || to) {
+    inRange.date = {};
+    if (from) inRange.date.$gte = from;
+    if (to) inRange.date.$lte = to;
+  }
+
+  const [entries, before, wallet, profile, branding, settings] = await Promise.all([
+    KhataEntry.find(inRange).populate('khata', 'name').populate('cashAccount', 'name')
+      .sort({ date: 1, createdAt: 1 }).limit(2000).lean(),
+    // Everything that happened BEFORE the window, so the statement opens on the
+    // figure the previous one closed at instead of at zero.
+    from
+      ? KhataEntry.find({ ...base, date: { $lt: from } }).select('direction amount status').lean()
+      : Promise.resolve([]),
+    ledger.getOrCreateWallet(employeeId, req.user),
+    EmployeeProfile.findOne({ user: employeeId }).select('employeeCode designation department').lean(),
+    require('../services/branding').getBranding().catch(() => ({ logo: null })),
+    Setting.getSettings().catch(() => null),
+  ]);
+
+  // The renderer takes flat names rather than populated sub-documents, so it can
+  // be driven from a fixture in scripts/testKhataLedger.js without a database
+  // behind it.
+  const rows = entries.map((e) => ({
+    ...e,
+    khataName: e.khata?.name || '',
+    cashAccountName: e.cashAccount?.name || '',
+  }));
+
+  const { renderKhataStatement, movement } = require('../services/khataStatementPdf');
+  const scope = khata ? 'khata' : 'wallet';
+  const opening = ledger.round2(
+    (khata ? 0 : wallet.openingBalance || 0)
+    + before.filter((e) => e.status !== 'Reversed').reduce((sum, e) => sum + movement(e, scope), 0)
+  );
+
+  // Bills are read one at a time rather than in one Promise.all: sixty GridFS
+  // downloads fired at once is a burst the connection pool does not need, and
+  // the loop stops the moment the cap is reached.
+  const receipts = new Map();
+  let receiptBytes = 0;
+  let omittedReceipts = 0;
+  for (const e of rows) {
+    if (!e.attachment?.storagePath) continue;
+    if (receipts.size >= RECEIPT_PAGE_CAP || receiptBytes >= RECEIPT_BYTES_CAP) {
+      omittedReceipts += 1;
+      continue;
+    }
+    try {
+      const buffer = await storage.readBuffer(e.attachment.storagePath);
+      if (!buffer) { omittedReceipts += 1; continue; }
+      receipts.set(String(e._id), { buffer, name: e.attachment.name || '' });
+      receiptBytes += buffer.length;
+    } catch (_) {
+      // A missing or unreadable bill must not sink the statement — but it is
+      // still a bill the reader was expecting to see.
+      omittedReceipts += 1;
+    }
+  }
+
+  const pdf = await renderKhataStatement({
+    company: require('../config/company'),
+    logo: branding.logo || null,
+    employee: {
+      name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
+      employeeCode: profile?.employeeCode,
+      designation: profile?.designation,
+      department: profile?.department,
+    },
+    khata: khata ? { name: khata.name, note: khata.note } : null,
+    range: { from, to },
+    opening,
+    entries: rows,
+    receipts,
+    omittedReceipts,
+    footer: {
+      helpline: settings?.documentFooter?.helpline || '',
+      note: settings?.documentFooter?.note || '',
+    },
+    generatedAt: new Date(),
+  });
+
+  const slug = (khata ? khata.name : `${employee.firstName}-all-khatas`)
+    .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'khata';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="khata-statement-${slug}.pdf"`);
+  res.setHeader('Content-Length', pdf.length);
+  res.send(pdf);
+}
+
+/**
+ * One employee's khata (or whole wallet) as a statement PDF.
+ *
+ * Sits under `khata.manage` with the rest of the operator views rather than
+ * behind the export grant: this is one person's book laid out for reading, not
+ * the whole company's ledger as data, which is the thing `khataExportAccess`
+ * exists to gate.
+ * @route GET /api/khata/employees/:employeeId/statement.pdf  (khata.manage)
+ * @param {string} [req.query.khata] - one expense book; omitted prints every book
+ * @param {string} [req.query.from] - inclusive
+ * @param {string} [req.query.to] - inclusive
+ * @returns {binary} application/pdf
+ */
+const statementPdf = asyncHandler(async (req, res) => {
+  if (!isId(req.params.employeeId)) bad(res, 'Invalid employee', 400);
+  await streamStatement(req, res, req.params.employeeId);
+});
+
+/**
+ * The same statement, for the signed-in employee's own khatas.
+ *
+ * No permission beyond being logged in: it is their money and their bills, and
+ * the employee id is taken from the token rather than the URL so there is
+ * nothing to tamper with.
+ * @route GET /api/khata/me/statement.pdf
+ * @returns {binary} application/pdf
+ */
+const myStatementPdf = asyncHandler(async (req, res) => {
+  await streamStatement(req, res, req.user._id);
+});
+
 /**
  * Stream an entry's receipt.
  *
@@ -1949,7 +2128,7 @@ module.exports = {
   // settings
   createKhata, createMyKhata, updateKhataSettings, updateWalletSettings, recomputeWallet,
   // reports
-  outstandingReport, sendSettleReminders, exportExcel,
+  outstandingReport, sendSettleReminders, exportExcel, statementPdf, myStatementPdf,
   // account operators
   listOperators, setOperators,
   // receipts

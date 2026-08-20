@@ -13,6 +13,7 @@
  *   POST   /admin/org-settings/logo                -> multipart `image`
  *   DELETE /admin/org-settings/logo
  *   GET/POST/DELETE /admin/org-settings/signature/:key   (key = ceo | md | hr)
+ *   PUT    /admin/org-settings  { documentFooter: { helpline, note } }
  *
  * The read-back endpoints are auth-protected, so a bare <Image uri> 401s — the
  * bearer token is attached as a request header, the same trick ui.js's Avatar
@@ -43,6 +44,9 @@ export default function BrandingScreen() {
   const [busy, setBusy] = useState('');
   const [bust, setBust] = useState(0);
   const [captions, setCaptions] = useState({});
+  // The contact strip on the khata statement PDF. Edited freely and saved on a
+  // button, so it needs its own draft alongside the server's copy.
+  const [footer, setFooter] = useState({ helpline: '', note: '' });
 
   const load = useCallback(async () => {
     try {
@@ -53,6 +57,7 @@ export default function BrandingScreen() {
         c[s.key] = { signatoryName: s.signatoryName || '', signatoryTitle: s.signatoryTitle || '' };
       });
       setCaptions(c);
+      setFooter({ helpline: data.documentFooter?.helpline || '', note: data.documentFooter?.note || '' });
     } catch (e) {
       toast(errMsg(e) || 'Could not load branding');
     } finally {
@@ -131,6 +136,16 @@ export default function BrandingScreen() {
       });
       applied(data); toast('Signature updated');
     } catch (e) { toast(errMsg(e) || 'Upload failed'); }
+    finally { setBusy(''); }
+  };
+
+  const saveFooter = async () => {
+    setBusy('footer');
+    try {
+      const { data } = await api.put('/admin/org-settings', { documentFooter: footer });
+      setFooter({ helpline: data.documentFooter?.helpline || '', note: data.documentFooter?.note || '' });
+      toast('Statement footer saved');
+    } catch (e) { toast(errMsg(e) || 'Could not save'); }
     finally { setBusy(''); }
   };
 
@@ -273,6 +288,42 @@ export default function BrandingScreen() {
             ) : null}
           </Card>
         ))}
+
+        {/* The khata statement is the one generated document an employee hands
+            to somebody outside the company, so the number on it is a decision,
+            not a constant. Lives in org settings rather than the deployed
+            config so changing it does not need a release. */}
+        <SectionHeader title="Statement footer" />
+        <Card>
+          <Text style={[font.small, { marginBottom: spacing(3) }]}>
+            Printed along the bottom of every khata statement PDF, next to the logo. Leave the number blank to
+            print no help line at all — a statement often leaves the building, so &quot;no number&quot; is a
+            real choice.
+          </Text>
+          <Field label="Help / contact number">
+            <Input
+              value={footer.helpline}
+              onChangeText={(v) => setFooter((f) => ({ ...f, helpline: v }))}
+              placeholder="+91 96069 98652"
+              keyboardType="phone-pad"
+              maxLength={40}
+            />
+          </Field>
+          <Field label="Small print (optional)">
+            <Input
+              value={footer.note}
+              onChangeText={(v) => setFooter((f) => ({ ...f, note: v }))}
+              placeholder="Queries on this statement within 7 days of receipt."
+              maxLength={120}
+            />
+          </Field>
+          <AppButton
+            title="Save footer"
+            onPress={saveFooter}
+            disabled={!!busy}
+            loading={busy === 'footer'}
+          />
+        </Card>
       </ScrollView>
     </Screen>
   );

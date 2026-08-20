@@ -81,6 +81,22 @@ const settingSchema = new mongoose.Schema(
       graceMinutes: { type: Number, default: DEFAULT_LATE_POLICY.graceMinutes, min: 0, max: MAX_GRACE_MINUTES },
     },
 
+    // The contact strip printed along the bottom of the documents an employee
+    // may forward outside the company — today the khata statement
+    // (services/khataStatementPdf.js).
+    //
+    // SuperAdmin-only, and deliberately NOT in config/company.js: that file is
+    // env-var constants, so changing the number a client is told to ring would
+    // need a redeploy. A blank helpline prints no help line at all rather than
+    // falling back to the office switchboard, because "no number" is a
+    // legitimate choice for a document that leaves the building.
+    documentFooter: {
+      helpline: { type: String, trim: true, maxlength: 40, default: '' },
+      // One line of small print under the company name — "Queries within 7 days
+      // of receipt", a GSTIN, whatever the finance team wants on it.
+      note: { type: String, trim: true, maxlength: 120, default: '' },
+    },
+
     // Letterhead branding, uploaded by a SuperAdmin from Admin → Email & Letter
     // Templates and applied to every generated document (offer, appointment,
     // payslip). Images are GridFS keys, same as User.photo — see services/storage.js.

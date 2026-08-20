@@ -107,6 +107,59 @@ check('one rupee over the limit is refused', limitCheck(5001, 10000, to(5000)), 
 check('a settlement is never blocked by a limit', limitCheck(99999, 10, from(5000)), 'allowed');
 check('a settlement is never blocked even at zero balance', limitCheck(0, 1, from(5000)), 'allowed');
 
+console.log('\n--- statement arithmetic (services/khataStatementPdf.js) ---');
+// The statement re-derives its own running total rather than reading
+// balanceAfter, because a single-khata statement has no wallet behind it. That
+// makes these two functions the ones that decide what a printed, signed-off
+// document says, so they are checked here alongside the ledger they mirror.
+const S = require('../services/khataStatementPdf');
+const at = (iso, entry) => ({ ...entry, date: new Date(`${iso}+05:30`), status: 'Approved' });
+
+// A wallet grows when money arrives; an expense book grows when money is spent.
+// Same row, opposite sign — which is the whole reason `scope` is carried.
+check('an advance raises the wallet', S.movement(to(5000), 'wallet'), 5000);
+check('spending lowers the wallet', S.movement(from(5000), 'wallet'), -5000);
+check('spending raises what the book has cost', S.movement(from(5000), 'khata'), 5000);
+check('a credit back lowers what the book has cost', S.movement(to(5000), 'khata'), -5000);
+
+const tripRows = [
+  at('2026-08-10T16:46:00', from(5424)),
+  at('2026-08-11T16:44:00', from(4698)),
+  at('2026-08-11T19:10:00', from(1000)),
+];
+const tripDays = S.groupByDay(tripRows, 'khata', 0);
+check('rows collapse into one block per calendar day', tripDays.length, 2);
+check('a day sums its own rows', tripDays[1].out, 5698);
+check("the day's net is what it added to the book", tripDays[1].net, 5698);
+check('the running total carries across days', tripDays[1].running, 11122);
+check('an opening figure is carried in, not restarted from zero',
+  S.groupByDay(tripRows, 'khata', 2000)[1].running, 13122);
+
+// Two rows either side of IST midnight: on a UTC server these land on the same
+// UTC day and would be merged into one block if the grouping read UTC parts.
+const midnight = S.groupByDay([
+  at('2026-08-11T23:50:00', from(100)),
+  at('2026-08-12T00:10:00', from(200)),
+], 'khata', 0);
+check('IST midnight splits two rows into two days', midnight.length, 2);
+
+// A reversed row stays visible on the statement but must not move a figure —
+// the mirror row that cancelled it is what does that now.
+const withReversed = S.groupByDay([
+  at('2026-08-10T10:00:00', from(1000)),
+  { ...at('2026-08-10T11:00:00', from(500)), status: 'Reversed' },
+], 'khata', 0);
+check('a reversed row still prints', withReversed[0].rows.length, 2);
+check('but it counts for nothing', withReversed[0].out, 1000);
+check('and leaves the running total alone', withReversed[0].running, 1000);
+
+// The wallet scope has to land on the same figure the ledger replay does, or a
+// printed statement would contradict the balance on screen.
+const walletRows = [at('2026-08-09T11:00:00', to(25000)), at('2026-08-10T16:46:00', from(5424))];
+check('the statement agrees with replayBalance',
+  S.groupByDay(walletRows, 'wallet', 0).pop().running,
+  L.replayBalance(0, walletRows).closing);
+
 console.log('\n--- rounding ---');
 check('classic float error is rounded away', L.round2(0.1 + 0.2), 0.3);
 check('third decimal rounds up', L.round2(1234.567), 1234.57);

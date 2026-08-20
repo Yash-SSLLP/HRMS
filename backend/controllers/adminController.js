@@ -546,6 +546,12 @@ const orgSettingsPayload = (s) => {
     // Does a cash-advance request need a CEO/MD sanction before the accounts
     // team sees it? Defaults ON, so an untouched deployment gains the gate.
     khataAdvanceApprovalRequired: s.khataAdvanceApprovalRequired !== false,
+    // The contact strip on the khata statement PDF. Always sent as a pair so the
+    // form can render two empty inputs rather than guess at a missing shape.
+    documentFooter: {
+      helpline: s.documentFooter?.helpline || '',
+      note: s.documentFooter?.note || '',
+    },
     branding: {
       hasLogo: !!s.branding?.logoPath,
       signatures: SIGNATURE_KEYS.map((key) => {
@@ -747,6 +753,13 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   }
   if (req.body.khataAdvanceApprovalRequired !== undefined) {
     s.khataAdvanceApprovalRequired = !!req.body.khataAdvanceApprovalRequired;
+  }
+  // Each half is settable on its own, and an empty string is a real value —
+  // clearing the helpline is how you take the number off the document.
+  if (req.body.documentFooter && typeof req.body.documentFooter === 'object') {
+    const f = req.body.documentFooter;
+    if (f.helpline !== undefined) s.documentFooter.helpline = String(f.helpline).trim().slice(0, 40);
+    if (f.note !== undefined) s.documentFooter.note = String(f.note).trim().slice(0, 120);
   }
   await s.save();
   res.json(orgSettingsPayload(s));

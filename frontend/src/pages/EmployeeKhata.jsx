@@ -32,6 +32,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { saveBlobResponse } from '../utils/download';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
@@ -95,6 +96,7 @@ export default function EmployeeKhata() {
   // '' = every book; otherwise the statement is narrowed to one.
   const [viewKhata, setViewKhata] = useState('');
   const [newKhata, setNewKhata] = useState(null); // { name, note }
+  const [downloading, setDownloading] = useState(false);
   // Two ways to attach the slip: pick a file, or shoot it with the phone camera
   // (`capture` makes a mobile browser open the camera instead of the gallery).
   const fileRef = useRef(null);
@@ -200,6 +202,26 @@ export default function EmployeeKhata() {
 
   const waiting = entries.filter((e) => e.status === 'Pending' || e.status === 'AwaitingApproval');
   const totalSpent = khatas.reduce((a, k) => a + (k.spent || 0), 0);
+
+  /**
+   * Their own statement as a PDF, with every bill they uploaded bound in behind
+   * it — the thing to send to whoever asked what the advance went on. Follows
+   * the khata currently being viewed, so "showing one khata" and the download
+   * cannot disagree.
+   */
+  const downloadStatement = async () => {
+    setDownloading(true);
+    try {
+      const res = await api.get('/khata/me/statement.pdf', {
+        params: viewKhata ? { khata: viewKhata } : {}, responseType: 'blob',
+      });
+      saveBlobResponse(res, 'khata-statement.pdf');
+    } catch (_) {
+      // The error body arrives as a Blob under responseType 'blob', so there is
+      // no message to unwrap — say it plainly.
+      toast.error('Could not build your statement');
+    } finally { setDownloading(false); }
+  };
 
   return (
     <div>
@@ -367,7 +389,13 @@ export default function EmployeeKhata() {
         </div>
       )}
 
-      <h2 className="text-sm font-semibold text-gray-700 mb-2">Statement</h2>
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <h2 className="text-sm font-semibold text-gray-700">Statement</h2>
+        <button onClick={downloadStatement} disabled={downloading || loading}
+          className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+          {downloading ? 'Building…' : `Download PDF${viewKhata ? ' (this khata)' : ''}`}
+        </button>
+      </div>
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-sm">

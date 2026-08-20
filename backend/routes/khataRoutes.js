@@ -62,6 +62,9 @@ router.post('/me/reimbursement', ctrl.requestReimbursement);
 router.post('/me/settle', receiptUpload.single('receipt'), ctrl.declareSettlement);
 // POST /me/khatas — open an expense book on my own account; protected.
 router.post('/me/khatas', ctrl.createMyKhata);
+// GET /me/statement.pdf — my khata as a printable statement with the bills
+// attached; protected, own ledger only (the id comes from the token).
+router.get('/me/statement.pdf', ctrl.myStatementPdf);
 
 // ----- Executive sanction — SuperAdmin / CEO / MD only -----
 // Mounted ABOVE the khata.manage gate on purpose: an executive holds no khata
@@ -86,6 +89,11 @@ router.get('/employee-options', ctrl.employeeOptions);
 router.get('/employees', ctrl.listKhatas);
 // GET /employees/:employeeId — one employee's wallet, books and statement; requires 'khata.manage'.
 router.get('/employees/:employeeId', ctrl.getKhata);
+// GET /employees/:employeeId/statement.pdf — that book (or every book) as a
+// printable statement with the bills embedded; requires 'khata.manage'.
+// Deliberately NOT behind requireKhataExport: that grant gates walking out with
+// the whole company's ledger as data, not reading one person's book.
+router.get('/employees/:employeeId/statement.pdf', ctrl.statementPdf);
 
 // ----- The wallet: the one pot per employee -----
 // PUT /wallets/:employeeId — advance limit and note (opening balance is SuperAdmin-only, checked in the controller); requires 'khata.manage'.

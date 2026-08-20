@@ -289,6 +289,7 @@ Mounted at `/api/khata`. All routes authenticated.
 | `POST /me/settle` | Declare unspent cash returned — no `khata`, optional receipt |
 | `POST /me/reimbursement` | Claim back what the company owes, when the wallet has gone negative. Amount defaults to everything outstanding and is capped at `totals.claimable` |
 | `POST /me/khatas` | Open an expense book on my own account |
+| `GET /me/statement.pdf` | My khata as a printable statement, bills bound in (`?khata=` narrows it). The employee id comes from the token, never the URL |
 
 **Advance sanction** — SuperAdmin / CEO / MD only, **no** `khata.manage` needed
 
@@ -306,6 +307,7 @@ Mounted at `/api/khata`. All routes authenticated.
 | `GET /employee-options` | Thin employee picker (no salary or personal data) |
 | `GET /employees` | One row per person — their wallet plus their books |
 | `GET /employees/:id` | One person's wallet, books and statement (`?khata=` narrows it) |
+| `GET /employees/:id/statement.pdf` | The same book as a **printable statement PDF** with every photo bill embedded — `?khata=`, `?from=`, `?to=`. **Not** behind `khataExportAccess`: that gate is about walking out with the whole ledger as data, this is one person's book laid out to be read |
 | `PUT /wallets/:employeeId` | Advance limit and note (opening balance ⇒ SuperAdmin) |
 | `POST /khatas` | Open a new named expense book for someone |
 | `PUT /khatas/:khataId` | Rename, note, make default, close / re-open |
@@ -321,6 +323,77 @@ Mounted at `/api/khata`. All routes authenticated.
 `POST /wallets/:employeeId/recompute` (repair tool — rebuild one person's books
 and wallet from the ledger, for use after a direct database edit or a restored
 backup).
+
+---
+
+## The statement PDF
+
+`services/khataStatementPdf.js`. The `.xlsx` export answers *"give me the
+data"*; this answers *"show this to the person who paid for it"* — a
+day-by-day statement with **every photo bill bound in behind it**, so the
+document still works once it has been emailed, printed, or opened next year.
+
+Reachable from the web and the mobile app alike, all producing the same
+document:
+
+* **Admin → Khata → People → someone** — *Statement PDF* on the person (every
+  book, or whichever one is currently being viewed), or on any khata card. A
+  small dialog asks for an optional date range first.
+* **My Khata → Statement → Download PDF** — an employee's own books, no extra
+  permission. The employee id comes from the token, so there is nothing in the
+  URL to tamper with.
+* **Mobile, same two places** — the *Statement PDF* button on a person and on
+  each khata card in the admin screen, and the *PDF* action on the Statement
+  header in My Khata. The file goes straight to the OS share sheet, so it can be
+  WhatsApped or emailed from the site without a laptop.
+
+### Two scopes, one renderer, and why the arithmetic differs
+
+`?khata=` set prints **one expense book**; omitted, it prints the person's
+**whole wallet**. IN is *always* money that reached the employee. What changes
+is only what the running total means:
+
+| Scope | Running total | IN | OUT |
+|---|---|---|---|
+| One khata | what that book has **cost**, cumulatively | a reversal crediting spend back | spending charged to it |
+| Whole wallet | the **wallet balance** — company cash still in hand | advances, reimbursements | spending, cash returned |
+
+In both, a positive running total is **Dr** (the company is owed / out of
+pocket) and a negative one is **Cr**, so the label means one thing everywhere.
+Because the two scopes move opposite ways, every movement is printed with an
+explicit `+`/`−` and the convention is spelled out in words on the summary card
+— a reader must never have to work out which way round Dr is on a document
+about their own money.
+
+With `?from=`, the statement **opens on the figure carried in from before it**
+rather than at zero, so consecutive statements join up.
+
+### What is on it
+
+* A **letterhead band** carrying the company logo (`Setting.branding.logoPath`
+  → `ORG_LOGO_PATH` → the bundled `assets/logo.png`, via `services/branding.js`)
+  on a white plate — the plate is there so a dark uploaded logo does not vanish
+  into a dark bar.
+* One block per **IST calendar day** with its own IN / OUT / net / running
+  total, and the individual entries nested under it with time (12-hour), payment
+  mode, kind, note, reference code and a bill thumbnail.
+* **Reversed** rows still print, greyed and marked — financial history is never
+  hidden — but they count for nothing; the mirror row is what moves the money.
+* A **receipt page per bill** at the back, numbered `#N` to match the thumbnail,
+  captioned with the entry's date, code and amount. Only JPEG and PNG can be
+  drawn into a PDF, so the bytes are sniffed rather than the stored mime
+  trusted; a PDF bill is noted as *"Bill on file"* instead. `RECEIPT_PAGE_CAP`
+  (60) stops a year of a busy site book building a document nobody can email.
+
+### The footer is SuperAdmin-editable
+
+`Setting.documentFooter` — a help/contact number and one line of small print,
+edited from **Admin → Permissions → Statement footer** on the web, or
+**Admin → Branding → Statement footer** on mobile. It lives in the settings
+singleton rather than `config/company.js` because that file is env-var constants
+and changing the number a client is told to ring would otherwise need a deploy.
+A blank number prints **no help line at all**, which is a legitimate choice for
+a document that leaves the building.
 
 ---
 
@@ -362,9 +435,11 @@ as though the employee *owed* what they were just paid back.
 npm run test:khata
 ```
 
-33 checks over the pure money rules — sign convention, ledger replay (including
+47 checks over the pure money rules — sign convention, ledger replay (including
 back-dated inserts and paise drift), operator authorization, the auto-approve
-threshold, credit limits, and rounding. No database, runs in about a second.
+threshold, credit limits, rounding, and the statement's own arithmetic (per-scope
+signs, IST day grouping, reversed rows counting for nothing, and the statement
+landing on the same figure `replayBalance` does). No database, about a second.
 
 ```bash
 KHATA_TEST_MONGO_URI="mongodb://127.0.0.1:27017/hrms_khata_test" npm run test:khata:db
@@ -384,13 +459,14 @@ reversals, back-dated re-stamping, and the executive sanction gate.
 
 | Layer | Files |
 |---|---|
-| Models | `backend/models/EmployeeWallet.js` (the pot), `EmployeeKhata.js` (the books), `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` on `CashbookEntry.js`; `khataAdvanceApprovalRequired` on `Setting.js` |
+| Models | `backend/models/EmployeeWallet.js` (the pot), `EmployeeKhata.js` (the books), `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` on `CashbookEntry.js`; `khataAdvanceApprovalRequired` and `documentFooter` on `Setting.js` |
 | Money rules | `backend/services/khataLedger.js` — the only place balance arithmetic happens |
+| Statement PDF | `backend/services/khataStatementPdf.js` (layout + its own running total), `streamStatement` in the controller (gathering, bill reads, the `RECEIPT_PAGE_CAP`) |
 | Integrations | `backend/services/khataSync.js` |
 | API | `backend/controllers/khataController.js`, `backend/routes/khataRoutes.js` |
 | Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` and `khataExportAccess` on `User`; `canExportKhata` + `requireKhataExport` + `canApproveAdvances` + `requireAdvanceApprover` in `backend/middleware/authMiddleware.js`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |
-| Web | `frontend/src/pages/AdminKhata.jsx`, `EmployeeKhata.jsx`; the org switch on `AdminPermissions.jsx` |
-| Mobile | `mobile/src/screens/KhataScreen.js`, `mobile/src/screens/admin/KhataAdminScreen.js` |
+| Web | `frontend/src/pages/AdminKhata.jsx`, `EmployeeKhata.jsx`; the org switch and the statement-footer fields on `AdminPermissions.jsx`; `frontend/src/utils/download.js` |
+| Mobile | `mobile/src/screens/KhataScreen.js`, `mobile/src/screens/admin/KhataAdminScreen.js`; the footer fields on `admin/BrandingScreen.js`; `mobile/src/utils/downloadFile.js` |
 
 ---
 

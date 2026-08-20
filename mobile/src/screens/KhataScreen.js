@@ -23,8 +23,13 @@
  * the wallet lie about what was left. The company rejects it afterwards if it
  * should not stand, which is why the bill is mandatory there.
  *
+ * The Statement section also downloads itself as a PDF (GET
+ * /khata/me/statement.pdf) with every bill they uploaded bound in behind it —
+ * the thing to send to whoever asked what the advance went on. It follows the
+ * khata currently being viewed.
+ *
  * Route: "Khata" (from the More/Menu list). Employee-facing (all roles).
- * Backend: GET /khata/me.
+ * Backend: GET /khata/me, GET /khata/me/statement.pdf.
  */
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
@@ -33,7 +38,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 
-import api, { errMsg } from '../api/client';
+import api, { API_BASE, errMsg } from '../api/client';
+import { useAuth } from '../store/auth';
 import { toast } from '../components/Toast';
 import { colors, radius, spacing, font } from '../theme';
 import {
@@ -42,6 +48,7 @@ import {
 } from '../components/ui';
 import { fmtDate, rupees, toYMD } from '../utils/format';
 import { compressImage, RECEIPT_MAX_PX } from '../utils/image';
+import { downloadAndShare } from '../utils/downloadFile';
 
 const STATUS_TONE = {
   AwaitingApproval: 'warning', Pending: 'warning', Approved: 'success',
@@ -67,6 +74,9 @@ const WALLET_LOOK = {
 };
 
 export default function KhataScreen() {
+  // The statement route sits behind `protect`, and FileSystem carries the header
+  // itself rather than going through the api client — see utils/downloadFile.js.
+  const token = useAuth((s) => s.token);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,6 +91,7 @@ export default function KhataScreen() {
   const [newKhata, setNewKhata] = useState(null);  // { name }
   const [receipt, setReceipt] = useState(null);    // slip for an expense/return
   const [submitting, setSubmitting] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -107,6 +118,34 @@ export default function KhataScreen() {
     const open = (data?.khatas || []).filter((k) => k.isActive);
     setKhataId(viewKhata || open.find((k) => k.isDefault)?._id || open[0]?._id || '');
     setSheet(which);
+  };
+
+  /**
+   * Their own statement as a PDF, with every bill they uploaded bound in behind
+   * it — the thing to send to whoever asked what the advance went on. Follows
+   * the khata currently being viewed, so "showing one khata" and the download
+   * cannot disagree.
+   */
+  const downloadStatement = async () => {
+    setDownloading(true);
+    try {
+      const book = (data?.khatas || []).find((k) => k._id === viewKhata);
+      const slug = (book?.name || 'all-khatas').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      const name = `khata-statement-${slug}.pdf`;
+      const { shared } = await downloadAndShare({
+        url: `${API_BASE}/khata/me/statement.pdf${viewKhata ? `?khata=${viewKhata}` : ''}`,
+        token,
+        fileName: name,
+        mimeType: 'application/pdf',
+        dialogTitle: 'Khata statement',
+        UTI: 'com.adobe.pdf',
+      });
+      if (!shared) toast('Saved', name);
+    } catch (err) {
+      toast('Could not build it', err.message || 'Please try again');
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const createKhata = async () => {
@@ -359,7 +398,10 @@ export default function KhataScreen() {
           </Card>
         )}
 
-        <SectionHeader title="Statement" />
+        <SectionHeader
+          title="Statement"
+          action={downloading ? 'Building…' : `PDF${viewKhata ? ' (this khata)' : ''}`}
+          onAction={downloading ? undefined : downloadStatement} />
 
         {entries.length === 0 ? (
           <EmptyState

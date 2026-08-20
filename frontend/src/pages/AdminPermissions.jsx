@@ -37,8 +37,30 @@ export default function AdminPermissions() {
   const allKeys = catalog.map((p) => p.key);
 
   // Org-wide feature switches.
-  const [org, setOrg] = useState({ chatEnabled: false, khataAdvanceApprovalRequired: true });
+  const [org, setOrg] = useState({
+    chatEnabled: false,
+    khataAdvanceApprovalRequired: true,
+    documentFooter: { helpline: '', note: '' },
+  });
   const [orgBusy, setOrgBusy] = useState(false);
+  // The footer inputs are edited freely and saved on a button, unlike the
+  // switches — so they need their own draft, or every keystroke would be a PUT.
+  const [footer, setFooter] = useState({ helpline: '', note: '' });
+  const [footerSaved, setFooterSaved] = useState(false);
+
+  // One reader for the org payload, so a switch save cannot drop a field it
+  // does not know about — which is exactly how the footer would have been wiped
+  // by the next toggle.
+  const readOrg = (d = {}) => ({
+    chatEnabled: !!d.chatEnabled,
+    // Absent means the server has not been upgraded yet; the gate is on by
+    // default there too, so assume on rather than showing it as disabled.
+    khataAdvanceApprovalRequired: d.khataAdvanceApprovalRequired !== false,
+    documentFooter: {
+      helpline: d.documentFooter?.helpline || '',
+      note: d.documentFooter?.note || '',
+    },
+  });
 
   const load = async () => {
     setLoading(true); setError('');
@@ -50,12 +72,9 @@ export default function AdminPermissions() {
       ]);
       setUsers(u.data.users || []);
       setCatalog(c.data.permissions || []);
-      setOrg({
-        chatEnabled: !!o.data.chatEnabled,
-        // Absent means the server has not been upgraded yet; the gate is on by
-        // default there too, so assume on rather than showing it as disabled.
-        khataAdvanceApprovalRequired: o.data.khataAdvanceApprovalRequired !== false,
-      });
+      const next = readOrg(o.data);
+      setOrg(next);
+      setFooter(next.documentFooter);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -73,10 +92,7 @@ export default function AdminPermissions() {
     setOrg({ ...org, [field]: next });
     try {
       const { data } = await api.put('/admin/org-settings', { [field]: next });
-      setOrg({
-        chatEnabled: !!data.chatEnabled,
-        khataAdvanceApprovalRequired: data.khataAdvanceApprovalRequired !== false,
-      });
+      setOrg(readOrg(data));
     } catch (err) {
       setOrg({ ...org, [field]: !next });
       setError(err.response?.data?.message || errorText);
@@ -84,6 +100,24 @@ export default function AdminPermissions() {
       setOrgBusy(false);
     }
   };
+
+  // The contact strip printed along the bottom of the khata statement PDF.
+  const saveFooter = async () => {
+    setOrgBusy(true); setError(''); setFooterSaved(false);
+    try {
+      const { data } = await api.put('/admin/org-settings', { documentFooter: footer });
+      const next = readOrg(data);
+      setOrg(next);
+      setFooter(next.documentFooter);
+      setFooterSaved(true);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save the statement footer');
+    } finally {
+      setOrgBusy(false);
+    }
+  };
+  const footerDirty = footer.helpline !== org.documentFooter.helpline
+    || footer.note !== org.documentFooter.note;
 
   // Cashbook and Expenses are standalone, role-independent grants — same call
   // shape either way, so they share one handler.
@@ -237,6 +271,38 @@ export default function AdminPermissions() {
             className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${org.khataAdvanceApprovalRequired ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
             {org.khataAdvanceApprovalRequired ? '✓ Required' : 'Not required'}
           </button>
+        </div>
+      </div>
+
+      {/* The contact strip on the khata statement PDF. Only a Super Admin can
+          change it, because the document goes outside the company. */}
+      <div className="bg-white shadow rounded-lg p-4 mb-5">
+        <h2 className="text-sm font-semibold text-gray-800">Statement footer</h2>
+        <p className="text-xs text-gray-500 mt-0.5 mb-3">
+          Printed along the bottom of every khata statement PDF, next to the company logo. Leave the number
+          blank to print no help line at all — a statement often leaves the building, so &quot;no number&quot;
+          is a real choice.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Help / contact number</label>
+            <input value={footer.helpline} maxLength={40} placeholder="+91 96069 98652"
+              onChange={(e) => { setFooter({ ...footer, helpline: e.target.value }); setFooterSaved(false); }}
+              className="w-full border rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Small print (optional)</label>
+            <input value={footer.note} maxLength={120} placeholder="Queries on this statement within 7 days of receipt."
+              onChange={(e) => { setFooter({ ...footer, note: e.target.value }); setFooterSaved(false); }}
+              className="w-full border rounded-lg px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <button onClick={saveFooter} disabled={orgBusy || !footerDirty}
+            className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white border border-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
+            {orgBusy ? 'Saving…' : 'Save footer'}
+          </button>
+          {footerSaved && !footerDirty && <span className="text-xs text-green-700">Saved.</span>}
         </div>
       </div>
 

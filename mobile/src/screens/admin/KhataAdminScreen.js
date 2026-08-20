@@ -25,17 +25,20 @@
  * (`User.khataExportAccess`), so the Export button is hidden without it; see
  * utils/roles.js → canExportKhata.
  *
+ * The STATEMENT PDF is deliberately outside those four gates: it is one
+ * person's book laid out to be read (bills embedded, not linked), which is what
+ * an operator standing on a site actually needs to hand over. The spreadsheet
+ * grant is about walking out with the whole company's ledger as data.
+ *
  * Route: "KhataAdmin" (from the More/Menu admin section).
  * Backend: /khata/overview, /employees, /employee-options, /pending,
- * /advance-approvals, /entries, /reports/export.
+ * /advance-approvals, /entries, /reports/export,
+ * /employees/:id/statement.pdf.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-
 import api, { API_BASE, errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
 import { canExportKhata, isExec, isSuperAdmin } from '../../utils/roles';
@@ -46,6 +49,7 @@ import {
   refresher, SectionHeader, EmptyState, SkeletonScreen, ModalSheet, StatTile,
 } from '../../components/ui';
 import { fmtDate, rupees, toYMD } from '../../utils/format';
+import { downloadAndShare } from '../../utils/downloadFile';
 
 const TABS = [
   ['people', 'People'],
@@ -113,6 +117,11 @@ export default function KhataAdminScreen() {
   const [viewKhata, setViewKhata] = useState('');  // '' = all of their books
   const [entryKhatas, setEntryKhatas] = useState([]); // books offered in the entry sheet
   const [exporting, setExporting] = useState(false);
+  // { employee, employeeName, khata, khataName, from, to } — the statement PDF
+  // asks for its date range before it builds, the way a paper statement is
+  // always asked for ("the Tamilnadu trip", not "everything ever").
+  const [statement, setStatement] = useState(null);
+  const [building, setBuilding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -154,34 +163,62 @@ export default function KhataAdminScreen() {
    * Download the khata as .xlsx and hand it to the share sheet.
    *
    * The route sits behind `protect`, so it needs the bearer header — which a
-   * plain Linking.openURL cannot set. FileSystem.downloadAsync it is, matching
-   * the attendance and payroll exports. Unfiltered, like the web Overview
-   * button: two sheets, every balance and every ledger row.
+   * plain Linking.openURL cannot set; see utils/downloadFile.js. Unfiltered,
+   * like the web Overview button: two sheets, every balance and every ledger row.
    */
   const exportXlsx = async () => {
     setExporting(true);
+    const name = `employee_khata_${toYMD(new Date())}.xlsx`;
     try {
-      const name = `employee_khata_${toYMD(new Date())}.xlsx`;
-      const fileUri = `${FileSystem.cacheDirectory}${name}`;
-      const res = await FileSystem.downloadAsync(`${API_BASE}/khata/reports/export`, fileUri, {
-        headers: { Authorization: `Bearer ${token}` },
+      const { shared } = await downloadAndShare({
+        url: `${API_BASE}/khata/reports/export`,
+        token,
+        fileName: name,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: 'Employee khata',
+        errors: { 403: 'You do not have permission to download the khata.' },
       });
-      // downloadAsync writes the error BODY to the file on a non-200, so the
-      // status has to be checked or the user shares a file of JSON.
-      if (res.status === 403) throw new Error('You do not have permission to download the khata.');
-      if (res.status !== 200) throw new Error('Export not available');
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(res.uri, {
-          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          dialogTitle: 'Employee khata',
-        });
-      } else {
-        toast('Saved', name);
-      }
+      if (!shared) toast('Saved', name);
     } catch (err) {
       toast('Export failed', err.message || 'Please try again');
     } finally {
       setExporting(false);
+    }
+  };
+
+  /**
+   * The printable statement — one khata, or everything the person holds, with
+   * every photo bill bound in behind it.
+   *
+   * Deliberately NOT behind `mayExport`: that grant is about walking out with
+   * the whole company's ledger as data. This is one person's book laid out to be
+   * read, and to be handed to whoever funded it — which is the thing an operator
+   * standing on a site actually needs from a phone.
+   */
+  const downloadStatement = async () => {
+    const { employee, khata, khataName, from, to } = statement;
+    setBuilding(true);
+    try {
+      const query = Object.entries({ khata, from, to })
+        .filter(([, v]) => v)
+        .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+        .join('&');
+      const slug = (khataName || 'all-khatas').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      const name = `khata-statement-${slug}.pdf`;
+      const { shared } = await downloadAndShare({
+        url: `${API_BASE}/khata/employees/${employee}/statement.pdf${query ? `?${query}` : ''}`,
+        token,
+        fileName: name,
+        mimeType: 'application/pdf',
+        dialogTitle: 'Khata statement',
+        UTI: 'com.adobe.pdf',
+      });
+      if (!shared) toast('Saved', name);
+      setStatement(null);
+    } catch (err) {
+      toast('Could not build it', err.message || 'Please try again');
+    } finally {
+      setBuilding(false);
     }
   };
 
@@ -409,6 +446,21 @@ export default function KhataAdminScreen() {
               <View style={{ width: spacing(2) }} />
               <AppButton title="Cash back" variant="ghost" onPress={() => openEntry(detail.employee._id, 'settlement')} style={{ flex: 1 }} />
             </View>
+            {/* Follows whichever book is being looked at right now — showing
+                "one khata" and then sharing everything would not match. */}
+            <AppButton
+              title="Statement PDF"
+              icon="document-text-outline"
+              variant="ghost"
+              style={{ marginTop: spacing(2) }}
+              onPress={() => setStatement({
+                employee: detail.employee._id,
+                employeeName: detail.employee.name,
+                khata: viewKhata,
+                khataName: (detail.khatas || []).find((k) => k._id === viewKhata)?.name || '',
+                from: '',
+                to: '',
+              })} />
           </Card>
 
           {/* Their books — a breakdown of where the one wallet went, not
@@ -440,6 +492,16 @@ export default function KhataAdminScreen() {
                       <Text style={styles.link}>Add expense</Text>
                     </TouchableOpacity>
                   )}
+                  <TouchableOpacity onPress={() => setStatement({
+                    employee: detail.employee._id,
+                    employeeName: detail.employee.name,
+                    khata: k._id,
+                    khataName: k.name,
+                    from: '',
+                    to: '',
+                  })}>
+                    <Text style={styles.link}>Statement PDF</Text>
+                  </TouchableOpacity>
                 </View>
               </Card>
             );
@@ -461,6 +523,7 @@ export default function KhataAdminScreen() {
           })()}
         </ScrollView>
         {renderEntrySheet()}
+        {renderStatementSheet()}
       </Screen>
     );
   }
@@ -689,6 +752,7 @@ export default function KhataAdminScreen() {
       </ScrollView>
 
       {renderEntrySheet()}
+      {renderStatementSheet()}
 
       <ModalSheet
         visible={!!newKhata}
@@ -840,6 +904,59 @@ export default function KhataAdminScreen() {
       </ModalSheet>
     </Screen>
   );
+
+  /**
+   * The date-range sheet the statement is built from.
+   *
+   * A function declaration rather than inline JSX because this screen returns
+   * early for the per-employee detail view, and the statement is offered from
+   * BOTH that view and the list behind it — one definition, two call sites, so
+   * the two can never drift.
+   */
+  function renderStatementSheet() {
+    return (
+      <ModalSheet
+        visible={!!statement}
+        onClose={() => setStatement(null)}
+        title="Statement PDF"
+        footer={<AppButton title="Download" icon="download-outline" onPress={downloadStatement} loading={building} />}>
+        {statement && (
+          <>
+            <Text style={styles.sheetIntro}>
+              {statement.khataName
+                ? `A printable statement of "${statement.khataName}" for ${statement.employeeName}.`
+                : `A printable statement of every khata ${statement.employeeName} holds.`}
+              {' '}Every photo bill in the period is embedded, so it stands on its own once it leaves the phone.
+            </Text>
+            {statement.khataName ? (
+              <TouchableOpacity
+                onPress={() => setStatement({ ...statement, khata: '', khataName: '' })}
+                style={{ marginBottom: spacing(3) }}>
+                <Text style={styles.link}>Cover every khata instead</Text>
+              </TouchableOpacity>
+            ) : null}
+            <Field label="From">
+              <DateField
+                value={statement.from}
+                onChange={(v) => setStatement({ ...statement, from: v })}
+                placeholder="Everything to date" />
+            </Field>
+            <Field label="To">
+              <DateField
+                value={statement.to}
+                onChange={(v) => setStatement({ ...statement, to: v })}
+                maximumDate={new Date()}
+                placeholder="Today" />
+            </Field>
+            <Text style={styles.sheetIntro}>
+              Leave both blank for everything to date. With a start date, the statement opens on the balance
+              carried in from before it.
+            </Text>
+          </>
+        )}
+      </ModalSheet>
+    );
+  }
 
   /** The give/record sheet, shared by the list and the per-employee views. */
   function renderEntrySheet() {

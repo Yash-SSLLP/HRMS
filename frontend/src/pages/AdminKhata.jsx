@@ -36,6 +36,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { useAuthStore } from '../store/authStore';
 import { canExportKhata, isExecViewer } from '../config/permissions';
+import { saveBlobResponse } from '../utils/download';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
@@ -175,6 +176,10 @@ export default function AdminKhata() {
   const [walletModal, setWalletModal] = useState(null);     // one employee's wallet settings
   const [sanctionModal, setSanctionModal] = useState(null); // { entry, approve, note }
   const [khataModal, setKhataModal] = useState(null);       // { employee, name, note }
+  // { employee, employeeName, khata, khataName, from, to } — the statement PDF
+  // asks for its date range before it builds, the way the paper version is
+  // always asked for ("the Tamilnadu trip", not "everything ever").
+  const [statementModal, setStatementModal] = useState(null);
   const [viewKhata, setViewKhata] = useState('');           // '' = every book of theirs
   const [operatorsFor, setOperatorsFor] = useState(null); // { account, operators[] }
 
@@ -432,18 +437,38 @@ export default function AdminKhata() {
     try {
       const res = await api.get('/khata/reports/export', { params: clean(ledgerFilter), responseType: 'blob' });
       // Server names the file via Content-Disposition; honour it, else fall back.
-      const cd = res.headers['content-disposition'] || '';
-      const m = /filename="?([^";]+)"?/i.exec(cd);
-      const url = URL.createObjectURL(res.data);
-      const a = document.createElement('a');
-      a.href = url; a.download = m ? m[1] : 'employee_khata.xlsx'; a.click();
-      URL.revokeObjectURL(url);
+      saveBlobResponse(res, 'employee_khata.xlsx');
     } catch (err) {
       // A blob responseType means the 403 body arrives as a Blob, so the usual
       // err.response.data.message is not there to read — say it plainly instead.
       if (err.response?.status === 403) toast.error('You do not have permission to download the khata.');
       else errToast(err, 'Could not export');
     }
+  };
+
+  /**
+   * The printable statement — one khata, or everything the person holds.
+   *
+   * Separate from the .xlsx export in both shape and gate: that one hands over
+   * the whole company's ledger as data and needs the export grant, this is one
+   * person's book laid out to be read (and to be handed to whoever funded it),
+   * with the bills bound in behind it.
+   */
+  const downloadStatement = async (e) => {
+    e?.preventDefault?.();
+    const { employee, khata, from, to } = statementModal;
+    setSaving(true);
+    try {
+      const res = await api.get(`/khata/employees/${employee}/statement.pdf`, {
+        params: clean({ khata, from, to }), responseType: 'blob',
+      });
+      saveBlobResponse(res, 'khata-statement.pdf');
+      setStatementModal(null);
+    } catch (err) {
+      // A blob responseType means an error body arrives as a Blob, so the usual
+      // err.response.data.message is not there to read.
+      toast.error('Could not build the statement');
+    } finally { setSaving(false); }
   };
 
   const remindEveryone = async () => {
@@ -748,6 +773,18 @@ export default function AdminKhata() {
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
                 Wallet settings
               </button>
+              {/* Whichever book is being looked at right now — showing "only
+                  this" and then downloading everything would not match. */}
+              <button onClick={() => setStatementModal({
+                employee: detail.employee._id,
+                employeeName: detail.employee.name,
+                khata: viewKhata,
+                khataName: (detail.khatas || []).find((k) => k._id === viewKhata)?.name || '',
+                from: '', to: '',
+              })}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
+                Statement PDF
+              </button>
             </div>
           </div>
 
@@ -795,6 +832,16 @@ export default function AdminKhata() {
                     })}
                       className="text-xs text-gray-600 hover:text-gray-900 underline">
                       Settings
+                    </button>
+                    <button onClick={() => setStatementModal({
+                      employee: detail.employee._id,
+                      employeeName: detail.employee.name,
+                      khata: k._id,
+                      khataName: k.name,
+                      from: '', to: '',
+                    })}
+                      className="text-xs text-gray-600 hover:text-gray-900 underline">
+                      Statement PDF
                     </button>
                   </div>
                 </div>
@@ -1322,6 +1369,56 @@ export default function AdminKhata() {
               <button type="submit" disabled={saving}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
                 {saving ? 'Opening…' : 'Open khata'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {statementModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <form onSubmit={downloadStatement} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+            <h3 className="text-lg font-semibold text-gray-900">Statement PDF</h3>
+            <p className="text-xs text-gray-500 mt-1 mb-4">
+              {statementModal.khataName
+                ? <>A printable statement of <strong>{statementModal.khataName}</strong> for {statementModal.employeeName}.</>
+                : <>A printable statement of every khata {statementModal.employeeName} holds.</>}
+              {' '}Every photo bill in the period is embedded, so the document stands on its own once it leaves here.
+            </p>
+
+            {statementModal.khataName && (
+              <button type="button"
+                onClick={() => setStatementModal({ ...statementModal, khata: '', khataName: '' })}
+                className="text-xs text-gray-600 hover:text-gray-900 underline mb-3">
+                Cover every khata instead
+              </button>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">From</label>
+                <input type="date" value={statementModal.from}
+                  onChange={(e) => setStatementModal({ ...statementModal, from: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">To</label>
+                <input type="date" value={statementModal.to} max={today()}
+                  onChange={(e) => setStatementModal({ ...statementModal, to: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              Leave both blank for everything to date. With a start date, the statement opens on the balance
+              carried in from before it.
+            </p>
+
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button" onClick={() => setStatementModal(null)}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">Cancel</button>
+              <button type="submit" disabled={saving}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm disabled:opacity-50">
+                {saving ? 'Building…' : 'Download PDF'}
               </button>
             </div>
           </form>
