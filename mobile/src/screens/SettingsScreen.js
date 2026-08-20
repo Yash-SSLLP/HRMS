@@ -1,7 +1,8 @@
 /**
  * SettingsScreen — app preferences: theme (system/light/dark, restarts the JS
  * bundle to apply), push-notification enable/disable, biometric app lock, account
- * info, about/version, and logout. Pushed as "Settings" from Profile. Any role.
+ * info, about/version, and logout. Pushed as "Settings" from Profile. Any role,
+ * though the Server row is SuperAdmin-only.
  * Backend: none directly — push register/unregister go through services/push;
  * theme + lock state persist locally (AsyncStorage / security store).
  */
@@ -16,6 +17,7 @@ import RNRestart from 'react-native-restart';
 
 import { API_BASE, signOut } from '../api/client';
 import { useAuth } from '../store/auth';
+import { isSuperAdmin } from '../utils/roles';
 import { useSecurity } from '../store/security';
 import { registerForPush, unregisterPush } from '../services/push';
 import {
@@ -350,7 +352,10 @@ export default function SettingsScreen() {
             </>
           ) : null}
 
-          <Row icon="server" label="Server" value={host} />
+          {/* Which backend the app talks to is a deployment detail — useful when
+              diagnosing a build pointed at the wrong server, noise (and a hint
+              worth not advertising) for everyone else. SuperAdmin only. */}
+          {isSuperAdmin(user) ? <Row icon="server" label="Server" value={host} /> : null}
           <Row icon="shield-outline" label="Privacy Policy" onPress={() => nav.navigate('Privacy')} tint={colors.textMuted} />
           <Row icon="help-buoy" label="Help & support" onPress={() => Linking.openURL('mailto:hr@sequencesurface.com?subject=HRMS%20App%20Support')} tint="#0ea5e9" last />
         </Card>
