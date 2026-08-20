@@ -1,8 +1,10 @@
 /**
  * AdminAnalytics — HR analytics & reports (admin portal). Loads a computed
  * overview (headcount, attrition, tenure, diversity, hires/exits by month) from
- * GET /analytics/overview and renders bar/pie/line charts. Clicking a hires/exits
- * point opens a modal listing who joined or left that month.
+ * GET /analytics/overview and renders bar/pie/line charts. A department filter in
+ * the page header re-fetches the overview for that department, so every chart and
+ * stat card on the page reflects it. Clicking a hires/exits point opens a modal
+ * listing who joined or left that month.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -56,19 +58,55 @@ export default function AdminAnalytics() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // { title, monthLabel, color, employees }
+  const [dept, setDept] = useState('All'); // department filter — applies to the whole page
+  const [refreshing, setRefreshing] = useState(false);
 
+  // Re-fetch whenever the department changes. Only the very first load shows the
+  // full-page loader; later switches keep the current charts on screen so the
+  // page doesn't flash between departments.
   useEffect(() => {
+    let cancelled = false;
     (async () => {
+      setRefreshing(true);
       try {
-        const res = await api.get('/analytics/overview');
+        const res = await api.get('/analytics/overview', { params: { department: dept } });
+        if (cancelled) return;
         setData(res.data);
+        setError('');
       } catch (err) {
-        setError(err.response?.data?.message || 'Failed to load analytics');
+        if (!cancelled) setError(err.response?.data?.message || 'Failed to load analytics');
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [dept]);
+
+  const d = data || {};
+
+  // One filter for the whole page — the server recomputes every metric for the
+  // chosen department. The option list comes back unfiltered, so switching
+  // department never shrinks the dropdown.
+  const deptFilter = (d.departments || []).length > 0 && (
+    <label className="flex items-center gap-2 text-sm text-gray-500">
+      Department
+      <select
+        value={dept}
+        onChange={(e) => setDept(e.target.value)}
+        className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-700 bg-white"
+      >
+        <option value="All">All departments</option>
+        {d.departments.map((name) => (
+          <option key={name} value={name}>{name}</option>
+        ))}
+      </select>
+    </label>
+  );
 
   if (loading) {
     return (
@@ -82,15 +120,15 @@ export default function AdminAnalytics() {
   if (error) {
     return (
       <div>
-        <PageHeader title="Analytics & Reports" subtitle="Headcount, attrition & demographics" />
+        <PageHeader title="Analytics & Reports" subtitle="Headcount, attrition & demographics">{deptFilter}</PageHeader>
         <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       </div>
     );
   }
 
-  const d = data || {};
-
-  if ((d.totalActive ?? 0) === 0) {
+  // Nothing at all to show only when the whole org is empty — a department with
+  // no active staff still has exits/hires history worth charting.
+  if (dept === 'All' && (d.totalActive ?? 0) === 0) {
     return (
       <div>
         <PageHeader title="Analytics & Reports" subtitle="Headcount, attrition & demographics" />
@@ -112,8 +150,10 @@ export default function AdminAnalytics() {
 
   // Line: [{ label, value, employees, monthKey }] — the employee list rides
   // along on each point so clicking a dot can list who joined / left that month.
-  const exitsLine = (d.exitsByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count, employees: x.employees || [], monthKey: x.month }));
-  const hiresLine = (d.hiresByMonth || []).map((x) => ({ label: monthLabel(x.month), value: x.count, employees: x.employees || [], monthKey: x.month }));
+  const monthLine = (rows) =>
+    (rows || []).map((x) => ({ label: monthLabel(x.month), value: x.count, employees: x.employees || [], monthKey: x.month }));
+  const exitsLine = monthLine(d.exitsByMonth);
+  const hiresLine = monthLine(d.hiresByMonth);
 
   // "2026-06" -> "June 2026"
   const fullMonth = (key) => {
@@ -121,12 +161,18 @@ export default function AdminAnalytics() {
     return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
   };
   const openPoint = (series, point) => {
-    setModal({ title: series.name, color: series.color, monthLabel: fullMonth(point.monthKey), employees: point.employees || [] });
+    setModal({ title: series.name, color: series.color, monthLabel: fullMonth(point.monthKey), dept, employees: point.employees || [] });
   };
 
   return (
     <div>
-      <PageHeader title="Analytics & Reports" subtitle="Headcount, attrition & demographics" />
+      <PageHeader
+        title="Analytics & Reports"
+        subtitle={dept === 'All' ? 'Headcount, attrition & demographics' : `Headcount, attrition & demographics · ${dept}`}
+      >
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+        {deptFilter}
+      </PageHeader>
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -137,8 +183,9 @@ export default function AdminAnalytics() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Headcount by Department — bar graph */}
-        <ChartCard title="Headcount by Department" empty={deptBars.length === 0}>
+        {/* Headcount by Department — bar graph. With a single department selected
+            this is a one-bar chart, so it's titled for that case instead. */}
+        <ChartCard title={dept === 'All' ? 'Headcount by Department' : `Headcount · ${dept}`} empty={deptBars.length === 0}>
           <BarChart data={deptBars} />
         </ChartCard>
 
@@ -159,8 +206,13 @@ export default function AdminAnalytics() {
 
         {/* New Employees vs Exits — combined line chart (full width) */}
         <div className="lg:col-span-2">
-          <ChartCard title="New Employees vs Exits · last 12 months" empty={hiresLine.length === 0 && exitsLine.length === 0}>
-            <p className="text-xs text-gray-400 -mt-2 mb-1 text-center">Click a dot to see which employees joined or left that month.</p>
+          <ChartCard
+            title="New Employees vs Exits · last 12 months"
+            empty={(d.newHiresLast12mo ?? 0) === 0 && (d.exitsLast12mo ?? 0) === 0}
+          >
+            <p className="text-xs text-gray-400 -mt-2 mb-1 text-center">
+              {d.newHiresLast12mo ?? 0} joined, {d.exitsLast12mo ?? 0} left · click a dot to see who.
+            </p>
             <LineChart
               series={[
                 // Joining vs leaving is a good/bad pair, so it reads better in
@@ -189,7 +241,10 @@ export default function AdminAnalytics() {
                   <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: modal.color }} />
                   {modal.title}
                 </h2>
-                <p className="text-sm text-gray-500 mt-0.5">{modal.monthLabel} · {modal.employees.length} {modal.employees.length === 1 ? 'person' : 'people'}</p>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {modal.monthLabel} · {modal.employees.length} {modal.employees.length === 1 ? 'person' : 'people'}
+                  {modal.dept && modal.dept !== 'All' ? ` · ${modal.dept}` : ''}
+                </p>
               </div>
               <button onClick={() => setModal(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
             </div>

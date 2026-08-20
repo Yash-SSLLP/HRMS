@@ -2,6 +2,7 @@
  * Analytics controller — org-wide HR analytics computed from EmployeeProfile
  * records: headcount by department/employment-type, gender diversity, tenure
  * bands, confirmation status, plus 12-month hires/exits, attrition count & rate.
+ * Every metric can be narrowed to a single department via ?department=.
  * Admin-only, read-only.
  */
 const asyncHandler = require('express-async-handler');
@@ -15,10 +16,15 @@ function tenureBucket(years) {
   return '5y+';
 }
 
+// Department label for a profile — blank/missing is its own bucket so those
+// employees stay visible in the filter instead of vanishing.
+const departmentOf = (p) => (p.department || '').trim() || 'Unassigned';
+
 /**
- * Return the org-wide HR analytics overview.
- * @route GET /api/analytics/overview  (SuperAdmin / HRManager)
- * @returns {Object} totalActive, headcountByDepartment/EmploymentType, genderDiversity,
+ * Return the HR analytics overview, optionally for one department only.
+ * @route GET /api/analytics/overview?department=Engineering  (SuperAdmin / HRManager)
+ * @returns {Object} department (the applied filter), departments (all available),
+ *   totalActive, headcountByDepartment/EmploymentType, genderDiversity,
  *   tenureBuckets, confirmationBreakdown, exitsByMonth, exitsLast12mo, attritionRate,
  *   newHiresLast12mo, hiresByMonth
  */
@@ -31,12 +37,23 @@ const overview = asyncHandler(async (req, res) => {
   const twelveMonthsAgo = new Date(now);
   twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
-  const profiles = await EmployeeProfile.find({})
+  const allProfiles = await EmployeeProfile.find({})
     .select(
       'gender dateOfJoining dateOfExit department employmentType confirmationStatus employeeCode designation user'
     )
     .populate('user', 'firstName lastName')
     .lean();
+
+  // The department list is always computed from the *unfiltered* set, so the
+  // dropdown keeps every option no matter which department is selected.
+  const departments = [...new Set(allProfiles.map(departmentOf))].sort((a, b) => a.localeCompare(b));
+
+  // ?department= narrows every metric below; 'All' (or absent) means org-wide.
+  // Non-string query values (e.g. a repeated param) fall back to org-wide.
+  const raw = typeof req.query.department === 'string' ? req.query.department.trim() : '';
+  const department = raw || 'All';
+  const profiles =
+    department === 'All' ? allProfiles : allProfiles.filter((p) => departmentOf(p) === department);
 
   // Compact employee descriptor for the click-through lists on the
   // "New Employees vs Exits" chart (who joined / left in a given month).
@@ -55,7 +72,7 @@ const overview = asyncHandler(async (req, res) => {
   // --- Headcount by department (active, sorted desc) ---
   const deptCounts = {};
   for (const p of active) {
-    const key = p.department || 'Unassigned';
+    const key = departmentOf(p);
     deptCounts[key] = (deptCounts[key] || 0) + 1;
   }
   const headcountByDepartment = Object.entries(deptCounts)
@@ -160,6 +177,8 @@ const overview = asyncHandler(async (req, res) => {
   }));
 
   res.json({
+    department,
+    departments,
     totalActive,
     headcountByDepartment,
     headcountByEmploymentType,
