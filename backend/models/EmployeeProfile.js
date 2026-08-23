@@ -79,6 +79,22 @@ const employeeProfileSchema = new mongoose.Schema(
     // person by a SuperAdmin — a WFH punch is exempt from the geofence check,
     // so it is a privilege, not a self-service checkbox.
     wfhAllowed: { type: Boolean, default: false },
+    // Whether this employee may check in and out from ANYWHERE — their punches
+    // are simply never measured against the office geofence.
+    //
+    // NOT the same grant as `wfhAllowed`, and the difference is the reason both
+    // exist. WFH is something the employee DECLARES, punch by punch, and it
+    // records a fact about that day: they worked from home. This says nothing
+    // about where the work happened — it says the geofence does not apply to
+    // this person at all, which is what a site engineer, a field sales rep or a
+    // driver actually needs. Making them tick "working from home" every morning
+    // to avoid being flagged would put a wrong word on the record and rely on
+    // them remembering it.
+    //
+    // Granted per person by a SuperAdmin from Admin → Permissions. The punch
+    // still carries its GPS fix, and it still appears on the punch map — this
+    // only stops it counting as a punch that needs explaining.
+    remotePunchAllowed: { type: Boolean, default: false },
     employmentType: {
       type: String,
       enum: ['FullTime', 'PartTime', 'Contract', 'Intern'],

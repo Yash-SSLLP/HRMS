@@ -10,13 +10,13 @@ import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
 
 import api, { errMsg } from '../api/client';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, SectionHeader, EmptyState, SkeletonScreen, Ionicons } from '../components/ui';
 import { fmtDate, rupees, toYMD } from '../utils/format';
-import { compressImage, RECEIPT_MAX_PX } from '../utils/image';
+import { captureReceipt } from '../utils/camera';
+import { getFiledLocationFields } from '../utils/geo';
 import { lastChange, actorOf } from '../utils/statusTrail';
 
 const CATEGORIES = ['Travel', 'Food', 'Accommodation', 'Supplies', 'Medical', 'Communication', 'Other'];
@@ -59,27 +59,14 @@ export default function ExpensesScreen() {
     setReceipt(res.assets[0]);
   };
 
-  // Photograph the paper receipt with the rear camera. Downscaled before it is
-  // held: a phone still is routinely 4-8 MB and the endpoint caps uploads at
-  // 5 MB, so the original would be rejected on submit.
+  // Photograph the paper receipt. Everything fiddly about that — a permission
+  // the OS will no longer ask for, a camera that refuses to launch, the
+  // downscale the 5 MB upload cap needs — lives in utils/camera, because a tap
+  // that silently does nothing is the one failure a receipt button must not
+  // have.
   const shootReceipt = async () => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      toast('Camera needed', 'Allow camera access to photograph a receipt.');
-      return;
-    }
-    const res = await ImagePicker.launchCameraAsync({
-      cameraType: ImagePicker.CameraType.back,
-      quality: 0.9,
-      allowsEditing: false,
-    });
-    if (res.canceled) return;
-    try {
-      const shot = await compressImage(res.assets[0], RECEIPT_MAX_PX);
-      setReceipt({ uri: shot.uri, name: `receipt-${Date.now()}.jpg`, mimeType: 'image/jpeg' });
-    } catch {
-      toast('Could not use that photo', 'Please try again, or attach a file instead.');
-    }
+    const shot = await captureReceipt();
+    if (shot) setReceipt(shot);
   };
 
   // Validate amount/date/receipt, then POST the claim as multipart with the file.
@@ -95,6 +82,11 @@ export default function ExpensesScreen() {
       form.append('expenseDate', date);
       form.append('merchant', merchant);
       form.append('description', description);
+      // Where the claim is being filed from. Best-effort — no permission or no
+      // fix simply sends nothing rather than blocking the claim. Only a Super
+      // Admin ever sees it.
+      Object.entries(await getFiledLocationFields({ maxWaitMs: 6000, goodEnoughM: 50 }))
+        .forEach(([k, v]) => form.append(k, v));
       form.append('receipt', { uri: receipt.uri, name: receipt.name || 'receipt', type: receipt.mimeType || 'application/octet-stream' });
       await api.post('/expenses', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       setShowForm(false);
@@ -168,6 +160,10 @@ export default function ExpensesScreen() {
                 </View>
               ) : null}
             </Field>
+            {/* Said plainly, where it happens, rather than buried in a policy. */}
+            <Text style={styles.locationNote}>
+              Your location is recorded with the claim. Only a Super Admin can see it.
+            </Text>
             <AppButton title="Submit claim" icon="send" onPress={submit} loading={submitting} />
           </Card>
         )}
@@ -244,6 +240,7 @@ const styles = StyleSheet.create({
   summaryValue: { fontSize: 26, fontWeight: '800', color: colors.text, marginTop: 4 },
   summaryIcon: { width: 52, height: 52, borderRadius: 16, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  locationNote: { color: colors.textMuted, fontSize: 11, marginBottom: spacing(2) },
   chip: { paddingHorizontal: 14, height: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontWeight: '700', fontSize: 13, color: colors.textMuted },

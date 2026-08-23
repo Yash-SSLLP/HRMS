@@ -28,24 +28,32 @@ async function myReportIds(userId) {
 // EmployeeProfile ids of the people who report directly to the current user.
 async function myReportProfiles(userId) {
   return EmployeeProfile.find({ reportingManager: userId })
-    .select('employeeCode designation department user workLocationRef')
+    .select('employeeCode designation department user workLocationRef remotePunchAllowed')
     .populate('user', 'firstName lastName email photo')
     .populate('workLocationRef', 'name lat lng radiusM')
     .lean();
 }
 
 // The geofence a punch is measured against: the employee's assigned work
-// location if set, else the global office. (Mirrors attendanceController.)
+// location if set, else the global office. `exempt` is the per-person grant to
+// punch from anywhere. (Mirrors attendanceController — keep the two in step.)
 function resolveGeofence(profile, settings) {
+  const exempt = profile?.remotePunchAllowed === true;
   const wl = profile && profile.workLocationRef;
   if (wl && wl.lat != null && wl.lng != null) {
     return {
       center: { lat: wl.lat, lng: wl.lng },
       radiusM: wl.radiusM != null ? wl.radiusM : settings.geofenceThresholdM,
       label: wl.name || 'work location',
+      exempt,
     };
   }
-  return { center: settings.office, radiusM: settings.geofenceThresholdM, label: settings.office?.label || 'office' };
+  return {
+    center: settings.office,
+    radiusM: settings.geofenceThresholdM,
+    label: settings.office?.label || 'office',
+    exempt,
+  };
 }
 
 /**
@@ -88,6 +96,9 @@ const listTeam = asyncHandler(async (req, res) => {
         checkOutDistanceM: haversineMeters(geo.center, a.checkOutLocation),
         geofenceRadiusM: geo.radiusM,
         locationName: geo.label,
+        // The office fence does not apply to this person, so a long distance
+        // here is expected rather than something for the manager to chase.
+        remotePunchAllowed: geo.exempt,
       };
     }
     return {

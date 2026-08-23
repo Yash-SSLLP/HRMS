@@ -36,7 +36,14 @@ const CATEGORIES = [
     person: (it) => fullName(it.employee),
     title: (it) => rupees(it.amount),
     sub: (it) => `${it.category} · ${fmtDate(it.expenseDate)}`,
-    note: (it) => it.description,
+    // The filing location rides along only for a Super Admin — the server sends
+    // it to nobody else, so there is no role test to keep in step here.
+    note: (it) => [
+      it.description,
+      it.filedLocation?.lat != null
+        ? `📍 Filed from ${it.filedLocation.lat.toFixed(5)}, ${it.filedLocation.lng.toFixed(5)}`
+        : '',
+    ].filter(Boolean).join('  ·  '),
     approve: (it) => api.patch(`/expenses/${it._id}/status`, { status: 'Approved' }),
     reject: (it) => api.patch(`/expenses/${it._id}/status`, { status: 'Rejected' }),
   },

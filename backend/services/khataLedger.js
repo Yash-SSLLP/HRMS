@@ -711,6 +711,10 @@ async function postEntry(input, actor) {
     category: input.category || 'Uncategorized',
     paymentMode: input.paymentMode || 'Cash',
     referenceNo: input.referenceNo,
+    // Where the employee was when they filed this, when a client sent it. The
+    // document is built from an explicit allowlist, so a new field has to be
+    // named here or it is silently dropped on the way through.
+    filedLocation: input.filedLocation || null,
     affectsCompanyCash,
     cashAccount: input.cashAccount || undefined,
     status: autoApprove ? 'Approved' : parkedStatus,
@@ -925,6 +929,191 @@ async function reverseEntry(entry, actor, reason) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Correcting an expense before the company has confirmed it
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a posted expense can still be corrected in place, and by whom.
+ *
+ * WHY AN EDIT AT ALL, in a ledger where nothing is ever changed. An expense is
+ * the one row that posts without anybody approving it (see recordMyExpense):
+ * the purchase already happened, so holding the record only made the wallet lie
+ * about what was left. That speed is worth having, but it means the figure
+ * lands on the ledger before any second pair of eyes — and a digit fat-fingered
+ * at a shop counter should be fixable by the person who typed it, not require a
+ * reversal and a re-entry that reads like a fraud being unwound.
+ *
+ * So the window is exactly the gap the fast posting opened: from the moment it
+ * is recorded to the moment the company confirms it. After confirmation it is a
+ * settled record and the only correction left is a reversal.
+ *
+ * The BOOK BEING CLOSED ends the employee's half of that window but not the
+ * company's. Closing is the company saying "this job is done and its figures
+ * are ours now"; leaving the employee able to reach back into it would make the
+ * closure meaningless, while the company still has to be able to fix what it
+ * finds in there.
+ * @param {object} entry - A KhataEntry document.
+ * @param {object} [khata] - The book it is filed under, when loaded.
+ * @returns {{employee: boolean, company: boolean, reason: string}} `reason`
+ *   explains a `false`, in words the person who tried it can act on.
+ */
+function expenseEditability(entry, khata) {
+  const no = (reason) => ({ employee: false, company: false, reason });
+
+  if (!entry || entry.type !== 'expense') {
+    return no('Only an expense can be edited. Anything else is corrected by reversing it.');
+  }
+  if (entry.status === 'Reversed' || entry.reversedBy) {
+    return no('This expense has been reversed, so it can no longer be changed.');
+  }
+  if (entry.status !== 'Approved') {
+    return no(`This entry is ${String(entry.status).toLowerCase()} and cannot be edited.`);
+  }
+  if (entry.confirmedByCompany) {
+    return no('The company has confirmed this expense. Reverse it if it is wrong.');
+  }
+
+  const bookOpen = !khata || khata.isActive !== false;
+  return {
+    // Only the person who filed it — an expense the company recorded on their
+    // behalf is the company's row to correct.
+    employee: entry.raisedByEmployee === true && bookOpen,
+    company: true,
+    reason: bookOpen ? '' : `"${khata.name}" has been closed, so only the company can change entries in it.`,
+  };
+}
+
+/** One field's before/after, phrased for the edit trail. */
+const changeLine = (label, before, after) => `${label}: ${before ?? '—'} → ${after ?? '—'}`;
+
+/**
+ * Apply a correction to an unconfirmed expense and replay everything it moves.
+ *
+ * The row is changed in place — this is the one place in the module that does
+ * that — but never silently: what it used to say is appended to `edits` before
+ * the new values are written, so the trail survives even though the row does
+ * not keep a second copy of itself.
+ *
+ * MOVING IT TO ANOTHER BOOK is a legitimate correction (filed under the wrong
+ * site), and the reason both books are recomputed rather than one: the cost has
+ * to come OFF the old heading as well as land on the new one.
+ * @param {object} entry - An Approved, unconfirmed expense document.
+ * @param {object} changes - Any of amount/purpose/category/paymentMode/referenceNo/date/khata.
+ * @param {object} actor - Who is correcting it.
+ * @param {{asEmployee?: boolean}} [opts] - Marks the trail entry as the employee's own.
+ * @returns {Promise<{entry: object, wallet: object, khata: object|null}>}
+ * @throws {Error} `.statusCode` set for a khata that is not theirs or is closed.
+ */
+async function applyExpenseEdit(entry, changes, actor, opts = {}) {
+  const lines = [];
+  const previousKhataId = entry.khata ? String(entry.khata) : null;
+
+  if (changes.amount !== undefined) {
+    const next = round2(changes.amount);
+    if (!(next > 0)) {
+      const err = new Error('Enter an amount greater than zero');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (next !== round2(entry.amount)) {
+      lines.push(changeLine('amount', `₹${round2(entry.amount)}`, `₹${next}`));
+      entry.amount = next;
+    }
+  }
+
+  if (changes.khata !== undefined && String(changes.khata) !== previousKhataId) {
+    // resolveKhata refuses a book belonging to somebody else, and a closed one
+    // — an expense cannot be moved INTO a book that has been shut, by either
+    // side, or closing a book would not stop it growing.
+    const target = await resolveKhata(entry.employee, changes.khata, actor);
+    const before = previousKhataId ? await EmployeeKhata.findById(previousKhataId).select('name') : null;
+    lines.push(changeLine('khata', before?.name, target.name));
+    entry.khata = target._id;
+  }
+
+  const text = [
+    ['purpose', 'what for'],
+    ['category', 'category'],
+    ['paymentMode', 'paid by'],
+    ['referenceNo', 'reference'],
+  ];
+  for (const [field, label] of text) {
+    if (changes[field] === undefined) continue;
+    const next = String(changes[field] || '').trim();
+    if (next !== String(entry[field] || '')) {
+      lines.push(changeLine(label, entry[field], next));
+      entry[field] = next;
+    }
+  }
+
+  if (changes.date !== undefined && changes.date) {
+    const next = new Date(changes.date);
+    if (!Number.isNaN(next.getTime()) && next.getTime() !== new Date(entry.date).getTime()) {
+      lines.push(changeLine('date', new Date(entry.date).toDateString(), next.toDateString()));
+      entry.date = next;
+    }
+  }
+
+  // A replaced bill is handled by the caller (it owns the file storage), but it
+  // belongs in the same trail entry as the rest of the correction.
+  if (changes.receiptReplaced) lines.push('bill replaced');
+
+  if (lines.length) {
+    entry.edits.push({
+      at: new Date(),
+      by: actor?._id,
+      byEmployee: opts.asEmployee === true,
+      summary: lines.join('; ').slice(0, 600),
+    });
+  }
+  await entry.save();
+
+  // Both books, because the cost may have moved between them, and the wallet,
+  // because the amount may have changed. recomputeFor covers the new book and
+  // the wallet; the old one has to be asked for by name.
+  if (previousKhataId && previousKhataId !== String(entry.khata || '')) {
+    await recomputeKhataSpent(previousKhataId);
+  }
+  await recomputeFor(entry);
+
+  return {
+    entry,
+    wallet: await getOrCreateWallet(entry.employee),
+    khata: entry.khata ? await EmployeeKhata.findById(entry.khata) : null,
+    changed: lines.length > 0,
+    summary: lines.join('; '),
+  };
+}
+
+/**
+ * Mark an expense as checked by the company, which closes it to further edits.
+ *
+ * Moves no money — the row already counted the moment it was recorded. What it
+ * changes is who may still touch it: nobody, short of a reversal.
+ * @param {object} entry - An Approved, unconfirmed expense document.
+ * @param {object} actor - Whoever on the company side looked at it.
+ * @param {string} [note] - Optional remark, shown to the employee.
+ * @returns {Promise<object>} The saved entry.
+ * @throws {Error} `.statusCode = 400` if it is not an expense awaiting confirmation.
+ */
+async function confirmExpense(entry, actor, note) {
+  const rights = expenseEditability(entry);
+  if (!rights.company) {
+    const err = new Error(rights.reason || 'This expense cannot be confirmed.');
+    err.statusCode = 400;
+    throw err;
+  }
+  entry.confirmedByCompany = true;
+  entry.confirmedBy = actor?._id;
+  entry.confirmedAt = new Date();
+  entry.reviewedBy = actor?._id;
+  entry.reviewedAt = new Date();
+  if (note) entry.reviewNote = String(note).slice(0, 500);
+  await entry.save();
+  return entry;
+}
+
 module.exports = {
   round2,
   splitTotals,
@@ -951,5 +1140,8 @@ module.exports = {
   approveEntry,
   rejectEntry,
   reverseEntry,
+  expenseEditability,
+  applyExpenseEdit,
+  confirmExpense,
   CASH_CATEGORY,
 };

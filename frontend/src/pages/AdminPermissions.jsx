@@ -183,6 +183,28 @@ export default function AdminPermissions() {
     }
   };
 
+  /**
+   * Let this employee punch in and out from anywhere.
+   *
+   * Deliberately a separate grant from WFH rather than a wider reading of it.
+   * WFH is something the employee declares on a punch, and it records that they
+   * worked from home that day. This says the office geofence does not apply to
+   * them at all — the answer for site engineers, field sales and drivers, who
+   * should not have to claim they were at home to avoid being flagged for being
+   * where their job is.
+   */
+  const toggleRemotePunch = async (u) => {
+    setBusyId(u._id || u.id); setError('');
+    try {
+      await api.patch(`/admin/users/${u._id || u.id}/remote-punch-access`, { enabled: !u.remotePunchAllowed });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not update punch-location access');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   // Seed the dialog with what the account effectively holds RIGHT NOW. A null
   // array is "all" for an HR Manager but "none" for a Manager — seeding every
   // box for a Manager would mean one careless Save handed them full admin.
@@ -230,7 +252,10 @@ export default function AdminPermissions() {
         Grant module access to any user or employee. <strong>Cashbook</strong> and <strong>Expenses</strong> access can
         be given to anyone, whatever their role; <strong>Khata</strong> likewise — with the separate
         <strong>Export</strong> tick controlling who may download every employee&apos;s cash ledger as a
-        spreadsheet, which no role grants on its own; <strong>Work from home</strong> is granted per employee;
+        spreadsheet, which no role grants on its own; <strong>Attendance</strong> holds the two per-employee
+        punch grants — <strong>WFH</strong> lets someone mark a punch as work-from-home, while
+        <strong>Punch anywhere</strong> exempts them from the office geofence altogether, so a check-in from a
+        site or a client office is never flagged (the location is still recorded either way);
         {' '}<strong>Module permissions</strong> apply to HR Managers and Managers — an HR Manager with none set keeps
         full access, while a Manager starts with nothing and only sees the admin portal once granted something.
         {' '}<strong>CEO / MD access</strong> switches an executive account between view-only (the default) and edit
@@ -319,7 +344,7 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Assets</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Khata</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Work from home</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700">Attendance</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">CEO / MD access</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">HR Permissions</th>
             </tr>
@@ -374,13 +399,23 @@ export default function AdminPermissions() {
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  {/* The flag lives on the employee profile, so accounts without
-                      one (CEO/MD) have nothing to grant. */}
+                  {/* Both flags live on the employee profile, so accounts
+                      without one (CEO/MD) have nothing to grant. */}
                   {u.hasProfile ? (
-                    <button onClick={() => toggleWfh(u)} disabled={busyId === (u._id || u.id)}
-                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.wfhAllowed ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-indigo-700 border-indigo-300 hover:bg-indigo-50'}`}>
-                      {u.wfhAllowed ? '✓ Allowed' : 'Allow WFH'}
-                    </button>
+                    <div className="flex flex-col gap-1.5 items-start">
+                      <button onClick={() => toggleWfh(u)} disabled={busyId === (u._id || u.id)}
+                        title="Lets them tick 'working from home' on a punch. That punch is not measured against the office geofence, and the day records as WFH."
+                        className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.wfhAllowed ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-indigo-700 border-indigo-300 hover:bg-indigo-50'}`}>
+                        {u.wfhAllowed ? '✓ WFH' : 'Allow WFH'}
+                      </button>
+                      {/* The one for field staff: no declaring anything, the
+                          fence simply does not apply to them. */}
+                      <button onClick={() => toggleRemotePunch(u)} disabled={busyId === (u._id || u.id)}
+                        title="Lets them check in and out from anywhere. Their punches are never flagged as outside the office — the GPS location is still recorded and still shown on the punch map."
+                        className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.remotePunchAllowed ? 'bg-sky-600 text-white border-sky-600 hover:bg-sky-700' : 'text-sky-700 border-sky-300 hover:bg-sky-50'}`}>
+                        {u.remotePunchAllowed ? '✓ Punch anywhere' : 'Punch anywhere'}
+                      </button>
+                    </div>
                   ) : (
                     <span className="text-xs text-gray-400">—</span>
                   )}

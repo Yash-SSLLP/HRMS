@@ -105,9 +105,103 @@ for a SuperAdmin would leave the accounts team watching wrong entries they could
 not correct. Safe because no company cash moves either way — it only restores
 the employee's wallet.
 
-Find them under **Admin → Employee Khata → Approvals → Recorded expenses**
+Find them under **Admin → Employee Khata → Approvals → Expenses to confirm**
 (they never reach `/pending`, having never been pending). Rows with no bill are
 flagged there, since that should not be possible through either client.
+
+## Confirming an expense — and the editing window before it
+
+Posting on the spot puts a figure on the ledger before anybody has checked it.
+That is worth it (see above), but it cuts both ways: a digit fat-fingered at a
+shop counter is now a wrong number in the accounts. Requiring a *reversal* to fix
+a typo would make the ledger read like a fraud being unwound every time somebody
+mistyped ₹550 as ₹5,500.
+
+So an expense stays **editable until the company confirms it**:
+
+| | While unconfirmed | After confirming |
+|---|---|---|
+| The employee who filed it | may correct amount, purpose, book, date, payment mode, bill — **unless the book has been closed** | no |
+| The company (`khata.manage`) | may correct any of it, closed book or not | no |
+| Either | — | reverse it and re-enter |
+
+**It counts the whole time, at whatever it currently says.** An edit is a
+correction to a live figure, not a new request waiting to take effect: change the
+amount and the wallet moves with it, immediately. This is the point the wording
+on both clients makes, because the alternative reading — "my edit is pending" —
+would have people spending money they had already spent.
+
+`PATCH /entries/:id/confirm` is what closes it. It moves no money at all; what it
+changes is who may still touch the row (nobody). Its counterpart is rejecting,
+which is a reversal. Both take the row out of the review queue, which is why the
+queue asks for `confirmed=false`.
+
+**Nothing is edited silently.** `KhataEntry.edits[]` keeps every correction —
+when, by whom, employee or company, and a readable summary of what changed
+(`amount: ₹500 → ₹550; what for: "cement" → "sand"`). The review queue shows the
+latest one against the row, so nobody confirms a figure without knowing it is not
+the figure that was first filed. Both books are replayed when a correction moves
+spending between them, so the cost comes off the old heading as well as landing
+on the new one.
+
+An expense can never be moved *into* a closed book, by either side — otherwise
+closing one would not stop it growing.
+
+## Where an expense was filed from
+
+Filing an expense captures the device's location and stores it on the entry
+(`KhataEntry.filedLocation` — lat, lng, the device's own accuracy estimate in
+metres, and when). It is not where the money was spent, which nobody can know;
+it is where the person stood when they told us about it. On a module whose only
+control is "the employee records their own spending honestly, with a bill", that
+context is worth having: an expense filed from the site it belongs to reads
+differently from one filed three states away.
+
+**Super Admins only.** `publicEntry` takes the viewer it is building the payload
+for and includes the location only for a SuperAdmin — not the accounts team, not
+the employee's manager, not the employee themselves. Passing no viewer means
+"show nobody", so a call site that has not thought about it leaks nothing by
+omission. The same rule guards expense *claims*, from the other direction:
+`Expense`'s `toJSON` deletes the field on the way out and the admin list puts it
+back for a SuperAdmin, so the default everywhere is "not exposed".
+
+Because the clients are only ever *sent* a location when the viewer may see it,
+neither app carries a role check for this — the absence of the data is the
+permission check, and there is no second copy of the rule to fall out of step.
+
+**Best-effort, never blocking.** A refused permission, a phone indoors with no
+fix, a browser that denies it — all leave the field null and the expense is
+filed regardless. Refusing to record money somebody has already spent because
+the satellites were unhelpful would be absurd, and an absent location is more
+honest than a fabricated one. The accuracy figure travels with the reading
+because a ±2 km fix and a ±8 m fix are not the same evidence.
+
+Both apps say so on the form, in plain words, before the employee submits.
+Captured on FILING only — a later correction does not overwrite it, since the
+question it answers is where the expense was originally declared.
+
+## Closing a khata is the company's act
+
+Only `khata.manage` can close a book (`PUT /khatas/:khataId`, `isActive:false`).
+There is no self-service equivalent anywhere in the API or either client, and
+that is deliberate: closing is finance saying *"this job is done and its figures
+are ours now"*.
+
+Closing does three things:
+
+1. the book takes no new entries (`resolveKhata` refuses it);
+2. it drops out of the pickers;
+3. **the employee can no longer edit the expenses already in it** — while the
+   company still can. Leaving the employee able to reach back into a closed book
+   would make the closure meaningless; sealing it against its own owner as well
+   would leave finance unable to fix what they find in there.
+
+The employee is notified when a book is closed or re-opened, because closing
+takes two things away from them at once and neither should have to be discovered
+by trying.
+
+The **default** book cannot be closed — self-service would have nowhere to file
+an expense. Promote another book first.
 
 ## When the wallet goes negative
 
@@ -286,6 +380,7 @@ Mounted at `/api/khata`. All routes authenticated.
 | `GET /me` | My wallet, my books (each with its `spent`), the totals (including `claimable`), one statement, and whether a request will need a CEO/MD sanction |
 | `POST /me/request` | Ask for an advance into my wallet — no `khata`, there is one pot |
 | `POST /me/expense` | Log what I spent it on — `khata` **required**, receipt **required**. Posts immediately |
+| `PUT /me/expenses/:id` | Correct one of mine the company has not confirmed yet — amount, purpose, book, date, mode, and optionally a replacement bill. Refused once it is confirmed or its book is closed |
 | `POST /me/settle` | Declare unspent cash returned — no `khata`, optional receipt |
 | `POST /me/reimbursement` | Claim back what the company owes, when the wallet has gone negative. Amount defaults to everything outstanding and is capped at `totals.claimable` |
 | `POST /me/khatas` | Open an expense book on my own account |
@@ -312,8 +407,10 @@ Mounted at `/api/khata`. All routes authenticated.
 | `POST /khatas` | Open a new named expense book for someone |
 | `PUT /khatas/:khataId` | Rename, note, make default, close / re-open |
 | `POST /entries` | Give an advance, record cash back, or file an expense (`type: 'expense'` ⇒ `khata` required) |
-| `GET /entries` · `GET /pending` | Ledger · the accounts team's queue |
+| `GET /entries` · `GET /pending` | Ledger · the accounts team's queue. `?confirmed=false` on `/entries` is the expenses-to-confirm queue |
 | `PATCH /entries/:id/approve` · `/reject` | Release · decline (approve needs `canApprove`) |
+| `PUT /entries/:id` | Correct an unconfirmed expense on the employee's behalf — including one in a closed book, which the employee can no longer touch |
+| `PATCH /entries/:id/confirm` | Accept a posted expense. Moves no money; **locks** the row against further edits on both sides |
 | `POST /entries/:id/reverse` | Cancel with a mirror row; reason required. Also how an employee expense is **rejected** — any `khata.manage` holder may do it for a cashless expense, SuperAdmin/`canApprove` otherwise |
 | `GET /reports/outstanding` | Who is holding cash, with ageing bands and what they have been spending on |
 | `GET /reports/export` | Wallets + books + full ledger as `.xlsx` — **also needs `khataExportAccess`** (Gate 4) |
@@ -435,7 +532,7 @@ as though the employee *owed* what they were just paid back.
 npm run test:khata
 ```
 
-47 checks over the pure money rules — sign convention, ledger replay (including
+56 checks over the pure money rules — sign convention, ledger replay (including
 back-dated inserts and paise drift), operator authorization, the auto-approve
 threshold, credit limits, rounding, and the statement's own arithmetic (per-scope
 signs, IST day grouping, reversed rows counting for nothing, and the statement
@@ -472,14 +569,24 @@ reversals, back-dated re-stamping, and the executive sanction gate.
 
 ## Migration
 
-Two scripts, in order. Both are dry-run by default and safe to re-run.
+Three scripts. All are dry-run by default and safe to re-run.
 
 ```bash
 cd backend
-node scripts/migrateMultiKhata.js --apply    # only if the database predates multi-khata
-node scripts/migrateKhataWallet.js           # report what it would do
-node scripts/migrateKhataWallet.js --apply   # do it
+node scripts/migrateMultiKhata.js --apply      # only if the database predates multi-khata
+node scripts/migrateKhataWallet.js             # report what it would do
+node scripts/migrateKhataWallet.js --apply     # do it
+node scripts/confirmLegacyExpenses.js --apply  # when deploying the confirm/edit change
 ```
+
+`confirmLegacyExpenses.js` closes the editing window on every expense recorded
+*before* that window existed. Those rows carry no `confirmedByCompany`, which
+reads as "never confirmed" — so without this they would all reappear in the
+accounts team's confirm queue at once, and every employee could go back and
+rewrite the amount on last quarter's spending. They were settled under the old
+rules; this stamps them as what they effectively already were. `confirmedBy` is
+left null on purpose: nobody pressed a button on them, and inventing an approver
+would put a name against a decision that was never made.
 
 `migrateMultiKhata.js` drops the obsolete `{ employee: 1 }` unique index (which
 Mongoose creates but never removes, and which rejects an employee's *second*

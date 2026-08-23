@@ -12,6 +12,16 @@ const receiptSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Where the claimant was when they filed the claim — see the same field on
+// KhataEntry for why it is kept and why `accuracy` travels with it.
+// SUPER ADMINS ONLY: the toJSON transform below deletes it on the way out, and
+// the admin list adds it back for a SuperAdmin. Stripping by default means a new
+// endpoint that forgets about this field leaks nothing.
+const geoSchema = new mongoose.Schema(
+  { lat: Number, lng: Number, accuracy: Number, at: Date },
+  { _id: false }
+);
+
 const expenseSchema = new mongoose.Schema(
   {
     // Short quotable reference (EXP-2026-00017), stamped on first save and never
@@ -26,6 +36,9 @@ const expenseSchema = new mongoose.Schema(
     merchant: { type: String, trim: true },
     receiptUrl: { type: String, trim: true }, // legacy free-text link (kept for old rows)
     receipt: { type: receiptSchema, default: null }, // uploaded receipt file (image/PDF)
+    // Where the claim was filed from. Best-effort — a denied location permission
+    // or a device with no fix leaves it null rather than blocking the claim.
+    filedLocation: { type: geoSchema, default: null },
     status: { type: String, enum: EXPENSE_STATUS, default: 'Pending', index: true },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: Date,
@@ -42,6 +55,10 @@ expenseSchema.set('toJSON', {
   transform: (_doc, ret) => {
     ret.hasReceipt = !!ret.receipt?.storagePath;
     if (ret.receipt) delete ret.receipt.storagePath; // never leak filesystem path
+    // Where the claim was filed is for SuperAdmins alone. Removed here rather
+    // than at each read, so the default for every existing and future caller is
+    // "not exposed"; the one screen allowed to show it puts it back by hand.
+    delete ret.filedLocation;
     return ret;
   },
 });

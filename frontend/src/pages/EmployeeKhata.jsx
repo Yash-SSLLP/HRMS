@@ -25,6 +25,13 @@
  * the wallet lie about what was left. The company rejects it afterwards if it
  * should not stand, which is why the bill is mandatory there.
  *
+ * AND SO AN EXPENSE CAN BE CORRECTED — PUT /khata/me/expenses/:id — right up
+ * until the company confirms it. That is the other half of posting on the spot:
+ * the figure reaches the ledger before anybody has checked it, so the person who
+ * typed it can fix a wrong digit rather than needing a reversal. It counts at
+ * whatever it currently says throughout. Closing the book ends that too — see
+ * canEditMine.
+ *
  * The wording deliberately avoids debit/credit — see the backend's
  * describeWalletForEmployee.
  */
@@ -32,7 +39,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import CameraCapture from '../components/CameraCapture';
 import { saveBlobResponse } from '../utils/download';
+import { getFiledLocationFields } from '../utils/geo';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
@@ -50,9 +59,15 @@ const STATUS_LABELS = { AwaitingApproval: 'With CEO/MD' };
 
 // How the wallet reads. `direction` comes from the server so the web and mobile
 // apps can never word the same balance differently.
+//
+// MONEY THE COMPANY OWES THE EMPLOYEE IS RED. Not because anything is wrong —
+// it is simply the state that needs acting on, by them (claim it) and by
+// whoever pays it. Green read as "all fine, nothing to do", which is the
+// opposite of true when somebody is out of pocket. Carrying an advance stays
+// indigo: that is neutral, ordinary, and nobody's move.
 const WALLET_STYLES = {
   holding: { card: 'bg-indigo-50 border-indigo-200', amount: 'text-indigo-700', hint: 'Company cash you are carrying. Record what you spend it on, or return what is left.' },
-  owed: { card: 'bg-emerald-50 border-emerald-200', amount: 'text-emerald-700', hint: 'You have spent more than you were advanced, so the company owes you the difference.' },
+  owed: { card: 'bg-red-50 border-red-200', amount: 'text-red-700', hint: 'You have spent more than you were advanced, so the company owes you the difference.' },
   settled: { card: 'bg-gray-50 border-gray-200', amount: 'text-gray-700', hint: 'You are not carrying any company cash right now.' },
 };
 
@@ -85,6 +100,22 @@ const TITLES = {
   claim: 'Ask to be paid back',
 };
 
+/**
+ * Can this row still be corrected by the person who filed it?
+ *
+ * An expense posts the moment it is recorded, so the figure is on the ledger
+ * before anybody has checked it — and until the company confirms it, the
+ * employee who typed it may fix it. Two things end that: the company confirming
+ * it (server: `editable` goes false) and the book being CLOSED, which is the
+ * company taking the job's figures over. Mirrors ledger.expenseEditability on
+ * the server, which is what actually enforces it.
+ * @param {object} entry - A row from GET /khata/me.
+ * @param {Object[]} khatas - The employee's books, for the closed check.
+ */
+const canEditMine = (entry, khatas) => entry.editable
+  && entry.raisedByEmployee
+  && khatas.some((k) => k._id === String(entry.khata) && k.isActive);
+
 export default function EmployeeKhata() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -97,10 +128,15 @@ export default function EmployeeKhata() {
   const [viewKhata, setViewKhata] = useState('');
   const [newKhata, setNewKhata] = useState(null); // { name, note }
   const [downloading, setDownloading] = useState(false);
-  // Two ways to attach the slip: pick a file, or shoot it with the phone camera
-  // (`capture` makes a mobile browser open the camera instead of the gallery).
+  // The expense being corrected, if the modal is open to fix one rather than to
+  // record a new one. Null for a new expense.
+  const [editing, setEditing] = useState(null);
+  // Two ways to attach the slip: pick a file already on the device, or open the
+  // camera. The camera is a real getUserMedia capture rather than an
+  // `<input capture>` hint, which does nothing at all on a laptop — see
+  // components/CameraCapture.
+  const [camera, setCamera] = useState(false);
   const fileRef = useRef(null);
-  const cameraRef = useRef(null);
 
   const load = async () => {
     setLoading(true); setError('');
@@ -140,10 +176,34 @@ export default function EmployeeKhata() {
       khata: viewKhata || openKhatas.find((k) => k.isDefault)?._id || openKhatas[0]?._id || '',
     });
     setReceipt(null);
-    // Clear the inputs too, else re-picking the same file fires no change event.
+    setEditing(null);
+    // Clear the input too, else re-picking the same file fires no change event.
     if (fileRef.current) fileRef.current.value = '';
-    if (cameraRef.current) cameraRef.current.value = '';
     setModal(which);
+  };
+
+  /**
+   * Open the same form to CORRECT an expense already recorded.
+   *
+   * The amount goes on counting against the advance the whole time — an edit
+   * fixes a live figure rather than raising something new that waits to take
+   * effect — so the form is the one they filed, filled in, not a fresh sheet.
+   * The bill is optional here: the one already attached stays unless they
+   * deliberately replace it.
+   */
+  const openEdit = (entry) => {
+    setForm({
+      khata: String(entry.khata || ''),
+      amount: String(entry.amount ?? ''),
+      purpose: entry.purpose || '',
+      paymentMode: entry.paymentMode || 'Cash',
+      referenceNo: entry.referenceNo || '',
+      date: (entry.date || '').slice(0, 10) || today(),
+    });
+    setReceipt(null);
+    if (fileRef.current) fileRef.current.value = '';
+    setEditing(entry);
+    setModal('expense');
   };
 
   const createKhata = async (e) => {
@@ -170,12 +230,22 @@ export default function EmployeeKhata() {
     }
     // The bill is the only control on an expense now that it posts on the spot.
     // Checked here as well as on the server so the failure is immediate rather
-    // than a round trip after they hit Send.
-    if (modal === 'expense' && !receipt) { toast.error('Attach the bill or receipt — it is required for an expense'); return; }
+    // than a round trip after they hit Send. Not asked for again on a
+    // correction: the bill that came with it is still attached.
+    if (modal === 'expense' && !editing && !receipt) { toast.error('Attach the bill or receipt — it is required for an expense'); return; }
 
     setSaving(true);
     try {
-      if (modal === 'request') {
+      if (editing) {
+        // A correction to a row that is already counting. Multipart because the
+        // bill can be swapped at the same time; sending no file leaves the
+        // existing one alone.
+        const fd = new FormData();
+        Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
+        if (receipt) fd.append('receipt', receipt);
+        const res = await api.put(`/khata/me/expenses/${editing._id}`, fd);
+        toast.success(res.data.message || 'Updated');
+      } else if (modal === 'request') {
         const res = await api.post('/khata/me/request', form);
         toast.success(res.data.message || 'Request sent for approval');
       } else if (modal === 'claim') {
@@ -188,10 +258,18 @@ export default function EmployeeKhata() {
         const fd = new FormData();
         Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
         if (receipt) fd.append('receipt', receipt);
+        // Where the expense is being filed from, taken at the moment of filing.
+        // Best-effort — a refused permission or a machine with no fix sends
+        // nothing rather than blocking a record of money already spent. Only a
+        // Super Admin ever sees it.
+        if (modal === 'expense') {
+          Object.entries(await getFiledLocationFields()).forEach(([k, v]) => fd.append(k, v));
+        }
         const res = await api.post(modal === 'expense' ? '/khata/me/expense' : '/khata/me/settle', fd);
         toast.success(res.data.message || 'Sent to the company to confirm');
       }
       setModal(null);
+      setEditing(null);
       await load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not submit');
@@ -255,7 +333,7 @@ export default function EmployeeKhata() {
               it. Without this the button simply vanishes and it reads like a
               bug. */}
           {display.direction === 'owed' && !totals.claimable && totals.pendingReimbursement > 0 && (
-            <p className="text-xs text-emerald-700 mt-1">
+            <p className="text-xs text-red-700 mt-1">
               You have claimed {money(totals.pendingReimbursement)} of this. The company will pay it out.
             </p>
           )}
@@ -266,7 +344,7 @@ export default function EmployeeKhata() {
                 fresh advance steps aside. */}
             {totals.claimable > 0 && (
               <button onClick={() => open('claim')}
-                className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium">
+                className="px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium">
                 Ask to be paid {money(totals.claimable)}
               </button>
             )}
@@ -366,8 +444,17 @@ export default function EmployeeKhata() {
                   <p className="text-xs text-gray-500">
                     spent · {k.entryCount === 1 ? '1 entry' : `${k.entryCount || 0} entries`}
                   </p>
+                  {/* Closing is the company's act — finance saying the job is
+                      done. Its record stays here; nothing more goes into it. */}
+                  {!k.isActive && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Closed by the company. No new expenses, and the ones in it can no longer be edited.
+                    </p>
+                  )}
                   {/* The same figure on every card, deliberately: one wallet. */}
-                  <p className="text-xs text-indigo-700 mt-2 pt-2 border-t border-gray-100">
+                  {/* The same figure on every card — and red when it is money
+                      the company owes them, matching the wallet above. */}
+                  <p className={`text-xs mt-2 pt-2 border-t border-gray-100 ${display.direction === 'owed' ? 'text-red-700' : 'text-indigo-700'}`}>
                     {money(display.amount)} {display.direction === 'owed' ? 'owed to you' : 'left in your wallet'}
                   </p>
                 </button>
@@ -438,7 +525,22 @@ export default function EmployeeKhata() {
                       {e.khataName ? `${e.khataName} · ` : ''}{e.code}
                       {e.reviewNote ? ` · ${e.reviewNote}` : ''}
                       {e.execNote ? ` · ${e.execNote}` : ''}
+                      {e.edits?.length > 0 && ` · edited ${e.edits.length === 1 ? 'once' : `${e.edits.length} times`}`}
                     </p>
+                    {/* An expense counts from the moment it is recorded, but it
+                        is not CHECKED until the company confirms it — and that
+                        gap is exactly when it can still be corrected. Say which
+                        side of it this row is on, and offer the correction
+                        where it is still open. */}
+                    {canEditMine(e, khatas) && (
+                      <button onClick={() => openEdit(e)}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 underline mt-0.5">
+                        Edit — not yet confirmed by the company
+                      </button>
+                    )}
+                    {e.type === 'expense' && e.confirmedByCompany && (
+                      <p className="text-xs text-gray-500 mt-0.5">Confirmed by the company</p>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right text-indigo-700">
                     {e.direction === 'to_employee' ? money(e.amount) : ''}
@@ -497,9 +599,14 @@ export default function EmployeeKhata() {
       {modal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">{TITLES[modal]}</h3>
+            <h3 className="text-lg font-semibold text-gray-900">
+              {editing ? 'Correct this expense' : TITLES[modal]}
+            </h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              {modal === 'request' && (data?.approvalRequired
+              {editing && 'The company has not confirmed this one yet, so you can still fix it. '
+                + 'It carries on counting against your advance at whatever it says — change the amount and your '
+                + 'wallet moves with it. Once the company confirms it, it is locked.'}
+              {!editing && modal === 'request' && (data?.approvalRequired
                 ? 'Your request goes to the CEO/MD to approve, then to whoever handles company cash. Nothing is paid until both have acted.'
                 : 'Your request goes to whoever handles company cash. Nothing is paid until they approve it.')}
               {modal === 'expense' && 'Log what you spent the advance on. It comes off your wallet straight away — the company can reject it afterwards if it should not stand, so attach the bill.'}
@@ -515,7 +622,7 @@ export default function EmployeeKhata() {
             </p>
 
             {modal === 'claim' && (
-              <div className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg px-3 py-2 mb-3">
+              <div className="text-xs bg-red-50 border border-red-200 text-red-800 rounded-lg px-3 py-2 mb-3">
                 The company owes you {money(display.amount)}
                 {totals.pendingReimbursement > 0 && <> , of which {money(totals.pendingReimbursement)} is already claimed</>}
                 . You can ask for up to {money(totals.claimable)}.
@@ -592,52 +699,70 @@ export default function EmployeeKhata() {
                   placeholder="Bill / UPI / cheque number" />
 
                 <label className="block text-sm text-gray-700 mb-1">
-                  {modal === 'expense' ? <>Bill or receipt<Req /></> : 'Receipt (optional)'}
+                  {editing ? 'Replace the bill (optional)'
+                    : modal === 'expense' ? <>Bill or receipt<Req /></> : 'Receipt (optional)'}
                 </label>
-                {/* Two ways in: attach a file already on the device, or take a
-                    photo of the paper slip there and then. */}
+                {/* Two ways in: attach a file already on the device, or open the
+                    camera and photograph the paper slip there and then. */}
                 <div className="flex flex-wrap gap-2 mb-2">
                   <button type="button" onClick={() => fileRef.current?.click()}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
                     Upload file
                   </button>
-                  <button type="button" onClick={() => cameraRef.current?.click()}
+                  <button type="button" onClick={() => setCamera(true)}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
                     Take photo
                   </button>
                 </div>
                 <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
                   onChange={(e) => setReceipt(e.target.files?.[0] || null)} />
-                <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-                  onChange={(e) => setReceipt(e.target.files?.[0] || null)} />
                 {receipt ? (
                   <div className="flex items-center gap-2 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3">
                     <span className="truncate text-gray-700">{receipt.name}</span>
-                    <button type="button" onClick={() => { setReceipt(null); if (fileRef.current) fileRef.current.value = ''; if (cameraRef.current) cameraRef.current.value = ''; }}
+                    <button type="button" onClick={() => { setReceipt(null); if (fileRef.current) fileRef.current.value = ''; }}
                       className="ml-auto text-gray-500 hover:text-gray-800 shrink-0">Remove</button>
                   </div>
                 ) : (
-                  <p className={`text-xs mb-3 ${modal === 'expense' ? 'text-red-600' : 'text-gray-500'}`}>
-                    {modal === 'expense'
-                      ? 'Image or PDF. An expense cannot be recorded without the bill.'
-                      : 'Image or PDF.'}
+                  <p className={`text-xs mb-3 ${modal === 'expense' && !editing ? 'text-red-600' : 'text-gray-500'}`}>
+                    {editing
+                      ? 'Image or PDF. Leave this alone to keep the bill already attached.'
+                      : modal === 'expense'
+                        ? 'Image or PDF. An expense cannot be recorded without the bill.'
+                        : 'Image or PDF.'}
                   </p>
                 )}
               </>
             )}
 
+            {/* Said plainly, where it happens, rather than left to be found out. */}
+            {modal === 'expense' && !editing && (
+              <p className="text-xs text-gray-500 mb-1">
+                📍 Your location is recorded with the expense. Only a Super Admin can see it.
+              </p>
+            )}
+
             <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setModal(null)}
+              <button type="button" onClick={() => { setModal(null); setEditing(null); }}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
                 Cancel
               </button>
               <button type="submit" disabled={saving}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
-                {saving ? 'Sending…' : 'Send'}
+                {saving ? (editing ? 'Saving…' : 'Sending…') : (editing ? 'Save changes' : 'Send')}
               </button>
             </div>
           </form>
         </div>
+      )}
+
+      {/* A real camera, not the `<input capture>` hint, which silently falls
+          back to a file dialog on anything without a phone camera. */}
+      {camera && (
+        <CameraCapture
+          title="Photograph the bill"
+          fileName="bill"
+          onCapture={(file) => setReceipt(file)}
+          onClose={() => setCamera(false)} />
       )}
     </div>
   );

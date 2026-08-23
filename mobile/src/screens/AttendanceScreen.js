@@ -75,6 +75,10 @@ export default function AttendanceScreen() {
   const [busy, setBusy] = useState(false);
   const [wfh, setWfh] = useState(false);
   const [wfhAllowed, setWfhAllowed] = useState(false); // granted per employee by the Backend
+  // Granted to field staff: the office geofence does not apply to their punches
+  // at all. Shown to them, because otherwise punching in from a site feels like
+  // something they are getting away with.
+  const [remotePunchAllowed, setRemotePunchAllowed] = useState(false);
   const [halfDay, setHalfDay] = useState(false); // declare today a half day at either punch
   // Set when today falls inside an approved leave. Punching in is still allowed,
   // but it is warned about first and the day only counts once the top of the
@@ -116,6 +120,7 @@ export default function AttendanceScreen() {
     setToday(data.today || null);
     setRecords(data.records || []);
     setWfhAllowed(!!data.wfhAllowed);
+    setRemotePunchAllowed(!!data.remotePunchAllowed);
     setTodayLeave(data.todayLeave || null);
     // Reflect a half day already declared at check-in, so the toggle doesn't
     // read as "off" when punching out of a day the employee already marked.
@@ -289,6 +294,17 @@ export default function AttendanceScreen() {
               </Text>
             </View>
           )}
+
+          {/* Said plainly, because the alternative is somebody standing on a
+              site wondering whether punching in from there counts against them. */}
+          {remotePunchAllowed && (!checkedIn || !checkedOut) ? (
+            <View style={styles.remoteNote}>
+              <Ionicons name="location" size={16} color={colors.info} />
+              <Text style={styles.remoteNoteText}>
+                You can check in and out from anywhere. Punches away from the office are not flagged.
+              </Text>
+            </View>
+          ) : null}
 
           {/* Work-from-home is a privilege granted per employee by the Backend. */}
           {wfhAllowed && (!checkedIn || !checkedOut) && (
@@ -478,6 +494,15 @@ const styles = StyleSheet.create({
     padding: spacing(3), marginBottom: spacing(3),
   },
   leaveNoteText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.warning, fontWeight: '600' },
+  // "You may punch from anywhere" — information, not a warning, so it takes the
+  // info tint rather than the amber one above.
+  remoteNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: colors.infoSoft, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.info,
+    padding: spacing(3), marginBottom: spacing(3),
+  },
+  remoteNoteText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: colors.info, fontWeight: '600' },
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   metric: { width: '48.5%', backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), marginBottom: spacing(2.5) },
   metricLabel: { fontSize: 11, color: colors.textMuted },

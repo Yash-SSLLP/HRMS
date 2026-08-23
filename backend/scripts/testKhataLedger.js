@@ -160,6 +160,36 @@ check('the statement agrees with replayBalance',
   S.groupByDay(walletRows, 'wallet', 0).pop().running,
   L.replayBalance(0, walletRows).closing);
 
+// Who may still correct a posted expense, and when the window shuts. Pure, and
+// worth pinning: it is the rule that decides whether an employee can rewrite a
+// figure the company has already acted on.
+console.log('\n--- the expense editing window ---');
+const expense = (over = {}) => ({
+  type: 'expense', status: 'Approved', raisedByEmployee: true, confirmedByCompany: false, reversedBy: null, ...over,
+});
+const openBook = { isActive: true, name: 'Site A' };
+const shutBook = { isActive: false, name: 'Site A' };
+const rights = (e, k) => { const r = L.expenseEditability(e, k); return [r.employee, r.company]; };
+
+check('a fresh expense in an open book is both theirs and ours to fix',
+  rights(expense(), openBook), [true, true]);
+check('closing the book ends the employee\'s half only',
+  rights(expense(), shutBook), [false, true]);
+check('confirming ends it for everybody',
+  rights(expense({ confirmedByCompany: true }), openBook), [false, false]);
+check('an expense the company recorded is not the employee\'s to change',
+  rights(expense({ raisedByEmployee: false }), openBook), [false, true]);
+check('a reversed expense is closed to both',
+  rights(expense({ status: 'Reversed', reversedBy: 'x' }), openBook), [false, false]);
+check('a parked row is not an editable one',
+  rights(expense({ status: 'Pending' }), openBook), [false, false]);
+// Everything else is corrected by reversal — there is no in-place edit for money
+// that moved through a company account.
+check('an advance is never edited in place', rights(expense({ type: 'advance' }), null), [false, false]);
+check('nor is a settlement', rights(expense({ type: 'settlement' }), null), [false, false]);
+check('a missing book reads as open rather than blocking the fix',
+  rights(expense(), undefined), [true, true]);
+
 console.log('\n--- rounding ---');
 check('classic float error is rounded away', L.round2(0.1 + 0.2), 0.3);
 check('third decimal rounds up', L.round2(1234.567), 1234.57);

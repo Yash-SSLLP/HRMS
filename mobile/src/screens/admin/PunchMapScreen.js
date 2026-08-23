@@ -197,6 +197,9 @@ export default function PunchMapScreen() {
                   <Text style={styles.calloutSub}>{p.date}</Text>
                   {p.distanceM != null ? <Text style={styles.calloutSub}>{fmtDist(p.distanceM)} from {p.locationName || 'work area'}</Text> : null}
                   {p.outside ? <Text style={[styles.calloutRow, { color: '#dc2626' }]}>⚠ Outside work area</Text> : null}
+                  {/* Field staff: the fence does not apply to them, so the
+                      distance above is expected rather than a finding. */}
+                  {p.remotePunchAllowed ? <Text style={[styles.calloutRow, { color: '#0284c7' }]}>May punch anywhere</Text> : null}
                   {p.wfh ? <Text style={[styles.calloutRow, { color: '#7c3aed' }]}>WFH</Text> : null}
                 </View>
               </Callout>

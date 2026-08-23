@@ -17,10 +17,10 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
 
 import api from '../api/client';
 import { compressImage, SELFIE_MAX_PX } from './image';
+import { getDeviceLocation } from './geo';
 
 const PENDING_KEY = 'pendingPunch';
 
@@ -29,54 +29,19 @@ const PENDING_KEY = 'pendingPunch';
 // record a morning check-in hours after the fact.
 const PENDING_MAX_AGE_MS = 15 * 60 * 1000;
 
-// GPS accuracy tuning for the punch location. The first fix a device returns is
-// usually coarse (network based); a real GPS fix converges over a few seconds,
-// so we watch briefly and keep the most accurate reading instead of trusting
-// the first one, which was recording misleading locations.
-const GPS_GOOD_ENOUGH_M = 25;   // resolve early once a fix is at least this accurate
-const GPS_MAX_WAIT_MS = 12000;  // otherwise accept the best fix within this window
-
 /**
  * Accurate GPS fix for a punch. Watches for a few seconds and keeps the most
  * accurate fix, resolving early once it is good enough.
+ *
+ * The implementation moved to utils/geo.js when expense filing started needing
+ * the same fix, and the same accuracy tuning with it: two copies of "how long do
+ * we wait for GPS" is how two screens end up recording locations of different
+ * quality and nobody knowing which to trust. Kept exported under this name
+ * because every attendance caller already asks for it.
  * @returns {Promise<object|null>} Coords, or null if permission is denied or no
  *   fix arrives — the punch still proceeds without coordinates.
  */
-export async function getPunchLocation() {
-  try {
-    const perm = await Location.requestForegroundPermissionsAsync();
-    if (!perm.granted) return null;
-    return await new Promise((resolve) => {
-      let best = null;
-      let sub = null;
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        if (sub) sub.remove();
-        resolve(best);
-      };
-      const timer = setTimeout(finish, GPS_MAX_WAIT_MS);
-      Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Highest, timeInterval: 1000, distanceInterval: 0 },
-        (pos) => {
-          const c = pos?.coords;
-          if (!c) return;
-          if (!best || (c.accuracy != null && c.accuracy < best.accuracy)) best = c;
-          if (best.accuracy != null && best.accuracy <= GPS_GOOD_ENOUGH_M) finish();
-        }
-      )
-        .then((s) => {
-          sub = s;
-          if (done) s.remove(); // max-wait already elapsed before the watch started
-        })
-        .catch(() => finish());
-    });
-  } catch {
-    return null;
-  }
-}
+export const getPunchLocation = getDeviceLocation;
 
 /**
  * Record what the punch about to be taken is for, so it can be completed if

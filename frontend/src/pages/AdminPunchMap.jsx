@@ -37,6 +37,10 @@ function tooltipHtml(p) {
     `<div style="opacity:.85">${escapeHtml(p.date)}</div>`,
     p.distanceM != null ? `<div style="opacity:.85">${fmtDist(p.distanceM)} from ${escapeHtml(p.locationName || 'work area')}</div>` : '',
     p.outside ? '<div style="color:#dc2626;font-weight:600">⚠ Outside work area</div>' : '',
+    // Field staff: the fence does not apply to them, so a long distance above
+    // is expected. Said here or HR reads the metres and wonders why it is not
+    // flagged.
+    p.remotePunchAllowed ? '<div style="color:#0284c7;font-weight:600">May punch anywhere</div>' : '',
     p.wfh ? '<div style="color:#7c3aed;font-weight:600">WFH</div>' : '',
   ];
   return `<div style="min-width:150px;font-size:12px;line-height:1.35">${rows.filter(Boolean).join('')}</div>`;

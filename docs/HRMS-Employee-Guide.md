@@ -60,6 +60,8 @@ Attendance is the record that you were at work, and it feeds directly into your 
 - Every punch requires a **selfie**. This is mandatory, not optional.
 - Every punch also captures your **GPS location**. The app shows only that it is working; your coordinates are never displayed, and you are never told whether you are inside or outside the office range. A punch is **never blocked** — the location is simply recorded for HR.
 - **Work From Home** is a permission, not a checkbox everyone has. If it has been granted to you, a WFH tick appears at punch time and those punches are exempt from the office-range check. If you do not see it, it has not been granted.
+- **Filing an expense records your location.** Both the khata expense form and the reimbursement claim form say so before you submit. It is a single reading taken at that moment — not tracking, and nothing is recorded at any other time. Only a **Super Admin** can see it: not HR, not the accounts team, not your manager. If your device cannot get a fix or you have not allowed location access, the expense still files, without one.
+- **Checking in from outside the office** can be allowed for you as a standing permission — the answer for site, field and travelling roles. When it is, the punch screen tells you so, and none of your punches are flagged for being away from the office. You do not have to tick anything, and you do not have to claim you were at home. Your location is still recorded, exactly as it is for everybody else.
 - You may declare a **half day** at either punch.
 - After check-in, a live timer counts your working time and freezes when you check out.
 

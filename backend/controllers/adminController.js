@@ -83,18 +83,20 @@ const listUsers = asyncHandler(async (req, res) => {
   }
   const users = await User.find(filter).sort({ createdAt: -1 });
 
-  // Attach the work-from-home grant, which lives on the employee profile. One
-  // extra query for the whole page rather than a lookup per row; users without a
-  // profile (CEO/MD) simply come back false.
-  const wfhByUser = new Map(
+  // Attach the two attendance grants that live on the employee profile — may
+  // they mark a punch as work-from-home, and does the office geofence apply to
+  // them at all. One extra query for the whole page rather than a lookup per
+  // row; users without a profile (CEO/MD) simply come back false.
+  const grantsByUser = new Map(
     (await EmployeeProfile.find({ user: { $in: users.map((u) => u._id) } })
-      .select('user wfhAllowed').lean())
-      .map((p) => [String(p.user), !!p.wfhAllowed])
+      .select('user wfhAllowed remotePunchAllowed').lean())
+      .map((p) => [String(p.user), { wfh: !!p.wfhAllowed, remotePunch: !!p.remotePunchAllowed }])
   );
   const out = users.map((u) => ({
     ...u.toJSON(),
-    wfhAllowed: wfhByUser.get(String(u._id)) || false,
-    hasProfile: wfhByUser.has(String(u._id)),
+    wfhAllowed: grantsByUser.get(String(u._id))?.wfh || false,
+    remotePunchAllowed: grantsByUser.get(String(u._id))?.remotePunch || false,
+    hasProfile: grantsByUser.has(String(u._id)),
   }));
 
   res.json({ count: out.length, users: out });
@@ -532,6 +534,36 @@ const setWfhAccess = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, wfhAllowed: profile.wfhAllowed });
 });
 
+/**
+ * Let one employee check in and out from anywhere.
+ *
+ * A SEPARATE GRANT FROM WFH, and the difference is the whole point. WFH is
+ * something the employee declares on a given punch, and it records that they
+ * worked from home that day. This says the office geofence does not apply to
+ * this person at all — the answer for site engineers, field sales and drivers,
+ * who are legitimately never at the office and should not have to tick
+ * "working from home" every morning to avoid being flagged for it.
+ *
+ * The punch still carries its GPS fix and still appears on the punch map; what
+ * changes is that a distant punch stops counting as one that needs explaining.
+ * Keyed on the user id like the other grants on the Permissions page, then
+ * resolved to the EmployeeProfile that holds the flag.
+ * @route PATCH /api/admin/users/:id/remote-punch-access  (SuperAdmin)
+ * @param {string} req.params.id - user id
+ * @param {boolean} req.body.enabled
+ * @returns {{id, remotePunchAllowed}}
+ */
+const setRemotePunchAccess = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ user: req.params.id });
+  if (!profile) {
+    res.status(404);
+    throw new Error('No employee profile linked to this account');
+  }
+  profile.remotePunchAllowed = !!req.body.enabled;
+  await profile.save();
+  res.json({ id: req.params.id, remotePunchAllowed: profile.remotePunchAllowed });
+});
+
 // The org-wide preference payload, in one place so GET and PUT can't drift.
 // `branding` reports only whether each image EXISTS plus its captions — never the
 // GridFS key, which is an internal handle the browser has no use for (same rule
@@ -782,6 +814,7 @@ module.exports = {
   setKhataExportAccess,
   setExecEditAccess,
   setWfhAccess,
+  setRemotePunchAccess,
   getOrgSettings,
   updateOrgSettings,
   uploadBrandingLogo,

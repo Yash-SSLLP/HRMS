@@ -111,6 +111,11 @@ export default function EmployeeAttendance() {
   const [today, setToday] = useState(null);
   const [policy, setPolicy] = useState(null); // { year, month, needsSetup, policy }
   const [wfhAllowed, setWfhAllowed] = useState(false); // WFH granted to this employee?
+  // Granted to field staff: the office geofence does not apply to their punches
+  // at all, so a check-in from a site is never flagged. Shown to them because
+  // otherwise punching from a site feels like something they are getting away
+  // with, and people ring HR to ask.
+  const [remotePunchAllowed, setRemotePunchAllowed] = useState(false);
   // Set when today falls inside an approved leave: { leaveType, approverName, … }.
   // Drives the warning shown BEFORE the punch — punching is still allowed, but
   // the day only counts once the top of the leave hierarchy approves it.
@@ -334,6 +339,7 @@ export default function EmployeeAttendance() {
       setRecords(attRes.data.records);
       setToday(attRes.data.today);
       setWfhAllowed(!!attRes.data.wfhAllowed);
+      setRemotePunchAllowed(!!attRes.data.remotePunchAllowed);
       setTodayLeave(attRes.data.todayLeave || null);
       setPolicy(polRes?.data || null);
     } catch (err) {
@@ -564,6 +570,15 @@ export default function EmployeeAttendance() {
               <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Location info captured.</div>
             ) : (
               <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting location info…</div>
+            )}
+
+            {/* Told plainly, because the alternative is somebody standing on a
+                site wondering whether punching in from there will count against
+                them. */}
+            {remotePunchAllowed && (
+              <div className="mb-2 text-xs text-sky-800 bg-sky-50 border border-sky-200 px-2 py-1.5 rounded-lg">
+                ✅ You may check in and out from anywhere. Punches away from the office are not flagged.
+              </div>
             )}
 
             {/* Work-from-home is a privilege granted per employee by the Backend. */}

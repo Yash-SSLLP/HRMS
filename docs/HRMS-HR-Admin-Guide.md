@@ -82,9 +82,18 @@ Login accounts, HR permissions, and organisation settings. Create, edit, deactiv
 
 ### Permissions
 
-One page for every grant the Super Admin controls: the organisation-wide chat switch, standalone cashbook and expense access for anyone regardless of role, per-employee **work from home**, and the fine-grained capability list for each HR Manager.
+One page for every grant the Super Admin controls: the organisation-wide chat switch, standalone cashbook and expense access for anyone regardless of role, the two per-employee **attendance** grants, and the fine-grained capability list for each HR Manager.
 
-[!IMPORTANT] Work from home is a permission, not a preference. Granting it makes the WFH tick appear at punch time and exempts those punches from the geofence check. The server ignores the flag from anyone who has not been granted it, so nobody can clear their own geofence violation by sending it anyway.
+The Attendance column holds two different grants, and picking the right one matters:
+
+| Grant | What it does | Who it is for |
+|---|---|---|
+| **Allow WFH** | Puts a "working from home" tick on the punch screen. A punch the employee ticks it on skips the geofence check, and the day records as WFH. | Office staff working from home now and then. |
+| **Punch anywhere** | The office geofence stops applying to that employee altogether. Nothing to tick, and no punch of theirs is ever flagged as outside the office. | Site engineers, field sales, drivers — people whose job is not at the office. |
+
+[!IMPORTANT] Both are permissions, not preferences. The server ignores a WFH flag sent by anyone who has not been granted it, so nobody can clear their own geofence violation by sending it anyway. "Punch anywhere" changes only the verdict: the GPS fix is still captured, still stored, and still drops a pin on the punch-location map, so you can always see where somebody actually was.
+
+[!IMPORTANT] Filing an expense — a khata expense or a reimbursement claim — also records where the employee was at that moment. **Only a Super Admin can see it**; it is not sent to HR, to the accounts team, to the employee's manager, or back to the employee. Super Admins see a "Filed from" link on the claim and on the khata expense that opens the spot on a map, with the device's accuracy in metres beside it. It is best-effort: a phone with no fix or a refused permission files the expense anyway, with no location.
 
 ### Employees
 
@@ -136,7 +145,7 @@ The probation lifecycle. The due date is the date of joining plus the probation 
 
 The presence board gives one row per active employee, split into present, on leave and absent for today, with selfie flags, lateness, WFH tags and hours. The attendance screen shows any employee's month with per-punch geofence distance, lets you add, edit and delete records by hand, and shows the punch selfies. Settings define the office location, the geofence threshold and when a check-in starts counting as late.
 
-Punches capture GPS but are never blocked; an out-of-range punch is flagged, not refused, and WFH punches are exempt.
+Punches capture GPS but are never blocked; an out-of-range punch is flagged, not refused. Two things exempt one: the employee ticking WFH on that punch, and the standing **Punch anywhere** grant, which exempts every punch that person makes. An exempt punch still records its distance — it simply stops counting as something to explain, everywhere it is read: the month view, the punch map, the export and the manager's team screen. The map tooltip says "May punch anywhere" against those people, so a long distance with no flag never looks like a bug.
 
 ### When a check-in counts as late
 

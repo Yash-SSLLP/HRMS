@@ -22,6 +22,7 @@ const {
   setKhataExportAccess,
   setExecEditAccess,
   setWfhAccess,
+  setRemotePunchAccess,
   getOrgSettings,
   updateOrgSettings,
   uploadBrandingLogo,
@@ -86,6 +87,11 @@ router.patch('/users/:id/exec-edit-access', restrictTo('SuperAdmin'), setExecEdi
 // so it is deliberately not something HR or the employee can switch on.
 // PATCH /users/:id/wfh-access — grant/revoke work-from-home; protected, SuperAdmin only.
 router.patch('/users/:id/wfh-access', restrictTo('SuperAdmin'), setWfhAccess);
+// Punch-from-anywhere grant — SuperAdmin only, and a different thing from WFH:
+// this one says the office geofence does not apply to this employee at all,
+// which is what field staff need. See setRemotePunchAccess.
+// PATCH /users/:id/remote-punch-access — allow check-in/out from outside the office; protected, SuperAdmin only.
+router.patch('/users/:id/remote-punch-access', restrictTo('SuperAdmin'), setRemotePunchAccess);
 
 // Org-wide preferences — SuperAdmin ONLY (e.g. whether CEO/MD appear in
 // employee-selection pickers).

@@ -35,7 +35,28 @@ const USER_FIELDS = 'firstName lastName email role';
  * @returns {Promise<Object[]>} Serialised claims, each with `statusHistory`
  *   oldest-first (the first entry is the submission).
  */
-async function withStatusHistory(expenses) {
+/**
+ * Read the GPS fix a client sent with a claim.
+ *
+ * Best-effort: a refused permission or a phone with no fix leaves it out rather
+ * than blocking the claim. Absent is a legitimate answer.
+ * @param {object} body - req.body (multipart, so the values arrive as strings).
+ * @returns {{lat: number, lng: number, accuracy?: number, at: Date}|undefined}
+ */
+function parseFiledLocation(body) {
+  const lat = parseFloat(body?.latitude);
+  const lng = parseFloat(body?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  const accuracy = parseFloat(body?.accuracy);
+  return {
+    lat,
+    lng,
+    accuracy: Number.isFinite(accuracy) ? Math.round(accuracy) : undefined,
+    at: new Date(),
+  };
+}
+
+async function withStatusHistory(expenses, viewer) {
   if (!expenses.length) return [];
 
   const logs = await AuditLog.find({
@@ -62,8 +83,23 @@ async function withStatusHistory(expenses) {
   }
 
   // toJSON (not the raw doc) so the schema transform still hides the receipt's
-  // storage path and adds hasReceipt.
-  return expenses.map((e) => ({ ...e.toJSON(), statusHistory: trails.get(String(e._id)) || [] }));
+  // storage path and adds hasReceipt — and strips the filing location, which
+  // only a SuperAdmin may see. Putting it back HERE, from the raw document, is
+  // the one place that is allowed to, and it is a deliberate act rather than
+  // something a caller gets by default.
+  const showLocation = viewer?.role === 'SuperAdmin';
+  return expenses.map((e) => ({
+    ...e.toJSON(),
+    ...(showLocation && e.filedLocation?.lat != null
+      ? { filedLocation: {
+        lat: e.filedLocation.lat,
+        lng: e.filedLocation.lng,
+        accuracy: e.filedLocation.accuracy,
+        at: e.filedLocation.at,
+      } }
+      : {}),
+    statusHistory: trails.get(String(e._id)) || [],
+  }));
 }
 
 // Tell the people who settle claims that a new one landed. Reimbursement is paid
@@ -144,6 +180,9 @@ const createExpense = asyncHandler(async (req, res) => {
     description,
     merchant,
     status: 'Pending',
+    // Where the claim was filed from. SuperAdmin-visible only — the Expense
+    // schema's toJSON strips it, and only the admin list puts it back.
+    filedLocation: parseFiledLocation(req.body),
   });
   await attachReceipt(expense, req.file);
   await expense.save();
@@ -197,7 +236,8 @@ const listExpenses = asyncHandler(async (req, res) => {
     .populate('employee', USER_FIELDS)
     .populate('reviewedBy', USER_FIELDS)
     .sort({ createdAt: -1 });
-  res.json({ count: expenses.length, expenses: await withStatusHistory(expenses) });
+  // The viewer decides whether the filing locations travel — SuperAdmin only.
+  res.json({ count: expenses.length, expenses: await withStatusHistory(expenses, req.user) });
 });
 
 /**

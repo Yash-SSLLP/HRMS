@@ -13,6 +13,7 @@ import CameraCapture from '../components/CameraCapture';
 import { StatusTrailLine, StatusTrailButton, StatusTrailModal } from '../components/StatusTrail';
 import { compressImage, RECEIPT_MAX_PX } from '../utils/image';
 import { toYMD } from '../utils/time';
+import { getFiledLocationFields } from '../utils/geo';
 
 const CATEGORIES = ['Travel', 'Food', 'Accommodation', 'Supplies', 'Medical', 'Communication', 'Other'];
 
@@ -113,6 +114,10 @@ export default function EmployeeExpenses() {
       const fd = new FormData();
       Object.entries(form).forEach(([k, v]) => fd.append(k, v));
       fd.append('receipt', receiptFile);
+      // Where the claim is being filed from. Best-effort: a refused permission
+      // or a machine with no fix sends nothing rather than blocking a claim for
+      // money already spent. Only a Super Admin ever sees it.
+      Object.entries(await getFiledLocationFields()).forEach(([k, v]) => fd.append(k, v));
       await api.post('/expenses', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       setShowModal(false);
       setForm(blankForm());
@@ -259,6 +264,11 @@ export default function EmployeeExpenses() {
                   <p className="mt-1 text-xs text-gray-500">A receipt is required to verify your claim. Max 5 MB.</p>
                 )}
               </div>
+              {/* Said plainly, where it happens. Recording somebody's location
+                  is not something to leave them to discover. */}
+              <p className="text-xs text-gray-500">
+                📍 Your location is recorded with the claim. Only a Super Admin can see it.
+              </p>
               {error && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
               )}

@@ -33,6 +33,7 @@ import api from '../api/client';
 import { useTabParam } from '../hooks/useTabParam';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+import CameraCapture from '../components/CameraCapture';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { useAuthStore } from '../store/authStore';
 import { canExportKhata, isExecViewer } from '../config/permissions';
@@ -93,6 +94,30 @@ const Req = () => (
     <span className="sr-only"> (required)</span>
   </>
 );
+
+
+/**
+ * Where an expense was filed from — a link out to the map.
+ *
+ * Renders NOTHING unless the server sent a location, and the server sends one
+ * only to a SuperAdmin. The permission check is therefore the absence of the
+ * data rather than a role test here: a page cannot show what it was never
+ * given, and there is no second copy of the rule to fall out of step with the
+ * server's.
+ */
+function FiledFrom({ location }) {
+  if (!location || location.lat == null) return null;
+  return (
+    <a
+      href={`https://www.google.com/maps/search/?api=1&query=${location.lat},${location.lng}`}
+      target="_blank" rel="noopener noreferrer"
+      title="Where the employee was when they filed this. Visible to Super Admins only."
+      className="text-xs text-sky-700 hover:text-sky-900 underline">
+      📍 Filed from {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
+      {location.accuracy != null ? ` (±${Math.round(location.accuracy)} m)` : ''}
+    </a>
+  );
+}
 
 /** Small stat card used across the overview. */
 function Stat({ label, value, tone = 'gray', hint }) {
@@ -176,6 +201,11 @@ export default function AdminKhata() {
   const [walletModal, setWalletModal] = useState(null);     // one employee's wallet settings
   const [sanctionModal, setSanctionModal] = useState(null); // { entry, approve, note }
   const [khataModal, setKhataModal] = useState(null);       // { employee, name, note }
+  // Correcting an expense that has posted but nobody has confirmed yet:
+  // { entry, data, khatas, file }. See the review queue below for why the
+  // company can edit these at all.
+  const [expenseEdit, setExpenseEdit] = useState(null);
+  const [camera, setCamera] = useState(false);
   // { employee, employeeName, khata, khataName, from, to } — the statement PDF
   // asks for its date range before it builds, the way the paper version is
   // always asked for ("the Tamilnadu trip", not "everything ever").
@@ -198,12 +228,14 @@ export default function AdminKhata() {
     .then((r) => setPending(r.data.entries || [])).catch(() => {}), []);
   // Only the people who may act on it ask for it — everyone else gets a 403,
   // and a tab that is always empty for them would only be confusing.
-  // Employee expenses post on the spot, so they never reach /pending. This is
-  // the review surface that replaces the approval step: recent spend, newest
-  // first, each rejectable.
+  // Expenses post on the spot, so they never reach /pending. This is the review
+  // surface that replaces the approval step: everything that has counted but
+  // that nobody on the company side has yet looked at, newest first. Each can be
+  // confirmed (which locks it), corrected, or rejected. Confirming is what takes
+  // a row OUT of this list, which is why the query asks for unconfirmed only.
   const loadExpenses = useCallback(() => api.get('/khata/entries', {
-    params: { type: 'expense', status: 'Approved', limit: 100 },
-  }).then((r) => setExpenses((r.data.entries || []).filter((e) => e.raisedByEmployee)))
+    params: { type: 'expense', status: 'Approved', confirmed: 'false', limit: 100 },
+  }).then((r) => setExpenses(r.data.entries || []))
     .catch(() => {}), []);
   const loadSanctions = useCallback(() => (isApprover
     ? api.get('/khata/advance-approvals').then((r) => setSanctions(r.data.entries || [])).catch(() => {})
@@ -383,6 +415,76 @@ export default function AdminKhata() {
       toast.success(res.data.message || 'Done. Both entries stay on the record.');
       await refresh();
     } catch (err) { errToast(err, asRejection ? 'Could not reject' : 'Could not reverse'); }
+  };
+
+  // ---------- confirming and correcting a posted expense ----------
+
+  /**
+   * Accept an expense. Moves no money — the row counted the moment it was
+   * recorded — but it CLOSES the row: neither side can edit it afterwards, and
+   * the only correction left is a reversal. So it is the deliberate end of the
+   * window that recording-on-the-spot opens, not a formality.
+   */
+  const confirmExpense = async (entry) => {
+    const ok = await confirmDialog({
+      title: `Confirm this ${money(entry.amount)} expense?`,
+      message: `${entry.employee?.name || 'The employee'} recorded it against "${entry.khataName || 'their khata'}". `
+        + 'It has already come off their advance; confirming says you have checked it. '
+        + 'After this neither of you can edit it — a mistake would have to be reversed.',
+      confirmText: 'Confirm',
+    });
+    if (!ok) return;
+    try {
+      const res = await api.patch(`/khata/entries/${entry._id}/confirm`, {});
+      toast.success(res.data.message || 'Confirmed');
+      await refresh();
+    } catch (err) { errToast(err, 'Could not confirm it'); }
+  };
+
+  /**
+   * Open the correction form for an expense nobody has confirmed yet.
+   *
+   * The books are fetched for the picker because a common correction is that the
+   * spend was filed under the wrong heading, and from the review queue there is
+   * no employee detail loaded to take them from.
+   */
+  const openExpenseEdit = async (entry) => {
+    setExpenseEdit({
+      entry,
+      khatas: [],
+      file: null,
+      data: {
+        amount: String(entry.amount ?? ''),
+        purpose: entry.purpose || '',
+        category: entry.category || '',
+        paymentMode: entry.paymentMode || 'Cash',
+        referenceNo: entry.referenceNo || '',
+        date: (entry.date || '').slice(0, 10) || today(),
+        khata: String(entry.khata || ''),
+      },
+    });
+    const employeeId = entry.employee?._id || entry.employee;
+    try {
+      const res = await api.get(`/khata/employees/${employeeId}`);
+      const books = (res.data.khatas || []).filter((k) => k.isActive || k._id === String(entry.khata));
+      setExpenseEdit((m) => (m ? { ...m, khatas: books } : m));
+    } catch { /* the picker stays empty; the entry keeps the book it has */ }
+  };
+
+  const submitExpenseEdit = async (e) => {
+    e.preventDefault();
+    const { entry, data, file } = expenseEdit;
+    if (!(Number(data.amount) > 0)) { toast.error('Enter an amount greater than zero'); return; }
+    setSaving(true);
+    try {
+      const fd = new FormData();
+      Object.entries(data).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
+      if (file) fd.append('receipt', file);
+      const res = await api.put(`/khata/entries/${entry._id}`, fd);
+      toast.success(res.data.message || 'Updated');
+      setExpenseEdit(null);
+      await refresh();
+    } catch (err) { errToast(err, 'Could not save the correction'); } finally { setSaving(false); }
   };
 
   // ---------- executive sanction ----------
@@ -854,6 +956,8 @@ export default function AdminKhata() {
               ? (detail.entries || []).filter((e) => String(e.khata) === viewKhata)
               : (detail.entries || [])}
             onReverse={reverse}
+            onEdit={openExpenseEdit}
+            onConfirm={confirmExpense}
             showEmployee={false} />
         </div>
       )}
@@ -897,7 +1001,8 @@ export default function AdminKhata() {
               </button>
             )}
           </div>
-          <EntryTable entries={entries} onReverse={reverse} showEmployee />
+          <EntryTable entries={entries} onReverse={reverse} onEdit={openExpenseEdit}
+            onConfirm={confirmExpense} showEmployee />
         </div>
       )}
 
@@ -1022,15 +1127,16 @@ export default function AdminKhata() {
           already counted, and the action is to reject what should not stand. */}
       {tab === 'approvals' && (
         <div className="mt-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">Recorded expenses</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Expenses to confirm</h3>
           <p className="text-xs text-gray-500 mb-2">
-            Already counted against the employee&apos;s advance. Reject anything that should not stand — it goes
-            back onto their advance and they are told why.
+            Already counted against the employee&apos;s advance, but not yet checked by anyone here. Confirm what
+            stands — which also locks it, so neither side can edit it afterwards. Correct a wrong figure while
+            you still can, or reject it: that puts it back onto their advance and tells them why.
           </p>
           <div className="bg-white shadow rounded-lg overflow-hidden">
             {expenses.length === 0 ? (
               <div className="px-4 py-8 text-center text-gray-500 text-sm">
-                No expenses recorded yet.
+                Nothing waiting — every recorded expense has been confirmed.
               </div>
             ) : (
               <ul className="divide-y divide-gray-100">
@@ -1042,23 +1148,46 @@ export default function AdminKhata() {
                       </p>
                       <p className="text-xs text-gray-500">
                         {e.khataName ? `${e.khataName} · ` : ''}{fmtDate(e.date)} · {e.code}
+                        {!e.raisedByEmployee && ' · recorded by the company'}
                       </p>
                       {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
+                      {/* Corrected since it was filed? Say so — the figure being
+                          confirmed may not be the one first recorded. */}
+                      {e.edits?.length > 0 && (
+                        <p className="text-xs text-amber-700 mt-1">
+                          Edited {e.edits.length === 1 ? 'once' : `${e.edits.length} times`}:{' '}
+                          {e.edits[e.edits.length - 1].summary}
+                        </p>
+                      )}
                       {/* The bill is mandatory on these, so a row without one is
                           worth noticing rather than passing over quietly. */}
-                      {e.hasAttachment ? (
-                        <button onClick={() => viewReceipt(e._id)}
-                          className="text-xs text-indigo-600 hover:text-indigo-800 underline">
-                          View bill
-                        </button>
-                      ) : (
-                        <span className="text-xs text-amber-700">No bill attached</span>
-                      )}
+                      <div className="flex flex-wrap items-center gap-3">
+                        {e.hasAttachment ? (
+                          <button onClick={() => viewReceipt(e._id)}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 underline">
+                            View bill
+                          </button>
+                        ) : (
+                          <span className="text-xs text-amber-700">No bill attached</span>
+                        )}
+                        {/* Super Admins only — nobody else is sent the coordinates. */}
+                        <FiledFrom location={e.filedLocation} />
+                      </div>
                     </div>
-                    <button onClick={() => reverse(e, true)}
-                      className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50 shrink-0">
-                      Reject
-                    </button>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button onClick={() => confirmExpense(e)}
+                        className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
+                        Confirm
+                      </button>
+                      <button onClick={() => openExpenseEdit(e)}
+                        className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                        Edit
+                      </button>
+                      <button onClick={() => reverse(e, true)}
+                        className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50">
+                        Reject
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1262,9 +1391,20 @@ export default function AdminKhata() {
             </div>
 
             <label className="block text-sm text-gray-700 mb-1">Receipt (optional)</label>
-            <input type="file" accept="image/*,application/pdf"
-              onChange={(e) => setEntryModal({ ...entryModal, file: e.target.files?.[0] || null })}
-              className="w-full text-sm mb-4" />
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <input type="file" accept="image/*,application/pdf"
+                onChange={(e) => setEntryModal({ ...entryModal, file: e.target.files?.[0] || null })}
+                className="text-sm" />
+              {/* A real camera rather than an `<input capture>` hint, which does
+                  nothing at all on a desktop — see components/CameraCapture. */}
+              <button type="button" onClick={() => setCamera('entry')}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                Take photo
+              </button>
+              {entryModal.file && (
+                <span className="text-xs text-gray-600 truncate max-w-[12rem]">{entryModal.file.name}</span>
+              )}
+            </div>
 
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setEntryModal(null)}
@@ -1423,6 +1563,105 @@ export default function AdminKhata() {
             </div>
           </form>
         </div>
+      )}
+
+      {/* Correcting an expense that has counted but that nobody has confirmed.
+          The amount goes on counting throughout — this fixes a live figure
+          rather than raising something new — so the wallet moves the moment it
+          is saved. Confirming closes the window; after that it takes a
+          reversal. */}
+      {expenseEdit && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={submitExpenseEdit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Correct this expense</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              {expenseEdit.entry.employee?.name || 'The employee'} · {expenseEdit.entry.code}.
+              It is already counted against their advance, so saving a different amount moves their wallet
+              straight away. They are told what changed.
+            </p>
+
+            <label className="block text-sm text-gray-700 mb-1">Khata</label>
+            <select value={expenseEdit.data.khata}
+              onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, khata: e.target.value } })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
+              {expenseEdit.khatas.length === 0 && <option value={expenseEdit.data.khata}>{expenseEdit.entry.khataName || 'Their khata'}</option>}
+              {expenseEdit.khatas.map((k) => (
+                <option key={k._id} value={k._id}>{k.name}{k.isActive ? '' : ' (closed)'}</option>
+              ))}
+            </select>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
+                <input type="number" min="0.01" step="0.01" required value={expenseEdit.data.amount}
+                  onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, amount: e.target.value } })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Date</label>
+                <input type="date" value={expenseEdit.data.date}
+                  onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, date: e.target.value } })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+              </div>
+            </div>
+
+            <label className="block text-sm text-gray-700 mb-1">What was bought</label>
+            <input type="text" value={expenseEdit.data.purpose}
+              onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, purpose: e.target.value } })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Paid by</label>
+                <select value={expenseEdit.data.paymentMode}
+                  onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, paymentMode: e.target.value } })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
+                  {['Cash', 'Bank', 'UPI', 'Cheque', 'Card', 'Adjustment', 'Other'].map((m) => <option key={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Reference</label>
+                <input type="text" value={expenseEdit.data.referenceNo}
+                  onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, referenceNo: e.target.value } })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" placeholder="Optional" />
+              </div>
+            </div>
+
+            <label className="block text-sm text-gray-700 mb-1">Replace the bill (optional)</label>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <input type="file" accept="image/*,application/pdf"
+                onChange={(e) => setExpenseEdit({ ...expenseEdit, file: e.target.files?.[0] || null })}
+                className="text-sm" />
+              <button type="button" onClick={() => setCamera('edit')}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                Take photo
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">
+              {expenseEdit.file ? expenseEdit.file.name : 'Leave this alone to keep the bill already attached.'}
+            </p>
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setExpenseEdit(null)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+              <button type="submit" disabled={saving}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                {saving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {camera && (
+        <CameraCapture
+          title="Photograph the bill"
+          fileName="bill"
+          onCapture={(file) => {
+            if (camera === 'edit') setExpenseEdit((m) => (m ? { ...m, file } : m));
+            else setEntryModal((m) => (m ? { ...m, file } : m));
+          }}
+          onClose={() => setCamera(false)} />
       )}
 
       {settingsModal && (
@@ -1699,7 +1938,7 @@ export default function AdminKhata() {
  * Shared statement table for the ledger and the per-employee view.
  * @param {{entries: Object[], onReverse: Function, showEmployee: boolean}} props
  */
-function EntryTable({ entries, onReverse, showEmployee }) {
+function EntryTable({ entries, onReverse, onEdit, onConfirm, showEmployee }) {
   return (
     <div className="bg-white shadow rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
@@ -1736,6 +1975,7 @@ function EntryTable({ entries, onReverse, showEmployee }) {
                     {e.cashAccountName ? ` · ${e.cashAccountName}` : ''}
                     {!e.affectsCompanyCash ? ' · no company cash' : ''}
                   </p>
+                  <FiledFrom location={e.filedLocation} />
                 </td>
                 <td className="px-4 py-3 text-right text-rose-700">
                   {e.direction === 'to_employee' ? money(e.amount) : ''}
@@ -1752,6 +1992,19 @@ function EntryTable({ entries, onReverse, showEmployee }) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
+                  {/* An expense that has posted but nobody has confirmed is
+                      still correctable — see the review queue. Once it is
+                      confirmed, reversing is the only way back. */}
+                  {e.editable && onEdit && (
+                    <button onClick={() => onEdit(e)} className="text-xs text-gray-500 hover:text-gray-900 mr-3">
+                      Edit
+                    </button>
+                  )}
+                  {e.editable && onConfirm && (
+                    <button onClick={() => onConfirm(e)} className="text-xs text-gray-500 hover:text-gray-900 mr-3">
+                      Confirm
+                    </button>
+                  )}
                   {e.status === 'Approved' && (
                     <button onClick={() => onReverse(e)} className="text-xs text-gray-500 hover:text-red-700">
                       Reverse

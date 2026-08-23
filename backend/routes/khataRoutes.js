@@ -56,6 +56,8 @@ router.get('/me', ctrl.getMyKhata);
 router.post('/me/request', ctrl.requestAdvance);
 // POST /me/expense — log what I spent the advance on, against one of my books; protected + multer single 'receipt'.
 router.post('/me/expense', receiptUpload.single('receipt'), ctrl.recordMyExpense);
+// PUT /me/expenses/:id — correct an expense of mine the company has not confirmed yet; protected + multer single 'receipt'.
+router.put('/me/expenses/:id', receiptUpload.single('receipt'), ctrl.updateMyExpense);
 // POST /me/reimbursement — claim back what the company owes me, when I have spent past my advance; protected.
 router.post('/me/reimbursement', ctrl.requestReimbursement);
 // POST /me/settle — declare unspent cash returned to the company (always parks); protected + multer single 'receipt'.
@@ -117,6 +119,10 @@ router.get('/pending', ctrl.listPending);
 router.patch('/entries/:id/approve', ctrl.approveEntry);
 // PATCH /entries/:id/reject — decline a parked entry; requires 'khata.manage'.
 router.patch('/entries/:id/reject', ctrl.rejectEntry);
+// PUT /entries/:id — correct an unconfirmed expense on the employee's behalf; requires 'khata.manage' + multer single 'receipt'.
+router.put('/entries/:id', receiptUpload.single('receipt'), ctrl.updateEntry);
+// PATCH /entries/:id/confirm — accept a self-posted expense, which locks it against further edits; requires 'khata.manage'.
+router.patch('/entries/:id/confirm', ctrl.confirmEntry);
 // POST /entries/:id/reverse — cancel a posted entry with a mirror row (never a delete); requires 'khata.manage' + canApprove.
 router.post('/entries/:id/reverse', ctrl.reverseEntry);
 

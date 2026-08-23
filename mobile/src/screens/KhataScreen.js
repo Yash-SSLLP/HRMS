@@ -23,6 +23,13 @@
  * the wallet lie about what was left. The company rejects it afterwards if it
  * should not stand, which is why the bill is mandatory there.
  *
+ * AND SO AN EXPENSE CAN BE CORRECTED — PUT /khata/me/expenses/:id — right up
+ * until the company confirms it. That is the other half of posting on the spot:
+ * the figure reaches the ledger before anybody has checked it, so the person who
+ * typed it can fix a wrong digit instead of needing a reversal. It counts at
+ * whatever it currently says throughout. Closing the book ends that too — see
+ * canEditMine.
+ *
  * The Statement section also downloads itself as a PDF (GET
  * /khata/me/statement.pdf) with every bill they uploaded bound in behind it —
  * the thing to send to whoever asked what the advance went on. It follows the
@@ -36,7 +43,6 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
 
 import api, { API_BASE, errMsg } from '../api/client';
 import { useAuth } from '../store/auth';
@@ -47,7 +53,8 @@ import {
   refresher, SectionHeader, EmptyState, SkeletonScreen, ModalSheet,
 } from '../components/ui';
 import { fmtDate, rupees, toYMD } from '../utils/format';
-import { compressImage, RECEIPT_MAX_PX } from '../utils/image';
+import { captureReceipt } from '../utils/camera';
+import { getFiledLocationFields } from '../utils/geo';
 import { downloadAndShare } from '../utils/downloadFile';
 
 const STATUS_TONE = {
@@ -67,11 +74,30 @@ const TITLES = {
 
 // How the wallet reads. `direction` comes from the server, so the app and the
 // web portal can never word the same balance differently.
+//
+// MONEY THE COMPANY OWES THE EMPLOYEE IS RED, matching the web portal. Not
+// because anything is wrong — it is simply the state that needs acting on, by
+// them (claim it) and by whoever pays it. Green read as "all fine, nothing to
+// do", which is the opposite of true when somebody is out of pocket.
 const WALLET_LOOK = {
   holding: { tint: colors.primary, icon: 'wallet-outline', hint: 'Company cash you are carrying. Record what you spend, or return what is left.' },
-  owed: { tint: colors.success, icon: 'arrow-down-circle', hint: 'You spent more than you were advanced, so the company owes you the difference.' },
+  owed: { tint: colors.danger, icon: 'arrow-down-circle', hint: 'You spent more than you were advanced, so the company owes you the difference.' },
   settled: { tint: colors.textMuted, icon: 'checkmark-circle', hint: 'You are not carrying any company cash right now.' },
 };
+
+/**
+ * Can this row still be corrected by the person who filed it?
+ *
+ * An expense posts the moment it is recorded, so the figure reaches the ledger
+ * before anybody has checked it — and until the company confirms it, whoever
+ * typed it may fix it. Two things end that: the company confirming it (the
+ * server drops `editable`) and the BOOK BEING CLOSED, which is the company
+ * taking that job's figures over. Mirrors ledger.expenseEditability on the
+ * server, which is what actually enforces it.
+ */
+const canEditMine = (entry, khatas) => entry.editable
+  && entry.raisedByEmployee
+  && khatas.some((k) => k._id === String(entry.khata) && k.isActive);
 
 export default function KhataScreen() {
   // The statement route sits behind `protect`, and FileSystem carries the header
@@ -90,6 +116,9 @@ export default function KhataScreen() {
   const [viewKhata, setViewKhata] = useState('');  // '' = every book
   const [newKhata, setNewKhata] = useState(null);  // { name }
   const [receipt, setReceipt] = useState(null);    // slip for an expense/return
+  // The expense being corrected, when the sheet is open to fix one rather than
+  // to record a new one. Null for a new expense.
+  const [editing, setEditing] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -117,7 +146,27 @@ export default function KhataScreen() {
     // Whatever book they are already looking at, else their default.
     const open = (data?.khatas || []).filter((k) => k.isActive);
     setKhataId(viewKhata || open.find((k) => k.isDefault)?._id || open[0]?._id || '');
+    setEditing(null);
     setSheet(which);
+  };
+
+  /**
+   * Open the same sheet to CORRECT an expense already recorded.
+   *
+   * The amount goes on counting against the advance throughout — an edit fixes a
+   * live figure rather than raising something new that waits to take effect — so
+   * the sheet opens filled in with what they filed. The bill is optional here:
+   * the one already attached stays unless they deliberately replace it.
+   */
+  const openEdit = (entry) => {
+    setAmount(String(entry.amount ?? ''));
+    setPurpose(entry.purpose || '');
+    setPaymentMode(entry.paymentMode || 'Cash');
+    setReceipt(null);
+    setDate((entry.date || '').slice(0, 10) || toYMD(new Date()));
+    setKhataId(String(entry.khata || ''));
+    setEditing(entry);
+    setSheet('expense');
   };
 
   /**
@@ -171,26 +220,13 @@ export default function KhataScreen() {
     setReceipt(res.assets[0]);
   };
 
-  // Photograph the paper slip. Downscaled before it is held: a phone still is
-  // routinely 4-8 MB and the endpoint caps uploads, so the original is rejected.
+  // Photograph the paper slip. Everything fiddly about that — a permission the
+  // OS will no longer ask for, a camera that refuses to launch, the downscale
+  // the upload cap needs — lives in utils/camera, because a tap that silently
+  // does nothing is the one failure a bill button must not have.
   const shootReceipt = async () => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      toast('Camera needed', 'Allow camera access to photograph a receipt.');
-      return;
-    }
-    const res = await ImagePicker.launchCameraAsync({
-      cameraType: ImagePicker.CameraType.back,
-      quality: 0.9,
-      allowsEditing: false,
-    });
-    if (res.canceled) return;
-    try {
-      const shot = await compressImage(res.assets[0], RECEIPT_MAX_PX);
-      setReceipt({ uri: shot.uri, name: `receipt-${Date.now()}.jpg`, mimeType: 'image/jpeg' });
-    } catch {
-      toast('Could not use that photo', 'Please try again, or attach a file instead.');
-    }
+    const shot = await captureReceipt({ namePrefix: 'bill' });
+    if (shot) setReceipt(shot);
   };
 
   const submit = async () => {
@@ -202,15 +238,28 @@ export default function KhataScreen() {
     }
     // The bill is the only control on an expense now that it posts on the spot.
     // Checked here as well as on the server so the failure is immediate rather
-    // than a round trip after they hit Send.
-    if (sheet === 'expense' && !receipt) {
+    // than a round trip after they hit Send. Not asked for again on a
+    // correction: the bill that came with it is still attached.
+    if (sheet === 'expense' && !editing && !receipt) {
       toast('Bill needed', 'Attach or photograph the bill — it is required for an expense.');
       return;
     }
 
     setSubmitting(true);
     try {
-      if (sheet === 'request') {
+      if (editing) {
+        // A correction to a row that is already counting. Multipart because the
+        // bill can be swapped at the same time; sending no file leaves the one
+        // already attached alone.
+        const form = new FormData();
+        Object.entries({ amount: Number(amount), purpose, date, paymentMode, khata: khataId })
+          .forEach(([k, v]) => form.append(k, String(v)));
+        if (receipt) {
+          form.append('receipt', { uri: receipt.uri, name: receipt.name || 'receipt', type: receipt.mimeType || 'application/octet-stream' });
+        }
+        const res = await api.put(`/khata/me/expenses/${editing._id}`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+        toast('Updated', res.data.message || 'It still counts against your advance.');
+      } else if (sheet === 'request') {
         const res = await api.post('/khata/me/request', { amount: Number(amount), purpose, date });
         toast('Sent', res.data.message || 'Your request has gone for approval.');
       } else if (sheet === 'claim') {
@@ -224,6 +273,16 @@ export default function KhataScreen() {
         // A khata only means something on an expense; a return comes out of the
         // wallet, which belongs to no book.
         if (sheet === 'expense') body.khata = khataId;
+        // Where the expense is being filed from, taken at the moment of filing.
+        // Best-effort: no permission or no fix simply sends nothing, because
+        // refusing to record money somebody has already spent over a GPS
+        // reading would be absurd. Only a Super Admin ever sees it.
+        if (sheet === 'expense') {
+          // A shorter, looser wait than a punch takes: this is context for an
+          // auditor, not a geofence decision, and nobody should watch a spinner
+          // for twelve seconds after tapping Send.
+          Object.assign(body, await getFiledLocationFields({ maxWaitMs: 6000, goodEnoughM: 50 }));
+        }
 
         if (receipt) {
           // Multipart. Always taken for an expense (the bill is compulsory) and
@@ -239,6 +298,7 @@ export default function KhataScreen() {
         }
       }
       setSheet(null);
+      setEditing(null);
       await load();
     } catch (err) {
       toast('Could not submit', errMsg(err));
@@ -374,6 +434,14 @@ export default function KhataScreen() {
                   {k.isActive ? `${k.entryCount || 0} ${k.entryCount === 1 ? 'entry' : 'entries'}` : 'Closed'}
                   {k.lastEntryAt ? ` · last ${fmtDate(k.lastEntryAt)}` : ''}
                 </Text>
+                {/* Closing is the company's act — finance saying the job is
+                    done. Its record stays; nothing more goes in, and what is
+                    already in it is no longer yours to change. */}
+                {!k.isActive ? (
+                  <Text style={styles.meta}>
+                    Closed by the company. No new expenses, and the ones in it can no longer be edited.
+                  </Text>
+                ) : null}
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={styles.rowAmount}>{rupees(k.spent)}</Text>
@@ -424,6 +492,21 @@ export default function KhataScreen() {
               </Text>
               {e.reviewNote ? <Text style={styles.meta}>{e.reviewNote}</Text> : null}
               {e.execNote ? <Text style={styles.meta}>{e.execNote}</Text> : null}
+              {e.edits?.length > 0 ? (
+                <Text style={styles.meta}>
+                  Edited {e.edits.length === 1 ? 'once' : `${e.edits.length} times`}
+                </Text>
+              ) : null}
+              {/* An expense counts from the moment it is recorded, but it is not
+                  CHECKED until the company confirms it — and that gap is exactly
+                  when it can still be corrected. */}
+              {canEditMine(e, khatas) ? (
+                <TouchableOpacity onPress={() => openEdit(e)} style={{ marginTop: spacing(1) }}>
+                  <Text style={styles.editLink}>Edit — not yet confirmed by the company</Text>
+                </TouchableOpacity>
+              ) : e.type === 'expense' && e.confirmedByCompany ? (
+                <Text style={styles.meta}>Confirmed by the company</Text>
+              ) : null}
             </View>
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={[
@@ -469,17 +552,28 @@ export default function KhataScreen() {
 
       <ModalSheet
         visible={!!sheet}
-        onClose={() => setSheet(null)}
-        title={TITLES[sheet] || ''}
-        footer={<AppButton title="Send" onPress={submit} loading={submitting} />}>
+        onClose={() => { setSheet(null); setEditing(null); }}
+        title={editing ? 'Correct this expense' : (TITLES[sheet] || '')}
+        footer={<AppButton title={editing ? 'Save changes' : 'Send'} onPress={submit} loading={submitting} />}>
 
         <Text style={styles.fieldsNote}>Fields marked * are required.</Text>
 
+        {/* Said, not hidden. Recording where somebody is standing is the kind
+            of thing people should be told about plainly, once, where it happens. */}
+        {!editing && sheet === 'expense' ? (
+          <Text style={styles.locationNote}>
+            Your location is recorded with the expense. Only a Super Admin can see it.
+          </Text>
+        ) : null}
+
         <Text style={styles.sheetIntro}>
-          {sheet === 'request' && (data?.approvalRequired
+          {editing && 'The company has not confirmed this one yet, so you can still fix it. It carries on '
+            + 'counting against your advance at whatever it says — change the amount and your wallet moves '
+            + 'with it. Once the company confirms it, it is locked.'}
+          {!editing && sheet === 'request' && (data?.approvalRequired
             ? 'This goes to the CEO/MD to approve, then to whoever handles company cash. Nothing is paid until both have acted.'
             : 'This goes to whoever handles company cash. Nothing is paid until they approve it.')}
-          {sheet === 'expense' && `Log what you spent the advance on. It comes off your wallet straight away — ${rupees(display.amount)} left. `
+          {!editing && sheet === 'expense' && `Log what you spent the advance on. It comes off your wallet straight away — ${rupees(display.amount)} left. `
             + 'The company can reject it afterwards, so attach the bill.'}
           {sheet === 'settle' && 'Tell the company you handed cash back. Your wallet updates once they confirm receiving it.'}
           {sheet === 'claim' && `You have spent more than you were advanced, so the company owes you ${rupees(display.amount)}. `
@@ -527,7 +621,10 @@ export default function KhataScreen() {
               <ChipSelect options={PAYMENT_MODES} value={paymentMode} onChange={setPaymentMode} />
             </Field>
 
-            <Field label={sheet === 'expense' ? 'Bill or receipt' : 'Receipt (optional)'} required={sheet === 'expense'}>
+            <Field
+              label={editing ? 'Replace the bill (optional)'
+                : sheet === 'expense' ? 'Bill or receipt' : 'Receipt (optional)'}
+              required={sheet === 'expense' && !editing}>
               {/* Two ways in: photograph the paper slip, or attach a file
                   (a PDF invoice, or an image already on the phone). */}
               <View style={{ flexDirection: 'row', gap: spacing(2.5) }}>
@@ -548,6 +645,8 @@ export default function KhataScreen() {
                     <Ionicons name="close" size={16} color={colors.textMuted} />
                   </TouchableOpacity>
                 </View>
+              ) : editing ? (
+                <Text style={styles.meta}>Leave this alone to keep the bill already attached.</Text>
               ) : sheet === 'expense' ? (
                 <Text style={styles.receiptRequired}>An expense cannot be recorded without the bill.</Text>
               ) : null}
@@ -575,9 +674,11 @@ const styles = StyleSheet.create({
   struck: { textDecorationLine: 'line-through' },
   rowActive: { borderWidth: 2, borderColor: colors.primary },
   link: { color: colors.textMuted, fontSize: 12, textDecorationLine: 'underline' },
+  editLink: { color: colors.primaryDark, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
 
   sheetIntro: { color: colors.textMuted, fontSize: 12, marginBottom: spacing(4) },
   fieldsNote: { color: colors.textFaint, fontSize: 11, marginBottom: spacing(2) },
+  locationNote: { color: colors.textMuted, fontSize: 11, marginBottom: spacing(2) },
   receiptRequired: { color: colors.danger, fontSize: 11, marginTop: spacing(2) },
 
   sumRow: {

@@ -86,6 +86,28 @@ const attachmentSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/**
+ * Where the phone (or browser) was when the entry was filed.
+ *
+ * Not where the money was spent — nobody can know that — but where the person
+ * stood when they told us about it. On a module whose whole control is "the
+ * employee is trusted to record their own spending honestly, with a bill", that
+ * is a useful thing to have: an expense filed from the site it belongs to reads
+ * differently from one filed from three states away.
+ *
+ * `accuracy` is the device's own error estimate in metres and is kept because a
+ * ±2 km fix and a ±8 m fix are not the same evidence, and a reader who is not
+ * told the difference will treat them as if they were.
+ *
+ * SEEN BY SUPER ADMINS ONLY. It never reaches any other client — see
+ * publicEntry in controllers/khataController.js, which omits it unless the
+ * viewer is a SuperAdmin, and omits it by default when no viewer is passed.
+ */
+const geoSchema = new mongoose.Schema(
+  { lat: Number, lng: Number, accuracy: Number, at: Date },
+  { _id: false }
+);
+
 const khataEntrySchema = new mongoose.Schema(
   {
     // Short quotable reference (KHT-2026-00042), stamped on first save and never
@@ -108,6 +130,11 @@ const khataEntrySchema = new mongoose.Schema(
     paymentMode: { type: String, enum: PAYMENT_MODES, default: 'Cash' },
     referenceNo: { type: String, trim: true, maxlength: 60 },
     attachment: { type: attachmentSchema, default: null },
+
+    // Where the employee was when they filed this. Captured on self-service
+    // expenses; null on anything an operator recorded on the company's behalf,
+    // and on any client that could not get a fix. SuperAdmin-visible only.
+    filedLocation: { type: geoSchema, default: null },
 
     // ----- company cash leg -----
     // Whether real money left or entered a company cash account. False for an
@@ -141,6 +168,36 @@ const khataEntrySchema = new mongoose.Schema(
     execApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     execApprovedAt: { type: Date, default: null },
     execNote: { type: String, trim: true, maxlength: 500 },
+
+    // ----- the company's look at a self-posted expense -----
+    // An expense posts on the spot (see recordMyExpense), so 'Approved' here
+    // means "counted", not "checked". This flag is the checking: it is set when
+    // somebody on the company side has actually looked at the bill and accepted
+    // it, and it is what CLOSES the row to further editing.
+    //
+    // While it is false the entry is still a draft in everything but its effect
+    // on the wallet: the employee who filed it may correct the amount, the
+    // purpose, the book or the bill, and so may the company. That is deliberate
+    // — a typo in a figure typed at a counter should be fixable by the person
+    // who typed it, right up to the moment the company accepts it. Afterwards
+    // it is a settled record and the only correction left is a reversal.
+    confirmedByCompany: { type: Boolean, default: false },
+    confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    confirmedAt: { type: Date, default: null },
+
+    // Every correction made before confirmation, oldest first. An edit is not a
+    // deletion, but it does rewrite a figure the company may already have seen,
+    // so what it used to say stays on the row rather than vanishing.
+    edits: {
+      type: [new mongoose.Schema({
+        at: { type: Date, default: Date.now },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byEmployee: { type: Boolean, default: false },
+        // Human-readable, e.g. 'amount ₹500 → ₹550; what for: "cement" → "sand"'.
+        summary: { type: String, trim: true, maxlength: 600 },
+      }, { _id: false })],
+      default: [],
+    },
 
     // Snapshot of the employee's WALLET balance immediately after this row
     // posted — the statement's running-balance column. Always the wallet, even

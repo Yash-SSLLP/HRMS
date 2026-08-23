@@ -36,7 +36,7 @@
  * /employees/:id/statement.pdf.
  */
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import api, { API_BASE, errMsg } from '../../api/client';
@@ -49,6 +49,7 @@ import {
   refresher, SectionHeader, EmptyState, SkeletonScreen, ModalSheet, StatTile,
 } from '../../components/ui';
 import { fmtDate, rupees, toYMD } from '../../utils/format';
+import { captureReceipt } from '../../utils/camera';
 import { downloadAndShare } from '../../utils/downloadFile';
 
 const TABS = [
@@ -113,6 +114,13 @@ export default function KhataAdminScreen() {
   const [approving, setApproving] = useState(null); // { entry, cashAccount }
   const [personQuery, setPersonQuery] = useState('');
   const [newKhata, setNewKhata] = useState(null);  // { employee, name }
+  // One book's settings — rename, re-note, make default, CLOSE or re-open.
+  // Closing is the company's act and lives only here: there is no employee
+  // equivalent anywhere in the app or the API.
+  const [khataSettings, setKhataSettings] = useState(null);
+  // Correcting an expense that has posted but nobody has confirmed yet:
+  // { entry, khatas, data, receipt }.
+  const [expenseEdit, setExpenseEdit] = useState(null);
   const [sanctioning, setSanctioning] = useState(null); // { entry, approve, note }
   const [viewKhata, setViewKhata] = useState('');  // '' = all of their books
   const [entryKhatas, setEntryKhatas] = useState([]); // books offered in the entry sheet
@@ -135,9 +143,11 @@ export default function KhataAdminScreen() {
         mayApproveAdvances
           ? api.get('/khata/advance-approvals').catch(() => ({ data: {} }))
           : Promise.resolve({ data: {} }),
-        // Employee expenses post on the spot, so they never reach /pending.
-        // This is the review surface that replaces the approval step.
-        api.get('/khata/entries', { params: { type: 'expense', status: 'Approved', limit: 100 } })
+        // Expenses post on the spot, so they never reach /pending. This is the
+        // review surface that replaces the approval step: everything that has
+        // counted but that nobody here has yet looked at. Confirming is what
+        // takes a row out of the list, which is why it asks for unconfirmed.
+        api.get('/khata/entries', { params: { type: 'expense', status: 'Approved', confirmed: 'false', limit: 100 } })
           .catch(() => ({ data: {} })),
       ]);
       setOv(o.data);
@@ -146,7 +156,7 @@ export default function KhataAdminScreen() {
       setPeople(p.data.employees || []);
       setPending(q.data.entries || []);
       setSanctions(a.data.entries || []);
-      setExpenses((x.data.entries || []).filter((e) => e.raisedByEmployee));
+      setExpenses(x.data.entries || []);
     } catch (err) {
       toast('Could not load', errMsg(err));
     } finally {
@@ -348,6 +358,114 @@ export default function KhataAdminScreen() {
     } finally { setSubmitting(false); }
   };
 
+  // ---------- one book's settings, including closing it ----------
+
+  /**
+   * Save a khata's settings. CLOSING is the interesting one: the book stops
+   * taking entries, and the employee stops being able to correct the expenses
+   * already in it — the company keeps both. It is company-only by construction:
+   * the route sits behind `khata.manage` and there is no self-service twin.
+   *
+   * The employee's fallback book cannot be closed, or self-service would have
+   * nowhere to file an expense; the server refuses it too.
+   */
+  const saveKhataSettings = async () => {
+    const { khata, name, note, makeDefault, isActive } = khataSettings;
+    if (!name.trim()) { toast('Name it', 'A khata needs a name.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await api.put(`/khata/khatas/${khata._id}`, {
+        name: name.trim(),
+        note,
+        isActive,
+        ...(makeDefault ? { isDefault: true } : {}),
+      });
+      toast('Saved', res.data.message || '');
+      setKhataSettings(null);
+      await load();
+      if (detail) await openDetail(detail.employee._id, true);
+    } catch (err) {
+      toast('Could not save', errMsg(err));
+    } finally { setSubmitting(false); }
+  };
+
+  // ---------- confirming and correcting a posted expense ----------
+
+  /**
+   * Accept an expense. Moves no money — the row counted the moment it was
+   * recorded — but it CLOSES the row: neither side can edit it afterwards, and
+   * the only correction left is a reversal.
+   */
+  const confirmExpense = (e) => {
+    Alert.alert(
+      `Confirm ${rupees(e.amount)}?`,
+      `${e.employee?.name || 'The employee'} recorded it against "${e.khataName || 'their khata'}". `
+      + 'It has already come off their advance; confirming says you have checked it. '
+      + 'After this neither of you can edit it — a mistake would have to be reversed.',
+      [
+        { text: 'Not yet', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            try {
+              const res = await api.patch(`/khata/entries/${e._id}/confirm`, {});
+              toast('Confirmed', res.data.message || 'It is now locked.');
+              await load();
+              if (detail) await openDetail(detail.employee._id, true);
+            } catch (err) { toast('Could not confirm', errMsg(err)); }
+          },
+        },
+      ]
+    );
+  };
+
+  /**
+   * Open the correction sheet for an expense nobody has confirmed yet. The
+   * books are fetched for the picker because a common correction is that the
+   * spend was filed under the wrong heading.
+   */
+  const openExpenseEdit = async (e) => {
+    setExpenseEdit({
+      entry: e,
+      khatas: [],
+      receipt: null,
+      data: {
+        amount: String(e.amount ?? ''),
+        purpose: e.purpose || '',
+        paymentMode: e.paymentMode || 'Cash',
+        referenceNo: e.referenceNo || '',
+        khata: String(e.khata || ''),
+      },
+    });
+    setDate((e.date || '').slice(0, 10) || toYMD(new Date()));
+    try {
+      const res = await api.get(`/khata/employees/${e.employee?._id || e.employee}`);
+      const books = (res.data.khatas || []).filter((k) => k.isActive || k._id === String(e.khata));
+      setExpenseEdit((m) => (m ? { ...m, khatas: books } : m));
+    } catch { /* the picker stays empty; the entry keeps the book it has */ }
+  };
+
+  const submitExpenseEdit = async () => {
+    const { entry: e, data, receipt } = expenseEdit;
+    if (!data.amount || Number(data.amount) <= 0) { toast('Invalid', 'Enter an amount greater than zero.'); return; }
+    setSubmitting(true);
+    try {
+      const form = new FormData();
+      Object.entries({ ...data, amount: Number(data.amount), date })
+        .forEach(([k, v]) => { if (v !== '' && v != null) form.append(k, String(v)); });
+      if (receipt) {
+        form.append('receipt', { uri: receipt.uri, name: receipt.name || 'receipt', type: receipt.mimeType || 'application/octet-stream' });
+      }
+      const res = await api.put(`/khata/entries/${e._id}`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      toast('Updated', res.data.message || '');
+      setExpenseEdit(null);
+      await load();
+      if (detail) await openDetail(detail.employee._id, true);
+    } catch (err) {
+      toast('Could not save the correction', errMsg(err));
+    } finally { setSubmitting(false); }
+  };
+
   // ---------- approvals ----------
 
   const submitApproval = async () => {
@@ -492,6 +610,17 @@ export default function KhataAdminScreen() {
                       <Text style={styles.link}>Add expense</Text>
                     </TouchableOpacity>
                   )}
+                  {/* Rename, re-note, make default — and close it. Closing is
+                      only ever done from here, by the company. */}
+                  <TouchableOpacity onPress={() => setKhataSettings({
+                    khata: k,
+                    name: k.name,
+                    note: k.note || '',
+                    isActive: k.isActive,
+                    makeDefault: false,
+                  })}>
+                    <Text style={styles.link}>Settings</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity onPress={() => setStatement({
                     employee: detail.employee._id,
                     employeeName: detail.employee.name,
@@ -519,11 +648,15 @@ export default function KhataAdminScreen() {
               : (detail.entries || []);
             return shown.length === 0
               ? <EmptyState icon="receipt-outline" title="No entries yet" />
-              : shown.map((e) => <EntryRow key={e._id} entry={e} />);
+              : shown.map((e) => (
+                <EntryRow key={e._id} entry={e} onEdit={openExpenseEdit} onConfirm={confirmExpense} />
+              ));
           })()}
         </ScrollView>
         {renderEntrySheet()}
         {renderStatementSheet()}
+        {renderKhataSettingsSheet()}
+        {renderExpenseEditSheet()}
       </Screen>
     );
   }
@@ -693,32 +826,48 @@ export default function KhataAdminScreen() {
           ))
         )}
 
-        {/* Employee expenses post immediately, so this is a review queue rather
-            than an approval one: everything here has already counted against the
-            employee's advance, and the action is to reject what should not stand. */}
+        {/* Expenses post immediately, so this is a review queue rather than an
+            approval one: everything here has already counted against the
+            employee's advance. Confirming says it stands — and locks it, on both
+            sides. Correcting is possible until then; rejecting puts it back. */}
         {tab === 'approvals' && (
           <>
-            <SectionHeader title="Recorded expenses" />
+            <SectionHeader title="Expenses to confirm" />
             {expenses.length === 0 ? (
               <EmptyState
                 icon="receipt-outline"
-                title="No expenses recorded"
-                subtitle="Spending an employee logs against their advance shows here, already counted." />
+                title="Nothing waiting"
+                subtitle="Every recorded expense has been confirmed. New ones land here already counted." />
             ) : expenses.map((e) => (
               <Card key={e._id} style={{ marginBottom: spacing(2) }}>
                 <Text style={font.body}>{e.employee?.name || 'Employee'} · {rupees(e.amount)}</Text>
                 <Text style={styles.meta}>
                   {e.khataName ? `${e.khataName} · ` : ''}{fmtDate(e.date)}{e.code ? ` · ${e.code}` : ''}
+                  {e.raisedByEmployee ? '' : ' · recorded by the company'}
                 </Text>
                 {e.purpose ? <Text style={[font.body, { marginTop: spacing(1) }]}>{e.purpose}</Text> : null}
+                {/* Corrected since it was filed? The figure being confirmed may
+                    not be the one first recorded. */}
+                {e.edits?.length > 0 ? (
+                  <Text style={styles.warn}>
+                    Edited {e.edits.length === 1 ? 'once' : `${e.edits.length} times`}: {e.edits[e.edits.length - 1].summary}
+                  </Text>
+                ) : null}
                 {/* The bill is mandatory on these, so a row without one is worth
                     noticing rather than passing over quietly. */}
                 {!e.hasAttachment ? <Text style={styles.warn}>No bill attached</Text> : null}
+                {/* Super Admins only — nobody else is sent the coordinates. */}
+                <FiledFrom location={e.filedLocation} />
+                <View style={{ flexDirection: 'row', marginTop: spacing(3) }}>
+                  <AppButton title="Confirm" onPress={() => confirmExpense(e)} style={{ flex: 1 }} />
+                  <View style={{ width: spacing(2) }} />
+                  <AppButton title="Edit" variant="ghost" onPress={() => openExpenseEdit(e)} style={{ flex: 1 }} />
+                </View>
                 <AppButton
                   title="Reject"
                   variant="ghost"
                   onPress={() => setRejecting({ entry: e, reason: '' })}
-                  style={{ marginTop: spacing(3) }} />
+                  style={{ marginTop: spacing(2) }} />
               </Card>
             ))}
           </>
@@ -753,6 +902,8 @@ export default function KhataAdminScreen() {
 
       {renderEntrySheet()}
       {renderStatementSheet()}
+      {renderKhataSettingsSheet()}
+      {renderExpenseEditSheet()}
 
       <ModalSheet
         visible={!!newKhata}
@@ -904,6 +1055,164 @@ export default function KhataAdminScreen() {
       </ModalSheet>
     </Screen>
   );
+
+  /**
+   * One book's settings, including the only place a khata can be CLOSED.
+   *
+   * A function declaration for the same reason as the statement sheet below:
+   * the screen returns early for the per-employee view, and this is offered
+   * from there as well as from the list behind it.
+   */
+  function renderKhataSettingsSheet() {
+    const k = khataSettings?.khata;
+    return (
+      <ModalSheet
+        visible={!!khataSettings}
+        onClose={() => setKhataSettings(null)}
+        title="Khata settings"
+        footer={<AppButton title="Save" onPress={saveKhataSettings} loading={submitting} />}>
+        {khataSettings && (
+          <>
+            <Text style={styles.sheetIntro}>
+              {rupees(k.spent)} spent under this heading so far. The advance limit belongs to the person&apos;s
+              wallet, not here — a book holds no money of its own.
+            </Text>
+
+            <Field label="Name" required>
+              <Input
+                value={khataSettings.name}
+                onChangeText={(v) => setKhataSettings({ ...khataSettings, name: v })}
+                maxLength={80}
+                placeholder="e.g. Site A — materials" />
+            </Field>
+
+            <Field label="Note">
+              <Input
+                value={khataSettings.note}
+                onChangeText={(v) => setKhataSettings({ ...khataSettings, note: v })}
+                placeholder="Optional" />
+            </Field>
+
+            {/* A book carrying spend CAN be closed: `spent` is history, and the
+                money itself is on the wallet, where closing a folder cannot hide
+                it. Only the fallback book has to stay open. */}
+            <Field label="Status">
+              <ChipSelect
+                options={[{ value: true, label: 'Open' }, { value: false, label: 'Closed' }]}
+                value={khataSettings.isActive}
+                onChange={(v) => {
+                  if (!v && k.isDefault) {
+                    toast('That is their default khata', 'Make another one the default first, then close this.');
+                    return;
+                  }
+                  setKhataSettings({ ...khataSettings, isActive: v });
+                }}
+                getLabel={(o) => o.label}
+                getValue={(o) => o.value} />
+            </Field>
+            <Text style={styles.meta}>
+              {k.isDefault
+                ? 'This is their default khata, so it cannot be closed. Make another one the default first.'
+                : 'A closed khata stays readable, with its spending on the record, but takes no new entries — '
+                  + 'and the employee can no longer edit the expenses already in it. You still can.'}
+            </Text>
+
+            {!k.isDefault && khataSettings.isActive ? (
+              <TouchableOpacity
+                onPress={() => setKhataSettings({ ...khataSettings, makeDefault: !khataSettings.makeDefault })}
+                style={{ marginTop: spacing(3) }}>
+                <Text style={styles.link}>
+                  {khataSettings.makeDefault
+                    ? 'Will become their default khata'
+                    : 'Make this their default khata'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </>
+        )}
+      </ModalSheet>
+    );
+  }
+
+  /**
+   * Correcting an expense that has counted but that nobody has confirmed.
+   *
+   * The amount goes on counting throughout — this fixes a live figure rather
+   * than raising something new — so the wallet moves the moment it is saved.
+   */
+  function renderExpenseEditSheet() {
+    return (
+      <ModalSheet
+        visible={!!expenseEdit}
+        onClose={() => setExpenseEdit(null)}
+        title="Correct this expense"
+        footer={<AppButton title="Save changes" onPress={submitExpenseEdit} loading={submitting} />}>
+        {expenseEdit && (
+          <>
+            <Text style={styles.sheetIntro}>
+              {expenseEdit.entry.employee?.name || 'The employee'} · {expenseEdit.entry.code}.
+              It is already counted against their advance, so saving a different amount moves their wallet
+              straight away. They are told what changed.
+            </Text>
+
+            {expenseEdit.khatas.length > 0 ? (
+              <Field label="Khata">
+                <ChipSelect
+                  options={expenseEdit.khatas}
+                  value={expenseEdit.data.khata}
+                  onChange={(v) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, khata: v } })}
+                  getLabel={(b) => (b.isActive ? b.name : b.name + ' (closed)')}
+                  getValue={(b) => b._id} />
+              </Field>
+            ) : null}
+
+            <Field label="Amount" required>
+              <Input
+                value={expenseEdit.data.amount}
+                onChangeText={(v) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, amount: v } })}
+                keyboardType="decimal-pad"
+                placeholder="0.00" />
+            </Field>
+
+            <Field label="What was bought?">
+              <Input
+                value={expenseEdit.data.purpose}
+                onChangeText={(v) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, purpose: v } })}
+                placeholder="e.g. 20 bags of cement" />
+            </Field>
+
+            <Field label="Date">
+              <DateField value={date} onChange={setDate} />
+            </Field>
+
+            <Field label="Paid by">
+              <ChipSelect
+                options={PAYMENT_MODES}
+                value={expenseEdit.data.paymentMode}
+                onChange={(v) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, paymentMode: v } })} />
+            </Field>
+
+            <Field label="Replace the bill (optional)">
+              <TouchableOpacity
+                onPress={async () => {
+                  const shot = await captureReceipt({ namePrefix: 'bill' });
+                  if (shot) setExpenseEdit((m) => (m ? { ...m, receipt: shot } : m));
+                }}
+                style={styles.receiptBtn}>
+                <Ionicons name="camera-outline" size={17} color={colors.text} />
+                <Text style={styles.receiptBtnText}>Take photo</Text>
+              </TouchableOpacity>
+              <Text style={styles.meta}>
+                {expenseEdit.receipt
+                  ? expenseEdit.receipt.name
+                  : 'Leave this alone to keep the bill already attached.'}
+              </Text>
+            </Field>
+          </>
+        )}
+      </ModalSheet>
+    );
+  }
 
   /**
    * The date-range sheet the statement is built from.
@@ -1124,8 +1433,35 @@ function toneFor(direction) {
   return colors.textMuted;
 }
 
-/** One statement line in the per-employee view. */
-function EntryRow({ entry }) {
+/**
+ * Where an expense was filed from — a link that opens the map app.
+ *
+ * Renders NOTHING unless the server sent a location, and the server only sends
+ * one to a SuperAdmin. So the permission check is the absence of the data
+ * rather than a role test here: a screen cannot show what it was never given,
+ * and there is no second copy of the rule to fall out of step.
+ */
+function FiledFrom({ location }) {
+  if (!location || location.lat == null) return null;
+  const url = `https://www.google.com/maps/search/?api=1&query=${location.lat},${location.lng}`;
+  return (
+    <TouchableOpacity onPress={() => Linking.openURL(url).catch(() => {})} style={{ marginTop: spacing(1) }}>
+      <Text style={styles.link}>
+        📍 Filed from {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
+        {location.accuracy != null ? ` (±${Math.round(location.accuracy)} m)` : ''}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+/**
+ * One statement line in the per-employee view.
+ *
+ * `onEdit`/`onConfirm` are offered only for a row the server says is still
+ * `editable` — an expense that has posted but that nobody has confirmed. Once
+ * it is confirmed, reversing is the only way back.
+ */
+function EntryRow({ entry, onEdit, onConfirm }) {
   return (
     <Card style={[styles.row, entry.status === 'Reversed' && { opacity: 0.6 }]}>
       <View style={{ flex: 1, paddingRight: spacing(2) }}>
@@ -1139,6 +1475,21 @@ function EntryRow({ entry }) {
           {entry.code ? ` · ${entry.code}` : ''}
           {entry.cashAccountName ? ` · ${entry.cashAccountName}` : ''}
         </Text>
+        <FiledFrom location={entry.filedLocation} />
+        {entry.editable ? (
+          <View style={{ flexDirection: 'row', gap: spacing(3), marginTop: spacing(1) }}>
+            {onConfirm ? (
+              <TouchableOpacity onPress={() => onConfirm(entry)}>
+                <Text style={styles.link}>Confirm</Text>
+              </TouchableOpacity>
+            ) : null}
+            {onEdit ? (
+              <TouchableOpacity onPress={() => onEdit(entry)}>
+                <Text style={styles.link}>Edit</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
       </View>
       <View style={{ alignItems: 'flex-end' }}>
         <Text style={[
@@ -1192,6 +1543,12 @@ const styles = StyleSheet.create({
   twoWayAmount: { fontSize: 22, fontWeight: '700' },
   link: { color: colors.textMuted, fontSize: 12, textDecorationLine: 'underline', marginTop: 2 },
 
+  receiptBtn: {
+    height: 46, borderRadius: 10, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt, paddingHorizontal: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+  },
+  receiptBtnText: { fontSize: 14, color: colors.text, fontWeight: '600' },
   sheetIntro: { color: colors.textMuted, fontSize: 12, marginBottom: spacing(4) },
   warn: { color: colors.warning, fontSize: 12, marginBottom: spacing(4) },
 });

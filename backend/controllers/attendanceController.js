@@ -115,24 +115,41 @@ function parsePunchLocation(body) {
 
 // The geofence a punch is measured against: the employee's assigned work
 // location if they have one, otherwise the global office (Setting.office).
-// Returns { center:{lat,lng}, radiusM, label }.
+// Returns { center:{lat,lng}, radiusM, label, exempt }.
+//
+// `exempt` is the per-person grant to punch from anywhere
+// (EmployeeProfile.remotePunchAllowed). It is carried HERE rather than checked
+// at each call site because "was this punch outside the fence?" is worked out in
+// five different places — the punch itself, the month summary, the export, the
+// punch map and the manager's team view — and a grant that half of them honoured
+// would show the same employee as flagged on one screen and clear on the next.
+// Distances are still computed and still shown; only the verdict changes.
 function resolveGeofence(profile, settings) {
+  const exempt = profile?.remotePunchAllowed === true;
   const wl = profile && profile.workLocationRef;
   if (wl && wl.lat != null && wl.lng != null) {
     return {
       center: { lat: wl.lat, lng: wl.lng },
       radiusM: wl.radiusM != null ? wl.radiusM : settings.geofenceThresholdM,
       label: wl.name || 'work location',
+      exempt,
     };
   }
-  return { center: settings.office, radiusM: settings.geofenceThresholdM, label: settings.office?.label || 'office' };
+  return {
+    center: settings.office,
+    radiusM: settings.geofenceThresholdM,
+    label: settings.office?.label || 'office',
+    exempt,
+  };
 }
 
 // Apply the geofence rule to a punch against a given center + radius. A punch
-// beyond the radius (and not marked WFH) is captured as an out-of-range punch —
-// the punch is never blocked; WFH punches are exempt. Returns the distance in
-// metres (or null when no location was captured) so callers can note it.
-function evaluateGeofence(loc, wfh, center, radiusM) {
+// beyond the radius is captured as an out-of-range punch — the punch is never
+// blocked. Two things exempt it: the employee declaring that punch as WFH, and
+// the standing per-person grant to punch from anywhere (see resolveGeofence).
+// `exempt` is either of those, already OR-ed by the caller. Returns the distance
+// in metres (or null when no location was captured) so callers can note it.
+function evaluateGeofence(loc, exempt, center, radiusM) {
   const distanceM = loc ? haversineMeters(center, loc) : null;
   // Allow the GPS error margin as tolerance so an imprecise fix (common indoors /
   // on laptops) doesn't wrongly flag an in-range punch as "outside". Cap the
@@ -140,7 +157,7 @@ function evaluateGeofence(loc, wfh, center, radiusM) {
   // far-away punch.
   const tolerance = loc && loc.accuracy != null ? Math.min(loc.accuracy, radiusM || 0) : 0;
   const outside = Boolean(
-    !wfh && radiusM && distanceM != null && distanceM - tolerance > radiusM
+    !exempt && radiusM && distanceM != null && distanceM - tolerance > radiusM
   );
   return { distanceM, outside };
 }
@@ -529,7 +546,9 @@ const checkIn = asyncHandler(async (req, res) => {
   // assigned work location (or the global office if unassigned).
   const settings = await Setting.getSettings();
   const geo = resolveGeofence(profile, settings);
-  const { distanceM, outside } = evaluateGeofence(loc, record.checkInWfh, geo.center, geo.radiusM);
+  // Either exemption clears the punch: the employee declaring this one as WFH,
+  // or the standing grant to punch from anywhere.
+  const { distanceM, outside } = evaluateGeofence(loc, record.checkInWfh || geo.exempt, geo.center, geo.radiusM);
   record.checkInOutsideGeofence = outside;
   if (outside) {
     record.remarks = appendRemark(record.remarks, `Check-in outside ${geo.label} (${distanceM} m).`);
@@ -615,7 +634,8 @@ const checkOut = asyncHandler(async (req, res) => {
   // assigned work location (or the global office if unassigned).
   const settings = await Setting.getSettings();
   const geo = resolveGeofence(profile, settings);
-  const { distanceM, outside } = evaluateGeofence(loc, record.checkOutWfh, geo.center, geo.radiusM);
+  // Either exemption clears the punch — see check-in.
+  const { distanceM, outside } = evaluateGeofence(loc, record.checkOutWfh || geo.exempt, geo.center, geo.radiusM);
   record.checkOutOutsideGeofence = outside;
   if (outside) {
     record.remarks = appendRemark(record.remarks, `Check-out outside ${geo.label} (${distanceM} m).`);
@@ -1130,6 +1150,9 @@ const listMine = asyncHandler(async (req, res) => {
     // Whether this employee may mark a punch as work-from-home (granted by a
     // SuperAdmin) — drives whether the WFH control is shown at all.
     wfhAllowed: !!profile.wfhAllowed,
+    // Whether the office geofence applies to them at all. Told to the employee
+    // so a punch from a site does not look like something they got away with.
+    remotePunchAllowed: !!profile.remotePunchAllowed,
     todayLeave,
   });
 });
@@ -1156,7 +1179,7 @@ const listAll = asyncHandler(async (req, res) => {
   const records = await Attendance.find(filter)
     .populate({
       path: 'employee',
-      select: 'employeeCode user workLocationRef',
+      select: 'employeeCode user workLocationRef remotePunchAllowed',
       populate: [
         { path: 'user', select: 'firstName lastName email' },
         { path: 'workLocationRef', select: 'name lat lng radiusM' },
@@ -1175,6 +1198,9 @@ const listAll = asyncHandler(async (req, res) => {
     o.checkOutDistanceM = haversineMeters(geo.center, o.checkOutLocation);
     o.geofenceRadiusM = geo.radiusM;
     o.locationName = geo.label;
+    // So a screen can explain a long distance that is not a finding, rather
+    // than leaving HR to wonder why it is not flagged.
+    o.remotePunchAllowed = geo.exempt;
     return o;
   });
 
@@ -1216,7 +1242,7 @@ const monthSummary = asyncHandler(async (req, res) => {
 
   const [profile, records, settings, holidays] = await Promise.all([
     EmployeeProfile.findById(req.query.employee)
-      .select('employeeCode designation department user workLocationRef')
+      .select('employeeCode designation department user workLocationRef remotePunchAllowed')
       .populate('user', 'firstName lastName email')
       .populate('workLocationRef', 'name lat lng radiusM'),
     // Capped at today like the registers: a leave approved for later this month
@@ -1245,8 +1271,10 @@ const monthSummary = asyncHandler(async (req, res) => {
     o.checkOutDistanceM = haversineMeters(geo.center, o.checkOutLocation);
     o.geofenceRadiusM = geo.radiusM;
     o.locationName = geo.label;
+    // `geo.exempt` = this employee may punch from anywhere, so the distance is
+    // still reported but is never a finding.
     o.distantPunch = Boolean(
-      geo.radiusM &&
+      !geo.exempt && geo.radiusM &&
       ((o.checkInDistanceM != null && o.checkInDistanceM > geo.radiusM && !o.checkInWfh) ||
         (o.checkOutDistanceM != null && o.checkOutDistanceM > geo.radiusM && !o.checkOutWfh))
     );
@@ -1329,7 +1357,7 @@ const punchMap = asyncHandler(async (req, res) => {
       $or: [{ 'checkInLocation.lat': { $ne: null } }, { 'checkOutLocation.lat': { $ne: null } }],
     }).populate({
       path: 'employee',
-      select: 'employeeCode designation department user workLocationRef',
+      select: 'employeeCode designation department user workLocationRef remotePunchAllowed',
       populate: [
         { path: 'user', select: 'firstName lastName' },
         { path: 'workLocationRef', select: 'name lat lng radiusM' },
@@ -1362,12 +1390,15 @@ const punchMap = asyncHandler(async (req, res) => {
       date: ymdLocal(r.date),
       geofenceRadiusM: geo.radiusM,
       locationName: geo.label,
+      remotePunchAllowed: geo.exempt,
     };
 
     const addPoint = (kind, loc, time, wfh) => {
       if (!loc || loc.lat == null || loc.lng == null) return;
       const distanceM = haversineMeters(geo.center, loc);
-      const outside = Boolean(geo.radiusM && !wfh && distanceM != null && distanceM > geo.radiusM);
+      // Not flagged for somebody the fence does not apply to — the pin still
+      // drops where they punched, it just is not marked as a problem.
+      const outside = Boolean(geo.radiusM && !wfh && !geo.exempt && distanceM != null && distanceM > geo.radiusM);
       points.push({
         ...base,
         id: `${base.recordId}-${kind}`,
@@ -1443,7 +1474,7 @@ function attendanceExportRows(records, settings) {
     const inDist = haversineMeters(geo.center, r.checkInLocation);
     const outDist = haversineMeters(geo.center, r.checkOutLocation);
     const distant = Boolean(
-      geo.radiusM &&
+      !geo.exempt && geo.radiusM &&
         ((inDist != null && inDist > geo.radiusM && !r.checkInWfh) ||
           (outDist != null && outDist > geo.radiusM && !r.checkOutWfh))
     );
@@ -1557,7 +1588,7 @@ const runAttendanceExport = async (req, res, opts = {}) => {
   const [records, settings] = await Promise.all([
     Attendance.find(filter).populate({
       path: 'employee',
-      select: 'employeeCode user workLocationRef',
+      select: 'employeeCode user workLocationRef remotePunchAllowed',
       populate: [
         { path: 'user', select: 'firstName lastName email' },
         { path: 'workLocationRef', select: 'name lat lng radiusM' },

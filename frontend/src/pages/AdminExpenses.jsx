@@ -145,6 +145,19 @@ export default function AdminExpenses() {
                 <td className="px-4 py-3 text-right font-medium text-gray-900">{inr.format(x.amount)}</td>
                 <td className="px-4 py-3">
                   <ReceiptView expense={x} />
+                  {/* Where the claim was filed from. Present only for a Super
+                      Admin — the server sends the coordinates to nobody else,
+                      so the absence of the data IS the permission check. */}
+                  {x.filedLocation?.lat != null && (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${x.filedLocation.lat},${x.filedLocation.lng}`}
+                      target="_blank" rel="noopener noreferrer"
+                      title="Where the employee was when they filed this claim. Visible to Super Admins only."
+                      className="block mt-1 text-xs text-sky-700 hover:text-sky-900 underline">
+                      📍 Filed from {x.filedLocation.lat.toFixed(5)}, {x.filedLocation.lng.toFixed(5)}
+                      {x.filedLocation.accuracy != null ? ` (±${Math.round(x.filedLocation.accuracy)} m)` : ''}
+                    </a>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[x.status] || 'bg-gray-100 text-gray-700'}`}>{x.status}</span>

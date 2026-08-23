@@ -89,10 +89,39 @@ function describeWalletForEmployee(balance) {
 }
 
 /**
+ * Read the GPS fix a client sent with a filing.
+ *
+ * Best-effort by design: a refused location permission, a phone indoors with no
+ * fix, a browser that denies it — none of those should stop somebody recording
+ * money they have already spent. Absent is a legitimate answer, and an absent
+ * location is more honest than a fabricated one.
+ * @param {object} body - req.body (multipart, so everything arrives as a string).
+ * @returns {{lat: number, lng: number, accuracy?: number, at: Date}|undefined}
+ */
+function parseFiledLocation(body) {
+  const lat = parseFloat(body?.latitude);
+  const lng = parseFloat(body?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  const accuracy = parseFloat(body?.accuracy);
+  return {
+    lat,
+    lng,
+    accuracy: Number.isFinite(accuracy) ? Math.round(accuracy) : undefined,
+    at: new Date(),
+  };
+}
+
+/**
  * Allowlist mapper for a ledger entry. A field not named here never reaches a
  * client, however it happens to be stored.
+ *
+ * `viewer` is the user the payload is being built FOR, and it exists for one
+ * field: where the employee was standing when they filed the expense. That is
+ * for SuperAdmins alone — not the accounts team, not the employee's manager,
+ * not the employee. Passing no viewer therefore means "show nobody", so a call
+ * site that has not thought about it leaks nothing by omission.
  */
-const publicEntry = (e) => ({
+const publicEntry = (e, viewer) => ({
   _id: e._id,
   code: e.code,
   employee: e.employee && e.employee.firstName
@@ -120,6 +149,36 @@ const publicEntry = (e) => ({
   raisedByEmployee: e.raisedByEmployee,
   balanceAfter: e.balanceAfter,
   hasAttachment: !!e.attachment?.storagePath,
+  // Has anybody on the company side actually looked at this expense? 'Approved'
+  // does not answer that for an expense, which posts unreviewed — see the
+  // KhataEntry schema. Until this is true the row is still correctable.
+  confirmedByCompany: !!e.confirmedByCompany,
+  confirmedAt: e.confirmedAt || null,
+  confirmedBy: e.confirmedBy && e.confirmedBy.firstName
+    ? { _id: e.confirmedBy._id, name: `${e.confirmedBy.firstName} ${e.confirmedBy.lastName || ''}`.trim() }
+    : (e.confirmedBy?._id || e.confirmedBy || null),
+  // Whether the row is still open to correction AT ALL. Whether the person
+  // reading it may make that correction is a second question — the employee
+  // also needs the book to be open, which only the khata list can answer — so
+  // the two are kept apart rather than collapsed into one misleading flag.
+  editable: ledger.expenseEditability(e).company,
+  // The corrections already made, so nobody reviewing a figure has to wonder
+  // whether it is the one that was originally filed.
+  edits: (e.edits || []).map((x) => ({
+    at: x.at, byEmployee: !!x.byEmployee, summary: x.summary,
+  })),
+  // Where it was filed from — SuperAdmin only, and only when one was captured.
+  // Spread rather than set to null so the key is simply ABSENT for everyone
+  // else: a client cannot show a field it never receives, which is why neither
+  // app carries a role check of its own for this.
+  ...(viewer?.role === 'SuperAdmin' && e.filedLocation?.lat != null
+    ? { filedLocation: {
+      lat: e.filedLocation.lat,
+      lng: e.filedLocation.lng,
+      accuracy: e.filedLocation.accuracy,
+      at: e.filedLocation.at,
+    } }
+    : {}),
   reversalOf: e.reversalOf || null,
   reversedBy: e.reversedBy || null,
   reversalReason: e.reversalReason,
@@ -517,6 +576,9 @@ const recordMyExpense = asyncHandler(async (req, res) => {
     // No company cash moves here — it left the tin when the advance was paid.
     // Recording the spend accounts for money already in the employee's hand.
     affectsCompanyCash: false,
+    // Where they were when they filed it. Kept for SuperAdmins only — see
+    // parseFiledLocation and the KhataEntry schema.
+    filedLocation: parseFiledLocation(req.body),
     // Posts on the spot; the company reverses it if it should not stand.
     autoApprove: true,
     raisedByEmployee: true,
@@ -543,6 +605,110 @@ const recordMyExpense = asyncHandler(async (req, res) => {
     wallet: publicWallet(wallet),
     message: `Recorded. ₹${ledger.round2(Math.abs(wallet.balance)).toLocaleString('en-IN')} `
       + `${wallet.balance < 0 ? 'is now owed to you' : 'left in your wallet'}.`,
+  });
+});
+
+/**
+ * Read the editable fields of an expense out of a request body.
+ *
+ * Only what was actually sent: an omitted field means "leave it alone", which
+ * is what lets a screen send one changed figure without having to round-trip
+ * every other value it never showed.
+ * @param {object} body - req.body.
+ * @param {object} res - For setting the status before throwing.
+ * @returns {object} Changes for ledger.applyExpenseEdit.
+ */
+function expenseChanges(body, res) {
+  const out = {};
+  for (const field of ['purpose', 'category', 'referenceNo', 'khata', 'date']) {
+    if (body[field] !== undefined && body[field] !== '') out[field] = body[field];
+  }
+  if (body.paymentMode !== undefined && body.paymentMode !== '') {
+    if (!PAYMENT_MODES.includes(body.paymentMode)) bad(res, 'That is not a payment method we record');
+    out.paymentMode = body.paymentMode;
+  }
+  if (body.amount !== undefined && body.amount !== '') {
+    const amount = toNum(body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) bad(res, 'Enter an amount greater than zero');
+    out.amount = amount;
+  }
+  if (out.khata !== undefined && !isId(out.khata)) bad(res, 'That is not a khata we can file this under');
+  return out;
+}
+
+/**
+ * Swap the bill on an entry, deleting the one it replaces.
+ *
+ * The old file is removed only AFTER the new one is stored and the entry saved:
+ * a failure part-way through leaves an entry with a bill that exists, never one
+ * pointing at a file that has been deleted.
+ * @param {object} entry - A saved KhataEntry document.
+ * @param {object} [file] - Multer file; nothing happens without one.
+ * @returns {Promise<boolean>} Whether a replacement actually happened.
+ */
+async function replaceReceipt(entry, file) {
+  if (!file) return false;
+  const previous = entry.attachment?.storagePath;
+  await attachReceipt(entry, file);
+  if (previous && previous !== entry.attachment?.storagePath) {
+    await storage.remove(previous).catch(() => { /* the entry is what matters */ });
+  }
+  return true;
+}
+
+/**
+ * Correct an expense you recorded, before the company has confirmed it.
+ *
+ * An expense posts the moment it is recorded — the purchase already happened —
+ * which means the figure reaches the ledger before anybody has checked it. This
+ * is the other half of that bargain: until the company confirms it, the person
+ * who typed it can fix it. The amount goes on counting against their advance
+ * throughout, at whatever it currently says; an edit is a correction to a live
+ * figure, not a new request waiting to take effect.
+ *
+ * Two things end the window: the company confirming the expense, and the book
+ * being closed. See ledger.expenseEditability for why.
+ * @route PUT /api/khata/me/expenses/:id
+ * @param {number} [req.body.amount] [req.body.purpose] [req.body.khata] etc.
+ * @param {file} [req.file] - A replacement bill (multer field 'receipt').
+ * @returns {{entry: object, wallet: object, khata: object, message: string}}
+ */
+const updateMyExpense = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'Invalid entry');
+  const entry = await KhataEntry.findById(req.params.id);
+  if (!entry) bad(res, 'That entry no longer exists', 404);
+  if (String(entry.employee) !== String(req.user._id)) bad(res, 'That entry is not yours', 403);
+
+  const book = entry.khata ? await EmployeeKhata.findById(entry.khata) : null;
+  const rights = ledger.expenseEditability(entry, book);
+  if (!rights.employee) {
+    bad(res, rights.reason
+      || 'This expense was recorded by the company, so only they can change it.');
+  }
+
+  const changes = expenseChanges(req.body, res);
+  changes.receiptReplaced = await replaceReceipt(entry, req.file);
+
+  const { entry: saved, wallet, khata, changed, summary } = await ledger.applyExpenseEdit(
+    entry, changes, req.user, { asEmployee: true }
+  );
+
+  if (changed) {
+    await notifyMany(await khataApproverIds(), {
+      type: 'general',
+      audience: 'admin',
+      title: 'Expense corrected before confirmation',
+      body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+        + ` changed ${saved.code || 'an expense'} — ${summary}. It is still waiting to be confirmed.`,
+      link: '/admin/khata',
+    });
+  }
+
+  res.json({
+    entry: publicEntry(saved),
+    wallet: publicWallet(wallet),
+    khata: khata ? publicKhata(khata) : null,
+    message: changed ? 'Updated. It still counts against your advance.' : 'Nothing was changed.',
   });
 });
 
@@ -871,7 +1037,8 @@ const getKhata = asyncHandler(async (req, res) => {
     // book never makes the headline figures disagree with the wallet.
     totals: summariseEntries(await KhataEntry.find({ employee: employeeId }).select('status direction type amount').lean()),
     count: entries.length,
-    entries: entries.map(publicEntry),
+    // The viewer decides whether the filing locations travel — SuperAdmin only.
+    entries: entries.map((e) => publicEntry(e, req.user)),
   });
 });
 
@@ -1134,6 +1301,11 @@ const listEntries = asyncHandler(async (req, res) => {
   if (req.query.type && ENTRY_TYPES.includes(req.query.type)) filter.type = req.query.type;
   if (isId(req.query.cashAccount)) filter.cashAccount = req.query.cashAccount;
   if (isId(req.query.khata)) filter.khata = req.query.khata;
+  // The expense review queue: everything that posted without anybody checking
+  // it. Rows written before this flag existed carry no `confirmedByCompany` at
+  // all, so "not confirmed" has to mean false OR missing, not `false`.
+  if (req.query.confirmed === 'false') filter.confirmedByCompany = { $ne: true };
+  else if (req.query.confirmed === 'true') filter.confirmedByCompany = true;
 
   const from = parseDate(req.query.from);
   const to = parseDate(req.query.to);
@@ -1153,7 +1325,7 @@ const listEntries = asyncHandler(async (req, res) => {
     .sort({ date: -1, createdAt: -1 })
     .limit(limit);
 
-  res.json({ count: entries.length, entries: entries.map(publicEntry) });
+  res.json({ count: entries.length, entries: entries.map((e) => publicEntry(e, req.user)) });
 });
 
 /**
@@ -1172,7 +1344,7 @@ const listPending = asyncHandler(async (req, res) => {
     .populate('cashAccount', 'name')
     .populate('execApprovedBy', 'firstName lastName role')
     .sort({ createdAt: 1 });
-  res.json({ count: entries.length, entries: entries.map(publicEntry) });
+  res.json({ count: entries.length, entries: entries.map((e) => publicEntry(e, req.user)) });
 });
 
 // ============================ Executive sanction ============================
@@ -1354,6 +1526,88 @@ const rejectEntry = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Correct an employee's expense on their behalf, before it is confirmed.
+ *
+ * The company's half of the same window the employee has (see updateMyExpense).
+ * It is wider in two ways, both deliberate: the company may correct an expense
+ * IT recorded as well as one the employee filed, and a closed book stops the
+ * employee editing but not them — closing is the company taking the figures
+ * over, not sealing them against their own owner.
+ *
+ * Confirming is the thing that ends it for everybody.
+ * @route PUT /api/khata/entries/:id  (khata.manage)
+ * @param {file} [req.file] - A replacement bill (multer field 'receipt').
+ * @returns {{entry: object, wallet: object, khata: object, message: string}}
+ */
+const updateEntry = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'Invalid entry');
+  const entry = await KhataEntry.findById(req.params.id);
+  if (!entry) bad(res, 'That entry no longer exists', 404);
+
+  const book = entry.khata ? await EmployeeKhata.findById(entry.khata) : null;
+  const rights = ledger.expenseEditability(entry, book);
+  if (!rights.company) bad(res, rights.reason || 'This entry can no longer be edited.');
+
+  const changes = expenseChanges(req.body, res);
+  changes.receiptReplaced = await replaceReceipt(entry, req.file);
+
+  const { entry: saved, wallet, khata, changed, summary } = await ledger.applyExpenseEdit(
+    entry, changes, req.user, { asEmployee: false }
+  );
+
+  if (changed) {
+    await notify({
+      recipient: saved.employee,
+      type: 'general',
+      audience: 'employee',
+      title: 'Your expense was corrected',
+      body: `${saved.code || 'An expense'} was changed by the company — ${summary}. `
+        + `You now have ₹${Math.abs(wallet.balance).toLocaleString('en-IN')} in hand.`,
+      link: '/employee/khata',
+    });
+  }
+
+  res.json({
+    entry: publicEntry(saved),
+    wallet: publicWallet(wallet),
+    khata: khata ? publicKhata(khata) : null,
+    message: changed ? 'Updated.' : 'Nothing was changed.',
+  });
+});
+
+/**
+ * Confirm an employee's expense — the company has looked at it and it stands.
+ *
+ * Moves no money: the row counted the moment it was recorded. What it changes is
+ * that nobody may edit it any more, on either side. It is the close of the
+ * window that recording-on-the-spot opens, and the counterpart of rejecting it
+ * (which is a reversal — see reverseEntry).
+ * @route PATCH /api/khata/entries/:id/confirm  (khata.manage)
+ * @param {string} [req.body.note] - Shown to the employee.
+ * @returns {{entry: object, message: string}}
+ */
+const confirmEntry = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'Invalid entry');
+  const entry = await KhataEntry.findById(req.params.id);
+  if (!entry) bad(res, 'That entry no longer exists', 404);
+
+  const saved = await ledger.confirmExpense(entry, req.user, req.body.note);
+
+  await notify({
+    recipient: saved.employee,
+    type: 'general',
+    audience: 'employee',
+    title: 'Expense confirmed',
+    body: `₹${saved.amount.toLocaleString('en-IN')} (${saved.code || 'your expense'}) has been checked and accepted`
+      + `${req.body.note ? `: ${String(req.body.note).slice(0, 200)}` : '.'}`
+      + ' It can no longer be edited.',
+    link: '/employee/khata',
+  });
+
+  res.json({ entry: publicEntry(saved), message: 'Confirmed. It is now locked.' });
+});
+
+/**
  * Correct a posted entry by reversing it. Nothing is ever deleted.
  *
  * Restricted to SuperAdmins and operators who may approve on that account:
@@ -1486,6 +1740,11 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
   }
   if (req.body.note !== undefined) khata.note = String(req.body.note).slice(0, 300);
 
+  // Closing is the COMPANY's act and only theirs — this route is behind
+  // `khata.manage`, and there is no self-service equivalent. It is how finance
+  // says "that job is done": the book stops taking entries, the employee stops
+  // being able to correct what is in it, and the company keeps both.
+  let closureChanged = null;
   if (req.body.isActive !== undefined) {
     const nextActive = req.body.isActive === true || req.body.isActive === 'true';
     // The fallback book has to stay open, or self-service has nowhere to file
@@ -1493,6 +1752,7 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
     if (!nextActive && khata.isDefault) {
       bad(res, 'This is the default khata and cannot be closed. Make another one the default first.');
     }
+    if (nextActive !== khata.isActive) closureChanged = nextActive ? 'reopened' : 'closed';
     khata.isActive = nextActive;
   }
 
@@ -1507,7 +1767,29 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
   }
 
   await khata.save();
-  res.json({ khata: publicKhata(khata), message: 'Saved' });
+
+  // Closing takes two things away from the employee at once — filing into the
+  // book, and correcting what is already in it — so it is told, not left to be
+  // discovered the next time they try.
+  if (closureChanged) {
+    await notify({
+      recipient: khata.employee,
+      type: 'general',
+      audience: 'employee',
+      title: closureChanged === 'closed' ? 'A khata was closed' : 'A khata was re-opened',
+      body: closureChanged === 'closed'
+        ? `"${khata.name}" has been closed by the company. Its record stays on your statement, but you `
+          + 'can no longer add to it or change the expenses in it.'
+        : `"${khata.name}" is open again. You can record expenses against it.`,
+      link: '/employee/khata',
+    });
+  }
+
+  res.json({
+    khata: publicKhata(khata),
+    message: closureChanged === 'closed' ? `"${khata.name}" is closed.`
+      : closureChanged === 'reopened' ? `"${khata.name}" is open again.` : 'Saved',
+  });
 });
 
 /**
@@ -2118,13 +2400,13 @@ const getReceipt = asyncHandler(async (req, res) => {
 
 module.exports = {
   // employee self-service
-  getMyKhata, requestAdvance, recordMyExpense, declareSettlement, requestReimbursement,
+  getMyKhata, requestAdvance, recordMyExpense, updateMyExpense, declareSettlement, requestReimbursement,
   // operator lists
   overview, listMyAccounts, listKhatas, getKhata, employeeOptions, listEntries, listPending,
   // executive sanction
   listAdvanceApprovals, decideAdvanceApproval,
   // money movement
-  createEntry, approveEntry, rejectEntry, reverseEntry,
+  createEntry, approveEntry, rejectEntry, reverseEntry, updateEntry, confirmEntry,
   // settings
   createKhata, createMyKhata, updateKhataSettings, updateWalletSettings, recomputeWallet,
   // reports
