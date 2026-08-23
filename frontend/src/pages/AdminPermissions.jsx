@@ -1,25 +1,125 @@
 /**
- * AdminPermissions — SuperAdmin-only access-control page (admin portal). Lists
- * users from GET /admin/users and grants module access: cashbook access for
- * anyone (PATCH /admin/users/:id/cashbook-access), khata access and the separate
- * khata download grant (PATCH /admin/users/:id/khata-access and
- * /khata-export-access), work-from-home per employee
- * (PATCH /admin/users/:id/wfh-access) and granular HR capabilities for HR
- * Managers (catalog from GET /admin/permissions/catalog, saved via
- * PATCH /admin/users/:id/permissions). Also hosts the org-wide switches from
- * GET/PUT /admin/org-settings — the chat module, and whether a cash-advance
- * request needs a CEO/MD approval before the accounts team can pay it.
+ * AdminPermissions — SuperAdmin-only access-control console (admin portal).
+ *
+ * THE PAGE IS A MATRIX: people down the side, grants across the top. Everything
+ * about the layout serves being able to answer two questions at a glance —
+ * "what can this person reach?" (read a row) and "who can reach this?" (read a
+ * column) — which is what an access review actually consists of.
+ *
+ * Three deliberate choices, because the previous version got each of them wrong:
+ *
+ *  1. EVERY GRANT IS THE SAME CONTROL. One switch, one accent colour, in every
+ *     column. Grants used to be filled pills in five different hues — teal,
+ *     purple, indigo, sky, amber — which carried no meaning (nothing about
+ *     "export" is more purple than "assets") and made a security screen look
+ *     like a toy. Colour is now reserved for the two places it MEANS something:
+ *     the role chip, and the accent that says "on".
+ *  2. THE EXPLANATION IS ON DEMAND. What each grant does used to be a
+ *     twelve-line paragraph above the table that nobody read and everybody
+ *     scrolled past. It is now a reference panel behind a button, plus a
+ *     tooltip on each switch — there when you need it, out of the way when you
+ *     are working.
+ *  3. ORG-WIDE AND PER-PERSON ARE DIFFERENT THINGS. The switches that change
+ *     the whole company (chat, the advance-approval gate) sit in their own
+ *     section, above and visually apart from the per-person matrix, rather than
+ *     reading as two more cards of the same weight.
+ *
+ * Grants it manages, all SuperAdmin-only on the server too: standalone module
+ * access for anyone (cashbook / expenses / assets / khata), the separate khata
+ * DOWNLOAD grant, the two per-employee attendance grants (WFH and
+ * punch-anywhere), executive edit mode for a CEO/MD account, and the granular
+ * capability list for HR Managers and Managers. It also hosts the org-wide
+ * settings from GET/PUT /admin/org-settings — the chat module, the CEO/MD
+ * advance-approval gate, and the footer printed on khata statement PDFs.
  */
 import { useEffect, useMemo, useState } from 'react';
+import {
+  FiSearch, FiInfo, FiSliders, FiX, FiCheck, FiAlertCircle,
+} from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import ToggleSwitch from '../components/ToggleSwitch';
 import { roleLabel } from '../config/roles';
 import { GRANTABLE_ROLES } from '../config/permissions';
 import { useAuthStore } from '../store/authStore';
 
-// Dedicated access-control page: grant module permissions to any user or employee.
-// Cashbook access is a standalone grant available to anyone; the granular HR
-// capabilities apply to HR Managers. SuperAdmin only (the backend enforces it).
+/**
+ * Role chips are the ONE place a colour carries information on this page: which
+ * kind of account this is. Tints only (`bg-*-50` + `text-*-700`), never a filled
+ * chip, so a column of them reads as labels rather than as a row of buttons —
+ * and every hue here has a dark-mode remap in index.css.
+ */
+const ROLE_TONES = {
+  SuperAdmin: 'bg-violet-50 text-violet-700 border-violet-200',
+  HRManager: 'bg-teal-50 text-teal-700 border-teal-200',
+  CEO: 'bg-amber-50 text-amber-800 border-amber-200',
+  MD: 'bg-amber-50 text-amber-800 border-amber-200',
+  Manager: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  LDManager: 'bg-sky-50 text-sky-700 border-sky-200',
+  AccountsManager: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  Employee: 'bg-gray-100 text-gray-600 border-gray-200',
+};
+
+/** Initials for the identity cell's avatar. */
+const initials = (u) => `${(u.firstName || '')[0] || ''}${(u.lastName || '')[0] || ''}`.toUpperCase() || '?';
+
+/**
+ * What each grant actually does, in one place.
+ *
+ * Written once and used twice — as the reference panel and as the `title` on
+ * every switch — so the tooltip and the documentation cannot drift apart, which
+ * is exactly what happened when both were maintained by hand.
+ */
+const GRANT_HELP = {
+  cashbook: 'Open the cashbook: record money in and out of the company’s cash accounts. A standalone grant — any account can hold it, whatever their role.',
+  expenses: 'Review, approve and settle staff expense claims.',
+  assets: 'Issue, return and track company assets.',
+  khata: 'Open the employee-khata module: give cash advances to staff, confirm what they spend, and settle up.',
+  khataExport: 'Download every employee’s balances and full ledger as a spreadsheet. No role grants this on its own — reading the ledger on screen and walking out with a copy of it are different decisions.',
+  wfh: 'Lets them tick “working from home” on a punch. That punch is not measured against the office geofence, and the day records as WFH.',
+  remotePunch: 'The office geofence stops applying to them entirely — for site, field and travelling staff. Their punches are never flagged as outside the office, and they do not have to declare anything. The GPS location is still recorded and still shown on the punch map.',
+  execEdit: 'A CEO/MD account is view-only by default. In edit mode it can change data anywhere an HR Manager can — but this page, the org settings and the audit log stay with Super Admins.',
+};
+
+/**
+ * One labelled switch inside a column that holds two related grants.
+ *
+ * `label` is the short word beside the switch ("Module", "Export"); `aria` is
+ * the full name a screen reader needs, because "Export" on its own says nothing
+ * about what is being exported once the column header is out of earshot.
+ */
+function GrantRow({ label, aria, ...rest }) {
+  return (
+    <div className="flex items-center gap-2">
+      <ToggleSwitch size="sm" label={aria || label} {...rest} />
+      <span className="text-[11px] leading-tight text-gray-500 whitespace-nowrap">{label}</span>
+    </div>
+  );
+}
+
+/** A cell for a grant that does not apply to this kind of account. */
+const NotApplicable = ({ hint }) => (
+  <span title={hint} className="text-gray-300 select-none">—</span>
+);
+
+/** One org-wide setting: what it does on the left, the switch on the right. */
+function SettingRow({ title, description, checked, onChange, busy, onLabel, offLabel }) {
+  return (
+    <div className="flex items-start justify-between gap-6 py-4">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-gray-900">{title}</div>
+        <p className="text-xs text-gray-500 mt-1 leading-relaxed max-w-3xl">{description}</p>
+      </div>
+      <div className="flex items-center gap-2.5 shrink-0 pt-0.5">
+        <span className={`text-xs font-medium ${checked ? 'accent-text' : 'text-gray-400'}`}>
+          {checked ? onLabel : offLabel}
+        </span>
+        <ToggleSwitch checked={checked} onChange={onChange} busy={busy} label={title} />
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPermissions() {
   const me = useAuthStore((s) => s.user);
   const isSuperAdmin = me?.role === 'SuperAdmin';
@@ -27,6 +127,8 @@ export default function AdminPermissions() {
   const [users, setUsers] = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [q, setQ] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [showGuide, setShowGuide] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
@@ -119,8 +221,8 @@ export default function AdminPermissions() {
   const footerDirty = footer.helpline !== org.documentFooter.helpline
     || footer.note !== org.documentFooter.note;
 
-  // Cashbook and Expenses are standalone, role-independent grants — same call
-  // shape either way, so they share one handler.
+  // Every per-person grant is the same call shape — PATCH one flag on one user
+  // — so they share one handler and each toggle below is a single line.
   const toggleAccess = async (u, { path, enabled, errorText }) => {
     setBusyId(u._id || u.id); setError('');
     try {
@@ -159,29 +261,13 @@ export default function AdminPermissions() {
   });
 
   // CEO/MD only: flip the account between view-only (the default) and edit mode.
-  const toggleExecEdit = async (u) => {
-    setBusyId(u._id || u.id); setError('');
-    try {
-      await api.patch(`/admin/users/${u._id || u.id}/exec-edit-access`, { enabled: !u.execEditAccess });
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Could not update executive access');
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const toggleExecEdit = (u) => toggleAccess(u, {
+    path: 'exec-edit-access', enabled: !u.execEditAccess, errorText: 'Could not update executive access',
+  });
 
-  const toggleWfh = async (u) => {
-    setBusyId(u._id || u.id); setError('');
-    try {
-      await api.patch(`/admin/users/${u._id || u.id}/wfh-access`, { enabled: !u.wfhAllowed });
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Could not update work-from-home access');
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const toggleWfh = (u) => toggleAccess(u, {
+    path: 'wfh-access', enabled: !u.wfhAllowed, errorText: 'Could not update work-from-home access',
+  });
 
   /**
    * Let this employee punch in and out from anywhere.
@@ -193,17 +279,9 @@ export default function AdminPermissions() {
    * should not have to claim they were at home to avoid being flagged for being
    * where their job is.
    */
-  const toggleRemotePunch = async (u) => {
-    setBusyId(u._id || u.id); setError('');
-    try {
-      await api.patch(`/admin/users/${u._id || u.id}/remote-punch-access`, { enabled: !u.remotePunchAllowed });
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Could not update punch-location access');
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const toggleRemotePunch = (u) => toggleAccess(u, {
+    path: 'remote-punch-access', enabled: !u.remotePunchAllowed, errorText: 'Could not update punch-location access',
+  });
 
   // Seed the dialog with what the account effectively holds RIGHT NOW. A null
   // array is "all" for an HR Manager but "none" for a Manager — seeding every
@@ -230,274 +308,421 @@ export default function AdminPermissions() {
   };
 
   const permGroups = catalog.reduce((acc, p) => { (acc[p.group] = acc[p.group] || []).push(p); return acc; }, {});
+  /** Flip a whole capability group at once — the common shape of a real change. */
+  const toggleGroup = (items, on) => setPermSel((s) => {
+    const n = new Set(s);
+    items.forEach((p) => (on ? n.add(p.key) : n.delete(p.key)));
+    return n;
+  });
+
+  /** How many capabilities an account effectively holds, for the row's badge. */
+  const capCount = (u) => (u.permissions == null
+    ? (u.role === 'HRManager' ? allKeys.length : 0)
+    : u.permissions.length);
+
+  // The role list is built from who is actually on the page rather than from
+  // ROLES, so the filter never offers a role that would return nothing.
+  const rolesPresent = useMemo(
+    () => [...new Set(users.map((u) => u.role))].sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))),
+    [users]
+  );
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return users.filter((u) => !t || `${u.firstName} ${u.lastName} ${u.email} ${u.role}`.toLowerCase().includes(t));
-  }, [users, q]);
+    return users.filter((u) => (!roleFilter || u.role === roleFilter)
+      && (!t || `${u.firstName} ${u.lastName} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(t)));
+  }, [users, q, roleFilter]);
 
   if (!isSuperAdmin) {
     return (
       <div>
-        <PageHeader title="Permissions" />
-        <p className="text-sm text-gray-500">Only a Super Admin can manage permissions.</p>
+        <PageHeader title="Permissions" subtitle="Access control" />
+        <div className="card p-6 flex items-start gap-3">
+          <FiAlertCircle className="text-amber-600 mt-0.5 shrink-0" size={18} />
+          <div>
+            <p className="text-sm font-medium text-gray-900">Super Admins only</p>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Granting access is the one thing that stays with the accounts that administer the system.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
 
+  const COLS = 9;
+
   return (
     <div>
-      <PageHeader title="Permissions" />
-      <p className="text-sm text-gray-500 mb-4">
-        Grant module access to any user or employee. <strong>Cashbook</strong> and <strong>Expenses</strong> access can
-        be given to anyone, whatever their role; <strong>Khata</strong> likewise — with the separate
-        <strong>Export</strong> tick controlling who may download every employee&apos;s cash ledger as a
-        spreadsheet, which no role grants on its own; <strong>Attendance</strong> holds the two per-employee
-        punch grants — <strong>WFH</strong> lets someone mark a punch as work-from-home, while
-        <strong>Punch anywhere</strong> exempts them from the office geofence altogether, so a check-in from a
-        site or a client office is never flagged (the location is still recorded either way);
-        {' '}<strong>Module permissions</strong> apply to HR Managers and Managers — an HR Manager with none set keeps
-        full access, while a Manager starts with nothing and only sees the admin portal once granted something.
-        {' '}<strong>CEO / MD access</strong> switches an executive account between view-only (the default) and edit
-        mode — in edit mode they can change data anywhere an HR Manager can, but this page, org settings and the
-        audit log stay with Super Admins.
-      </p>
+      <PageHeader
+        title="Permissions"
+        subtitle="Who can reach which module, and what each account may do inside it.">
+        <button
+          type="button"
+          onClick={() => setShowGuide((v) => !v)}
+          aria-expanded={showGuide}
+          className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors
+            ${showGuide ? 'accent-bg text-white border-transparent' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+          <FiInfo size={15} /> What these grants mean
+        </button>
+      </PageHeader>
 
-      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      {error && (
+        <div className="mb-4 flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-lg">
+          <FiAlertCircle className="mt-0.5 shrink-0" size={16} />
+          <span>{error}</span>
+        </div>
+      )}
 
-      {/* Org-wide feature switches */}
-      <div className="bg-white shadow rounded-lg p-4 mb-5">
-        <h2 className="text-sm font-semibold text-gray-800 mb-3">Modules</h2>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-gray-900">Chat / Messages</div>
-            <p className="text-xs text-gray-500 mt-0.5">
-              When off, the chat dock is hidden from every portal and the mobile Chat tab disappears.
-              Existing conversations are kept and come back untouched if you switch it on again.
+      {/* The reference that used to be a paragraph nobody read. Two columns of
+          term + meaning, behind a button, so it is available at the moment
+          somebody hesitates over a switch and invisible the rest of the time. */}
+      {showGuide && (
+        <div className="card p-5 mb-5">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 className="card-title">What these grants mean</h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Every switch here is enforced on the server as well — this page only decides what to ask for.
+              </p>
+            </div>
+            <button type="button" onClick={() => setShowGuide(false)} aria-label="Close"
+              className="topbar-icon-btn shrink-0"><FiX size={16} /></button>
+          </div>
+          <dl className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-3.5">
+            {[
+              ['Cashbook', GRANT_HELP.cashbook],
+              ['Expenses', GRANT_HELP.expenses],
+              ['Assets', GRANT_HELP.assets],
+              ['Khata · Module', GRANT_HELP.khata],
+              ['Khata · Export', GRANT_HELP.khataExport],
+              ['Attendance · WFH', GRANT_HELP.wfh],
+              ['Attendance · Anywhere', GRANT_HELP.remotePunch],
+              ['CEO / MD edit mode', GRANT_HELP.execEdit],
+              ['Capabilities', 'The fine-grained admin list for HR Managers and Managers. An HR Manager with none set keeps full access; a Manager starts with nothing and only sees the admin portal once granted something. Their team duties come from the role and are unaffected.'],
+            ].map(([term, meaning]) => (
+              <div key={term} className="min-w-0">
+                <dt className="text-sm font-medium text-gray-900">{term}</dt>
+                <dd className="text-xs text-gray-500 mt-0.5 leading-relaxed">{meaning}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+
+      {/* ---------------- Organisation-wide ---------------- */}
+      <section className="card mb-5">
+        <div className="px-5 pt-4 pb-1">
+          <h2 className="card-title">Organisation</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Settings that apply to everybody, not to one account.
+          </p>
+        </div>
+
+        <div className="px-5 divide-y divide-gray-100">
+          <SettingRow
+            title="Chat / Messages"
+            description="When off, the chat dock is hidden from every portal and the mobile Chat tab disappears. Existing conversations are kept and come back untouched if you switch it on again."
+            checked={org.chatEnabled}
+            busy={orgBusy}
+            onLabel="Enabled" offLabel="Disabled"
+            onChange={() => toggleOrg('chatEnabled', 'Could not update the chat setting')} />
+
+          <SettingRow
+            title="CEO / MD approval for cash advances"
+            description="When on, an employee's advance request waits for a CEO, MD or Super Admin to approve it before the accounts team can pay it. When off, requests go straight to the accounts team, who still decide which account the money comes out of. Requests already waiting on an executive stay there either way."
+            checked={org.khataAdvanceApprovalRequired}
+            busy={orgBusy}
+            onLabel="Required" offLabel="Not required"
+            onChange={() => toggleOrg('khataAdvanceApprovalRequired', 'Could not update the advance-approval setting')} />
+
+          {/* The contact strip on the khata statement PDF. Only a Super Admin
+              can change it, because the document goes outside the company. */}
+          <div className="py-4">
+            <div className="text-sm font-medium text-gray-900">Statement footer</div>
+            <p className="text-xs text-gray-500 mt-1 mb-3 max-w-3xl leading-relaxed">
+              Printed along the bottom of every khata statement PDF, next to the company logo. Leave the number
+              blank to print no help line at all — a statement often leaves the building, so &quot;no number&quot;
+              is a real choice.
             </p>
-          </div>
-          <button onClick={() => toggleOrg('chatEnabled', 'Could not update the chat setting')} disabled={orgBusy}
-            className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${org.chatEnabled ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
-            {org.chatEnabled ? '✓ Enabled' : 'Disabled'}
-          </button>
-        </div>
-
-        <div className="flex items-start justify-between gap-4 mt-4 pt-4 border-t border-gray-100">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-gray-900">CEO / MD approval for cash advances</div>
-            <p className="text-xs text-gray-500 mt-0.5">
-              When on, an employee&apos;s advance request waits for a CEO, MD or Super Admin to approve it before
-              the accounts team can pay it. When off, requests go straight to the accounts team, who still decide
-              which account the money comes out of. Requests already waiting on an executive stay there either way.
-            </p>
-          </div>
-          <button onClick={() => toggleOrg('khataAdvanceApprovalRequired', 'Could not update the advance-approval setting')}
-            disabled={orgBusy}
-            className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${org.khataAdvanceApprovalRequired ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
-            {org.khataAdvanceApprovalRequired ? '✓ Required' : 'Not required'}
-          </button>
-        </div>
-      </div>
-
-      {/* The contact strip on the khata statement PDF. Only a Super Admin can
-          change it, because the document goes outside the company. */}
-      <div className="bg-white shadow rounded-lg p-4 mb-5">
-        <h2 className="text-sm font-semibold text-gray-800">Statement footer</h2>
-        <p className="text-xs text-gray-500 mt-0.5 mb-3">
-          Printed along the bottom of every khata statement PDF, next to the company logo. Leave the number
-          blank to print no help line at all — a statement often leaves the building, so &quot;no number&quot;
-          is a real choice.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Help / contact number</label>
-            <input value={footer.helpline} maxLength={40} placeholder="+91 96069 98652"
-              onChange={(e) => { setFooter({ ...footer, helpline: e.target.value }); setFooterSaved(false); }}
-              className="w-full border rounded-lg px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Small print (optional)</label>
-            <input value={footer.note} maxLength={120} placeholder="Queries on this statement within 7 days of receipt."
-              onChange={(e) => { setFooter({ ...footer, note: e.target.value }); setFooterSaved(false); }}
-              className="w-full border rounded-lg px-3 py-2 text-sm" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-3xl">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1" htmlFor="footer-helpline">
+                  Help / contact number
+                </label>
+                <input id="footer-helpline" value={footer.helpline} maxLength={40} placeholder="+91 96069 98652"
+                  onChange={(e) => { setFooter({ ...footer, helpline: e.target.value }); setFooterSaved(false); }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1" htmlFor="footer-note">
+                  Small print (optional)
+                </label>
+                <input id="footer-note" value={footer.note} maxLength={120}
+                  placeholder="Queries on this statement within 7 days of receipt."
+                  onChange={(e) => { setFooter({ ...footer, note: e.target.value }); setFooterSaved(false); }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <button type="button" onClick={saveFooter} disabled={orgBusy || !footerDirty}
+                className="px-3.5 py-2 text-sm rounded-lg accent-bg text-white disabled:opacity-45 disabled:cursor-not-allowed">
+                {orgBusy ? 'Saving…' : 'Save footer'}
+              </button>
+              {footerDirty ? (
+                <span className="text-xs text-amber-700">Unsaved changes</span>
+              ) : footerSaved ? (
+                <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                  <FiCheck size={13} /> Saved
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-3 mt-3">
-          <button onClick={saveFooter} disabled={orgBusy || !footerDirty}
-            className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white border border-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
-            {orgBusy ? 'Saving…' : 'Save footer'}
-          </button>
-          {footerSaved && !footerDirty && <span className="text-xs text-green-700">Saved.</span>}
+      </section>
+
+      {/* ---------------- People × grants ---------------- */}
+      {/* Toolbar and table share one wrapper on purpose: the global responsive
+          rule pins a card's non-table child to the left edge, so the filters
+          stay put while a narrow screen scrolls the matrix sideways. */}
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div className="px-4 py-3.5 border-b border-gray-100 flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[13rem] max-w-sm">
+            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={15} />
+            <input value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="Search name, email or role…"
+              aria-label="Search accounts"
+              className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
+          </div>
+
+          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
+            aria-label="Filter by role"
+            className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            <option value="">All roles</option>
+            {rolesPresent.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+          </select>
+
+          <span className="text-xs text-gray-500 ml-auto whitespace-nowrap">
+            {loading ? 'Loading…'
+              : `${filtered.length} of ${users.length} ${users.length === 1 ? 'account' : 'accounts'}`}
+          </span>
         </div>
-      </div>
 
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, email or role…"
-        className="w-full sm:max-w-sm mb-4 border rounded-lg px-3 py-2 text-sm" />
-
-      <div className="bg-white shadow rounded-lg overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Role</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Cashbook</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Expenses</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Assets</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Khata</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Attendance</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">CEO / MD access</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">HR Permissions</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Account</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Role</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Cashbook</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Expenses</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Khata</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">CEO / MD</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Capabilities</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              [0, 1, 2, 3].map((i) => (
+                <tr key={i}>
+                  <td className="px-4 py-3.5" colSpan={COLS}>
+                    <div className="skeleton h-9 rounded-lg" style={{ width: `${100 - i * 8}%` }} />
+                  </td>
+                </tr>
+              ))
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
-            ) : filtered.map((u) => (
-              <tr key={u._id || u.id}>
-                <td className="px-4 py-3">
-                  <div className="font-medium text-gray-900">{u.firstName} {u.lastName}</div>
-                  <div className="text-xs text-gray-500">{u.email}</div>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{roleLabel(u.role)}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <button onClick={() => toggleCashbook(u)} disabled={busyId === (u._id || u.id)}
-                    className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.cashbookAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
-                    {u.cashbookAccess ? '✓ Granted' : 'Grant access'}
-                  </button>
-                </td>
-                <td className="px-4 py-3">
-                  <button onClick={() => toggleExpenses(u)} disabled={busyId === (u._id || u.id)}
-                    className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.expensesAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
-                    {u.expensesAccess ? '✓ Granted' : 'Grant access'}
-                  </button>
-                </td>
-                <td className="px-4 py-3">
-                  <button onClick={() => toggleAssets(u)} disabled={busyId === (u._id || u.id)}
-                    className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.assetsAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
-                    {u.assetsAccess ? '✓ Granted' : 'Grant access'}
-                  </button>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-col gap-1.5 items-start">
-                    <button onClick={() => toggleKhata(u)} disabled={busyId === (u._id || u.id)}
-                      title="Open the employee-khata module — give cash advances and settle them."
-                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.khataAccess ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700' : 'text-teal-700 border-teal-300 hover:bg-teal-50'}`}>
-                      {u.khataAccess ? '✓ Granted' : 'Grant access'}
-                    </button>
-                    {/* Kept visible even for roles that already hold the module
-                        (Accounts Manager, HR) — none of them can download
-                        without this tick. */}
-                    <button onClick={() => toggleKhataExport(u)} disabled={busyId === (u._id || u.id)}
-                      title="Download the balances and the full ledger as an Excel file."
-                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.khataExportAccess ? 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700' : 'text-purple-700 border-purple-300 hover:bg-purple-50'}`}>
-                      {u.khataExportAccess ? '✓ Export' : 'Allow export'}
-                    </button>
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  {/* Both flags live on the employee profile, so accounts
-                      without one (CEO/MD) have nothing to grant. */}
-                  {u.hasProfile ? (
-                    <div className="flex flex-col gap-1.5 items-start">
-                      <button onClick={() => toggleWfh(u)} disabled={busyId === (u._id || u.id)}
-                        title="Lets them tick 'working from home' on a punch. That punch is not measured against the office geofence, and the day records as WFH."
-                        className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.wfhAllowed ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-indigo-700 border-indigo-300 hover:bg-indigo-50'}`}>
-                        {u.wfhAllowed ? '✓ WFH' : 'Allow WFH'}
-                      </button>
-                      {/* The one for field staff: no declaring anything, the
-                          fence simply does not apply to them. */}
-                      <button onClick={() => toggleRemotePunch(u)} disabled={busyId === (u._id || u.id)}
-                        title="Lets them check in and out from anywhere. Their punches are never flagged as outside the office — the GPS location is still recorded and still shown on the punch map."
-                        className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.remotePunchAllowed ? 'bg-sky-600 text-white border-sky-600 hover:bg-sky-700' : 'text-sky-700 border-sky-300 hover:bg-sky-50'}`}>
-                        {u.remotePunchAllowed ? '✓ Punch anywhere' : 'Punch anywhere'}
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-gray-400">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {/* Executives are read-only by default; this switches one
-                      account into edit mode (HR-Manager-equivalent writes). */}
-                  {['CEO', 'MD'].includes(u.role) ? (
-                    <button onClick={() => toggleExecEdit(u)} disabled={busyId === (u._id || u.id)}
-                      title={u.execEditAccess
-                        ? 'Can change data across the admin portal. Click to return to view only.'
-                        : 'Can view everything but change nothing. Click to allow edits.'}
-                      className={`px-3 py-1.5 text-xs rounded-lg border disabled:opacity-50 ${u.execEditAccess ? 'bg-amber-600 text-white border-amber-600 hover:bg-amber-700' : 'text-amber-700 border-amber-300 hover:bg-amber-50'}`}>
-                      {u.execEditAccess ? '✓ Edit mode' : 'View only'}
-                    </button>
-                  ) : (
-                    <span className="text-xs text-gray-400">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {GRANTABLE_ROLES.includes(u.role) ? (
-                    <button onClick={() => openPerms(u)} className="text-indigo-600 hover:underline text-xs">
-                      {/* A null array means ALL for an HR Manager but NONE for a
-                          Manager, so the count has to read the role too. */}
-                      Edit ({u.permissions == null
-                        ? (u.role === 'HRManager' ? 'All' : 'None')
-                        : u.permissions.length})
-                    </button>
-                  ) : (
-                    <span className="text-xs text-gray-400">—</span>
-                  )}
+              <tr>
+                <td colSpan={COLS} className="px-4 py-12 text-center">
+                  <p className="text-sm font-medium text-gray-700">No accounts match</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {q || roleFilter ? 'Try a different search or clear the role filter.' : 'No users have been created yet.'}
+                  </p>
                 </td>
               </tr>
-            ))}
+            ) : filtered.map((u) => {
+              const id = u._id || u.id;
+              const busy = busyId === id;
+              const isExec = ['CEO', 'MD'].includes(u.role);
+              return (
+                <tr key={id} className={busy ? 'opacity-60' : ''}>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="avatar-circle bg-gray-100 text-gray-600" aria-hidden="true">
+                        {initials(u)}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-900 truncate">{u.firstName} {u.lastName}</div>
+                        <div className="text-xs text-gray-500 truncate">{u.email}</div>
+                      </div>
+                    </div>
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <span className={`inline-block px-2 py-0.5 text-xs font-medium rounded-md border whitespace-nowrap
+                      ${ROLE_TONES[u.role] || ROLE_TONES.Employee}`}>
+                      {roleLabel(u.role)}
+                    </span>
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <ToggleSwitch checked={!!u.cashbookAccess} busy={busy} label="Cashbook access"
+                      title={GRANT_HELP.cashbook} onChange={() => toggleCashbook(u)} />
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <ToggleSwitch checked={!!u.expensesAccess} busy={busy} label="Expenses access"
+                      title={GRANT_HELP.expenses} onChange={() => toggleExpenses(u)} />
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <ToggleSwitch checked={!!u.assetsAccess} busy={busy} label="Assets access"
+                      title={GRANT_HELP.assets} onChange={() => toggleAssets(u)} />
+                  </td>
+
+                  {/* Reaching the module and taking its data out are two
+                      decisions, so they are two switches — and the second is
+                      shown even for roles that already hold the module, since
+                      none of them can download without it. */}
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-2">
+                      <GrantRow label="Module" aria="Khata module access" checked={!!u.khataAccess} busy={busy}
+                        title={GRANT_HELP.khata} onChange={() => toggleKhata(u)} />
+                      <GrantRow label="Export" aria="Khata spreadsheet download" checked={!!u.khataExportAccess} busy={busy}
+                        title={GRANT_HELP.khataExport} onChange={() => toggleKhataExport(u)} />
+                    </div>
+                  </td>
+
+                  {/* Both attendance flags live on the employee profile, so an
+                      account without one (CEO/MD) has nothing to grant. */}
+                  <td className="px-4 py-3">
+                    {u.hasProfile ? (
+                      <div className="flex flex-col gap-2">
+                        <GrantRow label="WFH" aria="May mark a punch as work from home" checked={!!u.wfhAllowed} busy={busy}
+                          title={GRANT_HELP.wfh} onChange={() => toggleWfh(u)} />
+                        <GrantRow label="Anywhere" aria="May check in and out from anywhere" checked={!!u.remotePunchAllowed} busy={busy}
+                          title={GRANT_HELP.remotePunch} onChange={() => toggleRemotePunch(u)} />
+                      </div>
+                    ) : (
+                      <NotApplicable hint="No employee profile is linked to this account, so it has no attendance to grant." />
+                    )}
+                  </td>
+
+                  <td className="px-4 py-3">
+                    {isExec ? (
+                      <div className="flex items-center gap-2">
+                        <ToggleSwitch checked={!!u.execEditAccess} busy={busy} label="Executive edit mode"
+                          title={GRANT_HELP.execEdit} onChange={() => toggleExecEdit(u)} />
+                        <span className="text-[11px] leading-tight text-gray-500 whitespace-nowrap">
+                          {u.execEditAccess ? 'Edit mode' : 'View only'}
+                        </span>
+                      </div>
+                    ) : (
+                      <NotApplicable hint="Only a CEO or MD account has a view-only mode to lift." />
+                    )}
+                  </td>
+
+                  <td className="px-4 py-3">
+                    {GRANTABLE_ROLES.includes(u.role) ? (
+                      <button type="button" onClick={() => openPerms(u)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap">
+                        <FiSliders size={13} />
+                        {/* A null array means ALL for an HR Manager but NONE for
+                            a Manager, so the count has to read the role too. */}
+                        {u.permissions == null
+                          ? (u.role === 'HRManager' ? 'All' : 'None')
+                          : `${capCount(u)} of ${allKeys.length}`}
+                      </button>
+                    ) : (
+                      <NotApplicable hint="Capabilities apply to HR Managers and Managers." />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
       {permUser && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="card-title mb-1">Module permissions</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              {permUser.firstName} {permUser.lastName} · {roleLabel(permUser.role)} — choose which admin capabilities
-              this account has.
-              {permUser.role === 'Manager' && (
-                <>
-                  {' '}A Manager sees the admin portal only while they hold at least one capability; their team duties
-                  (approving their own team&apos;s leave) come from the role and are unaffected by anything here.
-                </>
-              )}
-            </p>
-            <div className="flex gap-2 mb-4">
-              <button type="button" onClick={() => setPermSel(new Set(allKeys))}
-                className="text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50">Select all</button>
-              <button type="button" onClick={() => setPermSel(new Set())}
-                className="text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50">Clear all</button>
-              <span className="text-xs text-gray-400 self-center ml-auto">{permSel.size}/{allKeys.length} granted</span>
-            </div>
-
-            <div className="space-y-4">
-              {Object.entries(permGroups).map(([group, items]) => (
-                <div key={group}>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">{group}</div>
-                  <div className="grid sm:grid-cols-2 gap-1.5">
-                    {items.map((p) => (
-                      <label key={p.key} className="flex items-center gap-2 text-sm text-gray-700 py-1">
-                        <input type="checkbox" checked={permSel.has(p.key)} onChange={() => togglePerm(p.key)}
-                          className="rounded border-gray-300" />
-                        {p.label}
-                      </label>
-                    ))}
-                  </div>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl max-h-[90vh] flex flex-col">
+            <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-100">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="avatar-circle bg-gray-100 text-gray-600" aria-hidden="true">
+                  {initials(permUser)}
+                </span>
+                <div className="min-w-0">
+                  <h2 className="card-title truncate">{permUser.firstName} {permUser.lastName}</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {roleLabel(permUser.role)} · choose which admin capabilities this account has
+                  </p>
                 </div>
-              ))}
+              </div>
+              <button type="button" onClick={() => setPermUser(null)} aria-label="Close"
+                className="topbar-icon-btn shrink-0"><FiX size={16} /></button>
             </div>
 
-            <div className="flex justify-end gap-2 pt-5">
+            <div className="px-6 py-4 overflow-y-auto">
+              {permUser.role === 'Manager' && (
+                <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 mb-4 leading-relaxed">
+                  A Manager sees the admin portal only while they hold at least one capability. Their team duties —
+                  approving their own team&apos;s leave — come from the role and are unaffected by anything here.
+                </p>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <button type="button" onClick={() => setPermSel(new Set(allKeys))}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50">
+                  Select all
+                </button>
+                <button type="button" onClick={() => setPermSel(new Set())}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50">
+                  Clear all
+                </button>
+                <span className="text-xs text-gray-500 ml-auto">
+                  <strong className="accent-text">{permSel.size}</strong> of {allKeys.length} granted
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {Object.entries(permGroups).map(([group, items]) => {
+                  const on = items.filter((p) => permSel.has(p.key)).length;
+                  const allOn = on === items.length;
+                  return (
+                    <div key={group} className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 bg-gray-50 border-b border-gray-200">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">{group}</span>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-[11px] text-gray-500">{on}/{items.length}</span>
+                          {/* Whole-group flips are the shape a real change
+                              usually takes ("give them recruitment"). */}
+                          <ToggleSwitch size="sm" checked={allOn} label={`Grant all of ${group}`}
+                            title={allOn ? `Clear every ${group} capability` : `Grant every ${group} capability`}
+                            onChange={() => toggleGroup(items, !allOn)} />
+                        </div>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-x-4 p-2">
+                        {items.map((p) => (
+                          <label key={p.key}
+                            className="flex items-center gap-2.5 text-sm text-gray-700 px-2 py-1.5 rounded-md hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" checked={permSel.has(p.key)} onChange={() => togglePerm(p.key)}
+                              className="rounded border-gray-300" />
+                            {p.label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
               <button type="button" onClick={() => setPermUser(null)}
-                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
               <button type="button" onClick={savePerms} disabled={permSaving}
-                className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                className="px-4 py-2 text-sm accent-bg text-white rounded-lg disabled:opacity-45">
                 {permSaving ? 'Saving…' : 'Save permissions'}
               </button>
             </div>
