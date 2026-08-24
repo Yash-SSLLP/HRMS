@@ -39,7 +39,7 @@ const PAGES = [
   { label: 'Regularization', screen: 'Regularization', group: 'Time & Attendance', icon: 'construct', show: emp },
   { label: 'My Roster', screen: 'Roster', group: 'Time & Attendance', icon: 'calendar-number', show: emp },
   { label: 'Payslips', screen: 'Payslips', group: 'Money', icon: 'cash', show: emp },
-  { label: 'Expenses', screen: 'Expenses', group: 'Money', icon: 'bag-handle', show: emp },
+  // Expense claims are filed through My Cashbook now — dropped from search.
   { label: 'Travel', screen: 'Travel', group: 'Money', icon: 'map', show: emp },
   { label: 'Loans', screen: 'Loans', group: 'Money', icon: 'wallet', show: emp,
     keywords: ['advance', 'emi', 'borrow'] },

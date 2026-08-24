@@ -332,7 +332,9 @@ export default function KhataScreen() {
             <Ionicons name={look.icon} size={22} color={look.tint} />
             <Text style={[font.label, { marginLeft: 6 }]}>{display.label}</Text>
           </View>
-          <Text style={[styles.heroAmount, { color: look.tint }]}>{rupees(display.amount)}</Text>
+          {/* Signed: negative when they have spent past the advance, positive
+              while they are still holding company cash. */}
+          <Text style={[styles.heroAmount, { color: look.tint }]}>{rupees(display.signed ?? display.amount)}</Text>
           <Text style={styles.heroHint}>{look.hint}</Text>
           {wallet.creditLimit > 0 ? (
             <Text style={styles.heroHint}>You may hold up to {rupees(wallet.creditLimit)} at a time.</Text>
@@ -400,7 +402,7 @@ export default function KhataScreen() {
               <Text style={[font.body, { fontWeight: '700' }]}>{display.label}</Text>
               <Text style={styles.meta}>{look.hint}</Text>
             </View>
-            <Text style={[styles.sumTotalAmount, { color: look.tint }]}>{rupees(display.amount)}</Text>
+            <Text style={[styles.sumTotalAmount, { color: look.tint }]}>{rupees(display.signed ?? display.amount)}</Text>
           </View>
 
           {waiting.length > 0 ? (

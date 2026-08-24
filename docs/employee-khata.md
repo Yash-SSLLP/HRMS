@@ -425,7 +425,7 @@ backup).
 
 ## The statement PDF
 
-`services/khataStatementPdf.js`. The `.xlsx` export answers *"give me the
+`services/cashbookSummaryPdf.js`. The `.xlsx` export answers *"give me the
 data"*; this answers *"show this to the person who paid for it"* — a
 day-by-day statement with **every photo bill bound in behind it**, so the
 document still works once it has been emailed, printed, or opened next year.
@@ -558,7 +558,7 @@ reversals, back-dated re-stamping, and the executive sanction gate.
 |---|---|
 | Models | `backend/models/EmployeeWallet.js` (the pot), `EmployeeKhata.js` (the books), `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` on `CashbookEntry.js`; `khataAdvanceApprovalRequired` and `documentFooter` on `Setting.js` |
 | Money rules | `backend/services/khataLedger.js` — the only place balance arithmetic happens |
-| Statement PDF | `backend/services/khataStatementPdf.js` (layout + its own running total), `streamStatement` in the controller (gathering, bill reads, the `RECEIPT_PAGE_CAP`) |
+| Statement PDF | `backend/services/cashbookSummaryPdf.js` (category-wise summary layout + `summariseByCategory`), `streamStatement` in the controller (gathering the rows) |
 | Integrations | `backend/services/khataSync.js` |
 | API | `backend/controllers/khataController.js`, `backend/routes/khataRoutes.js` |
 | Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` and `khataExportAccess` on `User`; `canExportKhata` + `requireKhataExport` + `canApproveAdvances` + `requireAdvanceApprover` in `backend/middleware/authMiddleware.js`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |

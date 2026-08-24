@@ -197,7 +197,10 @@ export const employeeNav = [
   ] },
   { group: 'Payroll & Expenses', icon: TbCurrencyRupee, items: [
     { to: '/employee/payslips', label: 'Payslips', icon: TbCurrencyRupee },
-    { to: '/employee/expenses', label: 'Expenses', icon: FiShoppingBag },
+    // Self-service expense claims are no longer offered here: employees file what
+    // they spend through My Cashbook, which covers the same ground against their
+    // advance. The route and page still exist (and HR's review queue still reads
+    // the claims already filed) — only the way in has been taken off the menu.
     { to: '/employee/cashbook', label: 'Cash Vouchers', icon: TbReceipt },
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },

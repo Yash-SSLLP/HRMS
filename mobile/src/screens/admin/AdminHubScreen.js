@@ -88,6 +88,8 @@ export default function AdminHubScreen() {
   tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canDo('org.manage') && (mayWrite || isGranted) });
   tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: hasAnyPermission(me, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews']) });
   tiles.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a', show: canDo('payroll.manage') });
+  tiles.push({ key: 'ExitAdmin', label: 'Exits', icon: 'exit', tint: '#dc2626', show: canDo('exit.manage') });
+  tiles.push({ key: 'Permissions', label: 'Permissions', icon: 'key', tint: '#7c3aed', show: me?.role === 'SuperAdmin' });
   tiles.push({ key: 'RnrAdmin', label: 'Recognition', icon: 'trophy', tint: '#f59e0b', show: canDo('announcements.manage') });
   tiles.push({ key: 'CalendarImport', label: 'Calendar Upload', icon: 'cloud-upload', tint: '#0ea5e9', show: canDo('leave.manage') });
   // Letterhead branding for generated documents. Hard role check, not a

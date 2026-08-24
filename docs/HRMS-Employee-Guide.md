@@ -10,7 +10,7 @@ This is your company's **HRMS** — Human Resource Management System. It is the 
 
 - Marking attendance, applying for leave, and checking your shifts.
 - Viewing payslips, requesting a loan or advance, and filing your tax declaration.
-- Claiming expenses and travel, tracking goals, taking courses, and completing tasks.
+- Recording what you spend, claiming travel, tracking goals, taking courses, and completing tasks.
 - Reading announcements, answering surveys, and seeing each month's Rewards and Recognition winners.
 - Keeping your profile and documents in order — and, when the time comes, submitting your resignation.
 
@@ -208,11 +208,9 @@ Save a draft as often as you like. Once **submitted**, the form becomes read-onl
 
 ### 7.4 Expenses
 
-Claim against a category — Travel, Food, Accommodation, Supplies, Medical, Communication, Other — with the amount, the date, the merchant, and a description.
+Spending is now filed through **My Cashbook**, which covers the same ground against the advance you are holding — see section 7.5. Separate expense claims are no longer raised from the menu.
 
-[!IMPORTANT] A receipt is required. Upload the image or PDF with the claim; it is what HR verifies the payment against, and it is carried through to the accounts entry when you are reimbursed.
-
-Track the claim through Pending, Approved, and Reimbursed, with the reviewer's note.
+[!NOTE] Claims you filed before this changed are still with HR and will be processed as normal, through Pending, Approved and Reimbursed. You simply no longer start new ones here.
 
 ### 7.5 Travel
 
@@ -333,7 +331,7 @@ You can see the status throughout, along with your HR contact. You cannot open a
 Almost everything above is in the Android app, organised under a **Menu**:
 
 - **Time and Attendance** — Leave, Attendance, Regularization, My Roster.
-- **Money** — Payslips, Expenses, Travel, Loans.
+- **Money** — Payslips, My Cashbook, Travel, Loans.
 - **Growth** — Tasks, My Interviews, Goals, Reviews, Learning.
 - **Requests and lifecycle** — My Approvals, Change Requests, Complaints, Tax Declaration, Onboarding, Resignation.
 - **Workplace** — Announcements, Surveys, Documents, Assets, Org Chart, and this guide.

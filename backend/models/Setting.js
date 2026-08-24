@@ -82,8 +82,8 @@ const settingSchema = new mongoose.Schema(
     },
 
     // The contact strip printed along the bottom of the documents an employee
-    // may forward outside the company — today the khata statement
-    // (services/khataStatementPdf.js).
+    // may forward outside the company — today the cashbook statement
+    // (services/cashbookSummaryPdf.js).
     //
     // SuperAdmin-only, and deliberately NOT in config/company.js: that file is
     // env-var constants, so changing the number a client is told to ring would

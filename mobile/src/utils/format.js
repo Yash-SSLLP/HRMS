@@ -78,7 +78,10 @@ export function timeAgo(d) {
 /** Format a number as INR currency, e.g. "₹1,25,000". */
 export function rupees(n) {
   const v = Number(n || 0);
-  return `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  // The sign goes BEFORE the symbol — "-₹12,000", not "₹-12,000" — which is how
+  // Intl renders it on the web, so the two apps read the same.
+  const sign = v < 0 ? '-' : '';
+  return `${sign}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 // Duration in MINUTES -> "1h 15m" / "45m" / "2h". Used for "late by" figures,

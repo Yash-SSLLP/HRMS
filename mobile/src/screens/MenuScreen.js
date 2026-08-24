@@ -40,7 +40,8 @@ const GROUPS = [
     title: 'Money',
     items: [
       { key: 'Payslips', label: 'Payslips', icon: 'cash', tint: '#9333ea' },
-      { key: 'Expenses', label: 'Expenses', icon: 'bag-handle', tint: '#ef4444' },
+      // Self-service expense claims are filed through My Cashbook now; the
+      // Expenses screen stays reachable in code but is off the menu.
       // 'book' read as a library/reading module; a voucher is a receipt.
       { key: 'Cashbook', label: 'Cash Vouchers', icon: 'receipt', tint: '#0891b2' },
       // The employee's own running cash account with the company.
@@ -150,6 +151,9 @@ export default function MenuScreen() {
     // screen uses are restrictTo('SuperAdmin') and 403 for anyone else.
     if (me?.role === 'SuperAdmin') {
       adminItems.push({ key: 'Branding', label: 'Logo & Signatures', icon: 'color-palette', tint: '#C7A24C' });
+      // Every endpoint behind this screen is restrictTo('SuperAdmin'), so the row
+      // is gated on the role rather than on a capability.
+      adminItems.push({ key: 'Permissions', label: 'Permissions', icon: 'key', tint: '#7c3aed' });
     }
     if (hasAnyPermission(me, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'])) {
       adminItems.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed' });
@@ -164,6 +168,11 @@ export default function MenuScreen() {
     // need, so a standalone khataAccess grant is enough — no admin role.
     if (hasPermission(me, 'khata.manage')) {
       adminItems.push({ key: 'KhataAdmin', label: 'Employee Advances', icon: 'book', tint: '#c026d3' });
+    }
+    // Exit console: work an exit along (clearance, complete, relieving letter)
+    // while away from a desk. Same capability the server gates /exits on.
+    if (hasPermission(me, 'exit.manage')) {
+      adminItems.push({ key: 'ExitAdmin', label: 'Exits', icon: 'exit', tint: '#dc2626' });
     }
     // The daily reminder schedule pushes at the whole company, so it is
     // SuperAdmin-only — the same gate the server applies.

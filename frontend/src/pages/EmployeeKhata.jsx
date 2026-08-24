@@ -320,7 +320,9 @@ export default function EmployeeKhata() {
       ) : (
         <div className={`border rounded-xl p-6 mb-5 ${style.card}`}>
           <p className="text-sm font-medium text-gray-600">{display.label}</p>
-          <p className={`text-4xl sm:text-5xl font-semibold mt-1 ${style.amount}`}>{money(display.amount)}</p>
+          {/* Signed on purpose: negative when they have spent past the advance,
+              positive while they are still holding company cash. */}
+          <p className={`text-4xl sm:text-5xl font-semibold mt-1 ${style.amount}`}>{money(display.signed ?? display.amount)}</p>
           <p className="text-xs text-gray-500 mt-2">{style.hint}</p>
 
           {wallet.creditLimit > 0 && (
@@ -405,7 +407,7 @@ export default function EmployeeKhata() {
                 {display.label}
                 <span className="block text-xs text-gray-400">{style.hint}</span>
               </dt>
-              <dd className={`text-lg font-semibold whitespace-nowrap ${style.amount}`}>{money(display.amount)}</dd>
+              <dd className={`text-lg font-semibold whitespace-nowrap ${style.amount}`}>{money(display.signed ?? display.amount)}</dd>
             </div>
           </dl>
 

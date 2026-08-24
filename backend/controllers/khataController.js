@@ -84,9 +84,14 @@ function describeBalance(balance) {
  */
 function describeWalletForEmployee(balance) {
   const value = ledger.round2(balance || 0);
-  if (value > 0) return { amount: value, direction: 'holding', label: 'Advance in hand' };
-  if (value < 0) return { amount: Math.abs(value), direction: 'owed', label: 'The company owes you' };
-  return { amount: 0, direction: 'settled', label: 'Nothing in hand' };
+  // `signed` keeps the wallet's own sign for the headline figure: POSITIVE when
+  // they were advanced more than they have spent (company cash in their hand),
+  // NEGATIVE when they have spent past the advance. `amount` stays absolute for
+  // the lines that carry the direction in words — "₹500 owed to you" reads
+  // wrong with a minus already in it.
+  if (value > 0) return { amount: value, signed: value, direction: 'holding', label: 'Advance in hand' };
+  if (value < 0) return { amount: Math.abs(value), signed: value, direction: 'owed', label: 'The company owes you' };
+  return { amount: 0, signed: 0, direction: 'settled', label: 'Nothing in hand' };
 }
 
 /**
@@ -2221,26 +2226,10 @@ const exportExcel = asyncHandler(async (req, res) => {
 // Statement PDF
 // ---------------------------------------------------------------------------
 
-/**
- * How many bills one statement embeds, and how many bytes of them.
- *
- * A year of a busy site book is a few hundred phone photos at up to 5 MB each —
- * embedding all of them would build a document nobody can email, and would hold
- * the request (and that much memory) open while it did. There is no image
- * library in this service to downscale with, so the only honest guard is to stop
- * at a budget.
- *
- * BOTH caps are needed: the count bounds the page-turning, the byte budget
- * bounds the memory, and either alone lets the other run away. Whatever is left
- * off is COUNTED and printed on the statement — a document that quietly drops
- * bills reads exactly like one that had none.
- */
-const RECEIPT_PAGE_CAP = 60;
-const RECEIPT_BYTES_CAP = 24 * 1024 * 1024;
 
 /** Rows a statement is built from: the posted money, plus the cancelled rows
- *  it keeps on the record. Reversed rows print greyed and count for nothing —
- *  see services/khataStatementPdf.js. */
+ *  it keeps on the record. Reversed rows are excluded from the category totals —
+ *  see services/cashbookSummaryPdf.js. */
 const STATEMENT_STATUSES = ['Approved', 'Reversed'];
 
 /**
@@ -2304,36 +2293,20 @@ async function streamStatement(req, res, employeeId) {
     cashAccountName: e.account?.name || '',
   }));
 
-  const { renderKhataStatement, movement } = require('../services/khataStatementPdf');
+  // The statement is now a CATEGORY-WISE SUMMARY (services/cashbookSummaryPdf.js).
+  // It replaced the day-by-day statement, so it carries neither the individual
+  // entries nor the embedded receipt images — the .xlsx export still has every row.
+  const { renderKhataStatement, movement } = require('../services/cashbookSummaryPdf');
   const scope = khata ? 'khata' : 'wallet';
   const opening = ledger.round2(
     (khata ? 0 : wallet.openingBalance || 0)
     + before.filter((e) => e.status !== 'Reversed').reduce((sum, e) => sum + movement(e, scope), 0)
   );
 
-  // Bills are read one at a time rather than in one Promise.all: sixty GridFS
-  // downloads fired at once is a burst the connection pool does not need, and
-  // the loop stops the moment the cap is reached.
-  const receipts = new Map();
-  let receiptBytes = 0;
-  let omittedReceipts = 0;
-  for (const e of rows) {
-    if (!e.attachment?.storagePath) continue;
-    if (receipts.size >= RECEIPT_PAGE_CAP || receiptBytes >= RECEIPT_BYTES_CAP) {
-      omittedReceipts += 1;
-      continue;
-    }
-    try {
-      const buffer = await storage.readBuffer(e.attachment.storagePath);
-      if (!buffer) { omittedReceipts += 1; continue; }
-      receipts.set(String(e._id), { buffer, name: e.attachment.name || '' });
-      receiptBytes += buffer.length;
-    } catch (_) {
-      // A missing or unreadable bill must not sink the statement — but it is
-      // still a bill the reader was expecting to see.
-      omittedReceipts += 1;
-    }
-  }
+  // No receipts are read here any more: the summary prints category totals, not
+  // individual entries, so pulling every bill out of storage would be a burst of
+  // downloads for bytes nothing renders. The bills stay on their entries in the
+  // app, and the .xlsx export still lists every row.
 
   const pdf = await renderKhataStatement({
     company: require('../config/company'),
@@ -2348,13 +2321,12 @@ async function streamStatement(req, res, employeeId) {
     range: { from, to },
     opening,
     entries: rows,
-    receipts,
-    omittedReceipts,
     footer: {
       helpline: settings?.documentFooter?.helpline || '',
       note: settings?.documentFooter?.note || '',
     },
     generatedAt: new Date(),
+    generatedBy: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
   });
 
   const slug = (khata ? khata.name : `${employee.firstName}-all-khatas`)

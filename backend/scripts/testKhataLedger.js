@@ -107,13 +107,11 @@ check('one rupee over the limit is refused', limitCheck(5001, 10000, to(5000)), 
 check('a settlement is never blocked by a limit', limitCheck(99999, 10, from(5000)), 'allowed');
 check('a settlement is never blocked even at zero balance', limitCheck(0, 1, from(5000)), 'allowed');
 
-console.log('\n--- statement arithmetic (services/khataStatementPdf.js) ---');
-// The statement re-derives its own running total rather than reading
-// balanceAfter, because a single-khata statement has no wallet behind it. That
-// makes these two functions the ones that decide what a printed, signed-off
-// document says, so they are checked here alongside the ledger they mirror.
-const S = require('../services/khataStatementPdf');
-const at = (iso, entry) => ({ ...entry, date: new Date(`${iso}+05:30`), status: 'Approved' });
+console.log('\n--- statement arithmetic (services/cashbookSummaryPdf.js) ---');
+// The statement is a category-wise summary, so these two functions are the ones
+// that decide what a printed, signed-off document says. Checked here alongside
+// the ledger they mirror.
+const S = require('../services/cashbookSummaryPdf');
 
 // A wallet grows when money arrives; an expense book grows when money is spent.
 // Same row, opposite sign — which is the whole reason `scope` is carried.
@@ -122,50 +120,55 @@ check('spending lowers the wallet', S.movement(from(5000), 'wallet'), -5000);
 check('spending raises what the book has cost', S.movement(from(5000), 'khata'), 5000);
 check('a credit back lowers what the book has cost', S.movement(to(5000), 'khata'), -5000);
 
-const tripRows = [
-  at('2026-08-10T16:46:00', from(5424)),
-  at('2026-08-11T16:44:00', from(4698)),
-  at('2026-08-11T19:10:00', from(1000)),
-];
-const tripDays = S.groupByDay(tripRows, 'khata', 0);
-check('rows collapse into one block per calendar day', tripDays.length, 2);
-check('a day sums its own rows', tripDays[1].out, 5698);
-check("the day's net is what it added to the book", tripDays[1].net, 5698);
-check('the running total carries across days', tripDays[1].running, 11122);
-check('an opening figure is carried in, not restarted from zero',
-  S.groupByDay(tripRows, 'khata', 2000)[1].running, 13122);
+// Category totals: IN is money that reached the employee, OUT money that left
+// them, Balance = In - Out, so a heading only ever spent against reads negative.
+const cat = (c, entry) => ({ ...entry, category: c, status: 'Approved' });
+const sum = S.summariseByCategory([
+  cat('Travel', from(5155)),
+  cat('Travel', from(1000)),
+  cat('Food', from(994)),
+  cat('Travel', to(2000)),
+]);
+const catRow = (name) => sum.rows.find((r) => r.category === name);
+check('rows fold into one line per category', sum.rows.length, 2);
+check('spending in a category adds up', catRow('Travel').out, 6155);
+check('money coming back lands in Cash In', catRow('Travel').in, 2000);
+check('balance is in minus out', catRow('Travel').balance, -4155);
+check('every counted row is counted once', sum.counted, 4);
+check('the totals row adds the categories up', sum.totals.out, 7149);
+check('and its balance matches', sum.totals.balance, -5149);
 
-// Two rows either side of IST midnight: on a UTC server these land on the same
-// UTC day and would be merged into one block if the grouping read UTC parts.
-const midnight = S.groupByDay([
-  at('2026-08-11T23:50:00', from(100)),
-  at('2026-08-12T00:10:00', from(200)),
-], 'khata', 0);
-check('IST midnight splits two rows into two days', midnight.length, 2);
+// An uncategorised row must still appear — silently dropping it would make the
+// printed total disagree with the ledger.
+const blank = S.summariseByCategory([cat('', from(300)), { ...from(200), status: 'Approved' }]);
+check('a blank category is gathered under one heading', blank.rows.length, 1);
+check('and keeps its money', blank.rows[0].out, 500);
+check('"No Category" is what it is called', blank.rows[0].category, 'No Category');
 
-// A reversed row stays visible on the statement but must not move a figure —
-// the mirror row that cancelled it is what does that now.
-const withReversed = S.groupByDay([
-  at('2026-08-10T10:00:00', from(1000)),
-  { ...at('2026-08-10T11:00:00', from(500)), status: 'Reversed' },
-], 'khata', 0);
-check('a reversed row still prints', withReversed[0].rows.length, 2);
-check('but it counts for nothing', withReversed[0].out, 1000);
-check('and leaves the running total alone', withReversed[0].running, 1000);
+// A reversed row was cancelled by its mirror; counting either would double it.
+const reversed = S.summariseByCategory([
+  cat('Food', from(1000)),
+  { ...cat('Food', from(500)), status: 'Reversed' },
+]);
+check('a reversed row counts for nothing', reversed.rows[0].out, 1000);
+check('and is not counted as an entry', reversed.counted, 1);
 
-// The wallet scope has to land on the same figure the ledger replay does, or a
+// The summary has to land on the same figure the ledger replay does, or a
 // printed statement would contradict the balance on screen.
-const walletRows = [at('2026-08-09T11:00:00', to(25000)), at('2026-08-10T16:46:00', from(5424))];
-check('the statement agrees with replayBalance',
-  S.groupByDay(walletRows, 'wallet', 0).pop().running,
+const walletRows = [{ ...to(25000), status: 'Approved' }, { ...from(5424), status: 'Approved' }];
+check('the summary agrees with replayBalance',
+  S.summariseByCategory(walletRows).totals.balance,
   L.replayBalance(0, walletRows).closing);
+
 
 // Who may still correct a posted expense, and when the window shuts. Pure, and
 // worth pinning: it is the rule that decides whether an employee can rewrite a
 // figure the company has already acted on.
 console.log('\n--- the expense editing window ---');
+// `movement` is the employee-ledger kind since the khata and cashbook ledgers
+// merged; `type` on a stored row is now the company's in/out sense.
 const expense = (over = {}) => ({
-  type: 'expense', status: 'Approved', raisedByEmployee: true, confirmedByCompany: false, reversedBy: null, ...over,
+  movement: 'expense', status: 'Approved', raisedByEmployee: true, confirmedByCompany: false, reversedBy: null, ...over,
 });
 const openBook = { isActive: true, name: 'Site A' };
 const shutBook = { isActive: false, name: 'Site A' };
@@ -185,8 +188,8 @@ check('a parked row is not an editable one',
   rights(expense({ status: 'Pending' }), openBook), [false, false]);
 // Everything else is corrected by reversal — there is no in-place edit for money
 // that moved through a company account.
-check('an advance is never edited in place', rights(expense({ type: 'advance' }), null), [false, false]);
-check('nor is a settlement', rights(expense({ type: 'settlement' }), null), [false, false]);
+check('an advance is never edited in place', rights(expense({ movement: 'advance' }), null), [false, false]);
+check('nor is a settlement', rights(expense({ movement: 'settlement' }), null), [false, false]);
 check('a missing book reads as open rather than blocking the fix',
   rights(expense(), undefined), [true, true]);
 

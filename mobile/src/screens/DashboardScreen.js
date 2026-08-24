@@ -37,7 +37,7 @@ const QUICK_ACTIONS = [
   { key: 'Attendance', label: 'Attendance', icon: 'finger-print', tint: '#16a34a' },
   { key: 'Payslips', label: 'Payslips', icon: 'cash', tint: '#9333ea' },
   { key: 'Tasks', label: 'Tasks', icon: 'checkbox', tint: '#2563eb' },
-  { key: 'Expenses', label: 'Expenses', icon: 'receipt', tint: '#ef4444' },
+  // Expense claims are filed through My Cashbook now — tile removed.
   { key: 'Documents', label: 'Documents', icon: 'folder', tint: '#f59e0b' },
   { key: 'Announcements', label: 'Notices', icon: 'megaphone', tint: '#4f46e5' },
   { key: 'Menu', label: 'More', icon: 'grid', tint: '#0d9488' },

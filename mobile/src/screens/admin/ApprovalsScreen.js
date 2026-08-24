@@ -86,11 +86,52 @@ const CATEGORIES = [
     approve: (it) => api.patch(`/loans/${it._id}/status`, { status: 'Approved' }),
     reject: (it) => api.patch(`/loans/${it._id}/status`, { status: 'Rejected' }),
   },
+  {
+    // Profile-detail changes. The one inbox serves both directions: an employee
+    // asking their HR partner to change a filled-in detail, and an HR Manager's
+    // change to an employee, which needs that company's CEO/MD. `approverKind`
+    // says which one an item is, so the row can say who it is waiting on.
+    key: 'change',
+    label: 'Changes',
+    // Scoped to "you are the assignee" and enforced server-side (403 otherwise),
+    // so this is actionable even for a read-only CEO/MD — the same exception the
+    // approvals inbox has always made.
+    assigneeScoped: true,
+    icon: 'create',
+    list: () => api.get('/change-requests/assigned'),
+    pluck: (d) => (d.changeRequests || []).filter((r) => r.status === 'pending'),
+    person: (it) => (it.approverKind === 'exec'
+      ? `${fullName(it.targetUser)} · raised by ${fullName(it.requestedBy)}`
+      : fullName(it.requestedBy)),
+    title: (it) => it.fieldLabel,
+    sub: (it) => (it.field === 'password'
+      ? 'New password (hidden)'
+      : `${it.currentValue || '—'} → ${it.requestedValue}`),
+    note: (it) => it.reason,
+    approve: (it) => api.patch(`/change-requests/${it._id}`, { action: 'approve' }),
+    reject: (it) => api.patch(`/change-requests/${it._id}`, { action: 'decline' }),
+  },
+  {
+    // Replacing a document that is already submitted, and therefore locked to
+    // the employee. Approving swaps the new file in for the old one.
+    key: 'docswap',
+    label: 'Documents',
+    assigneeScoped: true,
+    icon: 'document-text',
+    list: () => api.get('/documents/replace-requests/assigned'),
+    pluck: (d) => (d.requests || []).filter((r) => r.status === 'pending'),
+    person: (it) => fullName(it.employee?.user) || fullName(it.requestedBy),
+    title: (it) => `Replace ${it.category}`,
+    sub: (it) => it.fileName || 'New file attached',
+    note: (it) => it.reason,
+    approve: (it) => api.patch(`/documents/replace-requests/${it._id}`, { action: 'approve' }),
+    reject: (it) => api.patch(`/documents/replace-requests/${it._id}`, { action: 'decline' }),
+  },
 ];
 
 export default function ApprovalsScreen() {
   const me = useAuth((s) => s.user);
-  const writable = canManage(me, 'leave.manage');
+  const canManageLeave = canManage(me, 'leave.manage');
 
   const [tab, setTab] = useState(0);
   const [items, setItems] = useState([]);
@@ -100,6 +141,9 @@ export default function ApprovalsScreen() {
   const [busyId, setBusyId] = useState(null);
 
   const cat = CATEGORIES[tab];
+  // An assignee-scoped queue only ever lets you decide items routed to YOU, so it
+  // is not gated on a module capability the way the others are.
+  const writable = cat.assigneeScoped || canManageLeave;
 
   const loadCat = useCallback(async (index) => {
     setLoading(true);
