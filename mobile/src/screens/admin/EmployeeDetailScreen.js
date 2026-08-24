@@ -11,6 +11,14 @@ import { Screen, Card, Avatar, AppButton, Input, Field, Pill, Loader, Ionicons, 
 import { fmtDate } from '../../utils/format';
 
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
+// A site is offered to an employee if it belongs to their company, is a shared
+// site (no company), or the employee has no company set yet.
+const siteMatchesCompany = (loc, companyId) => {
+  const lc = String(loc.company?._id || loc.company || '');
+  const cid = String(companyId || '');
+  if (!cid || !lc) return true;
+  return lc === cid;
+};
 const maskAadhaar = (a) => (a ? `XXXX XXXX ${String(a).slice(-4)}` : null);
 const maskAcct = (a) => (a ? `••••${String(a).slice(-4)}` : null);
 
@@ -31,18 +39,21 @@ export default function EmployeeDetailScreen({ route }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState({ designation: '', department: '', workLocation: '', workLocationRef: '' });
+  const [edit, setEdit] = useState({ designation: '', department: '', company: '', workLocation: '', workLocationRef: '' });
   const [workLocations, setWorkLocations] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
 
   const load = useCallback(async () => {
-    const [pr, wl] = await Promise.all([
+    const [pr, wl, co] = await Promise.all([
       api.get(`/employees/${id}`).catch(() => ({ data: {} })),
       api.get('/work-locations').catch(() => ({ data: { locations: [] } })),
+      api.get('/companies').catch(() => ({ data: { companies: [] } })),
     ]);
     setProfile(pr.data.profile || null);
     setWorkLocations(wl.data.locations || []);
+    setCompanies(co.data.companies || []);
     setLoading(false);
   }, [id]);
 
@@ -52,6 +63,7 @@ export default function EmployeeDetailScreen({ route }) {
     setEdit({
       designation: profile.designation || '',
       department: profile.department || '',
+      company: profile.company?._id || profile.company || '',
       workLocation: profile.workLocation || '',
       workLocationRef: profile.workLocationRef?._id || profile.workLocationRef || '',
     });
@@ -62,7 +74,7 @@ export default function EmployeeDetailScreen({ route }) {
     setSaving(true);
     try {
       // Empty picker clears the geofence assignment (null, not '').
-      await api.put(`/employees/${id}`, { ...edit, workLocationRef: edit.workLocationRef || null });
+      await api.put(`/employees/${id}`, { ...edit, workLocationRef: edit.workLocationRef || null, company: edit.company || null });
       setEditing(false);
       await load();
     } catch (err) {
@@ -142,6 +154,7 @@ export default function EmployeeDetailScreen({ route }) {
         <View style={{ padding: spacing(4) }}>
           <Card style={styles.card}>
             <Text style={styles.cardTitle}>Employment</Text>
+            <Detail icon="layers" label="Company" value={profile.company?.name || null} />
             <Detail icon="briefcase" label="Designation" value={profile.designation} />
             <Detail icon="business" label="Department" value={profile.department} />
             <Detail icon="location" label="Location" value={profile.workLocation} />
@@ -205,10 +218,27 @@ export default function EmployeeDetailScreen({ route }) {
             </View>
             <Field label="Designation"><Input value={edit.designation} onChangeText={(v) => setEdit((p) => ({ ...p, designation: v }))} placeholder="Software Engineer" /></Field>
             <Field label="Department"><Input value={edit.department} onChangeText={(v) => setEdit((p) => ({ ...p, department: v }))} placeholder="Engineering" /></Field>
+            {companies.length > 0 && (
+              <Field label="Company">
+                <ChipSelect
+                  options={[{ _id: '', name: 'Unassigned' }, ...companies.filter((c) => c.isActive !== false)]}
+                  value={edit.company || ''}
+                  onChange={(v) => setEdit((p) => {
+                    const next = { ...p, company: v };
+                    // Drop a check-in site that no longer belongs to the new company.
+                    const site = workLocations.find((l) => String(l._id) === String(p.workLocationRef));
+                    if (site && !siteMatchesCompany(site, v)) next.workLocationRef = '';
+                    return next;
+                  })}
+                  getValue={(o) => o._id}
+                  getLabel={(o) => o.name}
+                />
+              </Field>
+            )}
             <Field label="Work location"><Input value={edit.workLocation} onChangeText={(v) => setEdit((p) => ({ ...p, workLocation: v }))} placeholder="Mumbai" /></Field>
             <Field label="Check-in site (geofence)">
               <ChipSelect
-                options={[{ _id: '', name: 'Default (office)' }, ...workLocations.filter((l) => l.active)]}
+                options={[{ _id: '', name: 'Default (office)' }, ...workLocations.filter((l) => l.active && (siteMatchesCompany(l, edit.company) || String(l._id) === String(edit.workLocationRef)))]}
                 value={edit.workLocationRef || ''}
                 onChange={(v) => setEdit((p) => ({ ...p, workLocationRef: v }))}
                 getValue={(o) => o._id}

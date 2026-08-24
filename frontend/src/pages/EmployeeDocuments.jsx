@@ -10,7 +10,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
-import { confirmDialog } from '../components/dialogs';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 
 const fmtSize = (n) => {
@@ -101,6 +101,30 @@ export default function EmployeeDocuments() {
 
   const onDownload = (d) => downloadFile(`/documents/${d._id}/download`, d.fileName);
 
+  // Request replacement of a locked (submitted) document: pick the new file,
+  // give a reason, and it goes to HR for approval. Uses a hidden file input.
+  const replaceRef = useRef(null);
+  const [replaceDoc, setReplaceDoc] = useState(null);
+  const startReplace = (d) => { setReplaceDoc(d); setTimeout(() => replaceRef.current?.click(), 0); };
+  const onReplaceFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const d = replaceDoc;
+    setReplaceDoc(null);
+    if (!file || !d) return;
+    const reason = (await promptDialog({ message: `Why replace your ${humanize(d.category)}? (optional)` })) ?? '';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      if (reason) fd.append('note', reason);
+      await api.post(`/documents/me/${d._id}/replace-request`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      toast.success('Replacement sent to HR for approval.');
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not send replacement request');
+    }
+  };
+
   const onDelete = async (d) => {
     if (!(await confirmDialog({ message: 'This cannot be undone.', title: `Delete "${d.fileName}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
@@ -114,6 +138,7 @@ export default function EmployeeDocuments() {
   return (
     <div>
       <PageHeader title="My Documents" />
+      <input ref={replaceRef} type="file" hidden accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx" onChange={onReplaceFile} />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
@@ -209,7 +234,12 @@ export default function EmployeeDocuments() {
             ) : docs.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No documents yet</td></tr>
             ) : docs.map((d) => {
-              const canDelete = !hrOnly.includes(d.category);
+              // A submitted document is locked — only a Rejected one (sent back by
+              // HR) can be removed and re-uploaded. To change a submitted doc, the
+              // employee asks HR to replace it.
+              const isOwnCategory = !hrOnly.includes(d.category);
+              const canDelete = isOwnCategory && d.status === 'Rejected';
+              const locked = isOwnCategory && d.status !== 'Rejected';
               return (
                 <tr key={d._id}>
                   <td className="px-4 py-3">
@@ -232,6 +262,12 @@ export default function EmployeeDocuments() {
                     <button onClick={() => onDownload(d)} className="text-blue-600 hover:underline">Download</button>
                     {canDelete && (
                       <button onClick={() => onDelete(d)} className="text-red-600 hover:underline">Delete</button>
+                    )}
+                    {locked && (
+                      <>
+                        <span className="text-gray-400" title="Submitted documents are locked.">🔒 Locked</span>
+                        <button onClick={() => startReplace(d)} className="text-indigo-600 hover:underline">Request replacement</button>
+                      </>
                     )}
                   </td>
                 </tr>

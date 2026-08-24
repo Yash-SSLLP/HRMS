@@ -16,6 +16,9 @@ const {
   REQUIRED_DOCUMENT_CATEGORIES,
 } = require('../models/Document');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const DocumentChangeRequest = require('../models/DocumentChangeRequest');
+const Notification = require('../models/Notification');
+const User = require('../models/User');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 
@@ -82,6 +85,20 @@ const uploadMine = asyncHandler(async (req, res) => {
     throw new Error(`Employees may upload only: ${SELF_UPLOAD_CATEGORIES.join(', ')}`);
   }
   const profile = await getMyProfileOrFail(req.user._id, res);
+
+  // "Fill missing" only: once a document is submitted it is locked. A category
+  // that already has a Submitted/Verified doc cannot be re-uploaded by the
+  // employee — they must ask HR to replace it. A Rejected doc is the exception:
+  // HR sent it back, so the employee may resubmit (the rejected copy is cleared).
+  const existing = await Document.find({ employee: profile._id, category });
+  if (existing.some((d) => d.status !== 'Rejected')) {
+    res.status(409);
+    throw new Error('This document is already on file. To change it, ask your HR to replace it.');
+  }
+  for (const stale of existing) {
+    try { await storage.remove(stale.storagePath); } catch (_) { /* best-effort */ }
+    await stale.deleteOne();
+  }
 
   const { storagePath, sha256, sizeBytes } = await storage.saveBuffer({
     buffer: req.file.buffer,
@@ -250,6 +267,12 @@ const remove = asyncHandler(async (req, res) => {
       res.status(403);
       throw new Error('Not authorized to delete this document');
     }
+    // A submitted document is locked — the employee cannot delete it. Only a
+    // Rejected one (sent back by HR) may be removed so they can resubmit.
+    if (doc.status !== 'Rejected') {
+      res.status(403);
+      throw new Error('This document is already submitted and can no longer be removed. Ask your HR to replace it.');
+    }
   }
 
   try {
@@ -306,6 +329,175 @@ const categories = asyncHandler(async (req, res) => {
   });
 });
 
+// ===== Document replacement requests =====
+
+// The HR partner (or a SuperAdmin) who decides an employee's document requests.
+async function resolveDocAssignee(profile) {
+  if (profile?.hrPartner) return profile.hrPartner;
+  const sa = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 });
+  return sa?._id;
+}
+
+/**
+ * Employee requests to replace a SUBMITTED (locked) document, attaching the new
+ * file. Routed to their HR partner; on approval the old file is swapped out.
+ * @route POST /api/documents/me/:id/replace-request  (multipart: file + reason)
+ */
+const requestReplacement = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    res.status(400);
+    throw new Error('A replacement file is required (multipart field "file")');
+  }
+  const profile = await getMyProfileOrFail(req.user._id, res);
+  const doc = await Document.findById(req.params.id);
+  if (!doc || !profile._id.equals(doc.employee)) {
+    res.status(404);
+    throw new Error('Document not found');
+  }
+  if (HR_ONLY_CATEGORIES.includes(doc.category)) {
+    res.status(403);
+    throw new Error('This document is managed by HR — ask them to update it.');
+  }
+  if (doc.status === 'Rejected') {
+    res.status(400);
+    throw new Error('This document was rejected — just upload the corrected file directly.');
+  }
+  const dup = await DocumentChangeRequest.findOne({ targetDoc: doc._id, status: 'pending' });
+  if (dup) {
+    res.status(409);
+    throw new Error('A replacement request for this document is already pending.');
+  }
+
+  const { storagePath, sha256, sizeBytes } = await storage.saveBuffer({
+    buffer: req.file.buffer,
+    ownerType: 'employee',
+    ownerId: profile._id,
+    originalName: req.file.originalname,
+  });
+
+  const assignedTo = await resolveDocAssignee(profile);
+  const dcr = await DocumentChangeRequest.create({
+    employee: profile._id,
+    requestedBy: req.user._id,
+    assignedTo,
+    category: doc.category,
+    targetDoc: doc._id,
+    fileName: req.file.originalname,
+    storagePath,
+    mime: req.file.mimetype,
+    sizeBytes,
+    sha256,
+    reason: req.body.note ? String(req.body.note).trim() : undefined,
+  });
+  if (assignedTo) {
+    await Notification.create({
+      recipient: assignedTo,
+      type: 'change_request',
+      audience: 'admin',
+      title: 'Document replacement request',
+      body: `${req.user.firstName} ${req.user.lastName} wants to replace their ${doc.category}.`,
+      link: 'documents',
+    });
+  }
+  res.status(201).json({ request: dcr.toJSON() });
+});
+
+/**
+ * The caller's own document-replacement requests.
+ * @route GET /api/documents/me/replace-requests
+ */
+const myReplacementRequests = asyncHandler(async (req, res) => {
+  const requests = await DocumentChangeRequest.find({ requestedBy: req.user._id })
+    .populate('decidedBy', 'firstName lastName')
+    .sort({ createdAt: -1 });
+  res.json({ count: requests.length, requests: requests.map((r) => r.toJSON()) });
+});
+
+/**
+ * HR inbox of document-replacement requests routed to the admin (SuperAdmin: all).
+ * @route GET /api/documents/replace-requests/assigned  (HR/Admin)
+ */
+const assignedReplacementRequests = asyncHandler(async (req, res) => {
+  if (!isAdmin(req.user)) {
+    res.status(403);
+    throw new Error('Only HR/Admin have a document-request inbox');
+  }
+  const filter = req.user.role === 'SuperAdmin' && req.query.all === 'true'
+    ? {}
+    : { assignedTo: req.user._id };
+  const requests = await DocumentChangeRequest.find(filter)
+    .populate({ path: 'employee', select: 'employeeCode user', populate: { path: 'user', select: 'firstName lastName' } })
+    .populate('requestedBy', 'firstName lastName')
+    .populate('decidedBy', 'firstName lastName')
+    .sort({ createdAt: -1 });
+  res.json({ count: requests.length, requests: requests.map((r) => r.toJSON()) });
+});
+
+/**
+ * Approve (swap the file in) or decline a document-replacement request.
+ * @route PATCH /api/documents/replace-requests/:id  { action, decisionNote }  (HR/Admin)
+ */
+const decideReplacement = asyncHandler(async (req, res) => {
+  const dcr = await DocumentChangeRequest.findById(req.params.id);
+  if (!dcr) {
+    res.status(404);
+    throw new Error('Request not found');
+  }
+  const isAssignee = dcr.assignedTo && dcr.assignedTo.equals(req.user._id);
+  if (!isAssignee && req.user.role !== 'SuperAdmin') {
+    res.status(403);
+    throw new Error('Only the assigned HR or a SuperAdmin can decide this');
+  }
+  if (dcr.status !== 'pending') {
+    res.status(400);
+    throw new Error('This request has already been decided');
+  }
+  const { action, decisionNote } = req.body;
+  if (!['approve', 'decline'].includes(action)) {
+    res.status(400);
+    throw new Error("action must be 'approve' or 'decline'");
+  }
+
+  if (action === 'approve') {
+    // Swap the file: remove the old document, promote the stored new file.
+    const old = dcr.targetDoc ? await Document.findById(dcr.targetDoc) : null;
+    if (old) {
+      try { await storage.remove(old.storagePath); } catch (_) { /* best-effort */ }
+      await old.deleteOne();
+    }
+    await Document.create({
+      employee: dcr.employee,
+      category: dcr.category,
+      fileName: dcr.fileName,
+      storagePath: dcr.storagePath,
+      mime: dcr.mime,
+      sizeBytes: dcr.sizeBytes,
+      sha256: dcr.sha256,
+      isPii: PII_CATEGORIES.includes(dcr.category),
+      uploadedBy: dcr.requestedBy,
+      status: 'Submitted',
+    });
+    dcr.status = 'approved';
+  } else {
+    // Discard the proposed file.
+    try { await storage.remove(dcr.storagePath); } catch (_) { /* best-effort */ }
+    dcr.status = 'declined';
+  }
+  dcr.decisionNote = decisionNote ? String(decisionNote).trim() : undefined;
+  dcr.decidedBy = req.user._id;
+  dcr.decidedAt = new Date();
+  await dcr.save();
+
+  await Notification.create({
+    recipient: dcr.requestedBy,
+    type: 'change_request',
+    title: `Document replacement ${dcr.status}`,
+    body: `Your request to replace your ${dcr.category} was ${dcr.status}.`,
+    link: 'documents',
+  });
+  res.json({ request: dcr.toJSON() });
+});
+
 module.exports = {
   listMine,
   uploadMine,
@@ -315,4 +507,8 @@ module.exports = {
   remove,
   categories,
   setStatus,
+  requestReplacement,
+  myReplacementRequests,
+  assignedReplacementRequests,
+  decideReplacement,
 };

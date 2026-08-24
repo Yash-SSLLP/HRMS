@@ -29,6 +29,8 @@ const blankProfile = {
   dateOfJoining: '',
   designation: '',
   department: '',
+  company: '',
+  hrPartner: '',
   grade: '',
   workLocation: '',
   workLocationRef: '',
@@ -75,6 +77,17 @@ const userHasProfile = (u, profiles) => (
     : profiles.some((p) => (p.user?._id || p.user) === u._id)
 );
 
+// A work site is offered to an employee when it belongs to their company, or is
+// a shared site with no company, or the employee has no company set yet (nothing
+// to constrain against). Keeps each company's people on their own sites.
+const siteMatchesCompany = (loc, companyId) => {
+  const lc = String(loc.company?._id || loc.company || '');
+  const cid = String(companyId || '');
+  if (!cid) return true; // employee has no company → no constraint
+  if (!lc) return true;  // shared site (no company) → available to everyone
+  return lc === cid;
+};
+
 export default function AdminEmployees() {
   const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
@@ -86,6 +99,7 @@ export default function AdminEmployees() {
   const [allUsers, setAllUsers] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [workLocations, setWorkLocations] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [docStatus, setDocStatus] = useState({}); // employeeId -> { complete, verified, missing }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -148,13 +162,14 @@ export default function AdminEmployees() {
     setLoading(true);
     setError('');
     try {
-      const [profilesRes, usersRes, allUsersRes, docRes, desigRes, wlRes] = await Promise.all([
+      const [profilesRes, usersRes, allUsersRes, docRes, desigRes, wlRes, companiesRes] = await Promise.all([
         api.get('/employees'),
         api.get('/admin/users?role=Employee'),
         api.get('/admin/users'),
         api.get('/employees/documents-status'),
         api.get('/org-masters?kind=Designation'),
         api.get('/work-locations').catch(() => ({ data: { locations: [] } })),
+        api.get('/companies').catch(() => ({ data: { companies: [] } })),
       ]);
       setProfiles(profilesRes.data.profiles);
       setUsers(usersRes.data.users);
@@ -163,6 +178,7 @@ export default function AdminEmployees() {
         (u) => u.role === 'HRManager' || u.role === 'SuperAdmin'
       ));
       setWorkLocations(wlRes.data.locations || []);
+      setCompanies(companiesRes.data.companies || []);
       setDesignations(
         (desigRes.data.masters || [])
           .filter((m) => m.isActive !== false)
@@ -234,6 +250,15 @@ export default function AdminEmployees() {
   // (and so no department), and without them the head of a department would have
   // nobody above them to report to.
   const EXEC_ROLES = ['CEO', 'MD', 'SuperAdmin'];
+  // Work-location options narrowed to the employee's company (+ shared sites),
+  // always keeping the currently-assigned site so an edit never silently drops it.
+  const visibleWorkLocations = useMemo(() => {
+    const cur = String(form.workLocationRef || '');
+    return workLocations.filter(
+      (l) => l.active && (siteMatchesCompany(l, form.company) || String(l._id) === cur)
+    );
+  }, [workLocations, form.company, form.workLocationRef]);
+
   const managerOptions = useMemo(() => {
     const selfId = String(form.user?._id || form.user || '');
     const currentId = String(form.reportingManager?._id || form.reportingManager || '');
@@ -336,7 +361,10 @@ export default function AdminEmployees() {
       ...blankProfile,
       ...p,
       user: p.user?._id || p.user,
-      hrPartner: undefined, // HR ownership removed · never send this field
+      company: p.company?._id || p.company || '',
+      // Shown so the Backend can (re)assign the HR partner; stripped from the
+      // payload for anyone who is not a SuperAdmin (see the save handler).
+      hrPartner: p.hrPartner?._id || p.hrPartner || '',
       reportingManager: p.reportingManager?._id || p.reportingManager || '',
       regularizationApprovers: (p.regularizationApprovers || []).map((a) => a?._id || a).filter(Boolean),
       dateOfJoining: p.dateOfJoining ? p.dateOfJoining.slice(0, 10) : '',
@@ -445,6 +473,13 @@ export default function AdminEmployees() {
     try {
       // Empty work-location select must clear the ref (null), not send '' (bad ObjectId).
       const payload = { ...form, workLocationRef: form.workLocationRef || null };
+      // Company: '' → null so an empty select clears it rather than sending a bad ObjectId.
+      payload.company = form.company || null;
+      // Assigning the HR partner is Backend-only; the server ignores this field
+      // for non-SuperAdmins, but strip it here too so a blank never clobbers an
+      // existing assignment through some other path.
+      if (isSuperAdmin) payload.hrPartner = form.hrPartner || null;
+      else delete payload.hrPartner;
       if (crossDept) payload.allowCrossDepartment = true;
       // Blank enums must be dropped, not sent as '' — the schema would reject it.
       if (!payload.gender) delete payload.gender;
@@ -453,11 +488,18 @@ export default function AdminEmployees() {
       if (!payload.dateOfMarriage) delete payload.dateOfMarriage;
       if (!payload.dateOfBirth) delete payload.dateOfBirth;
       let savedId = editingId;
+      let queuedForApproval = 0;
       if (editingId) {
-        await api.put(`/employees/${editingId}`, payload);
+        const { data } = await api.put(`/employees/${editingId}`, payload);
+        queuedForApproval = data.queuedForApproval || 0;
       } else {
         const { data } = await api.post('/employees', payload);
         savedId = data.profile?._id || savedId;
+      }
+      // An HR Manager's detail changes don't apply directly — they were sent to
+      // the employee's company CEO/MD for approval.
+      if (queuedForApproval > 0) {
+        toast.info(`${queuedForApproval} change${queuedForApproval === 1 ? '' : 's'} sent to the CEO/MD for approval — they'll apply once approved.`);
       }
 
       // Phone and email belong to the User account, so they are a separate call
@@ -473,11 +515,16 @@ export default function AdminEmployees() {
         if (emailChanged) patch.email = editEmail.trim();
         if (userId && Object.keys(patch).length) {
           try {
-            await api.put(`/admin/users/${userId}`, patch);
-            phoneAtOpen.current = editPhone;
-            if (emailChanged) {
-              emailAtOpen.current = editEmail.trim();
-              toast.success(`Sign-in email changed to ${editEmail.trim()}`);
+            const { data: uData } = await api.put(`/admin/users/${userId}`, patch);
+            if (uData?.queuedForApproval > 0) {
+              // HR edit — name/email/phone were sent to the CEO/MD, not applied.
+              toast.info(`${uData.queuedForApproval} change${uData.queuedForApproval === 1 ? '' : 's'} sent to the CEO/MD for approval.`);
+            } else {
+              phoneAtOpen.current = editPhone;
+              if (emailChanged) {
+                emailAtOpen.current = editEmail.trim();
+                toast.success(`Sign-in email changed to ${editEmail.trim()}`);
+              }
             }
           } catch (err) {
             toast.error(err.response?.data?.message
@@ -808,10 +855,31 @@ export default function AdminEmployees() {
                   <SearchableSelect value={form.workLocationRef || ''} onChange={(e) => setForm({ ...form, workLocationRef: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Default (office)</option>
-                    {workLocations.filter((l) => l.active).map((l) => (
-                      <option key={l._id} value={l._id}>{l.name}</option>
+                    {visibleWorkLocations.map((l) => (
+                      <option key={l._id} value={l._id}>{l.name}{l.company?.name ? ` · ${l.company.name}` : ''}</option>
                     ))}
                   </SearchableSelect>
+                  {form.company && <p className="text-xs text-gray-400 mt-1">Showing sites for the selected company, plus shared sites.</p>}
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700">Company</label>
+                  <SearchableSelect value={form.company || ''} onChange={(e) => {
+                    const company = e.target.value;
+                    setForm((prev) => {
+                      const next = { ...prev, company };
+                      // Drop a work site that no longer belongs to the new company.
+                      const site = workLocations.find((l) => String(l._id) === String(prev.workLocationRef));
+                      if (site && !siteMatchesCompany(site, company)) next.workLocationRef = '';
+                      return next;
+                    });
+                  }}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2">
+                    <option value="">Unassigned</option>
+                    {companies.filter((c) => c.isActive !== false).map((c) => (
+                      <option key={c._id} value={c._id}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
+                    ))}
+                  </SearchableSelect>
+                  <p className="text-xs text-gray-500 mt-1">The company this employee belongs to. A CEO/MD limited to certain companies only sees people in them.</p>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">Reporting Manager</label>
@@ -876,6 +944,34 @@ export default function AdminEmployees() {
                       ? 'Pick a department first — managers are chosen from within it.'
                       : 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'}
                   </p>
+                </div>
+                {/* HR Partner: the HR Manager who owns this employee. With per-HR
+                    scoping on, an HR Manager sees and manages only the employees
+                    they partner. Backend-only, like the reporting manager. */}
+                <div className="sm:col-span-2">
+                  <label className="block text-sm text-gray-700">HR Partner</label>
+                  {isSuperAdmin ? (
+                    <SearchableSelect
+                      value={form.hrPartner || ''}
+                      onChange={(e) => setForm({ ...form, hrPartner: e.target.value })}
+                      className="mt-1 block w-full border rounded-lg px-3 py-2"
+                    >
+                      <option value="">None</option>
+                      {hrUsers.map((u) => (
+                        <option key={u._id} value={u._id}>
+                          {u.firstName} {u.lastName} ({u.role}) · {u.email}
+                        </option>
+                      ))}
+                    </SearchableSelect>
+                  ) : (
+                    <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700 text-sm">
+                      {(() => {
+                        const hr = hrUsers.find((u) => u._id === (form.hrPartner?._id || form.hrPartner));
+                        return hr ? `${hr.firstName} ${hr.lastName} (${hr.role})` : '—';
+                      })()}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">The HR Manager who sees and manages this employee. Only the Backend can change it.</p>
                 </div>
                 {/* Attendance-regularization approval ladder: 1 or 2 named people,
                     in order. Deliberately separate from the reporting manager —
@@ -1172,7 +1268,7 @@ export default function AdminEmployees() {
                   The template also covers job, payroll (Salary Structure + Annual CTC), statutory, bank, address and emergency-contact details.
                 </p>
                 <p className="text-[11px] text-amber-700 mt-1">
-                  Lookup columns must match existing records or the row errors: <strong>Reporting Manager Email</strong> / <strong>HR Partner Email</strong> → an existing user's email; <strong>Salary Structure</strong> → an existing structure name (create it under Salary Structures first).
+                  Lookup columns must match existing records or the row errors: <strong>Reporting Manager Email</strong> / <strong>HR Partner Email</strong> → an existing user's email; <strong>Salary Structure</strong> → an existing structure name (create it under Salary Structures first); <strong>Company</strong> → an existing company name or code (create it under Companies first).
                 </p>
               </div>
               <button onClick={closeImport} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>

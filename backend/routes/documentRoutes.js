@@ -15,6 +15,10 @@ const {
   remove,
   categories,
   setStatus,
+  requestReplacement,
+  myReplacementRequests,
+  assignedReplacementRequests,
+  decideReplacement,
 } = require('../controllers/documentController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -51,6 +55,19 @@ router.get('/categories', categories);
 router.get('/me', listMine);
 // POST /me — upload own document; protected + multer single 'file' (5MB allowlist).
 router.post('/me', upload.single('file'), uploadMine);
+
+// Document replacement requests — the employee raises one with the new file, the
+// assigned HR (or a SuperAdmin) decides. Auth is enforced inside the handlers,
+// so these sit outside the documents.manage capability gate (like field change
+// requests): an HR partner can act even without the broad documents capability.
+// GET /me/replace-requests — the caller's own requests.
+router.get('/me/replace-requests', myReplacementRequests);
+// POST /me/:id/replace-request — propose replacing a locked document (multer file).
+router.post('/me/:id/replace-request', upload.single('file'), requestReplacement);
+// GET /replace-requests/assigned — HR/Admin inbox.
+router.get('/replace-requests/assigned', assignedReplacementRequests);
+// PATCH /replace-requests/:id — approve (swap the file) / decline.
+router.patch('/replace-requests/:id', decideReplacement);
 
 // Download is auth-checked inside the controller (allows both owner + admin)
 // GET /:id/download — download a document; protected (owner or admin, checked in controller).

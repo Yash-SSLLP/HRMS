@@ -34,7 +34,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
-  FiSearch, FiInfo, FiSliders, FiX, FiCheck, FiAlertCircle,
+  FiSearch, FiInfo, FiSliders, FiX, FiCheck, FiAlertCircle, FiHome,
 } from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -125,6 +125,7 @@ export default function AdminPermissions() {
   const isSuperAdmin = me?.role === 'SuperAdmin';
 
   const [users, setUsers] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
@@ -136,6 +137,11 @@ export default function AdminPermissions() {
   const [permUser, setPermUser] = useState(null);
   const [permSel, setPermSel] = useState(() => new Set());
   const [permSaving, setPermSaving] = useState(false);
+
+  // CEO/MD company-access modal: which companies this exec may see and manage.
+  const [companyUser, setCompanyUser] = useState(null);
+  const [companySel, setCompanySel] = useState(() => new Set());
+  const [companySaving, setCompanySaving] = useState(false);
   const allKeys = catalog.map((p) => p.key);
 
   // Org-wide feature switches.
@@ -167,12 +173,14 @@ export default function AdminPermissions() {
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const [u, c, o] = await Promise.all([
+      const [u, c, o, comp] = await Promise.all([
         api.get('/admin/users'),
         api.get('/admin/permissions/catalog').catch(() => ({ data: { permissions: [] } })),
         api.get('/admin/org-settings').catch(() => ({ data: {} })),
+        api.get('/companies').catch(() => ({ data: { companies: [] } })),
       ]);
       setUsers(u.data.users || []);
+      setCompanies(comp.data.companies || []);
       setCatalog(c.data.permissions || []);
       const next = readOrg(o.data);
       setOrg(next);
@@ -304,6 +312,27 @@ export default function AdminPermissions() {
       setError(err.response?.data?.message || 'Could not save permissions');
     } finally {
       setPermSaving(false);
+    }
+  };
+
+  // CEO/MD company access. A stored value is the exact list; an empty/absent one
+  // means EVERY company (see User.companies) — so we open the picker empty and
+  // treat "nothing ticked" as unrestricted.
+  const openCompanies = (u) => {
+    setCompanySel(new Set((u.companies || []).map(String)));
+    setCompanyUser(u);
+  };
+  const toggleCompany = (id) => setCompanySel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const saveCompanies = async () => {
+    setCompanySaving(true); setError('');
+    try {
+      await api.patch(`/admin/users/${companyUser._id || companyUser.id}/companies`, { companyIds: [...companySel] });
+      setCompanyUser(null);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save company access');
+    } finally {
+      setCompanySaving(false);
     }
   };
 
@@ -610,12 +639,20 @@ export default function AdminPermissions() {
 
                   <td className="px-4 py-3">
                     {isExec ? (
-                      <div className="flex items-center gap-2">
-                        <ToggleSwitch checked={!!u.execEditAccess} busy={busy} label="Executive edit mode"
-                          title={GRANT_HELP.execEdit} onChange={() => toggleExecEdit(u)} />
-                        <span className="text-[11px] leading-tight text-gray-500 whitespace-nowrap">
-                          {u.execEditAccess ? 'Edit mode' : 'View only'}
-                        </span>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          <ToggleSwitch checked={!!u.execEditAccess} busy={busy} label="Executive edit mode"
+                            title={GRANT_HELP.execEdit} onChange={() => toggleExecEdit(u)} />
+                          <span className="text-[11px] leading-tight text-gray-500 whitespace-nowrap">
+                            {u.execEditAccess ? 'Edit mode' : 'View only'}
+                          </span>
+                        </div>
+                        <button type="button" onClick={() => openCompanies(u)}
+                          title="Limit this executive to certain companies. With none chosen they see every company."
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap self-start">
+                          <FiHome size={12} />
+                          {u.companies && u.companies.length ? `${u.companies.length} compan${u.companies.length === 1 ? 'y' : 'ies'}` : 'All companies'}
+                        </button>
                       </div>
                     ) : (
                       <NotApplicable hint="Only a CEO or MD account has a view-only mode to lift." />
@@ -725,6 +762,52 @@ export default function AdminPermissions() {
                 className="px-4 py-2 text-sm accent-bg text-white rounded-lg disabled:opacity-45">
                 {permSaving ? 'Saving…' : 'Save permissions'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CEO/MD company access modal */}
+      {companyUser && (
+        <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8"
+          onClick={() => setCompanyUser(null)}>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100">
+              <div>
+                <h2 className="card-title">Company access</h2>
+                <p className="text-xs text-gray-500 mt-1">
+                  {companyUser.firstName} {companyUser.lastName} ({companyUser.role}) sees and manages the ticked companies. Tick none to give access to every company.
+                </p>
+              </div>
+              <button type="button" onClick={() => setCompanyUser(null)} aria-label="Close"
+                className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+            </div>
+            <div className="px-6 py-4 max-h-80 overflow-y-auto">
+              {companies.length === 0 ? (
+                <p className="text-sm text-gray-400">No companies yet. Add one under Companies first.</p>
+              ) : (
+                <div className="space-y-1">
+                  {companies.map((c) => (
+                    <label key={c._id}
+                      className="flex items-center gap-2.5 text-sm text-gray-700 px-2 py-1.5 rounded-md hover:bg-gray-50 cursor-pointer">
+                      <input type="checkbox" checked={companySel.has(String(c._id))} onChange={() => toggleCompany(String(c._id))}
+                        className="rounded border-gray-300" />
+                      <span>{c.name}{c.code ? <span className="text-gray-400 font-mono text-xs"> · {c.code}</span> : null}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-gray-100">
+              <span className="text-xs text-gray-500">{companySel.size === 0 ? 'All companies' : `${companySel.size} selected`}</span>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setCompanyUser(null)}
+                  className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="button" onClick={saveCompanies} disabled={companySaving}
+                  className="px-4 py-2 text-sm accent-bg text-white rounded-lg disabled:opacity-45">
+                  {companySaving ? 'Saving…' : 'Save access'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

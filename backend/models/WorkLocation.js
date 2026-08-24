@@ -6,6 +6,10 @@ const mongoose = require('mongoose');
 const workLocationSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, unique: true, trim: true },
+    // The company this site belongs to. Null = shared / not yet assigned. Lets a
+    // multi-company org keep each company's sites (and the employees assigned to
+    // them) separate. See models/Company.js.
+    company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
     lat: { type: Number },
     lng: { type: Number },
     // Punches farther than this (metres) from the location are flagged. Defaults

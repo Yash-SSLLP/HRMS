@@ -90,6 +90,13 @@ const userSchema = new mongoose.Schema(
     // the employee who actually looks after company hardware and they get the
     // Assets register in their own portal, without becoming an admin.
     assetsAccess: { type: Boolean, default: false },
+    // CEO/MD only. The set of companies this executive may see and manage, set
+    // by the Backend (SuperAdmin) on the Permissions page. Semantics mirror the
+    // HRManager `permissions` default: `undefined`/`[]` → EVERY company (so an
+    // exec is unrestricted until the Backend narrows them), a non-empty list →
+    // only those companies. Ignored for every other role — an HR Manager is
+    // scoped to their assigned employees, and the Backend account sees all.
+    companies: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Company' }], default: undefined },
     // CEO/MD only. Off (the default) = the read-only executive described above.
     // On = a SuperAdmin has switched that account into edit mode, giving it write
     // access equivalent to an HR Manager holding every capability. It never

@@ -10,6 +10,8 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
 const SalaryStructure = require('../models/SalaryStructure');
+const Company = require('../models/Company');
+const WorkLocation = require('../models/WorkLocation');
 const crypto = require('crypto');
 const Document = require('../models/Document');
 const { REQUIRED_DOCUMENT_CATEGORIES, SELF_UPLOAD_CATEGORIES, PII_CATEGORIES } = require('../models/Document');
@@ -18,8 +20,10 @@ const cloudinary = require('../services/cloudinary');
 const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
-const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds } = require('../utils/visibility');
-const { hasPermission } = require('../middleware/authMiddleware');
+const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
+const { employeeProfileScope, cannotManageProfile } = require('../utils/employeeScope');
+const { hasPermission, isEditingExec } = require('../middleware/authMiddleware');
+const { FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange } = require('../services/profileChanges');
 const { notifyMany } = require('../services/notify');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
@@ -151,15 +155,51 @@ const missingSalary = (p) => !p?.salaryStructure || !p?.annualCtc;
 // Escape user text before using it inside a RegExp (for case-insensitive lookups).
 const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Every HR/SuperAdmin sees and manages ALL employees — there is no per-HR
-// "assigned employees" ownership. (Kept as functions so call sites are unchanged.)
-function scopeForHR() {
-  return {};
+// Empty-string ObjectId refs (e.g. "None (top level)" → reportingManager: "")
+// can't be cast and would blow up on save. Normalise them: scalar refs → null,
+// array refs → drop the blanks. Run before validate/assign on create & update.
+const SCALAR_REF_FIELDS = ['reportingManager', 'hrPartner', 'company', 'workLocationRef', 'salaryStructure'];
+const ARRAY_REF_FIELDS = ['regularizationApprovers', 'leaveApprovers', 'leaveFinalHrRecipients'];
+function normalizeRefFields(body) {
+  if (!body || typeof body !== 'object') return;
+  for (const f of SCALAR_REF_FIELDS) {
+    if (f in body && (body[f] === '' || body[f] === undefined)) body[f] = null;
+  }
+  for (const f of ARRAY_REF_FIELDS) {
+    if (Array.isArray(body[f])) body[f] = body[f].filter((v) => v != null && String(v).trim() !== '');
+  }
 }
 
-function hrCannotManage() {
-  return false;
+// Is a dot-path actually present in a (possibly nested) payload object?
+function payloadHasPath(obj, path) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (const p of parts) {
+    if (cur == null || typeof cur !== 'object' || !(p in cur)) return false;
+    cur = cur[p];
+  }
+  return true;
 }
+// Set a dot-path on a (possibly nested) payload object, creating objects as needed.
+function payloadSetPath(obj, path, value) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const p = parts[i];
+    if (cur[p] == null || typeof cur[p] !== 'object') cur[p] = {};
+    cur = cur[p];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+// Who a given admin may SEE and MANAGE, shared with attendance and payroll so the
+// rule is identical everywhere. See utils/employeeScope.js for the rules.
+//   Backend (SuperAdmin) → everyone.
+//   HR Manager           → only the employees they are the HR partner for.
+//   CEO / MD             → the companies the Backend has assigned them; with
+//                          none set they are unrestricted (see User.companies).
+const scopeForHR = (req) => employeeProfileScope(req);
+const hrCannotManage = (req, profile) => cannotManageProfile(req, profile);
 
 // Executives (and the Backend account) can manage anyone: they have no employee
 // profile and therefore no department, so the department rule below can't apply
@@ -208,6 +248,35 @@ async function assertSameDepartment(managerUserId, department, allowCrossDepartm
 //  - hrPartner must point at an HRManager or SuperAdmin
 //  - an HRManager's own profile must report to / be partnered with a SuperAdmin
 // Throws an Error (with .status) on violation.
+/**
+ * Reject a check-in site that belongs to a different company than the employee.
+ * Enforced only for NEWLY INTRODUCED mismatches: a legacy record whose stored
+ * (company, site) pairing already mismatches is left alone so editing its other
+ * fields never gets blocked — the pairing is refused only when this write sets it
+ * to a mismatch it wasn't already at. Shared (company-less) sites and employees
+ * with no company are never constrained.
+ * @param {string} workLocationRefId - the resulting WorkLocation id (or falsy)
+ * @param {string} companyId - the resulting employee company id (or falsy)
+ * @param {Object|null} existing - the stored EmployeeProfile (null on create)
+ * @throws {Error} .status 400 when the write introduces a company↔site mismatch
+ */
+async function assertWorkLocationCompany(workLocationRefId, companyId, existing = null) {
+  if (!workLocationRefId || !companyId) return; // no site, or no company → nothing to constrain
+  const site = await WorkLocation.findById(workLocationRefId).select('company');
+  if (!site || !site.company) return; // unknown or shared site → allowed
+  if (String(site.company) === String(companyId)) return; // company matches → allowed
+  // Mismatch: allow only if it is exactly the pairing already stored (so editing
+  // an unrelated field on a legacy mismatched record is not blocked).
+  if (existing
+    && String(existing.workLocationRef || '') === String(workLocationRefId)
+    && String(existing.company || '') === String(companyId)) {
+    return;
+  }
+  const err = new Error("That check-in site belongs to a different company than the employee. Choose a site in the employee's company, or a shared site.");
+  err.status = 400;
+  throw err;
+}
+
 async function validateHierarchy(body, linkedUserId, existing = null, allowCrossDepartment = false) {
   const linkedId = String(linkedUserId);
 
@@ -388,9 +457,10 @@ const getMyProfile = asyncHandler(async (req, res) => {
  */
 // GET /api/employees  (HR/Admin)
 const listEmployees = asyncHandler(async (req, res) => {
-  const { q, department } = req.query;
+  const { q, department, company } = req.query;
   const filter = { ...scopeForHR(req) };
   if (department) filter.department = department;
+  if (company) filter.company = company;
   // Hide SuperAdmin accounts from non-SuperAdmin viewers, and — for pickers that
   // opt in via ?excludeExecutives=true — the CEO/MD accounts (unless a SuperAdmin
   // has turned on includeExecutivesInLists).
@@ -402,6 +472,7 @@ const listEmployees = asyncHandler(async (req, res) => {
   let query = EmployeeProfile.find(filter)
     .populate('user', 'firstName lastName email role isActive')
     .populate('hrPartner', 'firstName lastName email')
+    .populate('company', 'name code')
     .sort({ createdAt: -1 });
   let profiles = await query;
   if (q) {
@@ -458,6 +529,7 @@ const getEmployee = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findById(req.params.id)
     .populate('user', 'firstName lastName email role phone isActive')
     .populate('hrPartner', 'firstName lastName email')
+    .populate('company', 'name code')
     .populate('reportingManager', 'firstName lastName email');
   if (!profile) {
     res.status(404);
@@ -480,6 +552,7 @@ const getEmployee = asyncHandler(async (req, res) => {
  */
 // POST /api/employees  (HR/Admin)
 const createEmployee = asyncHandler(async (req, res) => {
+  normalizeRefFields(req.body);
   const { user: userId, employeeCode, dateOfJoining } = req.body;
   if (!userId || !employeeCode || !dateOfJoining) {
     res.status(400);
@@ -515,6 +588,10 @@ const createEmployee = asyncHandler(async (req, res) => {
     // is fully approved are both SuperAdmin controls.
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;
+    // With per-HR scoping on, an HR Manager only sees the employees they partner.
+    // Make them the partner of anyone they create, or the new joiner would drop
+    // straight out of their directory the moment it was saved.
+    if (req.user.role === 'HRManager') req.body.hrPartner = req.user._id;
   }
 
   // Consent flag, not profile data: pull it off the body so it is never stored,
@@ -523,6 +600,7 @@ const createEmployee = asyncHandler(async (req, res) => {
   delete req.body.allowCrossDepartment;
 
   await validateHierarchy(req.body, userId, null, allowCrossDept);
+  await assertWorkLocationCompany(req.body.workLocationRef, req.body.company, null);
 
   const profile = await EmployeeProfile.create(req.body);
 
@@ -561,6 +639,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
   }
   // Don't allow changing the linked user
   delete req.body.user;
+  normalizeRefFields(req.body);
 
   // Same uniqueness rule as create, minus this profile's own current code.
   if (req.body.employeeCode !== undefined) {
@@ -589,10 +668,61 @@ const updateEmployee = asyncHandler(async (req, res) => {
   delete req.body.allowCrossDepartment;
 
   await validateHierarchy(req.body, profile.user, profile, allowCrossDept);
+  // Resulting (company, site) after this write — validate only a newly-introduced mismatch.
+  const resultingRef = req.body.workLocationRef !== undefined ? req.body.workLocationRef : profile.workLocationRef;
+  const resultingCompany = req.body.company !== undefined ? req.body.company : profile.company;
+  await assertWorkLocationCompany(resultingRef, resultingCompany, profile);
+
+  // --- Route covered "detail" fields through the approval workflow ---
+  // The Backend (SuperAdmin) and a CEO/MD in edit mode write directly (each
+  // change audited). An HR Manager cannot change an employee's details directly:
+  // every changed catalogue field is queued as a request to the company CEO/MD,
+  // and the payload's value is reset to the current one so nothing is applied
+  // now. Non-catalogue fields (company, work-location site, …) apply as before.
+  const writesDirectly = req.user.role === 'SuperAdmin' || isEditingExec(req.user);
+  const auditTarget = {
+    name: `${profile.firstName || ''}`.trim() || undefined, // filled below from user if needed
+    profileId: profile._id,
+  };
+  const directAudits = [];
+  const queued = [];
+  for (const [key, meta] of Object.entries(FIELD_CATALOG)) {
+    if (meta.model !== 'Profile') continue; // name/email/phone live on User, edited elsewhere
+    if (!payloadHasPath(req.body, meta.path)) continue;
+    const nextVal = fmtFieldVal(meta, fieldGetPath(req.body, meta.path));
+    const curVal = fmtFieldVal(meta, fieldGetPath(profile, meta.path));
+    if (String(nextVal) === String(curVal)) continue; // unchanged
+    if (writesDirectly) {
+      directAudits.push({ meta, from: curVal, to: nextVal });
+    } else {
+      queued.push({ key, requestedValue: nextVal });
+      // Keep the stored value so Object.assign leaves the field untouched.
+      payloadSetPath(req.body, meta.path, fieldGetPath(profile, meta.path));
+    }
+  }
 
   Object.assign(profile, req.body);
   await profile.save();
-  res.json({ profile });
+
+  // Audit direct edits (Backend / exec edit-mode).
+  if (directAudits.length) {
+    const u = await User.findById(profile.user).select('firstName lastName');
+    auditTarget.name = `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
+    directAudits.forEach((c) => auditFieldChange(req.user, c.meta, c.from, c.to, auditTarget));
+  }
+
+  // Queue an HR Manager's detail changes for the company CEO/MD.
+  let queuedCount = 0;
+  if (queued.length) {
+    const { queueAdminChange } = require('./changeRequestController');
+    for (const q of queued) {
+      // eslint-disable-next-line no-await-in-loop
+      const cr = await queueAdminChange(req.user, profile.user, q.key, q.requestedValue);
+      if (cr) queuedCount += 1;
+    }
+  }
+
+  res.json({ profile, queuedForApproval: queuedCount });
 });
 
 /**
@@ -704,11 +834,14 @@ const exportAllEmployeesZip = asyncHandler(async (req, res) => {
  */
 // GET /api/employees/export.xlsx  (HR/Admin)
 const exportEmployeesXlsx = asyncHandler(async (req, res) => {
-  const profiles = await EmployeeProfile.find({})
+  // Scoped like the directory: an HR Manager exports only their assigned
+  // employees, a company-limited exec only their companies, the Backend all.
+  const profiles = await EmployeeProfile.find(scopeForHR(req))
     .populate('user', 'firstName lastName email phone role isActive')
     .populate('hrPartner', 'firstName lastName email')
     .populate('reportingManager', 'firstName lastName email')
     .populate('salaryStructure', 'name')
+    .populate('company', 'name code')
     .sort({ employeeCode: 1 });
   const stamp = new Date().toISOString().slice(0, 10);
   res.setHeader('Content-Disposition', `attachment; filename="employees-${stamp}.xlsx"`);
@@ -841,11 +974,22 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         salaryStructureId = st._id;
       }
 
+      // Resolve Company name (or code) -> Company._id (case-insensitive; optional)
+      let companyId;
+      if (p.companyName) {
+        const needle = new RegExp(`^${escapeRegExp(p.companyName)}$`, 'i');
+        const co = await Company.findOne({ $or: [{ name: needle }, { code: needle }] });
+        if (!co) {
+          throw new Error(`Company "${p.companyName}" not found — create it under Companies first`);
+        }
+        companyId = co._id;
+      }
+
       // ----- Create EmployeeProfile (rollback user on failure) -----
       // Spread all parsed profile fields (address, emergencyContact, bankDetails,
       // grade, probation, statutory, CTC, …) then override the resolved refs and
       // the special lookup columns.
-      const { hrPartnerEmail, reportingManagerEmail, salaryStructureName, ...profileFields } = p;
+      const { hrPartnerEmail, reportingManagerEmail, salaryStructureName, companyName, ...profileFields } = p;
       let createdProfile;
       try {
         createdProfile = await EmployeeProfile.create({
@@ -856,6 +1000,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
           hrPartner: hrPartnerId,
           reportingManager: reportingManagerId,
           salaryStructure: salaryStructureId,
+          company: companyId,
         });
       } catch (err) {
         await User.deleteOne({ _id: userDoc._id });
@@ -1026,5 +1171,6 @@ module.exports = {
   importEmployeesXlsx,
   // exported for unit tests
   assertSameDepartment,
+  assertWorkLocationCompany,
   validateHierarchy,
 };

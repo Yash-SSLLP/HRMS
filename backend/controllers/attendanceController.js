@@ -27,6 +27,7 @@ const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../
 const { notify, notifyMany } = require('../services/notify');
 const { usersHoldingAny } = require('../services/audience');
 const { hasPermission } = require('../middleware/authMiddleware');
+const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope } = require('../utils/employeeScope');
 // Punching in on a day you are on approved leave. The leave-side rules (which
 // day a leave still claims, who sits at the top of the ladder, and how a day is
 // handed back) live in leaveController; this module owns the punch and the
@@ -1058,7 +1059,9 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
  */
 const orgHeatmap = asyncHandler(async (req, res) => {
   const span = Math.min(Number(req.query.days) || 365, 400);
-  res.json(await computeHeatmapWindow({ empIds: null, span }));
+  // Scope to the employees this admin may see (HR Manager → their own; a
+  // company-limited exec → their companies; Backend → everyone / null).
+  res.json(await computeHeatmapWindow({ empIds: await allowedEmployeeIds(req), span }));
 });
 
 /**
@@ -1075,7 +1078,7 @@ const orgDayDetails = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('A valid date (YYYY-MM-DD) is required.');
   }
-  res.json(await computeDayDetails({ empIds: null, dateStr }));
+  res.json(await computeDayDetails({ empIds: await allowedEmployeeIds(req), dateStr }));
 });
 
 /**
@@ -1175,6 +1178,9 @@ const listAll = asyncHandler(async (req, res) => {
 
   const filter = { date: { $gte: start, $lt: capToToday(end) } };
   if (req.query.employee) filter.employee = req.query.employee;
+  // Limit to the employees this admin may see (also intersects a specific
+  // ?employee= against their scope).
+  await scopeEmployeeFilter(req, filter);
 
   const records = await Attendance.find(filter)
     .populate({
@@ -1255,6 +1261,10 @@ const monthSummary = asyncHandler(async (req, res) => {
   if (!profile) {
     res.status(404);
     throw new Error('Employee not found');
+  }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only view employees assigned to you');
   }
 
   const office = settings.office;
@@ -1350,12 +1360,16 @@ const punchMap = asyncHandler(async (req, res) => {
     ({ start, end } = monthRange(year, month));
   }
 
+  const punchFilter = {
+    date: { $gte: start, $lt: end },
+    // Only records that captured at least one GPS fix are useful on a map.
+    $or: [{ 'checkInLocation.lat': { $ne: null } }, { 'checkOutLocation.lat': { $ne: null } }],
+  };
+  if (req.query.employee) punchFilter.employee = req.query.employee;
+  await scopeEmployeeFilter(req, punchFilter);
+
   const [records, settings] = await Promise.all([
-    Attendance.find({
-      date: { $gte: start, $lt: end },
-      // Only records that captured at least one GPS fix are useful on a map.
-      $or: [{ 'checkInLocation.lat': { $ne: null } }, { 'checkOutLocation.lat': { $ne: null } }],
-    }).populate({
+    Attendance.find(punchFilter).populate({
       path: 'employee',
       select: 'employeeCode designation department user workLocationRef remotePunchAllowed',
       populate: [
@@ -1632,7 +1646,8 @@ const runAttendanceExport = async (req, res, opts = {}) => {
  */
 // GET /api/attendance/export?employee=&year=&month=&day=&months=   (HR/Admin)
 // Whole org in scope. See runAttendanceExport for the supported shapes.
-const exportAttendance = asyncHandler((req, res) => runAttendanceExport(req, res, {}));
+const exportAttendance = asyncHandler(async (req, res) =>
+  runAttendanceExport(req, res, { scopeIds: await allowedEmployeeIds(req) }));
 
 /**
  * Per-day present count and average hours over the trailing N days (dashboard charts).
@@ -1650,7 +1665,8 @@ const dailyStats = asyncHandler(async (req, res) => {
   const start = startOfDay(new Date());
   start.setDate(start.getDate() - (days - 1));
 
-  const records = await Attendance.find({ date: { $gte: start, $lte: end } })
+  const statsFilter = await scopeEmployeeFilter(req, { date: { $gte: start, $lte: end } });
+  const records = await Attendance.find(statsFilter)
     .select('date status checkIn hoursWorked')
     .lean();
 
@@ -1697,10 +1713,11 @@ const todayBoard = asyncHandler(async (req, res) => {
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
 
-  const records = await Attendance.find({
+  const boardFilter = await scopeEmployeeFilter(req, {
     date: { $gte: today, $lt: tomorrow },
     checkIn: { $ne: null },
-  })
+  });
+  const records = await Attendance.find(boardFilter)
     .populate({
       path: 'employee',
       select: 'employeeCode designation department user',
@@ -1759,7 +1776,9 @@ const presenceBoard = asyncHandler(async (req, res) => {
   const { LeaveRequest } = require('../models/Leave');
 
   const [profiles, records, leaves] = await Promise.all([
-    EmployeeProfile.find({})
+    // Scoped roster — the present/leave/absent split is computed from this set,
+    // so an HR Manager's board only ever counts their own assigned employees.
+    EmployeeProfile.find(employeeProfileScope(req))
       .select('employeeCode designation department user dateOfExit')
       .populate('user', 'firstName lastName photo isActive')
       .lean(),
@@ -1897,6 +1916,15 @@ const createRecord = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('employee and date are required');
   }
+  const target = await EmployeeProfile.findById(employee).select('hrPartner company');
+  if (!target) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  if (cannotManageProfile(req, target)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
+  }
   const day = startOfDay(date);
   const existing = await Attendance.findOne({ employee, date: day });
   if (existing) {
@@ -1927,6 +1955,11 @@ const updateRecord = asyncHandler(async (req, res) => {
   if (!record) {
     res.status(404);
     throw new Error('Attendance record not found');
+  }
+  const recProfile = await EmployeeProfile.findById(record.employee).select('hrPartner company');
+  if (cannotManageProfile(req, recProfile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   // Don't allow changing employee or date here
   delete req.body.employee;
@@ -2034,6 +2067,11 @@ const deleteRecord = asyncHandler(async (req, res) => {
   if (!record) {
     res.status(404);
     throw new Error('Attendance record not found');
+  }
+  const recProfile = await EmployeeProfile.findById(record.employee).select('hrPartner company');
+  if (cannotManageProfile(req, recProfile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   await record.deleteOne();
   res.json({ id: req.params.id, deleted: true });
@@ -2161,11 +2199,21 @@ async function applyRestDayDecision(record, { decision, note, by }) {
 // GET /api/attendance/rest-day-work
 const listRestDayWork = asyncHandler(async (req, res) => {
   const now = new Date();
+  const year = Number(req.query.year) || now.getFullYear();
+  const month = Number(req.query.month) || now.getMonth() + 1;
+  const empIds = await allowedEmployeeIds(req);
+  const employee = req.query.employee || null;
+  // A specific ?employee= outside this admin's scope returns nothing.
+  if (employee && empIds && !empIds.some((id) => String(id) === String(employee))) {
+    res.json({ year, month, counts: { pending: 0, approved: 0, rejected: 0 }, claims: [] });
+    return;
+  }
   res.json(await buildRestDayClaims({
-    year: Number(req.query.year) || now.getFullYear(),
-    month: Number(req.query.month) || now.getMonth() + 1,
+    empIds,
+    year,
+    month,
     state: req.query.state || 'all',
-    employee: req.query.employee || null,
+    employee,
   }));
 });
 
@@ -2187,6 +2235,11 @@ const decideRestDayWork = asyncHandler(async (req, res) => {
   if (!record) {
     res.status(404);
     throw new Error('Attendance record not found');
+  }
+  const rdProfile = await EmployeeProfile.findById(record.employee).select('hrPartner company');
+  if (cannotManageProfile(req, rdProfile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   try {
     await applyRestDayDecision(record, { decision, note: req.body.note, by: req.user });

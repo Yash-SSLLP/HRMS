@@ -1,15 +1,25 @@
 const mongoose = require('mongoose');
 
-// An employee's request to change one of their own profile/credential fields,
-// routed to HR/Admin for approval before it is applied to the User or
-// EmployeeProfile record. FIELD_CATALOG whitelists which fields are changeable.
+// A request to change one whitelisted profile/credential field, routed for
+// approval before it is applied to the User or EmployeeProfile record.
+//
+// Two directions share this model:
+//   • Employee-raised  → decided by the employee's HR partner (approverKind 'hr').
+//   • HR-raised        → decided by the employee's company CEO/MD (approverKind
+//                        'exec'). HR cannot change an employee's details directly.
+// The Backend (SuperAdmin) never needs a request — it edits directly (audited).
+//
 // pending -> awaiting decision; approved -> applied; declined -> rejected.
 const CHANGE_REQUEST_STATUSES = ['pending', 'approved', 'declined'];
+const APPROVER_KINDS = ['hr', 'exec'];
 
-// Catalogue of fields an employee may request a change to. Each entry says
+// Catalogue of fields that flow through the request workflow. Each entry says
 // which underlying document the value lives on ('User' = login/credentials,
 // 'Profile' = EmployeeProfile) and the dot-path to set. `secret` fields
-// (password) are never snapshotted or echoed back.
+// (password) are never snapshotted or echoed back. System fields (employee code,
+// dates of joining/exit), org-structure refs (company, reporting manager, work
+// location site, HR partner) and the approval-ladder / payroll controls are
+// deliberately NOT here — they stay direct Backend/HR actions, not "details".
 const FIELD_CATALOG = {
   // --- Credentials / account (User) ---
   email: { label: 'Login Email', model: 'User', path: 'email' },
@@ -20,14 +30,20 @@ const FIELD_CATALOG = {
 
   // --- Personal (EmployeeProfile) ---
   dateOfBirth: { label: 'Date of Birth', model: 'Profile', path: 'dateOfBirth', type: 'date' },
+  gender: { label: 'Gender', model: 'Profile', path: 'gender' },
+  maritalStatus: { label: 'Marital Status', model: 'Profile', path: 'maritalStatus' },
+  dateOfMarriage: { label: 'Marriage Date', model: 'Profile', path: 'dateOfMarriage', type: 'date' },
 
-  // --- Employment (EmployeeProfile) ---
+  // --- Employment detail (EmployeeProfile) ---
   designation: { label: 'Designation', model: 'Profile', path: 'designation' },
   department: { label: 'Department', model: 'Profile', path: 'department' },
-  workLocation: { label: 'Work Location', model: 'Profile', path: 'workLocation' },
+  workLocation: { label: 'Work Location (text)', model: 'Profile', path: 'workLocation' },
+  grade: { label: 'Grade', model: 'Profile', path: 'grade' },
+  employmentType: { label: 'Employment Type', model: 'Profile', path: 'employmentType' },
 
   // --- Statutory IDs (EmployeeProfile) ---
   pan: { label: 'PAN', model: 'Profile', path: 'pan' },
+  aadhaar: { label: 'Aadhaar', model: 'Profile', path: 'aadhaar' },
   uan: { label: 'UAN', model: 'Profile', path: 'uan' },
   pfNumber: { label: 'PF Number', model: 'Profile', path: 'pfNumber' },
   esicNumber: { label: 'ESIC Number', model: 'Profile', path: 'esicNumber' },
@@ -38,6 +54,7 @@ const FIELD_CATALOG = {
   'bankDetails.branch': { label: 'Bank - Branch', model: 'Profile', path: 'bankDetails.branch' },
   'bankDetails.accountNumber': { label: 'Bank - Account Number', model: 'Profile', path: 'bankDetails.accountNumber' },
   'bankDetails.ifsc': { label: 'Bank - IFSC', model: 'Profile', path: 'bankDetails.ifsc' },
+  'bankDetails.accountType': { label: 'Bank - Account Type', model: 'Profile', path: 'bankDetails.accountType' },
 
   // --- Current address (EmployeeProfile) ---
   'address.current.line1': { label: 'Address - Line 1', model: 'Profile', path: 'address.current.line1' },
@@ -45,6 +62,13 @@ const FIELD_CATALOG = {
   'address.current.city': { label: 'Address - City', model: 'Profile', path: 'address.current.city' },
   'address.current.state': { label: 'Address - State', model: 'Profile', path: 'address.current.state' },
   'address.current.pincode': { label: 'Address - PIN Code', model: 'Profile', path: 'address.current.pincode' },
+
+  // --- Permanent address (EmployeeProfile) ---
+  'address.permanent.line1': { label: 'Permanent Address - Line 1', model: 'Profile', path: 'address.permanent.line1' },
+  'address.permanent.line2': { label: 'Permanent Address - Line 2', model: 'Profile', path: 'address.permanent.line2' },
+  'address.permanent.city': { label: 'Permanent Address - City', model: 'Profile', path: 'address.permanent.city' },
+  'address.permanent.state': { label: 'Permanent Address - State', model: 'Profile', path: 'address.permanent.state' },
+  'address.permanent.pincode': { label: 'Permanent Address - PIN Code', model: 'Profile', path: 'address.permanent.pincode' },
 
   // --- Emergency contact (EmployeeProfile) ---
   'emergencyContact.name': { label: 'Emergency Contact - Name', model: 'Profile', path: 'emergencyContact.name' },
@@ -54,9 +78,15 @@ const FIELD_CATALOG = {
 
 const changeRequestSchema = new mongoose.Schema(
   {
-    // Who raised the request.
+    // Who raised the request (an employee for their own record, or an HR Manager
+    // for one of their employees).
     requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    // The admin (HR partner / SuperAdmin) responsible for deciding it.
+    // Whose record the change lands on. Same as requestedBy for a self-request;
+    // the employee's User id when HR raises it.
+    targetUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+    // Who decides: an HR partner ('hr') or a company CEO/MD ('exec').
+    approverKind: { type: String, enum: APPROVER_KINDS, default: 'hr', index: true },
+    // The admin responsible for deciding it (HR partner / CEO / MD / SuperAdmin).
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
 
     // Which catalogue field this targets, plus a human label snapshot.
@@ -64,7 +94,7 @@ const changeRequestSchema = new mongoose.Schema(
     fieldLabel: { type: String, trim: true },
 
     // Snapshot of the value at request time (blank for secret fields), the value
-    // the employee asked for, and the value the admin actually applied.
+    // asked for, and the value actually applied.
     currentValue: { type: String, trim: true, maxlength: 2000 },
     requestedValue: { type: String, required: true, trim: true, maxlength: 2000 },
     appliedValue: { type: String, trim: true, maxlength: 2000 },
@@ -80,8 +110,9 @@ const changeRequestSchema = new mongoose.Schema(
 );
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-changeRequestSchema.plugin(require("./plugins/auditStatus"));
+changeRequestSchema.plugin(require('./plugins/auditStatus'));
 
 module.exports = mongoose.model('ChangeRequest', changeRequestSchema);
 module.exports.CHANGE_REQUEST_STATUSES = CHANGE_REQUEST_STATUSES;
+module.exports.APPROVER_KINDS = APPROVER_KINDS;
 module.exports.FIELD_CATALOG = FIELD_CATALOG;

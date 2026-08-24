@@ -139,6 +139,8 @@ export default function AdminDocuments() {
     <div>
       <PageHeader title="Employee Documents" />
 
+      <ReplacementRequests onChanged={loadDocs} />
+
       <div className="bg-white shadow rounded-lg p-4 mb-4 flex gap-3 items-end flex-wrap">
         <div className="flex-1 min-w-[240px]">
           <label className="block text-xs text-gray-600">Employee</label>
@@ -255,6 +257,74 @@ export default function AdminDocuments() {
       </div>
 
       {previewDoc && <DocPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />}
+    </div>
+  );
+}
+
+// HR inbox of employee document-replacement requests. Approving swaps the new
+// file in for the locked one; declining discards it. Reloads the doc list so a
+// swap shows immediately.
+function ReplacementRequests({ onChanged }) {
+  const [requests, setRequests] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState('');
+
+  const load = async () => {
+    try {
+      const { data } = await api.get('/documents/replace-requests/assigned');
+      setRequests((data.requests || []).filter((r) => r.status === 'pending'));
+    } catch (e) {
+      setErr(e.response?.data?.message || 'Could not load replacement requests');
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const decide = async (r, action) => {
+    let note = '';
+    if (action === 'decline') note = (await promptDialog({ message: 'Reason for declining (optional):' })) || '';
+    setBusyId(r._id); setErr('');
+    try {
+      await api.patch(`/documents/replace-requests/${r._id}`, { action, decisionNote: note });
+      await load();
+      if (onChanged) await onChanged();
+    } catch (e) {
+      setErr(e.response?.data?.message || 'Action failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (requests.length === 0) return null;
+  return (
+    <div className="bg-amber-50 border border-amber-200 shadow-sm rounded-lg p-4 mb-4">
+      <div className="text-sm font-semibold text-amber-900 mb-2">Document replacement requests ({requests.length})</div>
+      {err && <div className="text-xs text-red-700 mb-2">{err}</div>}
+      <ul className="divide-y divide-amber-200">
+        {requests.map((r) => {
+          const who = r.employee?.user ? `${r.employee.user.firstName || ''} ${r.employee.user.lastName || ''}`.trim() : (r.requestedBy ? `${r.requestedBy.firstName || ''} ${r.requestedBy.lastName || ''}`.trim() : 'Employee');
+          return (
+            <li key={r._id} className="py-2 flex items-center justify-between gap-3 flex-wrap">
+              <div className="min-w-0 text-sm">
+                <span className="font-medium text-gray-900">{who}</span>
+                <span className="text-gray-500"> wants to replace </span>
+                <span className="font-medium text-gray-800">{r.category}</span>
+                <span className="text-gray-500"> · new file: {r.fileName || 'attached'}</span>
+                {r.reason && <div className="text-xs text-gray-500 italic">“{r.reason}”</div>}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button disabled={busyId === r._id} onClick={() => decide(r, 'approve')}
+                  className="bg-green-600 text-white text-xs px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 disabled:opacity-60">
+                  {busyId === r._id ? '…' : 'Approve & swap'}
+                </button>
+                <button disabled={busyId === r._id} onClick={() => decide(r, 'decline')}
+                  className="bg-white border border-gray-300 text-gray-700 text-xs px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-60">
+                  Decline
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

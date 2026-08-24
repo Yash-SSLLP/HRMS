@@ -14,7 +14,10 @@ const EmployeeProfile = require('../models/EmployeeProfile');
  */
 // GET /api/work-locations — all locations with how many employees are assigned.
 const listLocations = asyncHandler(async (req, res) => {
-  const locations = await WorkLocation.find().sort({ name: 1 }).lean();
+  const locations = await WorkLocation.find()
+    .populate('company', 'name code')
+    .sort({ name: 1 })
+    .lean();
   const counts = await EmployeeProfile.aggregate([
     { $match: { workLocationRef: { $ne: null } } },
     { $group: { _id: '$workLocationRef', n: { $sum: 1 } } },
@@ -40,7 +43,7 @@ const listLocations = asyncHandler(async (req, res) => {
  */
 // POST /api/work-locations
 const createLocation = asyncHandler(async (req, res) => {
-  const { name, lat, lng, radiusM, active } = req.body;
+  const { name, company, lat, lng, radiusM, active } = req.body;
   if (!name || !name.trim()) {
     res.status(400);
     throw new Error('name is required');
@@ -52,6 +55,7 @@ const createLocation = asyncHandler(async (req, res) => {
   }
   const location = await WorkLocation.create({
     name: name.trim(),
+    company: company || undefined,
     lat: lat != null && lat !== '' ? Number(lat) : undefined,
     lng: lng != null && lng !== '' ? Number(lng) : undefined,
     radiusM: radiusM != null && radiusM !== '' ? Math.max(0, Number(radiusM)) : undefined,
@@ -75,8 +79,36 @@ const updateLocation = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Work location not found');
   }
-  const { name, lat, lng, radiusM, active } = req.body;
+  const { name, company, lat, lng, radiusM, active, acknowledgeStranded } = req.body;
   if (name !== undefined) location.name = name.trim();
+  if (company !== undefined) {
+    const newCompany = company || null;
+    const changing = String(location.company || '') !== String(newCompany || '');
+    // Retagging a site to a different company can strand employees already
+    // assigned here who belong to another company. Don't silently do it — return
+    // a structured 409 the client turns into a warning, and only proceed once the
+    // admin acknowledges. Moving TO "no company" (a shared site) strands nobody.
+    if (changing && newCompany && acknowledgeStranded !== true) {
+      const assigned = await EmployeeProfile.find({ workLocationRef: location._id })
+        .select('company employeeCode user')
+        .populate('user', 'firstName lastName')
+        .lean();
+      const stranded = assigned.filter((p) => p.company && String(p.company) !== String(newCompany));
+      if (stranded.length) {
+        res.status(409);
+        return res.json({
+          code: 'STRANDED_EMPLOYEES',
+          count: stranded.length,
+          message: `${stranded.length} employee(s) assigned to this site belong to a different company. Changing its company leaves them at a site outside their own company.`,
+          employees: stranded.slice(0, 20).map((p) => ({
+            employeeCode: p.employeeCode || '',
+            name: `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim(),
+          })),
+        });
+      }
+    }
+    location.company = newCompany || undefined;
+  }
   if (lat !== undefined) location.lat = lat === '' || lat == null ? undefined : Number(lat);
   if (lng !== undefined) location.lng = lng === '' || lng == null ? undefined : Number(lng);
   if (radiusM !== undefined) location.radiusM = Math.max(0, Number(radiusM) || 0);
@@ -138,6 +170,17 @@ const assignEmployees = asyncHandler(async (req, res) => {
     throw new Error('Work location not found');
   }
   const ids = [...new Set((req.body.employeeIds || []).map(String))].filter(Boolean);
+  // A company-tagged site only accepts employees of that company (or company-less
+  // employees). This is a new assignment, so any mismatch is a new one — reject
+  // the batch with a clear message rather than silently creating a bad pairing.
+  if (location.company) {
+    const targets = await EmployeeProfile.find({ _id: { $in: ids } }).select('company');
+    const mismatched = targets.filter((p) => p.company && String(p.company) !== String(location.company));
+    if (mismatched.length) {
+      res.status(400);
+      throw new Error(`${mismatched.length} of the selected employee(s) belong to a different company than this site. Assign only employees in the site's company, or company-less employees.`);
+    }
+  }
   const result = await EmployeeProfile.updateMany(
     { _id: { $in: ids } },
     { $set: { workLocationRef: location._id } }

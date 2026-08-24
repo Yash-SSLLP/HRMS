@@ -45,16 +45,23 @@ export default function ChangeRequestScreen() {
 
   const labelFor = (key) => fields.find((f) => f.key === key)?.label || key;
 
-  // Validate then POST the selected field + new value for HR approval.
+  // Empty fields are filled directly (applied at once); filled fields go to HR
+  // as a change request.
   const submit = async () => {
     if (!field) { toast('Pick a field', 'Choose what you want to change.'); return; }
-    if (!value.trim()) { toast('Add a value', 'Enter the new value.'); return; }
+    if (!value.trim()) { toast('Add a value', 'Enter the value.'); return; }
+    if (field.pending) { toast('Already pending', 'A request for this field is already waiting.'); return; }
     setSubmitting(true);
     try {
-      await api.post('/change-requests', { field: field.key, requestedValue: value.trim(), reason: reason.trim() || undefined });
+      if (field.isEmpty && !field.secret) {
+        await api.post('/change-requests/fill', { field: field.key, value: value.trim() });
+        toast('Saved', 'Added to your profile.');
+      } else {
+        await api.post('/change-requests', { field: field.key, requestedValue: value.trim(), reason: reason.trim() || undefined });
+        toast('Submitted', 'Your change request was sent to HR for approval.');
+      }
       setShowForm(false); setField(null); setValue(''); setReason('');
       await load();
-      toast('Submitted', 'Your change request was sent to HR for approval.');
     } catch (err) {
       toast('Could not submit', errMsg(err));
     } finally {
@@ -76,19 +83,25 @@ export default function ChangeRequestScreen() {
               <View style={styles.chips}>
                 {fields.map((f) => (
                   <TouchableOpacity key={f.key} onPress={() => { setField(f); setValue(''); }} style={[styles.chip, field?.key === f.key && styles.chipActive]}>
-                    <Text style={[styles.chipText, field?.key === f.key && { color: colors.onPrimary }]}>{f.label}</Text>
+                    <Text style={[styles.chipText, field?.key === f.key && { color: colors.onPrimary }]}>
+                      {f.label}{f.pending ? ' · pending' : f.isEmpty && !f.secret ? ' · missing' : ''}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </Field>
-            {field && !field.secret && field.currentValue ? (
-              <Text style={styles.current}>Current: {field.currentValue}</Text>
+            {field?.pending ? (
+              <Text style={[styles.current, { color: colors.warning || '#B45309' }]}>A request for this field is already pending.</Text>
+            ) : field && !field.secret ? (
+              <Text style={styles.current}>{field.currentValue ? `Current: ${field.currentValue}` : 'Empty — filling this saves it straight away.'}</Text>
             ) : null}
-            <Field label={field ? `New ${field.label.toLowerCase()}` : 'New value'}>
-              <Input value={value} onChangeText={setValue} placeholder="New value" secureTextEntry={field?.secret} autoCapitalize={field?.type === 'email' ? 'none' : 'sentences'} keyboardType={field?.type === 'email' ? 'email-address' : 'default'} />
+            <Field label={field ? (field.isEmpty && !field.secret ? field.label : `New ${field.label.toLowerCase()}`) : 'Value'}>
+              <Input value={value} onChangeText={setValue} placeholder="Value" secureTextEntry={field?.secret} autoCapitalize={field?.type === 'email' ? 'none' : 'sentences'} keyboardType={field?.type === 'email' ? 'email-address' : 'default'} />
             </Field>
-            <Field label="Reason (optional)"><Input value={reason} onChangeText={setReason} placeholder="Why this change?" multiline /></Field>
-            <AppButton title="Submit request" icon="send" onPress={submit} loading={submitting} />
+            {field && !field.isEmpty ? (
+              <Field label="Reason (optional)"><Input value={reason} onChangeText={setReason} placeholder="Why this change?" multiline /></Field>
+            ) : null}
+            <AppButton title={field?.isEmpty && !field?.secret ? 'Save' : 'Submit request'} icon="send" onPress={submit} loading={submitting} />
           </Card>
         )}
 

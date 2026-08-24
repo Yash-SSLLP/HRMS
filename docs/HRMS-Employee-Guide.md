@@ -60,7 +60,7 @@ Attendance is the record that you were at work, and it feeds directly into your 
 - Every punch requires a **selfie**. This is mandatory, not optional.
 - Every punch also captures your **GPS location**. The app shows only that it is working; your coordinates are never displayed, and you are never told whether you are inside or outside the office range. A punch is **never blocked** — the location is simply recorded for HR.
 - **Work From Home** is a permission, not a checkbox everyone has. If it has been granted to you, a WFH tick appears at punch time and those punches are exempt from the office-range check. If you do not see it, it has not been granted.
-- **Filing an expense records your location.** Both the khata expense form and the reimbursement claim form say so before you submit. It is a single reading taken at that moment — not tracking, and nothing is recorded at any other time. Only a **Super Admin** can see it: not HR, not the accounts team, not your manager. If your device cannot get a fix or you have not allowed location access, the expense still files, without one.
+- **Filing an expense records your location.** Both the khata expense form and the reimbursement claim form say so before you submit. It is a single reading taken at that moment — not tracking, and nothing is recorded at any other time. Only the **Backend** can see it: not HR, not the accounts team, not your manager. If your device cannot get a fix or you have not allowed location access, the expense still files, without one.
 - **Checking in from outside the office** can be allowed for you as a standing permission — the answer for site, field and travelling roles. When it is, the punch screen tells you so, and none of your punches are flagged for being away from the office. You do not have to tick anything, and you do not have to claim you were at home. Your location is still recorded, exactly as it is for everybody else.
 - You may declare a **half day** at either punch.
 - After check-in, a live timer counts your working time and freezes when you check out.
@@ -132,7 +132,7 @@ How it plays out:
 
 ### Rule two — five free late arrivals a month
 
-A late arrival is a check-in after the company's start time — **10:00 AM** by default — plus any grace window. A Super Admin can move both, and the current rule is shown on the "Lateness and leave" card on your Attendance screen. The first **five late days each month are free**. From the sixth onward, each late day costs:
+A late arrival is a check-in after the company's start time — **10:00 AM** by default — plus any grace window. The Backend can move both, and the current rule is shown on the "Lateness and leave" card on your Attendance screen. The first **five late days each month are free**. From the sixth onward, each late day costs:
 
 - **₹200 per day** if your monthly Basic salary is below ₹25,000, or
 - **₹400 per day** if your monthly Basic is ₹25,000 or more.
@@ -302,11 +302,13 @@ These appear only when they are relevant to you:
 
 Your full record: personal details, employment information, statutory identifiers with the sensitive ones masked, and bank details.
 
-You can change exactly two things yourself: your **profile photograph** and your **date of birth**. Everything else goes through a change request.
+You can **fill in anything that is missing** yourself — a blank detail (bank account, address, an ID, and so on) saves the moment you enter it, from the **Account** page. Your **profile photograph** and **date of birth** are always yours to set. Once a detail has a value it is locked: to change it, you raise a change request.
 
 ### 12.2 Change requests
 
-Pick the field, see its current value, enter what it should be, and give a reason. Track it from pending to approved or declined, with HR's note. On approval HR applies the change for you.
+From the **Account** page, pick a detail. If it is empty you simply enter it and it saves. If it already has a value, enter what it should be and give a reason — that becomes a request to your HR, who approves (and applies it) or declines with a note. You can track each one from pending to approved or declined. A field with a request already in flight is marked *pending* until it is decided.
+
+The same lock applies to **documents**: you upload a required document that is missing, but once it is submitted you cannot delete or replace it. To change one, use **Request replacement** on that document — attach the new file and it goes to HR to approve. A document HR has *rejected* is the one exception: you can simply re-upload that.
 
 ### 12.3 Complaints
 
@@ -349,7 +351,7 @@ Almost everything above is in the Android app, organised under a **Menu**:
 - **Where do I see what this month will cost me?** The "Lateness and leave" card on the Attendance screen.
 - **What if I work on a day I am on leave?** Punch in as normal. The day stays leave until your approver confirms it, then the leave day is returned to you.
 - **Why can I not download my payslip?** Request it first; HR releases it, and then the download appears.
-- **What can I edit myself?** Your profile photograph and your date of birth. Everything else is a change request.
+- **What can I edit myself?** Anything on your profile that is still blank — you fill it in and it saves. Your photo and date of birth too. Once a detail is filled, changing it is a change request your HR approves.
 - **Who sees my complaint?** Leadership and HR only — never the person it concerns.
 - **Something in a course is broken.** Use "Report an issue" inside the course player.
 

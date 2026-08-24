@@ -12,6 +12,7 @@ const {
   isUnpaidType, isMaternityType, isEmergencyType,
 } = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
 const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
@@ -1044,9 +1045,20 @@ const setDoubleCut = asyncHandler(async (req, res) => {
   // Either HR (leave.manage) or someone on this employee's reporting ladder.
   const onLadder = (request.approvalChain || [])
     .some((s) => s.approver && String(s.approver) === String(req.user._id));
-  if (!hasPermission(req.user, 'leave.manage') && !onLadder) {
+  const isHrActor = hasPermission(req.user, 'leave.manage');
+  if (!isHrActor && !onLadder) {
     res.status(403);
     throw new Error('Only this employee\'s managers or HR can charge an emergency leave double.');
+  }
+  // An HR Manager acting purely as HR (not sitting on this employee's ladder)
+  // may only touch their own assigned employees. A ladder approver keeps their
+  // authority regardless of who the employee is partnered with.
+  if (isHrActor && !onLadder) {
+    const dcProfile = await EmployeeProfile.findById(request.employee).select('hrPartner company');
+    if (cannotManageProfile(req, dcProfile)) {
+      res.status(403);
+      throw new Error('You can only manage employees assigned to you');
+    }
   }
 
   const apply = req.body.apply !== false;
@@ -1170,6 +1182,9 @@ const listAllRequests = asyncHandler(async (req, res) => {
     if (from) filter.startDate.$gte = new Date(from);
     if (to) filter.startDate.$lte = new Date(to);
   }
+  // Limit to the employees this admin may see (HR Manager → assigned, exec →
+  // their companies; also intersects a specific ?employee= against that scope).
+  await scopeEmployeeFilter(req, filter);
   const requests = await LeaveRequest.find(filter)
     .populate({
       path: 'employee',
@@ -1540,6 +1555,11 @@ const approveRequest = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Leave request not found');
   }
+  const apProfile = await EmployeeProfile.findById(request.employee).select('hrPartner company');
+  if (cannotManageProfile(req, apProfile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
+  }
   try {
     await applyLeaveDecision(request, req.user._id, 'approve', req.body.note);
   } catch (err) {
@@ -1563,6 +1583,11 @@ const rejectRequest = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Leave request not found');
   }
+  const rjProfile = await EmployeeProfile.findById(request.employee).select('hrPartner company');
+  if (cannotManageProfile(req, rjProfile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
+  }
   try {
     await applyLeaveDecision(request, req.user._id, 'reject', req.body.note);
   } catch (err) {
@@ -1581,7 +1606,8 @@ const rejectRequest = asyncHandler(async (req, res) => {
 // GET /api/leave/balances?year= — list balances (admin)
 const listBalances = asyncHandler(async (req, res) => {
   const year = Number(req.query.year) || currentYear();
-  const balances = await LeaveBalance.find({ year }).populate({
+  const filter = await scopeEmployeeFilter(req, { year });
+  const balances = await LeaveBalance.find(filter).populate({
     path: 'employee',
     select: 'employeeCode user',
     populate: { path: 'user', select: 'firstName lastName email' },
@@ -1605,6 +1631,10 @@ const upsertBalance = asyncHandler(async (req, res) => {
   if (!profile) {
     res.status(404);
     throw new Error('Employee profile not found');
+  }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   const balance = await getOrCreateBalance(profile._id, Number(year));
   const { balances } = req.body || {};

@@ -15,16 +15,18 @@ export default function AddEmployeeScreen() {
   const roleOptions = myRole === 'SuperAdmin' ? ['Employee', 'Manager', 'HRManager'] : ['Employee'];
 
   const [departments, setDepartments] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [f, setF] = useState({
     firstName: '', lastName: '', email: '', password: '', phone: '', role: 'Employee',
-    employeeCode: '', dateOfJoining: '', designation: '', department: '', workLocation: '', dateOfBirth: '',
+    employeeCode: '', dateOfJoining: '', designation: '', department: '', company: '', workLocation: '', dateOfBirth: '',
   });
   const set = (k, v) => setF((prev) => ({ ...prev, [k]: v }));
 
   useFocusEffect(
     useCallback(() => {
       api.get('/departments').then(({ data }) => setDepartments(data.departments || [])).catch(() => {});
+      api.get('/companies').then(({ data }) => setCompanies(data.companies || [])).catch(() => {});
     }, [])
   );
 
@@ -72,6 +74,7 @@ export default function AddEmployeeScreen() {
         dateOfJoining: f.dateOfJoining,
         designation: f.designation || undefined,
         department: f.department || undefined,
+        company: f.company || undefined,
         workLocation: f.workLocation || undefined,
         dateOfBirth: f.dateOfBirth || undefined,
       });
@@ -136,6 +139,20 @@ export default function AddEmployeeScreen() {
                 </View>
               )}
             </Field>
+            {companies.length > 0 && (
+              <Field label="Company (optional)">
+                <View style={styles.chips}>
+                  <TouchableOpacity onPress={() => set('company', '')} style={[styles.chip, !f.company && styles.chipActive]}>
+                    <Text style={[styles.chipText, !f.company && { color: colors.onPrimary }]}>Unassigned</Text>
+                  </TouchableOpacity>
+                  {companies.filter((c) => c.isActive !== false).map((c) => (
+                    <TouchableOpacity key={c._id} onPress={() => set('company', c._id)} style={[styles.chip, f.company === c._id && styles.chipActive]}>
+                      <Text style={[styles.chipText, f.company === c._id && { color: colors.onPrimary }]}>{c.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </Field>
+            )}
             <View style={{ flexDirection: 'row', gap: spacing(3) }}>
               <View style={{ flex: 1 }}><Field label="Work location"><Input value={f.workLocation} onChangeText={(v) => set('workLocation', v)} placeholder="Mumbai" /></Field></View>
               <View style={{ flex: 1 }}><Field label="Birthday (optional)"><DateField value={f.dateOfBirth} onChange={(v) => set('dateOfBirth', v)} maximumDate={new Date()} placeholder="Optional" /></Field></View>

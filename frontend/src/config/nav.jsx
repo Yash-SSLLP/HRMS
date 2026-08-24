@@ -68,6 +68,7 @@ export const adminNav = [
     { to: '/admin/employees', label: 'Employees', icon: FiBriefcase, perm: 'employees.manage' },
     { to: '/admin/users', label: 'Users', icon: FiUsers, perm: 'users.manage' },
     { to: '/admin/org-chart', label: 'Org Chart', icon: FiGitBranch },
+    { to: '/admin/companies', label: 'Companies', icon: FiHome, roles: ['SuperAdmin'] },
     { to: '/admin/departments', label: 'Departments', icon: FiGrid, perm: 'org.manage' },
     { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap, perm: 'org.manage' },
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },

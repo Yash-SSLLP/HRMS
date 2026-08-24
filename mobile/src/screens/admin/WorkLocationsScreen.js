@@ -6,12 +6,13 @@ import * as Location from 'expo-location';
 
 import api, { errMsg } from '../../api/client';
 import { colors, radius, spacing, font } from '../../theme';
-import { Screen, Card, AppButton, Field, Input, Loader, EmptyState, ModalSheet, refresher, Ionicons } from '../../components/ui';
+import { Screen, Card, AppButton, Field, Input, Loader, EmptyState, ModalSheet, refresher, Ionicons, ChipSelect } from '../../components/ui';
 
-const blank = () => ({ name: '', lat: '', lng: '', radiusM: '200', active: true });
+const blank = () => ({ name: '', company: '', lat: '', lng: '', radiusM: '200', active: true });
 
 export default function WorkLocationsScreen() {
   const [locations, setLocations] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState(null); // form or null
@@ -24,6 +25,9 @@ export default function WorkLocationsScreen() {
     setLoading(false);
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  useEffect(() => {
+    api.get('/companies').then(({ data }) => setCompanies(data.companies || [])).catch(() => {});
+  }, []);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const useMyLocation = async () => {
@@ -37,22 +41,37 @@ export default function WorkLocationsScreen() {
     }
   };
 
-  const save = async () => {
+  const save = async (acknowledgeStranded = false) => {
     if (!editing.name.trim()) { toast('Name required', 'Enter a location name.'); return; }
     setSaving(true);
     try {
       const payload = {
         name: editing.name,
+        company: editing.company || null,
         lat: editing.lat === '' ? null : Number(editing.lat),
         lng: editing.lng === '' ? null : Number(editing.lng),
         radiusM: Number(editing.radiusM) || 0,
         active: editing.active,
       };
+      if (acknowledgeStranded) payload.acknowledgeStranded = true;
       if (editing._id) await api.put(`/work-locations/${editing._id}`, payload);
       else await api.post('/work-locations', payload);
       setEditing(null);
       await load();
     } catch (err) {
+      const data = err.response?.data;
+      // Retagging to another company would strand employees already here — warn.
+      if (err.response?.status === 409 && data?.code === 'STRANDED_EMPLOYEES') {
+        Alert.alert(
+          'Employees in another company',
+          `${data.count} employee(s) assigned here belong to a different company. Changing the site's company leaves them at a site outside their own. Change it anyway?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Change anyway', style: 'destructive', onPress: () => save(true) },
+          ]
+        );
+        return;
+      }
       toast('Save failed', errMsg(err));
     } finally {
       setSaving(false);
@@ -84,7 +103,7 @@ export default function WorkLocationsScreen() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={font.h3}>{l.name}</Text>
-                  <Text style={font.small}>Range: {l.radiusM} m</Text>
+                  <Text style={font.small}>{l.company?.name ? `${l.company.name} · ` : ''}Range: {l.radiusM} m</Text>
                 </View>
                 <View style={[styles.badge, { backgroundColor: l.active ? colors.successSoft : colors.surfaceAlt }]}>
                   <Text style={{ fontSize: 11, fontWeight: '700', color: l.active ? colors.success : colors.textMuted }}>{l.active ? 'Active' : 'Inactive'}</Text>
@@ -102,7 +121,7 @@ export default function WorkLocationsScreen() {
               <View style={styles.rowActions}>
                 <TouchableOpacity onPress={() => setAssignFor(l)}><Text style={styles.link}>👥 {l.assignedCount} assigned</Text></TouchableOpacity>
                 <View style={{ flexDirection: 'row', gap: 16, marginLeft: 'auto' }}>
-                  <TouchableOpacity onPress={() => setEditing({ _id: l._id, name: l.name, lat: l.lat ?? '', lng: l.lng ?? '', radiusM: String(l.radiusM ?? 200), active: l.active })}>
+                  <TouchableOpacity onPress={() => setEditing({ _id: l._id, name: l.name, company: l.company?._id || l.company || '', lat: l.lat ?? '', lng: l.lng ?? '', radiusM: String(l.radiusM ?? 200), active: l.active })}>
                     <Text style={styles.link}>Edit</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => remove(l)}><Text style={[styles.link, { color: colors.danger }]}>Delete</Text></TouchableOpacity>
@@ -119,6 +138,17 @@ export default function WorkLocationsScreen() {
         {editing && (
           <>
             <Field label="Name"><Input value={editing.name} onChangeText={(v) => setEditing({ ...editing, name: v })} placeholder="e.g. Bangalore HQ" /></Field>
+            {companies.length > 0 && (
+              <Field label="Company">
+                <ChipSelect
+                  options={[{ _id: '', name: 'Unassigned' }, ...companies.filter((c) => c.isActive !== false)]}
+                  value={editing.company || ''}
+                  onChange={(v) => setEditing({ ...editing, company: v })}
+                  getValue={(o) => o._id}
+                  getLabel={(o) => o.name}
+                />
+              </Field>
+            )}
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <View style={{ flex: 1 }}><Field label="Latitude"><Input value={String(editing.lat)} onChangeText={(v) => setEditing({ ...editing, lat: v })} keyboardType="numbers-and-punctuation" placeholder="12.97" /></Field></View>
               <View style={{ flex: 1 }}><Field label="Longitude"><Input value={String(editing.lng)} onChangeText={(v) => setEditing({ ...editing, lng: v })} keyboardType="numbers-and-punctuation" placeholder="77.59" /></Field></View>
@@ -153,6 +183,7 @@ function AssignSheet({ location, locations, onClose, onDone }) {
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.email,
         sub: p.designation || p.employeeCode || p.user.email,
         current: p.workLocationRef ? String(p.workLocationRef) : '',
+        company: String(p.company?._id || p.company || ''),
       }));
       setPeople(rows);
       setChecked(new Set(rows.filter((r) => r.current === String(location._id)).map((r) => r.id)));
@@ -160,6 +191,13 @@ function AssignSheet({ location, locations, onClose, onDone }) {
   }, [location._id]);
 
   const toggle = (id) => setChecked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // Only this site's company can be assigned to it (plus company-less employees);
+  // a site with no company accepts anyone, and someone already here always shows.
+  const siteCompany = String(location.company?._id || location.company || '');
+  const visible = people.filter((p) =>
+    !siteCompany || p.current === String(location._id) || !p.company || p.company === siteCompany
+  );
 
   const submit = async () => {
     const here = new Set(people.filter((p) => p.current === String(location._id)).map((p) => p.id));
@@ -183,7 +221,9 @@ function AssignSheet({ location, locations, onClose, onDone }) {
       footer={<AppButton title={`Save (${checked.size} here)`} loading={busy} onPress={submit} />}>
       {people.length === 0 ? (
         <Text style={font.label}>Loading employees…</Text>
-      ) : people.map((p) => {
+      ) : visible.length === 0 ? (
+        <Text style={font.label}>No employees in this site’s company yet.</Text>
+      ) : visible.map((p) => {
         const on = checked.has(p.id);
         const elsewhere = p.current && p.current !== String(location._id);
         return (

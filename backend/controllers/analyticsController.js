@@ -7,6 +7,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { employeeProfileScope } = require('../utils/employeeScope');
 
 // Buckets an employee's tenure (years since dateOfJoining) into a band label.
 function tenureBucket(years) {
@@ -37,7 +38,11 @@ const overview = asyncHandler(async (req, res) => {
   const twelveMonthsAgo = new Date(now);
   twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
-  const allProfiles = await EmployeeProfile.find({})
+  // Every metric on this page derives from this one set, so scoping it here
+  // scopes the whole overview: an HR Manager sees analytics only for their
+  // assigned employees, a company-limited CEO/MD only for their companies, the
+  // Backend for everyone (employeeProfileScope = {}).
+  const allProfiles = await EmployeeProfile.find(employeeProfileScope(req))
     .select(
       'gender dateOfJoining dateOfExit department employmentType confirmationStatus employeeCode designation user'
     )

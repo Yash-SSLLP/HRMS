@@ -16,6 +16,7 @@ const Holiday = require('../models/Holiday');
 // Anchor "today" to the IST calendar day (server runs in UTC) so the
 // "Present today" count matches the day attendance punches are filed under.
 const { startOfDayIST, ymdIST } = require('../utils/dateHelpers');
+const { employeeProfileScope } = require('../utils/employeeScope');
 
 function startOfToday() {
   return startOfDayIST();
@@ -32,24 +33,31 @@ function startOfToday() {
 const adminSummary = asyncHandler(async (req, res) => {
   const isHR = req.user.role === 'HRManager';
 
-  const empFilter = {};
-
   const today = startOfToday();
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
   const in30 = new Date(today);
   in30.setDate(today.getDate() + 30);
 
-  // All HR/SuperAdmin see the whole organisation — no per-HR employee scoping.
-  //
+  // Scope every figure to the employees this admin may see: an HR Manager to
+  // their assigned employees, a company-limited CEO/MD to their companies, the
+  // Backend to everyone (empScope = {}).
+  const empScope = employeeProfileScope(req);
+  const unrestricted = Object.keys(empScope).length === 0;
+
   // Everyone this dashboard counts is an ACTIVE, not-yet-exited employee, the
   // same rule the presence board uses for its headcount. Counting every profile
   // ever created made "Total employees" — and the attendance donut, whose slices
   // are derived from it — read higher than the real headcount.
-  const allProfiles = await EmployeeProfile.find({})
+  const allProfiles = await EmployeeProfile.find(empScope)
     .select('_id department documentsVerified dateOfExit user')
     .populate('user', 'isActive')
     .lean();
+
+  // Constrain the attendance / leave / document lookups to the scoped employees.
+  // For the Backend (unrestricted) this stays `{}` so the queries are unchanged.
+  const scopedIds = allProfiles.map((p) => p._id);
+  const empFilter = unrestricted ? {} : { employee: { $in: scopedIds } };
   const profiles = allProfiles.filter(
     (p) => p.user && p.user.isActive !== false && (!p.dateOfExit || new Date(p.dateOfExit) > today)
   );
@@ -73,7 +81,7 @@ const adminSummary = asyncHandler(async (req, res) => {
     }).select('employee workedDays').lean(),
     LeaveRequest.countDocuments({ ...empFilter, status: 'Pending' }),
     Department.countDocuments({}),
-    Document.find({}).select('employee category').lean(),
+    Document.find(empFilter).select('employee category').lean(),
     LeaveRequest.find({ ...empFilter, status: 'Pending' })
       .populate({ path: 'employee', select: 'employeeCode user', populate: { path: 'user', select: 'firstName lastName' } })
       .sort({ appliedAt: -1 })
@@ -147,7 +155,7 @@ const adminSummary = asyncHandler(async (req, res) => {
   const totalEmployees = profiles.length;
 
   res.json({
-    scope: 'all',
+    scope: unrestricted ? 'all' : 'scoped',
     cards: {
       totalEmployees,
       presentToday,

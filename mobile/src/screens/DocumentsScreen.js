@@ -120,6 +120,26 @@ export default function DocumentsScreen() {
     ]);
   };
 
+  // Request replacement of a locked (submitted) document: pick the new file and
+  // send it to HR for approval.
+  const requestReplace = async (d) => {
+    const res = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'image/*'], copyToCacheDirectory: true });
+    if (res.canceled) return;
+    const f = res.assets[0];
+    setBusyId(d._id);
+    try {
+      const form = new FormData();
+      form.append('file', { uri: f.uri, name: f.name || 'document', type: f.mimeType || 'application/octet-stream' });
+      await api.post(`/documents/me/${d._id}/replace-request`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      toast('Sent', 'Replacement sent to HR for approval.');
+      await load();
+    } catch (err) {
+      toast('Could not send', errMsg(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   // Pick a PDF/image from the device — held for review, not sent yet.
   const pickFile = async () => {
     const res = await DocumentPicker.getDocumentAsync({
@@ -256,12 +276,21 @@ export default function DocumentsScreen() {
                     {busyId === d._id ? 'Opening…' : 'View / download'}
                   </Text>
                 </TouchableOpacity>
-                {/* HR-managed categories are read-only for the employee. */}
+                {/* HR-managed categories are read-only for the employee. A
+                    submitted doc is locked (replace via HR); a rejected one can
+                    be removed and re-uploaded. */}
                 {!hrOnly.includes(d.category) && (
-                  <TouchableOpacity style={styles.docBtn} disabled={busyId === d._id} onPress={() => removeDoc(d)}>
-                    <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                    <Text style={[styles.docBtnText, { color: colors.danger }]}>Delete</Text>
-                  </TouchableOpacity>
+                  d.status === 'Rejected' ? (
+                    <TouchableOpacity style={styles.docBtn} disabled={busyId === d._id} onPress={() => removeDoc(d)}>
+                      <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                      <Text style={[styles.docBtnText, { color: colors.danger }]}>Delete</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity style={styles.docBtn} disabled={busyId === d._id} onPress={() => requestReplace(d)}>
+                      <Ionicons name="swap-horizontal-outline" size={16} color={colors.primary} />
+                      <Text style={[styles.docBtnText, { color: colors.primary }]}>Replace</Text>
+                    </TouchableOpacity>
+                  )
                 )}
               </View>
             </Card>

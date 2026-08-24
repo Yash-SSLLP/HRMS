@@ -45,14 +45,25 @@ function RequestRow({ r, onDecided }) {
   };
 
   const requester = r.requestedBy ? `${r.requestedBy.firstName || ''} ${r.requestedBy.lastName || ''}`.trim() : 'Unknown';
+  const target = r.targetUser ? `${r.targetUser.firstName || ''} ${r.targetUser.lastName || ''}`.trim() : '';
+  const isExec = r.approverKind === 'exec';
 
   return (
     <li className="py-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-gray-900">
+          <div className="text-sm font-medium text-gray-900 flex items-center gap-2 flex-wrap">
             {r.fieldLabel}
-            <span className="ml-2 text-xs font-normal text-gray-500">· {requester} ({r.requestedBy?.role})</span>
+            {isExec ? (
+              <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">HR change · needs exec approval</span>
+            ) : (
+              <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">Employee request</span>
+            )}
+          </div>
+          <div className="text-xs font-normal text-gray-500 mt-0.5">
+            {isExec
+              ? <>For <span className="text-gray-700">{target || 'employee'}</span> · raised by {requester} ({r.requestedBy?.role})</>
+              : <>{requester} ({r.requestedBy?.role})</>}
           </div>
           <div className="text-xs text-gray-500 mt-1">
             {isSecret ? (

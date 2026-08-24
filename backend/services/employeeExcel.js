@@ -8,7 +8,8 @@ const ExcelJS = require('exceljs');
 
 // path-style key reaches into nested objects, e.g. bankDetails.ifsc.
 // `ref` columns are resolved in the controller: reportingManagerEmail /
-// hrPartnerEmail → a User by email; salaryStructureName → a SalaryStructure by name.
+// hrPartnerEmail → a User by email; salaryStructureName → a SalaryStructure by
+// name; companyName → a Company by name (or code).
 const COLUMNS = [
   { key: 'employeeCode', header: 'Employee Code', width: 14, required: true },
   { key: 'firstName',    header: 'First Name',    width: 18, required: true, on: 'user' },
@@ -29,6 +30,7 @@ const COLUMNS = [
   { key: 'employmentType',  header: 'Employment Type',   width: 16, default: 'FullTime' },
   { key: 'designation',     header: 'Designation',       width: 22 },
   { key: 'department',      header: 'Department',        width: 18 },
+  { key: 'companyName',     header: 'Company',           width: 22 },
   { key: 'workLocation',    header: 'Work Location',     width: 18 },
   { key: 'grade',           header: 'Grade',             width: 10 },
   { key: 'reportingManagerEmail', header: 'Reporting Manager Email', width: 28 },
@@ -184,6 +186,8 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
         v = p.reportingManager?.email || '';
       } else if (c.key === 'salaryStructureName') {
         v = p.salaryStructure?.name || '';
+      } else if (c.key === 'companyName') {
+        v = p.company?.name || '';
       } else {
         const source = c.on === 'user' ? p.user : p;
         v = source ? getNested(source, c.key) : undefined;
@@ -211,6 +215,7 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
       employmentType: 'FullTime',
       designation: 'Software Engineer',
       department: 'Engineering',
+      companyName: 'Sequence Surfaces LLP',
       workLocation: 'Ahmedabad',
       grade: 'L3',
       reportingManagerEmail: 'manager@example.com',

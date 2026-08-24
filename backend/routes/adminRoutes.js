@@ -21,6 +21,7 @@ const {
   setKhataAccess,
   setKhataExportAccess,
   setExecEditAccess,
+  setExecCompanies,
   setWfhAccess,
   setRemotePunchAccess,
   getOrgSettings,
@@ -83,6 +84,8 @@ router.patch('/users/:id/khata-export-access', restrictTo('SuperAdmin'), setKhat
 // role that administers the system.
 // PATCH /users/:id/exec-edit-access — switch a CEO/MD into edit mode; protected, SuperAdmin only.
 router.patch('/users/:id/exec-edit-access', restrictTo('SuperAdmin'), setExecEditAccess);
+// PATCH /users/:id/companies — set which companies a CEO/MD may see; SuperAdmin only.
+router.patch('/users/:id/companies', restrictTo('SuperAdmin'), setExecCompanies);
 // Work-from-home grant — SuperAdmin only. A WFH punch skips the office geofence,
 // so it is deliberately not something HR or the employee can switch on.
 // PATCH /users/:id/wfh-access — grant/revoke work-from-home; protected, SuperAdmin only.

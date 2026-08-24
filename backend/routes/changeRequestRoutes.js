@@ -1,12 +1,14 @@
 /**
  * Change-request router — mounted at /api/change-requests.
- * Employee profile-field change requests plus approver decisions.
- * All routes require authentication (router.use(protect)).
+ * Employee fill-missing + change requests, HR-raised employee changes, and
+ * approver decisions. All routes require authentication.
  */
 const express = require('express');
 const {
   getFields,
+  fillMissingField,
   createChangeRequest,
+  createAdminChangeRequest,
   myChangeRequests,
   assignedChangeRequests,
   decideChangeRequest,
@@ -14,19 +16,21 @@ const {
 const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
-
-// All change-request routes require a logged-in user.
 router.use(protect);
 
-// GET /fields — list fields eligible for change requests; protected.
+// GET /fields — catalogue + current values + empty/pending flags.
 router.get('/fields', getFields);
-// GET / — list current user's change requests; POST / — raise a new one; protected.
+// POST /fill — fill a missing field directly (applied immediately).
+router.post('/fill', fillMissingField);
+// GET / — my requests; POST / — raise a change on my own filled field (→ HR).
 router.route('/')
   .get(myChangeRequests)
   .post(createChangeRequest);
-// GET /assigned — change requests awaiting the current user's decision; protected.
+// POST /admin — HR raises a change on an employee (→ company CEO/MD).
+router.post('/admin', createAdminChangeRequest);
+// GET /assigned — my approver inbox (HR partner / CEO / MD / SuperAdmin).
 router.get('/assigned', assignedChangeRequests);
-// PATCH /:id — approve/reject a change request; protected (assigned approver).
+// PATCH /:id — approve/decline a pending request.
 router.patch('/:id', decideChangeRequest);
 
 module.exports = router;

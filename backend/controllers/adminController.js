@@ -9,9 +9,11 @@ const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const { ROLES } = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const Company = require('../models/Company');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
+const { isEditingExec } = require('../middleware/authMiddleware');
 const { enqueueMail } = require('../services/email');
 const COMPANY = require('../config/company');
 const path = require('path');
@@ -212,32 +214,59 @@ const updateUser = asyncHandler(async (req, res) => {
     user.role = role;
   }
 
-  // Email is the login identity, so it is changed deliberately and checked for
-  // a clash first — a duplicate would otherwise surface as a raw index error,
-  // and the account would be left unable to sign in under either address.
+  // The employee's identity details (name, login email, phone) are catalogue
+  // fields: the Backend and an edit-mode exec change them directly (audited),
+  // but an HR Manager cannot — each change to an Employee is queued to that
+  // employee's company CEO/MD instead. Role / isActive / password are
+  // operational and stay direct for whoever is allowed to set them.
+  const writesDirectly = req.user.role === 'SuperAdmin' || isEditingExec(req.user);
+  const hrRouting = !writesDirectly && req.user.role === 'HRManager' && user.role === 'Employee';
+  const { auditFieldChange } = require('../services/profileChanges');
+  const IDENTITY = [
+    { key: 'firstName', label: 'First Name', incoming: firstName },
+    { key: 'lastName', label: 'Last Name', incoming: lastName },
+    { key: 'phone', label: 'Phone', incoming: phone },
+    { key: 'email', label: 'Login Email', incoming: email, isEmail: true },
+  ];
   let emailChanged = false;
-  if (email !== undefined && String(email).toLowerCase().trim() !== user.email) {
-    const next = String(email).toLowerCase().trim();
-    if (!next) {
-      res.status(400);
-      throw new Error('Email cannot be empty');
+  const identityQueue = []; // HR → exec
+  const identityAudits = []; // direct → audit
+  for (const f of IDENTITY) {
+    if (f.incoming === undefined) continue;
+    const next = f.isEmail ? String(f.incoming).toLowerCase().trim() : f.incoming;
+    const cur = user.get(f.key);
+    if (String(next ?? '') === String(cur ?? '')) continue; // unchanged
+    if (hrRouting) { identityQueue.push({ field: f.key, value: next }); continue; }
+    // Direct apply (Backend / edit-mode exec).
+    if (f.isEmail) {
+      if (!next) { res.status(400); throw new Error('Email cannot be empty'); }
+      const clash = await User.findOne({ email: next, _id: { $ne: user._id } });
+      if (clash) { res.status(409); throw new Error('That email is already in use by another account'); }
+      user.email = next;
+      emailChanged = true;
+    } else {
+      user.set(f.key, next);
     }
-    const clash = await User.findOne({ email: next, _id: { $ne: user._id } });
-    if (clash) {
-      res.status(409);
-      throw new Error('That email is already in use by another account');
-    }
-    user.email = next;
-    emailChanged = true;
+    identityAudits.push({ meta: { label: f.label }, from: cur ?? '', to: next ?? '' });
   }
 
-  if (firstName !== undefined) user.firstName = firstName;
-  if (lastName !== undefined) user.lastName = lastName;
-  if (phone !== undefined) user.phone = phone;
   if (isActive !== undefined) user.isActive = isActive;
   if (password) user.password = password; // pre-save hook re-hashes
 
   await user.save();
+
+  // Audit the direct identity edits, then queue the HR ones for the exec.
+  const auditTarget = { name: `${user.firstName || ''} ${user.lastName || ''}`.trim() };
+  identityAudits.forEach((c) => auditFieldChange(req.user, c.meta, c.from, c.to, auditTarget));
+  let queuedForApproval = 0;
+  if (identityQueue.length) {
+    const { queueAdminChange } = require('./changeRequestController');
+    for (const q of identityQueue) {
+      // eslint-disable-next-line no-await-in-loop
+      const cr = await queueAdminChange(req.user, user._id, q.field, q.value);
+      if (cr) queuedForApproval += 1;
+    }
+  }
 
   // Best-effort: the address is already changed, so a mail failure must not
   // fail the request or roll anything back.
@@ -253,7 +282,7 @@ const updateUser = asyncHandler(async (req, res) => {
     try { await ensureEmployeeProfile(user); } catch (err) { console.error('Staff profile auto-create failed:', err.message); }
   }
 
-  res.json({ user });
+  res.json({ user, queuedForApproval });
 });
 
 /**
@@ -509,6 +538,38 @@ const setExecEditAccess = asyncHandler(async (req, res) => {
   user.execEditAccess = !!req.body.enabled;
   await user.save();
   res.json({ id: user._id, execEditAccess: user.execEditAccess });
+});
+
+/**
+ * Set which companies a CEO/MD may see and manage. An empty list clears the
+ * restriction (the exec sees every company again); a non-empty list narrows
+ * them to exactly those companies. See models/User.js `companies`.
+ * @route PATCH /api/admin/users/:id/companies  { companyIds: string[] }  (SuperAdmin)
+ * @returns {{id: string, companies: string[]}}
+ */
+const setExecCompanies = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  if (!EXECUTIVE_ROLES.includes(user.role)) {
+    res.status(400);
+    throw new Error('Company access applies to CEO and MD accounts only.');
+  }
+  const ids = [...new Set((req.body.companyIds || []).map(String))].filter(Boolean);
+  if (ids.length) {
+    // Reject unknown ids so a typo can't silently lock the exec out of everything.
+    const found = await Company.countDocuments({ _id: { $in: ids } });
+    if (found !== ids.length) {
+      res.status(400);
+      throw new Error('One or more companies do not exist.');
+    }
+  }
+  // Empty list → clear the restriction (undefined = all companies).
+  user.companies = ids.length ? ids : undefined;
+  await user.save();
+  res.json({ id: user._id, companies: (user.companies || []).map(String) });
 });
 
 /**
@@ -813,6 +874,7 @@ module.exports = {
   setKhataAccess,
   setKhataExportAccess,
   setExecEditAccess,
+  setExecCompanies,
   setWfhAccess,
   setRemotePunchAccess,
   getOrgSettings,

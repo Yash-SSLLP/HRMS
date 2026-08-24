@@ -11,7 +11,7 @@ import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 
-const blank = () => ({ name: '', lat: '', lng: '', radiusM: 200, active: true });
+const blank = () => ({ name: '', company: '', lat: '', lng: '', radiusM: 200, active: true });
 const mapLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
 
 export default function AdminWorkLocations() {
@@ -19,6 +19,7 @@ export default function AdminWorkLocations() {
   const canManage = ['SuperAdmin', 'HRManager'].includes(currentUser?.role);
 
   const [locations, setLocations] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null); // form object or null
@@ -38,9 +39,12 @@ export default function AdminWorkLocations() {
     }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    api.get('/companies').then(({ data }) => setCompanies(data.companies || [])).catch(() => {});
+  }, []);
 
   const openCreate = () => setEditing(blank());
-  const openEdit = (l) => setEditing({ _id: l._id, name: l.name, lat: l.lat ?? '', lng: l.lng ?? '', radiusM: l.radiusM ?? 200, active: l.active });
+  const openEdit = (l) => setEditing({ _id: l._id, name: l.name, company: l.company?._id || l.company || '', lat: l.lat ?? '', lng: l.lng ?? '', radiusM: l.radiusM ?? 200, active: l.active });
 
   // Fill lat/lng from the admin's current device GPS position.
   const useMyLocation = () => {
@@ -52,24 +56,42 @@ export default function AdminWorkLocations() {
     );
   };
 
-  const save = async (e) => {
-    e.preventDefault();
+  const save = async (e, acknowledgeStranded = false) => {
+    if (e && e.preventDefault) e.preventDefault();
     setSaving(true);
     setError('');
     try {
       const payload = {
         name: editing.name,
+        company: editing.company || null,
         lat: editing.lat === '' ? null : Number(editing.lat),
         lng: editing.lng === '' ? null : Number(editing.lng),
         radiusM: Number(editing.radiusM) || 0,
         active: editing.active,
       };
+      if (acknowledgeStranded) payload.acknowledgeStranded = true;
       if (editing._id) await api.put(`/work-locations/${editing._id}`, payload);
       else await api.post('/work-locations', payload);
       setEditing(null);
       await load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Save failed');
+      const data = err.response?.data;
+      // Retagging the site to another company would strand employees already
+      // assigned here — warn, then proceed only on confirm.
+      if (err.response?.status === 409 && data?.code === 'STRANDED_EMPLOYEES') {
+        const shown = (data.employees || []).map((x) => `${x.employeeCode ? x.employeeCode + ' · ' : ''}${x.name}`);
+        if (data.count > shown.length) shown.push(`…and ${data.count - shown.length} more`);
+        const proceed = await confirmDialog({
+          tone: 'warning',
+          title: 'Employees here belong to another company',
+          message: `${data.count} employee(s) assigned to this site are in a different company. Changing the site's company will leave them at a site outside their own. Change it anyway?`,
+          details: shown.length ? shown : undefined,
+          confirmText: 'Change anyway',
+        });
+        if (proceed) { await save(null, true); return; }
+        return;
+      }
+      setError(data?.message || 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -108,7 +130,9 @@ export default function AdminWorkLocations() {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="font-semibold text-gray-900 truncate">{l.name}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">Range: {l.radiusM} m</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {l.company?.name ? <span className="text-gray-500">{l.company.name} · </span> : null}Range: {l.radiusM} m
+                  </div>
                 </div>
                 <span className={`shrink-0 text-xs px-2 py-0.5 rounded-lg ${l.active ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
                   {l.active ? 'Active' : 'Inactive'}
@@ -150,6 +174,18 @@ export default function AdminWorkLocations() {
               <input required value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 placeholder="e.g. Bangalore HQ" className="block w-full border rounded-lg px-3 py-2" />
             </div>
+            {companies.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Company</label>
+                <select value={editing.company || ''} onChange={(e) => setEditing({ ...editing, company: e.target.value })}
+                  className="block w-full border rounded-lg px-3 py-2">
+                  <option value="">Unassigned</option>
+                  {companies.filter((c) => c.isActive !== false).map((c) => (
+                    <option key={c._id} value={c._id}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Latitude</label>
@@ -207,6 +243,7 @@ function AssignModal({ location, locations, onClose, onDone }) {
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.email,
         sub: p.designation || p.employeeCode || p.user.email,
         current: p.workLocationRef ? String(p.workLocationRef) : '',
+        company: String(p.company?._id || p.company || ''),
       }));
       setPeople(rows);
       setChecked(new Set(rows.filter((r) => r.current === String(location._id)).map((r) => r.id)));
@@ -214,7 +251,16 @@ function AssignModal({ location, locations, onClose, onDone }) {
   }, [location._id]);
 
   const toggle = (id) => setChecked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const filtered = people.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || (p.sub || '').toLowerCase().includes(q.toLowerCase()));
+  // Only this site's company can be assigned to it (plus company-less employees).
+  // A site with no company accepts anyone; someone already here always shows so
+  // they can be unassigned.
+  const siteCompany = String(location.company?._id || location.company || '');
+  const filtered = people.filter((p) => {
+    const matchesSearch = p.name.toLowerCase().includes(q.toLowerCase()) || (p.sub || '').toLowerCase().includes(q.toLowerCase());
+    if (!matchesSearch) return false;
+    if (!siteCompany || p.current === String(location._id)) return true;
+    return !p.company || p.company === siteCompany;
+  });
 
   const submit = async () => {
     const here = new Set(people.filter((p) => p.current === String(location._id)).map((p) => p.id));

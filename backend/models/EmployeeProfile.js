@@ -100,9 +100,17 @@ const employeeProfileSchema = new mongoose.Schema(
       enum: ['FullTime', 'PartTime', 'Contract', 'Intern'],
       default: 'FullTime',
     },
+    // The company (legal entity) this employee belongs to. Used to scope what a
+    // CEO/MD sees once the Backend has limited them to certain companies. Null =
+    // unassigned — visible only to the Backend account and to execs with no
+    // company restriction. See models/Company.js.
+    company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
     reportingManager: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    // Dedicated HR contact for this employee. The exit flow uses this person
-    // as the default "handledBy" so the exit email is signed by them.
+    // Dedicated HR contact for this employee, and — with per-HR scoping switched
+    // on — the HR Manager who may see and manage this record. The exit flow also
+    // uses this person as the default "handledBy" so the exit email is signed by
+    // them. Assigned by the Backend (SuperAdmin); an HR Manager who creates an
+    // employee is set as its partner automatically so they keep visibility.
     hrPartner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     // Who signs off THIS employee's attendance regularizations, in order: the
     // first entry decides first, the second (optional) confirms. SuperAdmin-only

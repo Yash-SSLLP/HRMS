@@ -15,6 +15,7 @@ const asyncHandler = require('express-async-handler');
 const crypto = require('crypto');
 const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { employeeProfileScope, scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
 const Holiday = require('../models/Holiday');
@@ -247,6 +248,7 @@ const approvePayslipRelease = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   if (payslip.release?.status !== 'Requested') {
     res.status(400);
     throw new Error('Only a requested payslip can be approved for release.');
@@ -284,6 +286,7 @@ const finalisePayslipRelease = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   const state = payslip.release?.status;
   if (!['Approved', 'ChangeRequested'].includes(state)) {
     res.status(400);
@@ -350,6 +353,19 @@ const myAttendanceSummary = asyncHandler(async (req, res) => {
  * @returns {{count: number, payslips: Object[]}} with populated employee
  */
 // GET /api/payroll  (HR/Admin) — filters: employee, year, month, status
+// Per-record scope guard for payroll: 403 unless this admin may manage the
+// payslip's employee (Backend → all; HR Manager → their assigned employees; a
+// company-limited exec → their companies). Call once the payslip is loaded and
+// confirmed to exist.
+async function guardPayslipScope(req, res, payslip) {
+  const empId = payslip.employee && payslip.employee._id ? payslip.employee._id : payslip.employee;
+  const profile = await EmployeeProfile.findById(empId).select('hrPartner company');
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
+  }
+}
+
 const listPayslips = asyncHandler(async (req, res) => {
   const { employee, year, month, status, releaseStatus } = req.query;
   const filter = {};
@@ -367,6 +383,10 @@ const listPayslips = asyncHandler(async (req, res) => {
       ...(wanted.includes('NotRequested') ? [{ 'release.status': { $exists: false } }] : []),
     ];
   }
+
+  // Limit to the employees this admin may see (also intersects a specific
+  // ?employee= against their scope).
+  await scopeEmployeeFilter(req, filter);
 
   const payslips = await Payroll.find(filter)
     .populate({
@@ -570,7 +590,7 @@ const exportPayrollSheet = asyncHandler(async (req, res) => {
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
 
-  const profiles = await EmployeeProfile.find()
+  const profiles = await EmployeeProfile.find(employeeProfileScope(req))
     .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit')
     .populate('user', 'firstName lastName isActive')
     .populate('salaryStructure')
@@ -615,8 +635,8 @@ const exportPayrollSheet = asyncHandler(async (req, res) => {
 // payslip for the period, seeded from their most recent payslip (new joiners
 // get a blank draft for HR to fill in). Preview with GET, execute with POST.
 
-async function buildRunRows(year, month) {
-  const profiles = await EmployeeProfile.find()
+async function buildRunRows(year, month, scope = {}) {
+  const profiles = await EmployeeProfile.find(scope)
     .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit')
     .populate('user', 'firstName lastName email isActive')
     .populate('salaryStructure')
@@ -689,7 +709,7 @@ const previewPayrollRun = asyncHandler(async (req, res) => {
   const now = new Date();
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
-  const rows = await buildRunRows(year, month);
+  const rows = await buildRunRows(year, month, employeeProfileScope(req));
   res.json({
     year,
     month,
@@ -723,7 +743,9 @@ const runPayroll = asyncHandler(async (req, res) => {
     throw new Error('A valid year and month are required');
   }
 
-  const rows = await buildRunRows(year, month);
+  // Scope the run to the employees this admin may manage — an HR Manager runs
+  // payroll only for their assigned people, the Backend for everyone.
+  const rows = await buildRunRows(year, month, employeeProfileScope(req));
   const daysInMonth = new Date(year, month, 0).getDate();
   // Which already-generated payslips HR asked to overwrite.
   const regenAll = req.body.regenerate === true || req.body.regenerate === 'all';
@@ -1312,6 +1334,10 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee not found');
   }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
+  }
   const computed = await computeEmployeeRun(profile, year, month);
   const payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
   res.json({ year, month, employee: profile, computed, payslip });
@@ -1341,6 +1367,10 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
   if (!profile) {
     res.status(404);
     throw new Error('Employee not found');
+  }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   const computed = await computeEmployeeRun(profile, year, month);
   if (computed.needsSetup) {
@@ -1383,6 +1413,7 @@ const getPayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   res.json({ payslip });
 });
 
@@ -1400,10 +1431,14 @@ const createPayslip = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('employee, payPeriodYear, payPeriodMonth are required');
   }
-  const profile = await EmployeeProfile.findById(employee);
+  const profile = await EmployeeProfile.findById(employee).select('hrPartner company');
   if (!profile) {
     res.status(404);
     throw new Error('Employee profile not found');
+  }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   const payslip = new Payroll(req.body);
   applyEmployerContributions(payslip);
@@ -1425,6 +1460,7 @@ const updatePayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   if (payslip.status === 'Paid') {
     res.status(400);
     throw new Error('Paid payslips cannot be edited');
@@ -1467,6 +1503,7 @@ const approvePayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   if (payslip.status !== 'Draft' && payslip.status !== 'OnHold') {
     res.status(400);
     throw new Error(`Cannot approve from status ${payslip.status}`);
@@ -1490,6 +1527,7 @@ const markPayslipPaid = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   if (payslip.status !== 'Approved') {
     res.status(400);
     throw new Error('Payslip must be Approved before it can be marked Paid');
@@ -1526,6 +1564,7 @@ const downloadPayslipPdf = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   await streamPayslipPdf(payslip, res);
 });
 
@@ -1591,6 +1630,7 @@ const sharePayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   if (!['Approved', 'Paid'].includes(payslip.status)) {
     res.status(400);
     throw new Error('Only Approved or Paid payslips can be shared');
@@ -1616,6 +1656,7 @@ const markPayslipSent = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   payslip.emailedAt = new Date();
   await payslip.save();
   res.json({ payslip });
@@ -1640,6 +1681,7 @@ const emailPayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   if (!['Approved', 'Paid'].includes(payslip.status)) {
     res.status(400);
     throw new Error('Only Approved or Paid payslips can be emailed');
@@ -1731,6 +1773,7 @@ const deletePayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
+  await guardPayslipScope(req, res, payslip);
   if (payslip.status !== 'Draft') {
     res.status(400);
     throw new Error('Only Draft payslips can be deleted');
@@ -1756,6 +1799,10 @@ const deriveSalaryForEditor = asyncHandler(async (req, res) => {
   if (!profile) {
     res.status(404);
     throw new Error('Employee not found');
+  }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   const now = new Date();
   const year = Number(req.query.year) || now.getFullYear();
@@ -1815,6 +1862,7 @@ const deriveSalaryForEditor = asyncHandler(async (req, res) => {
  */
 const salarySetupStatus = asyncHandler(async (req, res) => {
   const profiles = await EmployeeProfile.find({
+    ...employeeProfileScope(req),
     $or: [
       { salaryStructure: { $in: [null, undefined] } },
       { annualCtc: { $in: [null, undefined, 0] } },
@@ -1849,6 +1897,10 @@ const giveHike = asyncHandler(async (req, res) => {
   if (!profile) {
     res.status(404);
     throw new Error('Employee not found');
+  }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   const { mode, value, newStructure, effectiveYear, effectiveMonth, reason } = req.body;
   const prevCtc = profile.annualCtc || 0;

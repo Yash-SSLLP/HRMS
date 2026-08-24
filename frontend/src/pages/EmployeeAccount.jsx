@@ -68,17 +68,24 @@ export default function EmployeeAccount() {
     e.preventDefault();
     setMsg(''); setError('');
     if (!field || !requestedValue.trim()) {
-      setError('Pick a field and enter the new value you want.');
+      setError('Pick a field and enter the value.');
       return;
     }
     setSubmitting(true);
     try {
-      await api.post('/change-requests', { field, requestedValue, reason });
+      // An empty field can be filled directly (applied at once). A field that
+      // already has a value goes to HR as a change request.
+      if (selected?.isEmpty) {
+        await api.post('/change-requests/fill', { field, value: requestedValue });
+        setMsg('Saved to your profile. To change it later, submit a change request.');
+      } else {
+        await api.post('/change-requests', { field, requestedValue, reason });
+        setMsg('Request submitted. Your HR will review it.');
+      }
       setField(''); setRequestedValue(''); setReason('');
-      setMsg('Request submitted. Your admin will review it.');
       await load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not submit request');
+      setError(err.response?.data?.message || 'Could not submit');
     } finally {
       setSubmitting(false);
     }
@@ -166,10 +173,11 @@ export default function EmployeeAccount() {
         {/* --- Request a change (not for SuperAdmin, who edits directly) --- */}
         {!isSuperAdmin && (
         <div className="bg-white shadow rounded-lg p-5">
-          <h2 className="card-title mb-3">Request a Change</h2>
+          <h2 className="card-title mb-1">Your details</h2>
+          <p className="text-xs text-gray-500 mb-3">Fill in anything that is missing — it saves straight away. Once a detail is filled, changing it needs a request your HR approves.</p>
           <form onSubmit={submitRequest} className="space-y-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">What do you want to change?</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Which detail?</label>
               <SearchableSelect
                 value={field}
                 onChange={(e) => { setField(e.target.value); setRequestedValue(''); setMsg(''); }}
@@ -177,45 +185,58 @@ export default function EmployeeAccount() {
               >
                 <option value="">Select a field…</option>
                 {fields.map((f) => (
-                  <option key={f.key} value={f.key}>{f.label}</option>
+                  <option key={f.key} value={f.key}>
+                    {f.label}{f.pending ? ' — pending' : f.isEmpty && !f.secret ? ' — missing' : ''}
+                  </option>
                 ))}
               </SearchableSelect>
             </div>
+
+            {selected?.pending && (
+              <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
+                A request for this field is already pending. You can submit another once it is decided.
+              </div>
+            )}
 
             {selected && !selected.secret && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Current value</label>
                 <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 min-h-[2.4rem]">
-                  {selected.currentValue || <span className="italic text-gray-400">empty</span>}
+                  {selected.currentValue || <span className="italic text-gray-400">empty — you can fill this in</span>}
                 </div>
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Requested {selected?.label || 'value'}</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {selected?.isEmpty && !selected?.secret ? `${selected.label}` : `New ${selected?.label || 'value'}`}
+              </label>
               <input
                 type={selected?.type || (selected?.secret ? 'password' : 'text')}
                 value={requestedValue}
                 onChange={(e) => setRequestedValue(e.target.value)}
                 className="block w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
-                placeholder={selected?.secret ? 'New password' : 'New value'}
-                disabled={!field}
+                placeholder={selected?.secret ? 'New password' : selected?.isEmpty ? 'Enter value' : 'New value'}
+                disabled={!field || selected?.pending}
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Reason <span className="text-gray-400 font-normal">(optional)</span></label>
-              <textarea
-                value={reason} rows={2}
-                onChange={(e) => setReason(e.target.value)}
-                className="block w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
-                placeholder="Why is this change needed?"
-              />
-            </div>
+            {/* A reason is only meaningful for a change request, not a first fill. */}
+            {selected && !selected.isEmpty && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason <span className="text-gray-400 font-normal">(optional)</span></label>
+                <textarea
+                  value={reason} rows={2}
+                  onChange={(e) => setReason(e.target.value)}
+                  className="block w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
+                  placeholder="Why is this change needed?"
+                />
+              </div>
+            )}
 
             {msg && <div className="text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">{msg}</div>}
-            <button type="submit" disabled={submitting} className="bg-gray-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60">
-              {submitting ? 'Submitting…' : 'Submit request'}
+            <button type="submit" disabled={submitting || selected?.pending} className="bg-gray-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60">
+              {submitting ? 'Saving…' : selected?.isEmpty && !selected?.secret ? 'Save' : 'Submit request'}
             </button>
           </form>
         </div>

@@ -10,9 +10,9 @@ The system has two portals. **My Portal** is employee self-service, covered in t
 
 ### The roles
 
-- **Super Admin** — full control, including creating other admins and setting their permissions.
-- **HR Manager** — the main HR operator, who can be given granular permissions. If none have ever been set, they hold all of them, so an existing HR account never loses access when the catalogue changes.
-- **CEO and MD** — read-only across the admin portal. They can view and export anything, but cannot save changes. One deliberate exception is described below.
+- **Backend** — the top-level system control. It can see and do everything across every company, creates the admin accounts, and holds the settings the rest of the roles are configured from. It is not a day-to-day HR login: think of it as the master switchboard that HR is set up from and escalated to. Where this guide says something is "Backend only", it means it is arranged there rather than on an HR Manager's own screens.
+- **HR Manager** — the main HR operator, who can be given granular permissions. If none have ever been set, they hold all of them, so an existing HR account never loses access when the catalogue changes. An HR Manager sees and manages **only the employees they are assigned to** as HR Partner — not the whole company (see *Who an HR Manager can see* below).
+- **CEO and MD** — read-only across the admin portal. They can view and export anything, but cannot save changes. Which **companies** they see is set from the Backend (see *Companies* below). One deliberate exception to read-only is described further down.
 - **Manager** — approves their own team's requests and sees their team's attendance, mostly from inside the employee portal.
 - **L&D Manager** — a courses-only admin who sees the learning platform and nothing else.
 - **Accounts Manager** — a cashbook-only admin.
@@ -20,13 +20,33 @@ The system has two portals. **My Portal** is employee self-service, covered in t
 
 ### How access is controlled
 
-Each admin screen is gated by a **capability**, such as `payroll.manage`, `leave.manage` or `announcements.manage`. Super Admin always passes; an HR Manager passes if they hold that capability.
+Each admin screen is gated by a **capability**, such as `payroll.manage`, `leave.manage` or `announcements.manage`. The Backend always passes; an HR Manager passes if they hold that capability.
 
 [!IMPORTANT] The approvals inbox is the one place a read-only executive can act. Because every action there is scoped to "you are the current approver", a CEO or MD — or any manager, or any ordinary employee who happens to sit in someone's chain — can decide their own rung despite being read-only everywhere else.
 
-Some actions are reserved for the Super Admin alone: creating or editing admin-role accounts, setting HR permissions and organisation settings, deleting departments and employee profiles, and reassigning an employee's HR partner or reporting manager.
+Some actions are reserved for the Backend alone: creating or editing admin-role accounts, setting HR permissions and organisation settings, deleting departments and employee profiles, and reassigning an employee's HR Partner or reporting manager.
 
-[!NOTE] Throughout this guide, "HR" means the Super Admin or an HR Manager holding the relevant capability, unless stated otherwise.
+[!NOTE] Throughout this guide, "HR" means the Backend or an HR Manager holding the relevant capability, unless stated otherwise.
+
+### Who an HR Manager can see
+
+Every employee record has an **HR Partner** — the HR Manager responsible for that person. An HR Manager sees and manages only the employees whose HR Partner is them. This runs through the people-facing modules: the Employees list and export; the **attendance** boards, registers, punch map and record edits; the **payroll** list, runs, payslips and exports; the **leave** requests and balances; the **dashboard** figures (headcount, present/absent, pending leaves, incomplete documents); and the **HR analytics** charts (headcount, gender, tenure, confirmations, attrition) all count only their assigned people. The Backend sees everyone. This is what lets the same system serve more than one company or team without each HR Manager seeing the others' people.
+
+[!NOTE] Two things stay deliberately org-wide. The **audit log** is Backend-only, and the **approvals inbox** is scoped to "you are the current approver" rather than to your assigned employees — so a manager still decides their own rung on anyone's request, exactly as before.
+
+- The **HR Partner is set from the Backend** on the employee's record. An HR Manager cannot hand an employee to someone else or grab one — the field is read-only for them.
+- When an HR Manager **creates** a new employee, they are made that employee's HR Partner automatically, so the new joiner stays in their list.
+- An employee with no HR Partner yet is visible only to the Backend, which can then assign one.
+
+[!NOTE] This is designed to grow with the company: as the HRMS is opened up to our other companies, each HR Manager keeps to their own assigned people, and leadership is scoped to their own companies.
+
+### Companies
+
+The HRMS runs for one or more **companies** (legal entities). The Backend maintains the list under **People & Organization → Companies** and sets each employee's company on their record.
+
+- A **CEO or MD** can be limited to certain companies from the Permissions page (the *Company access* button on their row). With none chosen they see every company; choose one or more and they see and manage only the people in those companies.
+- The **Backend** is company-agnostic — it always sees all companies.
+- HR Managers are scoped by their assigned employees (above), which in practice keeps them to their own company's people.
 
 ---
 
@@ -46,11 +66,11 @@ Read-only workforce analytics built from employee records: headcount by departme
 
 A history of status changes across the system — payroll approvals, interview-round changes, leave decisions, and more. Filter by entity, person, text or date.
 
-[!WARNING] The audit log is **Super Admin only**. It is not available to HR Managers, and executives cannot open it either.
+[!WARNING] The audit log is **Backend only**. It is not available to HR Managers, and executives cannot open it either.
 
 ### Chat export and the chat switch
 
-The Super Admin can export full chat transcripts, including after chat has been switched off, because conversations are retained rather than deleted.
+The Backend can export full chat transcripts, including after chat has been switched off, because conversations are retained rather than deleted.
 
 Chat itself is an organisation-wide switch, off by default. While it is off the chat button disappears from both web portals, the mobile tab disappears, and the API refuses requests, so an old deep link cannot get back in. Switching it on restores every conversation untouched.
 
@@ -64,25 +84,25 @@ Reference lists for designations, grades and locations used across the forms. Ad
 
 ### Departments
 
-Create and rename departments, which appear as dropdowns throughout the system. Only the Super Admin can delete one.
+Create and rename departments, which appear as dropdowns throughout the system. Only the Backend can delete one.
 
 ### Work locations
 
-Named, geofenced work sites, each with a latitude, longitude, radius in metres, and an active flag. Assigning an employee to a location means their attendance is measured against that site rather than the global office.
+Named, geofenced work sites, each with a latitude, longitude, radius in metres, an active flag, and the **company** it belongs to. Assigning an employee to a location means their attendance is measured against that site rather than the global office. Tagging a site with a company keeps each company's sites (and the people assigned to them) grouped as the system grows to more than one company. When you pick a check-in site on an employee's record, the list is limited to that employee's company (plus any shared, company-less sites); the same limit applies when assigning employees to a site from here. This is enforced on save too — a new pairing that crosses companies is refused — while any older mismatched pairing already on a record is left as it is until you change it. Changing a **site's own company** is allowed, but if people from another company are already assigned there you are warned first (and shown who) before it goes through.
 
 [!WARNING] A location cannot be deleted while employees are still assigned to it.
 
 ### Org chart
 
-A read-only reporting tree built from each person's reporting manager. CEO and MD appear as top nodes even though they are not employees. To change who reports to whom, edit the employee record — a Super Admin field.
+A read-only reporting tree built from each person's reporting manager. CEO and MD appear as top nodes even though they are not employees. To change who reports to whom, edit the employee record — a Backend field.
 
 ### Users
 
-Login accounts, HR permissions, and organisation settings. Create, edit, deactivate, reactivate and delete accounts; HR Managers can manage Employee accounts only, while admin-role accounts are Super Admin territory. Creating an HR Manager or L&D Manager creates their employee profile automatically. CEO and MD are not employees and have no profile. You cannot deactivate or delete your own account.
+Login accounts, HR permissions, and organisation settings. Create, edit, deactivate, reactivate and delete accounts; HR Managers can manage Employee accounts only, while admin-role accounts are Backend territory. Creating an HR Manager or L&D Manager creates their employee profile automatically. CEO and MD are not employees and have no profile. You cannot deactivate or delete your own account.
 
 ### Permissions
 
-One page for every grant the Super Admin controls: the organisation-wide chat switch, standalone cashbook and expense access for anyone regardless of role, the two per-employee **attendance** grants, and the fine-grained capability list for each HR Manager.
+One page for every grant the Backend controls: the organisation-wide chat switch, standalone cashbook and expense access for anyone regardless of role, the two per-employee **attendance** grants, and the fine-grained capability list for each HR Manager.
 
 The Attendance column holds two different grants, and picking the right one matters:
 
@@ -93,11 +113,11 @@ The Attendance column holds two different grants, and picking the right one matt
 
 [!IMPORTANT] Both are permissions, not preferences. The server ignores a WFH flag sent by anyone who has not been granted it, so nobody can clear their own geofence violation by sending it anyway. "Punch anywhere" changes only the verdict: the GPS fix is still captured, still stored, and still drops a pin on the punch-location map, so you can always see where somebody actually was.
 
-[!IMPORTANT] Filing an expense — a khata expense or a reimbursement claim — also records where the employee was at that moment. **Only a Super Admin can see it**; it is not sent to HR, to the accounts team, to the employee's manager, or back to the employee. Super Admins see a "Filed from" link on the claim and on the khata expense that opens the spot on a map, with the device's accuracy in metres beside it. It is best-effort: a phone with no fix or a refused permission files the expense anyway, with no location.
+[!IMPORTANT] Filing an expense — a khata expense or a reimbursement claim — also records where the employee was at that moment. **Only the Backend can see it**; it is not sent to HR, to the accounts team, to the employee's manager, or back to the employee. The Backend sees a "Filed from" link on the claim and on the khata expense that opens the spot on a map, with the device's accuracy in metres beside it. It is best-effort: a phone with no fix or a refused permission files the expense anyway, with no location.
 
 ### Employees
 
-The master employee records. Create a profile — which needs a linked user account, an employee code, and a date of joining — edit details, and (Super Admin only) delete.
+The master employee records. Create a profile — which needs a linked user account, an employee code, and a date of joining — edit details, and (Backend only) delete.
 
 Bulk tools cover export to Excel, an import template, import from Excel, a ZIP export of documents, and a documents-status report measured against the required set. You can also generate a tokenised public upload link so somebody without a login can submit their documents.
 
@@ -153,7 +173,7 @@ Attendance, then Settings, holds a **Late marking** block: the time the workday 
 
 The grace window is forgiveness, not a later start time. With a start of 10:00 AM and a ten-minute window, arriving at 10:08 is on time; arriving at 10:12 is late by twelve minutes, not two — the "late by" figure always counts from the start time, so it answers how late someone actually was.
 
-[!IMPORTANT] Only a **Super Admin** can change this. Everyone else with attendance access sees the block but cannot edit it, because the rule applies to the whole company and decides money — payroll charges ₹200 or ₹400 for every late day past the monthly allowance of five.
+[!IMPORTANT] Only the **Backend** can change this. Everyone else with attendance access sees the block but cannot edit it, because the rule applies to the whole company and decides money — payroll charges ₹200 or ₹400 for every late day past the monthly allowance of five.
 
 A change applies to how days are judged from that moment, including days already recorded: lateness is worked out from the punch time whenever it is displayed or paid, not frozen into the record. So a payroll run for a past month after a change uses the new rule for that month too. Move the cut-off between the month ending and payroll being run and the late counts for that month will move with it.
 
@@ -318,11 +338,20 @@ The monthly recognition programme, curated by HR.
 
 ## 12. Requests and cases
 
-**Complaints** are visible to the Super Admin, HR Managers and the CEO, each seeing everything except complaints against themselves. A complaint about an admin, or about the complainant's own HR partner, escalates to the Super Admin; otherwise it goes to their HR partner. The CEO can view but not action them. Notifications are deliberately vague and are never sent to the person the complaint concerns.
+**Complaints** are visible to the Backend, HR Managers and the CEO, each seeing everything except complaints against themselves. A complaint about an admin, or about the complainant's own HR partner, escalates to the Backend; otherwise it goes to their HR partner. The CEO can view but not action them. Notifications are deliberately vague and are never sent to the person the complaint concerns.
 
-**Change requests** are how employees alter profile fields and credentials they cannot self-edit. Approving one applies the value to the record, with validation; declining one closes it with a note.
+**Change requests** carry every edit to an employee's details through approval. The rules are the same for a name, a bank account, an address or a statutory ID:
 
-**Password resets** arrive from the login page. HR Managers can reset Employee accounts only; admin-account resets are Super Admin territory. A reset signs the user out of every device.
+- An employee **fills in anything that is missing** themselves, from their Account page — it saves straight away. Once a detail has a value, it is locked to them: changing it needs a request.
+- A request to change a **filled** detail goes to that employee's **HR partner**, who approves (applying the value, with validation) or declines with a note.
+- An **HR Manager cannot change an employee's details directly.** When HR edits a detail on the employee record, each change is sent to that employee's **company CEO/MD** for approval instead of saving — the Employees page tells HR how many changes were queued. It applies only once the exec approves it, from their own Change Requests inbox.
+- The **Backend** edits anything directly, with no request — every such change is written to the audit log.
+
+Documents follow the same idea: an employee uploads a **missing** required document, but once it is submitted it is **locked** — they cannot delete or replace it (only a document HR has *rejected* can be re-uploaded). To change a submitted document, the employee uses **Request replacement** — they attach the new file and it goes to HR, who approves it (the new file swaps in) or declines it, from the panel at the top of the **Employee Documents** page.
+
+Identity fields (name, login email, phone) work exactly like the profile details above: an HR Manager's change to an employee's name, email or phone is queued to the company CEO/MD rather than applied, while the Backend changes them directly.
+
+**Password resets** arrive from the login page. HR Managers can reset Employee accounts only; admin-account resets are Backend territory. A reset signs the user out of every device.
 
 ---
 
@@ -364,4 +393,4 @@ Role gating mirrors the web: HR can write, executives are read-only, and manager
 
 ---
 
-*That is the whole Admin Portal. Keep the permission model in mind — Super Admin, then HR Manager with capabilities, then read-only executives — and remember that the pay policy and the leave auto-stamp are working quietly in the background behind a great many of the figures you will be asked about.*
+*That is the whole Admin Portal. Keep the permission model in mind — the Backend, then HR Manager with capabilities, then read-only executives — and remember that the pay policy and the leave auto-stamp are working quietly in the background behind a great many of the figures you will be asked about.*

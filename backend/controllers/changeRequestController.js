@@ -1,91 +1,108 @@
 /**
- * Change-request controller — employees request edits to whitelisted profile/user
- * fields (FIELD_CATALOG); requests route to the employee's HR partner (or a
- * SuperAdmin) who approves (applying the value to User/EmployeeProfile) or
- * declines. Both sides receive notifications; secret fields hide their values.
+ * Change-request controller. Three ways a whitelisted profile/credential field
+ * (FIELD_CATALOG) gets changed:
+ *   • Employee fills a MISSING field  → applied immediately (audited), then locked.
+ *   • Employee changes a FILLED field → request routed to their HR partner.
+ *   • HR changes an employee's field  → request routed to the company CEO/MD.
+ * The Backend (SuperAdmin) edits directly elsewhere; it never raises a request.
+ * Secret fields (password) never snapshot or echo their value.
  */
 const asyncHandler = require('express-async-handler');
 const ChangeRequest = require('../models/ChangeRequest');
-const { CHANGE_REQUEST_STATUSES, FIELD_CATALOG } = require('../models/ChangeRequest');
+const { FIELD_CATALOG } = require('../models/ChangeRequest');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
+const {
+  readFieldValue,
+  applyFieldValue,
+  isEmptyValue,
+  resolveHrAssignee,
+  resolveExecAssignee,
+  auditFieldChange,
+} = require('../services/profileChanges');
 
 const USER_FIELDS = 'firstName lastName email role';
 
-// Fallback approver when an employee has no HR partner: the oldest active SuperAdmin
-async function findSuperAdmin() {
-  return User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 });
-}
-
-// Read a dot-path value off a Mongoose doc / plain object.
-function getPath(obj, path) {
-  return path.split('.').reduce((acc, key) => (acc == null ? acc : acc[key]), obj);
-}
-
-// Stringify a value for display/snapshot. Date fields render as YYYY-MM-DD.
-function fmtVal(meta, val) {
-  if (val == null) return '';
-  if (meta.type === 'date') {
-    const d = new Date(val);
-    return Number.isNaN(d.getTime()) ? String(val) : d.toISOString().slice(0, 10);
-  }
-  return String(val);
-}
-
-// The admin who should decide this user's requests: their HR partner, else a
-// SuperAdmin. Mirrors the complaint-routing convention.
-async function resolveAssignee(userId) {
-  const profile = await EmployeeProfile.findOne({ user: userId }).select('hrPartner');
-  if (profile?.hrPartner) return profile.hrPartner;
-  const sa = await findSuperAdmin();
-  return sa?._id;
+// { name, profileId } for the audit trail, by the employee's User id.
+async function auditTargetOf(userId) {
+  const [user, profile] = await Promise.all([
+    User.findById(userId).select('firstName lastName'),
+    EmployeeProfile.findOne({ user: userId }).select('_id'),
+  ]);
+  return {
+    name: `${user?.firstName || ''} ${user?.lastName || ''}`.trim(),
+    profileId: profile?._id,
+  };
 }
 
 /**
- * List the editable field catalogue with the caller's current values.
+ * The catalogue with the caller's current values, whether each is empty (so it
+ * can be filled directly) and whether a request is already pending on it.
  * @route GET /api/change-requests/fields
- * @returns {{fields: Array<{key,label,secret,type,currentValue}>}} secret fields have empty currentValue
  */
-// GET /api/change-requests/fields
-// The catalogue plus the caller's current values, so the UI can show what each
-// field is today and let them pick one to change. Secret fields show no value.
 const getFields = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).select('email firstName lastName phone');
-  const profile = await EmployeeProfile.findOne({ user: req.user._id }).lean();
+  const pending = await ChangeRequest.find({ targetUser: req.user._id, status: 'pending' }).select('field').lean();
+  const pendingSet = new Set(pending.map((p) => p.field));
 
-  const fields = Object.entries(FIELD_CATALOG).map(([key, meta]) => {
-    let current = '';
-    if (!meta.secret) {
-      const source = meta.model === 'User' ? user : profile;
-      const val = source ? getPath(source, meta.path) : undefined;
-      current = fmtVal(meta, val);
-    }
-    return {
+  const fields = [];
+  for (const [key, meta] of Object.entries(FIELD_CATALOG)) {
+    const currentValue = meta.secret ? '' : await readFieldValue(req.user._id, meta);
+    fields.push({
       key,
       label: meta.label,
       secret: !!meta.secret,
       type: meta.type || (meta.secret ? 'password' : 'text'),
-      currentValue: current,
-    };
-  });
-
+      currentValue,
+      // A secret field is never "fillable" (there's always a password).
+      isEmpty: !meta.secret && isEmptyValue(currentValue),
+      pending: pendingSet.has(key),
+    });
+  }
   res.json({ fields });
 });
 
 /**
- * Create a change request for one whitelisted field and notify the assignee.
- * @route POST /api/change-requests
- * @param {string} req.body.field - key in FIELD_CATALOG
- * @param {string} req.body.requestedValue - required
- * @param {string} [req.body.reason]
- * @returns {{changeRequest: Object}} (201)
- * @sideeffect snapshots current value (non-secret), assigns to HR partner/SuperAdmin, notifies assignee
+ * Employee fills a MISSING field on their own record — applied immediately, no
+ * approval. Refused once the field already has a value (use a change request).
+ * @route POST /api/change-requests/fill  { field, value }
  */
-// POST /api/change-requests  { field, requestedValue, reason }
+const fillMissingField = asyncHandler(async (req, res) => {
+  const { field, value } = req.body;
+  const meta = FIELD_CATALOG[field];
+  if (!meta || meta.secret) {
+    res.status(400);
+    throw new Error('This field cannot be filled directly.');
+  }
+  if (value == null || String(value).trim() === '') {
+    res.status(400);
+    throw new Error('A value is required.');
+  }
+  const current = await readFieldValue(req.user._id, meta);
+  if (!isEmptyValue(current)) {
+    res.status(409);
+    throw new Error('This field is already set. Submit a change request to change it.');
+  }
+  // Block a double-fill while a request is somehow pending on it.
+  const already = await ChangeRequest.findOne({ targetUser: req.user._id, field, status: 'pending' });
+  if (already) {
+    res.status(409);
+    throw new Error('A request for this field is already pending.');
+  }
+
+  const newVal = String(value).trim();
+  await applyFieldValue(req.user._id, meta, newVal);
+  auditFieldChange(req.user, meta, '', newVal, await auditTargetOf(req.user._id));
+  res.status(200).json({ ok: true, field, value: await readFieldValue(req.user._id, meta) });
+});
+
+/**
+ * Employee raises a change request for a FILLED field on their own record →
+ * routed to their HR partner.
+ * @route POST /api/change-requests  { field, requestedValue, reason }
+ */
 const createChangeRequest = asyncHandler(async (req, res) => {
   const { field, requestedValue, reason } = req.body;
-
   const meta = FIELD_CATALOG[field];
   if (!meta) {
     res.status(400);
@@ -95,24 +112,19 @@ const createChangeRequest = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('A requested value is required');
   }
-
-  // Snapshot the current value (never for secret fields).
-  let currentValue = '';
-  if (!meta.secret) {
-    if (meta.model === 'User') {
-      const user = await User.findById(req.user._id).select(meta.path);
-      currentValue = getPath(user, meta.path);
-    } else {
-      const profile = await EmployeeProfile.findOne({ user: req.user._id }).lean();
-      currentValue = profile ? getPath(profile, meta.path) : '';
-    }
-    currentValue = fmtVal(meta, currentValue);
+  const dup = await ChangeRequest.findOne({ targetUser: req.user._id, field, status: 'pending' });
+  if (dup) {
+    res.status(409);
+    throw new Error('A request for this field is already pending.');
   }
 
-  const assignedTo = await resolveAssignee(req.user._id);
+  const currentValue = meta.secret ? '' : await readFieldValue(req.user._id, meta);
+  const assignedTo = await resolveHrAssignee(req.user._id);
 
   const cr = await ChangeRequest.create({
     requestedBy: req.user._id,
+    targetUser: req.user._id,
+    approverKind: 'hr',
     assignedTo,
     field,
     fieldLabel: meta.label,
@@ -125,21 +137,97 @@ const createChangeRequest = asyncHandler(async (req, res) => {
     await Notification.create({
       recipient: assignedTo,
       type: 'change_request',
+      audience: 'admin',
       title: 'New change request',
       body: `${req.user.firstName} ${req.user.lastName} requested a change to "${meta.label}".`,
       link: 'change-requests',
     });
   }
-
   res.status(201).json({ changeRequest: cr });
 });
 
 /**
- * List the caller's own change requests, newest first.
- * @route GET /api/change-requests/mine
- * @returns {{count: number, changeRequests: Object[]}}
+ * HR raises a change on an EMPLOYEE's record → routed to the employee's company
+ * CEO/MD. Reusable by the employee-update path so an HR edit becomes a queued
+ * exec approval instead of a direct write. Returns the created request (or null
+ * if nothing changed).
+ * @param {object} actor - the HR user raising it
+ * @param {string} targetUserId - the employee's User id
+ * @param {string} field - FIELD_CATALOG key
+ * @param {string} requestedValue
+ * @param {string} [reason]
  */
-// GET /api/change-requests/mine
+async function queueAdminChange(actor, targetUserId, field, requestedValue, reason) {
+  const meta = FIELD_CATALOG[field];
+  if (!meta) throw Object.assign(new Error('Unknown field'), { status: 400 });
+  const wanted = requestedValue == null ? '' : String(requestedValue).trim();
+  const currentValue = meta.secret ? '' : await readFieldValue(targetUserId, meta);
+  if (String(currentValue) === wanted) return null; // no change
+  // Collapse a duplicate pending request on the same field.
+  const dup = await ChangeRequest.findOne({ targetUser: targetUserId, field, status: 'pending' });
+  if (dup) return dup;
+
+  const assignedTo = await resolveExecAssignee(targetUserId);
+  const cr = await ChangeRequest.create({
+    requestedBy: actor._id,
+    targetUser: targetUserId,
+    approverKind: 'exec',
+    assignedTo,
+    field,
+    fieldLabel: meta.label,
+    currentValue,
+    requestedValue: wanted,
+    reason: reason ? String(reason).trim() : undefined,
+  });
+  if (assignedTo) {
+    await Notification.create({
+      recipient: assignedTo,
+      type: 'change_request',
+      audience: 'admin',
+      title: 'HR change needs your approval',
+      body: `${actor.firstName} ${actor.lastName} wants to change "${meta.label}" for an employee.`,
+      link: 'change-requests',
+    });
+  }
+  return cr;
+}
+
+/**
+ * HR raises a single-field change on an employee (→ company CEO/MD).
+ * @route POST /api/change-requests/admin  { targetUser, field, requestedValue, reason }
+ */
+const createAdminChangeRequest = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'HRManager') {
+    res.status(403);
+    throw new Error('Only HR Managers raise change requests for employees. The Backend edits directly.');
+  }
+  const { targetUser, field, requestedValue, reason } = req.body;
+  if (!targetUser) {
+    res.status(400);
+    throw new Error('targetUser is required');
+  }
+  // HR may only act on their own assigned employees.
+  const profile = await EmployeeProfile.findOne({ user: targetUser }).select('hrPartner');
+  if (!profile || String(profile.hrPartner || '') !== String(req.user._id)) {
+    res.status(403);
+    throw new Error('You can only change details for employees assigned to you.');
+  }
+  if (!requestedValue || !String(requestedValue).trim()) {
+    res.status(400);
+    throw new Error('A requested value is required');
+  }
+  const cr = await queueAdminChange(req.user, targetUser, field, requestedValue, reason);
+  if (!cr) {
+    res.status(400);
+    throw new Error('That value matches what is already on record.');
+  }
+  res.status(201).json({ changeRequest: cr });
+});
+
+/**
+ * The caller's own change requests, newest first.
+ * @route GET /api/change-requests/mine
+ */
 const myChangeRequests = asyncHandler(async (req, res) => {
   const changeRequests = await ChangeRequest.find({ requestedBy: req.user._id })
     .populate('assignedTo', USER_FIELDS)
@@ -149,17 +237,14 @@ const myChangeRequests = asyncHandler(async (req, res) => {
 });
 
 /**
- * List change requests in the admin's inbox.
- * @route GET /api/change-requests/assigned  (HR/SuperAdmin)
- * @param {string} [req.query.all] - 'true' (SuperAdmin only) returns every request
- * @returns {{count: number, changeRequests: Object[]}}
+ * The admin's change-request inbox — HR partners see employee requests routed to
+ * them; CEO/MD see HR requests routed to them; a SuperAdmin can see all (?all).
+ * @route GET /api/change-requests/assigned
  */
-// GET /api/change-requests/assigned  (HR/SuperAdmin; ?all=true for SuperAdmin)
 const assignedChangeRequests = asyncHandler(async (req, res) => {
-  // Permission gate: only HR/SuperAdmin have an inbox
-  if (!['HRManager', 'SuperAdmin'].includes(req.user.role)) {
+  if (!['HRManager', 'SuperAdmin', 'CEO', 'MD'].includes(req.user.role)) {
     res.status(403);
-    throw new Error('Only HR Managers and SuperAdmins have a change-request inbox');
+    throw new Error('You do not have a change-request inbox');
   }
   const filter =
     req.user.role === 'SuperAdmin' && req.query.all === 'true'
@@ -168,58 +253,28 @@ const assignedChangeRequests = asyncHandler(async (req, res) => {
 
   const changeRequests = await ChangeRequest.find(filter)
     .populate('requestedBy', USER_FIELDS)
+    .populate('targetUser', USER_FIELDS)
     .populate('assignedTo', USER_FIELDS)
     .populate('decidedBy', USER_FIELDS)
     .sort({ createdAt: -1 });
   res.json({ count: changeRequests.length, changeRequests });
 });
 
-// Apply an approved value to the underlying User / EmployeeProfile document.
-// Runs schema validators (email format, IFSC, PAN, etc.) via save().
-async function applyChange(requestedByUserId, meta, value) {
-  if (meta.model === 'User') {
-    const user = await User.findById(requestedByUserId).select('+password');
-    if (!user) throw Object.assign(new Error('Target user no longer exists'), { status: 404 });
-    if (meta.path === 'email') {
-      const email = String(value).toLowerCase().trim();
-      const clash = await User.findOne({ email, _id: { $ne: user._id } });
-      if (clash) throw Object.assign(new Error('That email is already in use'), { status: 409 });
-      user.email = email;
-    } else {
-      user.set(meta.path, value); // password set here is re-hashed by the pre-save hook
-    }
-    await user.save();
-  } else {
-    const profile = await EmployeeProfile.findOne({ user: requestedByUserId });
-    if (!profile) throw Object.assign(new Error('Employee profile not found'), { status: 404 });
-    profile.set(meta.path, value);
-    await profile.save();
-  }
-}
-
 /**
- * Approve (applying the value) or decline a pending change request.
- * @route PATCH /api/change-requests/:id
- * @param {string} req.params.id - change request id
- * @param {string} req.body.action - 'approve' or 'decline'
- * @param {string} [req.body.appliedValue] - admin override of the requested value
- * @param {string} [req.body.decisionNote]
- * @returns {{changeRequest: Object}}
- * @sideeffect on approve writes the value to User/EmployeeProfile; notifies the requester either way
+ * Approve (applying the value to the target's record) or decline a pending
+ * request. The assigned approver or a SuperAdmin may decide.
+ * @route PATCH /api/change-requests/:id  { action, appliedValue, decisionNote }
  */
-// PATCH /api/change-requests/:id  { action: 'approve'|'decline', appliedValue, decisionNote }
 const decideChangeRequest = asyncHandler(async (req, res) => {
   const cr = await ChangeRequest.findById(req.params.id);
   if (!cr) {
     res.status(404);
     throw new Error('Change request not found');
   }
-
-  // Permission gate: only the assigned admin (or any SuperAdmin) may decide
   const isAssignee = cr.assignedTo && cr.assignedTo.equals(req.user._id);
   if (!isAssignee && req.user.role !== 'SuperAdmin') {
     res.status(403);
-    throw new Error('Only the assigned admin or a SuperAdmin can decide this request');
+    throw new Error('Only the assigned approver or a SuperAdmin can decide this request');
   }
   if (cr.status !== 'pending') {
     res.status(400);
@@ -233,16 +288,16 @@ const decideChangeRequest = asyncHandler(async (req, res) => {
   }
 
   const meta = FIELD_CATALOG[cr.field];
+  const target = cr.targetUser || cr.requestedBy;
 
   if (action === 'approve') {
-    // Admin may override the value the employee asked for.
     const valueToApply =
       appliedValue !== undefined && String(appliedValue).trim() !== ''
         ? String(appliedValue).trim()
         : cr.requestedValue;
-
-    await applyChange(cr.requestedBy, meta, valueToApply);
-
+    const before = meta.secret ? '' : await readFieldValue(target, meta);
+    await applyFieldValue(target, meta, valueToApply);
+    auditFieldChange(req.user, meta, before, valueToApply, await auditTargetOf(target));
     cr.status = 'approved';
     cr.appliedValue = meta.secret ? '••••••' : valueToApply;
   } else {
@@ -254,22 +309,29 @@ const decideChangeRequest = asyncHandler(async (req, res) => {
   cr.decidedAt = new Date();
   await cr.save();
 
-  await Notification.create({
-    recipient: cr.requestedBy,
-    type: 'change_request',
-    title: `Change request ${cr.status}`,
-    body: `Your request to change "${cr.fieldLabel}" was ${cr.status}.`,
-    link: 'change-requests',
-  });
+  // Tell the requester, and the employee if HR raised it on their behalf.
+  const recipients = new Set([String(cr.requestedBy)]);
+  if (cr.targetUser) recipients.add(String(cr.targetUser));
+  await Promise.all([...recipients].map((recipient) =>
+    Notification.create({
+      recipient,
+      type: 'change_request',
+      title: `Change request ${cr.status}`,
+      body: `The change to "${cr.fieldLabel}" was ${cr.status}.`,
+      link: 'change-requests',
+    })
+  ));
 
   res.json({ changeRequest: cr });
 });
 
 module.exports = {
   getFields,
+  fillMissingField,
   createChangeRequest,
+  createAdminChangeRequest,
+  queueAdminChange,
   myChangeRequests,
   assignedChangeRequests,
   decideChangeRequest,
 };
-module.exports._statuses = CHANGE_REQUEST_STATUSES;
