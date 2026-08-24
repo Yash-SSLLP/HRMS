@@ -43,8 +43,9 @@ const mongoose = require('mongoose');
 const EmployeeKhata = require('../models/EmployeeKhata');
 const { DEFAULT_KHATA_NAME } = require('../models/EmployeeKhata');
 const EmployeeWallet = require('../models/EmployeeWallet');
-const KhataEntry = require('../models/KhataEntry');
-const { KHATA_TYPES } = require('../models/KhataEntry');
+// The employee ledger now lives in the cashbook collection — same rows, one book.
+const KhataEntry = require('../models/CashbookEntry').EmployeeLedgerEntry;
+const { KHATA_TYPES } = require('../models/KhataEntry'); // legacy enum helper only
 const CashAccount = require('../models/CashAccount');
 const CashbookEntry = require('../models/CashbookEntry');
 const User = require('../models/User');
@@ -354,15 +355,15 @@ async function recomputeWalletBalance(employeeId) {
 
   const entries = await KhataEntry.find({ employee: wallet.employee, status: 'Approved' })
     .sort({ date: 1, createdAt: 1 })
-    .select('direction amount balanceAfter date');
+    .select('direction amount walletBalanceAfter date');
 
   const { closing, running } = replayBalance(wallet.openingBalance, entries);
 
   // Only write rows whose stamped running balance actually moved.
   const writes = [];
   entries.forEach((entry, i) => {
-    if (entry.balanceAfter !== running[i]) {
-      writes.push({ updateOne: { filter: { _id: entry._id }, update: { $set: { balanceAfter: running[i] } } } });
+    if (entry.walletBalanceAfter !== running[i]) {
+      writes.push({ updateOne: { filter: { _id: entry._id }, update: { $set: { walletBalanceAfter: running[i] } } } });
     }
   });
   if (writes.length) await KhataEntry.bulkWrite(writes, { ordered: false });
@@ -397,12 +398,12 @@ async function recomputeKhataSpent(khataId) {
   if (!khata) return null;
 
   const entries = await KhataEntry.find({
-    khata: khata._id,
+    expenseBook: khata._id,
     status: 'Approved',
     // Spending, plus the reversals that cancel it — a reversal is filed under
     // whatever it reverses, so one against an expense has to come back off the
     // book it was charged to.
-    type: { $in: [...KHATA_TYPES, 'reversal'] },
+    movement: { $in: [...KHATA_TYPES, 'reversal'] },
   })
     .sort({ date: 1, createdAt: 1 })
     .select('direction amount date');
@@ -430,7 +431,7 @@ async function recomputeKhataSpent(khataId) {
  * @returns {Promise<number|null>} The recomputed wallet balance.
  */
 async function recomputeFor(entry) {
-  if (entry.khata) await recomputeKhataSpent(entry.khata);
+  if (entry.expenseBook) await recomputeKhataSpent(entry.expenseBook);
   return recomputeWalletBalance(entry.employee);
 }
 
@@ -580,34 +581,29 @@ function assertWithinCreditLimit(wallet, entry) {
  * @sideeffect Writes `cashbookEntry` on the khata entry and recomputes the account balance.
  */
 async function postCashLeg(entry, actor, employee) {
-  if (!entry.affectsCompanyCash || !entry.cashAccount) return null;
-  // Already posted — an approval replayed, or a retried request. Never pay twice.
-  if (entry.cashbookEntry) return CashbookEntry.findById(entry.cashbookEntry);
+  if (!entry.affectsCompanyCash || !entry.account) return null;
 
-  const who = nameOf(employee);
-  const cashEntry = await CashbookEntry.create({
-    account: entry.cashAccount,
-    type: entry.direction === 'to_employee' ? 'out' : 'in',
-    amount: entry.amount,
-    date: entry.date,
-    category: CASH_CATEGORY[entry.type] || (entry.direction === 'to_employee' ? CASH_CATEGORY.advance : CASH_CATEGORY.settlement),
-    paymentMode: entry.paymentMode === 'Adjustment' ? 'Other' : entry.paymentMode,
-    description: entry.purpose || `Employee khata — ${entry.type}`,
-    party: who,
-    referenceNo: entry.code || undefined,
-    status: 'Approved',
-    employee: entry.employee,
-    sourceKhataEntry: entry._id,
-    createdBy: actor?._id,
-  });
+  // THE ROW IS THE CASH ROW. The employee ledger and the cashbook are one
+  // collection now, so an advance no longer writes a second, mirrored entry —
+  // it simply carries the account and the in/out sense itself, and shows up in
+  // that account's book directly. What is left to do here is fill in the
+  // company-facing columns (the account view reads `party`/`description`, the
+  // employee view reads `purpose`) and restate the account balance.
+  if (!entry.party) entry.party = nameOf(employee);
+  if (!entry.description) {
+    entry.description = entry.purpose || `Employee advance — ${entry.movement}`;
+  }
+  if (!entry.category || entry.category === 'Uncategorized') {
+    entry.category = CASH_CATEGORY[entry.movement]
+      || (entry.direction === 'to_employee' ? CASH_CATEGORY.advance : CASH_CATEGORY.settlement);
+  }
+  // 'Adjustment' is an employee-ledger payment mode the cashbook does not know.
+  if (entry.paymentMode === 'Adjustment') entry.paymentMode = 'Other';
 
-  entry.cashbookEntry = cashEntry._id;
+  const balance = await recomputeCashAccount(entry.account);
+  entry.balanceAfter = balance;
   await entry.save();
-
-  const balance = await recomputeCashAccount(entry.cashAccount);
-  cashEntry.balanceAfter = balance;
-  await cashEntry.save();
-  return cashEntry;
+  return entry;
 }
 
 // ---------------------------------------------------------------------------
@@ -659,7 +655,7 @@ async function postEntry(input, actor) {
       return {
         entry: prior,
         wallet: await getOrCreateWallet(prior.employee),
-        khata: prior.khata ? await EmployeeKhata.findById(prior.khata) : null,
+        khata: prior.expenseBook ? await EmployeeKhata.findById(prior.expenseBook) : null,
         cashEntry: null,
         duplicate: true,
       };
@@ -702,9 +698,14 @@ async function postEntry(input, actor) {
 
   const entry = await KhataEntry.create({
     employee: employeeId,
-    khata: khata ? khata._id : null,
+    expenseBook: khata ? khata._id : null,
     direction: input.direction,
-    type,
+    movement: type,
+    // The company's view of the same event, so this ONE row serves both books:
+    // money going to the employee leaves the company (out), money coming back
+    // enters it (in). Rows that move no company cash still carry it for shape,
+    // but `affectsCompanyCash: false` keeps them out of every account balance.
+    type: input.direction === 'to_employee' ? 'out' : 'in',
     amount,
     date: input.date || new Date(),
     purpose: input.purpose,
@@ -716,7 +717,7 @@ async function postEntry(input, actor) {
     // named here or it is silently dropped on the way through.
     filedLocation: input.filedLocation || null,
     affectsCompanyCash,
-    cashAccount: input.cashAccount || undefined,
+    account: input.cashAccount || undefined,
     status: autoApprove ? 'Approved' : parkedStatus,
     execApprovalRequired: input.execApprovalRequired === true,
     raisedByEmployee: input.raisedByEmployee === true,
@@ -806,8 +807,8 @@ async function approveEntry(entry, actor, opts = {}) {
     err.statusCode = 400;
     throw err;
   }
-  if (opts.cashAccount) entry.cashAccount = opts.cashAccount;
-  if (entry.affectsCompanyCash && !entry.cashAccount) {
+  if (opts.cashAccount) entry.account = opts.cashAccount;
+  if (entry.affectsCompanyCash && !entry.account) {
     const err = new Error('Choose which company account this money moves through.');
     err.statusCode = 400;
     throw err;
@@ -828,7 +829,7 @@ async function approveEntry(entry, actor, opts = {}) {
   return {
     entry,
     wallet: await getOrCreateWallet(entry.employee),
-    khata: entry.khata ? await EmployeeKhata.findById(entry.khata) : null,
+    khata: entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null,
     cashEntry,
   };
 }
@@ -890,17 +891,18 @@ async function reverseEntry(entry, actor, reason) {
     employee: entry.employee,
     // A reversal is filed under whatever the original was, so cancelling an
     // expense takes the cost back off the book it was charged to.
-    khata: entry.khata || null,
+    expenseBook: entry.expenseBook || null,
     // The mirror image: money that went out now comes back, and vice versa.
     direction: entry.direction === 'to_employee' ? 'from_employee' : 'to_employee',
-    type: 'reversal',
+    movement: 'reversal',
+    type: entry.direction === 'to_employee' ? 'in' : 'out',
     amount: entry.amount,
     date: new Date(),
     purpose: `Reversal of ${entry.code || 'entry'} — ${reason}`,
     category: entry.category,
     paymentMode: entry.paymentMode,
     affectsCompanyCash: entry.affectsCompanyCash,
-    cashAccount: entry.cashAccount,
+    account: entry.account,
     status: 'Approved',
     reversalOf: entry._id,
     reversalReason: reason,
@@ -925,7 +927,7 @@ async function reverseEntry(entry, actor, reason) {
     original: entry,
     reversal,
     wallet: await getOrCreateWallet(entry.employee),
-    khata: entry.khata ? await EmployeeKhata.findById(entry.khata) : null,
+    khata: entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null,
   };
 }
 
@@ -961,7 +963,7 @@ async function reverseEntry(entry, actor, reason) {
 function expenseEditability(entry, khata) {
   const no = (reason) => ({ employee: false, company: false, reason });
 
-  if (!entry || entry.type !== 'expense') {
+  if (!entry || entry.movement !== 'expense') {
     return no('Only an expense can be edited. Anything else is corrected by reversing it.');
   }
   if (entry.status === 'Reversed' || entry.reversedBy) {
@@ -1007,7 +1009,7 @@ const changeLine = (label, before, after) => `${label}: ${before ?? '—'} → $
  */
 async function applyExpenseEdit(entry, changes, actor, opts = {}) {
   const lines = [];
-  const previousKhataId = entry.khata ? String(entry.khata) : null;
+  const previousKhataId = entry.expenseBook ? String(entry.expenseBook) : null;
 
   if (changes.amount !== undefined) {
     const next = round2(changes.amount);
@@ -1029,7 +1031,7 @@ async function applyExpenseEdit(entry, changes, actor, opts = {}) {
     const target = await resolveKhata(entry.employee, changes.khata, actor);
     const before = previousKhataId ? await EmployeeKhata.findById(previousKhataId).select('name') : null;
     lines.push(changeLine('khata', before?.name, target.name));
-    entry.khata = target._id;
+    entry.expenseBook = target._id;
   }
 
   const text = [
@@ -1072,7 +1074,7 @@ async function applyExpenseEdit(entry, changes, actor, opts = {}) {
   // Both books, because the cost may have moved between them, and the wallet,
   // because the amount may have changed. recomputeFor covers the new book and
   // the wallet; the old one has to be asked for by name.
-  if (previousKhataId && previousKhataId !== String(entry.khata || '')) {
+  if (previousKhataId && previousKhataId !== String(entry.expenseBook || '')) {
     await recomputeKhataSpent(previousKhataId);
   }
   await recomputeFor(entry);
@@ -1080,7 +1082,7 @@ async function applyExpenseEdit(entry, changes, actor, opts = {}) {
   return {
     entry,
     wallet: await getOrCreateWallet(entry.employee),
-    khata: entry.khata ? await EmployeeKhata.findById(entry.khata) : null,
+    khata: entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null,
     changed: lines.length > 0,
     summary: lines.join('; '),
   };

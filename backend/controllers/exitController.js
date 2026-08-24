@@ -18,6 +18,8 @@ const { notify } = require('../services/notify');
 const { buildApprovalChain } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { buildDefaultSections } = require('../config/exitClearance');
+const { getBranding } = require('../services/branding');
+const { renderRelievingLetter, resolveLetterBody } = require('../services/letterPdf');
 
 // Shared resolver — see config/appUrl.js. The exit-feedback link goes to a
 // leaver who no longer has a company login, so a localhost default is dead mail.
@@ -444,6 +446,136 @@ const getExit = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Stream the relieving letter for a leaver as a PDF.
+ *
+ * Gated on the exit actually being over: the letter certifies that the notice
+ * was served and nothing is outstanding, so issuing it while the person is
+ * still working — or still holding a company laptop — would be a false
+ * statement. Clearance must be satisfied (or explicitly overridden by HR) and
+ * the last working day must have passed.
+ *
+ * @route GET /api/exits/:id/relieving-letter.pdf  (HR/Admin, 'exit.manage')
+ * @param {string} req.params.id - exit request id
+ * @returns {application/pdf} inline; 400 while the exit is not yet complete
+ */
+// Is this exit far enough along to certify? Returns an error message, or null
+// when the letter may be issued. Shared by all three ways in (HR, the leaver's
+// own portal, and the public token link) so the rule is stated once.
+function relievingLetterBlocker(exit) {
+  if (exit.status === 'Cancelled') {
+    return 'This resignation was withdrawn, so there is no relieving letter to issue.';
+  }
+  if (!clearanceSatisfied(exit)) {
+    const pending = pendingSectionTitles(exit);
+    return pending.length
+      ? `No-dues clearance is not finished yet — still pending: ${pending.join(', ')}.`
+      : 'No-dues clearance is not finished yet, so the letter cannot be issued.';
+  }
+  const lwd = exit.lastWorkingDay ? startOfDayIST(exit.lastWorkingDay) : null;
+  if (!lwd || lwd > startOfDayIST(new Date())) {
+    return 'The last working day has not passed yet, so the letter cannot be issued.';
+  }
+  return null;
+}
+
+// Render one exit's relieving letter and write it to the response.
+async function sendRelievingLetter(exit, res) {
+  const profile = exit.employee;
+  const data = {
+    employeeName: `${profile?.user?.firstName || ''} ${profile?.user?.lastName || ''}`.trim(),
+    employeeCode: profile?.employeeCode,
+    designation: profile?.designation,
+    department: profile?.department,
+    joiningDate: profile?.dateOfJoining,
+    lastWorkingDay: exit.lastWorkingDay,
+    brand: await getBranding(),
+  };
+  // The org's edited template wins over the coded default (Admin → Templates).
+  data.body = await resolveLetterBody('relieving', data);
+
+  const pdf = await renderRelievingLetter(data);
+  const safeName = (data.employeeName || 'employee').replace(/[^\w.-]+/g, '-').toLowerCase();
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="relieving-letter-${safeName}.pdf"`);
+  res.send(pdf);
+}
+
+const EXIT_POPULATE = {
+  path: 'employee',
+  populate: { path: 'user', select: 'firstName lastName' },
+};
+
+const relievingLetterPdf = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findById(req.params.id).populate(EXIT_POPULATE);
+  if (!exit) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  const blocked = relievingLetterBlocker(exit);
+  if (blocked) {
+    res.status(400);
+    throw new Error(blocked);
+  }
+  await sendRelievingLetter(exit, res);
+});
+
+/**
+ * The leaver's own relieving letter, from their portal / the mobile app.
+ *
+ * Only useful while their login still works — completing an exit deactivates the
+ * account — so the same letter is also served by token below, which is what the
+ * exit email should link to.
+ * @route GET /api/exits/me/relieving-letter.pdf
+ */
+const myRelievingLetterPdf = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ user: req.user._id }).select('_id');
+  if (!profile) {
+    res.status(404);
+    throw new Error('No employee profile found for your account.');
+  }
+  const exit = await ExitRequest.findOne({ employee: profile._id, status: { $ne: 'Cancelled' } })
+    .sort({ createdAt: -1 })
+    .populate(EXIT_POPULATE);
+  if (!exit) {
+    res.status(404);
+    throw new Error('You have no exit on record.');
+  }
+  const blocked = relievingLetterBlocker(exit);
+  if (blocked) {
+    res.status(400);
+    throw new Error(blocked);
+  }
+  await sendRelievingLetter(exit, res);
+});
+
+/**
+ * The relieving letter by its public exit token — no login needed.
+ *
+ * This is the one that actually reaches the leaver: by the time the letter can
+ * be issued their company account has been switched off, so an authenticated
+ * route alone would lock them out of their own certificate. Reuses the exit
+ * feedback token they already have from the exit email.
+ * @route GET /api/exits/feedback/:token/relieving-letter.pdf  (public)
+ */
+const publicRelievingLetterPdf = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findOne({ feedbackToken: req.params.token }).populate(EXIT_POPULATE);
+  if (!exit) {
+    res.status(404);
+    throw new Error('This link is invalid or has been revoked');
+  }
+  if (exit.feedbackTokenExpiresAt && exit.feedbackTokenExpiresAt < new Date()) {
+    res.status(410);
+    throw new Error('This link has expired — please ask HR to re-send it.');
+  }
+  const blocked = relievingLetterBlocker(exit);
+  if (blocked) {
+    res.status(400);
+    throw new Error(blocked);
+  }
+  await sendRelievingLetter(exit, res);
+});
+
+/**
  * Edit an open exit's dates/reason/handler/clearance/status (not Completed/Cancelled).
  * @route PUT /api/exits/:id  (HR/Admin)
  * @param {string} req.params.id - exit request id
@@ -583,6 +715,8 @@ const completeExit = asyncHandler(async (req, res) => {
     hr: exit.handledBy,
     lastWorkingDay: exit.lastWorkingDay,
     feedbackUrl,
+    // Same tokenised page — it serves the relieving letter as well as the form.
+    letterUrl: feedbackUrl,
   });
   res.json({
     exit,
@@ -634,6 +768,8 @@ const resendExitEmail = asyncHandler(async (req, res) => {
     hr: exit.handledBy,
     lastWorkingDay: exit.lastWorkingDay,
     feedbackUrl,
+    // Same tokenised page — it serves the relieving letter as well as the form.
+    letterUrl: feedbackUrl,
   });
   if (req.body?.preview) {
     return res.json({ to: empEmail, subject: msg.subject, body: msg.text, feedbackUrl });
@@ -940,6 +1076,9 @@ module.exports = {
   assignClearanceApprovers,
   updateClearanceSectionAdmin,
   overrideClearance,
+  relievingLetterPdf,
+  myRelievingLetterPdf,
+  publicRelievingLetterPdf,
   // Shared with the approvals controller and the exit worker
   advanceExitApproval,
   ensureExitApprovalChain,

@@ -422,13 +422,47 @@ function appointmentBody(data = {}, R = '₹') {
 }
 
 /**
+ * The relieving letter's body, as editable blocks.
+ *
+ * Written WITHOUT pronouns on purpose: the text is assembled from stored fields
+ * and a certificate that guesses "he"/"she" from a gender field gets it wrong
+ * for real people, while "they has been relieved" is broken grammar. Repeating
+ * the name reads as correct, formal English for every employee.
+ *
+ * @param {Object} data - { employeeName, employeeCode, designation, department,
+ *   joiningDate, lastWorkingDay }
+ * @returns {{type: 'para'|'term', head?: string, text: string, bold?: boolean}[]}
+ */
+function relievingBody(data = {}) {
+  const who = data.employeeName || '__________';
+  const code = data.employeeCode ? ` (Employee Code: ${data.employeeCode})` : '';
+  const dept = data.department ? ` in the ${data.department} department` : '';
+  const lwd = longDate(data.lastWorkingDay);
+  return [
+    { type: 'para', text:
+      `This is to certify that ${who}${code} was employed with ${COMPANY.name} as `
+      + `${data.designation || '__________'}${dept} from ${longDate(data.joiningDate)} to ${lwd}.` },
+    { type: 'para', text:
+      `The resignation tendered has been accepted, and ${who} stands relieved of all duties `
+      + `with effect from the close of business on ${lwd}.` },
+    { type: 'para', bold: true, text:
+      'All company property has been returned and no dues remain outstanding as on the date of this letter.' },
+    { type: 'para', text:
+      `During the tenure with us, ${who} was found to be sincere and diligent in the discharge of the responsibilities assigned.` },
+    { type: 'para', bold: true, text:
+      `We thank ${who} for the contribution made to ${COMPANY.name} and wish every success in the future.` },
+  ];
+}
+
+/**
  * The default body for a letter kind, for the editor to prefill with. The rupee
  * glyph differs per embedded font, so use the plain sign here — this text is for
  * a browser textarea, not the PDF.
- * @param {'offer'|'appointment'} kind
+ * @param {'offer'|'appointment'|'relieving'} kind
  * @param {Object} data
  */
 function letterBodyDefaults(kind, data = {}) {
+  if (kind === 'relieving') return relievingBody(data);
   return kind === 'appointment' ? appointmentBody(data, '₹') : offerBody(data, '₹');
 }
 
@@ -472,6 +506,15 @@ async function resolveLetterBody(kind, data = {}) {
       joiningDate: longDate(data.joiningDate),
       acceptanceDeadline: longDate(data.acceptanceDeadline),
       interviewRef: data.refInterviewDate ? `held on ${longDate(data.refInterviewDate)}` : 'we recently held with you',
+      // ----- relieving letter -----
+      // The leaver is an employee, not a candidate, so the name arrives as
+      // `employeeName`; accept the candidate key too so one template can be
+      // previewed from either side.
+      employeeName: data.employeeName || data.candidateName,
+      employeeCode: data.employeeCode,
+      employeeCodeClause: data.employeeCode ? ` (Employee Code: ${data.employeeCode})` : '',
+      designation: data.designation || data.position,
+      lastWorkingDay: longDate(data.lastWorkingDay),
     };
     return await renderLetterBlocks(`${kind}.letter`, vars, fallback);
   } catch (err) {
@@ -593,8 +636,65 @@ async function renderAppointmentLetter(data = {}) {
   return lastBuffer;
 }
 
+// One pass at a given compression — same shape as renderOfferOnce.
+function renderRelievingOnce(data, scale) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 0 });
+    const chunks = [];
+    let pages = 1; // the first page exists before anything is drawn
+    doc.on('pageAdded', () => { pages += 1; });
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pages }));
+    doc.on('error', reject);
+
+    const F = { ...setupFonts(doc), s: scale };
+    const brand = data.brand || {};
+    const y = drawLetterhead(doc, F, brand);
+    const who = data.employeeName || data.candidateName || '';
+
+    para(doc, F, `Date: ${todayLong()}`, { y });
+    doc.moveDown(0.4 * scale);
+    para(doc, F, who, { bold: true, gap: 0.15 });
+    if (data.employeeCode) para(doc, F, `Employee Code: ${data.employeeCode}`, { gap: 1 });
+
+    // "To Whomsoever It May Concern" is the convention for a relieving letter —
+    // it is a certificate the leaver shows a future employer, not a letter
+    // addressed only to them.
+    para(doc, F, 'Sub: Relieving Letter', { bold: true, align: 'center', gap: 0.6 });
+    para(doc, F, 'TO WHOMSOEVER IT MAY CONCERN', { bold: true, align: 'center', gap: 1 });
+
+    drawBlocks(doc, F, bodyOrDefault(data, relievingBody(data)));
+
+    // No acceptance stub: an offer is accepted, a relieving letter is not — it
+    // certifies something that already happened. The block still prints both
+    // signature columns from the uploaded branding (HR left, CEO/MD right).
+    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, false, brand);
+
+    doc.end();
+  });
+}
+
+/**
+ * Relieving letter: one sheet, letterhead and signature block as every other
+ * letter. Shrinks a step at a time if an edited body would overflow, exactly
+ * like the offer letter.
+ * @param {Object} data - { employeeName, employeeCode, designation, department,
+ *   joiningDate, lastWorkingDay, signatoryName, signatoryTitle, brand, body }
+ * @returns {Promise<Buffer>} the rendered PDF bytes
+ */
+async function renderRelievingLetter(data = {}) {
+  let lastBuffer = null;
+  for (const scale of OFFER_FIT_STEPS) {
+    const { buffer, pages } = await renderRelievingOnce(data, scale);
+    if (pages === 1) return buffer;
+    lastBuffer = buffer;
+  }
+  return lastBuffer;
+}
+
 module.exports = {
-  renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody,
+  renderOfferLetter, renderAppointmentLetter, renderRelievingLetter,
+  letterBodyDefaults, resolveLetterBody,
   // Exported so the one-page behaviour can be measured at a chosen compression.
-  renderOfferOnce, renderAppointmentOnce, OFFER_FIT_STEPS,
+  renderOfferOnce, renderAppointmentOnce, renderRelievingOnce, OFFER_FIT_STEPS,
 };

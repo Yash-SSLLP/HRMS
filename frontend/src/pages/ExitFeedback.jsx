@@ -83,6 +83,12 @@ export default function ExitFeedback() {
           </p>
         </header>
 
+        {/* The relieving letter lives here too: by the time this page is opened
+            the company login is switched off, so this tokenised page is the only
+            way the letter reaches the person it is about. Shown whatever the
+            feedback state — it must not depend on filling the survey in. */}
+        {ctx && !loading && <RelievingLetterCard token={token} />}
+
         {loading ? (
           <p className="text-center text-gray-500">Loading…</p>
         ) : error && !ctx ? (
@@ -193,6 +199,51 @@ export default function ExitFeedback() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The relieving letter, offered on the same tokenised page as the feedback form.
+ *
+ * Fetched as a blob rather than linked with a bare <a href> so a refusal (the
+ * server withholds the letter until clearance is done and the last working day
+ * has passed) can be shown as a sentence instead of dumping raw JSON into a tab.
+ */
+function RelievingLetterCard({ token }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const open = async () => {
+    setBusy(true); setErr('');
+    try {
+      const res = await api.get(`/exits/feedback/${token}/relieving-letter.pdf`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      let msg = 'Your relieving letter is not available yet.';
+      try {
+        const text = e.response?.data instanceof Blob ? await e.response.data.text() : null;
+        if (text) msg = JSON.parse(text).message || msg;
+      } catch { /* keep the fallback */ }
+      setErr(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white shadow-lg rounded-2xl p-5 mb-5">
+      <h2 className="text-sm font-semibold text-gray-900">Your relieving letter</h2>
+      <p className="text-sm text-gray-600 mt-1">
+        Keep a copy for your records — a future employer will usually ask for it.
+      </p>
+      {err && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg mt-3">{err}</p>}
+      <button onClick={open} disabled={busy}
+        className="mt-3 px-4 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60">
+        {busy ? 'Opening…' : 'Download relieving letter'}
+      </button>
     </div>
   );
 }

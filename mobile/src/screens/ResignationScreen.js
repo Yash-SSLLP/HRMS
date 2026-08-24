@@ -11,7 +11,11 @@ import { toast } from '../components/Toast';
 import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
-import api, { errMsg } from '../api/client';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+
+import api, { errMsg, API_BASE } from '../api/client';
+import { useAuth } from '../store/auth';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Card, AppButton, Input, Field, DateField, Pill, Loader, refresher, Ionicons, SkeletonScreen } from '../components/ui';
 import { fmtDate } from '../utils/format';
@@ -31,6 +35,42 @@ export default function ResignationScreen() {
   const [exit, setExit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [gettingLetter, setGettingLetter] = useState(false);
+  const token = useAuth((s) => s.token);
+
+  // Download the relieving letter and hand it to the OS share sheet so it can be
+  // saved, printed or mailed on. Only offered once the exit is over — the server
+  // refuses until clearance is done and the last working day has passed, and its
+  // message explains which of the two is outstanding.
+  const getRelievingLetter = async () => {
+    setGettingLetter(true);
+    try {
+      const fileUri = `${FileSystem.cacheDirectory}relieving-letter.pdf`;
+      const res = await FileSystem.downloadAsync(`${API_BASE}/exits/me/relieving-letter.pdf`, fileUri, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status !== 200) {
+        // The body is JSON when the server refuses; surface that reason.
+        let msg = 'The relieving letter is not available yet.';
+        try {
+          const body = await FileSystem.readAsStringAsync(res.uri);
+          msg = JSON.parse(body).message || msg;
+        } catch { /* keep the fallback */ }
+        throw new Error(msg);
+      }
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(res.uri, {
+          mimeType: 'application/pdf', dialogTitle: 'Relieving letter', UTI: 'com.adobe.pdf',
+        });
+      } else {
+        toast('Downloaded', 'Relieving letter saved to the app cache.');
+      }
+    } catch (err) {
+      toast('Not available', err.message || 'Could not fetch the relieving letter.');
+    } finally {
+      setGettingLetter(false);
+    }
+  };
 
   // Default to a 30-day notice; the two fields stay in sync from here.
   const [lastWorkingDay, setLastWorkingDay] = useState(ymdFromDays(30));
@@ -120,6 +160,23 @@ export default function ResignationScreen() {
                 <Ionicons name="information-circle" size={18} color={colors.info} />
                 <Text style={styles.noteText}>Your resignation has been accepted. You're serving notice until {fmtDate(exit.lastWorkingDay)}. HR will complete clearance before your last day.</Text>
               </View>
+            ) : null}
+            {/* The letter certifies that notice was served and nothing is
+                outstanding, so it only appears once the exit is finished. */}
+            {exit.status === 'Completed' ? (
+              <>
+                <View style={styles.note}>
+                  <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                  <Text style={styles.noteText}>Your exit is complete. You can download your relieving letter below — HR also emails you a copy you can open without signing in.</Text>
+                </View>
+                <AppButton
+                  title="Relieving letter"
+                  icon="document-text"
+                  onPress={getRelievingLetter}
+                  loading={gettingLetter}
+                  style={{ marginTop: spacing(3) }}
+                />
+              </>
             ) : null}
           </Card>
         ) : (

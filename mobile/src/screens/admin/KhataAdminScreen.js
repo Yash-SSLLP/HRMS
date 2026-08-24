@@ -75,7 +75,7 @@ const STATUS_LABEL = { AwaitingApproval: 'With CEO/MD' };
 // KHATA_TYPES on the server.
 const ENTRY_KINDS = [
   { value: 'advance', label: 'Advance out', direction: 'to_employee' },
-  { value: 'expense', label: 'Expense on a khata', direction: 'from_employee' },
+  { value: 'expense', label: 'Expense on a book', direction: 'from_employee' },
   { value: 'settlement', label: 'Cash back', direction: 'from_employee' },
 ];
 
@@ -185,7 +185,7 @@ export default function KhataAdminScreen() {
         token,
         fileName: name,
         mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        dialogTitle: 'Employee khata',
+        dialogTitle: 'Employee advances',
         errors: { 403: 'You do not have permission to download the khata.' },
       });
       if (!shared) toast('Saved', name);
@@ -220,7 +220,7 @@ export default function KhataAdminScreen() {
         token,
         fileName: name,
         mimeType: 'application/pdf',
-        dialogTitle: 'Khata statement',
+        dialogTitle: 'Cashbook statement',
         UTI: 'com.adobe.pdf',
       });
       if (!shared) toast('Saved', name);

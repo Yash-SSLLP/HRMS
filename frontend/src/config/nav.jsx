@@ -95,9 +95,14 @@ export const adminNav = [
     { to: '/admin/cashbook', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage',
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'ledger', label: 'Ledger' }, { id: 'vouchers', label: 'Vouchers' },
         { id: 'accounts', label: 'Accounts' }, { id: 'categories', label: 'Categories' }, { id: 'reports', label: 'Reports' }] },
-    { to: '/admin/khata', label: 'Employee Khata', icon: TbReceipt, perm: 'khata.manage',
+    // The per-employee side of the cashbook — advances people hold and the
+    // expenses they file against them. (Formerly "Employee Khata".)
+    { to: '/admin/khata', label: 'Employee Advances', icon: TbReceipt, perm: 'khata.manage',
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'people', label: 'People' }, { id: 'ledger', label: 'Ledger' },
         { id: 'approvals', label: 'Approvals' }, { id: 'accounts', label: 'Accounts' }] },
+    // CEO/MD have no employee portal, so their own cash account (advances they
+    // take, expenses they file) lives here in the admin portal.
+    { to: '/admin/my-khata', label: 'My Cashbook', icon: TbReceipt, roles: ['CEO', 'MD'] },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
@@ -166,7 +171,7 @@ export const accountsNav = [
   // Account Managers settle reimbursements, so they get the expense queue too.
   { to: '/admin/expenses', label: 'Expenses', end: true, icon: FiShoppingBag },
   // Handing cash to staff is the other half of the accounts job.
-  { to: '/admin/khata', label: 'Employee Khata', end: true, icon: TbReceipt },
+  { to: '/admin/khata', label: 'Employee Advances', end: true, icon: TbReceipt },
 ];
 
 export const employeeNav = [
@@ -197,10 +202,10 @@ export const employeeNav = [
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
     { to: '/employee/travel', label: 'Travel', icon: FiMap },
-    { to: '/employee/khata', label: 'My Khata', icon: TbReceipt },
+    { to: '/employee/khata', label: 'My Cashbook', icon: TbReceipt },
     { to: '/employee/cashbook-manage', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage' },
-    // The khata admin surface, for standalone-grant holders with no admin portal.
-    { to: '/employee/khata-manage', label: 'Employee Khata', icon: TbCashBanknote, perm: 'khata.manage' },
+    // The employee-advances admin surface, for standalone-grant holders with no admin portal.
+    { to: '/employee/khata-manage', label: 'Employee Advances', icon: TbCashBanknote, perm: 'khata.manage' },
     // The review queue, for standalone-grant holders with no admin portal. Named
     // apart from the self-service "Expenses" row above, which lists only my own.
     { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },

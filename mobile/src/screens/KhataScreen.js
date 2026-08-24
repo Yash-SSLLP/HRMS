@@ -186,7 +186,7 @@ export default function KhataScreen() {
         token,
         fileName: name,
         mimeType: 'application/pdf',
-        dialogTitle: 'Khata statement',
+        dialogTitle: 'Cashbook statement',
         UTI: 'com.adobe.pdf',
       });
       if (!shared) toast('Saved', name);

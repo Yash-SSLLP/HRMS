@@ -303,7 +303,7 @@ export default function EmployeeKhata() {
 
   return (
     <div>
-      <PageHeader title="My Khata" />
+      <PageHeader title="My Cashbook" />
 
       <p className="text-sm text-gray-500 mb-4">
         The company advances money into your wallet; you then record what you spend it on against

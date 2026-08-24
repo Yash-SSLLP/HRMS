@@ -19,6 +19,9 @@ const {
   assignClearanceApprovers,
   updateClearanceSectionAdmin,
   overrideClearance,
+  relievingLetterPdf,
+  myRelievingLetterPdf,
+  publicRelievingLetterPdf,
 } = require('../controllers/exitController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -28,6 +31,10 @@ const router = express.Router();
 // Mounted first so they bypass the auth middleware below.
 // GET /feedback/:token — load exit-feedback form context; public (token-scoped).
 router.get('/feedback/:token', getFeedbackContext);
+// GET /feedback/:token/relieving-letter.pdf — the leaver's relieving letter, no
+// login required. Completing an exit switches their account off, so this token
+// link is the only way the letter actually reaches the person it is about.
+router.get('/feedback/:token/relieving-letter.pdf', publicRelievingLetterPdf);
 // POST /feedback/:token — submit exit feedback; public (token-scoped).
 router.post('/feedback/:token', submitFeedback);
 
@@ -37,6 +44,8 @@ router.use(protect);
 // Employee self-service
 // GET /me — current user's own exit record; protected.
 router.get('/me', getMyExit);
+// GET /me/relieving-letter.pdf — my own relieving letter, while my login works.
+router.get('/me/relieving-letter.pdf', myRelievingLetterPdf);
 // POST /me — submit own resignation; protected.
 router.post('/me', submitMyResignation);
 
@@ -65,6 +74,11 @@ router.post('/:id/resend-email', resendExitEmail);
 router.patch('/:id/clearance-assignees', assignClearanceApprovers);
 // PATCH /:id/clearance/override — HR override of the no-dues gate (with reason).
 router.patch('/:id/clearance/override', overrideClearance);
+
+// GET /:id/relieving-letter.pdf — the leaver's relieving letter as a PDF;
+// requires 'exit.manage'. Refused until no-dues clearance is satisfied and the
+// last working day has passed — the letter certifies both.
+router.get('/:id/relieving-letter.pdf', relievingLetterPdf);
 // PATCH /:id/clearance/:key — HR ticks a no-dues section.
 router.patch('/:id/clearance/:key', updateClearanceSectionAdmin);
 

@@ -288,6 +288,13 @@ Approve travel requests and handle reimbursements separately, including the uplo
 
 Cash accounts with an in-and-out ledger and a running balance, employee vouchers routed for approval, transfers between accounts, and a day book, summary and export. Access can be granted to anyone regardless of role, and there is a dedicated Accounts Manager role for people who need the cashbook and nothing else.
 
+### Employee khata
+
+Each person has one **wallet** (the company cash they hold) and as many named **expense books** as they need. They ask for an advance, and — depending on the org setting — it either waits for a **CEO/MD to sanction** it or goes straight to whoever handles the cash; then the **Account Manager** (any employee the Backend has granted khata access, or the Accounts Manager role) pays it out. Expenses post the moment they are filed and the accounts team confirms them afterwards.
+
+- **The CEO and MD have their own khata too.** They take advances and file expenses like anyone else — from **My Khata** in their portal. Because they are the sanctioning authority, their own advance **skips the sanction step and goes straight to the Account Manager** to be paid.
+- **Editing:** an expense stays editable by the person who filed it (and by the accounts team) **until it is confirmed**. Once confirmed it is locked — normally you would reverse it to fix a mistake — **except the Backend, which can still correct a confirmed expense** in place.
+
 ---
 
 ## 9. Performance and learning
@@ -362,6 +369,10 @@ An exit can be initiated by HR — as a resignation, termination or retirement �
 An employee's resignation climbs the same reporting hierarchy for approval. Once approved it enters the **notice period**, during which their login stays active and they keep working normally, while the assigned managers complete their **no-dues clearance** sections. The account is deactivated automatically only once clearance is complete and the last working day has passed — never before.
 
 Completing an exit generates a feedback token for a public, no-login feedback form, sets the date of exit, and hands you an editable feedback email to review and send. Nothing is emailed automatically.
+
+Once an exit is **Completed**, a **Relieving Letter** button on it opens the letter as a PDF — same letterhead, signature block and layout as the offer and appointment letters. It is deliberately refused until no-dues clearance is satisfied (or explicitly overridden) and the last working day has passed, because the letter certifies both. Its wording is editable like every other letter, under Templates → *Relieving letter*.
+
+[!IMPORTANT] The leaver can fetch the same letter themselves — from Resignation in the web portal or the mobile app while their login still works, and afterwards through the **same no-login link as their exit feedback**. That matters because completing an exit switches their account off: without the token link, the one person the letter is about could not open it.
 
 [!NOTE] The notice period and the last working day stay in step: changing one updates the other, so the two can never disagree.
 

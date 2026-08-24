@@ -213,6 +213,8 @@ export default function App() {
         <Route path="loans" element={<AdminLoans />} />
         <Route path="cashbook" element={<AdminCashbook />} />
         <Route path="khata" element={<AdminKhata />} />
+        {/* CEO/MD self-service khatabook inside the admin portal (they have no employee portal). */}
+        <Route path="my-khata" element={<EmployeeKhata />} />
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />

@@ -322,6 +322,8 @@ Submit your resignation with your intended last working day, your notice period,
 
 Your resignation then climbs the same reporting hierarchy for approval. Once approved you enter your **notice period** — your login stays active and you continue working normally — while the no-dues clearance is completed by the departments that hold company property or access. Your account is deactivated only after clearance is done and your last working day has passed.
 
+Once your exit is complete, a **Relieving letter** button appears on the Resignation screen (web and mobile) and downloads your letter. Since your company login is switched off at that point, HR's exit email also carries a link that opens the same letter without signing in — keep that email.
+
 You can see the status throughout, along with your HR contact. You cannot open a second resignation while one is already in progress.
 
 ---

@@ -652,7 +652,7 @@ export default function AdminKhata() {
 
   return (
     <div>
-      <PageHeader title="Employee Khata">
+      <PageHeader title="Employee Advances">
         <button onClick={() => openEntry('')}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + New entry

@@ -28,7 +28,8 @@ const mongoose = require('mongoose');
 const ExcelJS = require('exceljs');
 const EmployeeKhata = require('../models/EmployeeKhata');
 const EmployeeWallet = require('../models/EmployeeWallet');
-const KhataEntry = require('../models/KhataEntry');
+// The employee ledger is part of the cashbook collection now (one row per movement).
+const KhataEntry = require('../models/CashbookEntry').EmployeeLedgerEntry;
 const { ENTRY_TYPES, PAYMENT_MODES } = require('../models/KhataEntry');
 const CashAccount = require('../models/CashAccount');
 const Setting = require('../models/Setting');
@@ -129,10 +130,12 @@ const publicEntry = (e, viewer) => ({
     : (e.employee?._id || e.employee || null),
   // Which expense book this was filed under. Null for anything that moves the
   // wallet itself — an advance, a settlement, a reimbursement.
-  khata: e.khata?._id || e.khata || null,
-  khataName: e.khata?.name || undefined,
+  // The API keeps calling this `khata` so existing clients are unaffected; the
+  // stored field is `expenseBook` since the two ledgers merged.
+  khata: e.expenseBook?._id || e.expenseBook || null,
+  khataName: e.expenseBook?.name || undefined,
   direction: e.direction,
-  type: e.type,
+  type: e.movement,
   amount: e.amount,
   // Pre-signed so a client never has to re-derive the convention.
   signedAmount: e.direction === 'to_employee' ? e.amount : -e.amount,
@@ -143,11 +146,13 @@ const publicEntry = (e, viewer) => ({
   referenceNo: e.referenceNo,
   status: e.status,
   affectsCompanyCash: e.affectsCompanyCash,
-  cashAccount: e.cashAccount?._id || e.cashAccount || null,
-  cashAccountName: e.cashAccount?.name || undefined,
-  cashbookEntry: e.cashbookEntry || null,
+  cashAccount: e.account?._id || e.account || null,
+  cashAccountName: e.account?.name || undefined,
+  // The row IS the cashbook row now, so it points at itself rather than at a
+  // separate mirrored entry. Legacy rows may still carry the old link.
+  cashbookEntry: e.cashbookEntry || (e.affectsCompanyCash ? e._id : null),
   raisedByEmployee: e.raisedByEmployee,
-  balanceAfter: e.balanceAfter,
+  balanceAfter: e.walletBalanceAfter,
   hasAttachment: !!e.attachment?.storagePath,
   // Has anybody on the company side actually looked at this expense? 'Approved'
   // does not answer that for an expense, which posts unreviewed — see the
@@ -383,14 +388,14 @@ function summariseEntries(entries = []) {
     const amt = Number(e.amount) || 0;
     if (e.status === 'Approved') {
       if (e.direction === 'to_employee') s.advanced += amt;
-      else if (e.type === 'expense') s.spent += amt;
+      else if (e.movement === 'expense') s.spent += amt;
       else s.returned += amt;
     } else if (e.status === 'AwaitingApproval' || e.status === 'Pending') {
       s.waitingCount += 1;
       if (e.direction === 'to_employee') {
         // A claim is money coming back, not an advance going out; folding the
         // two together would offer to pay somebody twice.
-        if (e.type === 'reimbursement') s.pendingReimbursement += amt;
+        if (e.movement === 'reimbursement') s.pendingReimbursement += amt;
         else if (e.status === 'AwaitingApproval') s.awaitingAdvance += amt;
         else s.pendingAdvance += amt;
       } else {
@@ -424,8 +429,8 @@ const getMyKhata = asyncHandler(async (req, res) => {
   const khatas = await ledger.listKhatasOf(req.user._id, true);
 
   const entries = await KhataEntry.find({ employee: req.user._id })
-    .populate('cashAccount', 'name')
-    .populate('khata', 'name')
+    .populate('account', 'name')
+    .populate('expenseBook', 'name')
     .sort({ date: -1, createdAt: -1 })
     .limit(400);
 
@@ -450,8 +455,11 @@ const getMyKhata = asyncHandler(async (req, res) => {
       claimable: ledger.round2(Math.max(0, -(wallet.balance || 0) - sums.pendingReimbursement)),
     },
     // Whether a request of theirs will need an executive's sanction, so the
-    // form can say so before they send it rather than after.
-    approvalRequired: await advanceApprovalRequired(),
+    // form can say so before they send it rather than after. A CEO/MD/Backend
+    // sanctions their own — theirs goes straight to accounts.
+    approvalRequired: ['CEO', 'MD', 'SuperAdmin'].includes(req.user.role)
+      ? false
+      : await advanceApprovalRequired(),
     count: entries.length,
     entries: entries.map(publicEntry),
   });
@@ -477,7 +485,11 @@ const requestAdvance = asyncHandler(async (req, res) => {
   const purpose = String(req.body.purpose || '').trim();
   if (!purpose) bad(res, 'Say what the advance is for');
 
-  const needsExec = await advanceApprovalRequired();
+  // A CEO/MD (or the Backend) is the sanctioning authority — there is nobody
+  // above them to approve their own advance, so it skips the executive gate and
+  // goes straight to the accounts team (the Account Manager) to be paid out.
+  const isSelfApprover = ['CEO', 'MD', 'SuperAdmin'].includes(req.user.role);
+  const needsExec = !isSelfApprover && await advanceApprovalRequired();
 
   const { entry } = await ledger.postEntry({
     employee: req.user._id,
@@ -679,7 +691,7 @@ const updateMyExpense = asyncHandler(async (req, res) => {
   if (!entry) bad(res, 'That entry no longer exists', 404);
   if (String(entry.employee) !== String(req.user._id)) bad(res, 'That entry is not yours', 403);
 
-  const book = entry.khata ? await EmployeeKhata.findById(entry.khata) : null;
+  const book = entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null;
   const rights = ledger.expenseEditability(entry, book);
   if (!rights.employee) {
     bad(res, rights.reason
@@ -1000,7 +1012,7 @@ const getKhata = asyncHandler(async (req, res) => {
   const filter = { employee: employeeId };
   // Narrow to a single book when one is named; otherwise show everything,
   // which is the view that answers "what is going on with this person?".
-  if (isId(req.query.khata)) filter.khata = req.query.khata;
+  if (isId(req.query.khata)) filter.expenseBook = req.query.khata;
 
   const from = parseDate(req.query.from);
   const to = parseDate(req.query.to);
@@ -1012,8 +1024,8 @@ const getKhata = asyncHandler(async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
 
   const entries = await KhataEntry.find(filter)
-    .populate('cashAccount', 'name')
-    .populate('khata', 'name')
+    .populate('account', 'name')
+    .populate('expenseBook', 'name')
     .populate('reviewedBy', 'firstName lastName')
     .populate('execApprovedBy', 'firstName lastName role')
     .sort({ date: -1, createdAt: -1 })
@@ -1299,8 +1311,8 @@ const listEntries = asyncHandler(async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
   if (isId(req.query.employee)) filter.employee = req.query.employee;
   if (req.query.type && ENTRY_TYPES.includes(req.query.type)) filter.type = req.query.type;
-  if (isId(req.query.cashAccount)) filter.cashAccount = req.query.cashAccount;
-  if (isId(req.query.khata)) filter.khata = req.query.khata;
+  if (isId(req.query.cashAccount)) filter.account = req.query.cashAccount;
+  if (isId(req.query.khata)) filter.expenseBook = req.query.khata;
   // The expense review queue: everything that posted without anybody checking
   // it. Rows written before this flag existed carry no `confirmedByCompany` at
   // all, so "not confirmed" has to mean false OR missing, not `false`.
@@ -1318,8 +1330,8 @@ const listEntries = asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 200, 1000);
   const entries = await KhataEntry.find(filter)
     .populate('employee', USER_FIELDS)
-    .populate('khata', 'name')
-    .populate('cashAccount', 'name')
+    .populate('expenseBook', 'name')
+    .populate('account', 'name')
     .populate('reviewedBy', 'firstName lastName')
     .populate('execApprovedBy', 'firstName lastName role')
     .sort({ date: -1, createdAt: -1 })
@@ -1340,8 +1352,8 @@ const listEntries = asyncHandler(async (req, res) => {
 const listPending = asyncHandler(async (req, res) => {
   const entries = await KhataEntry.find({ status: 'Pending' })
     .populate('employee', USER_FIELDS)
-    .populate('khata', 'name')
-    .populate('cashAccount', 'name')
+    .populate('expenseBook', 'name')
+    .populate('account', 'name')
     .populate('execApprovedBy', 'firstName lastName role')
     .sort({ createdAt: 1 });
   res.json({ count: entries.length, entries: entries.map((e) => publicEntry(e, req.user)) });
@@ -1361,7 +1373,7 @@ const listPending = asyncHandler(async (req, res) => {
 const listAdvanceApprovals = asyncHandler(async (req, res) => {
   const entries = await KhataEntry.find({ status: 'AwaitingApproval' })
     .populate('employee', USER_FIELDS)
-    .populate('khata', 'name')
+    .populate('expenseBook', 'name')
     .sort({ createdAt: 1 });
 
   // The requester's current position, so the decision is not made blind — "they
@@ -1544,9 +1556,16 @@ const updateEntry = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'That entry no longer exists', 404);
 
-  const book = entry.khata ? await EmployeeKhata.findById(entry.khata) : null;
+  const book = entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null;
   const rights = ledger.expenseEditability(entry, book);
-  if (!rights.company) bad(res, rights.reason || 'This entry can no longer be edited.');
+  // Everyone loses edit rights once the company confirms an expense — it must be
+  // reversed instead. The one exception: a SuperAdmin (the Backend) can still
+  // correct a confirmed expense in place, so a mistake caught after sign-off does
+  // not force a reversal. A reversed entry stays untouchable.
+  const superAdminAfterConfirm = req.user.role === 'SuperAdmin'
+    && entry.movement === 'expense' && entry.status === 'Approved'
+    && !entry.reversedBy && entry.confirmedByCompany;
+  if (!rights.company && !superAdminAfterConfirm) bad(res, rights.reason || 'This entry can no longer be edited.');
 
   const changes = expenseChanges(req.body, res);
   changes.receiptReplaced = await replaceReceipt(entry, req.file);
@@ -1621,10 +1640,10 @@ const reverseEntry = asyncHandler(async (req, res) => {
   if (!entry) bad(res, 'Entry not found', 404);
 
   if (req.user.role !== 'SuperAdmin') {
-    if (entry.affectsCompanyCash && entry.cashAccount) {
-      const { rights } = await requireOperableAccount(req.user, entry.cashAccount, res);
+    if (entry.affectsCompanyCash && entry.account) {
+      const { rights } = await requireOperableAccount(req.user, entry.account, res);
       if (!rights.canApprove) bad(res, 'Only an approver on this account can reverse a posted entry.', 403);
-    } else if (entry.type === 'expense') {
+    } else if (entry.movement === 'expense') {
       // Rejecting an employee's expense. Any khata operator may do it: an
       // expense self-approves, so this reversal IS the company's review of it,
       // and reserving that for a SuperAdmin would leave the accounts team
@@ -2044,8 +2063,8 @@ const exportExcel = asyncHandler(async (req, res) => {
   const [entries, wallets, khatas] = await Promise.all([
     KhataEntry.find(filter)
       .populate('employee', USER_FIELDS)
-      .populate('khata', 'name')
-      .populate('cashAccount', 'name')
+      .populate('expenseBook', 'name')
+      .populate('account', 'name')
       .populate('createdBy', USER_FIELDS)
       .populate('reviewedBy', USER_FIELDS)
       .populate('execApprovedBy', USER_FIELDS)
@@ -2151,13 +2170,13 @@ const exportExcel = asyncHandler(async (req, res) => {
       code: e.code || '',
       date: day(e.date),
       employee: name(e.employee),
-      khata: e.khata?.name || '',
-      type: e.type,
+      khata: e.expenseBook?.name || '',
+      type: e.movement,
       purpose: e.purpose || e.category || '',
       given: e.direction === 'to_employee' ? e.amount : null,
       returned: e.direction === 'from_employee' ? e.amount : null,
       balanceAfter: e.status === 'Approved' ? e.balanceAfter : null,
-      account: e.cashAccount?.name || '',
+      account: e.account?.name || '',
       movesCash: e.affectsCompanyCash ? 'Yes' : 'No',
       mode: e.paymentMode || '',
       reference: e.referenceNo || '',
@@ -2253,7 +2272,7 @@ async function streamStatement(req, res, employeeId) {
   if (to) to.setHours(23, 59, 59, 999);
 
   const base = { employee: employeeId, status: { $in: STATEMENT_STATUSES } };
-  if (khata) base.khata = khata._id;
+  if (khata) base.expenseBook = khata._id;
 
   const inRange = { ...base };
   if (from || to) {
@@ -2263,7 +2282,7 @@ async function streamStatement(req, res, employeeId) {
   }
 
   const [entries, before, wallet, profile, branding, settings] = await Promise.all([
-    KhataEntry.find(inRange).populate('khata', 'name').populate('cashAccount', 'name')
+    KhataEntry.find(inRange).populate('expenseBook', 'name').populate('account', 'name')
       .sort({ date: 1, createdAt: 1 }).limit(2000).lean(),
     // Everything that happened BEFORE the window, so the statement opens on the
     // figure the previous one closed at instead of at zero.
@@ -2281,8 +2300,8 @@ async function streamStatement(req, res, employeeId) {
   // behind it.
   const rows = entries.map((e) => ({
     ...e,
-    khataName: e.khata?.name || '',
-    cashAccountName: e.cashAccount?.name || '',
+    khataName: e.expenseBook?.name || '',
+    cashAccountName: e.account?.name || '',
   }));
 
   const { renderKhataStatement, movement } = require('../services/khataStatementPdf');

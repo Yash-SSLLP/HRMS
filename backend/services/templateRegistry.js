@@ -151,6 +151,43 @@ Warm regards,
     ['employeeName', 'employeeCode', 'period', 'companyName', 'link']
   ),
 
+  letter(
+    'relieving.letter',
+    'Relieving letter',
+    'People',
+    'The body of the relieving letter PDF issued to a leaver once their notice is served and no-dues clearance is complete. Page layout, letterhead and signature block stay fixed.',
+    `This is to certify that {{employeeName}}{{employeeCodeClause}} was employed with {{companyName}} as {{designation}}{{departmentClause}} from {{joiningDate}} to {{lastWorkingDay}}.
+
+The resignation tendered has been accepted, and {{employeeName}} stands relieved of all duties with effect from the close of business on {{lastWorkingDay}}.
+
+**All company property has been returned and no dues remain outstanding as on the date of this letter.**
+
+During the tenure with us, {{employeeName}} was found to be sincere and diligent in the discharge of the responsibilities assigned.
+
+**We thank {{employeeName}} for the contribution made to {{companyName}} and wish every success in the future.**`,
+    ['employeeName', 'employeeCode', 'employeeCodeClause', 'designation', 'department', 'departmentClause',
+      'companyName', 'joiningDate', 'lastWorkingDay']
+  ),
+
+  mail(
+    'relieving.mail',
+    'Relieving letter email',
+    'People',
+    'The covering email the relieving letter PDF is attached to.',
+    'Your relieving letter — {{companyName}}',
+    `Dear {{employeeName}},
+
+Please find attached your relieving letter from {{companyName}}, confirming that you have been relieved of your duties with effect from {{lastWorkingDay}}.
+
+You can also view it here: {{link}}
+
+We thank you for your contribution and wish you every success ahead.
+
+Warm regards,
+{{companyName}} · HR`,
+    ['employeeName', 'employeeCode', 'companyName', 'lastWorkingDay', 'link']
+  ),
+
   mail(
     'exit.feedback',
     'Exit feedback request',

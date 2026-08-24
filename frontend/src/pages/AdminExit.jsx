@@ -247,6 +247,26 @@ export default function AdminExit() {
     }
   };
 
+  // Open the relieving letter in a new tab. Fetched as a blob so the axios
+  // interceptor can attach the Bearer token — a bare <a href> would 401.
+  const openRelievingLetter = async () => {
+    try {
+      const res = await api.get(`/exits/${detail._id}/relieving-letter.pdf`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      // The server refuses until clearance is done and the last day has passed;
+      // that message is the useful one, but it arrives as a blob.
+      let msg = 'Could not open the relieving letter';
+      try {
+        const text = err.response?.data instanceof Blob ? await err.response.data.text() : null;
+        if (text) msg = JSON.parse(text).message || msg;
+      } catch { /* keep the fallback */ }
+      toast.error(msg);
+    }
+  };
+
   const resendEmail = async () => {
     try {
       const { data } = await api.post(`/exits/${detail._id}/resend-email`, { preview: true });
@@ -676,6 +696,15 @@ export default function AdminExit() {
                     title="Preview, edit and (re)send the feedback email"
                     className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
                     {detail.exitEmailQueuedAt ? 'Resend Email' : 'Send Email'}
+                  </button>
+                )}
+                {/* The letter certifies that notice was served and nothing is
+                    outstanding, so it is only offered once the exit is done. */}
+                {detail.status === 'Completed' && (
+                  <button onClick={openRelievingLetter}
+                    title="Open the relieving letter PDF"
+                    className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                    Relieving Letter
                   </button>
                 )}
               </div>
