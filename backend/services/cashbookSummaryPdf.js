@@ -68,7 +68,8 @@ const movement = (entry, scope) => {
 
 /**
  * Fold the rows into one line per category, in first-seen order so a book's own
- * headings keep the order the person set them up in.
+ * headings keep the order the person set them up in. Only `Approved` rows count
+ * — see the loop.
  * @param {Array<{category?: string, direction: string, amount: number, status?: string}>} entries
  * @returns {{rows: Array<{category: string, in: number, out: number, balance: number}>, totals: object, counted: number}}
  */
@@ -76,8 +77,18 @@ function summariseByCategory(entries = []) {
   const byCat = new Map();
   let counted = 0;
   for (const e of entries) {
-    // A reversed row was cancelled by its mirror; counting either would double it.
-    if (e.status === 'Reversed') continue;
+    // ONLY MONEY THAT ACTUALLY MOVED. This is a cash statement, so `Approved` is
+    // the whole test:
+    //   Rejected          — the request was declined, nothing was paid;
+    //   AwaitingApproval  — still with the CEO/MD;
+    //   Pending           — sanctioned, but the accounts team has not paid it;
+    //   Reversed          — cancelled by its mirror row, and counting either
+    //                       one of the pair would double it.
+    // Counting any of those printed a declined or unpaid advance as Cash In, so
+    // the document's Final Balance disagreed with the balance the app showed.
+    // A declined request is still VISIBLE to the employee in the app, with the
+    // reason on it — it just is not money, so it is not on the statement.
+    if (e.status !== 'Approved') continue;
     counted += 1;
     const key = (e.category || '').trim() || 'No Category';
     if (!byCat.has(key)) byCat.set(key, { category: key, in: 0, out: 0 });

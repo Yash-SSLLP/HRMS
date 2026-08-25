@@ -45,6 +45,11 @@ import { getFiledLocationFields } from '../utils/geo';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
+
+// A row whose money never moved — declined, or cancelled by a reversal. It is
+// still shown (with its reason) because "what happened to my request?" is a
+// question the cashbook has to answer, but it must not read as a payment.
+const deadRow = (e) => e.status === 'Rejected' || e.status === 'Reversed';
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -546,11 +551,16 @@ export default function EmployeeKhata() {
                       <p className="text-xs text-gray-500 mt-0.5">Confirmed by the company</p>
                     )}
                   </td>
-                  {/* Sign-colour rule: green raises your in-hand figure, red lowers it. */}
-                  <td className="px-4 py-3 text-right text-emerald-700">
+                  {/* Sign-colour rule: green raises your in-hand figure, red
+                      lowers it — but only for money that actually moved. A
+                      declined or reversed row is struck through in grey: it
+                      stays on the list so you can see what happened and why,
+                      and a green "+₹5,000" on a request that was refused would
+                      read as money you had been given. */}
+                  <td className={`px-4 py-3 text-right ${deadRow(e) ? 'text-gray-400 line-through' : 'text-emerald-700'}`}>
                     {e.direction === 'to_employee' ? money(e.amount) : ''}
                   </td>
-                  <td className="px-4 py-3 text-right text-red-700">
+                  <td className={`px-4 py-3 text-right ${deadRow(e) ? 'text-gray-400 line-through' : 'text-red-700'}`}>
                     {e.direction === 'from_employee' ? money(e.amount) : ''}
                   </td>
                   {/* Only posted rows carry a running balance; a waiting one has not happened. */}

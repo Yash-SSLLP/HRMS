@@ -153,6 +153,21 @@ const reversed = S.summariseByCategory([
 check('a reversed row counts for nothing', reversed.rows[0].out, 1000);
 check('and is not counted as an entry', reversed.counted, 1);
 
+// A statement is money that MOVED. A declined advance was never paid, and one
+// still queued has not been paid yet — printing either as Cash In inflated the
+// document and made its Final Balance disagree with the app. The employee still
+// SEES a declined request in their cashbook, with the reason; it just is not
+// money, so it is not on the statement.
+const notMoney = S.summariseByCategory([
+  { ...cat('Travel', to(1000)), status: 'Approved' },
+  { ...cat('Travel', to(9000)), status: 'Rejected' },
+  { ...cat('Travel', to(7000)), status: 'AwaitingApproval' },
+  { ...cat('Travel', to(3000)), status: 'Pending' },
+]);
+check('a declined advance is not on the statement', notMoney.rows[0].in, 1000);
+check('nor a request still awaiting sanction, nor one awaiting payment', notMoney.totals.in, 1000);
+check('and none of them is counted as an entry', notMoney.counted, 1);
+
 // The summary has to land on the same figure the ledger replay does, or a
 // printed statement would contradict the balance on screen.
 const walletRows = [{ ...to(25000), status: 'Approved' }, { ...from(5424), status: 'Approved' }];

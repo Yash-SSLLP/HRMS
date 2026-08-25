@@ -72,6 +72,10 @@ const TITLES = {
   claim: 'Ask to be paid back',
 };
 
+// A row whose money never moved — declined, or cancelled by a reversal. Still
+// shown (with its reason), but never as a payment.
+const deadRow = (e) => e.status === 'Rejected' || e.status === 'Reversed';
+
 // How the wallet reads. `direction` comes from the server, so the app and the
 // web portal can never word the same balance differently.
 //
@@ -515,8 +519,14 @@ export default function KhataScreen() {
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={[
                 styles.rowAmount,
-                // Sign-colour rule: '+' rows green, '−' rows red.
-                { color: e.direction === 'to_employee' ? colors.success : colors.danger },
+                // Sign-colour rule: '+' rows green, '−' rows red — but only for
+                // money that actually moved. A declined or reversed row is
+                // struck through in grey: it stays on the list so you can see
+                // what happened and why, and a green "+₹5,000" on a request that
+                // was refused would read as money you had been given.
+                deadRow(e)
+                  ? { color: colors.textFaint, textDecorationLine: 'line-through' }
+                  : { color: e.direction === 'to_employee' ? colors.success : colors.danger },
               ]}>
                 {e.direction === 'to_employee' ? '+' : '−'}{rupees(e.amount)}
               </Text>
