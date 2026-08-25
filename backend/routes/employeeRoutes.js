@@ -21,6 +21,8 @@ const {
   exportEmployeesXlsx,
   downloadImportTemplate,
   importEmployeesXlsx,
+  listImportFlags,
+  resolveImportFlag,
   createDocLink,
   getPublicDocRequest,
   submitPublicDocs,
@@ -84,6 +86,14 @@ router.get('/documents-status', employeesDocumentStatus);
 router.get('/export-all.zip', exportAllEmployeesZip);
 // POST /import — bulk-import employees from xlsx; protected, requires 'employees.manage' + multer single 'file' (2MB xlsx).
 router.post('/import', xlsxUpload.single('file'), importEmployeesXlsx);
+// Import review: values an import created or could not match. Both before /:id
+// so "import-flags" is never matched as an employee id. The capability gate
+// above already gives HR (with employees.manage), the Backend and CEO/MD read
+// access, and blocks a view-only exec from the PATCH.
+// GET /import-flags — list open (or resolved) import flags.
+router.get('/import-flags', listImportFlags);
+// PATCH /import-flags/:id — correct the value and/or clear the flag.
+router.patch('/import-flags/:id', resolveImportFlag);
 // GET /code-available — is an employee code free? (live check for the add/edit
 // form). Also before /:id so "code-available" isn't matched as an id.
 router.get('/code-available', checkEmployeeCode);

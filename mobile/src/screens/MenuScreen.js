@@ -10,7 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 
 import { useAuth } from '../store/auth';
 import {
-  showsAdminEntry, canViewAdmin, hasTeam, canEmployeeSelf, hasPermission, hasAnyPermission,
+  showsAdminEntry, canViewAdmin, hasTeam, canEmployeeSelf, hasPermission, hasAnyPermission, isExec,
 } from '../utils/roles';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Ionicons } from '../components/ui';
@@ -143,6 +143,12 @@ export default function MenuScreen() {
     }
     if (hasPermission(me, 'employees.manage')) {
       adminItems.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea' });
+    }
+    // What an Excel import had to create or could not match. An exec is included
+    // deliberately: the server lets a view-only CEO/MD read the list, and they
+    // are one of the three audiences the flags are raised for.
+    if (hasPermission(me, 'employees.manage') || isExec(me)) {
+      adminItems.push({ key: 'ImportReview', label: 'Import Review', icon: 'flag', tint: '#d97706' });
     }
     if (hasPermission(me, 'payroll.manage')) {
       adminItems.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' });

@@ -2,11 +2,46 @@
  * Company controller — manages the companies (legal entities) the HRMS runs
  * for. Employees belong to a company (EmployeeProfile.company) and a CEO/MD can
  * be limited by the Backend to the companies they may see (User.companies).
- * Reads are open to any authenticated user (dropdowns); writes are Backend-only.
+ *
+ * Reads are open to any authenticated user (dropdowns, and the Companies page
+ * an HR Manager reads). Writes belong to the Backend and the executives — see
+ * routes/companyRoutes.js for why CEO/MD are named there explicitly.
  */
 const asyncHandler = require('express-async-handler');
 const Company = require('../models/Company');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { EXECUTIVE_ROLES } = require('../utils/visibility');
+
+/**
+ * Refuse an executive who has been narrowed to certain companies the right to
+ * touch one outside that list.
+ *
+ * Without this, naming CEO/MD in the write gate would hand a CEO limited to one
+ * company the power to rename or delete every OTHER company — the exact thing
+ * `User.companies` exists to prevent. Same semantics as everywhere else: an
+ * empty/absent list means unrestricted, so only a deliberately narrowed exec is
+ * held to it.
+ * @param {import('express').Request} req
+ * @param {object|null} company - the target; omit when creating.
+ * @throws {Error} with .status 403 when the company is out of their scope.
+ */
+function assertCompanyScope(req, company) {
+  const u = req.user;
+  if (!u || !EXECUTIVE_ROLES.includes(u.role)) return; // Backend: unrestricted
+  const ids = Array.isArray(u.companies) ? u.companies.filter(Boolean).map(String) : [];
+  if (!ids.length) return; // not narrowed → every company
+  // Creating while narrowed would produce a company they cannot then manage.
+  if (!company) {
+    const err = new Error('Your account is limited to certain companies, so you cannot add a new one. Ask the Backend account.');
+    err.status = 403;
+    throw err;
+  }
+  if (!ids.includes(String(company._id))) {
+    const err = new Error(`Your account is not assigned to ${company.name}, so you cannot change it.`);
+    err.status = 403;
+    throw err;
+  }
+}
 
 /**
  * List all companies, each with its assigned-employee count.
@@ -29,10 +64,11 @@ const listCompanies = asyncHandler(async (req, res) => {
 
 /**
  * Create a company (unique name; unique code when given).
- * @route POST /api/companies  (Backend / SuperAdmin)
- * @returns {{company: Object}} 201; 409 on a duplicate name/code
+ * @route POST /api/companies  (Backend / CEO / MD)
+ * @returns {{company: Object}} 201; 409 on a duplicate name/code; 403 for a company-limited exec
  */
 const createCompany = asyncHandler(async (req, res) => {
+  assertCompanyScope(req, null);
   const { name, code, isActive } = req.body;
   if (!name || !name.trim()) {
     res.status(400);
@@ -59,8 +95,8 @@ const createCompany = asyncHandler(async (req, res) => {
 
 /**
  * Update a company's fields (partial).
- * @route PUT /api/companies/:id  (Backend / SuperAdmin)
- * @returns {{company: Object}}
+ * @route PUT /api/companies/:id  (Backend / CEO / MD)
+ * @returns {{company: Object}}; 403 when the company is outside a limited exec's list
  */
 const updateCompany = asyncHandler(async (req, res) => {
   const company = await Company.findById(req.params.id);
@@ -68,6 +104,7 @@ const updateCompany = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Company not found');
   }
+  assertCompanyScope(req, company);
   const { name, code, isActive } = req.body;
   if (name !== undefined) {
     const trimmed = String(name).trim();
@@ -100,8 +137,8 @@ const updateCompany = asyncHandler(async (req, res) => {
 
 /**
  * Delete a company, but only when no employees are still assigned to it.
- * @route DELETE /api/companies/:id  (Backend / SuperAdmin)
- * @returns {{id: string, deleted: boolean}}; 400 if employees remain assigned
+ * @route DELETE /api/companies/:id  (Backend / CEO / MD)
+ * @returns {{id: string, deleted: boolean}}; 400 if employees remain assigned, 403 if out of scope
  */
 const deleteCompany = asyncHandler(async (req, res) => {
   const company = await Company.findById(req.params.id);
@@ -109,6 +146,7 @@ const deleteCompany = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Company not found');
   }
+  assertCompanyScope(req, company);
   const assigned = await EmployeeProfile.countDocuments({ company: company._id });
   if (assigned > 0) {
     res.status(400);
@@ -123,4 +161,6 @@ module.exports = {
   createCompany,
   updateCompany,
   deleteCompany,
+  // exported for unit tests
+  assertCompanyScope,
 };

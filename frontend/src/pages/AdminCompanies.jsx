@@ -1,10 +1,16 @@
 /**
- * AdminCompanies — the companies (legal entities) the HRMS runs for. Backend
- * (SuperAdmin) only: lists companies from GET /companies with a headcount, and
- * creates / edits / deletes them via /companies. Employees are tied to a company
- * on their own record (the employee form); a CEO/MD is limited to certain
- * companies on the Permissions page. Deleting a company is blocked while people
- * are still assigned to it.
+ * AdminCompanies — the companies (legal entities) the HRMS runs for. Lists them
+ * from GET /companies with a headcount, and creates / edits / deletes them via
+ * /companies. Employees are tied to a company on their own record (the employee
+ * form); a CEO/MD is limited to certain companies on the Permissions page.
+ * Deleting a company is blocked while people are still assigned to it.
+ *
+ * WHO SEES WHAT: an HR Manager reads this page and gets no buttons at all — the
+ * headcount per entity is useful to them, changing the entity is not their call.
+ * The Backend account and the executives (CEO/MD) manage it. A CEO/MD is allowed
+ * here WITHOUT being switched into edit mode, unlike almost everywhere else,
+ * because a company is the executive's own domain; routes/companyRoutes.js says
+ * the same thing on the server, which is what actually enforces it.
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -15,9 +21,21 @@ import { confirmDialog } from '../components/dialogs';
 
 const blank = () => ({ name: '', code: '', isActive: true });
 
+// Roles that may change a company. Mirrors MAY_MANAGE in the router.
+const MANAGER_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+
 export default function AdminCompanies() {
   const currentUser = useAuthStore((s) => s.user);
-  const canManage = currentUser?.role === 'SuperAdmin';
+  const canManage = MANAGER_ROLES.includes(currentUser?.role);
+
+  // A CEO/MD narrowed to certain companies manages only those. An empty/absent
+  // list means unrestricted — the same rule the server applies in
+  // assertCompanyScope, mirrored here so a button that would 403 is never shown.
+  const myCompanies = (currentUser?.companies || []).map(String);
+  const limited = currentUser?.role !== 'SuperAdmin' && myCompanies.length > 0;
+  const canEditCompany = (c) => canManage && (!limited || myCompanies.includes(String(c._id)));
+  // Adding a company while narrowed would create one the exec cannot then manage.
+  const canCreate = canManage && !limited;
 
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,12 +90,27 @@ export default function AdminCompanies() {
   return (
     <div>
       <PageHeader title="Companies" subtitle="The companies this HRMS runs for — employees belong to one, and a CEO/MD can be limited to some">
-        {canManage && (
+        {canCreate && (
           <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Company</button>
         )}
       </PageHeader>
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+
+      {/* Say why the buttons are missing rather than leaving a page that looks
+          broken. Two different reasons, so two different sentences. */}
+      {!canManage && (
+        <div className="mb-4 text-sm text-gray-600 bg-gray-50 border border-gray-200 px-4 py-3 rounded-xl">
+          You can see the companies and their headcounts here. Adding, editing and removing a company is done by
+          the Backend account or a CEO/MD.
+        </div>
+      )}
+      {canManage && limited && (
+        <div className="mb-4 text-sm text-gray-600 bg-gray-50 border border-gray-200 px-4 py-3 rounded-xl">
+          Your account is assigned to {myCompanies.length === 1 ? 'one company' : `${myCompanies.length} companies`},
+          so you can edit {myCompanies.length === 1 ? 'that one' : 'those'} only. The others are shown for reference.
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-gray-500">Loading…</p>
@@ -103,7 +136,7 @@ export default function AdminCompanies() {
                 👥 {c.assignedCount} employee{c.assignedCount === 1 ? '' : 's'}
               </div>
 
-              {canManage && (
+              {canEditCompany(c) && (
                 <div className="mt-4 pt-3 border-t border-gray-100 flex gap-3 text-sm">
                   <button onClick={() => openEdit(c)} className="text-blue-600 hover:underline">Edit</button>
                   <button onClick={() => remove(c)} className="text-red-600 hover:underline ml-auto">Delete</button>

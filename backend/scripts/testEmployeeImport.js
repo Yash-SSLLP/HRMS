@@ -1,0 +1,166 @@
+/**
+ * Employee Excel import — behaviour tests. No database.
+ *
+ *   npm run test:import
+ *
+ * WHY STUBS RATHER THAN A TEST DATABASE: `MONGO_URI` here points at the live
+ * cluster (see the other test scripts, which refuse to run without their own
+ * throwaway URI). These tests install fake models into `require.cache` before
+ * loading the controller, so the REAL importEmployeesXlsx runs end to end
+ * against them and nothing reaches Mongo.
+ *
+ * WHAT IS BEING PINNED: an import must never refuse a row because the sheet
+ * named something that does not exist yet. A designation, department, grade,
+ * work location or company is CREATED; a role, salary structure or person that
+ * cannot be invented is left at its safe default. Either way the row imports
+ * and a flag is recorded for HR, the admins and the executives to review.
+ */
+const path = require('path');
+
+const BACKEND = path.join(__dirname, '..');
+const resolve = (p) => require.resolve(path.join(BACKEND, p));
+
+let passed = 0;
+let failed = 0;
+const check = (name, actual, expected) => {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}`
+    + (ok ? '' : `\n         got  ${JSON.stringify(actual)}\n         want ${JSON.stringify(expected)}`));
+  if (ok) passed += 1; else failed += 1;
+};
+const isTrue = (name, cond) => check(name, !!cond, true);
+
+// ---- captured side effects ----
+const insertedFlags = [];
+const createdUsers = [];
+const createdProfiles = [];
+const createdCompanies = [];
+const ensured = { Designation: [], Department: [], Grade: [], Location: [] };
+
+/** Install a fake module so the controller picks it up instead of the real one. */
+const stub = (rel, exports) => {
+  const filename = resolve(rel);
+  require.cache[filename] = { id: filename, filename, loaded: true, exports };
+};
+
+const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'Employee'];
+
+stub('models/User.js', {
+  ROLES,
+  // Nothing exists in this run: no duplicate account, and neither the reporting
+  // manager nor the HR partner the sheet names can be found.
+  findOne: async () => null,
+  findById: async () => null,
+  find: () => ({ select: () => ({ lean: async () => [] }) }),
+  create: async (doc) => { createdUsers.push(doc); return { _id: `u${createdUsers.length}`, ...doc }; },
+  deleteOne: async () => ({}),
+  updateOne: async () => ({}),
+});
+stub('models/EmployeeProfile.js', {
+  findOne: async () => null,
+  findById: async () => null,
+  create: async (doc) => { createdProfiles.push(doc); return { _id: `p${createdProfiles.length}`, ...doc }; },
+  find: () => ({ populate: () => ({ sort: async () => [] }) }),
+});
+stub('models/SalaryStructure.js', { findOne: async () => null });
+stub('models/Company.js', {
+  findOne: async () => null,
+  create: async (doc) => { createdCompanies.push(doc); return { _id: `c${createdCompanies.length}`, ...doc }; },
+});
+stub('models/ImportFlag.js', {
+  insertMany: async (docs) => { insertedFlags.push(...docs); return docs; },
+  deleteMany: async () => ({}),
+});
+stub('services/orgMasterSync.js', {
+  // `true` = "this call created it", which is what decides a flag. Every value
+  // in this fixture is new, which is the case under test.
+  ensureDesignation: async (n) => { if (!n) return false; ensured.Designation.push(n); return true; },
+  ensureDepartment: async (n) => { if (!n) return false; ensured.Department.push(n); return true; },
+  ensureGrade: async (n) => { if (!n) return false; ensured.Grade.push(n); return true; },
+  ensureLocation: async (n) => { if (!n) return false; ensured.Location.push(n); return true; },
+});
+stub('services/notify.js', { notify: async () => {}, notifyMany: async () => {} });
+
+// One row naming a new value in every column that can carry one.
+const ROWS = [{
+  excelRow: 2,
+  user: {
+    firstName: 'Asha', lastName: 'Rao', email: 'asha@example.com',
+    role: 'Site Supervisor', // not a system role — a job title in the wrong column
+  },
+  profile: {
+    employeeCode: 'SSL900',
+    dateOfJoining: new Date('2026-01-05'),
+    designation: 'Site Supervisor',
+    department: 'Projects',
+    grade: 'G7',
+    workLocation: 'Pune Yard',
+    companyName: 'Brand New Pvt Ltd',
+    salaryStructureName: 'Nonexistent Structure',
+    reportingManagerEmail: 'later@example.com', // further down the same file
+    hrPartnerEmail: 'nohr@example.com',
+  },
+}];
+stub('services/employeeExcel.js', { writeWorkbook: async () => {}, parseWorkbook: async () => ROWS });
+
+const ctrl = require(path.join(BACKEND, 'controllers/employeeController.js'));
+
+(async () => {
+  const req = {
+    file: { buffer: Buffer.from('x') },
+    // An HR Manager, deliberately: they may not grant admin roles, which is one
+    // of the two ways a role gets defaulted.
+    user: { _id: 'admin1', role: 'HRManager' },
+    body: {},
+    query: {},
+  };
+  let payload = null;
+  const res = { status() { return this; }, json(d) { payload = d; }, setHeader() {} };
+
+  await ctrl.importEmployeesXlsx(req, res, (e) => { throw e; });
+
+  console.log('\n--- the row imports even though every value is new ---');
+  check('one row created', payload.createdCount, 1);
+  check('no errors', payload.errorCount, 0);
+  check('nothing skipped', payload.skippedCount, 0);
+
+  console.log('\n--- values that are just names get created ---');
+  check('designation registered', ensured.Designation, ['Site Supervisor']);
+  check('department registered', ensured.Department, ['Projects']);
+  check('grade registered', ensured.Grade, ['G7']);
+  check('work location registered', ensured.Location, ['Pune Yard']);
+  check('company created', createdCompanies.map((c) => c.name), ['Brand New Pvt Ltd']);
+
+  console.log('\n--- a role is never invented ---');
+  check('account created as Employee', createdUsers[0].role, 'Employee');
+
+  console.log('\n--- references that cannot be invented are left blank, not fatal ---');
+  check('no salary structure set', createdProfiles[0].salaryStructure, undefined);
+  check('no reporting manager set', createdProfiles[0].reportingManager, undefined);
+  check('no HR partner set', createdProfiles[0].hrPartner, undefined);
+
+  console.log('\n--- and every one of them is flagged for review ---');
+  const byField = Object.fromEntries(insertedFlags.map((f) => [f.field, f.action]));
+  check('nine flags', payload.flagCount, 9);
+  check('role — defaulted', byField.role, 'defaulted');
+  check('designation — created', byField.designation, 'created');
+  check('department — created', byField.department, 'created');
+  check('grade — created', byField.grade, 'created');
+  check('work location — created', byField.workLocation, 'created');
+  check('company — created', byField.company, 'created');
+  check('salary structure — unmatched', byField.salaryStructure, 'unmatched');
+  check('reporting manager — unmatched', byField.reportingManager, 'unmatched');
+  check('HR partner — unmatched', byField.hrPartner, 'unmatched');
+
+  // The raw cell is the evidence a reviewer judges by, so it must survive intact.
+  isTrue('a flag keeps the exact sheet value', insertedFlags.find((f) => f.field === 'role').rawValue === 'Site Supervisor');
+  isTrue('one batch id across the upload', new Set(insertedFlags.map((f) => f.batch)).size === 1);
+  isTrue('flags point at the created profile', insertedFlags.every((f) => f.employee === 'p1'));
+  isTrue('every flag explains itself', insertedFlags.every((f) => f.note && f.note.length > 20));
+
+  console.log(`\n${failed ? 'FAILED' : 'PASSED'} — ${passed} passed, ${failed} failed\n`);
+  process.exit(failed ? 1 : 0);
+})().catch((err) => {
+  console.error('\nThe import threw, which is itself the bug:\n', err);
+  process.exit(1);
+});

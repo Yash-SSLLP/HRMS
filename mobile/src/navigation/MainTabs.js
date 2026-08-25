@@ -73,6 +73,7 @@ import WorkLocationsScreen from '../screens/admin/WorkLocationsScreen';
 import KhataAdminScreen from '../screens/admin/KhataAdminScreen';
 import ExitAdminScreen from '../screens/admin/ExitAdminScreen';
 import PermissionsScreen from '../screens/admin/PermissionsScreen';
+import ImportReviewScreen from '../screens/admin/ImportReviewScreen';
 import PushNotificationScreen from '../screens/admin/PushNotificationScreen';
 import LateMarkingScreen from '../screens/admin/LateMarkingScreen';
 import BrandingScreen from '../screens/admin/BrandingScreen';
@@ -149,6 +150,8 @@ function HomeStack() {
       <HomeStackNav.Screen name="KhataAdmin" component={KhataAdminScreen} options={{ title: 'Employee Advances' }} />
       <HomeStackNav.Screen name="ExitAdmin" component={ExitAdminScreen} options={{ title: 'Exits' }} />
       <HomeStackNav.Screen name="Permissions" component={PermissionsScreen} options={{ title: 'Permissions' }} />
+      {/* Reviewing what an Excel import created; importing itself is web-only. */}
+      <HomeStackNav.Screen name="ImportReview" component={ImportReviewScreen} options={{ title: 'Import Review' }} />
       {/* SuperAdmin-only in practice; the screen and the server both gate it. */}
       <HomeStackNav.Screen name="PushNotification" component={PushNotificationScreen} options={{ title: 'Push Notification' }} />
       {/* SuperAdmin-only too — the server drops the late policy from anyone else. */}

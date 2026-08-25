@@ -25,6 +25,8 @@ const { employeeProfileScope, cannotManageProfile } = require('../utils/employee
 const { hasPermission, isEditingExec } = require('../middleware/authMiddleware');
 const { FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange } = require('../services/profileChanges');
 const { notifyMany } = require('../services/notify');
+const ImportFlag = require('../models/ImportFlag');
+const orgMasterSync = require('../services/orgMasterSync');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
@@ -744,6 +746,9 @@ const deleteEmployee = asyncHandler(async (req, res) => {
     throw new Error('Employee profile not found');
   }
   await profile.deleteOne();
+  // Their import flags point at a profile that is gone, so they can never be
+  // resolved — clear them rather than leaving dead rows in the review list.
+  await ImportFlag.deleteMany({ employee: profile._id }).catch(() => {});
   res.json({ id: req.params.id, deleted: true });
 });
 
@@ -889,8 +894,16 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
   const skipped = [];
   const errors = [];
   const noSalary = []; // imported rows with no salary structure and/or CTC
+  const flaggedRows = []; // rows that named something new, for the summary + notification
+  // One id for this upload, so the review screen can group its flags together.
+  const batch = crypto.randomBytes(8).toString('hex');
 
   for (const { excelRow, user: u, profile: p } of rows) {
+    // Values this row named that did not exist yet. Collected per row and only
+    // written once the employee is actually created — a flag pointing at a
+    // profile that failed to save would be unresolvable.
+    const rowFlags = [];
+    const flag = (field, rawValue, action, note) => rowFlags.push({ field, rawValue, action, note });
     try {
       // ----- Validate required fields -----
       if (!u.firstName || !u.lastName || !u.email) {
@@ -899,12 +912,25 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       if (!p.employeeCode) throw new Error('Employee Code is required');
       if (!p.dateOfJoining) throw new Error('Date of Joining is required');
 
-      // Role / privilege guard — only SuperAdmin can create admin-level
-      // accounts via import; everyone else is limited to Employee.
-      const role = u.role || 'Employee';
-      if (!ROLES.includes(role)) throw new Error(`Invalid role "${role}"`);
-      if (role !== 'Employee' && !isSuperAdmin) {
-        throw new Error('Only SuperAdmin may create admin accounts');
+      // ----- Role -----
+      // A role is the ONE unknown value that is never auto-created: `ROLES` is
+      // the enum the entire permission system gates on, so a role invented from
+      // a spreadsheet cell would match no gate and belongs to nobody's decision.
+      // An unrecognised value is almost always a job title, so the row imports
+      // as an Employee (least privilege) and the flag says what was asked for.
+      let role = (u.role || 'Employee').trim() || 'Employee';
+      if (!ROLES.includes(role)) {
+        flag('role', role, 'defaulted',
+          `"${role}" is not a system role, so the account was created as an Employee. `
+          + 'If it is a job title it belongs in the Designation column; otherwise set the right role here.');
+        role = 'Employee';
+      } else if (role !== 'Employee' && !isSuperAdmin) {
+        // Same treatment for a real role the importer may not grant: import at
+        // least privilege rather than losing the row, and let a SuperAdmin promote.
+        flag('role', role, 'defaulted',
+          `Only the Backend account may create ${role} logins, so this was created as an Employee. `
+          + 'A Super Admin can change it here.');
+        role = 'Employee';
       }
 
       // ----- Skip if email or employeeCode already exists -----
@@ -936,53 +962,108 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         isActive: u.isActive !== undefined ? u.isActive : true,
       });
 
-      // Resolve HR partner email -> User._id (optional)
+      // ----- References the sheet names by email / name -----
+      // None of these fail the row any more. A person or a salary structure
+      // cannot be invented from a string, so an unmatched one is left blank and
+      // flagged; a plain NAME in a list of names is created and flagged.
+
+      // HR partner email -> User._id (optional).
       let hrPartnerId;
       if (p.hrPartnerEmail) {
         const partner = await User.findOne({
           email: p.hrPartnerEmail,
           role: { $in: ['HRManager', 'SuperAdmin'] },
         });
-        if (!partner) {
-          throw new Error(`HR Partner email "${p.hrPartnerEmail}" does not match any HRManager or SuperAdmin`);
+        if (partner) hrPartnerId = partner._id;
+        else {
+          flag('hrPartner', p.hrPartnerEmail, 'unmatched',
+            `No HR Manager or Backend account has the email "${p.hrPartnerEmail}", so no HR partner was set.`);
         }
-        hrPartnerId = partner._id;
       }
 
-      // Resolve Reporting Manager email -> User._id (optional). The manager must
-      // be in the same department as the employee (executives excepted) — the
-      // same rule the admin form enforces, so a bulk import can't route around it.
+      // Reporting Manager email -> User._id (optional). The manager must be in
+      // the same department as the employee (executives excepted) — the same
+      // rule the admin form enforces. Both a missing person and a department
+      // mismatch are flagged rather than thrown: the manager is very often
+      // further down the SAME spreadsheet and does not exist yet at this point,
+      // which used to make importing a whole team in one file impossible.
       let reportingManagerId;
       if (p.reportingManagerEmail) {
         const mgr = await User.findOne({ email: p.reportingManagerEmail });
         if (!mgr) {
-          throw new Error(`Reporting Manager email "${p.reportingManagerEmail}" does not match any user`);
+          flag('reportingManager', p.reportingManagerEmail, 'unmatched',
+            `No account has the email "${p.reportingManagerEmail}", so no reporting manager was set. `
+            + 'If they are in this same file they exist now — set it here.');
+        } else {
+          try {
+            await assertSameDepartment(mgr._id, p.department);
+            reportingManagerId = mgr._id;
+          } catch (deptErr) {
+            flag('reportingManager', p.reportingManagerEmail, 'unmatched', deptErr.message);
+          }
         }
-        await assertSameDepartment(mgr._id, p.department);
-        reportingManagerId = mgr._id;
       }
 
-      // Resolve Salary Structure name -> SalaryStructure._id (case-insensitive; optional)
+      // Salary Structure name -> SalaryStructure._id (case-insensitive; optional).
+      // Deliberately NOT auto-created: a structure is a set of earning and
+      // deduction rules, and an empty one invented here would look configured
+      // while paying ₹0. Blank is the honest state, and it already feeds the
+      // "no salary set up" notification below.
       let salaryStructureId;
       if (p.salaryStructureName) {
         const st = await SalaryStructure.findOne({
           name: new RegExp(`^${escapeRegExp(p.salaryStructureName)}$`, 'i'),
         });
-        if (!st) {
-          throw new Error(`Salary Structure "${p.salaryStructureName}" not found — create it under Salary Structures first`);
+        if (st) salaryStructureId = st._id;
+        else {
+          flag('salaryStructure', p.salaryStructureName, 'unmatched',
+            `There is no salary structure called "${p.salaryStructureName}". It was left unset — `
+            + 'create the structure under Salary Structures, then pick it here.');
         }
-        salaryStructureId = st._id;
       }
 
-      // Resolve Company name (or code) -> Company._id (case-insensitive; optional)
+      // Company name (or code) -> Company._id (case-insensitive; optional).
+      // A company IS just a name here, so an unknown one is created.
       let companyId;
       if (p.companyName) {
         const needle = new RegExp(`^${escapeRegExp(p.companyName)}$`, 'i');
-        const co = await Company.findOne({ $or: [{ name: needle }, { code: needle }] });
+        let co = await Company.findOne({ $or: [{ name: needle }, { code: needle }] });
         if (!co) {
-          throw new Error(`Company "${p.companyName}" not found — create it under Companies first`);
+          co = await Company.create({ name: p.companyName, createdBy: req.user._id });
+          flag('company', p.companyName, 'created',
+            `"${p.companyName}" was not on the company list, so it was added. `
+            + 'Check the name and fill in its details under Companies.');
         }
         companyId = co._id;
+      }
+
+      // ----- Free-text values backed by a managed list -----
+      // Designation, department, grade and work-location label are plain names.
+      // The profile's post-save hook registers designation and department; these
+      // calls run first purely to learn whether the value is NEW, which is what
+      // decides the flag. They are idempotent, so the hook stays harmless.
+      const [newDesignation, newDepartment, newGrade, newLocation] = await Promise.all([
+        orgMasterSync.ensureDesignation(p.designation),
+        orgMasterSync.ensureDepartment(p.department),
+        orgMasterSync.ensureGrade(p.grade),
+        orgMasterSync.ensureLocation(p.workLocation),
+      ]);
+      if (newDesignation) {
+        flag('designation', p.designation, 'created',
+          `"${p.designation}" was not a known designation, so it was added to Org Masters.`);
+      }
+      if (newDepartment) {
+        flag('department', p.department, 'created',
+          `"${p.department}" was not a known department, so it was added to Departments.`);
+      }
+      if (newGrade) {
+        flag('grade', p.grade, 'created',
+          `"${p.grade}" was not a known grade, so it was added to Org Masters.`);
+      }
+      if (newLocation) {
+        flag('workLocation', p.workLocation, 'created',
+          `"${p.workLocation}" was not a known work location, so it was added to Org Masters. `
+          + 'This is the label only — a geofenced site still has to be set up under Work Locations.');
       }
 
       // ----- Create EmployeeProfile (rollback user on failure) -----
@@ -1008,6 +1089,30 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       }
 
       created.push({ excelRow, email: u.email, employeeCode: importCode });
+
+      // The row is safely on disk, so its flags now have something to point at.
+      // Best-effort: a flag that fails to write must never undo an import that
+      // otherwise succeeded — the employee is the thing that matters.
+      if (rowFlags.length) {
+        try {
+          await ImportFlag.insertMany(rowFlags.map((f) => ({
+            ...f,
+            employee: createdProfile._id,
+            user: userDoc._id,
+            batch,
+            excelRow,
+            importedBy: req.user._id,
+          })));
+          flaggedRows.push({
+            employeeCode: importCode,
+            name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+            fields: rowFlags.map((f) => f.field),
+          });
+        } catch (flagErr) {
+          console.error('Could not record import flags:', flagErr.message);
+        }
+      }
+
       // Imports often omit the salary columns — collect them and send ONE
       // notification after the loop rather than one per row.
       if (!salaryStructureId || !p.annualCtc) {
@@ -1026,18 +1131,243 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
   }
 
   notifyMissingSalarySetup(noSalary);
+  notifyImportFlags(flaggedRows, batch);
 
+  const flagCount = flaggedRows.reduce((a, r) => a + r.fields.length, 0);
   res.json({
     total: rows.length,
     createdCount: created.length,
     skippedCount: skipped.length,
     errorCount: errors.length,
+    // How many values this upload had to invent or could not honour, so the
+    // import dialog can send the user straight to the review list.
+    flagCount,
+    flaggedRows,
+    batch,
     defaultPassword: DEFAULT_IMPORT_PASSWORD,
     created,
     skipped,
     errors,
   });
 });
+
+// ===== Import review — values the import had to create or could not match =====
+
+/**
+ * List the flags an import left behind.
+ * @route GET /api/employees/import-flags  (employees.manage — HR, admins, CEO/MD)
+ * @param {string} [req.query.status] - 'Open' (default) or 'Resolved'/'all'.
+ * @param {string} [req.query.batch] - narrow to one upload.
+ * @returns {{count: number, flags: Object[]}}
+ */
+const listImportFlags = asyncHandler(async (req, res) => {
+  const status = req.query.status || 'Open';
+  const filter = {};
+  if (status !== 'all') filter.status = status;
+  if (req.query.batch) filter.batch = req.query.batch;
+
+  const flags = await ImportFlag.find(filter)
+    .populate('user', 'firstName lastName email role')
+    .populate({ path: 'employee', select: 'employeeCode designation department grade workLocation' })
+    .populate('resolvedBy', 'firstName lastName')
+    .populate('importedBy', 'firstName lastName')
+    .sort({ createdAt: -1 })
+    .limit(500)
+    .lean();
+
+  res.json({ count: flags.length, flags });
+});
+
+/**
+ * Field-by-field writers for resolving a flag with a corrected value.
+ *
+ * Each takes the raw string a reviewer typed and applies it to the right
+ * document, resolving names/emails to ids the same way the import does. Kept as
+ * one table rather than a switch so the set of settable fields is visibly the
+ * same set the flag model enumerates.
+ */
+const FLAG_WRITERS = {
+  role: async (value, { profile, user, actor }) => {
+    if (!ROLES.includes(value)) throw new Error(`"${value}" is not a system role`);
+    // Same rule as the import and the admin form: handing out an admin login is
+    // the Backend account's call alone.
+    if (value !== 'Employee' && actor.role !== 'SuperAdmin') {
+      throw new Error('Only the Backend account may grant an admin role');
+    }
+    await User.updateOne({ _id: user._id }, { role: value });
+    return value;
+  },
+  designation: async (value, { profile }) => {
+    await orgMasterSync.ensureDesignation(value);
+    profile.designation = value;
+    await profile.save();
+    return value;
+  },
+  department: async (value, { profile }) => {
+    await orgMasterSync.ensureDepartment(value);
+    profile.department = value;
+    await profile.save();
+    return value;
+  },
+  grade: async (value, { profile }) => {
+    await orgMasterSync.ensureGrade(value);
+    profile.grade = value;
+    await profile.save();
+    return value;
+  },
+  workLocation: async (value, { profile }) => {
+    await orgMasterSync.ensureLocation(value);
+    profile.workLocation = value;
+    await profile.save();
+    return value;
+  },
+  company: async (value, { profile }) => {
+    const needle = new RegExp(`^${escapeRegExp(value)}$`, 'i');
+    const co = await Company.findOne({ $or: [{ name: needle }, { code: needle }] });
+    if (!co) throw new Error(`No company called "${value}" — add it under Companies first`);
+    profile.company = co._id;
+    await profile.save();
+    return co.name;
+  },
+  salaryStructure: async (value, { profile }) => {
+    const st = await SalaryStructure.findOne({ name: new RegExp(`^${escapeRegExp(value)}$`, 'i') });
+    if (!st) throw new Error(`No salary structure called "${value}" — create it under Salary Structures first`);
+    profile.salaryStructure = st._id;
+    await profile.save();
+    return st.name;
+  },
+  reportingManager: async (value, { profile, actor }) => {
+    const mgr = await User.findOne({ email: String(value).trim().toLowerCase() });
+    if (!mgr) throw new Error(`No account has the email "${value}"`);
+    // A Backend account may knowingly cross departments (a dotted line); for
+    // anyone else the same-department rule still applies.
+    await assertSameDepartment(mgr._id, profile.department, actor.role === 'SuperAdmin');
+    profile.reportingManager = mgr._id;
+    await profile.save();
+    return `${mgr.firstName || ''} ${mgr.lastName || ''}`.trim() || mgr.email;
+  },
+  hrPartner: async (value, { profile }) => {
+    const partner = await User.findOne({
+      email: String(value).trim().toLowerCase(),
+      role: { $in: ['HRManager', 'SuperAdmin'] },
+    });
+    if (!partner) throw new Error(`"${value}" is not an HR Manager or Backend account`);
+    profile.hrPartner = partner._id;
+    await profile.save();
+    return `${partner.firstName || ''} ${partner.lastName || ''}`.trim() || partner.email;
+  },
+};
+
+/**
+ * Resolve one flag — optionally correcting the value first.
+ *
+ * Sending a `value` writes it onto the employee and closes the flag; sending
+ * none just closes it ("what the import did was right"). Either way the flag is
+ * kept, not deleted: it is the record of what the spreadsheet actually said.
+ * @route PATCH /api/employees/import-flags/:id  (employees.manage; writes, so not a read-only exec)
+ * @param {string} [req.body.value] - corrected value; omit to accept as-is.
+ * @returns {{flag: Object, message: string}}
+ */
+const resolveImportFlag = asyncHandler(async (req, res) => {
+  const flagDoc = await ImportFlag.findById(req.params.id);
+  if (!flagDoc) {
+    res.status(404);
+    throw new Error('That import flag no longer exists');
+  }
+  if (flagDoc.status === 'Resolved') {
+    res.status(400);
+    throw new Error('This flag has already been dealt with');
+  }
+
+  const raw = req.body.value;
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  let resolution = 'Accepted as imported';
+
+  if (value) {
+    const profile = await EmployeeProfile.findById(flagDoc.employee);
+    if (!profile) {
+      res.status(404);
+      throw new Error('That employee no longer exists');
+    }
+    const write = FLAG_WRITERS[flagDoc.field];
+    if (!write) {
+      res.status(400);
+      throw new Error(`"${flagDoc.field}" cannot be changed from here`);
+    }
+    let applied;
+    try {
+      applied = await write(value, { profile, user: { _id: flagDoc.user }, actor: req.user });
+    } catch (err) {
+      res.status(err.status || 400);
+      throw err;
+    }
+    resolution = `Changed to ${applied}`;
+  }
+
+  flagDoc.status = 'Resolved';
+  flagDoc.resolution = resolution;
+  flagDoc.resolvedBy = req.user._id;
+  flagDoc.resolvedAt = new Date();
+  await flagDoc.save();
+
+  res.json({ flag: flagDoc, message: resolution });
+});
+
+/**
+ * Tell HR, the admins and the executives that an import invented values.
+ *
+ * ONE notification per upload, not one per flag: an import of fifty people who
+ * all share a new department would otherwise fill every inbox with the same
+ * fact. Best-effort — a notification failure never fails the import.
+ * @param {Array<{employeeCode?: string, name?: string, fields: string[]}>} rows
+ * @param {string} batch - the upload's id, so the link opens just its flags.
+ * @returns {Promise<void>}
+ */
+async function notifyImportFlags(rows, batch) {
+  try {
+    const list = (rows || []).filter(Boolean);
+    if (!list.length) return;
+
+    // Everyone who can act on it: the Backend account, HR Managers holding the
+    // employees capability, and the executives — the audience the business
+    // asked for. CEO/MD see it even in view-only mode; opening the list is a read.
+    const admins = await User.find({
+      role: { $in: ['SuperAdmin', 'HRManager', 'CEO', 'MD'] },
+      isActive: true,
+    }).select('_id role permissions').lean();
+    const recipients = admins
+      .filter((u) => ['SuperAdmin', 'CEO', 'MD'].includes(u.role) || hasPermission(u, 'employees.manage'))
+      .map((u) => u._id);
+    if (!recipients.length) return;
+
+    const flagCount = list.reduce((a, r) => a + r.fields.length, 0);
+    // Name the actual fields — "3 new values" says nothing about whether this
+    // needs looking at today, but "department, role" does.
+    const fields = [...new Set(list.flatMap((r) => r.fields))];
+    const LABELS = {
+      role: 'role', designation: 'designation', department: 'department', grade: 'grade',
+      workLocation: 'work location', company: 'company', salaryStructure: 'salary structure',
+      reportingManager: 'reporting manager', hrPartner: 'HR partner',
+    };
+    const named = fields.map((f) => LABELS[f] || f).join(', ');
+    const people = list.length === 1
+      ? (list[0].name || list[0].employeeCode || 'one employee')
+      : `${list.length} employees`;
+
+    await notifyMany(recipients, {
+      type: 'employee',
+      // Admin-portal notification: a dual-role HR Manager should not meet this
+      // in My Portal (see the notification-audience convention).
+      audience: 'admin',
+      title: `${flagCount} imported ${flagCount === 1 ? 'value needs' : 'values need'} a check`,
+      body: `The Excel import created or could not match ${named} for ${people}. `
+        + 'They were imported anyway — review and correct the values.',
+      link: `/admin/employees?importFlags=${batch}`,
+    });
+  } catch (err) {
+    console.error('notifyImportFlags failed:', err.message);
+  }
+}
 
 // ===== Per-employee document submission link =====
 
@@ -1169,6 +1499,8 @@ module.exports = {
   exportEmployeesXlsx,
   downloadImportTemplate,
   importEmployeesXlsx,
+  listImportFlags,
+  resolveImportFlag,
   // exported for unit tests
   assertSameDepartment,
   assertWorkLocationCompany,

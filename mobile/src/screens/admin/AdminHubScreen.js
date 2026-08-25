@@ -84,6 +84,9 @@ export default function AdminHubScreen() {
   tiles.push({ key: 'TodayAttendance', label: "Today's Attendance", icon: 'finger-print', tint: '#0ea5e9', show: canDo('attendance.manage') });
   tiles.push({ key: 'PunchMap', label: 'Punch Map', icon: 'map', tint: '#0891b2', show: canDo('attendance.manage') });
   tiles.push({ key: 'Directory', label: 'Directory', icon: 'id-card', tint: '#9333ea', show: canDo('employees.manage') });
+  // Values an Excel import created or could not match. Execs see it too (the
+  // server lets a view-only CEO/MD read the list), which canDo alone excludes.
+  tiles.push({ key: 'ImportReview', label: 'Import Review', icon: 'flag', tint: '#d97706', show: canDo('employees.manage') || isExec(me) });
   tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canDo('employees.manage') && (mayWrite || isGranted) });
   tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canDo('org.manage') && (mayWrite || isGranted) });
   tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: hasAnyPermission(me, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews']) });

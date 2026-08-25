@@ -20,6 +20,33 @@ import SearchableSelect from '../components/SearchableSelect';
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 // Enums mirrored from models/EmployeeProfile.js — a value outside these fails validation.
 const GENDERS = ['Male', 'Female', 'Other'];
+
+// ----- Import review -----
+// Mirrors ROLES in backend/models/User.js. The import cannot invent a role, so
+// this is the closed list a reviewer picks from when correcting one.
+const ROLE_OPTIONS = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'Employee'];
+
+// Field labels for a flag chip. Keyed by ImportFlag.FLAG_FIELDS.
+const FLAG_LABELS = {
+  role: 'Role',
+  designation: 'Designation',
+  department: 'Department',
+  grade: 'Grade',
+  workLocation: 'Work location',
+  company: 'Company',
+  salaryStructure: 'Salary structure',
+  reportingManager: 'Reporting manager',
+  hrPartner: 'HR partner',
+};
+
+// What to type in the correction box — an email for the two person fields, a
+// name for everything else. Saying so beats a reviewer guessing and failing.
+const PLACEHOLDERS = {
+  reportingManager: 'Their manager’s email address',
+  hrPartner: 'The HR partner’s email address',
+  salaryStructure: 'An existing salary structure name',
+  role: 'Pick a system role',
+};
 const MARITAL_STATUSES = ['Single', 'Married', 'Other'];
 const blankAddress = { line1: '', line2: '', city: '', state: '', pincode: '', country: 'India' };
 
@@ -127,6 +154,24 @@ export default function AdminEmployees() {
   const [importResult, setImportResult] = useState(null);
   const importFileRef = useRef(null);
 
+  // ----- Import review -----
+  // Values an import had to invent (a department nobody had created) or could
+  // not honour (a role that isn't a role). The rows imported regardless; these
+  // are what somebody has to look at afterwards.
+  const [flags, setFlags] = useState([]);
+  const [showFlags, setShowFlags] = useState(false);
+  const [flagEdits, setFlagEdits] = useState({}); // flagId -> the corrected value being typed
+  const [flagBusy, setFlagBusy] = useState('');
+
+  const loadFlags = async () => {
+    try {
+      const { data } = await api.get('/employees/import-flags');
+      setFlags(data.flags || []);
+    } catch {
+      setFlags([]); // never let the review list break the page
+    }
+  };
+
   const closeImport = () => {
     setShowImportModal(false);
     setImportResult(null);
@@ -146,7 +191,7 @@ export default function AdminEmployees() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setImportResult(data);
-      await load();
+      await Promise.all([load(), loadFlags()]);
     } catch (err) {
       setImportResult({
         errorBanner: err.response?.data?.message || 'Import failed',
@@ -194,7 +239,7 @@ export default function AdminEmployees() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadFlags(); }, []);
 
   // ----- deep link: /admin/employees?edit=<profileId> -----
   // The employee detail page (a read-only view) sends HR here to edit, rather
@@ -215,6 +260,41 @@ export default function AdminEmployees() {
     setSearchParams(returnToDetail ? { back: '1' } : {}, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editParam, loading, profiles]);
+
+  // ----- deep link: /admin/employees?importFlags=<batch> -----
+  // Where the "imported values need a check" notification lands. The batch is
+  // not used to filter (an admin opening this wants every open flag, not just
+  // that upload's) — it only says which notification brought them here.
+  const flagsParam = searchParams.get('importFlags');
+  const handledFlags = useRef(false);
+  useEffect(() => {
+    if (!flagsParam || handledFlags.current) return;
+    handledFlags.current = true;
+    setShowFlags(true);
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flagsParam]);
+
+  /**
+   * Close one flag, optionally correcting the value first.
+   * An empty box means "what the import did was right" — the flag clears and
+   * nothing on the employee changes.
+   */
+  const resolveFlag = async (flag) => {
+    const value = (flagEdits[flag._id] || '').trim();
+    setFlagBusy(flag._id);
+    try {
+      const { data } = await api.patch(`/employees/import-flags/${flag._id}`, value ? { value } : {});
+      toast.success(data.message || 'Done');
+      setFlagEdits((s) => { const n = { ...s }; delete n[flag._id]; return n; });
+      // The value may have landed on the employee, so refresh both lists.
+      await Promise.all([loadFlags(), value ? load() : Promise.resolve()]);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update');
+    } finally {
+      setFlagBusy('');
+    }
+  };
 
   // SuperAdmin-only org preference: whether CEO/MD appear in employee-selection
   // pickers across the app. Off by default.
@@ -663,6 +743,31 @@ export default function AdminEmployees() {
           + Add Profile
         </button>
       </PageHeader>
+
+      {/* An import never refuses a row for naming something new — it creates
+          what it safely can and says so here. Amber, not red: nothing is
+          broken, but somebody should look. */}
+      {flags.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="text-sm">
+            <div className="font-medium text-amber-900">
+              {flags.length === 1
+                ? 'One imported value needs a check'
+                : `${flags.length} imported values need a check`}
+            </div>
+            <div className="text-xs text-amber-800 mt-0.5">
+              The Excel import created these or could not match them. The employees were imported either way.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFlags(true)}
+            className="px-3 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 shrink-0"
+          >
+            Review
+          </button>
+        </div>
+      )}
 
       {isSuperAdmin && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
@@ -1257,6 +1362,103 @@ export default function AdminEmployees() {
         </div>
       )}
 
+      {/* ---------------- Import review ---------------- */}
+      {showFlags && (
+        <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl">
+            <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-100">
+              <div>
+                <h2 className="card-title">Imported values to check</h2>
+                <p className="text-xs text-gray-500 mt-1 max-w-2xl leading-relaxed">
+                  An import never refuses a row for naming something new. Anything that is simply a name — a designation,
+                  department, grade, work location or company — was created. Anything that could not be invented — a role,
+                  a salary structure, a named person — was left at its safe default. Correct what is wrong; leave the box
+                  empty to say the import got it right.
+                </p>
+              </div>
+              <button type="button" onClick={() => setShowFlags(false)} aria-label="Close"
+                className="text-gray-400 hover:text-gray-700 text-xl leading-none shrink-0">×</button>
+            </div>
+
+            <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-3">
+              {flags.length === 0 ? (
+                <div className="text-center py-10">
+                  <p className="text-sm font-medium text-gray-700">Nothing to check</p>
+                  <p className="text-xs text-gray-500 mt-1">Every imported value has been dealt with.</p>
+                </div>
+              ) : flags.map((f) => {
+                const person = `${f.user?.firstName || ''} ${f.user?.lastName || ''}`.trim()
+                  || f.employee?.employeeCode || 'Employee';
+                // Suggestions for the correction box. A datalist rather than a
+                // hard dropdown on purpose: the value being flagged is by
+                // definition one the lists did not have, so free text has to stay.
+                const listId = `flagopts-${f._id}`;
+                const suggestions = f.field === 'role' ? ROLE_OPTIONS
+                  : f.field === 'designation' ? designations
+                    : f.field === 'company' ? companies.map((c) => c.name)
+                      : f.field === 'workLocation' ? workLocations.map((w) => w.name)
+                        : ['reportingManager', 'hrPartner'].includes(f.field)
+                          ? allUsers.map((u) => u.email).filter(Boolean)
+                          : [];
+                return (
+                  <div key={f._id} className="border border-gray-200 rounded-xl p-4">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="text-sm font-medium text-gray-900">{person}</span>
+                      {f.employee?.employeeCode && (
+                        <span className="text-xs text-gray-500">{f.employee.employeeCode}</span>
+                      )}
+                      <span className="text-[11px] px-2 py-0.5 rounded-md border bg-gray-50 text-gray-600 border-gray-200">
+                        {FLAG_LABELS[f.field] || f.field}
+                      </span>
+                      {/* "Created" and "left blank" are different outcomes and
+                          need different urgency, so they are different chips. */}
+                      <span className={`text-[11px] px-2 py-0.5 rounded-md border ${
+                        f.action === 'created'
+                          ? 'bg-sky-50 text-sky-700 border-sky-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'}`}>
+                        {f.action === 'created' ? 'Created' : 'Not applied'}
+                      </span>
+                      {f.excelRow ? <span className="text-[11px] text-gray-400">row {f.excelRow}</span> : null}
+                    </div>
+
+                    <p className="text-xs text-gray-600 leading-relaxed">{f.note}</p>
+
+                    <div className="flex flex-wrap items-center gap-2 mt-3">
+                      <input
+                        list={suggestions.length ? listId : undefined}
+                        value={flagEdits[f._id] ?? ''}
+                        onChange={(e) => setFlagEdits((s) => ({ ...s, [f._id]: e.target.value }))}
+                        placeholder={PLACEHOLDERS[f.field] || `Correct value (was “${f.rawValue || '—'}”)`}
+                        className="flex-1 min-w-[14rem] border rounded-lg px-3 py-2 text-sm"
+                      />
+                      {suggestions.length > 0 && (
+                        <datalist id={listId}>
+                          {suggestions.slice(0, 200).map((s) => <option key={s} value={s} />)}
+                        </datalist>
+                      )}
+                      <button
+                        type="button"
+                        disabled={flagBusy === f._id}
+                        onClick={() => resolveFlag(f)}
+                        className="px-3.5 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 shrink-0"
+                      >
+                        {flagBusy === f._id ? 'Saving…'
+                          : (flagEdits[f._id] || '').trim() ? 'Save & clear' : 'Looks right'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end px-6 py-4 border-t border-gray-100">
+              <button type="button" onClick={() => setShowFlags(false)}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showImportModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
@@ -1268,7 +1470,11 @@ export default function AdminEmployees() {
                   The template also covers job, payroll (Salary Structure + Annual CTC), statutory, bank, address and emergency-contact details.
                 </p>
                 <p className="text-[11px] text-amber-700 mt-1">
-                  Lookup columns must match existing records or the row errors: <strong>Reporting Manager Email</strong> / <strong>HR Partner Email</strong> → an existing user's email; <strong>Salary Structure</strong> → an existing structure name (create it under Salary Structures first); <strong>Company</strong> → an existing company name or code (create it under Companies first).
+                  A row is never refused for naming something new. A new <strong>Designation</strong>, <strong>Department</strong>,{' '}
+                  <strong>Grade</strong>, <strong>Work Location</strong> or <strong>Company</strong> is created and flagged for review.
+                  A <strong>Role</strong> that is not a system role imports as Employee; an unmatched{' '}
+                  <strong>Salary Structure</strong>, <strong>Reporting Manager Email</strong> or <strong>HR Partner Email</strong>{' '}
+                  is left blank. All of them are flagged so you can correct them afterwards.
                 </p>
               </div>
               <button onClick={closeImport} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
@@ -1317,6 +1523,8 @@ export default function AdminEmployees() {
                       <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                         <div className="text-2xl font-semibold text-red-800">{importResult.errorCount}</div>
                         <div className="text-xs text-red-700">Errors</div>
+                        {/* Kept as its own tile: an error is a row that did NOT
+                            import, which is a different thing from a flag. */}
                       </div>
                     </div>
 
@@ -1324,6 +1532,29 @@ export default function AdminEmployees() {
                       <p className="text-sm text-gray-700">
                         Default password for newly-created accounts: <code className="bg-gray-100 px-1 py-0.5 rounded">{importResult.defaultPassword}</code> · communicate this to the employees so they can sign in and change it.
                       </p>
+                    )}
+
+                    {/* Values this upload had to invent or could not honour.
+                        The rows are already in — this is the follow-up. */}
+                    {importResult.flagCount > 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                        <div className="text-sm font-medium text-amber-900">
+                          {importResult.flagCount === 1
+                            ? '1 value needs a check'
+                            : `${importResult.flagCount} values need a check`}
+                        </div>
+                        <p className="text-xs text-amber-800 mt-0.5">
+                          New designations, departments and companies were created; roles and people that could not be
+                          matched were left at their safe default. HR, the admins and the CEO/MD have been notified.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => { closeImport(); setShowFlags(true); }}
+                          className="mt-2 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs hover:bg-amber-700"
+                        >
+                          Review them now
+                        </button>
+                      </div>
                     )}
 
                     {importResult.errors?.length > 0 && (

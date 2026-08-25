@@ -11,7 +11,7 @@ import { useNavigation } from '@react-navigation/native';
 import api, { mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
 import {
-  canEmployeeSelf, canViewAdmin, canManage, hasTeam, showsAdminEntry, isSuperAdmin,
+  canEmployeeSelf, canViewAdmin, canManage, hasTeam, showsAdminEntry, isSuperAdmin, isExec,
   hasPermission, hasAnyPermission,
 } from '../utils/roles';
 import { Screen, Avatar, Ionicons } from '../components/ui';
@@ -92,6 +92,10 @@ const PAGES = [
   { label: 'Punch Map', screen: 'PunchMap', group: 'Admin', icon: 'map', show: (u) => hasPermission(u, 'attendance.manage'),
     keywords: ['gps', 'location', 'geofence'] },
   { label: 'Directory', screen: 'Directory', group: 'Admin', icon: 'id-card', show: (u) => hasPermission(u, 'employees.manage') },
+  // Execs included: the server lets a view-only CEO/MD read the flag list.
+  { label: 'Import Review', screen: 'ImportReview', group: 'Admin', icon: 'flag',
+    show: (u) => hasPermission(u, 'employees.manage') || isExec(u),
+    keywords: ['excel', 'import', 'flags', 'new designation', 'new department'] },
   { label: 'Payroll', screen: 'PayrollAdmin', group: 'Admin', icon: 'cash', show: (u) => hasPermission(u, 'payroll.manage'),
     keywords: ['salary'] },
   // Gated on the capability rather than a role: a standalone khataAccess grant

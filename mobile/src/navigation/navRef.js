@@ -70,6 +70,12 @@ export function routeForNotification(data = {}) {
     if (m) return { tab: 'Home', screen: 'CoursePlayer', params: { courseId: m[1] } };
     return { tab: 'Home', screen: 'Learning' };
   }
+  // "Imported values need a check" — the web link is /admin/employees with a
+  // ?importFlags=<batch> query. Matched on the QUERY, before the path lookup
+  // below, because the path alone is just the employee directory.
+  if (typeof link === 'string' && link.includes('importFlags')) {
+    return { tab: 'Home', screen: 'ImportReview' };
+  }
   // Web-path links ('/employee/expenses', '/admin/payroll', …).
   if (typeof link === 'string' && link.startsWith('/')) {
     const path = link.split('?')[0].replace(/\/+$/, '');
