@@ -2,8 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="shortcut icon" type="image/png" href="/favicon.png" />
-    <link rel="icon" type="image/svg+xml" href="/logo-mark.svg" />
+    <!-- The mobile app's own lockup, background removed (cut from
+         mobile/assets/logo.png, so the tab matches the app exactly).
+
+         TWO FILES, because the wordmark is white: on a pale tab bar white
+         letters are white-on-white and only the gold mark survives. Each file
+         carries the same artwork with the letters painted for its own ground,
+         and `media` lets the browser take the right one — Chrome, Edge and
+         Safari also re-evaluate it live when the OS theme is switched.
+
+         THE ORDER IS LOAD-BEARING: Firefox does not honour `media` on an icon
+         link and simply uses the FIRST tag. Dark-tab art therefore goes first,
+         so its worst case (a light Firefox tab) is the gold mark alone —
+         exactly what the tab showed before this change, not a regression.
+
+         An SVG icon must NOT be declared alongside these: Chrome prefers
+         image/svg+xml over PNG regardless of order, which would quietly win.
+         /logo-mark.svg is still shipped and still used in-app as
+         COMPANY_LOGO_MARK (see src/config/company.js). -->
+    <link rel="icon" type="image/png" href="/favicon-dark.png" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/png" href="/favicon-light.png" media="(prefers-color-scheme: light)" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- Brand gold — tints the browser/OS chrome on mobile. -->
     <meta name="theme-color" content="#B08843" />
