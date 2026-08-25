@@ -259,7 +259,10 @@ export default function SearchableSelect({
     else if (e.key === 'Tab') setOpen(false);
   };
 
-  const showSearch = options.length > SEARCH_THRESHOLD;
+  // The box must also appear whenever a searchOnly group is holding options
+  // back: the footer hint says "type a name to search", and with a short
+  // visible list the count threshold alone left nowhere to type.
+  const showSearch = options.length > SEARCH_THRESHOLD || options.some((o) => o.searchOnly);
 
   // A native <select> with no width class sizes to its content; a block-level
   // flex trigger would instead stretch across its parent. Match the original by

@@ -3,9 +3,9 @@
  *
  * Lists login accounts and opens one to grant or revoke what it may reach:
  * the standalone module grants (cashbook, expenses, employee advances and its
- * separate download, assets), the two per-employee attendance grants, an HR
- * Manager's capability list, and — for a CEO/MD — which companies they cover
- * and whether they may edit rather than only read.
+ * separate download, assets), the two per-employee attendance grants, the
+ * capability list for HR Managers and Managers, and — for a CEO/MD — which
+ * companies they cover and whether they may edit rather than only read.
  *
  * SUPER ADMIN ONLY, and not merely by hiding the menu row: every endpoint here
  * is `restrictTo('SuperAdmin')` on the server, so a non-SuperAdmin who reached
@@ -135,9 +135,13 @@ export default function PermissionsScreen() {
   const hrHoldsAll = (u) => u?.role === 'HRManager' && !Array.isArray(u.permissions);
 
   const toggleCapability = async (user, key) => {
+    // Seed from what the account effectively holds: no array is "everything"
+    // for an HR Manager (the migration default above) but "nothing" for a
+    // Manager — seeding a Manager from the full catalogue would hand them the
+    // whole console on their first tap.
     const current = Array.isArray(user.permissions)
       ? user.permissions
-      : catalog.map((p) => p.key); // start from "everything" when it is implicit
+      : (user.role === 'HRManager' ? catalog.map((p) => p.key) : []);
     const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
     setBusy(key);
     try {
@@ -263,10 +267,17 @@ export default function PermissionsScreen() {
             </>
           ) : null}
 
-          {/* The HR capability list. */}
-          {sel.role === 'HRManager' && catalog.length ? (
+          {/* The capability list — HR Managers and Managers (GRANTABLE_ROLES on
+              the web console and the server). */}
+          {(sel.role === 'HRManager' || sel.role === 'Manager') && catalog.length ? (
             <>
-              <Text style={styles.head}>HR capabilities</Text>
+              <Text style={styles.head}>Admin capabilities</Text>
+              {sel.role === 'Manager' ? (
+                <Text style={[font.small, { marginBottom: spacing(2) }]}>
+                  A Manager sees the admin console only while they hold at least one capability. Their team
+                  duties — approving their own team&apos;s leave — come from the role and are unaffected.
+                </Text>
+              ) : null}
               {hrHoldsAll(sel) ? (
                 <Text style={[font.small, { color: colors.warning, marginBottom: spacing(2) }]}>
                   No list has ever been set, so they hold every capability. Un-ticking one saves an explicit list.

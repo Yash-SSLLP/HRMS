@@ -548,9 +548,10 @@ export default function KhataAdminScreen() {
             <Text style={styles.meta}>
               {[detail.employee.employeeCode, detail.employee.designation].filter(Boolean).join(' · ') || detail.employee.email}
             </Text>
-            {/* One figure, because there is one pot. */}
+            {/* One figure, because there is one pot — signed, so a wallet the
+                company owes on reads negative, not just green. */}
             <Text style={[styles.bigAmount, { color: toneFor(detail.balance.direction) }]}>
-              {rupees(detail.balance.amount)}
+              {rupees(detail.balance.signed ?? detail.balance.amount)}
             </Text>
             <Text style={styles.meta}>{detail.balance.label}</Text>
             <Text style={[styles.meta, { marginTop: spacing(2) }]}>
@@ -668,8 +669,11 @@ export default function KhataAdminScreen() {
         refreshControl={refresher(refreshing, onRefresh)}>
 
         <View style={styles.tiles}>
-          <StatTile icon="wallet-outline" label="In staff hands" value={rupees(ov?.totalReceivable)} tint={colors.danger} />
-          <StatTile icon="arrow-down-circle" label="You will give" value={rupees(ov?.totalPayable)} tint={colors.success} />
+          <StatTile icon="wallet-outline" label="In staff hands" value={rupees(ov?.totalReceivable)} tint={colors.success} />
+          {/* Negative on purpose: this is money owed BY the company, and the
+              figure carries that sign — and the red that goes with it. */}
+          <StatTile icon="arrow-down-circle" label="You will give"
+            value={rupees(ov?.totalPayable ? -ov.totalPayable : 0)} tint={colors.danger} />
         </View>
 
         <AppButton title="New entry" icon="add" onPress={() => openEntry('', 'advance')} style={{ marginBottom: spacing(3) }} />
@@ -734,8 +738,9 @@ export default function KhataAdminScreen() {
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
+                    {/* Signed: negative when the company owes this person. */}
                     <Text style={[styles.rowAmount, { color: toneFor(r.display.direction) }]}>
-                      {rupees(r.display.amount)}
+                      {rupees(r.display.signed ?? r.display.amount)}
                     </Text>
                     <Text style={styles.meta}>{r.display.label}</Text>
                   </View>
@@ -1422,14 +1427,15 @@ export default function KhataAdminScreen() {
 }
 
 /**
- * Colour for a balance direction. Red = staff are holding our cash, green = we
- * owe them. Takes both the company-side words ('get'/'give') and the
+ * Colour for a balance direction — it follows the SIGN of the figure: green
+ * for a positive wallet (they hold our cash), red for a negative one (we owe
+ * them). Takes both the company-side words ('get'/'give') and the
  * employee-side ones ('holding'/'owed'), so the same helper serves either
  * payload without a caller having to know which it got.
  */
 function toneFor(direction) {
-  if (direction === 'get' || direction === 'holding') return colors.danger;
-  if (direction === 'give' || direction === 'owed') return colors.success;
+  if (direction === 'get' || direction === 'holding') return colors.success;
+  if (direction === 'give' || direction === 'owed') return colors.danger;
   return colors.textMuted;
 }
 
@@ -1494,7 +1500,8 @@ function EntryRow({ entry, onEdit, onConfirm }) {
       <View style={{ alignItems: 'flex-end' }}>
         <Text style={[
           styles.rowAmount,
-          { color: entry.direction === 'to_employee' ? colors.danger : colors.success },
+          // Sign-colour rule: '+' rows green, '−' rows red.
+          { color: entry.direction === 'to_employee' ? colors.success : colors.danger },
         ]}>
           {entry.direction === 'to_employee' ? '+' : '−'}{rupees(entry.amount)}
         </Text>

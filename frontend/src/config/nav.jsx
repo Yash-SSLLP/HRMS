@@ -34,6 +34,9 @@ import { TbCashBanknote, TbReceipt, TbCurrencyRupee } from 'react-icons/tb';
 // `feature: 'chat'` = hide unless the org-wide chat switch is on, so the whole
 // module disappears together (top-bar launcher, dock and this) rather than
 // leaving a stray chat page behind.
+// `keywords` = extra lower-case terms the global search should match that do not
+// appear in the label — the other names people actually type ("khatabook" for
+// Employee Advances). They never render; GlobalSearch is the only consumer.
 export const adminNav = [
   // Pinned above every category: the landing page is reached constantly and
   // shouldn't need a dropdown opened first. An entry with no `group` renders as
@@ -72,10 +75,12 @@ export const adminNav = [
     { to: '/admin/departments', label: 'Departments', icon: FiGrid, perm: 'org.manage' },
     { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap, perm: 'org.manage' },
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },
-    { to: '/admin/permissions', label: 'Permissions', icon: FiShield, roles: ['SuperAdmin'] },
+    { to: '/admin/permissions', label: 'Permissions', icon: FiShield, roles: ['SuperAdmin'],
+      keywords: ['access', 'grants', 'capabilities', 'manager grant'] },
   ] },
   { group: 'Payroll & Salary', icon: TbCurrencyRupee, items: [
-    { to: '/admin/payroll', label: 'Payroll', icon: TbCurrencyRupee, perm: 'payroll.manage' },
+    { to: '/admin/payroll', label: 'Payroll', icon: TbCurrencyRupee, perm: 'payroll.manage',
+      keywords: ['salary', 'payslip'] },
     // The release queue: employees ask for their payslip, HR checks and hands it over.
     { to: '/admin/payslip-requests', label: 'Payslip Requests', icon: TbReceipt, perm: 'payroll.manage',
       tabs: [{ id: 'pending', label: 'Needs action' }, { id: 'released', label: 'Released' }] },
@@ -93,16 +98,19 @@ export const adminNav = [
   { group: 'Expenses & Cashbook', icon: FiShoppingBag, items: [
     { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage' },
     { to: '/admin/cashbook', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage',
+      keywords: ['petty cash', 'voucher', 'cash account'],
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'ledger', label: 'Ledger' }, { id: 'vouchers', label: 'Vouchers' },
         { id: 'accounts', label: 'Accounts' }, { id: 'categories', label: 'Categories' }, { id: 'reports', label: 'Reports' }] },
     // The per-employee side of the cashbook — advances people hold and the
     // expenses they file against them. (Formerly "Employee Khata".)
     { to: '/admin/khata', label: 'Employee Advances', icon: TbReceipt, perm: 'khata.manage',
+      keywords: ['khata', 'khatabook', 'advance', 'udhar', 'cash ledger'],
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'people', label: 'People' }, { id: 'ledger', label: 'Ledger' },
         { id: 'approvals', label: 'Approvals' }, { id: 'accounts', label: 'Accounts' }] },
     // CEO/MD have no employee portal, so their own cash account (advances they
     // take, expenses they file) lives here in the admin portal.
-    { to: '/admin/my-khata', label: 'My Cashbook', icon: TbReceipt, roles: ['CEO', 'MD'] },
+    { to: '/admin/my-khata', label: 'My Cashbook', icon: TbReceipt, roles: ['CEO', 'MD'],
+      keywords: ['khata', 'advance'] },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
@@ -148,7 +156,8 @@ export const adminNav = [
     { to: '/admin/password-resets', label: 'Password Resets', icon: FiKey, perm: 'users.manage' },
   ] },
   { group: 'Exits', icon: FiLogOut, items: [
-    { to: '/admin/exits', label: 'Exits', icon: FiLogOut, perm: 'exit.manage' },
+    { to: '/admin/exits', label: 'Exits', icon: FiLogOut, perm: 'exit.manage',
+      keywords: ['resignation', 'clearance', 'relieving', 'offboarding'] },
   ] },
   // Last entry in the sidebar. A single-item group renders as a plain top-level
   // link labelled with the group name (see NavList in Layout.jsx), so this shows
@@ -196,19 +205,23 @@ export const employeeNav = [
     { to: '/employee/org-chart', label: 'Org Chart', icon: FiGitBranch },
   ] },
   { group: 'Payroll & Expenses', icon: TbCurrencyRupee, items: [
-    { to: '/employee/payslips', label: 'Payslips', icon: TbCurrencyRupee },
+    { to: '/employee/payslips', label: 'Payslips', icon: TbCurrencyRupee,
+      keywords: ['salary', 'slip'] },
     // Self-service expense claims are no longer offered here: employees file what
     // they spend through My Cashbook, which covers the same ground against their
     // advance. The route and page still exist (and HR's review queue still reads
     // the claims already filed) — only the way in has been taken off the menu.
-    { to: '/employee/cashbook', label: 'Cash Vouchers', icon: TbReceipt },
+    { to: '/employee/cashbook', label: 'Cash Vouchers', icon: TbReceipt,
+      keywords: ['voucher', 'petty cash'] },
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
     { to: '/employee/travel', label: 'Travel', icon: FiMap },
-    { to: '/employee/khata', label: 'My Cashbook', icon: TbReceipt },
+    { to: '/employee/khata', label: 'My Cashbook', icon: TbReceipt,
+      keywords: ['khata', 'khatabook', 'advance', 'udhar', 'expense'] },
     { to: '/employee/cashbook-manage', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage' },
     // The employee-advances admin surface, for standalone-grant holders with no admin portal.
-    { to: '/employee/khata-manage', label: 'Employee Advances', icon: TbCashBanknote, perm: 'khata.manage' },
+    { to: '/employee/khata-manage', label: 'Employee Advances', icon: TbCashBanknote, perm: 'khata.manage',
+      keywords: ['khata', 'khatabook', 'advance', 'udhar'] },
     // The review queue, for standalone-grant holders with no admin portal. Named
     // apart from the self-service "Expenses" row above, which lists only my own.
     { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },
@@ -238,7 +251,8 @@ export const employeeNav = [
     { to: '/employee/complaints', label: 'Complaints', icon: FiAlertTriangle },
   ] },
   { group: 'Exits', icon: FiLogOut, items: [
-    { to: '/employee/exit', label: 'Resignation', icon: FiLogOut, danger: true },
+    { to: '/employee/exit', label: 'Resignation', icon: FiLogOut, danger: true,
+      keywords: ['exit', 'notice period', 'quit'] },
   ] },
   // Last entry in the sidebar — see the note on the admin Help group above.
   { group: 'Help', icon: FiHelpCircle, items: [

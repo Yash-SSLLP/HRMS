@@ -66,7 +66,9 @@ const STATUS_LABELS = { AwaitingApproval: 'With CEO/MD' };
 // opposite of true when somebody is out of pocket. Carrying an advance stays
 // indigo: that is neutral, ordinary, and nobody's move.
 const WALLET_STYLES = {
-  holding: { card: 'bg-indigo-50 border-indigo-200', amount: 'text-indigo-700', hint: 'Company cash you are carrying. Record what you spend it on, or return what is left.' },
+  // Positive is GREEN, negative is RED — the sign-colour rule used everywhere
+  // in the money modules now (owed stays red: it is also the state to act on).
+  holding: { card: 'bg-emerald-50 border-emerald-200', amount: 'text-emerald-700', hint: 'Company cash you are carrying. Record what you spend it on, or return what is left.' },
   owed: { card: 'bg-red-50 border-red-200', amount: 'text-red-700', hint: 'You have spent more than you were advanced, so the company owes you the difference.' },
   settled: { card: 'bg-gray-50 border-gray-200', amount: 'text-gray-700', hint: 'You are not carrying any company cash right now.' },
 };
@@ -383,7 +385,7 @@ export default function EmployeeKhata() {
                 Advanced to you
                 <span className="block text-xs text-gray-400">Money paid into your wallet, confirmed</span>
               </dt>
-              <dd className="font-medium text-indigo-700 whitespace-nowrap">+ {money(totals.advanced)}</dd>
+              <dd className="font-medium text-emerald-700 whitespace-nowrap">+ {money(totals.advanced)}</dd>
             </div>
 
             <div className="flex items-center justify-between py-2">
@@ -391,7 +393,7 @@ export default function EmployeeKhata() {
                 Spent, across all khatas
                 <span className="block text-xs text-gray-400">Expenses the company has confirmed</span>
               </dt>
-              <dd className="font-medium text-emerald-700 whitespace-nowrap">− {money(totals.spent)}</dd>
+              <dd className="font-medium text-red-700 whitespace-nowrap">− {money(totals.spent)}</dd>
             </div>
 
             <div className="flex items-center justify-between py-2">
@@ -399,7 +401,7 @@ export default function EmployeeKhata() {
                 Returned
                 <span className="block text-xs text-gray-400">Unspent cash handed back, and payroll recoveries</span>
               </dt>
-              <dd className="font-medium text-emerald-700 whitespace-nowrap">− {money(totals.returned)}</dd>
+              <dd className="font-medium text-red-700 whitespace-nowrap">− {money(totals.returned)}</dd>
             </div>
 
             <div className="flex items-center justify-between py-2.5 border-t-2 border-gray-200">
@@ -456,7 +458,7 @@ export default function EmployeeKhata() {
                   {/* The same figure on every card, deliberately: one wallet. */}
                   {/* The same figure on every card — and red when it is money
                       the company owes them, matching the wallet above. */}
-                  <p className={`text-xs mt-2 pt-2 border-t border-gray-100 ${display.direction === 'owed' ? 'text-red-700' : 'text-indigo-700'}`}>
+                  <p className={`text-xs mt-2 pt-2 border-t border-gray-100 ${display.direction === 'owed' ? 'text-red-700' : 'text-emerald-700'}`}>
                     {money(display.amount)} {display.direction === 'owed' ? 'owed to you' : 'left in your wallet'}
                   </p>
                 </button>
@@ -544,10 +546,11 @@ export default function EmployeeKhata() {
                       <p className="text-xs text-gray-500 mt-0.5">Confirmed by the company</p>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right text-indigo-700">
+                  {/* Sign-colour rule: green raises your in-hand figure, red lowers it. */}
+                  <td className="px-4 py-3 text-right text-emerald-700">
                     {e.direction === 'to_employee' ? money(e.amount) : ''}
                   </td>
-                  <td className="px-4 py-3 text-right text-emerald-700">
+                  <td className="px-4 py-3 text-right text-red-700">
                     {e.direction === 'from_employee' ? money(e.amount) : ''}
                   </td>
                   {/* Only posted rows carry a running balance; a waiting one has not happened. */}

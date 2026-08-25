@@ -64,14 +64,19 @@ function bad(res, message, status = 400) {
  * accounted for, which from the company's side reads "you will get". This
  * mapping lives here so the web and the mobile app cannot drift apart on the
  * single most confusable thing in the module.
+ *
+ * `signed` keeps the wallet's own sign for the headline figure — NEGATIVE when
+ * the company owes the employee (they spent or returned past the advance) —
+ * matching describeWalletForEmployee below. `amount` stays absolute for lines
+ * that word the direction ("₹500 to give" must not carry a minus too).
  * @param {number} balance - Signed balance, company's point of view.
- * @returns {{amount: number, direction: 'get'|'give'|'settled', label: string}}
+ * @returns {{amount: number, signed: number, direction: 'get'|'give'|'settled', label: string}}
  */
 function describeBalance(balance) {
   const value = ledger.round2(balance || 0);
-  if (value > 0) return { amount: value, direction: 'get', label: 'You will get' };
-  if (value < 0) return { amount: Math.abs(value), direction: 'give', label: 'You will give' };
-  return { amount: 0, direction: 'settled', label: 'Settled up' };
+  if (value > 0) return { amount: value, signed: value, direction: 'get', label: 'You will get' };
+  if (value < 0) return { amount: Math.abs(value), signed: value, direction: 'give', label: 'You will give' };
+  return { amount: 0, signed: 0, direction: 'settled', label: 'Settled up' };
 }
 
 /**

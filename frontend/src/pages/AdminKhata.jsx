@@ -144,12 +144,14 @@ function Stat({ label, value, tone = 'gray', hint }) {
 function netStat(ov) {
   const net = Number(ov?.net) || 0;
   const across = `across ${ov?.peopleWithKhatas || 0} people`;
-  const value = money(Math.abs(net));
+  // Signed, like every wallet figure on this page: negative means the money is
+  // owed BY the company, and the tile's label agrees with the sign.
+  const value = money(net);
   if (net > 0) {
-    return { label: 'Net — you will get', tone: 'rose', value, hint: `Staff owe the company this much more than it owes them, ${across}` };
+    return { label: 'Net — you will get', tone: 'emerald', value, hint: `Staff owe the company this much more than it owes them, ${across}` };
   }
   if (net < 0) {
-    return { label: 'Net — you will give', tone: 'emerald', value, hint: `The company owes staff this much more than they owe it, ${across}` };
+    return { label: 'Net — you will give', tone: 'rose', value, hint: `The company owes staff this much more than they owe it, ${across}` };
   }
   return { label: 'Net position', tone: 'gray', value, hint: `All square, ${across}` };
 }
@@ -157,11 +159,16 @@ function netStat(ov) {
 /** The "you will get / you will give" chip, worded from the company's side. */
 function BalanceChip({ display }) {
   if (!display) return null;
-  const tone = display.direction === 'get' ? 'text-rose-700'
-    : display.direction === 'give' ? 'text-emerald-700' : 'text-gray-500';
+  // Colour follows the SIGN of the figure, not the risk reading: positive
+  // (they hold our cash) is green, negative (we owe them) is red.
+  const tone = display.direction === 'get' ? 'text-emerald-700'
+    : display.direction === 'give' ? 'text-rose-700' : 'text-gray-500';
   return (
     <div className="text-right">
-      <p className={`font-semibold ${tone}`}>{money(display.amount)}</p>
+      {/* The signed figure, not the absolute: when the company owes the
+          employee (they spent or returned past the advance) the number itself
+          reads negative — the label alone was too easy to skim past. */}
+      <p className={`font-semibold ${tone}`}>{money(display.signed ?? display.amount)}</p>
       <p className="text-xs text-gray-500">{display.label}</p>
     </div>
   );
@@ -688,12 +695,13 @@ export default function AdminKhata() {
         loading ? <div className="skeleton h-40 rounded-xl" /> : (
           <div className="space-y-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <Stat label="Advance in staff hands" tone="rose" value={money(ov?.totalReceivable)}
+              <Stat label="Advance in staff hands" tone="emerald" value={money(ov?.totalReceivable)}
                 hint="Paid out and not yet accounted for" />
-              <Stat label="You will give" tone="emerald" value={money(ov?.totalPayable)}
+              <Stat label="You will give" tone="rose"
+                value={money(ov?.totalPayable ? -ov.totalPayable : 0)}
                 hint="Staff who have spent past their advance" />
-              {/* A bare net figure reads identically whether the company is owed
-                  or owing, so the tile names the direction and drops the sign. */}
+              {/* The tile names the direction AND keeps the sign — a negative
+                  figure is money the company owes, same as every row below. */}
               <Stat {...netStat(ov)} />
               {/* The two queues are two different people's work, so they are two
                   tiles — one number covering both would be actionable by nobody. */}
@@ -1977,10 +1985,13 @@ function EntryTable({ entries, onReverse, onEdit, onConfirm, showEmployee }) {
                   </p>
                   <FiledFrom location={e.filedLocation} />
                 </td>
-                <td className="px-4 py-3 text-right text-rose-700">
+                {/* Green for money that RAISES their in-hand figure, red for
+                    money that lowers it — the same sign-colour rule as the
+                    wallet balances. */}
+                <td className="px-4 py-3 text-right text-emerald-700">
                   {e.direction === 'to_employee' ? money(e.amount) : ''}
                 </td>
-                <td className="px-4 py-3 text-right text-emerald-700">
+                <td className="px-4 py-3 text-right text-rose-700">
                   {e.direction === 'from_employee' ? money(e.amount) : ''}
                 </td>
                 <td className="px-4 py-3 text-right text-gray-700">

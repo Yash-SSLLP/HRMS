@@ -25,3 +25,4 @@ firebase-service-account*.json
 # Signing keys — the release keystore must never enter the repo
 *.jks
 *.keystore
+/Important data

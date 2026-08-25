@@ -80,7 +80,9 @@ const TITLES = {
 // them (claim it) and by whoever pays it. Green read as "all fine, nothing to
 // do", which is the opposite of true when somebody is out of pocket.
 const WALLET_LOOK = {
-  holding: { tint: colors.primary, icon: 'wallet-outline', hint: 'Company cash you are carrying. Record what you spend, or return what is left.' },
+  // Positive is GREEN, negative is RED — the sign-colour rule across the money
+  // modules (owed stays red: it is also the state that needs acting on).
+  holding: { tint: colors.success, icon: 'wallet-outline', hint: 'Company cash you are carrying. Record what you spend, or return what is left.' },
   owed: { tint: colors.danger, icon: 'arrow-down-circle', hint: 'You spent more than you were advanced, so the company owes you the difference.' },
   settled: { tint: colors.textMuted, icon: 'checkmark-circle', hint: 'You are not carrying any company cash right now.' },
 };
@@ -378,7 +380,7 @@ export default function KhataScreen() {
               <Text style={font.body}>Advanced to you</Text>
               <Text style={styles.meta}>Money paid into your wallet, confirmed</Text>
             </View>
-            <Text style={[styles.rowAmount, { color: colors.primary }]}>+{rupees(totals.advanced)}</Text>
+            <Text style={[styles.rowAmount, { color: colors.success }]}>+{rupees(totals.advanced)}</Text>
           </View>
 
           <View style={styles.sumRow}>
@@ -386,7 +388,7 @@ export default function KhataScreen() {
               <Text style={font.body}>Spent, across all khatas</Text>
               <Text style={styles.meta}>Expenses the company has confirmed</Text>
             </View>
-            <Text style={[styles.rowAmount, { color: colors.success }]}>−{rupees(totals.spent)}</Text>
+            <Text style={[styles.rowAmount, { color: colors.danger }]}>−{rupees(totals.spent)}</Text>
           </View>
 
           <View style={styles.sumRow}>
@@ -394,7 +396,7 @@ export default function KhataScreen() {
               <Text style={font.body}>Returned</Text>
               <Text style={styles.meta}>Unspent cash handed back, and payroll recoveries</Text>
             </View>
-            <Text style={[styles.rowAmount, { color: colors.success }]}>−{rupees(totals.returned)}</Text>
+            <Text style={[styles.rowAmount, { color: colors.danger }]}>−{rupees(totals.returned)}</Text>
           </View>
 
           <View style={[styles.sumRow, styles.sumTotal]}>
@@ -513,7 +515,8 @@ export default function KhataScreen() {
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={[
                 styles.rowAmount,
-                { color: e.direction === 'to_employee' ? colors.primary : colors.success },
+                // Sign-colour rule: '+' rows green, '−' rows red.
+                { color: e.direction === 'to_employee' ? colors.success : colors.danger },
               ]}>
                 {e.direction === 'to_employee' ? '+' : '−'}{rupees(e.amount)}
               </Text>

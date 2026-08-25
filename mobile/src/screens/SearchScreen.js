@@ -10,7 +10,10 @@ import { useNavigation } from '@react-navigation/native';
 
 import api, { mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
-import { canEmployeeSelf, canViewAdmin, canApprove, hasTeam, showsAdminEntry, isSuperAdmin, hasPermission } from '../utils/roles';
+import {
+  canEmployeeSelf, canViewAdmin, canManage, hasTeam, showsAdminEntry, isSuperAdmin,
+  hasPermission, hasAnyPermission,
+} from '../utils/roles';
 import { Screen, Avatar, Ionicons } from '../components/ui';
 import { colors, radius, spacing, font } from '../theme';
 
@@ -24,8 +27,8 @@ const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin'];
 // Searchable destinations. `tab: true` jumps to a bottom tab; the rest push in
 // the Home stack. `show(user, features)` gates each row by role (mirrors the
 // Menu + Admin Console gating) and, where relevant, by an org feature switch.
-// It gets the whole user, not just the role, so canApprove can see an exec who
-// has been switched into edit mode.
+// It gets the whole user, not just the role, so canManage/hasPermission can see
+// an exec who has been switched into edit mode and a Manager's granted list.
 //
 // `keywords` are extra terms that should find the row but do not appear in its
 // label — what people actually type. Somebody looking for the khata module
@@ -68,30 +71,56 @@ const PAGES = [
   // SuperAdmin, who get no self-service groups at all. Gating this to `emp`
   // would hide it from exactly the people most likely to search for it.
   { label: 'Org Chart', screen: 'OrgChart', group: 'Workplace', icon: 'git-branch', show: always },
+  // Everyone can be somebody's reporting manager, so the reporting-chain inbox
+  // is reachable by every role (same rule as the Home stack registration).
+  { label: 'My Approvals', screen: 'MyApprovals', group: 'Requests', icon: 'git-merge', show: always,
+    keywords: ['approve', 'inbox', 'pending requests'] },
   // Tabs (available to everyone)
   { label: 'Calendar', screen: 'Calendar', group: 'Workplace', icon: 'calendar', tab: true, show: always },
   // Chat is an org-wide switch; `show` also receives the feature flags.
   { label: 'Messages', screen: 'Chat', group: 'Workplace', icon: 'chatbubbles', tab: true, show: (u, f) => !!f?.chatEnabled },
   { label: 'Notifications', screen: 'Alerts', group: 'Workplace', icon: 'notifications', tab: true, show: always },
   { label: 'Profile', screen: 'Profile', group: 'Account', icon: 'person', tab: true, show: always },
-  // Admin & manager
+  // Admin & manager. Each row is gated exactly like its Menu row / Admin
+  // Console tile (capability, not blanket role), so a granted Manager can
+  // search for precisely the screens they can open — no more, no fewer.
   { label: 'Admin Console', screen: 'AdminHub', group: 'Admin', icon: 'shield-checkmark', show: showsAdminEntry },
   { label: 'My Team', screen: 'Team', group: 'Admin', icon: 'people', show: hasTeam },
   { label: 'Approvals', screen: 'Approvals', group: 'Admin', icon: 'checkmark-done', show: canViewAdmin },
-  { label: "Today's Attendance", screen: 'TodayAttendance', group: 'Admin', icon: 'finger-print', show: canViewAdmin },
-  { label: 'Monthly Attendance', screen: 'AttendanceMonth', group: 'Admin', icon: 'calendar', show: canViewAdmin },
-  { label: 'Directory', screen: 'Directory', group: 'Admin', icon: 'id-card', show: canViewAdmin },
-  { label: 'Payroll', screen: 'PayrollAdmin', group: 'Admin', icon: 'cash', show: canViewAdmin },
+  { label: "Today's Attendance", screen: 'TodayAttendance', group: 'Admin', icon: 'finger-print', show: (u) => hasPermission(u, 'attendance.manage') },
+  { label: 'Monthly Attendance', screen: 'AttendanceMonth', group: 'Admin', icon: 'calendar', show: (u) => hasPermission(u, 'attendance.manage') },
+  { label: 'Punch Map', screen: 'PunchMap', group: 'Admin', icon: 'map', show: (u) => hasPermission(u, 'attendance.manage'),
+    keywords: ['gps', 'location', 'geofence'] },
+  { label: 'Directory', screen: 'Directory', group: 'Admin', icon: 'id-card', show: (u) => hasPermission(u, 'employees.manage') },
+  { label: 'Payroll', screen: 'PayrollAdmin', group: 'Admin', icon: 'cash', show: (u) => hasPermission(u, 'payroll.manage'),
+    keywords: ['salary'] },
   // Gated on the capability rather than a role: a standalone khataAccess grant
   // is enough to use the screen, so it must be enough to find it.
-  { label: 'Employee Khata', screen: 'KhataAdmin', group: 'Admin', icon: 'book',
+  { label: 'Employee Advances', screen: 'KhataAdmin', group: 'Admin', icon: 'book',
     show: (u) => hasPermission(u, 'khata.manage'),
     keywords: ['khatabook', 'khata', 'advance', 'cash ledger', 'udhar'] },
-  { label: 'Add Employee', screen: 'AddEmployee', group: 'Admin', icon: 'person-add', show: canApprove },
-  { label: 'Work Locations', screen: 'WorkLocations', group: 'Admin', icon: 'location', show: canApprove },
-  { label: 'Recruitment', screen: 'Recruitment', group: 'Admin', icon: 'briefcase', show: canApprove },
-  { label: 'Rewards & Recognition', screen: 'RnrAdmin', group: 'Admin', icon: 'trophy', show: canApprove },
-  { label: 'Calendar Upload', screen: 'CalendarImport', group: 'Admin', icon: 'cloud-upload', show: (u) => hasPermission(u, 'leave.manage') },
+  { label: 'Exits', screen: 'ExitAdmin', group: 'Admin', icon: 'exit',
+    show: (u) => hasPermission(u, 'exit.manage'),
+    keywords: ['resignation', 'clearance', 'relieving', 'offboarding'] },
+  { label: 'Add Employee', screen: 'AddEmployee', group: 'Admin', icon: 'person-add', show: (u) => canManage(u, 'employees.manage') },
+  { label: 'Work Locations', screen: 'WorkLocations', group: 'Admin', icon: 'location', show: (u) => canManage(u, 'org.manage'),
+    keywords: ['geofence', 'site', 'office'] },
+  { label: 'Recruitment', screen: 'Recruitment', group: 'Admin', icon: 'briefcase',
+    show: (u) => hasAnyPermission(u, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews']),
+    keywords: ['hiring', 'candidates', 'jobs'] },
+  { label: 'Rewards & Recognition', screen: 'RnrAdmin', group: 'Admin', icon: 'trophy', show: (u) => hasPermission(u, 'announcements.manage') },
+  { label: 'Calendar Upload', screen: 'CalendarImport', group: 'Admin', icon: 'cloud-upload', show: (u) => hasPermission(u, 'leave.manage'),
+    keywords: ['holidays', 'import'] },
+  // SuperAdmin-only screens — the same hard role gates the Menu and the Admin
+  // Console apply, because every endpoint behind them is restrictTo('SuperAdmin').
+  { label: 'Permissions', screen: 'Permissions', group: 'Admin', icon: 'key', show: isSuperAdmin,
+    keywords: ['access', 'grants', 'capabilities', 'roles'] },
+  { label: 'Logo & Signatures', screen: 'Branding', group: 'Admin', icon: 'color-palette', show: isSuperAdmin,
+    keywords: ['branding', 'letterhead', 'logo', 'signature'] },
+  { label: 'Late Marking', screen: 'LateMarking', group: 'Admin', icon: 'alarm', show: isSuperAdmin,
+    keywords: ['late', 'penalty', 'grace'] },
+  { label: 'Push Notification', screen: 'PushNotification', group: 'Admin', icon: 'notifications', show: isSuperAdmin,
+    keywords: ['reminder', 'punch reminder'] },
 ];
 
 const personUri = (p) => (p.user?.photo ? `${mediaUrl(`/auth/users/${p.user._id}/avatar`)}?p=${encodeURIComponent(p.user.photo)}` : null);
