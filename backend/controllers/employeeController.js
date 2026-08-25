@@ -472,7 +472,11 @@ const listEmployees = asyncHandler(async (req, res) => {
   }
   if (excludeUserIds.length) filter.user = { $nin: excludeUserIds };
   let query = EmployeeProfile.find(filter)
-    .populate('user', 'firstName lastName email role isActive')
+    // `updatedAt` on the USER as well as the profile: role, login email and
+    // phone are stored on the account, so an edit to any of them moves that
+    // stamp and not the profile's. The directory's "last updated" column takes
+    // the later of the two, which is the only honest answer.
+    .populate('user', 'firstName lastName email role isActive updatedAt')
     .populate('hrPartner', 'firstName lastName email')
     .populate('company', 'name code')
     .sort({ createdAt: -1 });

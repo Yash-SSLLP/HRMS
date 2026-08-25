@@ -16,6 +16,8 @@ import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { ROLES, roleLabel } from '../config/roles';
+import { formatDateTime12 } from '../utils/time';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 // Enums mirrored from models/EmployeeProfile.js — a value outside these fails validation.
@@ -90,6 +92,13 @@ const blankProfile = {
 // payroll. Everyone else can have one.
 const PROFILE_INELIGIBLE_ROLES = ['CEO', 'MD', 'SuperAdmin'];
 
+// The roles this modal may set. It edits somebody who HAS an employee profile,
+// and the three above are exactly the roles that never have one — offering them
+// here would let you produce an account that contradicts its own record. Making
+// somebody a CEO/MD/Backend is done on the Users page, where the profile can be
+// removed at the same time.
+const ASSIGNABLE_ROLES = ROLES.filter((r) => !PROFILE_INELIGIBLE_ROLES.includes(r));
+
 /**
  * Does this user already have an employee profile?
  *
@@ -104,6 +113,48 @@ const userHasProfile = (u, profiles) => (
     : profiles.some((p) => (p.user?._id || p.user) === u._id)
 );
 
+/**
+ * When was this employee last touched?
+ *
+ * The LATER of the profile's and the account's `updatedAt`: designation,
+ * department and the rest live on the profile, while role, login email and
+ * phone live on the User — so reading only one of them would report a record as
+ * untouched on the very day somebody changed its role.
+ */
+const lastUpdatedAt = (p) => {
+  const a = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+  const b = p.user?.updatedAt ? new Date(p.user.updatedAt).getTime() : 0;
+  const max = Math.max(a, b);
+  return max ? new Date(max) : null;
+};
+
+/**
+ * The sortable columns, each with the value to sort on.
+ *
+ * `numeric: true` on the text comparisons is what makes employee codes come out
+ * in human order: a plain string sort puts "SSL 122" before "SSL 7" because it
+ * compares character by character. It matters for designations with numbers in
+ * them too ("Engineer II" vs "Engineer I").
+ *
+ * `type: 'num'` columns sort high-to-low first, because "most recently updated"
+ * and "still incomplete" are the answers somebody is looking for when they click
+ * those headers — ascending would put the least interesting rows on top.
+ */
+const SORTS = {
+  // Spaces are stripped before comparing: the codes in use are inconsistent
+  // about them ("SSL 7" beside "SSL41"), and a space sorts before a digit — so
+  // comparing them literally interleaves the numbers, putting SSL 122 above
+  // SSL41. Normalising gives SSL7 < SSL41 < SSL68 < SSL122, which is the order
+  // anybody reading a code column expects.
+  code: { label: 'Employee code', get: (p) => String(p.employeeCode || '').replace(/\s+/g, '') },
+  name: { label: 'Name', get: (p) => `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() },
+  designation: { label: 'Designation', get: (p) => p.designation || '' },
+  department: { label: 'Department', get: (p) => p.department || '' },
+  documents: { label: 'Documents', type: 'num', get: (p, docs) => (docs[String(p._id)]?.complete ? 1 : 0) },
+  status: { label: 'Status', type: 'num', get: (p) => (p.user?.isActive ? 1 : 0) },
+  updated: { label: 'Last update', type: 'num', get: (p) => (lastUpdatedAt(p)?.getTime() || 0) },
+};
+
 // A work site is offered to an employee when it belongs to their company, or is
 // a shared site with no company, or the employee has no company set yet (nothing
 // to constrain against). Keeps each company's people on their own sites.
@@ -114,6 +165,35 @@ const siteMatchesCompany = (loc, companyId) => {
   if (!lc) return true;  // shared site (no company) → available to everyone
   return lc === cid;
 };
+
+/**
+ * A column header you can click to sort by.
+ *
+ * The arrow shows only on the active column — an arrow on every header tells you
+ * nothing about which one is in force. `aria-sort` carries the same fact to a
+ * screen reader, which cannot see the glyph.
+ */
+function SortHeader({ label, sortKey, sort, onSort, align = 'left' }) {
+  const active = sort.key === sortKey;
+  return (
+    <th
+      className={`px-4 py-3 text-${align} font-medium text-gray-700`}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        title={`Sort by ${label.toLowerCase()}`}
+        className={`inline-flex items-center gap-1 hover:text-gray-900 ${active ? 'text-gray-900' : ''}`}
+      >
+        {label}
+        <span className={`text-[10px] leading-none ${active ? 'accent-text' : 'text-gray-300'}`} aria-hidden="true">
+          {active ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </button>
+    </th>
+  );
+}
 
 export default function AdminEmployees() {
   const navigate = useNavigate();
@@ -148,6 +228,17 @@ export default function AdminEmployees() {
   const [editPhone, setEditPhone] = useState('');
   const phoneAtOpen = useRef('');
   const emailAtOpen = useRef('');
+  // The role lives on the login account, not the profile — same separate-save
+  // treatment as phone and email below.
+  //
+  // Only the Backend account may CHANGE it, mirroring updateUser on the server:
+  // it refuses an admin role from anyone else, and refuses any edit to a
+  // non-Employee account from anyone else — which leaves an HR Manager able to
+  // set "Employee" on an Employee, i.e. nothing. Everyone else sees the role
+  // read-only rather than a control that would only ever fail.
+  const [editRole, setEditRole] = useState('Employee');
+  const roleAtOpen = useRef('Employee');
+  const canSetRole = isSuperAdmin;
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -421,6 +512,10 @@ export default function AdminEmployees() {
     setEditPhone('');
     phoneAtOpen.current = '';
     emailAtOpen.current = '';
+    // Creating picks an EXISTING account, which already carries its own role —
+    // so the picker is edit-only and this is just a reset.
+    setEditRole('Employee');
+    roleAtOpen.current = 'Employee';
     resetDocLink();
     setShowModal(true);
     // Prefill the next employee code (continues the last one, e.g. SSL 8 → SSL 9).
@@ -462,6 +557,8 @@ export default function AdminEmployees() {
     setEditPhone(p.user?.phone || '');
     phoneAtOpen.current = p.user?.phone || '';
     emailAtOpen.current = p.user?.email || '';
+    setEditRole(p.user?.role || 'Employee');
+    roleAtOpen.current = p.user?.role || 'Employee';
     setShowModal(true);
   };
 
@@ -588,11 +685,16 @@ export default function AdminEmployees() {
       // the profile save.
       const emailChanged = editingId && editEmail.trim() && editEmail.trim() !== emailAtOpen.current;
       const phoneChanged = editPhone !== phoneAtOpen.current;
-      if (phoneChanged || emailChanged) {
+      // The role rides along in the same call. Unlike name/email/phone it is
+      // "operational", so the server applies it directly rather than queueing it
+      // for a CEO/MD — and refuses outright if this admin may not grant it.
+      const roleChanged = editingId && canSetRole && editRole && editRole !== roleAtOpen.current;
+      if (phoneChanged || emailChanged || roleChanged) {
         const userId = form.user?._id || form.user;
         const patch = {};
         if (phoneChanged) patch.phone = editPhone;
         if (emailChanged) patch.email = editEmail.trim();
+        if (roleChanged) patch.role = editRole;
         if (userId && Object.keys(patch).length) {
           try {
             const { data: uData } = await api.put(`/admin/users/${userId}`, patch);
@@ -605,10 +707,16 @@ export default function AdminEmployees() {
                 emailAtOpen.current = editEmail.trim();
                 toast.success(`Sign-in email changed to ${editEmail.trim()}`);
               }
+              if (roleChanged) {
+                roleAtOpen.current = editRole;
+                toast.success(`Role changed to ${roleLabel(editRole)}`);
+              }
             }
           } catch (err) {
-            toast.error(err.response?.data?.message
-              || `Profile saved, but the ${emailChanged ? 'email' : 'phone number'} could not be updated`);
+            // Name the field that failed — "could not be updated" on its own
+            // leaves you guessing which of the three the server refused.
+            const field = roleChanged ? 'role' : emailChanged ? 'email' : 'phone number';
+            toast.error(err.response?.data?.message || `Profile saved, but the ${field} could not be updated`);
           }
         }
       }
@@ -665,6 +773,86 @@ export default function AdminEmployees() {
 
   // Shared cell renderers so the desktop table and the mobile card list stay
   // in sync.
+  // ----- Directory search + filters -----
+  // All client-side: the list is already fully loaded, so filtering here is
+  // instant and needs no round trip. `query` is what has actually been applied;
+  // `search` is what is in the box. They differ only between typing and
+  // submitting, which is what makes the Search button mean something.
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState({ department: '', company: '', status: '', documents: '' });
+  const setFilter = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
+  // `key: ''` = leave the server's order alone (newest added first), which is
+  // what the page has always shown — sorting is opt-in, not a new default.
+  const [sort, setSort] = useState({ key: '', dir: 'asc' });
+  const clearFilters = () => {
+    setFilters({ department: '', company: '', status: '', documents: '' });
+    setSearch(''); setQuery(''); setSort({ key: '', dir: 'asc' });
+  };
+  const activeFilterCount = Object.values(filters).filter(Boolean).length + (query ? 1 : 0) + (sort.key ? 1 : 0);
+
+  /**
+   * Click a column: sort by it, or flip the direction if it is already the one.
+   * A numeric column opens descending (newest / most complete first); a text
+   * column opens A–Z.
+   */
+  const toggleSort = (key) => setSort((s) => (
+    s.key === key
+      ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: SORTS[key]?.type === 'num' ? 'desc' : 'asc' }
+  ));
+
+  // Options come from the people actually on the page, so a filter never offers
+  // a value that would return nothing.
+  const departmentOptions = useMemo(
+    () => [...new Set(profiles.map((p) => p.department).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [profiles]
+  );
+  const companyOptions = useMemo(
+    () => [...new Set(profiles.map((p) => p.company?.name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [profiles]
+  );
+
+  const visibleProfiles = useMemo(() => {
+    const t = query.trim().toLowerCase();
+    const matched = profiles.filter((p) => {
+      if (filters.department && p.department !== filters.department) return false;
+      if (filters.company && p.company?.name !== filters.company) return false;
+      if (filters.status && String(!!p.user?.isActive) !== filters.status) return false;
+      if (filters.documents) {
+        const s = docStatus[String(p._id)];
+        const complete = !!s?.complete;
+        if (filters.documents === 'complete' && !complete) return false;
+        if (filters.documents === 'incomplete' && complete) return false;
+      }
+      if (!t) return true;
+      // Everything on the row, plus the fields somebody would reasonably type
+      // (PAN and the company name) even though only some of them are columns.
+      return [
+        p.employeeCode, p.designation, p.department, p.pan,
+        p.user?.firstName, p.user?.lastName, p.user?.email, p.company?.name,
+        `${p.user?.firstName || ''} ${p.user?.lastName || ''}`,
+      ].some((v) => String(v || '').toLowerCase().includes(t));
+    });
+
+    const col = SORTS[sort.key];
+    if (!col) return matched; // untouched: the server's newest-first order
+
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    // Sort a COPY: `matched` may be `profiles` itself when nothing is filtered,
+    // and sorting that in place would mutate state React thinks is unchanged.
+    return [...matched].sort((a, b) => {
+      const av = col.get(a, docStatus);
+      const bv = col.get(b, docStatus);
+      if (col.type === 'num') return sign * ((av || 0) - (bv || 0));
+      // Blanks sink to the bottom whichever way the column is pointing —
+      // a column of dashes at the top is never the answer to "sort by this".
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      return sign * String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }, [profiles, query, filters, docStatus, sort]);
+
   const docBadge = (p) => {
     const s = docStatus[String(p._id)];
     if (!s) return <span className="text-xs text-gray-400">-</span>;
@@ -800,26 +988,130 @@ export default function AdminEmployees() {
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
+      {/* ---------------- Search + filters ---------------- */}
+      <div className="bg-white shadow rounded-lg px-4 py-3.5 mb-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* A real form, so Enter submits and the button is not decoration. */}
+          <form
+            onSubmit={(e) => { e.preventDefault(); setQuery(search); }}
+            className="flex items-center gap-2 flex-1 min-w-[16rem]"
+          >
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+              <input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  // Emptying the box restores the full list straight away —
+                  // making somebody press Search to see everything again is
+                  // the kind of small rudeness that makes a filter feel broken.
+                  if (!e.target.value) setQuery('');
+                }}
+                placeholder="Search name, code, email, designation, PAN…"
+                aria-label="Search employees"
+                className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm"
+              />
+            </div>
+            <button type="submit" className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 shrink-0">
+              Search
+            </button>
+          </form>
+
+          <select value={filters.department} onChange={(e) => setFilter('department', e.target.value)}
+            aria-label="Filter by department" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            <option value="">All departments</option>
+            {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+
+          {companyOptions.length > 1 && (
+            <select value={filters.company} onChange={(e) => setFilter('company', e.target.value)}
+              aria-label="Filter by company" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+              <option value="">All companies</option>
+              {companyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+
+          <select value={filters.status} onChange={(e) => setFilter('status', e.target.value)}
+            aria-label="Filter by status" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            <option value="">Any status</option>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+
+          <select value={filters.documents} onChange={(e) => setFilter('documents', e.target.value)}
+            aria-label="Filter by document completeness" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            <option value="">Any documents</option>
+            <option value="complete">Documents complete</option>
+            <option value="incomplete">Documents incomplete</option>
+          </select>
+
+          {/* The same sort the column headers drive. It lives here as well
+              because the phone/tablet view is a card list with no headers to
+              click — without this, sorting would be desktop-only. */}
+          <select
+            value={sort.key ? `${sort.key}:${sort.dir}` : ''}
+            onChange={(e) => {
+              const [key, dir] = e.target.value.split(':');
+              setSort(key ? { key, dir } : { key: '', dir: 'asc' });
+            }}
+            aria-label="Sort by"
+            className="border rounded-lg px-3 py-2 text-sm text-gray-700"
+          >
+            <option value="">Sort: recently added</option>
+            <option value="name:asc">Name A–Z</option>
+            <option value="name:desc">Name Z–A</option>
+            <option value="code:asc">Code ascending</option>
+            <option value="code:desc">Code descending</option>
+            <option value="designation:asc">Designation A–Z</option>
+            <option value="department:asc">Department A–Z</option>
+            <option value="updated:desc">Last update — newest</option>
+            <option value="updated:asc">Last update — oldest</option>
+            <option value="documents:asc">Documents — incomplete first</option>
+            <option value="status:asc">Status — inactive first</option>
+          </select>
+
+          <div className="flex items-center gap-3 ml-auto shrink-0">
+            {activeFilterCount > 0 && (
+              <button type="button" onClick={clearFilters} className="text-xs text-gray-600 hover:underline">
+                Clear {activeFilterCount === 1 ? 'filter' : 'filters'}
+              </button>
+            )}
+            <span className="text-xs text-gray-500 whitespace-nowrap">
+              {loading ? 'Loading…'
+                : visibleProfiles.length === profiles.length
+                  ? `${profiles.length} ${profiles.length === 1 ? 'profile' : 'profiles'}`
+                  : `${visibleProfiles.length} of ${profiles.length}`}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Desktop: table */}
       <div className="hidden lg:block bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Code</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Name</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Designation</th>
+              <SortHeader label="Code" sortKey="code" sort={sort} onSort={toggleSort} />
+              <SortHeader label="Name" sortKey="name" sort={sort} onSort={toggleSort} />
+              <SortHeader label="Designation" sortKey="designation" sort={sort} onSort={toggleSort} />
+              {/* PAN is an identifier nobody scans in order — no sort. */}
               <th className="px-4 py-3 text-left font-medium text-gray-700">PAN</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Documents</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
+              <SortHeader label="Documents" sortKey="documents" sort={sort} onSort={toggleSort} />
+              <SortHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
+              <SortHeader label="Last update" sortKey="updated" sort={sort} onSort={toggleSort} />
               <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : profiles.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No profiles yet</td></tr>
-            ) : profiles.map((p) => (
+              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+            ) : visibleProfiles.length === 0 ? (
+              // "No profiles yet" is wrong when a filter is what emptied the
+              // table — it reads as data loss rather than as a narrow search.
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">
+                {profiles.length === 0 ? 'No profiles yet' : 'Nobody matches these filters'}
+              </td></tr>
+            ) : visibleProfiles.map((p) => (
               // The whole row opens the employee — the record was previously
               // only reachable through global search. The action buttons stop
               // the click so Edit/Delete still do their own thing.
@@ -834,6 +1126,12 @@ export default function AdminEmployees() {
                 <td className="px-4 py-3 font-mono text-xs">{p.pan || '-'}</td>
                 <td className="px-4 py-3">{docBadge(p)}</td>
                 <td className="px-4 py-3">{statusBadge(p)}</td>
+                {/* Date AND time, 12-hour per the portal convention — "last
+                    updated" is only useful if you can tell two edits apart on
+                    the same day. */}
+                <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">
+                  {lastUpdatedAt(p) ? formatDateTime12(lastUpdatedAt(p)) : <span className="text-gray-400">-</span>}
+                </td>
                 <td className="px-4 py-3 text-right space-x-2" onClick={(e) => e.stopPropagation()}>{rowActions(p)}</td>
               </tr>
             ))}
@@ -845,9 +1143,11 @@ export default function AdminEmployees() {
       <div className="lg:hidden space-y-3">
         {loading ? (
           <div className="bg-white shadow rounded-xl p-4 space-y-2"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
-        ) : profiles.length === 0 ? (
-          <div className="bg-white shadow rounded-xl p-6 text-center text-gray-500">No profiles yet</div>
-        ) : profiles.map((p) => (
+        ) : visibleProfiles.length === 0 ? (
+          <div className="bg-white shadow rounded-xl p-6 text-center text-gray-500">
+            {profiles.length === 0 ? 'No profiles yet' : 'Nobody matches these filters'}
+          </div>
+        ) : visibleProfiles.map((p) => (
           <div key={p._id} className="bg-white shadow rounded-xl p-4">
             <div className="flex items-start justify-between gap-2">
               {/* Same target as the desktop row: tapping the name opens the
@@ -866,6 +1166,9 @@ export default function AdminEmployees() {
               {statusBadge(p)}
               {p.pan ? <span className="font-mono text-[11px] text-gray-500">PAN {p.pan}</span> : null}
             </div>
+            {lastUpdatedAt(p) && (
+              <div className="mt-2 text-[11px] text-gray-400">Updated {formatDateTime12(lastUpdatedAt(p))}</div>
+            )}
             <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-2 text-sm">
               {rowActions(p)}
             </div>
@@ -941,6 +1244,44 @@ export default function AdminEmployees() {
                     {EMPLOYMENT_TYPES.map((t) => <option key={t}>{t}</option>)}
                   </select>
                 </div>
+
+                {/* Role — the login account's, not the profile's. Edit-only:
+                    creating picks an existing account that already has one. */}
+                {editingId && (
+                  <div>
+                    <label className="block text-sm text-gray-700">Role</label>
+                    {canSetRole ? (
+                      <>
+                        <select
+                          value={editRole}
+                          onChange={(e) => setEditRole(e.target.value)}
+                          className="mt-1 block w-full border rounded-lg px-3 py-2"
+                        >
+                          {/* A role already on the account but not assignable here
+                              (a CEO who somehow has a profile) still has to be
+                              shown, or opening the form would silently demote them. */}
+                          {(ASSIGNABLE_ROLES.includes(roleAtOpen.current)
+                            ? ASSIGNABLE_ROLES
+                            : [roleAtOpen.current, ...ASSIGNABLE_ROLES]
+                          ).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+                        </select>
+                        <p className="text-[11px] text-gray-400 mt-1">
+                          What they can reach in the app. Saved on the login account.
+                          {editRole !== 'Employee' && editRole !== roleAtOpen.current && (
+                            <span className="text-amber-700"> Grants admin access — set what they may do under Permissions.</span>
+                          )}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-50 text-gray-500">
+                          {roleLabel(editRole)}
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1">Only the Backend account can change a role.</p>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm text-gray-700">Designation</label>
                   <DesignationSelect

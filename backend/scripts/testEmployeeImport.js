@@ -47,6 +47,11 @@ const stub = (rel, exports) => {
   require.cache[filename] = { id: filename, filename, loaded: true, exports };
 };
 
+// Grabbed from the REAL module before the stub below replaces it in the cache:
+// parsePersonName is pure, so it is tested directly rather than through an
+// import run. (Order matters here — after the stub, this export is gone.)
+const { parsePersonName } = require(path.join(BACKEND, 'services/employeeExcel.js'));
+
 const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'Employee'];
 
 stub('models/User.js', {
@@ -193,6 +198,30 @@ const ctrl = require(path.join(BACKEND, 'controllers/employeeController.js'));
   check('nothing was created', second.createdCount, 0);
   check('the orphaned account was deleted', deletedUsers.length - before, 1);
   check('and it was the right one', deletedUsers[deletedUsers.length - 1], createdUsers[0]?._id || 'u1');
+
+  console.log('\n--- names arrive tidy, whatever the spreadsheet shouted ---');
+  const nm = (input, expected) => check(`"${input}" → "${expected}"`, parsePersonName(input), expected);
+  // The two the business asked for.
+  nm('YASH KUMAR', 'Yash Kumar');
+  nm('yash kumar', 'Yash Kumar');
+  nm('Yash Kumar', 'Yash Kumar');            // already right — untouched
+  // Real names from the import that went wrong.
+  nm('SIDDHANT RAJ', 'Siddhant Raj');
+  nm('GAJENDRA SARSWAT', 'Gajendra Sarswat');
+  nm('sandeepa T.U', 'Sandeepa T.U');        // initials keep their case
+  nm('Kc lavanya Shetty', 'Kc Lavanya Shetty'); // per-word: only "lavanya" was wrong
+  nm('KUSUMA V', 'Kusuma V');
+  // Deliberate mixed case is somebody's actual name — never flatten it.
+  nm('McDonald', 'McDonald');
+  nm('DeSilva', 'DeSilva');
+  nm("D'Souza", "D'Souza");
+  // Uniform case still gets the internal capitals right.
+  nm("o'brien", "O'Brien");
+  nm('MARY-JANE', 'Mary-Jane');
+  // Whitespace from a copy-paste.
+  nm('  ANITA   RAO  ', 'Anita Rao');
+  check('an empty cell stays empty', parsePersonName(''), undefined);
+  check('a blank cell stays empty', parsePersonName('   '), undefined);
 
   console.log(`\n${failed ? 'FAILED' : 'PASSED'} — ${passed} passed, ${failed} failed\n`);
   process.exit(failed ? 1 : 0);

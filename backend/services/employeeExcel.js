@@ -12,8 +12,10 @@ const ExcelJS = require('exceljs');
 // name; companyName → a Company by name (or code).
 const COLUMNS = [
   { key: 'employeeCode', header: 'Employee Code', width: 14, required: true },
-  { key: 'firstName',    header: 'First Name',    width: 18, required: true, on: 'user' },
-  { key: 'lastName',     header: 'Last Name',     width: 18, required: true, on: 'user' },
+  // `type: 'name'` tidies the capitalisation on the way IN only — see
+  // parsePersonName. Export writes the stored name back untouched.
+  { key: 'firstName',    header: 'First Name',    width: 18, required: true, on: 'user', type: 'name' },
+  { key: 'lastName',     header: 'Last Name',     width: 18, required: true, on: 'user', type: 'name' },
   { key: 'email',        header: 'Email',         width: 28, required: true, on: 'user' },
   { key: 'phone',        header: 'Phone',         width: 16, on: 'user' },
   { key: 'role',         header: 'Role',          width: 14, on: 'user', default: 'Employee' },
@@ -146,6 +148,51 @@ function parsePhone(v) {
   if (digits.length === 10) return digits;
   if (digits.length === 12 && digits.startsWith('91')) return '+' + digits;
   return digits;
+}
+
+/**
+ * Tidy the capitalisation of a person's name from a spreadsheet.
+ *
+ * Spreadsheets arrive shouting or whispering — "YASH KUMAR", "yash kumar",
+ * "sandeepa T.U" — and whatever is typed here becomes the name on their
+ * payslip, their offer letter and every screen in the app. So it is fixed once,
+ * at the point the sheet is read, rather than left for somebody to correct by
+ * hand a hundred times.
+ *
+ * THE RULE IS PER WORD, AND ONLY FOR WORDS TYPED IN ONE CASE. A word that
+ * already mixes upper and lower was capitalised deliberately by a human, and is
+ * left exactly alone — that is what protects "McDonald", "D'Souza" and
+ * "DeSilva" from being helpfully flattened into "Mcdonald". Only a word that is
+ * entirely upper or entirely lower is rewritten, because neither of those
+ * carries any intent worth keeping.
+ *
+ * Initials keep their case: "T.U" is not a word that wants title-casing, and
+ * "T.u" would be simply wrong.
+ *
+ * @param {*} v - the raw cell.
+ * @returns {string|undefined} the tidied name, or undefined when the cell is empty.
+ */
+function parsePersonName(v) {
+  if (v == null || v === '') return undefined;
+  // Collapse the double spaces and stray tabs that survive a copy-paste.
+  const clean = String(v).trim().replace(/\s+/g, ' ');
+  if (!clean) return undefined;
+
+  // A run of single letters joined by dots ("T.U", "A.B.C.", "K."). Always upper.
+  const isInitials = (w) => /^(?:\p{L}\.)+\p{L}?$/u.test(w) || /^\p{L}$/u.test(w);
+  // Did a human choose this casing? Then keep it.
+  const isMixedCase = (w) => /\p{Ll}/u.test(w) && /\p{Lu}/u.test(w);
+
+  // Capitalise one run of letters, leaving any trailing punctuation alone.
+  const capitalise = (s) => (s ? s[0].toLocaleUpperCase() + s.slice(1).toLocaleLowerCase() : s);
+
+  return clean.split(' ').map((word) => {
+    if (isInitials(word)) return word.toLocaleUpperCase();
+    if (isMixedCase(word)) return word;
+    // Hyphens and apostrophes start a new capital inside one word:
+    // "mary-jane" → "Mary-Jane", "o'brien" → "O'Brien".
+    return word.split(/([-'’])/).map((part) => (/^[-'’]$/.test(part) ? part : capitalise(part))).join('');
+  }).join(' ');
 }
 
 // ----- exporting -----
@@ -311,6 +358,7 @@ async function parseWorkbook(buffer) {
       if (c.type === 'date') value = parseDate(raw);
       else if (c.type === 'boolean') value = parseBoolean(raw);
       else if (c.type === 'number') value = parseNumber(raw);
+      else if (c.type === 'name') value = parsePersonName(raw);
       else if (c.key === 'phone') value = parsePhone(raw);
       else if (c.key === 'pan' || c.key === 'bankDetails.ifsc') value = String(raw).trim().toUpperCase();
       else if (c.key === 'email') value = String(raw).trim().toLowerCase();
@@ -336,4 +384,6 @@ async function parseWorkbook(buffer) {
   return rows;
 }
 
-module.exports = { COLUMNS, writeWorkbook, parseWorkbook };
+// parsePersonName is exported for the unit tests — capitalisation rules are
+// easy to break and the damage lands on somebody's payslip.
+module.exports = { COLUMNS, writeWorkbook, parseWorkbook, parsePersonName };
