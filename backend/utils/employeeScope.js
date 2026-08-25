@@ -105,10 +105,30 @@ function cannotManageProfile(req, profile) {
   return false;
 }
 
+/**
+ * The companies a CEO/MD has been narrowed to, as strings.
+ *
+ * Separated from employeeProfileScope because some screens need ONLY this half
+ * of the rule. The org chart is the case in point: it is readable by everyone,
+ * so applying the full scope would hand an HR Manager a chart containing only
+ * their own assigned employees and shatter the reporting tree — but a
+ * company-limited executive must still not see another company's people.
+ *
+ * Empty array = unrestricted (every company), matching User.companies, where an
+ * absent or empty list deliberately means "all".
+ * @param {object|null} user
+ * @returns {string[]} company ids, or [] when this account is not narrowed
+ */
+function execCompanyIds(user) {
+  if (!user || !EXECUTIVE_ROLES.includes(user.role)) return [];
+  return Array.isArray(user.companies) ? user.companies.filter(Boolean).map(String) : [];
+}
+
 module.exports = {
   employeeProfileScope,
   isUnscoped,
   allowedEmployeeIds,
   scopeEmployeeFilter,
   cannotManageProfile,
+  execCompanyIds,
 };

@@ -6,7 +6,7 @@ import api from '../../api/client';
 import { readCacheSync, hydrate, writeCache } from '../../api/cache';
 import { useAuth } from '../../store/auth';
 import {
-  canViewAdmin, canApprove, isExec, hasTeam, hasPermission, hasAnyPermission, isGrantedManager,
+  canViewAdmin, canApprove, isAdmin, isExec, hasTeam, hasPermission, hasAnyPermission, isGrantedManager,
 } from '../../utils/roles';
 import { colors, radius, spacing, font } from '../../theme';
 import { Screen, Card, Pill, ProgressBar, refresher, SectionHeader, Loader, EmptyState, Ionicons, SkeletonScreen, MiniBarChart } from '../../components/ui';
@@ -87,6 +87,9 @@ export default function AdminHubScreen() {
   // Values an Excel import created or could not match. Execs see it too (the
   // server lets a view-only CEO/MD read the list), which canDo alone excludes.
   tiles.push({ key: 'ImportReview', label: 'Import Review', icon: 'flag', tint: '#d97706', show: canDo('employees.manage') || isExec(me) });
+  // The legal entities. Read by admins and execs (the web nav's audience);
+  // only the Backend and CEO/MD get the buttons, which the screen decides.
+  tiles.push({ key: 'Companies', label: 'Companies', icon: 'business', tint: '#0f766e', show: isAdmin(me) || isExec(me) });
   tiles.push({ key: 'AddEmployee', label: 'Add Employee', icon: 'person-add', tint: '#0d9488', show: canDo('employees.manage') && (mayWrite || isGranted) });
   tiles.push({ key: 'WorkLocations', label: 'Work Locations', icon: 'location', tint: '#0891b2', show: canDo('org.manage') && (mayWrite || isGranted) });
   tiles.push({ key: 'Recruitment', label: 'Recruitment', icon: 'briefcase', tint: '#7c3aed', show: hasAnyPermission(me, ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews']) });

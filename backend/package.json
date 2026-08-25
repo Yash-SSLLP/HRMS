@@ -15,6 +15,7 @@
     "test:khata:db": "node scripts/testKhataIntegration.js",
     "test:salary": "node scripts/testSalaryRevision.js",
     "test:import": "node scripts/testEmployeeImport.js",
+    "test:org": "node scripts/testOrgChart.js",
     "audit:accounts": "node scripts/auditImportedAccounts.js"
   },
   "keywords": [

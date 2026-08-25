@@ -3,6 +3,11 @@
  * from GET /org/chart and renders it as a decision-tree of avatar nodes. A
  * SuperAdmin can click a person to set who they report to (PUT /employees/:id)
  * or change their system role (PUT /admin/users/:id); others see it read-only.
+ *
+ * Multi-company: the chart spans EVERY company by default and the dropdown
+ * narrows it to one — reporting lines are the point of an org chart, so the
+ * unfiltered hierarchy is what you see first rather than being made to pick a
+ * company before anything renders.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -13,7 +18,16 @@ import { roleLabel, ROLES } from '../config/roles';
 import SearchableSelect from '../components/SearchableSelect';
 import { confirmDialog } from '../components/dialogs';
 
-const ROOT_TITLE = 'Sequence Surfaces';
+// Shown at the top of the tree when no single company is selected. With one
+// picked, its real name replaces this — the page used to hard-code one
+// company's name above everybody, including the other company's staff.
+const ALL_COMPANIES_TITLE = 'All companies';
+
+// Zoom limits. 0.5 still shows a readable avatar; past 1.6 a wide tree stops
+// fitting any screen and panning becomes the only way to read it.
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 1.6;
+const ZOOM_STEP = 0.1;
 
 // Every role the backend accepts (models/User.js ROLES), taken from the shared
 // config rather than re-listed here — a hand-copied list had silently dropped
@@ -63,7 +77,7 @@ function sortTree(nodes) {
 }
 
 // One circular tree node + its branch of reports.
-function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
+function TreeNode({ node, depth, editable, selectedId, myId, onSelect, showCompany }) {
   const hasReports = Array.isArray(node.reports) && node.reports.length > 0;
   const color = depth === 0 ? ROOT_COLOR : hasReports ? BRANCH_COLOR : LEAF_COLOR;
   const meta = [node.designation, node.department].filter(Boolean).join(' · ');
@@ -117,6 +131,11 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
           )}
         </span>
         {meta && <span className="org-meta">{meta}</span>}
+        {/* Only while every company is on screen at once — repeating the same
+            company name on every node of a filtered chart is pure noise. */}
+        {showCompany && node.companyName && (
+          <span className="org-meta" style={{ opacity: 0.75 }}>{node.companyName}</span>
+        )}
       </div>
 
       {hasReports && (
@@ -129,6 +148,7 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect }) {
               editable={editable}
               selectedId={selectedId}
               myId={myId}
+              showCompany={showCompany}
               onSelect={onSelect}
             />
           ))}
@@ -147,11 +167,18 @@ export default function AdminOrgChart() {
   const [error, setError] = useState('');
   const [savingId, setSavingId] = useState(null);
   const [selected, setSelected] = useState(null);
+  // '' = every company, which is the default view.
+  const [company, setCompany] = useState('');
+  const [companies, setCompanies] = useState([]);
+  const [zoom, setZoom] = useState(1);
 
-  const load = async () => {
+  const load = async (companyId = company) => {
     try {
-      const { data } = await api.get('/org/chart');
+      const { data } = await api.get('/org/chart', { params: companyId ? { company: companyId } : {} });
       setRoots(Array.isArray(data?.roots) ? data.roots : []);
+      // The options travel with the chart and are already narrowed to what this
+      // viewer may pick, so a company-limited exec never sees another in the list.
+      setCompanies(Array.isArray(data?.companies) ? data.companies : []);
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to load the org chart.');
     } finally {
@@ -160,6 +187,19 @@ export default function AdminOrgChart() {
   };
 
   useEffect(() => { load(); }, []);
+
+  /** Switch company: refetch, because the tree re-roots server-side. */
+  const onCompanyChange = async (id) => {
+    setCompany(id);
+    setSelected(null);
+    setLoading(true);
+    setError('');
+    await load(id);
+  };
+
+  const zoomBy = (delta) => setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((z + delta) * 100) / 100)));
+  const companyName = companies.find((c) => String(c._id) === String(company))?.name || '';
+  const heading = companyName || ALL_COMPANIES_TITLE;
 
   const everyone = flatten(roots);
   const sortedRoots = sortTree(roots);
@@ -223,7 +263,35 @@ export default function AdminOrgChart() {
       <PageHeader
         title="Org Chart"
         subtitle={isSuperAdmin ? 'Reporting hierarchy · click a person to set who they report to' : 'Reporting hierarchy'}
-      />
+      >
+        {/* Only worth a picker when there is more than one company to pick. */}
+        {companies.length > 1 && (
+          <select
+            value={company}
+            onChange={(e) => onCompanyChange(e.target.value)}
+            aria-label="Show a company"
+            className="border rounded-lg px-3 py-2 text-sm text-gray-700"
+          >
+            <option value="">All companies</option>
+            {companies.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+          </select>
+        )}
+
+        {/* Zoom. A wide hierarchy does not fit a laptop at full size, and the
+            board already scrolls — shrinking it is how you see the shape. */}
+        <div className="inline-flex items-center rounded-lg border border-gray-300 overflow-hidden">
+          <button type="button" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}
+            aria-label="Zoom out" title="Zoom out"
+            className="px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">−</button>
+          <button type="button" onClick={() => setZoom(1)} title="Reset zoom to 100%"
+            className="px-2 py-2 text-xs tabular-nums text-gray-600 border-x border-gray-300 hover:bg-gray-50 min-w-[3.25rem]">
+            {Math.round(zoom * 100)}%
+          </button>
+          <button type="button" onClick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}
+            aria-label="Zoom in" title="Zoom in"
+            className="px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">+</button>
+        </div>
+      </PageHeader>
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
@@ -308,16 +376,22 @@ export default function AdminOrgChart() {
 
         {!loading && roots.length > 0 && (
           <>
-            <h2 className="text-center text-2xl font-bold text-gray-900 mb-2">{ROOT_TITLE}</h2>
+            <h2 className="text-center text-2xl font-bold text-gray-900 mb-2">{heading}</h2>
             <div className="org-tree-wrap">
+              {/* The scale sits on an inner wrapper, not on .org-tree-wrap
+                  itself: the wrapper is what scrolls, and transforming a
+                  scroll container shrinks the scrollable area with it, so a
+                  zoomed-in tree could not be panned to its right-hand edge.
+                  `width: max-content` keeps the scroll width honest. */}
+              <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', width: 'max-content', margin: '0 auto', transition: 'transform 120ms ease-out' }}>
               <ul className="org-tree">
                 {/* Synthetic company root, branching to the real org roots. Its
                     dot carries the animated company mark rather than a flat
                     colour, so the top of the tree reads as the company itself. */}
                 <li>
-                  <div className="org-node org-node--company" title={ROOT_TITLE}>
+                  <div className="org-node org-node--company" title={heading}>
                     <span className="org-dot org-dot--company" style={{ background: ROOT_COLOR }}>
-                      <img src="/company-logo.gif" alt={ROOT_TITLE} className="org-dot__logo" />
+                      <img src="/company-logo.gif" alt={heading} className="org-dot__logo" />
                     </span>
                   </div>
                   <ul>
@@ -330,11 +404,13 @@ export default function AdminOrgChart() {
                         selectedId={selected?.id}
                         myId={myId}
                         onSelect={setSelected}
+                        showCompany={!company && companies.length > 1}
                       />
                     ))}
                   </ul>
                 </li>
               </ul>
+              </div>
             </div>
 
             {/* Legend */}

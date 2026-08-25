@@ -10,7 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 
 import { useAuth } from '../store/auth';
 import {
-  showsAdminEntry, canViewAdmin, hasTeam, canEmployeeSelf, hasPermission, hasAnyPermission, isExec,
+  showsAdminEntry, canViewAdmin, hasTeam, canEmployeeSelf, hasPermission, hasAnyPermission, isAdmin, isExec,
 } from '../utils/roles';
 import { colors, radius, spacing, font } from '../theme';
 import { Screen, Ionicons } from '../components/ui';
@@ -149,6 +149,10 @@ export default function MenuScreen() {
     // are one of the three audiences the flags are raised for.
     if (hasPermission(me, 'employees.manage') || isExec(me)) {
       adminItems.push({ key: 'ImportReview', label: 'Import Review', icon: 'flag', tint: '#d97706' });
+    }
+    // Legal entities — same audience as the web's Companies nav item.
+    if (isAdmin(me) || isExec(me)) {
+      adminItems.push({ key: 'Companies', label: 'Companies', icon: 'business', tint: '#0f766e' });
     }
     if (hasPermission(me, 'payroll.manage')) {
       adminItems.push({ key: 'PayrollAdmin', label: 'Payroll', icon: 'cash', tint: '#16a34a' });

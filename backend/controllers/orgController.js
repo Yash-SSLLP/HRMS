@@ -5,14 +5,34 @@
  * always renders.
  */
 const asyncHandler = require('express-async-handler');
+const mongoose = require('mongoose');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
+const Company = require('../models/Company');
 const { hiddenUserIds } = require('../utils/visibility');
+const { execCompanyIds } = require('../utils/employeeScope');
 
 /**
  * Return the reporting hierarchy as a forest of nodes for the org-chart view.
+ *
+ * COMPANIES. Every node carries the company it belongs to, and `?company=<id>`
+ * narrows the chart to one. With no parameter the chart spans every company,
+ * which is the default the business asked for: one hierarchy, with the dropdown
+ * as a filter rather than a thing you must choose before seeing anything.
+ * Filtering to a company is a genuine re-root — somebody whose manager sits in
+ * another company simply becomes a root here, which the existing
+ * manager-not-in-set branch below already handles.
+ *
+ * SCOPING. A CEO/MD narrowed to certain companies (User.companies) sees only
+ * those, wherever the request came from. This used to be missing entirely: the
+ * chart applied `hiddenUserIds` alone, so a company-limited executive could
+ * read every other company's people straight off it while the employee
+ * directory correctly refused them.
+ *
  * @route GET /api/org/chart
- * @returns {{roots: Object[]}} each node {id, profileId, name, designation, department, role, managerId, reports[]}
+ * @param {string} [req.query.company] - Company id to narrow the chart to.
+ * @returns {{roots: Object[], companies: Object[]}} each node
+ *   {id, profileId, name, designation, department, companyId, companyName, role, managerId, reports[]}
  */
 // GET /api/org/chart
 // Builds a read-only reporting hierarchy from EmployeeProfile records.
@@ -21,9 +41,28 @@ const { hiddenUserIds } = require('../utils/visibility');
 // manager, or whose manager is not an employee in the set, surface as roots.
 const orgChart = asyncHandler(async (req, res) => {
   const hidden = await hiddenUserIds(req.user);
-  const profiles = await EmployeeProfile.find(hidden.length ? { user: { $nin: hidden } } : {})
-    .select('user reportingManager designation department')
+  const filter = {};
+  if (hidden.length) filter.user = { $nin: hidden };
+
+  // What this viewer is allowed to see, then what they asked to see. The scope
+  // is applied first and the request narrowed INTO it, so `?company=` can never
+  // widen an executive past their own companies.
+  const allowed = execCompanyIds(req.user);
+  const asked = req.query.company;
+  const askedValid = asked && mongoose.Types.ObjectId.isValid(asked) ? String(asked) : '';
+  let companyFilter = allowed;
+  if (askedValid) companyFilter = allowed.length && !allowed.includes(askedValid) ? ['__none__'] : [askedValid];
+  // `{ $in: [] }` matches NOTHING. `company: null` would have been wrong here:
+  // in Mongo that matches every employee with no company set, so an executive
+  // asking for a company they do not hold would have been handed the
+  // unassigned people instead of an empty chart.
+  if (companyFilter.length === 1 && companyFilter[0] === '__none__') filter.company = { $in: [] };
+  else if (companyFilter.length) filter.company = { $in: companyFilter };
+
+  const profiles = await EmployeeProfile.find(filter)
+    .select('user reportingManager designation department company')
     .populate('user', 'firstName lastName email photo role')
+    .populate('company', 'name')
     .lean();
 
   // Build one node per employee, keyed by the user id.
@@ -38,6 +77,8 @@ const orgChart = asyncHandler(async (req, res) => {
       name,
       designation: p.designation || '',
       department: p.department || '',
+      companyId: p.company ? String(p.company._id) : null,
+      companyName: p.company?.name || '',
       hasPhoto: Boolean(p.user.photo),
       role: p.user.role,
       managerId: p.reportingManager ? p.reportingManager.toString() : null,
@@ -52,17 +93,30 @@ const orgChart = asyncHandler(async (req, res) => {
   // the node as read-only (you don't reassign whom the CEO reports to).
   const hiddenSet = new Set(hidden.map(String));
   const execs = await User.find({ role: { $in: ['CEO', 'MD'] }, isActive: true })
-    .select('firstName lastName photo role')
+    .select('firstName lastName photo role companies')
     .lean();
+  // Which company an exec belongs to is their OWN assignment list, not a
+  // profile they do not have. An exec with no list covers every company, so
+  // they stay on the chart whatever is selected; a narrowed one appears only
+  // for the companies they actually cover.
+  const execCovers = (u) => {
+    if (!askedValid) return true;
+    const own = Array.isArray(u.companies) ? u.companies.filter(Boolean).map(String) : [];
+    return own.length === 0 || own.includes(askedValid);
+  };
   for (const u of execs) {
     const id = u._id.toString();
     if (nodes.has(id) || hiddenSet.has(id)) continue;
+    if (!execCovers(u)) continue;
     nodes.set(id, {
       id,
       profileId: null,
       name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
       designation: u.role === 'MD' ? 'Managing Director' : 'Chief Executive Officer',
       department: '',
+      // An executive spans the group rather than sitting inside one company.
+      companyId: null,
+      companyName: '',
       hasPhoto: Boolean(u.photo),
       role: u.role,
       managerId: null,
@@ -106,7 +160,16 @@ const orgChart = asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ roots: safeRoots });
+  // The dropdown's options travel with the chart, so the client needs one call.
+  // Narrowed to what this viewer may pick, for the same reason as above.
+  const companyQuery = allowed.length ? { _id: { $in: allowed } } : {};
+  const companies = await Company.find(companyQuery).select('name code').sort({ name: 1 }).lean();
+
+  res.json({
+    roots: safeRoots,
+    companies: companies.map((c) => ({ _id: String(c._id), name: c.name, code: c.code || null })),
+    company: askedValid || '',
+  });
 });
 
 module.exports = { orgChart };

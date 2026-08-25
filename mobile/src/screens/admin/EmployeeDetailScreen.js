@@ -1,11 +1,11 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { toast } from '../../components/Toast';
 import { View, Text, StyleSheet, ScrollView, Linking, TouchableOpacity, Modal, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api, { mediaUrl, errMsg } from '../../api/client';
 import { useAuth } from '../../store/auth';
-import { canManage } from '../../utils/roles';
+import { canManage, isSuperAdmin } from '../../utils/roles';
 import { colors, radius, spacing, font, roleAccent } from '../../theme';
 import { Screen, Card, Avatar, AppButton, Input, Field, Pill, Loader, Ionicons, SkeletonScreen, ChipSelect } from '../../components/ui';
 import { fmtDate } from '../../utils/format';
@@ -33,13 +33,37 @@ function Detail({ icon, label, value, last }) {
   );
 }
 
+// Roles this screen may set. It edits somebody who HAS an employee profile,
+// and CEO/MD/SuperAdmin are exactly the roles that never have one — offering
+// them here would produce an account that contradicts its own record. Mirrors
+// ASSIGNABLE_ROLES on the web employee form.
+const ASSIGNABLE_ROLES = ['Employee', 'Manager', 'HRManager', 'AccountsManager', 'LDManager'];
+const ROLE_LABELS = {
+  Employee: 'Employee',
+  Manager: 'Manager',
+  HRManager: 'HR Manager',
+  AccountsManager: 'Account Manager',
+  LDManager: 'HR L&D',
+  CEO: 'CEO',
+  MD: 'MD',
+  SuperAdmin: 'Super Admin',
+};
+const roleLabel = (r) => ROLE_LABELS[r] || r;
+
 export default function EmployeeDetailScreen({ route }) {
   const { id } = route.params || {};
-  const writable = canManage(useAuth((s) => s.user), 'employees.manage');
+  const me = useAuth((s) => s.user);
+  const writable = canManage(me, 'employees.manage');
+  // Only the Backend account may change a role — the same rule updateUser
+  // enforces server-side, so anyone else would only ever get a 403.
+  const canSetRole = isSuperAdmin(me);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState({ designation: '', department: '', company: '', workLocation: '', workLocationRef: '' });
+  // The role lives on the login account, not the profile, so it saves separately.
+  const [editRole, setEditRole] = useState('Employee');
+  const roleAtOpen = useRef('Employee');
   const [workLocations, setWorkLocations] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -67,6 +91,8 @@ export default function EmployeeDetailScreen({ route }) {
       workLocation: profile.workLocation || '',
       workLocationRef: profile.workLocationRef?._id || profile.workLocationRef || '',
     });
+    setEditRole(profile.user?.role || 'Employee');
+    roleAtOpen.current = profile.user?.role || 'Employee';
     setEditing(true);
   };
 
@@ -75,6 +101,17 @@ export default function EmployeeDetailScreen({ route }) {
     try {
       // Empty picker clears the geofence assignment (null, not '').
       await api.put(`/employees/${id}`, { ...edit, workLocationRef: edit.workLocationRef || null, company: edit.company || null });
+      // The role is a User field, so a second call — and only when it changed.
+      // A failure here must not read as "nothing saved": the profile already is.
+      if (canSetRole && editRole && editRole !== roleAtOpen.current) {
+        const userId = profile.user?._id;
+        try {
+          if (userId) await api.put(`/admin/users/${userId}`, { role: editRole });
+          roleAtOpen.current = editRole;
+        } catch (roleErr) {
+          toast('Details saved, but the role was not', errMsg(roleErr));
+        }
+      }
       setEditing(false);
       await load();
     } catch (err) {
@@ -216,6 +253,32 @@ export default function EmployeeDetailScreen({ route }) {
               <Text style={font.h2}>Edit details</Text>
               <TouchableOpacity onPress={() => setEditing(false)}><Ionicons name="close" size={26} color={colors.text} /></TouchableOpacity>
             </View>
+            {/* Role — the login account's, not the profile's. A closed list:
+                typing a role that is not a role is the thing to prevent. */}
+            <Field label="Role">
+              {canSetRole ? (
+                <>
+                  <ChipSelect
+                    options={ASSIGNABLE_ROLES.includes(roleAtOpen.current)
+                      ? ASSIGNABLE_ROLES
+                      : [roleAtOpen.current, ...ASSIGNABLE_ROLES]}
+                    value={editRole}
+                    onChange={setEditRole}
+                    getLabel={roleLabel}
+                  />
+                  <Text style={styles.roleHint}>
+                    What they can reach in the app. Saved on the login account.
+                    {editRole !== 'Employee' && editRole !== roleAtOpen.current
+                      ? ' Grants admin access — set what they may do under Permissions.'
+                      : ''}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.roleReadOnly}>
+                  {roleLabel(editRole)} · only the Backend account can change a role
+                </Text>
+              )}
+            </Field>
             <Field label="Designation"><Input value={edit.designation} onChangeText={(v) => setEdit((p) => ({ ...p, designation: v }))} placeholder="Software Engineer" /></Field>
             <Field label="Department"><Input value={edit.department} onChangeText={(v) => setEdit((p) => ({ ...p, department: v }))} placeholder="Engineering" /></Field>
             {companies.length > 0 && (
@@ -254,6 +317,8 @@ export default function EmployeeDetailScreen({ route }) {
 }
 
 const styles = StyleSheet.create({
+  roleHint: { fontSize: 11, color: colors.textMuted, marginTop: 6, lineHeight: 15 },
+  roleReadOnly: { fontSize: 13, color: colors.textMuted },
   header: { alignItems: 'center', paddingTop: spacing(6), paddingBottom: spacing(6), borderBottomLeftRadius: 28, borderBottomRightRadius: 28 },
   editBtn: { position: 'absolute', top: spacing(4), right: spacing(4), width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },

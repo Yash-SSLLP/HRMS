@@ -11,7 +11,7 @@ import { useNavigation } from '@react-navigation/native';
 import api, { mediaUrl } from '../api/client';
 import { useAuth } from '../store/auth';
 import {
-  canEmployeeSelf, canViewAdmin, canManage, hasTeam, showsAdminEntry, isSuperAdmin, isExec,
+  canEmployeeSelf, canViewAdmin, canManage, hasTeam, showsAdminEntry, isSuperAdmin, isAdmin, isExec,
   hasPermission, hasAnyPermission,
 } from '../utils/roles';
 import { Screen, Avatar, Ionicons } from '../components/ui';
@@ -96,6 +96,9 @@ const PAGES = [
   { label: 'Import Review', screen: 'ImportReview', group: 'Admin', icon: 'flag',
     show: (u) => hasPermission(u, 'employees.manage') || isExec(u),
     keywords: ['excel', 'import', 'flags', 'new designation', 'new department'] },
+  { label: 'Companies', screen: 'Companies', group: 'Admin', icon: 'business',
+    show: (u) => isAdmin(u) || isExec(u),
+    keywords: ['company', 'legal entity', 'llp', 'branches'] },
   { label: 'Payroll', screen: 'PayrollAdmin', group: 'Admin', icon: 'cash', show: (u) => hasPermission(u, 'payroll.manage'),
     keywords: ['salary'] },
   // Gated on the capability rather than a role: a standalone khataAccess grant
