@@ -35,7 +35,11 @@ const insertedFlags = [];
 const createdUsers = [];
 const createdProfiles = [];
 const createdCompanies = [];
+const deletedUsers = [];
 const ensured = { Designation: [], Department: [], Grade: [], Location: [] };
+// Flipped mid-run to prove the account is rolled back when its employee record
+// cannot be saved.
+let failProfileCreate = false;
 
 /** Install a fake module so the controller picks it up instead of the real one. */
 const stub = (rel, exports) => {
@@ -52,14 +56,23 @@ stub('models/User.js', {
   findOne: async () => null,
   findById: async () => null,
   find: () => ({ select: () => ({ lean: async () => [] }) }),
-  create: async (doc) => { createdUsers.push(doc); return { _id: `u${createdUsers.length}`, ...doc }; },
-  deleteOne: async () => ({}),
+  create: async (doc) => {
+    const _id = `u${createdUsers.length + 1}`;
+    createdUsers.push({ ...doc, _id });
+    return { _id, ...doc };
+  },
+  // Returns a thenable with .catch so the controller's `.catch(() => {})` works.
+  deleteOne: async (q) => { deletedUsers.push(q._id); return {}; },
   updateOne: async () => ({}),
 });
 stub('models/EmployeeProfile.js', {
   findOne: async () => null,
   findById: async () => null,
-  create: async (doc) => { createdProfiles.push(doc); return { _id: `p${createdProfiles.length}`, ...doc }; },
+  create: async (doc) => {
+    if (failProfileCreate) throw new Error('simulated profile failure');
+    createdProfiles.push(doc);
+    return { _id: `p${createdProfiles.length}`, ...doc };
+  },
   find: () => ({ populate: () => ({ sort: async () => [] }) }),
 });
 stub('models/SalaryStructure.js', { findOne: async () => null });
@@ -157,6 +170,29 @@ const ctrl = require(path.join(BACKEND, 'controllers/employeeController.js'));
   isTrue('one batch id across the upload', new Set(insertedFlags.map((f) => f.batch)).size === 1);
   isTrue('flags point at the created profile', insertedFlags.every((f) => f.employee === 'p1'));
   isTrue('every flag explains itself', insertedFlags.every((f) => f.note && f.note.length > 20));
+
+  console.log('\n--- an import adds an EMPLOYEE, never a bare login ---');
+  // The account and the employee record must arrive together. This is the bug
+  // that put 17 profile-less logins in the live database: the User was created
+  // before the reference lookups, so a lookup that threw left it behind.
+  check('one account for one employee', [createdUsers.length, createdProfiles.length], [1, 1]);
+  check('the profile points at that account', createdProfiles[0].user, 'u1');
+
+  // Now force the employee record to fail and prove the account does not survive.
+  const before = deletedUsers.length;
+  failProfileCreate = true;
+  createdUsers.length = 0;
+  insertedFlags.length = 0;
+  let second = null;
+  await ctrl.importEmployeesXlsx(
+    { ...req, file: { buffer: Buffer.from('x') } },
+    { status() { return this; }, json(d) { second = d; }, setHeader() {} },
+    (e) => { throw e; }
+  );
+  check('the row is reported as an error', second.errorCount, 1);
+  check('nothing was created', second.createdCount, 0);
+  check('the orphaned account was deleted', deletedUsers.length - before, 1);
+  check('and it was the right one', deletedUsers[deletedUsers.length - 1], createdUsers[0]?._id || 'u1');
 
   console.log(`\n${failed ? 'FAILED' : 'PASSED'} — ${passed} passed, ${failed} failed\n`);
   process.exit(failed ? 1 : 0);

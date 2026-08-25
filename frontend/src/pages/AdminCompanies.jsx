@@ -87,6 +87,49 @@ export default function AdminCompanies() {
     }
   };
 
+  // ----- Who belongs to a company -----
+  // The headcount on each card was a dead end: it said "4 employees" with no way
+  // to see who, or to change it. This opens the roster behind it.
+  const [roster, setRoster] = useState(null); // { company, members, others }
+  const [rosterBusy, setRosterBusy] = useState(false);
+  const [rosterQ, setRosterQ] = useState('');
+
+  const openRoster = async (c) => {
+    setRosterQ('');
+    setRoster({ company: c, members: null, others: null }); // opens with a spinner
+    try {
+      const { data } = await api.get(`/companies/${c._id}/employees`);
+      setRoster(data);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load the employee list');
+      setRoster(null);
+    }
+  };
+
+  /** Move one person in or out, then refresh both the roster and the counts. */
+  const moveEmployee = async (profileId, into) => {
+    if (!roster) return;
+    setRosterBusy(true);
+    try {
+      await api.patch(`/companies/${roster.company._id}/employees`,
+        into ? { add: [profileId] } : { remove: [profileId] });
+      const { data } = await api.get(`/companies/${roster.company._id}/employees`);
+      setRoster(data);
+      await load(); // the headcount on the cards behind the modal
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update');
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
+  const rosterFilter = (list) => {
+    const t = rosterQ.trim().toLowerCase();
+    if (!t) return list;
+    return list.filter((m) => `${m.name} ${m.employeeCode} ${m.email} ${m.designation} ${m.department}`
+      .toLowerCase().includes(t));
+  };
+
   return (
     <div>
       <PageHeader title="Companies" subtitle="The companies this HRMS runs for — employees belong to one, and a CEO/MD can be limited to some">
@@ -132,19 +175,81 @@ export default function AdminCompanies() {
                 </span>
               </div>
 
-              <div className="text-sm text-gray-600 mt-3">
+              {/* The headcount is the way in to the roster — it was previously
+                  a dead number with no way to see or change who it counted. */}
+              <button
+                type="button"
+                onClick={() => openRoster(c)}
+                className="text-sm text-gray-600 mt-3 text-left hover:text-gray-900 hover:underline w-fit"
+                title={`See and assign the employees in ${c.name}`}
+              >
                 👥 {c.assignedCount} employee{c.assignedCount === 1 ? '' : 's'}
-              </div>
+              </button>
 
-              {canEditCompany(c) && (
-                <div className="mt-4 pt-3 border-t border-gray-100 flex gap-3 text-sm">
-                  <button onClick={() => openEdit(c)} className="text-blue-600 hover:underline">Edit</button>
-                  <button onClick={() => remove(c)} className="text-red-600 hover:underline ml-auto">Delete</button>
-                </div>
-              )}
+              <div className="mt-4 pt-3 border-t border-gray-100 flex items-center gap-3 text-sm">
+                <button onClick={() => openRoster(c)} className="text-gray-600 hover:underline">
+                  {canEditCompany(c) ? 'Employees' : 'View employees'}
+                </button>
+                {canEditCompany(c) && (
+                  <>
+                    <button onClick={() => openEdit(c)} className="text-blue-600 hover:underline">Edit</button>
+                    <button onClick={() => remove(c)} className="text-red-600 hover:underline ml-auto">Delete</button>
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </div>
+      )}
+
+      {/* ---------------- Who belongs to this company ---------------- */}
+      {roster && (
+        <Modal
+          title={`Employees · ${roster.company.name}`}
+          onClose={() => setRoster(null)}
+          wide
+        >
+          {roster.members === null ? (
+            <p className="text-sm text-gray-500">Loading…</p>
+          ) : (
+            <>
+              <p className="text-xs text-gray-500 -mt-2 mb-3">
+                {canEditCompany(roster.company)
+                  ? 'An employee belongs to one company. Adding somebody here moves them out of whichever company they are in now.'
+                  : 'Read-only — assigning employees to a company is done by the Backend account or a CEO/MD.'}
+              </p>
+
+              <input
+                value={rosterQ}
+                onChange={(e) => setRosterQ(e.target.value)}
+                placeholder="Search name, code, designation…"
+                className="block w-full border rounded-lg px-3 py-2 text-sm mb-4"
+              />
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <RosterColumn
+                  title={`In this company (${roster.members.length})`}
+                  people={rosterFilter(roster.members)}
+                  empty="Nobody is assigned to this company yet."
+                  action={canEditCompany(roster.company)
+                    ? { label: 'Remove', tone: 'text-red-600', onClick: (m) => moveEmployee(m._id, false) }
+                    : null}
+                  busy={rosterBusy}
+                />
+                <RosterColumn
+                  title={`Everyone else (${roster.others.length})`}
+                  people={rosterFilter(roster.others)}
+                  empty="Everybody is already in this company."
+                  showCompany
+                  action={canEditCompany(roster.company)
+                    ? { label: 'Add', tone: 'text-blue-600', onClick: (m) => moveEmployee(m._id, true) }
+                    : null}
+                  busy={rosterBusy}
+                />
+              </div>
+            </>
+          )}
+        </Modal>
       )}
 
       {editing && (
@@ -175,10 +280,58 @@ export default function AdminCompanies() {
   );
 }
 
-function Modal({ title, onClose, children }) {
+/**
+ * One side of the roster: the people in this company, or everyone else.
+ *
+ * Two columns rather than a checkbox list, because the question being answered
+ * is "who is in and who is out", and a single list with ticks makes you hold
+ * that distinction in your head instead of showing it.
+ */
+function RosterColumn({ title, people, empty, action, busy, showCompany }) {
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">{title}</h3>
+      <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 max-h-80 overflow-y-auto">
+        {people.length === 0 ? (
+          <p className="text-sm text-gray-400 px-3 py-6 text-center">{empty}</p>
+        ) : people.map((m) => (
+          <div key={m._id} className="flex items-center gap-3 px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-gray-900 truncate">
+                {m.name}
+                {!m.isActive && <span className="ml-2 text-[11px] text-gray-400">inactive</span>}
+              </div>
+              <div className="text-xs text-gray-500 truncate">
+                {[m.employeeCode, m.designation, m.department].filter(Boolean).join(' · ') || m.email}
+              </div>
+              {/* Where they are NOW, so adding them reads as a move. */}
+              {showCompany && (
+                <div className="text-[11px] text-gray-400 truncate mt-0.5">
+                  {m.companyName ? `Currently in ${m.companyName}` : 'No company'}
+                </div>
+              )}
+            </div>
+            {action && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => action.onClick(m)}
+                className={`text-xs ${action.tone} hover:underline disabled:opacity-40 shrink-0`}
+              >
+                {action.label}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children, wide }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
+      <div className={`bg-white rounded-xl shadow-lg w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} p-6`}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="card-title">{title}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>

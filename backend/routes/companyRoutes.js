@@ -21,6 +21,8 @@ const {
   createCompany,
   updateCompany,
   deleteCompany,
+  listCompanyEmployees,
+  updateCompanyEmployees,
 } = require('../controllers/companyController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
@@ -37,5 +39,10 @@ const MAY_MANAGE = ['SuperAdmin', 'CEO', 'MD'];
 router.post('/', restrictTo(...MAY_MANAGE), createCompany);
 router.put('/:id', restrictTo(...MAY_MANAGE), updateCompany);
 router.delete('/:id', restrictTo(...MAY_MANAGE), deleteCompany);
+
+// Who belongs to a company. Reading the roster is open like the list above (HR
+// reads this page); moving people in and out is a write like any other.
+router.get('/:id/employees', listCompanyEmployees);
+router.patch('/:id/employees', restrictTo(...MAY_MANAGE), updateCompanyEmployees);
 
 module.exports = router;

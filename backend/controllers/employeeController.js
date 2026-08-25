@@ -951,17 +951,6 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         continue;
       }
 
-      // ----- Create User -----
-      const userDoc = await User.create({
-        email: u.email,
-        password: DEFAULT_IMPORT_PASSWORD,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        phone: u.phone,
-        role,
-        isActive: u.isActive !== undefined ? u.isActive : true,
-      });
-
       // ----- References the sheet names by email / name -----
       // None of these fail the row any more. A person or a salary structure
       // cannot be invented from a string, so an unmatched one is left blank and
@@ -1066,11 +1055,27 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
           + 'This is the label only — a geofenced site still has to be set up under Work Locations.');
       }
 
-      // ----- Create EmployeeProfile (rollback user on failure) -----
-      // Spread all parsed profile fields (address, emergencyContact, bankDetails,
-      // grade, probation, statutory, CTC, …) then override the resolved refs and
-      // the special lookup columns.
+      // ----- Create the account and the employee record, together -----
+      //
+      // AN IMPORT ADDS AN EMPLOYEE, NEVER A BARE LOGIN. The account is created
+      // HERE — last — precisely so nothing that can throw sits between it and
+      // the employee record. It used to be created much further up, before the
+      // four reference lookups above; when one of those threw (an unmatched
+      // company or salary structure, which they no longer do), the row failed
+      // with the User already saved, leaving a login belonging to nobody. That
+      // is how 17 profile-less accounts appeared in one import. Keep these two
+      // creates adjacent, and put new can-throw work ABOVE this line.
       const { hrPartnerEmail, reportingManagerEmail, salaryStructureName, companyName, ...profileFields } = p;
+      const userDoc = await User.create({
+        email: u.email,
+        password: DEFAULT_IMPORT_PASSWORD,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        phone: u.phone,
+        role,
+        isActive: u.isActive !== undefined ? u.isActive : true,
+      });
+
       let createdProfile;
       try {
         createdProfile = await EmployeeProfile.create({
@@ -1084,7 +1089,9 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
           company: companyId,
         });
       } catch (err) {
-        await User.deleteOne({ _id: userDoc._id });
+        // The account must not outlive the failure that stopped its employee
+        // record — that is the whole orphan problem, and this is its backstop.
+        await User.deleteOne({ _id: userDoc._id }).catch(() => {});
         throw err;
       }
 

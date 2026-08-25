@@ -156,11 +156,116 @@ const deleteCompany = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+// ===== Who belongs to a company =====
+
+/** Shape one profile for the roster lists. */
+const publicMember = (p) => ({
+  _id: p._id,
+  name: `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode,
+  email: p.user?.email || '',
+  employeeCode: p.employeeCode,
+  designation: p.designation || '',
+  department: p.department || '',
+  isActive: p.user?.isActive !== false,
+  company: p.company ? String(p.company._id || p.company) : null,
+  companyName: p.company?.name || null,
+});
+
+/**
+ * The employees assigned to a company, plus everyone who could be moved into it.
+ *
+ * Both lists come back in one call because the screen is one screen: you decide
+ * who belongs here by looking at who is here and who is not, side by side.
+ * `others` carries each person's CURRENT company, so moving somebody is a
+ * visible move rather than a silent reassignment.
+ * @route GET /api/companies/:id/employees  (any authenticated admin-portal user)
+ * @returns {{company: Object, members: Object[], others: Object[]}}
+ */
+const listCompanyEmployees = asyncHandler(async (req, res) => {
+  const company = await Company.findById(req.params.id).lean();
+  if (!company) {
+    res.status(404);
+    throw new Error('Company not found');
+  }
+  const profiles = await EmployeeProfile.find({})
+    .select('employeeCode designation department company user')
+    .populate('user', 'firstName lastName email isActive')
+    .populate('company', 'name')
+    .sort({ employeeCode: 1 })
+    .lean();
+
+  const mine = String(company._id);
+  const rows = profiles.filter((p) => p.user).map(publicMember);
+  res.json({
+    company: { _id: company._id, name: company.name, code: company.code || null },
+    members: rows.filter((r) => r.company === mine),
+    others: rows.filter((r) => r.company !== mine),
+  });
+});
+
+/**
+ * Move employees into this company, or clear them out of it.
+ *
+ * Writes `EmployeeProfile.company` directly rather than going through the
+ * employee update endpoint: this is one field, the audience is different (the
+ * Companies page, not HR's employee form), and a bulk move should be one
+ * request rather than N.
+ * @route PATCH /api/companies/:id/employees  (Backend / CEO / MD)
+ * @param {string[]} [req.body.add] - profile ids to place in this company.
+ * @param {string[]} [req.body.remove] - profile ids to leave company-less.
+ * @returns {{added: number, removed: number}}
+ */
+const updateCompanyEmployees = asyncHandler(async (req, res) => {
+  const company = await Company.findById(req.params.id);
+  if (!company) {
+    res.status(404);
+    throw new Error('Company not found');
+  }
+  assertCompanyScope(req, company);
+
+  const add = Array.isArray(req.body.add) ? req.body.add.filter(Boolean) : [];
+  const remove = Array.isArray(req.body.remove) ? req.body.remove.filter(Boolean) : [];
+  if (!add.length && !remove.length) {
+    res.status(400);
+    throw new Error('Nothing to change');
+  }
+
+  // A narrowed executive must not reach into a company they do not manage to
+  // take its people — the scope check above only cleared the TARGET company.
+  const u = req.user;
+  const ids = EXECUTIVE_ROLES.includes(u.role) && Array.isArray(u.companies)
+    ? u.companies.filter(Boolean).map(String)
+    : [];
+  if (ids.length && add.length) {
+    const incoming = await EmployeeProfile.find({ _id: { $in: add } }).select('company').lean();
+    const poaching = incoming.find((p) => p.company && !ids.includes(String(p.company)));
+    if (poaching) {
+      res.status(403);
+      throw new Error('Some of those employees belong to a company your account is not assigned to.');
+    }
+  }
+
+  const [added, removed] = await Promise.all([
+    add.length
+      ? EmployeeProfile.updateMany({ _id: { $in: add } }, { company: company._id })
+      : Promise.resolve({ modifiedCount: 0 }),
+    // Removing from a company means "no company", not "some other company" —
+    // there is nowhere else to put them from this screen.
+    remove.length
+      ? EmployeeProfile.updateMany({ _id: { $in: remove }, company: company._id }, { $unset: { company: 1 } })
+      : Promise.resolve({ modifiedCount: 0 }),
+  ]);
+
+  res.json({ added: added.modifiedCount || 0, removed: removed.modifiedCount || 0 });
+});
+
 module.exports = {
   listCompanies,
   createCompany,
   updateCompany,
   deleteCompany,
+  listCompanyEmployees,
+  updateCompanyEmployees,
   // exported for unit tests
   assertCompanyScope,
 };

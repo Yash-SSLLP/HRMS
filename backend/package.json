@@ -14,7 +14,8 @@
     "test:khata": "node scripts/testKhataLedger.js",
     "test:khata:db": "node scripts/testKhataIntegration.js",
     "test:salary": "node scripts/testSalaryRevision.js",
-    "test:import": "node scripts/testEmployeeImport.js"
+    "test:import": "node scripts/testEmployeeImport.js",
+    "audit:accounts": "node scripts/auditImportedAccounts.js"
   },
   "keywords": [
     "hrms",
