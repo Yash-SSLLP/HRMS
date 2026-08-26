@@ -248,9 +248,16 @@ const github = {
  */
 const APK_RE = /^hrms-(\d+\.\d+\.\d+)-(\d+)\.apk$/i;
 
-// Default: the folder in this checkout, so a deployment needs one env var
+// The folder in this checkout, so a deployment needs one env var
 // (APP_RELEASE_STORE=repo) and nothing else.
-const REPO_DIR = DISK_DIR || path.join(__dirname, '..', '..', 'Mobile App');
+//
+// Deliberately NOT falling back to APP_RELEASE_DIR: that variable belongs to the
+// disk store, and a server that has used both would still have it set — pointing
+// this driver at an empty uploads folder while the APK sits here unread, and
+// answering "no build published" with everything apparently configured. Override
+// with APP_RELEASE_REPO_DIR if the folder ever moves.
+const REPO_DIR = process.env.APP_RELEASE_REPO_DIR
+  || path.join(__dirname, '..', '..', 'Mobile App');
 
 const repo = {
   name: 'repo',
