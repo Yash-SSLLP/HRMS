@@ -1,0 +1,47 @@
+node_modules/
+.env
+.env.local
+dist/
+build/
+backend/uploads/
+.DS_Store
+*.log
+npm-debug.log*
+.vscode/
+.idea/
+coverage/
+
+# Firebase service-account key (backend push) — secret, never commit
+backend/config/firebase-service-account.json
+firebase-service-account*.json
+
+# Build artefacts. Only APKs under mobile/android/ were ignored before, so one
+# copied anywhere else could be committed by a stray `git add .` — a ~70 MB blob
+# that stays in the history for good. Releases belong on GitHub Releases, which
+# is what scripts/publish-apk.js uploads to.
+*.apk
+*.aab
+
+# Signing keys — the release keystore must never enter the repo
+*.jks
+*.keystore
+/Important data
+.claude
+dist
+
+# The Android app lives in its own repository (Yash-SSLLP/HRMS-mobile), not here.
+# This repo is the web halves — frontend + backend — plus the API the app asks
+# for updates (backend/controllers/appReleaseController.js). Keeping the two
+# apart is also what stops ~70 MB APKs drifting back into this history; nine of
+# them are already in it, which is why *.apk above exists.
+mobile/
+
+# The released Android build. *.apk above keeps stray APKs out of the tree; this
+# one folder is the exception, because it IS the delivery mechanism: the backend
+# serves whatever hrms-<version>-<code>.apk sits here (APP_RELEASE_STORE=repo),
+# so `git pull` on the VPS is what publishes an update to every phone.
+# Keep ONE build here - replace, never accumulate.
+!Mobile App/
+!Mobile App/*.apk
+!Mobile App/*.json
+!Mobile App/*.md
