@@ -19,6 +19,20 @@ const asyncHandler = require('express-async-handler');
 const AppRelease = require('../models/AppRelease');
 const store = require('../services/appReleaseStore');
 
+/**
+ * The current release, from whichever source this server's store trusts.
+ *
+ * An AUTHORITATIVE driver (the `repo` store) reads the filesystem on every call,
+ * so a `git pull` that lands a new APK changes the answer with no publish step
+ * and nothing to keep in sync. The others record a row when something is
+ * published and serve what it points at.
+ */
+async function currentRelease() {
+  const driver = store.driver();
+  if (driver.authoritative) return driver.current();
+  return AppRelease.findOne({ key: 'current' });
+}
+
 /** Strip a release document down to what a phone needs. */
 function publicView(release) {
   if (!release) return null;
@@ -27,7 +41,9 @@ function publicView(release) {
     versionCode: release.versionCode,
     notes: release.notes || '',
     size: release.size,
-    publishedAt: release.createdAt,
+    // Mongoose documents carry createdAt; the repo driver reports the file's own
+    // mtime, since a folder has no other notion of "when".
+    publishedAt: release.createdAt || release.publishedAt,
   };
 }
 
@@ -40,8 +56,7 @@ function publicView(release) {
  * error worth showing anybody.
  */
 const getLatest = asyncHandler(async (req, res) => {
-  const release = await AppRelease.findOne({ key: 'current' });
-  res.json({ release: publicView(release) });
+  res.json({ release: publicView(await currentRelease()) });
 });
 
 /**
@@ -51,7 +66,7 @@ const getLatest = asyncHandler(async (req, res) => {
  * one configured now (see services/appReleaseStore.js).
  */
 const download = asyncHandler(async (req, res) => {
-  const release = await AppRelease.findOne({ key: 'current' });
+  const release = await currentRelease();
   if (!release) {
     res.status(404);
     throw new Error('No build has been published yet.');
@@ -69,10 +84,10 @@ const download = asyncHandler(async (req, res) => {
  */
 const getPublishTarget = asyncHandler(async (req, res) => {
   const driver = store.ensureConfigured();
-  const current = await AppRelease.findOne({ key: 'current' });
+  const current = await currentRelease();
   res.json({
     store: driver.name,
-    mode: driver.acceptsUpload ? 'upload' : 'reference',
+    mode: driver.acceptsUpload ? 'upload' : (driver.authoritative ? 'repo' : 'reference'),
     ...driver.target(),
     // So the publisher can refuse early rather than build, upload, and then be
     // told the version was not bumped.
@@ -95,6 +110,17 @@ const getPublishTarget = asyncHandler(async (req, res) => {
  */
 const publish = asyncHandler(async (req, res) => {
   const driver = store.ensureConfigured();
+
+  // In repo mode the folder in the checkout IS the release. Accepting an upload
+  // here would put a file where the next `git pull` overwrites or contradicts
+  // it, so refuse with the actual procedure rather than appear to succeed.
+  if (driver.authoritative) {
+    res.status(409);
+    throw new Error(
+      'This server publishes from the repository: commit the APK to the "Mobile App" '
+      + 'folder as hrms-<version>-<code>.apk, push, and deploy. Nothing to upload here.'
+    );
+  }
 
   const versionName = String(req.body.versionName || '').trim();
   const versionCode = Number(req.body.versionCode);
@@ -177,11 +203,18 @@ const publish = asyncHandler(async (req, res) => {
  * is misbehaving.
  */
 const getRelease = asyncHandler(async (req, res) => {
-  const release = await AppRelease.findOne({ key: 'current' }).populate('publishedBy', 'name email');
   const driver = store.driver();
+  const release = driver.authoritative
+    ? driver.current()
+    : await AppRelease.findOne({ key: 'current' }).populate('publishedBy', 'name email');
   res.json({
     release,
-    store: { name: driver.name, mode: driver.acceptsUpload ? 'upload' : 'reference', configured: driver.configured() },
+    store: {
+      name: driver.name,
+      mode: driver.acceptsUpload ? 'upload' : (driver.authoritative ? 'repo' : 'reference'),
+      configured: driver.configured(),
+      ...driver.target(),
+    },
   });
 });
 

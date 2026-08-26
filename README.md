@@ -20,6 +20,7 @@ leave, payroll, learning, and exit — across a web portal and a companion Andro
 HRMS/
 ├── backend/     Node + Express API (controllers, routes, models, services, scripts)
 ├── frontend/    React + Vite web SPA (admin + employee portals)
+├── Mobile App/  the released Android APK - committed, and served to phones as the update
 ├── docs/        Project docs
 └── uploads/     Local file storage (fallback when Cloudinary is unconfigured)
 ```
@@ -75,20 +76,28 @@ the user out for checking for updates.
 notices the difference:
 
 ```
-APP_RELEASE_STORE=disk            # a folder on this server — the VPS end state
+APP_RELEASE_STORE=repo            # DEFAULT IN USE: the APK committed to "Mobile App/".
+                                  # Git is the publisher - deploy, and phones see it.
+                                  # APP_RELEASE_DIR overrides the folder; not normally set.
+
+APP_RELEASE_STORE=disk            # the server keeps uploaded APKs itself
 APP_RELEASE_DIR=/var/www/hrms-releases   # keep it OUTSIDE the checkout, or a deploy wipes it
+APP_PUBLISH_KEY=...               # X-API-Key for uploading; also used by CI
 
-APP_RELEASE_STORE=github          # a release asset on the mobile repo — works on Render,
-APP_RELEASE_GITHUB_REPO=Yash-SSLLP/HRMS-mobile   # whose disk is wiped on every deploy
+APP_RELEASE_STORE=github          # a release asset on the mobile repo
+APP_RELEASE_GITHUB_REPO=Yash-SSLLP/HRMS-mobile
 APP_RELEASE_GITHUB_TOKEN=...      # Contents write; needed for a private repo
-
-APP_PUBLISH_KEY=...               # what CI sends as X-API-Key to publish
 ```
 
-On the `github` store the ~70 MB never passes through this API — CI puts the file
-on GitHub itself and sends only a pointer, which is what keeps a small web
-instance out of the upload path. SuperAdmins see the current build, and can
-publish one by hand where the store accepts uploads, at **Admin → App Release**.
+**The `repo` store has no publish step at all.** It reads the folder on every
+request, so there is no database row to keep in sync and nothing to upload: the
+APK that a `git pull` puts in `Mobile App/` IS the release, and the filename
+`hrms-<version>-<code>.apk` carries the version. See
+[Mobile App/README.md](Mobile%20App/README.md).
+
+The other two record a release when something is published; `POST /api/app/publish`
+takes either the CI key or a logged-in SuperAdmin. SuperAdmins can see the current
+build — and upload one where the store accepts it — at **Admin → App Release**.
 
 ## Roles
 

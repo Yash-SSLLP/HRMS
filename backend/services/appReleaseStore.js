@@ -227,9 +227,122 @@ const github = {
   },
 };
 
+// ===== repo =================================================================
+
+/**
+ * The APK is committed to the repository, in the "Mobile App" folder beside
+ * backend/ and frontend/, and reaches this server the same way every other
+ * change does: git pull. There is no publish step, no upload and no key —
+ * whatever APK is sitting in that folder after a deploy IS the current release.
+ *
+ * WHY THIS IS DIFFERENT FROM THE OTHERS. disk and github both record a release
+ * in the database and serve what that row points at. This driver is
+ * AUTHORITATIVE: it reads the folder on every request, so the filesystem and the
+ * answer can never disagree. A `git pull` that brings a new APK changes what the
+ * app is offered with no other action — which is the entire point.
+ *
+ * The version is taken from the FILENAME, `hrms-<versionName>-<versionCode>.apk`
+ * — the same contract the mobile CI and scripts/publish-apk.js already use. It
+ * has to travel somehow, and a name is the one piece of metadata a plain folder
+ * carries. An optional release.json beside it supplies release notes.
+ */
+const APK_RE = /^hrms-(\d+\.\d+\.\d+)-(\d+)\.apk$/i;
+
+// Default: the folder in this checkout, so a deployment needs one env var
+// (APP_RELEASE_STORE=repo) and nothing else.
+const REPO_DIR = DISK_DIR || path.join(__dirname, '..', '..', 'Mobile App');
+
+const repo = {
+  name: 'repo',
+  acceptsUpload: false,
+
+  // Read the folder, do not trust a database row.
+  authoritative: true,
+
+  configured() {
+    return fs.existsSync(REPO_DIR);
+  },
+
+  misconfigured() {
+    return `No "Mobile App" folder at ${REPO_DIR} — deploy one containing hrms-<version>-<code>.apk.`;
+  },
+
+  target() {
+    return { dir: REPO_DIR };
+  },
+
+  /**
+   * The newest APK in the folder, or null when there is none.
+   *
+   * Highest versionCode wins rather than newest mtime: a git checkout rewrites
+   * timestamps, so mtime says when you deployed, not which build is newer.
+   *
+   * @returns {{versionName:string, versionCode:number, size:number, fileName:string, notes:string, publishedAt:Date}|null}
+   */
+  current() {
+    let names;
+    try {
+      names = fs.readdirSync(REPO_DIR);
+    } catch {
+      return null;
+    }
+
+    const builds = names
+      .map((name) => {
+        const m = APK_RE.exec(name);
+        return m ? { name, versionName: m[1], versionCode: Number(m[2]) } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.versionCode - a.versionCode);
+
+    if (!builds.length) return null;
+    const newest = builds[0];
+
+    let stat;
+    try {
+      stat = fs.statSync(path.join(REPO_DIR, newest.name));
+    } catch {
+      return null;
+    }
+
+    // Notes are optional: a release with nothing to say is normal, and a
+    // malformed file must not take the update channel down.
+    let notes = '';
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(REPO_DIR, 'release.json'), 'utf8'));
+      if (String(meta.versionCode) === String(newest.versionCode)) notes = String(meta.notes || '');
+    } catch { /* no notes */ }
+
+    return {
+      versionName: newest.versionName,
+      versionCode: newest.versionCode,
+      size: stat.size,
+      fileName: newest.name,
+      notes,
+      publishedAt: stat.mtime,
+      store: 'repo',
+    };
+  },
+
+  /** Nothing to remove: git decides what is in the folder. */
+  async remove() { /* no-op */ },
+
+  async send(req, res, release) {
+    const file = path.join(REPO_DIR, release.fileName || '');
+    if (!fs.existsSync(file)) {
+      throw httpError(404, 'The published APK is missing from this server. Has the deploy run?');
+    }
+    res.type('application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition', `attachment; filename="${release.fileName}"`);
+    return new Promise((resolve, reject) => {
+      res.sendFile(file, (err) => (err ? reject(err) : resolve()));
+    });
+  },
+};
+
 // ===== selection ============================================================
 
-const DRIVERS = { disk, github };
+const DRIVERS = { disk, github, repo };
 
 /** The configured driver. Throws if APP_RELEASE_STORE names one that does not exist. */
 function driver() {

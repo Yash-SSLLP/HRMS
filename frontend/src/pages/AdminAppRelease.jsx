@@ -10,6 +10,9 @@
  * WHY THE UPLOAD BOX IS SOMETIMES ABSENT. Where the APK physically lives depends
  * on the server's APP_RELEASE_STORE:
  *
+ *   repo    the APK is committed to the repository's "Mobile App" folder and
+ *           arrives by `git pull` on deploy. Git is the publisher; this page is
+ *           then a read-only view of what the server is currently serving.
  *   disk    the server keeps the file, so it can be uploaded from here.
  *   github  the server keeps only a pointer to a release asset, and the ~70 MB
  *           deliberately never travels through the API — publishing then happens
@@ -152,22 +155,26 @@ export default function AdminAppRelease() {
             </div>
             <div>
               <dt className="text-gray-500">Published</dt>
-              <dd className="font-semibold text-gray-900">{formatDateTime12(release.createdAt)}</dd>
+              <dd className="font-semibold text-gray-900">{formatDateTime12(release.createdAt || release.publishedAt)}</dd>
             </div>
-            <div className="col-span-2">
-              <dt className="text-gray-500">By</dt>
-              <dd className="text-gray-900">
-                {release.publishedVia === 'ci'
-                  ? 'CI (a push to the mobile repo)'
-                  : release.publishedBy?.name || 'an operator'}
-              </dd>
-            </div>
+            {release.store !== 'repo' && (
+              <div className="col-span-2">
+                <dt className="text-gray-500">By</dt>
+                <dd className="text-gray-900">
+                  {release.publishedVia === 'ci'
+                    ? 'CI (a push to the mobile repo)'
+                    : release.publishedBy?.name || 'an operator'}
+                </dd>
+              </div>
+            )}
             <div className="col-span-2">
               <dt className="text-gray-500">Stored</dt>
               <dd className="text-gray-900">
-                {release.store === 'disk'
-                  ? `on this server (${release.fileName})`
-                  : `on ${release.githubRepo} (${release.githubTag})`}
+                {release.store === 'repo'
+                  ? `in the repository — Mobile App/${release.fileName}`
+                  : release.store === 'disk'
+                    ? `on this server (${release.fileName})`
+                    : `on ${release.githubRepo} (${release.githubTag})`}
               </dd>
             </div>
             {release.notes && (
@@ -252,6 +259,21 @@ export default function AdminAppRelease() {
             {progress >= 0 ? 'Publishing…' : 'Publish'}
           </button>
         </form>
+      )}
+
+      {!loading && store?.mode === 'repo' && (
+        <div className="bg-white shadow rounded-lg p-6 text-sm text-gray-600">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Publishing</h2>
+          <p>
+            This server serves whatever APK sits in the repository&apos;s
+            {' '}<code className="bg-gray-100 px-1 rounded">Mobile App</code> folder
+            {store.dir && <> (<code className="bg-gray-100 px-1 rounded">{store.dir}</code>)</>}, so
+            <strong> git is the publisher</strong> — there is nothing to upload here. To release a new build:
+            bump the version, build the APK, drop it in that folder as
+            {' '}<code className="bg-gray-100 px-1 rounded">hrms-&lt;version&gt;-&lt;code&gt;.apk</code>, commit, push,
+            and deploy. Phones are offered it on their next check.
+          </p>
+        </div>
       )}
 
       {!loading && store?.mode === 'reference' && (
