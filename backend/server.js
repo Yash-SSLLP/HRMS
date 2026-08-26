@@ -132,6 +132,9 @@ app.use('/api/events', require('./routes/eventRoutes'));
 app.use('/api/reminders', require('./routes/reminderRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/devices', require('./routes/deviceRoutes'));
+// The mobile app's own update channel: what the newest build is, and the APK
+// itself. Its read routes are public by design — see appReleaseController.js.
+app.use('/api/app', require('./routes/appReleaseRoutes'));
 
 app.use('/api/departments', require('./routes/departmentRoutes'));
 app.use('/api/work-locations', require('./routes/workLocationRoutes'));

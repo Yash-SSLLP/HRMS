@@ -16,7 +16,7 @@ import {
   FiShoppingBag, FiMap, FiPercent, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
   FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
-  FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell,
+  FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell, FiSmartphone,
 } from 'react-icons/fi';
 // Feather has no money-ledger glyph, and its only currency mark is a dollar sign
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
@@ -145,6 +145,9 @@ export const adminNav = [
     // Push reminder schedule — SuperAdmin-only, matching the server, which
     // ignores the reminder block from anyone else.
     { to: '/admin/push-notifications', label: 'Push Notification', icon: FiBell, roles: ['SuperAdmin'] },
+    // Which Android build every phone is offered. SuperAdmin-only, matching the
+    // server: publishing decides what installs on company devices.
+    { to: '/admin/app-release', label: 'App Release', icon: FiSmartphone, roles: ['SuperAdmin'] },
   ] },
   { group: 'Reports & Audit', icon: FiBarChart2, items: [
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },

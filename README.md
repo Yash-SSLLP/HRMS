@@ -20,7 +20,6 @@ leave, payroll, learning, and exit — across a web portal and a companion Andro
 HRMS/
 ├── backend/     Node + Express API (controllers, routes, models, services, scripts)
 ├── frontend/    React + Vite web SPA (admin + employee portals)
-├── mobile/      React Native (Expo) Android app
 ├── docs/        Project docs
 └── uploads/     Local file storage (fallback when Cloudinary is unconfigured)
 ```
@@ -54,15 +53,42 @@ npm run dev      # Vite dev server on :5173  (npm run build to produce a bundle)
 
 ### Mobile (Expo)
 
-```bash
-cd mobile
-npm install
-npm start                 # Expo dev server
-npm run android           # build & run on a device/emulator
+The Android app lives in its **own repository** — `Yash-SSLLP/HRMS-mobile`. It was
+moved out of this one so that this repo stays the web halves, and so ~70 MB APKs
+never enter this history again (nine of them already did, which is most of why a
+clone is as big as it is).
+
+What stays here is the **update channel** the app asks. Because the app is
+sideloaded, nothing tells a phone that a new build exists; it calls this API:
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/app/latest` | public | the newest published build |
+| `GET /api/app/download` | public | the APK (streamed, or a redirect) |
+| `POST /api/app/publish` | CI key or SuperAdmin | make a build current — replaces the previous one, file included |
+
+The read routes are public deliberately: the app checks on open, which can happen
+before login, and a 401 travelling back through its auth interceptor would sign
+the user out for checking for updates.
+
+**Where the APK is stored** is one environment variable, and the app never
+notices the difference:
+
+```
+APP_RELEASE_STORE=disk            # a folder on this server — the VPS end state
+APP_RELEASE_DIR=/var/www/hrms-releases   # keep it OUTSIDE the checkout, or a deploy wipes it
+
+APP_RELEASE_STORE=github          # a release asset on the mobile repo — works on Render,
+APP_RELEASE_GITHUB_REPO=Yash-SSLLP/HRMS-mobile   # whose disk is wiped on every deploy
+APP_RELEASE_GITHUB_TOKEN=...      # Contents write; needed for a private repo
+
+APP_PUBLISH_KEY=...               # what CI sends as X-API-Key to publish
 ```
 
-The mobile app needs a **restricted** Google Maps Android API key in
-`mobile/app.json` → `android.config.googleMaps.apiKey` for the punch-location map.
+On the `github` store the ~70 MB never passes through this API — CI puts the file
+on GitHub itself and sends only a pointer, which is what keeps a small web
+instance out of the upload path. SuperAdmins see the current build, and can
+publish one by hand where the store accepts uploads, at **Admin → App Release**.
 
 ## Roles
 

@@ -74,6 +74,7 @@ const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding.jsx'));
 const AdminHiringOnboarding = lazy(() => import('./pages/AdminHiringOnboarding.jsx'));
 const AdminNewJoinees = lazy(() => import('./pages/AdminNewJoinees.jsx'));
 const AdminAuditLog = lazy(() => import('./pages/AdminAuditLog.jsx'));
+const AdminAppRelease = lazy(() => import('./pages/AdminAppRelease.jsx'));
 const AdminTemplates = lazy(() => import('./pages/AdminTemplates.jsx'));
 const AdminChatExport = lazy(() => import('./pages/AdminChatExport.jsx'));
 const EmployeeOnboarding = lazy(() => import('./pages/EmployeeOnboarding.jsx'));
@@ -243,6 +244,7 @@ export default function App() {
         <Route path="change-requests" element={<AdminChangeRequests />} />
         <Route path="password-resets" element={<AdminPasswordResets />} />
         <Route path="audit-log" element={<AdminAuditLog />} />
+        <Route path="app-release" element={<AdminAppRelease />} />
         <Route path="templates" element={<AdminTemplates />} />
         <Route path="chat-export" element={<AdminChatExport />} />
         <Route path="account" element={<EmployeeAccount />} />
