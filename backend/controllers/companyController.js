@@ -10,6 +10,7 @@
 const asyncHandler = require('express-async-handler');
 const Company = require('../models/Company');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const User = require('../models/User');
 const { EXECUTIVE_ROLES } = require('../utils/visibility');
 
 /**
@@ -153,7 +154,24 @@ const deleteCompany = asyncHandler(async (req, res) => {
     throw new Error(`${assigned} employee(s) are still assigned to this company. Reassign them before deleting.`);
   }
   await company.deleteOne();
-  res.json({ id: req.params.id, deleted: true });
+
+  // Strip the dead id from every exec who had access to it.
+  //
+  // WHY THIS MATTERS MORE THAN IT LOOKS. `User.companies` is not just a display
+  // list: an EMPTY array means "every company", and a non-empty one restricts
+  // the exec to exactly those ids (utils/employeeScope.js). So a leftover id for
+  // a company that no longer exists does not merely show a stale tick — it keeps
+  // the array non-empty and silently holds a CEO/MD in company-limited mode,
+  // hiding every employee whose profile has no company or a different one. It is
+  // also invisible in the Permissions modal, which can only render companies that
+  // still exist, so nobody can clear it by hand: the count says "2 selected"
+  // while one box is ticked, and saving writes the phantom straight back.
+  const { modifiedCount } = await User.updateMany(
+    { companies: company._id },
+    { $pull: { companies: company._id } }
+  );
+
+  res.json({ id: req.params.id, deleted: true, accessRevokedFrom: modifiedCount });
 });
 
 // ===== Who belongs to a company =====

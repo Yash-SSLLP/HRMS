@@ -6,6 +6,7 @@
 const asyncHandler = require('express-async-handler');
 const Department = require('../models/Department');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { employeeProfileScope } = require('../utils/employeeScope');
 
 /**
  * List departments with a live employee count per department.
@@ -21,8 +22,14 @@ const listDepartments = asyncHandler(async (req, res) => {
   if (req.query.active === 'true') filter.isActive = true;
   const departments = await Department.find(filter).sort({ name: 1 }).lean();
 
+  // Counted through the SAME scope the expanded member list uses
+  // (GET /employees applies employeeProfileScope too). Without it a
+  // company-limited CEO/MD saw a global headcount on the badge and then an empty
+  // list when they opened it — "4 employees" expanding to "No employees in this
+  // department" — and could read headcount for companies they were deliberately
+  // excluded from. `{}` for an unrestricted viewer, so nothing changes for them.
   const counts = await EmployeeProfile.aggregate([
-    { $match: { department: { $nin: [null, ''] } } },
+    { $match: { department: { $nin: [null, ''] }, ...employeeProfileScope(req) } },
     { $group: { _id: '$department', count: { $sum: 1 } } },
   ]);
   // Map department name -> headcount so we can attach counts without extra queries
