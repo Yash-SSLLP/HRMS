@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.4",
-  "versionCode": 50,
-  "notes": "Shows the real app version on the Profile and Settings screens (it read a hard-coded v1.0.0 before), and points the app at the Hostinger backend."
+  "versionName": "2.2.5",
+  "versionCode": 51,
+  "notes": "Per-company data isolation across the app (each company sees only its own people and records; Backend account sees all), Companies screen now Backend-only, compact org chart with company-name heading, and the company filter reserved for the Backend account."
 }
