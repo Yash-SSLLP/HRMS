@@ -69,7 +69,7 @@ const BOOTED_AT = new Date();
  * Root endpoint
  *
  * This prevents:
- * GET https://hrms-cfyq.onrender.com/
+ * GET https://hrms.salestracker.in/
  * from returning "Not found - /"
  */
 app.get('/', (req, res) => {

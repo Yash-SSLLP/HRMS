@@ -26,9 +26,11 @@
  * killing delivery over a bad link would be worse than delivering the attachment.
  */
 
-// The deployed web app. Same origin the mobile app ships as `webBaseUrl`
-// (mobile/app.json) and the frontend builds against.
-const PROD_FALLBACK = 'https://hrms-orpin-gamma.vercel.app';
+// The deployed web app. Same origin the mobile app ships as `webBaseUrl` and the
+// frontend builds against — the Hostinger VPS. Was Vercel; once that project is
+// deleted, a link built from the old value is dead, which is exactly the silent
+// failure this file exists to prevent.
+const PROD_FALLBACK = 'https://hrms.salestracker.in';
 const DEV_FALLBACK = 'http://localhost:5173';
 
 const strip = (u) => String(u || '').trim().replace(/\/+$/, '');
