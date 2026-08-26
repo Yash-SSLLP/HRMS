@@ -5,6 +5,8 @@
 const asyncHandler = require('express-async-handler');
 const Training = require('../models/Training');
 const { TRAINING_STATUS } = require('../models/Training');
+// Company wall: Training.participants refs User, so the User-keyed helper applies.
+const { allowedUserIds } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email role';
 
@@ -19,8 +21,19 @@ const listTrainings = asyncHandler(async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
   const trainings = await Training.find(filter)
     .populate('participants', USER_FIELDS)
-    .sort({ startDate: -1, createdAt: -1 });
-  res.json({ count: trainings.length, trainings });
+    .sort({ startDate: -1, createdAt: -1 })
+    .lean();
+  // Company wall: trainings themselves are shared config (titles/dates stay
+  // visible), but the attendee list is people-data — a walled viewer only sees
+  // participants from their own company.
+  const ids = await allowedUserIds(req);
+  const visible = ids
+    ? trainings.map((t) => ({
+        ...t,
+        participants: (t.participants || []).filter((p) => p && ids.includes(String(p._id))),
+      }))
+    : trainings;
+  res.json({ count: visible.length, trainings: visible });
 });
 
 /**
@@ -58,6 +71,18 @@ const updateTraining = asyncHandler(async (req, res) => {
   }
   // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
+  // Company wall, write side: the list handed a walled admin only their own
+  // company's participants, so a round-tripped edit must not wipe the ones
+  // they could not see. Their submission replaces only the in-wall subset;
+  // out-of-wall participants are carried over untouched.
+  if (req.body.participants !== undefined) {
+    const ids = await allowedUserIds(req);
+    if (ids) {
+      const keep = (training.participants || []).filter((p) => !ids.includes(String(p)));
+      const submitted = (req.body.participants || []).filter((p) => ids.includes(String(p)));
+      req.body.participants = [...keep, ...submitted];
+    }
+  }
   Object.assign(training, req.body);
   await training.save();
   res.json({ training });

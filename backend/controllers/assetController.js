@@ -7,6 +7,7 @@ const asyncHandler = require('express-async-handler');
 const Asset = require('../models/Asset');
 const { ASSET_STATUS } = require('../models/Asset');
 const AssetAssignment = require('../models/AssetAssignment');
+const { scopeUserField, scopeUserFilter, cannotSeeUser } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email role';
 
@@ -111,6 +112,16 @@ const assignAsset = asyncHandler(async (req, res) => {
     throw new Error('Asset not found');
   }
   const { userId, note } = req.body;
+  // Company wall: an admin may only hand assets to, or take them back from,
+  // employees inside their own company scope (both are User ids).
+  if (userId && (await cannotSeeUser(req, userId))) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  if (asset.assignedTo && (await cannotSeeUser(req, asset.assignedTo))) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
   const when = req.body.date ? new Date(req.body.date) : new Date();
 
   // Close whatever is currently held (on reassign or return).
@@ -156,6 +167,9 @@ const listAssignments = asyncHandler(async (req, res) => {
   if (req.query.active === 'true') filter.returnedAt = null;
   if (req.query.employee) filter.employee = req.query.employee;
   if (req.query.asset) filter.asset = req.query.asset;
+  // Company wall: the register only shows holdings of employees in the
+  // viewer's company scope (AssetAssignment.employee is a User id).
+  await scopeUserField(req, filter);
   const assignments = await AssetAssignment.find(filter)
     .populate('asset', 'name assetTag category serialNumber')
     .populate('employee', USER_FIELDS)
@@ -195,6 +209,8 @@ const listAssetPeople = asyncHandler(async (req, res) => {
   const excluded = ['SuperAdmin'];
   if (await shouldExcludeExecutives(req)) excluded.push(...EXECUTIVE_ROLES);
   filter.role = { $nin: excluded };
+  // Company wall: the picker only offers people of the viewer's own company.
+  await scopeUserFilter(req, filter);
   const users = await User.find(filter).select(USER_FIELDS).sort({ firstName: 1, lastName: 1 }).lean();
   res.json({ count: users.length, users });
 });

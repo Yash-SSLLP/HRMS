@@ -1627,9 +1627,11 @@ main { max-width: 100%; }
    spaces) must wrap rather than force horizontal overflow. `anywhere` rather
    than `break-word` is deliberate: it also lowers the element's min-content
    width, which is what actually lets a flex or grid child shrink to a phone.
-   Capped at 1279px so roomy desktop layouts measure exactly as they did. */
+   Capped at 1599px (not 1279px): the fixed sidebar eats 256-320px, so even a
+   1440px Mac window leaves the content column tablet-narrow — clipping long
+   strings exactly where the report said "details got hidden". */
 .whitespace-pre-wrap { overflow-wrap: anywhere; }
-@media (max-width: 1279px) {
+@media (max-width: 1599px) {
   main :is(h1, h2, h3, p, td, th, li, dd, dt, label, span, div) { overflow-wrap: anywhere; }
   /* …but not where the layout depends on measured / deliberately nowrap text. */
   main :is(.whitespace-nowrap, .font-mono, .tabular-nums, svg, svg *) { overflow-wrap: normal; }
@@ -1674,9 +1676,11 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
    one-word-per-line column — far harder to read than a sideways swipe. The
    per-cell cap stops a long free-text column (a complaint, a note) from
    stretching the table absurdly: past 20rem it wraps as usual.
-   1279px, not the lg breakpoint: the 320px sidebar appears at lg, so a 1024px
-   laptop gives a page LESS room (~670px) than a 768px tablet does. */
-@media (max-width: 1279px) {
+   1599px, not the lg breakpoint: the fixed sidebar appears at lg, so even a
+   1440px laptop gives a page LESS room (~1050px) than its viewport suggests —
+   at 1280px it is ~900px. Below this cap wide tables keep their natural width
+   and scroll in-card instead of crushing into one-word columns. */
+@media (max-width: 1599px) {
   /* `table.min-w-full` repeats the rule at class specificity so it beats the
      Tailwind utility nearly every one of these tables carries. */
   :has(> table) > table,
@@ -1692,6 +1696,12 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
   max-height: 92vh;
   overflow-y: auto;
 }
+/* Panels built as flex columns WITH their own inner scroller (header and
+   footer stay put, the body scrolls) opt back out — forcing the outer box to
+   scroll too put sticky footers in the wrong scrollport. The :has() guard is
+   what keeps this safe: a flex-col panel with no inner scroller keeps the
+   92vh outer scroll above instead of getting hard-clipped. */
+.fixed.inset-0 > div.flex-col:has(.overflow-y-auto, .overflow-auto, iframe) { overflow-y: hidden; }
 
 /* Tighter gutters on phones so cards get more usable width, and nothing with a
    hard-coded width may exceed the screen. */
@@ -1736,7 +1746,7 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
 .org-tree ul { position: relative; padding-top: var(--org-gap); white-space: nowrap; text-align: center; }
 .org-tree li {
   display: inline-block; vertical-align: top; text-align: center;
-  position: relative; padding: var(--org-gap) 16px 0;
+  position: relative; padding: var(--org-gap) 9px 0;
 }
 /* connectors up from each node to the shared horizontal bar */
 .org-tree li::before, .org-tree li::after {
@@ -1762,7 +1772,7 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
   position: relative;
   display: inline-flex; flex-direction: column; align-items: center;
   gap: 0.3rem; cursor: default; white-space: normal;
-  width: 9.5rem;
+  width: 8.75rem;
   padding: 1.85rem 0.6rem 0.7rem;
   margin-top: 1.4rem;              /* room for the avatar to sit proud of the card */
   border-radius: 0.9rem;
@@ -1886,6 +1896,56 @@ html.dark .org-node.is-editable:hover {
   box-shadow: 0 2px 6px rgba(0, 0, 0, .5),
               0 20px 36px -18px color-mix(in srgb, var(--accent) 65%, transparent);
 }
+
+/* --- Compact leaf columns ---------------------------------------------------
+   A manager's leaf reports (nobody under them) render as vertical columns
+   (AdminOrgChart's .org-vstack) instead of fanning out sideways — the single
+   biggest lever on chart width.
+
+   GEOMETRY: a card stacked directly under another card reads as "reports to
+   the one above" — exactly the misreading this replaced. So the column is a
+   RAIL: one vertical line down the left, with an elbow tick into each card.
+   Every card hangs off the same line, which can only mean "all of these
+   report to the parent". The parent's drop lands on the rail itself: the
+   outer <li>'s connector split-point is shifted from its centre to the rail. */
+.org-tree li.org-leafcol { --rail: 20px; padding-left: 0; padding-right: 6px; }
+/* Move the bar/drop split from 50% to the rail. The generic first/last-child
+   border/radius rules still apply — only the x position changes. */
+.org-tree li.org-leafcol::before { right: calc(100% - var(--rail)); width: var(--rail); }
+.org-tree li.org-leafcol::after { left: var(--rail); width: calc(100% - var(--rail)); }
+/* A column that is an ONLY child gets its drop from the parent ul's centre
+   line — move that line onto the rail too. */
+.org-tree ul:has(> li.org-leafcol:only-child)::before { left: var(--rail, 20px); }
+
+.org-tree ul.org-vstack {
+  padding: 0;
+  white-space: normal;
+  display: block; text-align: left;
+}
+/* The vstack is itself a `ul ul`; kill the generic centre drop line. */
+.org-tree ul.org-vstack::before { display: none; }
+.org-tree .org-vstack > li {
+  display: block; position: relative; text-align: left;
+  padding: 0 0 0 34px;
+}
+.org-tree .org-vstack > li + li { margin-top: 0.45rem; }
+/* Elbow: down the rail, curve right into this card. Later in the file than
+   the generic first/last/only-child pseudo rules on purpose — equal
+   specificity, so these full redefinitions win. */
+.org-tree .org-vstack > li::before {
+  content: ''; display: block; position: absolute;
+  left: 19px; right: auto; top: 0; width: 14px; height: 3.3rem;
+  border: 0; border-left: 2px solid var(--org-link); border-bottom: 2px solid var(--org-link);
+  border-radius: 0 0 0 10px;
+}
+.org-tree .org-vstack > li + li::before { top: -0.45rem; height: calc(3.3rem + 0.45rem); }
+/* The rail keeps going past this card to the next one's elbow. */
+.org-tree .org-vstack > li::after {
+  content: ''; display: block; position: absolute;
+  left: 19px; right: auto; top: 0; bottom: -0.45rem; width: 0; height: auto;
+  border: 0; border-left: 2px solid var(--org-link); border-radius: 0;
+}
+.org-tree .org-vstack > li:last-child::after { display: none; }
 
 /* The whole board gets a subtle dotted surface so the cards sit ON something.
    It uses --bg, not --surface-2: in the dark palette --surface-2 is LIGHTER
@@ -2099,9 +2159,15 @@ html.dark {
 .cal-swatch { width: .7rem; height: .7rem; border-radius: .22rem; flex-shrink: 0; }
 .cal-count { margin-left: auto; font-size: .6875rem; font-weight: 700; color: var(--cal-ink-dim); }
 
-@media (max-width: 900px) {
+/* The decorative vertical month rail costs ~82px of grid width. It only earns
+   its place on a truly wide content column — and with the fixed sidebar, a
+   1280-1440px laptop's column is NOT wide (~900-1050px), so the rail goes and
+   the horizontal month title takes over well before phone widths. */
+@media (max-width: 1450px) {
   .cal-rail { display: none; }
   .cal-month-h { display: block; margin-bottom: .5rem; }
+}
+@media (max-width: 900px) {
   .cal-shell { padding: .85rem; gap: 0; }
   .cal-cell { min-height: 4.5rem; }
   .cal-footer { grid-template-columns: 1fr; }

@@ -15,8 +15,9 @@ const CashbookEntry = require('../models/CashbookEntry');
 const { recomputeBalance } = require('./cashbookController');
 const storage = require('../services/storage');
 const { hasPermission } = require('../middleware/authMiddleware');
+const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 const { notify, notifyMany } = require('../services/notify');
-const { usersHoldingAny } = require('../services/audience');
+const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 
 const USER_FIELDS = 'firstName lastName email role';
 
@@ -107,7 +108,14 @@ async function withStatusHistory(expenses, viewer) {
 // expense reviewers themselves.
 async function notifyClaimReviewers(expense, submitter) {
   const who = `${submitter.firstName || ''} ${submitter.lastName || ''}`.trim() || 'An employee';
-  await notifyMany(await usersHoldingAny('cashbook.manage', 'expenses.manage'), {
+  // Walled to the claimant's company — reviewers of another company neither
+  // settle nor should hear about this claim. (The submitter IS the claimant, so
+  // their request-scoped company is the claim's company.)
+  const reviewers = await scopeRecipientsToCompany(
+    await usersHoldingAny('cashbook.manage', 'expenses.manage'),
+    submitter.scopeCompanyId
+  );
+  await notifyMany(reviewers, {
     type: 'expense',
     audience: 'admin',
     title: 'New expense claim to review',
@@ -212,6 +220,12 @@ const downloadReceipt = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('Not allowed');
   }
+  // Company wall: a non-owner reviewer may only open receipts of claimants
+  // within their own company scope (Expense.employee is a User id).
+  if (!isOwner && (await cannotSeeUser(req, expense.employee))) {
+    res.status(404);
+    throw new Error('Receipt not found');
+  }
   if (expense.receipt.mime) res.setHeader('Content-Type', expense.receipt.mime);
   if (!(await storage.streamTo(expense.receipt.storagePath, res))) {
     res.status(404);
@@ -232,6 +246,9 @@ const listExpenses = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (req.query.category) filter.category = req.query.category;
+  // Company wall: reviewers only see claims from employees of their own
+  // company; SuperAdmin and unrestricted execs see everything.
+  await scopeUserField(req, filter); // Expense.employee is a User id
   const expenses = await Expense.find(filter)
     .populate('employee', USER_FIELDS)
     .populate('reviewedBy', USER_FIELDS)
@@ -334,6 +351,11 @@ const reviewExpense = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Expense not found');
   }
+  // Company wall: a reviewer may not act on another company's claim.
+  if (await cannotSeeUser(req, expense.employee)) {
+    res.status(404);
+    throw new Error('Expense not found');
+  }
 
   const wasReimbursed = expense.status === 'Reimbursed';
   // Grab the claimant's id up front: the cashbook post below populates
@@ -393,6 +415,11 @@ const reviewExpense = asyncHandler(async (req, res) => {
 const deleteExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense) {
+    res.status(404);
+    throw new Error('Expense not found');
+  }
+  // Company wall: a reviewer may not delete another company's claim.
+  if (await cannotSeeUser(req, expense.employee)) {
     res.status(404);
     throw new Error('Expense not found');
   }

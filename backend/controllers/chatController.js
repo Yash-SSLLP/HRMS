@@ -15,6 +15,7 @@ const User = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
 const { hideSuperAdminFilter } = require('../utils/visibility');
+const { scopeUserFilter } = require('../utils/employeeScope');
 const { notify, notifyMany } = require('../services/notify');
 
 // Trim a chat body to a notification-friendly preview.
@@ -81,7 +82,10 @@ function messageStatus(m) {
 // connection status to each. Reused by the complaints target picker.
 const directory = asyncHandler(async (req, res) => {
   const meId = req.user._id;
-  const activeUsers = await User.find({ isActive: true, _id: { $ne: meId }, ...hideSuperAdminFilter(req.user) })
+  // Company wall: the directory only offers people of the caller's own company
+  // (scopeUserFilter is a no-op for the Backend / an unrestricted account).
+  const dirFilter = await scopeUserFilter(req, { isActive: true, _id: { $ne: meId }, ...hideSuperAdminFilter(req.user) });
+  const activeUsers = await User.find(dirFilter)
     .select(USER_FIELDS)
     .sort({ firstName: 1, lastName: 1 });
 
@@ -131,7 +135,9 @@ const sendRequest = asyncHandler(async (req, res) => {
     throw new Error('You cannot connect with yourself');
   }
 
-  const recipient = await User.findOne({ _id: recipientId, isActive: true });
+  // The company wall applies to the write too, not just the directory read — a
+  // crafted request with another company's user id must fail the same way.
+  const recipient = await User.findOne(await scopeUserFilter(req, { _id: recipientId, isActive: true }));
   if (!recipient) {
     res.status(404);
     throw new Error('User not found');
@@ -519,8 +525,11 @@ const createGroup = asyncHandler(async (req, res) => {
   }
   let ids = Array.isArray(memberIds) ? [...new Set(memberIds.map(String))] : [];
   ids = ids.filter((id) => id !== String(meId));
-  // Only active users; SuperAdmin can't be added by a non-SuperAdmin (hidden).
-  const valid = await User.find({ _id: { $in: ids }, isActive: true, ...hideSuperAdminFilter(req.user) }).select('_id');
+  // Only active users; SuperAdmin can't be added by a non-SuperAdmin (hidden),
+  // and the company wall keeps other companies' people un-addable too.
+  const valid = await User.find(
+    await scopeUserFilter(req, { _id: { $in: ids }, isActive: true, ...hideSuperAdminFilter(req.user) })
+  ).select('_id');
   const members = [
     { user: meId, role: 'owner', status: 'accepted', respondedAt: new Date(), lastReadAt: new Date() },
     ...valid.map((u) => ({ user: u._id, role: 'member', status: 'invited' })),
@@ -869,7 +878,9 @@ const addGroupMembers = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Pick at least one person to add');
   }
-  const valid = await User.find({ _id: { $in: ids }, isActive: true, ...hideSuperAdminFilter(req.user) }).select('_id');
+  const valid = await User.find(
+    await scopeUserFilter(req, { _id: { $in: ids }, isActive: true, ...hideSuperAdminFilter(req.user) })
+  ).select('_id');
 
   let added = 0;
   for (const u of valid) {

@@ -40,6 +40,9 @@ const clean = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => 
 export default function AdminCashbook() {
   const [tab, setTab] = useTabParam('overview', TABS.map(([k]) => k));
   const [accounts, setAccounts] = useState([]);
+  // Which company an account belongs to (null = shared). The list the server
+  // returns is already walled to what the caller may see.
+  const [companies, setCompanies] = useState([]);
   const [categories, setCategories] = useState([]);
   const [ov, setOv] = useState(null);
   const [entries, setEntries] = useState([]);
@@ -67,7 +70,10 @@ export default function AdminCashbook() {
   const loadVouchers = () => api.get('/cashbook/entries', { params: { status: 'Pending' } })
     .then((r) => setVouchers((r.data.entries || []).filter((e) => e.submittedByEmployee))).catch(() => {});
 
-  useEffect(() => { loadAccounts(); loadCategories(); loadOverview(); loadVouchers(); }, []);
+  useEffect(() => {
+    loadAccounts(); loadCategories(); loadOverview(); loadVouchers();
+    api.get('/companies').then((r) => setCompanies(r.data.companies || [])).catch(() => {});
+  }, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'ledger') loadEntries(); }, [tab, filters]);
 
@@ -486,6 +492,16 @@ export default function AdminCashbook() {
               <Field label="Opening balance"><input type="number" step="0.01" value={accountModal.data.openingBalance} onChange={(e) => setAccountModal({ ...accountModal, data: { ...accountModal.data, openingBalance: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>
             </div>
             <Field label="Note"><input value={accountModal.data.note} onChange={(e) => setAccountModal({ ...accountModal, data: { ...accountModal.data, note: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>
+            {/* Which company's money this book holds. Blank = shared. A
+                company-walled operator's accounts are stamped server-side. */}
+            {companies.length > 0 && (
+              <Field label="Company">
+                <select value={accountModal.data.company || ''} onChange={(e) => setAccountModal({ ...accountModal, data: { ...accountModal.data, company: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm">
+                  <option value="">Shared (all companies)</option>
+                  {companies.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+                </select>
+              </Field>
+            )}
             {accountModal.mode === 'edit' && (
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={accountModal.data.isActive} onChange={(e) => setAccountModal({ ...accountModal, data: { ...accountModal.data, isActive: e.target.checked } })} /> Active</label>
             )}

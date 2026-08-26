@@ -5,12 +5,10 @@
  * form); a CEO/MD is limited to certain companies on the Permissions page.
  * Deleting a company is blocked while people are still assigned to it.
  *
- * WHO SEES WHAT: an HR Manager reads this page and gets no buttons at all — the
- * headcount per entity is useful to them, changing the entity is not their call.
- * The Backend account and the executives (CEO/MD) manage it. A CEO/MD is allowed
- * here WITHOUT being switched into edit mode, unlike almost everywhere else,
- * because a company is the executive's own domain; routes/companyRoutes.js says
- * the same thing on the server, which is what actually enforces it.
+ * WHO SEES WHAT: the Backend (SuperAdmin) alone — the page, its roster and
+ * every write. The nav hides it for everyone else, this component shows them a
+ * plain notice, and routes/companyRoutes.js 403s them, which is what actually
+ * enforces it. (This deliberately reversed the earlier CEO/MD-may-manage rule.)
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -21,21 +19,16 @@ import { confirmDialog } from '../components/dialogs';
 
 const blank = () => ({ name: '', code: '', isActive: true });
 
-// Roles that may change a company. Mirrors MAY_MANAGE in the router.
-const MANAGER_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+// The whole page is the Backend's alone — the nav hides it and the routes 403
+// everyone else, but a typed URL still lands here, so the page checks too.
+const MANAGER_ROLES = ['SuperAdmin'];
 
 export default function AdminCompanies() {
   const currentUser = useAuthStore((s) => s.user);
   const canManage = MANAGER_ROLES.includes(currentUser?.role);
 
-  // A CEO/MD narrowed to certain companies manages only those. An empty/absent
-  // list means unrestricted — the same rule the server applies in
-  // assertCompanyScope, mirrored here so a button that would 403 is never shown.
-  const myCompanies = (currentUser?.companies || []).map(String);
-  const limited = currentUser?.role !== 'SuperAdmin' && myCompanies.length > 0;
-  const canEditCompany = (c) => canManage && (!limited || myCompanies.includes(String(c._id)));
-  // Adding a company while narrowed would create one the exec cannot then manage.
-  const canCreate = canManage && !limited;
+  const canEditCompany = () => canManage;
+  const canCreate = canManage;
 
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -130,6 +123,19 @@ export default function AdminCompanies() {
       .toLowerCase().includes(t));
   };
 
+  // The routes 403 everyone but the Backend; a typed URL gets a plain answer
+  // instead of a page of failing requests.
+  if (!canManage) {
+    return (
+      <div>
+        <PageHeader title="Companies" subtitle="The companies this HRMS runs for" />
+        <div className="mb-4 text-sm text-gray-600 bg-gray-50 border border-gray-200 px-4 py-3 rounded-xl">
+          Companies are managed by the Backend account only.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader title="Companies" subtitle="The companies this HRMS runs for — employees belong to one, and a CEO/MD can be limited to some">
@@ -139,21 +145,6 @@ export default function AdminCompanies() {
       </PageHeader>
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
-
-      {/* Say why the buttons are missing rather than leaving a page that looks
-          broken. Two different reasons, so two different sentences. */}
-      {!canManage && (
-        <div className="mb-4 text-sm text-gray-600 bg-gray-50 border border-gray-200 px-4 py-3 rounded-xl">
-          You can see the companies and their headcounts here. Adding, editing and removing a company is done by
-          the Backend account or a CEO/MD.
-        </div>
-      )}
-      {canManage && limited && (
-        <div className="mb-4 text-sm text-gray-600 bg-gray-50 border border-gray-200 px-4 py-3 rounded-xl">
-          Your account is assigned to {myCompanies.length === 1 ? 'one company' : `${myCompanies.length} companies`},
-          so you can edit {myCompanies.length === 1 ? 'that one' : 'those'} only. The others are shown for reference.
-        </div>
-      )}
 
       {loading ? (
         <p className="text-sm text-gray-500">Loading…</p>

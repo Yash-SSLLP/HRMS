@@ -71,9 +71,9 @@ export const adminNav = [
     { to: '/admin/employees', label: 'Employees', icon: FiBriefcase, perm: 'employees.manage' },
     { to: '/admin/users', label: 'Users', icon: FiUsers, perm: 'users.manage' },
     { to: '/admin/org-chart', label: 'Org Chart', icon: FiGitBranch },
-    // HR Managers read this page; only the Backend and the executives change it
-    // (the page itself hides the buttons — see AdminCompanies).
-    { to: '/admin/companies', label: 'Companies', icon: FiHome, roles: ['SuperAdmin', 'HRManager', 'CEO', 'MD'] },
+    // Backend only — the Companies tab was deliberately pulled from HR and the
+    // executives (user decision 2026-08-26); the routes enforce the same.
+    { to: '/admin/companies', label: 'Companies', icon: FiHome, roles: ['SuperAdmin'] },
     { to: '/admin/departments', label: 'Departments', icon: FiGrid, perm: 'org.manage' },
     { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap, perm: 'org.manage' },
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },

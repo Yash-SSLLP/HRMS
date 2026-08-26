@@ -27,6 +27,54 @@ const { enqueueMail, sendMail } = require('../services/email');
 const { notify } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
 const { computeNextEmployeeCode } = require('./lifecycleController');
+const { viewerCompanyScope } = require('../utils/employeeScope');
+
+// ===== Company wall =====
+// A job belongs to a hiring company (Job.company; null = shared/legacy), and a
+// candidate belongs to their job's company. A company-walled recruiter sees
+// only their own company's openings and applicants.
+
+/** Job filter fragment for this viewer: `{}` when unrestricted. */
+function jobCompanyFilter(req) {
+  const scope = viewerCompanyScope(req);
+  if (!scope) return {};
+  return { company: { $in: [...scope.ids, null] } };
+}
+
+/** May this viewer not see the given (loaded) job? */
+function jobOutOfScope(req, job) {
+  const scope = viewerCompanyScope(req);
+  if (!scope || !job || !job.company) return false;
+  return !scope.ids.includes(String(job.company));
+}
+
+/** The job ids this viewer may see, or null when unrestricted. */
+async function allowedJobIds(req) {
+  const scope = viewerCompanyScope(req);
+  if (!scope) return null;
+  const rows = await Job.find(jobCompanyFilter(req)).select('_id').lean();
+  return rows.map((r) => String(r._id));
+}
+
+/**
+ * Route middleware for every /candidates/:id/* endpoint: 404 when the
+ * candidate's job belongs to a company outside the viewer's wall. One central
+ * gate instead of two dozen per-handler checks. Candidates with no job are
+ * treated as shared, like a company-less job.
+ */
+const candidateScopeGuard = asyncHandler(async (req, res, next) => {
+  const scope = viewerCompanyScope(req);
+  if (!scope) return next();
+  const candidate = await Candidate.findById(req.params.id).select('job').lean();
+  if (candidate && candidate.job) {
+    const job = await Job.findById(candidate.job).select('company').lean();
+    if (job && job.company && !scope.ids.includes(String(job.company))) {
+      res.status(404);
+      throw new Error('Candidate not found');
+    }
+  }
+  next();
+});
 
 const DEFAULT_NEW_USER_PASSWORD = process.env.DEFAULT_NEW_USER_PASSWORD || 'Welcome@123';
 // Public website origin, for candidate-facing letter-download links in emails.
@@ -56,7 +104,7 @@ function parseCcList(raw, exclude = []) {
  * @returns {{count: number, jobs: Object[]}} each with candidateCount
  */
 const listJobs = asyncHandler(async (req, res) => {
-  const filter = {};
+  const filter = { ...jobCompanyFilter(req) };
   if (req.query.status) filter.status = req.query.status;
   const jobs = await Job.find(filter).sort({ createdAt: -1 });
   const counts = await Candidate.aggregate([{ $group: { _id: '$job', n: { $sum: 1 } } }]);
@@ -78,6 +126,17 @@ const createJob = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('title is required');
   }
+  if (req.body.company === '') req.body.company = null; // "shared" from the form
+  // A walled recruiter hires for their own company, full stop: their jobs get
+  // it stamped automatically, and a crafted body cannot point elsewhere.
+  const scope = viewerCompanyScope(req);
+  if (scope) {
+    if (req.body.company && !scope.ids.includes(String(req.body.company))) {
+      res.status(403);
+      throw new Error('You can only open jobs for your own company.');
+    }
+    if (!req.body.company) req.body.company = scope.ids[0];
+  }
   const job = await Job.create({ ...req.body, postedBy: req.user._id });
   res.status(201).json({ job });
 });
@@ -95,6 +154,24 @@ const updateJob = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Job not found');
   }
+  if (jobOutOfScope(req, job)) {
+    res.status(404);
+    throw new Error('Job not found');
+  }
+  if (req.body.company === '') req.body.company = null; // "shared" from the form
+  // A walled recruiter cannot repoint a job at another company — and cannot
+  // clear it to "shared" either, which would quietly expose the job and all
+  // its candidates to every other company. Resending the unchanged value is
+  // fine (the edit form always includes the field).
+  const scope = viewerCompanyScope(req);
+  if (scope && req.body.company !== undefined) {
+    const next = req.body.company ? String(req.body.company) : '';
+    const cur = job.company ? String(job.company) : '';
+    if (next !== cur && (!next || !scope.ids.includes(next))) {
+      res.status(403);
+      throw new Error('You can only open jobs for your own company.');
+    }
+  }
   // Prevent clients from overwriting the original poster
   delete req.body.postedBy;
   Object.assign(job, req.body);
@@ -111,6 +188,10 @@ const updateJob = asyncHandler(async (req, res) => {
 const deleteJob = asyncHandler(async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) {
+    res.status(404);
+    throw new Error('Job not found');
+  }
+  if (jobOutOfScope(req, job)) {
     res.status(404);
     throw new Error('Job not found');
   }
@@ -225,6 +306,16 @@ const listCandidates = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.job) filter.job = req.query.job;
   if (req.query.stage) filter.stage = req.query.stage;
+  // Company wall: candidates follow their job's company. Job-less candidates
+  // are shared, like a company-less job.
+  const jobIds = await allowedJobIds(req);
+  if (jobIds) {
+    if (filter.job) {
+      if (!jobIds.includes(String(filter.job))) filter.job = { $in: [] };
+    } else {
+      filter.$or = [{ job: { $in: jobIds } }, { job: null }];
+    }
+  }
   const candidates = await Candidate.find(filter)
     .populate('job', 'title department')
     .sort({ createdAt: -1 });
@@ -246,6 +337,14 @@ const createCandidate = asyncHandler(async (req, res) => {
   if (req.body.stage && !CANDIDATE_STAGES.includes(req.body.stage)) {
     res.status(400);
     throw new Error(`stage must be one of ${CANDIDATE_STAGES.join(', ')}`);
+  }
+  // Company wall: a candidate can only be filed against a job the viewer sees.
+  if (req.body.job) {
+    const job = await Job.findById(req.body.job).select('company').lean();
+    if (!job || jobOutOfScope(req, job)) {
+      res.status(404);
+      throw new Error('Job not found');
+    }
   }
   const candidate = await Candidate.create({
     ...req.body,
@@ -277,6 +376,17 @@ const updateCandidate = asyncHandler(async (req, res) => {
   delete req.body.resumeName;
   delete req.body.resumeSizeBytes;
   delete req.body.rounds;
+  // Same wall as createCandidate: re-filing the candidate against a job the
+  // viewer cannot see would push them across the company wall (and out of the
+  // viewer's own reach, with no way back).
+  if (req.body.job !== undefined && req.body.job
+    && String(req.body.job) !== String(candidate.job || '')) {
+    const nextJob = await Job.findById(req.body.job).select('company').lean();
+    if (!nextJob || jobOutOfScope(req, nextJob)) {
+      res.status(404);
+      throw new Error('Job not found');
+    }
+  }
   Object.assign(candidate, req.body);
   await candidate.save();
   res.json({ candidate });
@@ -1419,7 +1529,7 @@ function splitName(full = '') {
 // POST /api/recruitment/candidates/:id/convert-to-employee
 // Turn a New Joinee into an actual login (User) + EmployeeProfile.
 const convertToEmployee = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id).populate('job', 'title department employmentType');
+  const candidate = await Candidate.findById(req.params.id).populate('job', 'title department employmentType company');
   if (!candidate) {
     res.status(404);
     throw new Error('Candidate not found');
@@ -1489,6 +1599,9 @@ const convertToEmployee = asyncHandler(async (req, res) => {
         ? Number(req.body.probationMonths)
         : (candidate.appointment?.data?.probationMonths ?? candidate.offer?.data?.probationMonths ?? 3),
       hrPartner,
+      // The new joiner lands in the company that was hiring, so the company
+      // wall holds from day one instead of waiting for a manual assignment.
+      company: candidate.job?.company || req.user.scopeCompanyId || undefined,
     });
   } catch (err) {
     // Roll back the orphan user if the profile fails to validate/save.
@@ -2068,6 +2181,7 @@ module.exports = {
   requestDocuments, getDocumentRequest, submitDocuments,
   downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
   letterDraft, previewLetter,
+  candidateScopeGuard,
   // Internals exercised directly by the scratch tests; not routed.
   __test: { documentReviewSummary, cleanLetterBody },
 };

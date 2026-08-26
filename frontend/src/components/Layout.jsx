@@ -16,7 +16,7 @@ import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock,
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
-import { hasPermission, hasAnyPermission, isReadOnlyExec, isEditingExec, canUseAdminPortal } from '../config/permissions';
+import { hasPermission, hasAnyPermission, isReadOnlyExec, canUseAdminPortal } from '../config/permissions';
 import { formatDateTime12 } from '../utils/time';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
@@ -332,11 +332,12 @@ function NavPill({ to, icon, label }) {
       }}
     >
       {icon}
-      {/* Icon-only until lg: below that the shortcut strip shares the bar with
-          the search and the account cluster, and four labelled pills leave the
-          strip a 90px scroller showing one and a half of them. The title/
+      {/* Icon-only until 2xl: between lg and 2xl the fixed sidebar, the search
+          and the account cluster leave this strip only ~100-300px, so labelled
+          pills would overflow into a scroller with its scrollbar hidden — the
+          pills effectively vanished on 1280-1440px laptops. The title/
           aria-label above still name each one. */}
-      <span className="hidden lg:inline">{label}</span>
+      <span className="hidden 2xl:inline">{label}</span>
     </Link>
   );
 }
@@ -380,7 +381,7 @@ function ApprovalsPill({ to }) {
       }}
     >
       <FiCheckSquare size={16} strokeWidth={2.2} />
-      <span className="hidden lg:inline">Approvals</span>
+      <span className="hidden 2xl:inline">Approvals</span>
       {pending > 0 && (
         <span
           className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none"
@@ -419,7 +420,7 @@ function ChatLauncher() {
         className="drop-shadow-sm">
         <path d="M12 2a10 10 0 00-8.94 14.47L2 22l5.7-1.5A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.13l-.29-.17-3.39.89.9-3.3-.19-.3A8 8 0 1112 20z" />
       </svg>
-      <span className="hidden lg:inline">Chats</span>
+      <span className="hidden 2xl:inline">Chats</span>
       {unread > 0 && (
         <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none"
           style={{ boxShadow: '0 0 0 2px #fff' }}>
@@ -713,6 +714,13 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
                 <div className="text-[11px] text-gray-500 truncate">{employeeCode ? `${employeeCode} · ${roleLabel}` : roleLabel}</div>
               )}
               <div className="text-[11px] text-gray-400 truncate">{user?.email}</div>
+              {/* The view-only badge lives HERE unconditionally: the top-bar
+                  copy is xl-only, and a CEO/MD below 1280px otherwise had no
+                  hint their account is read-only. Edit mode gets NO badge —
+                  writing is just the normal admin experience. */}
+              {isReadOnlyExec(user) && (
+                <div className="mt-1 text-[11px] font-semibold text-amber-600">👁 View-only access</div>
+              )}
             </div>
           </div>
           <div className="p-1.5">
@@ -876,7 +884,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
       <div className="brand-strip h-1 fixed top-0 inset-x-0 z-50" />
 
       {/* Desktop fixed sidebar */}
-      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-80 bg-white border-r border-gray-200 z-40">
+      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-64 2xl:w-80 bg-white border-r border-gray-200 z-40">
         {sidebar}
       </aside>
 
@@ -891,7 +899,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
       )}
 
       {/* Content column */}
-      <div className="lg:pl-80 flex flex-col min-h-screen">
+      <div className="lg:pl-64 2xl:pl-80 flex flex-col min-h-screen">
         <header className="sticky top-1 z-30 h-16 bg-white border-b border-gray-200 flex items-center gap-2 sm:gap-3 px-3 sm:px-6">
           <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn shrink-0 lg:hidden" aria-label="Open menu">
             <span className="text-xl leading-none">☰</span>
@@ -926,13 +934,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
               👁 View only
             </span>
           )}
-          {/* The counterpart: an exec whose writes are live should know it. */}
-          {isEditingExec(user) && (
-            <span className="hidden xl:inline-flex items-center gap-1 ml-1 shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200"
-              title="A Super Admin has switched this account to edit mode: your changes here are saved. Super Admin areas (permissions, org settings, audit log) stay read-only.">
-              ✎ Edit mode
-            </span>
-          )}
+          {/* No badge for an edit-mode exec — writing is the normal admin
+              experience, and the user asked for the pill to go. Only the
+              LIMITED state (view-only) announces itself. */}
 
           <div className="flex items-center gap-1 sm:gap-2 ml-auto shrink-0">
             {isAdmin && canEmployeePortal && (

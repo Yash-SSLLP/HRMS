@@ -6,9 +6,30 @@
 const asyncHandler = require('express-async-handler');
 const Project = require('../models/Project');
 const { PROJECT_STATUS } = require('../models/Project');
+const { allowedUserIds } = require('../utils/employeeScope');
 
 // Populated user sub-fields returned for manager/members references
 const USER_FIELDS = 'firstName lastName email role';
+
+/**
+ * Company wall, per record: true when NONE of this project's people (manager,
+ * members, or its creator — all User ids) are inside the viewer's company
+ * scope. `createdBy` matters: a freshly created project in Planning has no
+ * manager or members yet, and without it the walled admin who just created it
+ * would lose sight of their own project instantly. Unrestricted viewers
+ * (SuperAdmin, unwalled execs) always pass.
+ * @param {import('express').Request} req
+ * @param {Object} project - a Project doc (refs may be populated or raw ids)
+ * @returns {Promise<boolean>}
+ */
+async function projectOutOfScope(req, project) {
+  const ids = await allowedUserIds(req);
+  if (!ids) return false; // unrestricted
+  const people = [project.manager, project.createdBy, ...(project.members || [])]
+    .filter(Boolean)
+    .map((p) => String(p._id || p));
+  return !people.some((p) => ids.includes(p));
+}
 
 /**
  * List projects, optionally filtered by status, newest first.
@@ -19,6 +40,19 @@ const USER_FIELDS = 'firstName lastName email role';
 const listProjects = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
+  // Company wall: this list is reachable by ANY authenticated user and its
+  // populated manager/members would expose other companies' name/email lists.
+  // Walled viewers only see projects with at least one of their own company's
+  // people on them ($and keeps any other filter conditions intact).
+  const ids = await allowedUserIds(req);
+  if (ids) {
+    filter.$and = [
+      ...(filter.$and || []),
+      // createdBy keeps a manager-less, member-less new project visible to
+      // the walled admin who created it (see projectOutOfScope).
+      { $or: [{ manager: { $in: ids } }, { members: { $in: ids } }, { createdBy: { $in: ids } }] },
+    ];
+  }
   const projects = await Project.find(filter)
     .populate('manager', USER_FIELDS)
     .populate('members', USER_FIELDS)
@@ -61,6 +95,11 @@ const updateProject = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Project not found');
   }
+  // Company wall: may not touch a project belonging entirely to another company.
+  if (await projectOutOfScope(req, project)) {
+    res.status(404);
+    throw new Error('Project not found');
+  }
   // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
   Object.assign(project, req.body);
@@ -77,6 +116,11 @@ const updateProject = asyncHandler(async (req, res) => {
 const deleteProject = asyncHandler(async (req, res) => {
   const project = await Project.findById(req.params.id);
   if (!project) {
+    res.status(404);
+    throw new Error('Project not found');
+  }
+  // Company wall: may not delete a project belonging entirely to another company.
+  if (await projectOutOfScope(req, project)) {
     res.status(404);
     throw new Error('Project not found');
   }

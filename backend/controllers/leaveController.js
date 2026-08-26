@@ -18,7 +18,7 @@ const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
 const { enqueueMail } = require('../services/email');
 const { notify, notifyMany } = require('../services/notify');
-const { usersHoldingAny } = require('../services/audience');
+const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { daysInclusive, currentYear, startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
 const { hasPermission } = require('../middleware/authMiddleware');
@@ -302,10 +302,13 @@ async function notifyChainVoided(request, voidedSteps, reason) {
 async function notifyHrInformational(request, verb, actorId, excludeIds = []) {
   try {
     const prof = await EmployeeProfile.findById(request.employee)
-      .select('user hrPartner')
+      .select('user hrPartner company')
       .populate('user', 'firstName lastName');
     const ids = new Set();
-    for (const id of await usersHoldingAny('leave.manage')) ids.add(String(id));
+    // Walled to the employee's company — company B's HR does not hear about
+    // company A's leave.
+    const holders = await scopeRecipientsToCompany(await usersHoldingAny('leave.manage'), prof?.company);
+    for (const id of holders) ids.add(String(id));
     if (prof?.hrPartner) ids.add(String(prof.hrPartner));
     // Safety net: never let a status change go completely unheard.
     if (!ids.size) {
@@ -359,7 +362,7 @@ async function notifyHrInformational(request, verb, actorId, excludeIds = []) {
 async function notifyHrFinalApproval(request, actorId, { configuredOnly = false } = {}) {
   try {
     const prof = await EmployeeProfile.findById(request.employee)
-      .select('user hrPartner leaveFinalHrRecipients employeeCode department')
+      .select('user hrPartner leaveFinalHrRecipients employeeCode department company')
       .populate('user', 'firstName lastName');
 
     const configured = (prof?.leaveFinalHrRecipients || []).map(String).filter(Boolean);
@@ -369,7 +372,8 @@ async function notifyHrFinalApproval(request, actorId, { configuredOnly = false 
     } else if (configuredOnly) {
       return [];
     } else {
-      for (const id of await usersHoldingAny('leave.manage')) ids.add(String(id));
+      // Same company wall as the generic notice above.
+      for (const id of await scopeRecipientsToCompany(await usersHoldingAny('leave.manage'), prof?.company)) ids.add(String(id));
       if (prof?.hrPartner) ids.add(String(prof.hrPartner));
       if (!ids.size) {
         const sa = await User.findOne({ role: 'SuperAdmin', isActive: true })

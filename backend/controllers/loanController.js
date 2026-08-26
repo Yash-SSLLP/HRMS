@@ -6,6 +6,7 @@
 const asyncHandler = require('express-async-handler');
 const Loan = require('../models/Loan');
 const khataSync = require('../services/khataSync');
+const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 
 // Populated employee sub-fields returned for loan references
 const USER_FIELDS = 'firstName lastName email';
@@ -60,6 +61,9 @@ const requestLoan = asyncHandler(async (req, res) => {
 const listAll = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
+  // Company wall: only loans of employees this admin may see (Loan.employee is
+  // a User id). No-op for SuperAdmin / unrestricted execs.
+  await scopeUserField(req, filter);
   const loans = await Loan.find(filter)
     .populate('employee', USER_FIELDS)
     .sort({ createdAt: -1 });
@@ -86,6 +90,11 @@ const createForEmployee = asyncHandler(async (req, res) => {
   if (!(Number(principal) > 0)) {
     res.status(400);
     throw new Error('principal must be greater than 0');
+  }
+  // Company wall: an admin cannot open a loan for another company's employee.
+  if (await cannotSeeUser(req, employee)) {
+    res.status(404);
+    throw new Error('Employee not found');
   }
   const loan = await Loan.create({
     employee,
@@ -115,7 +124,9 @@ const createForEmployee = asyncHandler(async (req, res) => {
  */
 const reviewLoan = asyncHandler(async (req, res) => {
   const loan = await Loan.findById(req.params.id);
-  if (!loan) {
+  // Company wall: a loan of an employee this admin may not see is reported as
+  // not found — its existence is none of their business.
+  if (!loan || (await cannotSeeUser(req, loan.employee))) {
     res.status(404);
     throw new Error('Loan not found');
   }
@@ -160,7 +171,8 @@ const reviewLoan = asyncHandler(async (req, res) => {
  */
 const recordRepayment = asyncHandler(async (req, res) => {
   const loan = await Loan.findById(req.params.id);
-  if (!loan) {
+  // Company wall: same not-found treatment as reviewLoan.
+  if (!loan || (await cannotSeeUser(req, loan.employee))) {
     res.status(404);
     throw new Error('Loan not found');
   }

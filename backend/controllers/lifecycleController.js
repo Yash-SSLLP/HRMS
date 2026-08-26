@@ -5,6 +5,8 @@
  */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
+// Company wall: confirmations list/act directly on EmployeeProfile.
+const { employeeProfileScope, cannotManageProfile } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email';
 
@@ -32,7 +34,8 @@ const effectiveDueDate = (profile) => {
  */
 // GET /api/lifecycle/confirmations  (?status=Probation|Extended|Confirmed)
 const listConfirmations = asyncHandler(async (req, res) => {
-  const filter = {};
+  // Company wall: a walled admin only tracks confirmations of their own people.
+  const filter = { ...employeeProfileScope(req) };
   if (req.query.status) filter.confirmationStatus = req.query.status;
 
   const profiles = await EmployeeProfile.find(filter).populate('user', USER_FIELDS);
@@ -80,7 +83,8 @@ const listConfirmations = asyncHandler(async (req, res) => {
 // body { action: 'confirm'|'extend'|'reset', note, probationMonths?, confirmationDueDate? }
 const updateConfirmation = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findById(req.params.id);
-  if (!profile) {
+  // Company wall: 404 for another company's employee (existence stays hidden).
+  if (!profile || cannotManageProfile(req, profile)) {
     res.status(404);
     throw new Error('Employee profile not found');
   }

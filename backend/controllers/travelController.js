@@ -8,6 +8,7 @@ const path = require('path');
 const TravelRequest = require('../models/TravelRequest');
 const { TRAVEL_STATUS } = require('../models/TravelRequest');
 const storage = require('../services/storage');
+const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 
 const EMPLOYEE_FIELDS = 'firstName lastName email';
 // Statuses an admin may set when reviewing the travel request itself
@@ -100,6 +101,9 @@ const createRequest = asyncHandler(async (req, res) => {
 const listAll = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
+  // Company wall: only requests from employees this admin may see
+  // (TravelRequest.employee is a User id). No-op for unrestricted viewers.
+  await scopeUserField(req, filter);
 
   const items = await TravelRequest.find(filter)
     .populate('employee', EMPLOYEE_FIELDS)
@@ -125,7 +129,8 @@ const reviewRequest = asyncHandler(async (req, res) => {
   }
 
   const item = await TravelRequest.findById(req.params.id);
-  if (!item) {
+  // Company wall: an out-of-scope employee's request is reported as not found.
+  if (!item || (await cannotSeeUser(req, item.employee))) {
     res.status(404);
     throw new Error('Travel request not found');
   }
@@ -157,7 +162,8 @@ const reviewReimbursement = asyncHandler(async (req, res) => {
   }
 
   const item = await TravelRequest.findById(req.params.id);
-  if (!item) {
+  // Company wall: same not-found treatment as reviewRequest.
+  if (!item || (await cannotSeeUser(req, item.employee))) {
     res.status(404);
     throw new Error('Travel request not found');
   }
@@ -228,10 +234,13 @@ const getReceipt = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('No receipt on file for this request');
   }
-  // Permission gate: only admins or the owner may view the receipt
-  if (!isAdmin(req.user) && !item.employee.equals(req.user._id)) {
-    res.status(403);
-    throw new Error('Not authorized to view this receipt');
+  // Permission gate: only admins or the owner may view the receipt — and an
+  // admin must also be on the right side of the company wall for this employee.
+  if (!item.employee.equals(req.user._id)) {
+    if (!isAdmin(req.user) || (await cannotSeeUser(req, item.employee))) {
+      res.status(403);
+      throw new Error('Not authorized to view this receipt');
+    }
   }
   const ext = path.extname(item.reimbursementReceiptPath).toLowerCase();
   const type = ext === '.pdf' ? 'application/pdf'

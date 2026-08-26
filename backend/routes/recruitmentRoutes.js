@@ -19,6 +19,7 @@ const {
   letterDraft, previewLetter,
   requestDocuments, getDocumentRequest, submitDocuments,
   downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
+  candidateScopeGuard,
 } = require('../controllers/recruitmentController');
 const { protect, requirePermission, requireAnyPermission } = require('../middleware/authMiddleware');
 
@@ -86,6 +87,10 @@ router.get('/my-interviews/:id/resume', protect, downloadMyInterviewResume);
 router.use(protect);
 
 const canView = requireAnyPermission('recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews');
+
+// Company wall for every per-candidate route below: a candidate whose job is
+// hiring for another company reads as not-found, whatever the capability held.
+router.use('/candidates/:id', candidateScopeGuard);
 const canJobs = requirePermission('recruitment.jobs');
 const canCand = requirePermission('recruitment.candidates');
 const canIntv = requirePermission('recruitment.interviews');

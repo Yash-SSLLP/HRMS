@@ -6,6 +6,8 @@
 const asyncHandler = require('express-async-handler');
 const Goal = require('../models/Goal');
 const { GOAL_STATUS } = require('../models/Goal');
+// Company wall: Goal.employee refs User, so the User-keyed scope helpers apply.
+const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email role';
 
@@ -21,6 +23,8 @@ const listGoals = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.employee) filter.employee = req.query.employee;
   if (req.query.status) filter.status = req.query.status;
+  // Company wall: a walled admin only sees goals of their own company's people.
+  await scopeUserField(req, filter, 'employee');
   const goals = await Goal.find(filter)
     .populate('employee', USER_FIELDS)
     .sort({ createdAt: -1 });
@@ -58,7 +62,8 @@ const createGoal = asyncHandler(async (req, res) => {
  */
 const updateGoal = asyncHandler(async (req, res) => {
   const goal = await Goal.findById(req.params.id);
-  if (!goal) {
+  // Company wall: 404 for goals of another company's people (existence stays hidden).
+  if (!goal || await cannotSeeUser(req, goal.employee)) {
     res.status(404);
     throw new Error('Goal not found');
   }
@@ -77,7 +82,8 @@ const updateGoal = asyncHandler(async (req, res) => {
  */
 const deleteGoal = asyncHandler(async (req, res) => {
   const goal = await Goal.findById(req.params.id);
-  if (!goal) {
+  // Company wall: 404 for goals of another company's people (existence stays hidden).
+  if (!goal || await cannotSeeUser(req, goal.employee)) {
     res.status(404);
     throw new Error('Goal not found');
   }

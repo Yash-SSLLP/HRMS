@@ -14,6 +14,7 @@ const Message = require('../models/Message');
 const { enqueueMail } = require('../services/email');
 const { isChatEnabled } = require('../middleware/chatEnabled');
 const { hiddenUserIds } = require('../utils/visibility');
+const { companyScopeFilter } = require('../utils/employeeScope');
 const { IST_TZ, istParts, istMonthDay, istMonthRange } = require('../utils/istDate');
 
 // {month, day} of a date **in IST**, for recurring-date matching. Must not use
@@ -73,10 +74,16 @@ function personPayload(p) {
   };
 }
 
-async function loadActiveProfiles(viewer) {
-  // Profiles for active users who have not exited (SuperAdmin hidden from others).
+async function loadActiveProfiles(req) {
+  const viewer = req.user;
+  // Profiles for active users who have not exited (SuperAdmin hidden from
+  // others), walled into the viewer's own company — company A does not get
+  // told company B's birthdays.
   const hidden = await hiddenUserIds(viewer);
-  const filter = { $or: [{ dateOfExit: null }, { dateOfExit: { $exists: false } }] };
+  const filter = {
+    $or: [{ dateOfExit: null }, { dateOfExit: { $exists: false } }],
+    ...companyScopeFilter(req),
+  };
   if (hidden.length) filter.user = { $nin: hidden };
   const profiles = await EmployeeProfile.find(filter)
     .populate({ path: 'user', select: 'firstName lastName email isActive' });
@@ -90,7 +97,7 @@ async function loadActiveProfiles(viewer) {
  */
 // GET /api/celebrations/today
 const todayCelebrations = asyncHandler(async (req, res) => {
-  const profiles = await loadActiveProfiles(req.user);
+  const profiles = await loadActiveProfiles(req);
   const t = md(new Date());
   const currentYear = istParts(new Date()).y;
 
@@ -137,7 +144,7 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
   // both are sent.
   const months = req.query.months ? Math.min(Math.max(Number(req.query.months) || 1, 1), 6) : null;
   const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
-  const profiles = await loadActiveProfiles(req.user);
+  const profiles = await loadActiveProfiles(req);
   const range = months ? nextNMonths(months) : nextNDays(days);
   const currentYear = istParts(new Date()).y;
 
@@ -249,7 +256,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   }
 
   // --- Birthdays & anniversaries (recurring month/day) ---
-  const profiles = await loadActiveProfiles(req.user);
+  const profiles = await loadActiveProfiles(req);
   for (const p of profiles) {
     if (p.dateOfBirth) {
       const x = md(p.dateOfBirth);
@@ -415,6 +422,12 @@ const sendWish = asyncHandler(async (req, res) => {
     select: 'firstName lastName email isActive',
   });
   if (!profile || !profile.user) {
+    res.status(404);
+    throw new Error('Recipient not found');
+  }
+  // Company wall: you can only wish the colleagues you can see.
+  const { companyOutOfScope } = require('../utils/employeeScope');
+  if (companyOutOfScope(req, profile)) {
     res.status(404);
     throw new Error('Recipient not found');
   }

@@ -13,6 +13,9 @@ const Message = require('../models/Message');
 const { notify } = require('../services/notify');
 const { enqueueMail } = require('../services/email');
 const { isChatEnabled } = require('../middleware/chatEnabled');
+// Company wall: RosterEntry.employee refs User, so the User-keyed scope helpers
+// apply. Shift definitions themselves are shared config and stay global.
+const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName';
 
@@ -205,6 +208,8 @@ const listRoster = asyncHandler(async (req, res) => {
     if (req.query.from) filter.date.$gte = new Date(req.query.from);
     if (req.query.to) filter.date.$lte = new Date(req.query.to);
   }
+  // Company wall: a walled admin only sees their own company's roster.
+  await scopeUserField(req, filter, 'employee');
   const entries = await RosterEntry.find(filter)
     .populate('employee', USER_FIELDS)
     .populate('shift')
@@ -227,6 +232,11 @@ const assignRoster = asyncHandler(async (req, res) => {
   if (!employee || !date || !shift) {
     res.status(400);
     throw new Error('employee, date and shift are required');
+  }
+  // Company wall: a walled admin may only roster their own company's people.
+  if (await cannotSeeUser(req, employee)) {
+    res.status(404);
+    throw new Error('Employee not found');
   }
   let entry = await RosterEntry.findOne({ employee, date: new Date(date) });
   let shiftChanged;
@@ -268,7 +278,8 @@ const assignRoster = asyncHandler(async (req, res) => {
  */
 const deleteRoster = asyncHandler(async (req, res) => {
   const entry = await RosterEntry.findById(req.params.id);
-  if (!entry) {
+  // Company wall: 404 for another company's entry (existence stays hidden).
+  if (!entry || await cannotSeeUser(req, entry.employee)) {
     res.status(404);
     throw new Error('Roster entry not found');
   }

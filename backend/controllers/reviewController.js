@@ -8,6 +8,8 @@ const asyncHandler = require('express-async-handler');
 const ReviewCycle = require('../models/Review');
 const { Review } = require('../models/Review');
 const User = require('../models/User');
+// Company wall: Review.employee refs User, so the User-keyed scope helper applies.
+const { scopeUserField } = require('../utils/employeeScope');
 
 // A rating row carries a score only once the reviewer has actually rated it.
 // The UI's "Rate…" placeholder submits 0, and old drafts may hold 0 too, so
@@ -269,7 +271,10 @@ const assignReview = asyncHandler(async (req, res) => {
  */
 // GET /api/reviews/cycles/:id/reviews
 const cycleReviews = asyncHandler(async (req, res) => {
-  const reviews = await Review.find({ cycle: req.params.id })
+  // Company wall: a walled admin only sees appraisals about their own company's
+  // people (the reviewee — `employee` — drives visibility, not the reviewer).
+  const filter = await scopeUserField(req, { cycle: req.params.id }, 'employee');
+  const reviews = await Review.find(filter)
     .populate('employee', 'firstName lastName')
     .populate('reviewer', 'firstName lastName')
     .sort({ createdAt: -1 });

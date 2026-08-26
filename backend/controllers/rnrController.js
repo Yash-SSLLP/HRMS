@@ -11,6 +11,15 @@ const User = require('../models/User');
 const Holiday = require('../models/Holiday');
 const { notifyMany } = require('../services/notify');
 const { startOfDayIST, ymdIST } = require('../utils/dateHelpers');
+// Company wall: winner pickers list EmployeeProfiles; award winners and the
+// announcement audience are User-keyed.
+const { employeeProfileScope, scopeUserFilter, allowedUserIds } = require('../utils/employeeScope');
+
+// Company wall: keep only the winners a walled viewer may see (allowedUserIds
+// string set; null = unrestricted). Winner snapshots carry names/photos, so an
+// out-of-scope winner would leak another company's people-data.
+const visibleWinners = (winners, ids) =>
+  ids ? (winners || []).filter((w) => ids.includes(String(w.user))) : (winners || []);
 
 const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -84,6 +93,10 @@ const currentBanner = asyncHandler(async (req, res) => {
     dismissedBy: { $ne: req.user._id },
   }).sort({ announcedAt: -1 });
   if (!award) return res.json({ award: null });
+  // Company wall: only show the winners of the viewer's own company; when none
+  // of them are in scope there is nothing to celebrate on this side of the wall.
+  const winners = visibleWinners(award.winners, await allowedUserIds(req));
+  if (!winners.length) return res.json({ award: null });
   res.json({
     award: {
       _id: award._id,
@@ -91,7 +104,7 @@ const currentBanner = asyncHandler(async (req, res) => {
       month: award.month,
       monthName: MONTHS[award.month],
       announcedAt: award.announcedAt,
-      winners: award.winners,
+      winners,
     },
   });
 });
@@ -120,12 +133,16 @@ const dismissBanner = asyncHandler(async (req, res) => {
 // GET /api/rnr?year=&month=  — a single month's award, or the recent history.
 const listAwards = asyncHandler(async (req, res) => {
   const { year, month } = req.query;
+  // Company wall: strip winner snapshots of other companies' people for walled
+  // admins (the award record itself is shared, its people-data is not).
+  const ids = await allowedUserIds(req);
   if (year && month) {
-    const award = await RnrAward.findOne({ year: Number(year), month: Number(month) });
+    const award = await RnrAward.findOne({ year: Number(year), month: Number(month) }).lean();
+    if (award) award.winners = visibleWinners(award.winners, ids);
     return res.json({ award });
   }
-  const awards = await RnrAward.find().sort({ year: -1, month: -1 }).limit(24);
-  res.json({ awards });
+  const awards = await RnrAward.find().sort({ year: -1, month: -1 }).limit(24).lean();
+  res.json({ awards: awards.map((a) => ({ ...a, winners: visibleWinners(a.winners, ids) })) });
 });
 
 /**
@@ -135,7 +152,8 @@ const listAwards = asyncHandler(async (req, res) => {
  */
 // GET /api/rnr/people — active employees (+ the department list) for the pickers.
 const listPeople = asyncHandler(async (req, res) => {
-  const profiles = await EmployeeProfile.find()
+  // Company wall: a walled admin picks winners only from their own company.
+  const profiles = await EmployeeProfile.find(employeeProfileScope(req))
     .select('designation department user')
     .populate('user', 'firstName lastName photo isActive');
   const people = profiles
@@ -174,7 +192,18 @@ const upsertAward = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('This month is already announced and can no longer be edited.');
   }
-  const winners = await enrichWinners(req.body.winners);
+  let winners = await enrichWinners(req.body.winners);
+  // Company wall, write side: the month's draft is one shared record, and a
+  // walled admin was only shown their own company's winners — their save must
+  // replace that subset, never wipe the winners they could not see.
+  const ids = await allowedUserIds(req);
+  if (ids) {
+    winners = winners.filter((w) => !w.user || ids.includes(String(w.user)));
+    if (award) {
+      const invisible = (award.winners || []).filter((w) => w.user && !ids.includes(String(w.user)));
+      winners = [...invisible, ...winners];
+    }
+  }
   if (award) {
     award.winners = winners;
     award.createdBy = req.user._id;
@@ -218,7 +247,9 @@ const announceAward = asyncHandler(async (req, res) => {
 
   const period = `${MONTHS[award.month]} ${award.year}`;
   const eom = award.winners.find((w) => w.category === 'EmployeeOfMonth');
-  const users = await User.find({ isActive: true }).select('_id');
+  // Company wall: a walled admin's announcement fans out only to their own
+  // company; an unrestricted admin still notifies the whole org.
+  const users = await User.find(await scopeUserFilter(req, { isActive: true })).select('_id');
   await notifyMany(users.map((u) => u._id), {
     type: 'recognition',
     audience: 'employee',

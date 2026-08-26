@@ -3,15 +3,19 @@
  * for. Employees belong to a company (EmployeeProfile.company) and a CEO/MD can
  * be limited by the Backend to the companies they may see (User.companies).
  *
- * Reads are open to any authenticated user (dropdowns, and the Companies page
- * an HR Manager reads). Writes belong to the Backend and the executives — see
- * routes/companyRoutes.js for why CEO/MD are named there explicitly.
+ * The company LIST stays readable by any authenticated user (dropdowns), but
+ * is walled per viewer. Everything else — the page's roster and every write —
+ * is Backend (SuperAdmin) only, enforced in routes/companyRoutes.js.
+ * assertCompanyScope below is therefore currently a no-op safety net (a
+ * SuperAdmin is never narrowed); it stays in case executives are ever let
+ * back in.
  */
 const asyncHandler = require('express-async-handler');
 const Company = require('../models/Company');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { EXECUTIVE_ROLES } = require('../utils/visibility');
+const { viewerCompanyScope, companyScopeFilter } = require('../utils/employeeScope');
 
 /**
  * Refuse an executive who has been narrowed to certain companies the right to
@@ -50,7 +54,12 @@ function assertCompanyScope(req, company) {
  * @returns {{count: number, companies: Object[]}} companies with assignedCount
  */
 const listCompanies = asyncHandler(async (req, res) => {
-  const companies = await Company.find().sort({ name: 1 }).lean();
+  // Company wall: a walled viewer is only told about their own companies —
+  // company B's very existence is none of company A's business. Unrestricted
+  // viewers (the Backend, unnarrowed execs, accounts with no company) see all.
+  const scope = viewerCompanyScope(req);
+  const companyFilter = scope ? { _id: { $in: scope.ids } } : {};
+  const companies = await Company.find(companyFilter).sort({ name: 1 }).lean();
   const counts = await EmployeeProfile.aggregate([
     { $match: { company: { $ne: null } } },
     { $group: { _id: '$company', n: { $sum: 1 } } },
@@ -205,7 +214,15 @@ const listCompanyEmployees = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Company not found');
   }
-  const profiles = await EmployeeProfile.find({})
+  // Company wall: a walled viewer may neither open another company's roster
+  // (404, same as the list no longer naming it) nor see other companies'
+  // people in the "everyone else" column.
+  const scope = viewerCompanyScope(req);
+  if (scope && !scope.ids.includes(String(company._id))) {
+    res.status(404);
+    throw new Error('Company not found');
+  }
+  const profiles = await EmployeeProfile.find(companyScopeFilter(req))
     .select('employeeCode designation department company user')
     .populate('user', 'firstName lastName email isActive')
     .populate('company', 'name')
@@ -273,6 +290,12 @@ const updateCompanyEmployees = asyncHandler(async (req, res) => {
       ? EmployeeProfile.updateMany({ _id: { $in: remove }, company: company._id }, { $unset: { company: 1 } })
       : Promise.resolve({ modifiedCount: 0 }),
   ]);
+
+  // The moved people's cached scope is now wrong — drop it so their wall moves
+  // with them on their very next request, not after the TTL.
+  const { invalidateScopeCompany } = require('../middleware/authMiddleware');
+  const movedUsers = await EmployeeProfile.find({ _id: { $in: [...add, ...remove] } }).select('user').lean();
+  invalidateScopeCompany(movedUsers.map((p) => p.user).filter(Boolean));
 
   res.json({ added: added.modifiedCount || 0, removed: removed.modifiedCount || 0 });
 });

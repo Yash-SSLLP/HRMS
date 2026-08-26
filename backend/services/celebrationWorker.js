@@ -26,6 +26,7 @@ const Task = require('../models/Task');
 const User = require('../models/User');
 const DigestLog = require('../models/DigestLog');
 const { notify, notifyMany } = require('./notify');
+const { scopeRecipientsToCompany } = require('./audience');
 const { resolveRecipients } = require('../controllers/reminderController');
 
 const { IST_TZ, istMonthDay, istParts, istDateString, istDayRange } = require('../utils/istDate');
@@ -79,8 +80,12 @@ async function runBirthdays(dateStr, today, profiles, everyone) {
 
   for (const p of people) {
     const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim();
-    // Everyone except the birthday person.
-    const others = everyone.filter((id) => String(id) !== String(p.user._id));
+    // Everyone in the celebrant's company except the birthday person — the
+    // same wall the celebrations API enforces, or the push names somebody the
+    // recipient's portal will refuse to show.
+    const others = await scopeRecipientsToCompany(
+      everyone.filter((id) => String(id) !== String(p.user._id)), p.company
+    );
     await notifyMany(others, {
       type: 'birthday',
       title: `🎂 It's ${name}'s birthday today!`,
@@ -110,7 +115,10 @@ async function runAnniversaries(dateStr, today, profiles, everyone) {
 
   for (const { p, years } of people) {
     const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim();
-    const others = everyone.filter((id) => String(id) !== String(p.user._id));
+    // Company-walled like the birthday pass above.
+    const others = await scopeRecipientsToCompany(
+      everyone.filter((id) => String(id) !== String(p.user._id)), p.company
+    );
     await notifyMany(others, {
       type: 'anniversary',
       title: `🎊 ${name} celebrates ${years} year${years > 1 ? 's' : ''} today!`,
@@ -144,7 +152,10 @@ async function runMarriageAnniversaries(dateStr, today, profiles, everyone) {
 
   for (const { p, years } of people) {
     const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim();
-    const others = everyone.filter((id) => String(id) !== String(p.user._id));
+    // Company-walled like the birthday pass above.
+    const others = await scopeRecipientsToCompany(
+      everyone.filter((id) => String(id) !== String(p.user._id)), p.company
+    );
     await notifyMany(others, {
       type: 'marriage',
       title: `💍 ${name} celebrates ${years} year${years > 1 ? 's' : ''} of marriage today!`,

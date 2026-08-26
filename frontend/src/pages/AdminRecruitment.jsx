@@ -126,11 +126,13 @@ const ROUND_STYLES = {
   Cleared: 'bg-green-100 text-green-700',
   Rejected: 'bg-red-100 text-red-700',
 };
-const blankJob = { title: '', department: '', location: '', employmentType: 'FullTime', openings: 1, description: '', status: 'Open' };
+const blankJob = { title: '', department: '', location: '', employmentType: 'FullTime', openings: 1, description: '', status: 'Open', company: '' };
 const blankCand = { name: '', email: '', phone: '', job: '', stage: 'Applied', rating: 0, notes: '' };
 
 export default function AdminRecruitment() {
   const [jobs, setJobs] = useState([]);
+  // Which company is hiring (blank = shared). Server-walled list.
+  const [companies, setCompanies] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [selectedJob, setSelectedJob] = useState('');
   const [loading, setLoading] = useState(true);
@@ -185,6 +187,9 @@ export default function AdminRecruitment() {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [selectedJob]);
+  useEffect(() => {
+    api.get('/companies').then((r) => setCompanies(r.data.companies || [])).catch(() => {});
+  }, []);
 
   // Load the interviewer pool once. Two calls because the round stores a User id
   // but `department` lives on the employee profile — /admin/users has no
@@ -217,7 +222,7 @@ export default function AdminRecruitment() {
   const openJobCreate = () => { setJobEditId(null); setJobForm(blankJob); setJobModal(true); };
   const openJobEdit = (j) => {
     setJobEditId(j._id);
-    setJobForm({ title: j.title, department: j.department || '', location: j.location || '', employmentType: j.employmentType, openings: j.openings, description: j.description || '', status: j.status });
+    setJobForm({ title: j.title, department: j.department || '', location: j.location || '', employmentType: j.employmentType, openings: j.openings, description: j.description || '', status: j.status, company: j.company || '' });
     setJobModal(true);
   };
   const saveJob = async (e) => {
@@ -901,6 +906,12 @@ export default function AdminRecruitment() {
                   {['FullTime', 'PartTime', 'Contract', 'Intern'].map((t) => <option key={t}>{t}</option>)}
                 </select>
                 <input type="number" min="0" placeholder="Openings" value={jobForm.openings} onChange={(e) => setJobForm({ ...jobForm, openings: Number(e.target.value) })} className="block w-full border rounded-lg px-3 py-2" />
+                {companies.length > 0 && (
+                  <select value={jobForm.company || ''} onChange={(e) => setJobForm({ ...jobForm, company: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                    <option value="">Hiring company: shared</option>
+                    {companies.map((c) => <option key={c._id} value={c._id}>Hiring for {c.name}</option>)}
+                  </select>
+                )}
                 <select value={jobForm.status} onChange={(e) => setJobForm({ ...jobForm, status: e.target.value })} className="block w-full border rounded-lg px-3 py-2 sm:col-span-2">
                   {JOB_STATUS.map((s) => <option key={s}>{s}</option>)}
                 </select>

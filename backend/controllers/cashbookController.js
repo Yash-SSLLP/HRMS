@@ -15,6 +15,69 @@ const CashbookEntry = require('../models/CashbookEntry');
 const { ENTRY_STATUS, PAYMENT_MODES } = require('../models/CashbookEntry');
 const User = require('../models/User');
 const storage = require('../services/storage');
+const { viewerCompanyScope, cannotSeeUser, allowedUserIds } = require('../utils/employeeScope');
+
+// ===== Company wall =====
+// A cash account belongs to a company (CashAccount.company; null = shared/
+// legacy, visible to everyone). A walled operator sees and moves only their
+// own company's money.
+
+/** CashAccount filter fragment for this viewer: `{}` when unrestricted. */
+function accountCompanyFilter(req) {
+  const scope = viewerCompanyScope(req);
+  if (!scope) return {};
+  return { company: { $in: [...scope.ids, null] } };
+}
+
+/** May this viewer not touch the given (loaded) account? */
+function accountOutOfScope(req, acc) {
+  const scope = viewerCompanyScope(req);
+  if (!scope || !acc || !acc.company) return false;
+  return !scope.ids.includes(String(acc.company));
+}
+
+/** Account ids in scope, or null when unrestricted. */
+async function allowedAccountIds(req) {
+  const scope = viewerCompanyScope(req);
+  if (!scope) return null;
+  const rows = await CashAccount.find(accountCompanyFilter(req)).select('_id').lean();
+  return rows.map((r) => String(r._id));
+}
+
+/**
+ * May this viewer not touch the given (loaded) entry? Follows the account's
+ * company when the entry has one, else the voucher employee's company.
+ */
+async function entryOutOfScope(req, entry) {
+  const scope = viewerCompanyScope(req);
+  if (!scope || !entry) return false;
+  if (entry.account) {
+    const acc = await CashAccount.findById(entry.account).select('company').lean();
+    return accountOutOfScope(req, acc);
+  }
+  if (entry.employee) return cannotSeeUser(req, entry.employee);
+  return false;
+}
+
+/** Narrow an entry filter's `account` to what this viewer may see. */
+async function scopeEntryAccounts(req, filter) {
+  const ids = await allowedAccountIds(req);
+  if (!ids) return filter;
+  if (filter.account && typeof filter.account !== 'object') {
+    if (!ids.includes(String(filter.account))) filter.account = { $in: [] };
+  } else {
+    // Entries without an account (employee vouchers awaiting review) follow
+    // their employee's company instead of an account's.
+    const userIds = (await allowedUserIds(req)) || [];
+    filter.$and = [...(filter.$and || []), {
+      $or: [
+        { account: { $in: ids } },
+        { account: null, employee: { $in: userIds } },
+      ],
+    }];
+  }
+  return filter;
+}
 const { notify, notifyMany } = require('../services/notify');
 
 const USER_FIELDS = 'firstName lastName email role';
@@ -178,7 +241,7 @@ const submitVoucher = asyncHandler(async (req, res) => {
  * @returns {{count: number, accounts: Object[]}}
  */
 const listAccounts = asyncHandler(async (req, res) => {
-  const accounts = await CashAccount.find().sort({ isActive: -1, name: 1 }).lean();
+  const accounts = await CashAccount.find(accountCompanyFilter(req)).sort({ isActive: -1, name: 1 }).lean();
   res.json({ count: accounts.length, accounts });
 });
 
@@ -194,10 +257,22 @@ const createAccount = asyncHandler(async (req, res) => {
   const { name, type, note } = req.body;
   if (!name || !name.trim()) { res.status(400); throw new Error('Account name is required'); }
   const openingBalance = toNum(req.body.openingBalance);
+  // A walled operator's accounts belong to their own company — stamped, and a
+  // crafted body cannot point elsewhere.
+  const scope = viewerCompanyScope(req);
+  let company = req.body.company || undefined;
+  if (scope) {
+    if (company && !scope.ids.includes(String(company))) {
+      res.status(403);
+      throw new Error('You can only open accounts for your own company.');
+    }
+    if (!company) company = scope.ids[0];
+  }
   const acc = await CashAccount.create({
     name: name.trim(),
     type,
     note,
+    company,
     openingBalance: Number.isNaN(openingBalance) ? 0 : openingBalance,
     currentBalance: Number.isNaN(openingBalance) ? 0 : openingBalance,
     createdBy: req.user._id,
@@ -215,6 +290,21 @@ const createAccount = asyncHandler(async (req, res) => {
 const updateAccount = asyncHandler(async (req, res) => {
   const acc = await CashAccount.findById(req.params.id);
   if (!acc) { res.status(404); throw new Error('Account not found'); }
+  if (accountOutOfScope(req, acc)) { res.status(404); throw new Error('Account not found'); }
+  // Only an unrestricted admin (the Backend) may MOVE an account between
+  // companies; a walled operator resending the unchanged value is fine (the
+  // edit form always includes the field).
+  if (req.body.company !== undefined) {
+    const next = req.body.company ? String(req.body.company) : '';
+    const cur = acc.company ? String(acc.company) : '';
+    if (next !== cur) {
+      if (viewerCompanyScope(req)) {
+        res.status(403);
+        throw new Error('Only the Backend account can change which company an account belongs to.');
+      }
+      acc.company = next || undefined;
+    }
+  }
   for (const k of ['name', 'type', 'note', 'isActive']) {
     if (req.body[k] !== undefined) acc[k] = req.body[k];
   }
@@ -235,6 +325,9 @@ const updateAccount = asyncHandler(async (req, res) => {
  * @returns {{id: string, deleted: boolean}}; 400 if entries exist
  */
 const deleteAccount = asyncHandler(async (req, res) => {
+  const target = await CashAccount.findById(req.params.id).select('company').lean();
+  if (!target) { res.status(404); throw new Error('Account not found'); }
+  if (accountOutOfScope(req, target)) { res.status(404); throw new Error('Account not found'); }
   const count = await CashbookEntry.countDocuments({ account: req.params.id });
   if (count > 0) {
     res.status(400);
@@ -325,6 +418,7 @@ function entryFilterFromQuery(q) {
 // GET /api/cashbook/entries
 const listEntries = asyncHandler(async (req, res) => {
   const filter = entryFilterFromQuery(req.query);
+  await scopeEntryAccounts(req, filter);
   const limit = Math.min(Number(req.query.limit) || 200, 1000);
   const page = Math.max(Number(req.query.page) || 1, 1);
   const [entries, total] = await Promise.all([
@@ -359,6 +453,7 @@ const createEntry = asyncHandler(async (req, res) => {
   if (!(amount > 0)) { res.status(400); throw new Error('A positive amount is required'); }
   const acc = await CashAccount.findById(account);
   if (!acc) { res.status(404); throw new Error('Account not found'); }
+  if (accountOutOfScope(req, acc)) { res.status(404); throw new Error('Account not found'); }
 
   const entry = await CashbookEntry.create({
     account,
@@ -392,6 +487,7 @@ const createEntry = asyncHandler(async (req, res) => {
 const updateEntry = asyncHandler(async (req, res) => {
   const entry = await CashbookEntry.findById(req.params.id);
   if (!entry) { res.status(404); throw new Error('Entry not found'); }
+  if (await entryOutOfScope(req, entry)) { res.status(404); throw new Error('Entry not found'); }
   if (entry.transferGroup) { res.status(400); throw new Error('Transfer legs cannot be edited; delete the transfer instead.'); }
   const prevAccount = entry.account ? String(entry.account) : null;
 
@@ -404,7 +500,11 @@ const updateEntry = asyncHandler(async (req, res) => {
     entry.amount = a;
   }
   if (req.body.date !== undefined) { const d = parseDate(req.body.date); if (d) entry.date = d; }
-  if (req.body.account !== undefined && req.body.account) entry.account = req.body.account;
+  if (req.body.account !== undefined && req.body.account) {
+    const nextAcc = await CashAccount.findById(req.body.account).select('company').lean();
+    if (!nextAcc || accountOutOfScope(req, nextAcc)) { res.status(404); throw new Error('Account not found'); }
+    entry.account = req.body.account;
+  }
   if (req.body.status !== undefined && ENTRY_STATUS.includes(req.body.status)) entry.status = req.body.status;
   await entry.save();
 
@@ -425,6 +525,7 @@ const updateEntry = asyncHandler(async (req, res) => {
 const deleteEntry = asyncHandler(async (req, res) => {
   const entry = await CashbookEntry.findById(req.params.id);
   if (!entry) { res.status(404); throw new Error('Entry not found'); }
+  if (await entryOutOfScope(req, entry)) { res.status(404); throw new Error('Entry not found'); }
   const affected = new Set();
   const toDelete = [entry];
   if (entry.transferGroup) {
@@ -456,6 +557,7 @@ const reviewVoucher = asyncHandler(async (req, res) => {
   if (!['approve', 'reject'].includes(action)) { res.status(400); throw new Error("action must be 'approve' or 'reject'"); }
   const entry = await CashbookEntry.findById(req.params.id);
   if (!entry) { res.status(404); throw new Error('Entry not found'); }
+  if (await entryOutOfScope(req, entry)) { res.status(404); throw new Error('Entry not found'); }
   if (entry.status !== 'Pending') { res.status(400); throw new Error(`This voucher is already ${entry.status}.`); }
 
   entry.reviewedBy = req.user._id;
@@ -467,6 +569,7 @@ const reviewVoucher = asyncHandler(async (req, res) => {
     if (!accountId) { res.status(400); throw new Error('Pick an account to pay this voucher from'); }
     const acc = await CashAccount.findById(accountId);
     if (!acc) { res.status(404); throw new Error('Account not found'); }
+    if (accountOutOfScope(req, acc)) { res.status(404); throw new Error('Account not found'); }
     entry.account = accountId;
     entry.status = 'Approved';
     if (req.body.category) entry.category = req.body.category;
@@ -514,6 +617,9 @@ const transfer = asyncHandler(async (req, res) => {
   if (!(amount > 0)) { res.status(400); throw new Error('A positive amount is required'); }
   const [from, to] = await Promise.all([CashAccount.findById(fromAccount), CashAccount.findById(toAccount)]);
   if (!from || !to) { res.status(404); throw new Error('Account not found'); }
+  if (accountOutOfScope(req, from) || accountOutOfScope(req, to)) {
+    res.status(404); throw new Error('Account not found');
+  }
 
   const date = parseDate(req.body.date) || new Date();
   const group = new mongoose.Types.ObjectId();
@@ -536,15 +642,24 @@ const transfer = asyncHandler(async (req, res) => {
  */
 // GET /api/cashbook/overview — headline numbers for the dashboard
 const overview = asyncHandler(async (req, res) => {
-  const accounts = await CashAccount.find({ isActive: true }).lean();
+  const accounts = await CashAccount.find({ isActive: true, ...accountCompanyFilter(req) }).lean();
   const totalCash = accounts.reduce((s, a) => s + (a.currentBalance || 0), 0);
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+  // The day's totals cover EVERY allowed account, not just the active ones the
+  // header lists — an entry through a since-deactivated account must still
+  // reconcile with the ledger and summary screens. aggregate() does not cast,
+  // so real ObjectIds.
+  const allowedIds = await allowedAccountIds(req);
+  const scoped = allowedIds
+    ? { account: { $in: allowedIds.map((id) => new mongoose.Types.ObjectId(id)) } }
+    : {};
+  const pendingFilter = await scopeEntryAccounts(req, { status: 'Pending' });
   const [todayAgg, pending] = await Promise.all([
     CashbookEntry.aggregate([
-      { $match: { status: 'Approved', date: { $gte: startOfDay } } },
+      { $match: { status: 'Approved', date: { $gte: startOfDay }, ...scoped } },
       { $group: { _id: '$type', total: { $sum: '$amount' } } },
     ]),
-    CashbookEntry.countDocuments({ status: 'Pending' }),
+    CashbookEntry.countDocuments(pendingFilter),
   ]);
   let todayIn = 0, todayOut = 0;
   todayAgg.forEach((r) => { if (r._id === 'in') todayIn = r.total; else if (r._id === 'out') todayOut = r.total; });
@@ -564,6 +679,7 @@ const daybook = asyncHandler(async (req, res) => {
   if (!account) { res.status(400); throw new Error('account is required'); }
   const acc = await CashAccount.findById(account);
   if (!acc) { res.status(404); throw new Error('Account not found'); }
+  if (accountOutOfScope(req, acc)) { res.status(404); throw new Error('Account not found'); }
   const from = req.query.from && parseDate(req.query.from);
   const to = req.query.to && parseDate(req.query.to);
   if (to) to.setHours(23, 59, 59, 999);
@@ -607,6 +723,13 @@ const daybook = asyncHandler(async (req, res) => {
 const summary = asyncHandler(async (req, res) => {
   const match = { status: 'Approved' };
   if (req.query.account) match.account = new mongoose.Types.ObjectId(req.query.account);
+  // Company wall — aggregate() does not cast strings, so use real ObjectIds.
+  const allowedAcc = await allowedAccountIds(req);
+  if (allowedAcc) {
+    const allowedSet = new Set(allowedAcc);
+    if (match.account && !allowedSet.has(String(match.account))) match.account = { $in: [] };
+    else if (!match.account) match.account = { $in: allowedAcc.map((id) => new mongoose.Types.ObjectId(id)) };
+  }
   const from = req.query.from && parseDate(req.query.from);
   const to = req.query.to && parseDate(req.query.to);
   if (from || to) { match.date = {}; if (from) match.date.$gte = from; if (to) { to.setHours(23, 59, 59, 999); match.date.$lte = to; } }
@@ -634,6 +757,7 @@ const summary = asyncHandler(async (req, res) => {
 // GET /api/cashbook/reports/export — Excel workbook of the filtered ledger
 const exportExcel = asyncHandler(async (req, res) => {
   const filter = entryFilterFromQuery(req.query);
+  await scopeEntryAccounts(req, filter);
   const entries = await CashbookEntry.find(filter)
     .populate('account', 'name')
     .populate('employee', USER_FIELDS)
@@ -748,12 +872,15 @@ const exportExcel = asyncHandler(async (req, res) => {
  */
 // GET /api/cashbook/entries/:id/receipt — stream the receipt (owner or manager)
 const getReceipt = asyncHandler(async (req, res) => {
-  const entry = await CashbookEntry.findById(req.params.id).select('attachment employee');
+  const entry = await CashbookEntry.findById(req.params.id).select('attachment employee account');
   if (!entry || !entry.attachment?.storagePath) { res.status(404); throw new Error('Receipt not found'); }
   const isOwner = entry.employee && String(entry.employee) === String(req.user._id);
-  const isManager = req.user.role === 'SuperAdmin' || req.user.role === 'AccountsManager'
+  // A manager only within the company wall — role alone no longer opens
+  // another company's receipts.
+  const isManager = (req.user.role === 'SuperAdmin' || req.user.role === 'AccountsManager'
     || (req.user.role === 'HRManager' && (!req.user.permissions || req.user.permissions.includes('cashbook.manage')))
-    || ['CEO', 'MD'].includes(req.user.role);
+    || ['CEO', 'MD'].includes(req.user.role))
+    && !(await entryOutOfScope(req, entry));
   if (!isOwner && !isManager) { res.status(403); throw new Error('Not allowed'); }
   if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
   if (!(await storage.streamTo(entry.attachment.storagePath, res))) { res.status(404); throw new Error('Receipt file missing'); }

@@ -6,6 +6,9 @@
 const asyncHandler = require('express-async-handler');
 const WorkLocation = require('../models/WorkLocation');
 const EmployeeProfile = require('../models/EmployeeProfile');
+// Company wall: WorkLocation carries its own `company`; assigned-employee
+// listings are EmployeeProfile queries.
+const { viewerCompanyScope, employeeProfileScope, allowedEmployeeIds } = require('../utils/employeeScope');
 
 /**
  * List all work locations, each with its assigned-employee count.
@@ -14,12 +17,22 @@ const EmployeeProfile = require('../models/EmployeeProfile');
  */
 // GET /api/work-locations — all locations with how many employees are assigned.
 const listLocations = asyncHandler(async (req, res) => {
-  const locations = await WorkLocation.find()
+  // Company wall: a walled viewer sees only their own companies' sites, plus
+  // company-less sites — those are shared and belong to nobody else's company.
+  const scope = viewerCompanyScope(req);
+  const siteFilter = scope
+    ? { $or: [{ company: { $in: scope.ids } }, { company: null }] }
+    : {};
+  const locations = await WorkLocation.find(siteFilter)
     .populate('company', 'name code')
     .sort({ name: 1 })
     .lean();
+  // Headcounts likewise only count in-scope employees. allowedEmployeeIds gives
+  // real ObjectIds — aggregate() does no ref casting, so the profile-scope
+  // filter fragment (string ids) can't be $match-ed directly.
+  const empIds = await allowedEmployeeIds(req);
   const counts = await EmployeeProfile.aggregate([
-    { $match: { workLocationRef: { $ne: null } } },
+    { $match: { workLocationRef: { $ne: null }, ...(empIds ? { _id: { $in: empIds } } : {}) } },
     { $group: { _id: '$workLocationRef', n: { $sum: 1 } } },
   ]);
   // Map location id -> headcount to attach counts without extra queries
@@ -147,7 +160,9 @@ const deleteLocation = asyncHandler(async (req, res) => {
  */
 // GET /api/work-locations/:id/employees — profiles assigned here.
 const listAssigned = asyncHandler(async (req, res) => {
-  const employees = await EmployeeProfile.find({ workLocationRef: req.params.id })
+  // Company wall: on a shared (company-less) site, a walled viewer still only
+  // sees their own company's people assigned there.
+  const employees = await EmployeeProfile.find({ workLocationRef: req.params.id, ...employeeProfileScope(req) })
     .select('employeeCode designation user')
     .populate('user', 'firstName lastName email')
     .sort({ employeeCode: 1 })

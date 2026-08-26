@@ -6,6 +6,7 @@
 const asyncHandler = require('express-async-handler');
 const OnboardingTask = require('../models/OnboardingTask');
 const { ONBOARDING_STATUS } = require('../models/OnboardingTask');
+const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email';
 const CREATOR_FIELDS = 'firstName lastName';
@@ -59,6 +60,9 @@ const listTasks = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.employee) filter.employee = req.query.employee;
   if (req.query.status) filter.status = req.query.status;
+  // Company wall: only tasks of employees this admin may see
+  // (OnboardingTask.employee is a User id). No-op for unrestricted viewers.
+  await scopeUserField(req, filter);
   const tasks = await OnboardingTask.find(filter)
     .populate('employee', USER_FIELDS)
     .populate('createdBy', CREATOR_FIELDS)
@@ -92,7 +96,8 @@ const createTask = asyncHandler(async (req, res) => {
  */
 const updateTask = asyncHandler(async (req, res) => {
   const task = await OnboardingTask.findById(req.params.id);
-  if (!task) {
+  // Company wall: an out-of-scope employee's task is reported as not found.
+  if (!task || (await cannotSeeUser(req, task.employee))) {
     res.status(404);
     throw new Error('Task not found');
   }
@@ -113,7 +118,8 @@ const updateTask = asyncHandler(async (req, res) => {
  */
 const deleteTask = asyncHandler(async (req, res) => {
   const task = await OnboardingTask.findById(req.params.id);
-  if (!task) {
+  // Company wall: same not-found treatment as updateTask.
+  if (!task || (await cannotSeeUser(req, task.employee))) {
     res.status(404);
     throw new Error('Task not found');
   }

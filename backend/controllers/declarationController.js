@@ -6,6 +6,7 @@
 const asyncHandler = require('express-async-handler');
 const InvestmentDeclaration = require('../models/InvestmentDeclaration');
 const { DECLARATION_STATUSES, REGIMES } = require('../models/InvestmentDeclaration');
+const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 
 const EMPLOYEE_FIELDS = 'firstName lastName email';
 
@@ -148,6 +149,9 @@ const listAll = asyncHandler(async (req, res) => {
   const filter = {};
   if (status) filter.status = status;
   if (financialYear) filter.financialYear = financialYear;
+  // Company wall: only declarations of employees this admin may see
+  // (InvestmentDeclaration.employee is a User id). No-op when unrestricted.
+  await scopeUserField(req, filter);
 
   const declarations = await InvestmentDeclaration.find(filter)
     .populate('employee', EMPLOYEE_FIELDS)
@@ -172,7 +176,9 @@ const reviewDeclaration = asyncHandler(async (req, res) => {
   }
 
   const declaration = await InvestmentDeclaration.findById(req.params.id);
-  if (!declaration) {
+  // Company wall: an out-of-scope employee's declaration is reported as not
+  // found — a tax declaration is exactly the data the wall exists to protect.
+  if (!declaration || (await cannotSeeUser(req, declaration.employee))) {
     res.status(404);
     throw new Error('Declaration not found');
   }

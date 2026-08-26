@@ -5,6 +5,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const Payroll = require('../models/Payroll');
+const { scopeEmployeeFilter } = require('../utils/employeeScope');
 
 // --- helpers -------------------------------------------------------------
 
@@ -49,9 +50,12 @@ function initTotals(keys) {
 }
 
 // Fetch processed payslips for a given month/year, populated, valid rows only.
-async function fetchPayslips({ month, year }) {
+// Scoped like the payroll module itself — these reports were the back door
+// around its per-admin scoping, handing company B's salaries to company A.
+async function fetchPayslips(req, { month, year }) {
   const filter = { payPeriodYear: year };
   if (month) filter.payPeriodMonth = month;
+  await scopeEmployeeFilter(req, filter);
 
   const payslips = await Payroll.find(filter)
     .populate(EMPLOYEE_POPULATE)
@@ -71,7 +75,7 @@ async function fetchPayslips({ month, year }) {
  */
 const pfReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
-  const payslips = await fetchPayslips({ month, year });
+  const payslips = await fetchPayslips(req, { month, year });
 
   const cols = ['epfWages', 'employeeEpf', 'employerEpf', 'eps'];
   const totals = initTotals(cols);
@@ -105,7 +109,7 @@ const pfReport = asyncHandler(async (req, res) => {
 // NOTE: ESI typically applies only when an employee's gross <= 21000/month.
 const esiReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
-  const payslips = await fetchPayslips({ month, year });
+  const payslips = await fetchPayslips(req, { month, year });
 
   const cols = ['gross', 'employeeEsi', 'employerEsi'];
   const totals = initTotals(cols);
@@ -136,7 +140,7 @@ const esiReport = asyncHandler(async (req, res) => {
  */
 const ptReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
-  const payslips = await fetchPayslips({ month, year });
+  const payslips = await fetchPayslips(req, { month, year });
 
   const cols = ['gross', 'professionalTax'];
   const totals = initTotals(cols);
@@ -165,7 +169,7 @@ const ptReport = asyncHandler(async (req, res) => {
  */
 const tdsReport = asyncHandler(async (req, res) => {
   const { month, year } = parsePeriod(req);
-  const payslips = await fetchPayslips({ month, year });
+  const payslips = await fetchPayslips(req, { month, year });
 
   const cols = ['gross', 'tds'];
   const totals = initTotals(cols);
@@ -196,7 +200,7 @@ const tdsReport = asyncHandler(async (req, res) => {
 const form16Summary = asyncHandler(async (req, res) => {
   const { year } = parsePeriod(req);
   // Ignore any month filter for the annual summary.
-  const payslips = await fetchPayslips({ month: null, year });
+  const payslips = await fetchPayslips(req, { month: null, year });
 
   const cols = ['annualGross', 'annualEpf', 'annualPt', 'annualTds', 'annualNet'];
   const totals = initTotals(cols);

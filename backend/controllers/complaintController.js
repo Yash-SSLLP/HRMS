@@ -11,6 +11,8 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { notifyMany } = require('../services/notify');
 const { isEditingExec } = require('../middleware/authMiddleware');
+// Company wall: Complaint.complainant refs User, so the User-keyed helper applies.
+const { scopeUserField } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email role';
 
@@ -128,6 +130,9 @@ const assignedComplaints = asyncHandler(async (req, res) => {
     throw new Error('Only the CEO, HR and SuperAdmins can view complaints');
   }
   const filter = { against: { $ne: req.user._id } };
+  // Company wall: a walled leader only sees complaints raised by their own
+  // company's people. The never-see-your-own-accusations rule above still holds.
+  await scopeUserField(req, filter, 'complainant');
 
   const complaints = await Complaint.find(filter)
     .populate('complainant', USER_FIELDS)

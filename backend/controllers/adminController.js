@@ -13,6 +13,7 @@ const Company = require('../models/Company');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
+const { scopeUserFilter } = require('../utils/employeeScope');
 const { isEditingExec } = require('../middleware/authMiddleware');
 const { enqueueMail } = require('../services/email');
 const COMPANY = require('../config/company');
@@ -83,6 +84,9 @@ const listUsers = asyncHandler(async (req, res) => {
       filter.role = { $nin: excludedRoles };
     }
   }
+  // Company wall: a non-Backend viewer only sees accounts of their own
+  // company (plus group-wide execs); no-op for SuperAdmin / unrestricted.
+  await scopeUserFilter(req, filter);
   const users = await User.find(filter).sort({ createdAt: -1 });
 
   // Attach the two attendance grants that live on the employee profile — may
@@ -112,7 +116,7 @@ const listUsers = asyncHandler(async (req, res) => {
  */
 // GET /api/admin/users/:id
 const getUser = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id);
+  const user = await User.findOne(await scopeUserFilter(req, { _id: req.params.id }));
   if (!user) {
     res.status(404);
     throw new Error('User not found');
@@ -187,7 +191,9 @@ const createUser = asyncHandler(async (req, res) => {
  */
 // PUT /api/admin/users/:id
 const updateUser = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id);
+  // Company wall on the write path too: a non-Backend admin cannot address
+  // another company's account by id (reads as not-found, same as the list).
+  const user = await User.findOne(await scopeUserFilter(req, { _id: req.params.id }));
   if (!user) {
     res.status(404);
     throw new Error('User not found');

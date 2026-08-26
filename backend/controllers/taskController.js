@@ -6,6 +6,7 @@
 const asyncHandler = require('express-async-handler');
 const Task = require('../models/Task');
 const { TASK_STATUS, TASK_PRIORITY } = require('../models/Task');
+const { scopeUserField } = require('../utils/employeeScope');
 
 // Populated user sub-fields returned for assignedTo references
 const USER_FIELDS = 'firstName lastName email role';
@@ -24,6 +25,14 @@ const listTasks = asyncHandler(async (req, res) => {
   if (req.query.project) filter.project = req.query.project;
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
   if (req.query.status) filter.status = req.query.status;
+  // Company wall: walled admins only see tasks assigned to people of their own
+  // company (Task.assignedTo is a User id).
+  await scopeUserField(req, filter, 'assignedTo');
+  // Unassigned tasks carry no people-data, so keep them visible to walled
+  // viewers too — unless a specific assignee was asked for above.
+  if (!req.query.assignedTo && filter.assignedTo && Array.isArray(filter.assignedTo.$in)) {
+    filter.assignedTo.$in.push(null);
+  }
   const tasks = await Task.find(filter)
     .populate('assignedTo', USER_FIELDS)
     .populate('project', 'name status')

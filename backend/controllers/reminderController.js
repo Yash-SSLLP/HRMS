@@ -12,6 +12,9 @@ const { REMINDER_SCOPES, REMINDER_PRIORITIES, BROADCAST_ROLES } = require('../mo
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { notifyMany } = require('../services/notify');
+// Company wall: Reminder.createdBy / recipients ref User, so the User-keyed
+// helper applies.
+const { allowedUserIds } = require('../utils/employeeScope');
 
 const CREATOR_FIELDS = 'firstName lastName role';
 
@@ -83,6 +86,18 @@ const listReminders = asyncHandler(async (req, res) => {
   const filter = req.query.mine === '1'
     ? { createdBy: req.user._id }
     : Reminder.visibleFilter(req.user, await myDepartment(req.user));
+
+  // Company wall: visibleFilter fans 'everyone'/'department' reminders across
+  // companies. For a walled viewer, additionally require the reminder to touch
+  // their side of the wall — its creator OR one of its recipients in scope.
+  // (SuperAdmins and group-wide execs are in allowedUserIds, so their org-wide
+  // reminders still reach everybody.) Unrestricted viewers keep full visibility.
+  if (req.query.mine !== '1') {
+    const ids = await allowedUserIds(req);
+    if (ids) {
+      filter.$and = [{ $or: [{ createdBy: { $in: ids } }, { recipients: { $in: ids } }] }];
+    }
+  }
 
   if (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) {
     const [y, m] = req.query.month.split('-').map(Number);

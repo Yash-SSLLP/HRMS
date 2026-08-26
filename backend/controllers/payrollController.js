@@ -28,7 +28,7 @@ const { renderPayslip } = require('../services/payslipPdf');
 const { buildPayslipLines } = require('../services/payslipLines');
 const { buildPayslipFields, buildClassicRows, MONTHS: MONTHS_LONG } = require('../services/payslipFields');
 const { notify, notifyMany } = require('../services/notify');
-const { usersHoldingAny } = require('../services/audience');
+const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { buildYtd, computeYtdFrom } = require('../services/payslipYtd');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
@@ -96,10 +96,11 @@ function logRelease(payslip, action, actor, note) {
 
 const periodLabel = (p) => `${MONTHS_LONG[(p.payPeriodMonth || 1) - 1]} ${p.payPeriodYear}`;
 
-// Tell the people who run payroll that something is waiting on them.
-async function notifyPayrollTeam(title, body) {
+// Tell the people who run payroll that something is waiting on them — only the
+// ones covering the employee's company (the wall the read paths enforce).
+async function notifyPayrollTeam(title, body, companyId) {
   try {
-    await notifyMany(await usersHoldingAny('payroll.manage'), {
+    await notifyMany(await scopeRecipientsToCompany(await usersHoldingAny('payroll.manage'), companyId), {
       type: 'payroll',
       audience: 'admin',
       title,
@@ -201,7 +202,7 @@ const requestMyPayslip = asyncHandler(async (req, res) => {
 
   const who = req.user.fullName || `${req.user.firstName} ${req.user.lastName}`.trim();
   await notifyPayrollTeam('Payslip requested',
-    `${who} asked for their ${periodLabel(payslip)} payslip.`);
+    `${who} asked for their ${periodLabel(payslip)} payslip.`, req.user.scopeCompanyId);
   res.json({ release: payslip.release });
 });
 
@@ -231,7 +232,7 @@ const requestMyPayslipChange = asyncHandler(async (req, res) => {
 
   const who = req.user.fullName || `${req.user.firstName} ${req.user.lastName}`.trim();
   await notifyPayrollTeam('Payslip correction requested',
-    `${who} asked for a change to their ${periodLabel(payslip)} payslip: ${note}`);
+    `${who} asked for a change to their ${periodLabel(payslip)} payslip: ${note}`, req.user.scopeCompanyId);
   res.json({ release: payslip.release });
 });
 

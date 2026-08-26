@@ -9,8 +9,9 @@
  * unfiltered hierarchy is what you see first rather than being made to pick a
  * company before anything renders.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import { useAuthStore } from '../store/authStore';
@@ -76,8 +77,9 @@ function sortTree(nodes) {
     });
 }
 
-// One circular tree node + its branch of reports.
-function TreeNode({ node, depth, editable, selectedId, myId, onSelect, showCompany }) {
+// The person card alone (no <li>, no branch) — shared between the normal tree
+// nodes and the stacked leaf columns below.
+function NodeCard({ node, depth, editable, selectedId, myId, onSelect, showCompany }) {
   const hasReports = Array.isArray(node.reports) && node.reports.length > 0;
   const color = depth === 0 ? ROOT_COLOR : hasReports ? BRANCH_COLOR : LEAF_COLOR;
   const meta = [node.designation, node.department].filter(Boolean).join(' · ');
@@ -96,51 +98,87 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect, showCompa
   const dotShadow = isMe ? '0 0 0 3px #10b981, 0 0 0 6px rgba(16,185,129,0.25)' : 'none';
 
   return (
-    <li>
-      <div
-        // rounded-xl + shadow are load-bearing, not decoration: index.css gives
-        // that pair the app-wide card hairline that adapts to dark mode.
-        className={`org-node rounded-xl shadow ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
-        onClick={() => canEdit && onSelect(node)}
-        title={isMe ? 'This is you'
-          : canEdit && !node.profileId ? `${node.name} — click to change role (no employee profile, so no manager)`
-            : canEdit ? 'Click to set who this person reports to, or change their role'
-              : isExec ? `${node.name} (executive - top of the hierarchy)` : node.name}
+    <div
+      // rounded-xl + shadow are load-bearing, not decoration: index.css gives
+      // that pair the app-wide card hairline that adapts to dark mode.
+      className={`org-node rounded-xl shadow ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
+      onClick={() => canEdit && onSelect(node)}
+      title={isMe ? 'This is you'
+        : canEdit && !node.profileId ? `${node.name} — click to change role (no employee profile, so no manager)`
+          : canEdit ? 'Click to set who this person reports to, or change their role'
+            : isExec ? `${node.name} (executive - top of the hierarchy)` : node.name}
+    >
+      <span
+        className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}
+        title={isCeo ? 'CEO' : undefined}
+        style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px', overflow: 'hidden', boxShadow: dotShadow }}
       >
-        <span
-          className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}
-          title={isCeo ? 'CEO' : undefined}
-          style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px', overflow: 'hidden', boxShadow: dotShadow }}
-        >
-          {node.hasPhoto ? (
-            <AuthImage
-              url={`/auth/users/${node.id}/avatar`}
-              alt={node.name}
-              className="w-full h-full rounded-full object-cover"
-              style={{ width: '100%', height: '100%' }}
-              fallback={<span>{initials(node.name)}</span>}
-            />
-          ) : initials(node.name)}
-        </span>
-        <span className="org-name">
-          {node.name || 'Unnamed'}
-          {isMe && (
-            <span style={{ marginLeft: 6, fontSize: '0.65rem', fontWeight: 700, color: '#047857', background: '#d1fae5', borderRadius: 9999, padding: '1px 6px', verticalAlign: 'middle' }}>
-              You
-            </span>
-          )}
-        </span>
-        {meta && <span className="org-meta">{meta}</span>}
-        {/* Only while every company is on screen at once — repeating the same
-            company name on every node of a filtered chart is pure noise. */}
-        {showCompany && node.companyName && (
-          <span className="org-meta" style={{ opacity: 0.75 }}>{node.companyName}</span>
+        {node.hasPhoto ? (
+          <AuthImage
+            url={`/auth/users/${node.id}/avatar`}
+            alt={node.name}
+            className="w-full h-full rounded-full object-cover"
+            style={{ width: '100%', height: '100%' }}
+            fallback={<span>{initials(node.name)}</span>}
+          />
+        ) : initials(node.name)}
+      </span>
+      <span className="org-name">
+        {node.name || 'Unnamed'}
+        {isMe && (
+          <span style={{ marginLeft: 6, fontSize: '0.65rem', fontWeight: 700, color: '#047857', background: '#d1fae5', borderRadius: 9999, padding: '1px 6px', verticalAlign: 'middle' }}>
+            You
+          </span>
         )}
-      </div>
+      </span>
+      {meta && <span className="org-meta">{meta}</span>}
+      {/* Only while every company is on screen at once — repeating the same
+          company name on every node of a filtered chart is pure noise. */}
+      {showCompany && node.companyName && (
+        <span className="org-meta" style={{ opacity: 0.75 }}>{node.companyName}</span>
+      )}
+    </div>
+  );
+}
+
+// A manager's LEAF reports (nobody under them) stack vertically in columns of
+// at most this many, instead of fanning out side by side. Ten leaf reports
+// used to cost ~10 card-widths of horizontal scroll; stacked they cost three.
+const LEAF_COL_MAX = 4;
+// Even two leaves stack: every mid-level manager with a couple of reports
+// costs one card-width instead of two, and those savings multiply across a
+// level. A single leaf stays inline (a one-card "column" is just the card).
+const LEAF_STACK_MIN = 2;
+
+/** Split leaves into balanced columns of at most LEAF_COL_MAX. */
+function leafColumns(leaves) {
+  const cols = Math.ceil(leaves.length / LEAF_COL_MAX);
+  const per = Math.ceil(leaves.length / cols);
+  const out = [];
+  for (let i = 0; i < leaves.length; i += per) out.push(leaves.slice(i, i + per));
+  return out;
+}
+
+// One circular tree node + its branch of reports.
+function TreeNode({ node, depth, editable, selectedId, myId, onSelect, showCompany }) {
+  const reports = Array.isArray(node.reports) ? node.reports : [];
+  const hasReports = reports.length > 0;
+
+  // Children who are themselves managers keep the classic horizontal branch;
+  // a big group of leaves collapses into compact vertical columns. This is
+  // what keeps a 24-person org from being a 4000px-wide chart.
+  const managers = reports.filter((r) => r.reports && r.reports.length > 0);
+  const leaves = reports.filter((r) => !r.reports || r.reports.length === 0);
+  const stackLeaves = leaves.length >= LEAF_STACK_MIN;
+
+  const cardProps = { depth, editable, selectedId, myId, onSelect, showCompany };
+  return (
+    <li>
+      <NodeCard node={node} {...cardProps} />
 
       {hasReports && (
         <ul>
-          {node.reports.map((child) => (
+          {(stackLeaves ? managers : reports).map((child) => (
             <TreeNode
               key={child.id}
               node={child}
@@ -151,6 +189,20 @@ function TreeNode({ node, depth, editable, selectedId, myId, onSelect, showCompa
               showCompany={showCompany}
               onSelect={onSelect}
             />
+          ))}
+          {stackLeaves && leafColumns(leaves).map((col) => (
+            // Each column hangs off the sibling bar like a single child; the
+            // org-leafcol class shifts its connector onto the column's rail so
+            // the cards clearly read as SIBLINGS on one line, not a chain.
+            <li key={`leafcol-${col[0].id}`} className="org-leafcol">
+              <ul className="org-vstack">
+                {col.map((leaf) => (
+                  <li key={leaf.id}>
+                    <NodeCard node={leaf} {...cardProps} depth={depth + 1} />
+                  </li>
+                ))}
+              </ul>
+            </li>
           ))}
         </ul>
       )}
@@ -171,6 +223,32 @@ export default function AdminOrgChart() {
   const [company, setCompany] = useState('');
   const [companies, setCompanies] = useState([]);
   const [zoom, setZoom] = useState(1);
+  // The scrolling board and the scaled tree inside it, for the fit-to-width
+  // measurement below.
+  const wrapRef = useRef(null);
+  const treeRef = useRef(null);
+
+  // Open at a zoom that shows the WHOLE chart. A wide org always used to
+  // greet the viewer with a horizontal scrollbar and half the tree off-screen;
+  // starting fitted (never above 100%, floored at ZOOM_MIN) shows the shape
+  // first and lets them zoom in for detail. Runs whenever the tree reflows
+  // (load, company filter) but never fights a zoom the user has already set.
+  const userZoomed = useRef(false);
+  useEffect(() => {
+    if (loading || userZoomed.current) return;
+    const wrap = wrapRef.current;
+    const tree = treeRef.current;
+    if (!wrap || !tree) return;
+    const natural = tree.scrollWidth; // unscaled: width comes from max-content
+    // clientWidth includes the board's own padding — take it back out, plus a
+    // little breathing room, or the fit lands a few px over and still scrolls.
+    const cs = getComputedStyle(wrap);
+    const avail = wrap.clientWidth
+      - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0) - 8;
+    if (natural > 0 && avail > 0) {
+      setZoom(Math.max(ZOOM_MIN, Math.min(1, Math.floor((avail / natural) * 100) / 100)));
+    }
+  }, [loading, roots, company]);
 
   const load = async (companyId = company) => {
     try {
@@ -197,9 +275,41 @@ export default function AdminOrgChart() {
     await load(id);
   };
 
-  const zoomBy = (delta) => setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((z + delta) * 100) / 100)));
+  const zoomBy = (delta) => {
+    userZoomed.current = true; // a manual zoom wins over auto-fit from then on
+    setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((z + delta) * 100) / 100)));
+  };
+
+  // Ctrl + scroll (and a trackpad pinch, which browsers deliver as a
+  // ctrl-modified wheel) zooms the board directly — the natural map-style
+  // gesture, instead of hunting for the −/+ buttons. Attached manually with
+  // { passive: false }: React's onWheel is passive, so it cannot
+  // preventDefault, and without that the browser zooms the whole page.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return undefined;
+    const onWheel = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return; // plain scroll keeps scrolling
+      e.preventDefault();
+      userZoomed.current = true;
+      // Proportional steps feel smoother than fixed ones under a pinch.
+      const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+      setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * factor * 100) / 100)));
+    };
+    wrap.addEventListener('wheel', onWheel, { passive: false });
+    return () => wrap.removeEventListener('wheel', onWheel);
+    // Re-attach when the board mounts/unmounts (it only exists once loaded).
+  }, [loading, roots.length]);
   const companyName = companies.find((c) => String(c._id) === String(company))?.name || '';
-  const heading = companyName || ALL_COMPANIES_TITLE;
+  // When exactly one company is visible, its name IS the chart's title — for
+  // everyone, Backend included. "All companies" only earns its place on the
+  // Backend's genuinely multi-company view; anyone else with several visible
+  // (an unrestricted exec) gets the brand name rather than a claim about
+  // companies they never picked between.
+  const heading = companyName
+    || (companies.length === 1 ? companies[0].name
+      : isSuperAdmin ? ALL_COMPANIES_TITLE
+        : COMPANY_NAME);
 
   const everyone = flatten(roots);
   const sortedRoots = sortTree(roots);
@@ -264,8 +374,10 @@ export default function AdminOrgChart() {
         title="Org Chart"
         subtitle={isSuperAdmin ? 'Reporting hierarchy · click a person to set who they report to' : 'Reporting hierarchy'}
       >
-        {/* Only worth a picker when there is more than one company to pick. */}
-        {companies.length > 1 && (
+        {/* Backend only, and only worth a picker when there is more than one
+            company to pick. Everyone else sees just their own company's chart
+            (the server walls the data anyway), so a filter would be noise. */}
+        {isSuperAdmin && companies.length > 1 && (
           <select
             value={company}
             onChange={(e) => onCompanyChange(e.target.value)}
@@ -283,7 +395,7 @@ export default function AdminOrgChart() {
           <button type="button" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}
             aria-label="Zoom out" title="Zoom out"
             className="px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">−</button>
-          <button type="button" onClick={() => setZoom(1)} title="Reset zoom to 100%"
+          <button type="button" onClick={() => { userZoomed.current = true; setZoom(1); }} title="Reset zoom to 100%"
             className="px-2 py-2 text-xs tabular-nums text-gray-600 border-x border-gray-300 hover:bg-gray-50 min-w-[3.25rem]">
             {Math.round(zoom * 100)}%
           </button>
@@ -291,6 +403,7 @@ export default function AdminOrgChart() {
             aria-label="Zoom in" title="Zoom in"
             className="px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">+</button>
         </div>
+        <span className="hidden md:inline text-xs text-gray-400 self-center">Ctrl + scroll to zoom</span>
       </PageHeader>
 
       {error && (
@@ -377,13 +490,16 @@ export default function AdminOrgChart() {
         {!loading && roots.length > 0 && (
           <>
             <h2 className="text-center text-2xl font-bold text-gray-900 mb-2">{heading}</h2>
-            <div className="org-tree-wrap">
+            <div className="org-tree-wrap" ref={wrapRef}>
               {/* The scale sits on an inner wrapper, not on .org-tree-wrap
-                  itself: the wrapper is what scrolls, and transforming a
-                  scroll container shrinks the scrollable area with it, so a
-                  zoomed-in tree could not be panned to its right-hand edge.
-                  `width: max-content` keeps the scroll width honest. */}
-              <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', width: 'max-content', margin: '0 auto', transition: 'transform 120ms ease-out' }}>
+                  itself: the wrapper is what scrolls. CSS `zoom` rather than a
+                  transform: zoom participates in LAYOUT, so a shrunk tree
+                  also shrinks its box (no dead band below, no unreachable
+                  left half — both artifacts the old transform had), and a
+                  zoomed-in tree grows real scrollable width. `width:
+                  max-content` keeps the natural width measurable for the
+                  fit-to-width effect above. */}
+              <div ref={treeRef} style={{ zoom, width: 'max-content', margin: '0 auto' }}>
               <ul className="org-tree">
                 {/* Synthetic company root, branching to the real org roots. Its
                     dot carries the animated company mark rather than a flat

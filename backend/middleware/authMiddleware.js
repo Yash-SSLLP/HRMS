@@ -6,6 +6,53 @@ const jwt = require('jsonwebtoken');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 
+// Roles whose company wall comes from their own account (`User.companies`) or
+// who have none at all — everyone else's wall is their own profile's company.
+const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+
+/**
+ * Resolve which company this (non-exec, non-Backend) account belongs to and
+ * stash it on the user object as `scopeCompanyId` for utils/employeeScope's
+ * company wall. One indexed findOne per request; SuperAdmin and CEO/MD skip it
+ * (their scope lives on the account itself).
+ * @param {object} user - the loaded User doc (mutated: gains scopeCompanyId)
+ * @sideeffect Sets user.scopeCompanyId (ObjectId|null). Never persisted.
+ */
+// Which company each account belongs to changes only when the Backend
+// reassigns somebody, so a short in-memory cache absorbs the per-request
+// lookup (chat polls alone would otherwise hit the shared cluster once per
+// poll per user). 60s bounds how stale a reassignment can look.
+const SCOPE_COMPANY_TTL_MS = 60 * 1000;
+const scopeCompanyCache = new Map(); // userId -> { companyId, at }
+
+async function attachScopeCompany(user) {
+  if (!user || ACCOUNT_SCOPED_ROLES.includes(user.role)) return;
+  const key = String(user._id);
+  const hit = scopeCompanyCache.get(key);
+  if (hit && Date.now() - hit.at < SCOPE_COMPANY_TTL_MS) {
+    user.scopeCompanyId = hit.companyId;
+    return;
+  }
+  // Lazy require to avoid a model-load cycle at module init.
+  const EmployeeProfile = require('../models/EmployeeProfile');
+  const prof = await EmployeeProfile.findOne({ user: user._id }).select('company').lean();
+  user.scopeCompanyId = (prof && prof.company) || null;
+  scopeCompanyCache.set(key, { companyId: user.scopeCompanyId, at: Date.now() });
+  // Keep the cache from growing without bound on a long-lived process.
+  if (scopeCompanyCache.size > 5000) scopeCompanyCache.clear();
+}
+
+/**
+ * Drop cached company scopes after a reassignment so the wall moves with the
+ * person immediately instead of after the TTL. Call with the affected USER
+ * ids (not profile ids); no ids = flush everything.
+ * @param {Array} [userIds]
+ */
+function invalidateScopeCompany(userIds) {
+  if (!userIds || !userIds.length) { scopeCompanyCache.clear(); return; }
+  for (const id of userIds) scopeCompanyCache.delete(String(id));
+}
+
 /**
  * Authenticate a request via `Authorization: Bearer <jwt>`. Verifies the token,
  * loads the User, and rejects deactivated accounts or tokens invalidated by a
@@ -50,6 +97,7 @@ const protect = asyncHandler(async (req, res, next) => {
     throw new Error('Session expired. Please log in again.');
   }
 
+  await attachScopeCompany(user);
   req.user = user;
   next();
 });
@@ -100,6 +148,7 @@ const protectMedia = asyncHandler(async (req, res, next) => {
     throw new Error('Session expired. Please log in again.');
   }
 
+  await attachScopeCompany(user);
   req.user = user;
   next();
 });
@@ -315,6 +364,7 @@ const requireAdvanceApprover = (req, res, next) => {
 module.exports = {
   protect,
   protectMedia,
+  invalidateScopeCompany,
   restrictTo,
   EXEC_VIEWERS,
   isExecViewer,

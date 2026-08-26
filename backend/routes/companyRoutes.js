@@ -1,19 +1,15 @@
 /**
  * Company router — mounted at /api/companies.
  *
- * The companies (legal entities) the HRMS runs for. Reading the list is open to
- * any authenticated user (it feeds dropdowns on the employee form and the CEO/MD
- * company assignment), and HR Managers read it on the Companies page.
+ * The companies (legal entities) the HRMS runs for. Reading the LIST stays open
+ * to any authenticated user because it feeds dropdowns (the employee form, the
+ * CEO/MD company assignment) — but the controller walls it, so a non-Backend
+ * caller is only ever told about their own company.
  *
- * WRITES ARE THE BACKEND'S AND THE EXECUTIVES': a company is the executive's own
- * domain, so CEO/MD are named in the gate rather than reaching it through the
- * usual exec read-only rule. Listing them explicitly in `restrictTo` is what
- * makes their writes pass WITHOUT `execEditAccess` — the same deliberate
- * exception the advance-sanction route makes, and the reason it is spelled out
- * here. An HR Manager reads this page but cannot change it.
- *
- * A CEO/MD narrowed to certain companies (User.companies) may only touch those;
- * `assertCompanyScope` in the controller enforces it.
+ * EVERYTHING ELSE IS THE BACKEND'S (SuperAdmin) ALONE — the Companies page,
+ * its roster, and every write. This deliberately reverses the earlier
+ * "CEO/MD may manage companies" exception: the user decided the Companies tab
+ * is a Backend-only surface, so the routes match the nav.
  */
 const express = require('express');
 const {
@@ -29,20 +25,25 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 const router = express.Router();
 router.use(protect);
 
-// GET / — list companies; any authenticated user (used for dropdowns).
+// GET / — list companies; any authenticated user (dropdowns; company-walled).
 router.get('/', listCompanies);
 
-// Writes: the Backend and the executives. Naming CEO/MD here (rather than
-// letting them fall through the exec read-only branch of restrictTo) is what
-// lets a view-only executive change a company — see the note above.
-const MAY_MANAGE = ['SuperAdmin', 'CEO', 'MD'];
-router.post('/', restrictTo(...MAY_MANAGE), createCompany);
-router.put('/:id', restrictTo(...MAY_MANAGE), updateCompany);
-router.delete('/:id', restrictTo(...MAY_MANAGE), deleteCompany);
+// The Companies page and every write: Backend only. NOTE restrictTo would let
+// CEO/MD read the roster through its exec-GET back door, so the roster uses an
+// explicit inline gate instead.
+const superAdminOnly = (req, res, next) => {
+  if (req.user.role !== 'SuperAdmin') {
+    res.status(403);
+    return next(new Error('Companies are managed by the Backend account only.'));
+  }
+  next();
+};
+router.post('/', superAdminOnly, createCompany);
+router.put('/:id', superAdminOnly, updateCompany);
+router.delete('/:id', superAdminOnly, deleteCompany);
 
-// Who belongs to a company. Reading the roster is open like the list above (HR
-// reads this page); moving people in and out is a write like any other.
-router.get('/:id/employees', listCompanyEmployees);
-router.patch('/:id/employees', restrictTo(...MAY_MANAGE), updateCompanyEmployees);
+// Who belongs to a company — the roster behind the page's "Employees" button.
+router.get('/:id/employees', superAdminOnly, listCompanyEmployees);
+router.patch('/:id/employees', superAdminOnly, updateCompanyEmployees);
 
 module.exports = router;

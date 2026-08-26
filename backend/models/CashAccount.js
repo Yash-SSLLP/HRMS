@@ -53,6 +53,11 @@ const cashAccountSchema = new mongoose.Schema(
     note: { type: String, trim: true, maxlength: 300 },
     isActive: { type: Boolean, default: true },
 
+    // Which company's money this book holds. Null = shared/legacy, visible to
+    // every cashbook operator; set, the account AND its ledger are walled to
+    // that company's admins (utils/employeeScope).
+    company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
+
     // Employee-khata operators for this account — see accountOperatorSchema.
     // Empty means only a SuperAdmin can pay employees out of this book.
     // Does NOT affect the ordinary cashbook routes, which stay on

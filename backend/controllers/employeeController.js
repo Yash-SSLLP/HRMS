@@ -21,7 +21,7 @@ const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
 const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
-const { employeeProfileScope, cannotManageProfile } = require('../utils/employeeScope');
+const { employeeProfileScope, cannotManageProfile, viewerCompanyScope, scopeEmployeeFilter, companyOutOfScope } = require('../utils/employeeScope');
 const { hasPermission, isEditingExec } = require('../middleware/authMiddleware');
 const { FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange } = require('../services/profileChanges');
 const { notifyMany } = require('../services/notify');
@@ -52,7 +52,10 @@ async function findProfileByCode(code, excludeProfileId = null) {
   if (!employeeCode) return null;
   const query = { employeeCode };
   if (excludeProfileId) query._id = { $ne: excludeProfileId };
-  return EmployeeProfile.findOne(query).select('_id employeeCode user').populate('user', 'firstName lastName email');
+  // hrPartner + company ride along for the scope check in checkEmployeeCode —
+  // without them cannotManageProfile judges an empty profile and gets the
+  // answer wrong in both directions.
+  return EmployeeProfile.findOne(query).select('_id employeeCode user hrPartner company').populate('user', 'firstName lastName email');
 }
 
 /**
@@ -91,7 +94,11 @@ const checkEmployeeCode = asyncHandler(async (req, res) => {
   res.json({
     code,
     available: !clash,
-    takenBy: clash
+    // Name the holder only when the caller may see them — a taken code from
+    // another company stays just "taken", not a directory probe. The COMPANY
+    // wall, not the hrPartner rule: any same-company admin may be told which
+    // colleague holds the code, or the message is useless.
+    takenBy: clash && !companyOutOfScope(req, clash)
       ? `${clash.user?.firstName || ''} ${clash.user?.lastName || ''}`.trim() || undefined
       : undefined,
   });
@@ -202,6 +209,25 @@ function payloadSetPath(obj, path, value) {
 //                          none set they are unrestricted (see User.companies).
 const scopeForHR = (req) => employeeProfileScope(req);
 const hrCannotManage = (req, profile) => cannotManageProfile(req, profile);
+
+/**
+ * A company-walled admin may only place an employee in a company they can see.
+ * Without this, HR of company A could set `company` to company B — moving the
+ * person straight out of their own wall (and out of reach of undoing it).
+ * @param {import('express').Request} req
+ * @param {*} companyId - the requested `company` value (falsy = unassigned, allowed)
+ * @throws 403 via res-less Error with .status when out of scope
+ */
+function assertAssignableCompany(req, companyId) {
+  if (!companyId) return; // clearing / leaving unassigned is always fine
+  const scope = viewerCompanyScope(req);
+  if (!scope) return; // Backend / unrestricted viewer
+  if (!scope.ids.includes(String(companyId))) {
+    const err = new Error('You can only place employees in your own company.');
+    err.status = 403;
+    throw err;
+  }
+}
 
 // Executives (and the Backend account) can manage anyone: they have no employee
 // profile and therefore no department, so the department rule below can't apply
@@ -606,6 +632,7 @@ const createEmployee = asyncHandler(async (req, res) => {
   delete req.body.allowCrossDepartment;
 
   await validateHierarchy(req.body, userId, null, allowCrossDept);
+  assertAssignableCompany(req, req.body.company);
   await assertWorkLocationCompany(req.body.workLocationRef, req.body.company, null);
 
   const profile = await EmployeeProfile.create(req.body);
@@ -677,6 +704,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
   // Resulting (company, site) after this write — validate only a newly-introduced mismatch.
   const resultingRef = req.body.workLocationRef !== undefined ? req.body.workLocationRef : profile.workLocationRef;
   const resultingCompany = req.body.company !== undefined ? req.body.company : profile.company;
+  if (req.body.company !== undefined) assertAssignableCompany(req, req.body.company);
   await assertWorkLocationCompany(resultingRef, resultingCompany, profile);
 
   // --- Route covered "detail" fields through the approval workflow ---
@@ -709,6 +737,12 @@ const updateEmployee = asyncHandler(async (req, res) => {
 
   Object.assign(profile, req.body);
   await profile.save();
+
+  // A company change moves this person's wall — drop their cached scope so it
+  // applies on their next request, not after the auth cache's TTL.
+  if (req.body.company !== undefined) {
+    require('../middleware/authMiddleware').invalidateScopeCompany([profile.user]);
+  }
 
   // Audit direct edits (Backend / exec edit-mode).
   if (directAudits.length) {
@@ -1177,6 +1211,8 @@ const listImportFlags = asyncHandler(async (req, res) => {
   if (status !== 'all') filter.status = status;
   if (req.query.batch) filter.batch = req.query.batch;
 
+  // Company wall: flags about another company's employees stay invisible.
+  await scopeEmployeeFilter(req, filter);
   const flags = await ImportFlag.find(filter)
     .populate('user', 'firstName lastName email role')
     .populate({ path: 'employee', select: 'employeeCode designation department grade workLocation' })
@@ -1238,6 +1274,7 @@ const FLAG_WRITERS = {
     if (!co) throw new Error(`No company called "${value}" — add it under Companies first`);
     profile.company = co._id;
     await profile.save();
+    require('../middleware/authMiddleware').invalidateScopeCompany([profile.user]);
     return co.name;
   },
   salaryStructure: async (value, { profile }) => {
@@ -1394,6 +1431,13 @@ const createDocLink = asyncHandler(async (req, res) => {
   if (!profile) {
     res.status(404);
     throw new Error('Employee not found');
+  }
+  // Same wall as every other per-employee admin action — minting a public
+  // upload/view link for another company's employee is exactly the kind of
+  // side door the scope exists to close.
+  if (hrCannotManage(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
   }
   if (!profile.docToken) {
     profile.docToken = crypto.randomBytes(24).toString('hex');

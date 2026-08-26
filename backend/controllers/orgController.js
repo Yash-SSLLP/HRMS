@@ -10,7 +10,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const Company = require('../models/Company');
 const { hiddenUserIds } = require('../utils/visibility');
-const { execCompanyIds } = require('../utils/employeeScope');
+const { viewerCompanyScope } = require('../utils/employeeScope');
 
 /**
  * Return the reporting hierarchy as a forest of nodes for the org-chart view.
@@ -46,18 +46,22 @@ const orgChart = asyncHandler(async (req, res) => {
 
   // What this viewer is allowed to see, then what they asked to see. The scope
   // is applied first and the request narrowed INTO it, so `?company=` can never
-  // widen an executive past their own companies.
-  const allowed = execCompanyIds(req.user);
+  // widen anybody past their own companies. This is no longer exec-only: every
+  // non-Backend viewer (HR, managers, plain employees) is walled into their own
+  // company; a viewer whose own profile has no company stays unrestricted.
+  const scope = viewerCompanyScope(req);
   const asked = req.query.company;
   const askedValid = asked && mongoose.Types.ObjectId.isValid(asked) ? String(asked) : '';
-  let companyFilter = allowed;
-  if (askedValid) companyFilter = allowed.length && !allowed.includes(askedValid) ? ['__none__'] : [askedValid];
-  // `{ $in: [] }` matches NOTHING. `company: null` would have been wrong here:
-  // in Mongo that matches every employee with no company set, so an executive
+  // `{ $in: [] }` matches NOTHING. Bare `company: null` would have been wrong
+  // here: in Mongo that matches every employee with no company set, so a viewer
   // asking for a company they do not hold would have been handed the
-  // unassigned people instead of an empty chart.
-  if (companyFilter.length === 1 && companyFilter[0] === '__none__') filter.company = { $in: [] };
-  else if (companyFilter.length) filter.company = { $in: companyFilter };
+  // unassigned people instead of an empty chart. Non-exec viewers DO also see
+  // the no-company people on their unfiltered chart ($in with null).
+  if (askedValid) {
+    filter.company = scope && !scope.ids.includes(askedValid) ? { $in: [] } : askedValid;
+  } else if (scope) {
+    filter.company = { $in: scope.includeUnassigned ? [...scope.ids, null] : scope.ids };
+  }
 
   const profiles = await EmployeeProfile.find(filter)
     .select('user reportingManager designation department company')
@@ -100,9 +104,12 @@ const orgChart = asyncHandler(async (req, res) => {
   // they stay on the chart whatever is selected; a narrowed one appears only
   // for the companies they actually cover.
   const execCovers = (u) => {
-    if (!askedValid) return true;
     const own = Array.isArray(u.companies) ? u.companies.filter(Boolean).map(String) : [];
-    return own.length === 0 || own.includes(askedValid);
+    if (own.length === 0) return true; // spans the whole group
+    if (askedValid) return own.includes(askedValid);
+    // A company-walled viewer only sees the executives who cover their company.
+    if (scope) return own.some((c) => scope.ids.includes(c));
+    return true;
   };
   for (const u of execs) {
     const id = u._id.toString();
@@ -162,7 +169,7 @@ const orgChart = asyncHandler(async (req, res) => {
 
   // The dropdown's options travel with the chart, so the client needs one call.
   // Narrowed to what this viewer may pick, for the same reason as above.
-  const companyQuery = allowed.length ? { _id: { $in: allowed } } : {};
+  const companyQuery = scope ? { _id: { $in: scope.ids } } : {};
   const companies = await Company.find(companyQuery).select('name code').sort({ name: 1 }).lean();
 
   res.json({

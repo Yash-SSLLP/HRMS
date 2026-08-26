@@ -18,6 +18,11 @@ const jobSchema = new mongoose.Schema(
     openings: { type: Number, default: 1, min: 0 },
     description: { type: String, trim: true },
     status: { type: String, enum: JOB_STATUS, default: 'Open' },
+    // Which company is hiring. Null = a shared/legacy opening, visible to every
+    // recruiter; set, it walls the job AND its candidates to that company's
+    // admins (utils/employeeScope). A walled recruiter's new jobs get their own
+    // company stamped automatically.
+    company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
     postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

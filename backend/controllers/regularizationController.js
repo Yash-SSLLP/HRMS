@@ -11,6 +11,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { notify } = require('../services/notify');
 const { isReadOnlyExec } = require('../middleware/authMiddleware');
+const { scopeUserField } = require('../utils/employeeScope');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { statusFromHours } = require('../utils/workday');
 
@@ -276,6 +277,9 @@ const createRequest = asyncHandler(async (req, res) => {
 const listAll = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
+  // Company wall: only requests from employees this admin may see
+  // (Regularization.employee is a User id). No-op for unrestricted viewers.
+  await scopeUserField(req, filter);
 
   const items = await Regularization.find(filter)
     .populate('employee', EMPLOYEE_FIELDS)

@@ -39,6 +39,7 @@ const storage = require('../services/storage');
 const ledger = require('../services/khataLedger');
 const { notify, notifyMany } = require('../services/notify');
 const { hasPermission } = require('../middleware/authMiddleware');
+const { scopeUserField, scopeUserFilter, cannotSeeUser } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email role photo';
 
@@ -873,7 +874,10 @@ const overview = asyncHandler(async (req, res) => {
   // Usually the first khata screen anyone opens, so it is where a database that
   // predates multi-khata gets repaired. Memoized — one check per process.
   await ledger.ensureKhataIntegrity();
-  const wallets = await EmployeeWallet.find({}).select('balance employee').lean();
+  // Company wall: a walled operator's figures cover only their own company's
+  // people (EmployeeWallet.employee is a User id).
+  const wallets = await EmployeeWallet.find(await scopeUserField(req, {}))
+    .select('balance employee').lean();
 
   // The two things a manager actually asks: what is out with staff, and what do
   // we owe them. Never netted — a person holding ₹5,000 while somebody else is
@@ -887,9 +891,9 @@ const overview = asyncHandler(async (req, res) => {
   }
 
   const [pendingCount, awaitingApprovalCount, activeKhatas] = await Promise.all([
-    KhataEntry.countDocuments({ status: 'Pending' }),
-    KhataEntry.countDocuments({ status: 'AwaitingApproval' }),
-    EmployeeKhata.countDocuments({ isActive: true }),
+    KhataEntry.countDocuments(await scopeUserField(req, { status: 'Pending' })),
+    KhataEntry.countDocuments(await scopeUserField(req, { status: 'AwaitingApproval' })),
+    EmployeeKhata.countDocuments(await scopeUserField(req, { isActive: true })),
   ]);
 
   res.json({
@@ -931,7 +935,8 @@ const listMyAccounts = asyncHandler(async (req, res) => {
 const listKhatas = asyncHandler(async (req, res) => {
   await ledger.ensureKhataIntegrity();
 
-  const wallets = await EmployeeWallet.find({})
+  // Company wall: only the caller's own company's wallets.
+  const wallets = await EmployeeWallet.find(await scopeUserField(req, {}))
     .populate('employee', USER_FIELDS)
     .lean();
 
@@ -1007,6 +1012,8 @@ const getKhata = asyncHandler(async (req, res) => {
 
   const employee = await User.findById(employeeId).select(USER_FIELDS);
   if (!employee) bad(res, 'Employee not found', 404);
+  // Company wall: another company's ledger reads as not-found.
+  if (await cannotSeeUser(req, employeeId)) bad(res, 'Employee not found', 404);
 
   // Opens the wallet and their first book on first view, so a person with
   // nothing yet still has somewhere for the first advance to land.
@@ -1082,6 +1089,8 @@ const createKhata = asyncHandler(async (req, res) => {
 
   const target = await User.findById(employee).select('firstName lastName isActive');
   if (!target) bad(res, 'Employee not found', 404);
+  // Company wall: no opening books for another company's employee.
+  if (await cannotSeeUser(req, employee)) bad(res, 'Employee not found', 404);
   if (!target.isActive) bad(res, 'That account is deactivated and cannot hold company cash');
 
   const khata = await openKhata({
@@ -1144,7 +1153,8 @@ const createMyKhata = asyncHandler(async (req, res) => {
  * @returns {{count: number, employees: Object[]}}
  */
 const employeeOptions = asyncHandler(async (req, res) => {
-  const users = await User.find({ isActive: true, role: { $nin: ['CEO', 'MD'] } })
+  // Company wall: the picker only offers the caller's own company's people.
+  const users = await User.find(await scopeUserFilter(req, { isActive: true, role: { $nin: ['CEO', 'MD'] } }))
     .select('firstName lastName email photo')
     .sort({ firstName: 1 })
     .lean();
@@ -1207,6 +1217,8 @@ const createEntry = asyncHandler(async (req, res) => {
 
   const target = await User.findById(employee).select(USER_FIELDS);
   if (!target) bad(res, 'Employee not found', 404);
+  // Company wall: money cannot be posted to another company's employee.
+  if (await cannotSeeUser(req, employee)) bad(res, 'Employee not found', 404);
 
   const type = ENTRY_TYPES.includes(req.body.type)
     ? req.body.type
@@ -1338,6 +1350,9 @@ const listEntries = asyncHandler(async (req, res) => {
   }
 
   const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  // Company wall: a walled operator sees only their own company's entries
+  // (an explicit ?employee= outside the wall matches nothing).
+  await scopeUserField(req, filter);
   const entries = await KhataEntry.find(filter)
     .populate('employee', USER_FIELDS)
     .populate('expenseBook', 'name')
@@ -1360,7 +1375,7 @@ const listEntries = asyncHandler(async (req, res) => {
  * @returns {{count: number, entries: Object[]}}
  */
 const listPending = asyncHandler(async (req, res) => {
-  const entries = await KhataEntry.find({ status: 'Pending' })
+  const entries = await KhataEntry.find(await scopeUserField(req, { status: 'Pending' }))
     .populate('employee', USER_FIELDS)
     .populate('expenseBook', 'name')
     .populate('account', 'name')
@@ -1381,7 +1396,8 @@ const listPending = asyncHandler(async (req, res) => {
  * @returns {{count: number, entries: Object[], approvalRequired: boolean}}
  */
 const listAdvanceApprovals = asyncHandler(async (req, res) => {
-  const entries = await KhataEntry.find({ status: 'AwaitingApproval' })
+  // A company-narrowed CEO/MD decides only their own companies' advances.
+  const entries = await KhataEntry.find(await scopeUserField(req, { status: 'AwaitingApproval' }))
     .populate('employee', USER_FIELDS)
     .populate('expenseBook', 'name')
     .sort({ createdAt: 1 });
@@ -1421,6 +1437,8 @@ const listAdvanceApprovals = asyncHandler(async (req, res) => {
 const decideAdvanceApproval = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id).populate('employee', USER_FIELDS);
   if (!entry) bad(res, 'Request not found', 404);
+  // Company wall: a narrowed exec decides only their own companies' advances.
+  if (await cannotSeeUser(req, entry.employee?._id || entry.employee)) bad(res, 'Request not found', 404);
   if (entry.direction !== 'to_employee') bad(res, 'Only an advance request goes through this approval.');
 
   const approve = req.body.approve === true || req.body.approve === 'true';
@@ -1476,6 +1494,7 @@ const decideAdvanceApproval = asyncHandler(async (req, res) => {
 const approveEntry = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'Entry not found', 404);
+  if (await cannotSeeUser(req, entry.employee)) bad(res, 'Entry not found', 404);
   if (entry.status === 'AwaitingApproval') {
     bad(res, 'This advance still needs a CEO/MD approval before it can be paid.');
   }
@@ -1525,6 +1544,7 @@ const approveEntry = asyncHandler(async (req, res) => {
 const rejectEntry = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'Entry not found', 404);
+  if (await cannotSeeUser(req, entry.employee)) bad(res, 'Entry not found', 404);
   // An advance still with an executive is theirs to decline, not the operators'
   // — otherwise the accounts team could quietly overrule a pending sanction.
   if (entry.status === 'AwaitingApproval') {
@@ -1565,6 +1585,7 @@ const updateEntry = asyncHandler(async (req, res) => {
   if (!isId(req.params.id)) bad(res, 'Invalid entry');
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'That entry no longer exists', 404);
+  if (await cannotSeeUser(req, entry.employee)) bad(res, 'That entry no longer exists', 404);
 
   const book = entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null;
   const rights = ledger.expenseEditability(entry, book);
@@ -1619,6 +1640,7 @@ const confirmEntry = asyncHandler(async (req, res) => {
   if (!isId(req.params.id)) bad(res, 'Invalid entry');
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'That entry no longer exists', 404);
+  if (await cannotSeeUser(req, entry.employee)) bad(res, 'That entry no longer exists', 404);
 
   const saved = await ledger.confirmExpense(entry, req.user, req.body.note);
 
@@ -1648,6 +1670,7 @@ const confirmEntry = asyncHandler(async (req, res) => {
 const reverseEntry = asyncHandler(async (req, res) => {
   const entry = await KhataEntry.findById(req.params.id);
   if (!entry) bad(res, 'Entry not found', 404);
+  if (await cannotSeeUser(req, entry.employee)) bad(res, 'Entry not found', 404);
 
   if (req.user.role !== 'SuperAdmin') {
     if (entry.affectsCompanyCash && entry.account) {
@@ -1718,6 +1741,9 @@ const updateWalletSettings = asyncHandler(async (req, res) => {
   const { employeeId } = req.params;
   if (!isId(employeeId)) bad(res, 'Invalid employee');
 
+  // Company wall: another company's wallet reads as not-found.
+  if (await cannotSeeUser(req, employeeId)) bad(res, 'Employee not found', 404);
+
   const wallet = await ledger.getOrCreateWallet(employeeId, req.user);
 
   if (req.body.creditLimit !== undefined) {
@@ -1760,6 +1786,7 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
 
   const khata = await EmployeeKhata.findById(khataId);
   if (!khata) bad(res, 'Khata not found', 404);
+  if (await cannotSeeUser(req, khata.employee)) bad(res, 'Khata not found', 404);
 
   if (req.body.name !== undefined) {
     const name = String(req.body.name).trim();
@@ -1833,6 +1860,8 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
 const recomputeWallet = asyncHandler(async (req, res) => {
   const { employeeId } = req.params;
   if (!isId(employeeId)) bad(res, 'Invalid employee');
+
+  if (await cannotSeeUser(req, employeeId)) bad(res, 'Employee not found', 404);
 
   // Rebuild every book first, then the pot: the pot is what people read off the
   // screen, so it should be the figure computed against a settled set of books.
@@ -1946,7 +1975,8 @@ const setOperators = asyncHandler(async (req, res) => {
 const outstandingReport = asyncHandler(async (req, res) => {
   const minAmount = Number(req.query.minAmount) || 0;
 
-  const wallets = await EmployeeWallet.find({ balance: { $gt: minAmount } })
+  // Company wall: the ageing report covers only the caller's own company.
+  const wallets = await EmployeeWallet.find(await scopeUserField(req, { balance: { $gt: minAmount } }))
     .populate('employee', USER_FIELDS)
     .sort({ lastEntryAt: 1 })
     .lean();
@@ -2022,6 +2052,8 @@ const sendSettleReminders = asyncHandler(async (req, res) => {
   if (Array.isArray(req.body.employees) && req.body.employees.length) {
     filter.employee = { $in: req.body.employees.filter(isId) };
   }
+  // Company wall: reminders cannot be mass-mailed to another company's staff.
+  await scopeUserField(req, filter);
 
   const wallets = await EmployeeWallet.find(filter).select('employee balance').lean();
   if (!wallets.length) {
@@ -2070,6 +2102,9 @@ const exportExcel = asyncHandler(async (req, res) => {
     if (to) { to.setHours(23, 59, 59, 999); filter.date.$lte = to; }
   }
 
+  // Company wall on every sheet: even an export-granted operator only takes
+  // out the ledger of their own company.
+  await scopeUserField(req, filter);
   const [entries, wallets, khatas] = await Promise.all([
     KhataEntry.find(filter)
       .populate('employee', USER_FIELDS)
@@ -2080,8 +2115,8 @@ const exportExcel = asyncHandler(async (req, res) => {
       .populate('execApprovedBy', USER_FIELDS)
       .sort({ date: 1, createdAt: 1 })
       .lean(),
-    EmployeeWallet.find({}).populate('employee', USER_FIELDS).sort({ balance: -1 }).lean(),
-    EmployeeKhata.find({}).populate('employee', USER_FIELDS).sort({ spent: -1 }).lean(),
+    EmployeeWallet.find(await scopeUserField(req, {})).populate('employee', USER_FIELDS).sort({ balance: -1 }).lean(),
+    EmployeeKhata.find(await scopeUserField(req, {})).populate('employee', USER_FIELDS).sort({ spent: -1 }).lean(),
   ]);
 
   const MONEY = '#,##0.00';
@@ -2357,6 +2392,8 @@ async function streamStatement(req, res, employeeId) {
  */
 const statementPdf = asyncHandler(async (req, res) => {
   if (!isId(req.params.employeeId)) bad(res, 'Invalid employee', 400);
+  // Company wall: another company's statement reads as not-found.
+  if (await cannotSeeUser(req, req.params.employeeId)) bad(res, 'Employee not found', 404);
   await streamStatement(req, res, req.params.employeeId);
 });
 
@@ -2387,7 +2424,10 @@ const getReceipt = asyncHandler(async (req, res) => {
   if (!entry || !entry.attachment?.storagePath) bad(res, 'Receipt not found', 404);
 
   const isOwner = String(entry.employee) === String(req.user._id);
-  const isManager = hasPermission(req.user, 'khata.manage') || ['CEO', 'MD'].includes(req.user.role);
+  // A manager only within the company wall — capability alone no longer opens
+  // another company's receipts.
+  const isManager = (hasPermission(req.user, 'khata.manage') || ['CEO', 'MD'].includes(req.user.role))
+    && !(await cannotSeeUser(req, entry.employee));
   if (!isOwner && !isManager) bad(res, 'Not allowed', 403);
 
   if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);

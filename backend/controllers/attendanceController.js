@@ -25,7 +25,7 @@ const {
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../utils/restDay');
 const { notify, notifyMany } = require('../services/notify');
-const { usersHoldingAny } = require('../services/audience');
+const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { hasPermission } = require('../middleware/authMiddleware');
 const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope } = require('../utils/employeeScope');
 // Punching in on a day you are on approved leave. The leave-side rules (which
@@ -281,8 +281,12 @@ async function notifyWorkOnLeaveApprover(record, profile, claim) {
 async function notifyHrWorkOnLeave(record, profile, claim, actorId) {
   try {
     const ids = new Set();
-    for (const id of await usersHoldingAny('attendance.manage')) ids.add(String(id));
-    for (const id of await usersHoldingAny('leave.manage')) ids.add(String(id));
+    // Walled to the employee's company: HR of another company neither pays for
+    // nor should hear about this day.
+    const holders = new Set();
+    for (const id of await usersHoldingAny('attendance.manage')) holders.add(String(id));
+    for (const id of await usersHoldingAny('leave.manage')) holders.add(String(id));
+    for (const id of await scopeRecipientsToCompany([...holders], profile.company)) ids.add(String(id));
     if (profile.hrPartner) ids.add(String(profile.hrPartner));
     if (!ids.size) {
       const sa = await require('../models/User')
@@ -492,7 +496,9 @@ async function decideWorkOnLeave(record, userId, action, note, actor) {
   }
   await record.save();
 
-  const profile = await EmployeeProfile.findById(record.employee).select('user hrPartner').lean();
+  // `company` rides along for the notification wall in notifyHrWorkOnLeave —
+  // without it the recipient filter sees undefined and fans out org-wide.
+  const profile = await EmployeeProfile.findById(record.employee).select('user hrPartner company').lean();
   const saved = record.workOnLeave;
   const decided = { ...(typeof saved.toObject === 'function' ? saved.toObject() : saved), decidedByName };
   if (profile?.user) {
@@ -683,7 +689,13 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
     throw new Error('Attendance record not found');
   }
 
-  let allowed = isAdmin(req.user);
+  // Admins only within their scope — HR of company A must not pull company B's
+  // punch selfies by record id. The owning employee always may.
+  let allowed = false;
+  if (isAdmin(req.user)) {
+    const recProfile = await EmployeeProfile.findById(record.employee).select('hrPartner company').lean();
+    allowed = !cannotManageProfile(req, recProfile);
+  }
   if (!allowed) {
     const profile = await EmployeeProfile.findOne({ user: req.user._id });
     if (profile && profile._id.equals(record.employee)) allowed = true;

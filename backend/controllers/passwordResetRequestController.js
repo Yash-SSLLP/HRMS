@@ -7,6 +7,8 @@ const asyncHandler = require('express-async-handler');
 const PasswordResetRequest = require('../models/PasswordResetRequest');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
+const { allowedUserIds, cannotSeeUser } = require('../utils/employeeScope');
+const { scopeRecipientsToCompany } = require('../services/audience');
 
 // All of these identity fields must be supplied on the public form
 const REQUIRED = ['name', 'email', 'employeeCode', 'phone', 'designation', 'department'];
@@ -38,11 +40,19 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
     reason: body.reason ? String(body.reason).trim() : undefined,
   });
 
-  // Notify every active HR Manager and SuperAdmin so either can action it.
-  const admins = await User.find({
+  // Notify the active HR Managers and SuperAdmins so either can action it —
+  // walled to the requester's company when the email matches an account.
+  let admins = (await User.find({
     role: { $in: ['SuperAdmin', 'HRManager'] },
     isActive: true,
-  }).select('_id');
+  }).select('_id')).map((a) => ({ _id: a._id }));
+  const requester = await User.findOne({ email: doc.email }).select('_id');
+  if (requester) {
+    const EmployeeProfile = require('../models/EmployeeProfile');
+    const prof = await EmployeeProfile.findOne({ user: requester._id }).select('company').lean();
+    const kept = await scopeRecipientsToCompany(admins.map((a) => a._id), prof?.company);
+    admins = kept.map((id) => ({ _id: id }));
+  }
 
   if (admins.length) {
     await Notification.insertMany(
@@ -66,9 +76,23 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
  */
 // GET /api/password-reset-requests  (HR / Admin)
 const listPasswordResetRequests = asyncHandler(async (req, res) => {
-  const requests = await PasswordResetRequest.find()
+  let requests = await PasswordResetRequest.find()
     .populate('resolvedBy', 'firstName lastName email role')
     .sort({ createdAt: -1 });
+  // Company wall: requests are keyed only by the typed-in email, so map each to
+  // an account and hide the ones belonging to another company's people. A
+  // request matching NO account stays visible to every admin — somebody has to
+  // deal with it, and it contains nothing beyond what the requester typed.
+  const allowed = await allowedUserIds(req);
+  if (allowed) {
+    const emails = [...new Set(requests.map((r) => r.email).filter(Boolean))];
+    const matched = await User.find({ email: { $in: emails } }).select('email _id').lean();
+    const ownerByEmail = new Map(matched.map((u) => [u.email, String(u._id)]));
+    requests = requests.filter((r) => {
+      const owner = ownerByEmail.get(r.email);
+      return !owner || allowed.includes(owner);
+    });
+  }
   res.json({ count: requests.length, requests });
 });
 
@@ -128,6 +152,11 @@ const resetUserPassword = asyncHandler(async (req, res) => {
   if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee') {
     res.status(403);
     throw new Error('Only a SuperAdmin may reset admin accounts.');
+  }
+  // Company wall: an admin cannot set the password of another company's account.
+  if (await cannotSeeUser(req, user._id)) {
+    res.status(403);
+    throw new Error('This account belongs to a company outside your access.');
   }
 
   user.password = String(newPassword); // pre-save hook hashes + invalidates sessions

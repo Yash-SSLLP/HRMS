@@ -21,6 +21,22 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
+const { scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
+
+/**
+ * Company/ownership wall for a single document: may this ADMIN not touch it?
+ * (The owner-employee path is decided separately by each endpoint.) Loads the
+ * owning profile and applies the shared scope rule, so an HR Manager of
+ * company A cannot read company B's identity documents by id.
+ * @param {import('express').Request} req
+ * @param {Object} doc - a Document (needs `employee`)
+ * @returns {Promise<boolean>} true when out of scope
+ */
+async function adminCannotTouchDoc(req, doc) {
+  if (req.user.role === 'SuperAdmin') return false; // skip the lookup
+  const profile = await EmployeeProfile.findById(doc.employee).select('hrPartner company').lean();
+  return cannotManageProfile(req, profile);
+}
 
 // Best-effort durable backup of an uploaded document to Cloudinary. Never throws
 // — a failed backup must not block the upload; the local disk copy is primary.
@@ -135,6 +151,9 @@ const uploadMine = asyncHandler(async (req, res) => {
 const listForEmployee = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.employee) filter.employee = req.query.employee;
+  // Scoped like the employee directory: an admin sees only their own
+  // employees' documents (and a requested ?employee= outside that matches nothing).
+  await scopeEmployeeFilter(req, filter);
   const docs = await Document.find(filter)
     .populate({
       path: 'employee',
@@ -175,6 +194,10 @@ const uploadForEmployee = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee profile not found');
   }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage documents of employees assigned to you');
+  }
 
   const { storagePath, sha256, sizeBytes } = await storage.saveBuffer({
     buffer: req.file.buffer,
@@ -213,8 +236,9 @@ const download = asyncHandler(async (req, res) => {
     throw new Error('Document not found');
   }
 
-  // Permission gate: HR/Admin always, or the owner employee
-  let allowed = isAdmin(req.user);
+  // Permission gate: HR/Admin (within their company/assignment scope), or the
+  // owner employee.
+  let allowed = isAdmin(req.user) && !(await adminCannotTouchDoc(req, doc));
   if (!allowed) {
     const profile = await EmployeeProfile.findOne({ user: req.user._id });
     if (profile && profile._id.equals(doc.employee)) allowed = true;
@@ -259,7 +283,12 @@ const remove = asyncHandler(async (req, res) => {
     throw new Error('Document not found');
   }
 
-  // Permission gate: HR can delete any; employee only their own non-HR-issued doc
+  // Permission gate: HR can delete any within their scope; employee only their
+  // own non-HR-issued doc.
+  if (isAdmin(req.user) && (await adminCannotTouchDoc(req, doc))) {
+    res.status(403);
+    throw new Error('Not authorized to delete this document');
+  }
   if (!isAdmin(req.user)) {
     const profile = await EmployeeProfile.findOne({ user: req.user._id });
     const isOwner = profile && profile._id.equals(doc.employee);
@@ -305,6 +334,10 @@ const setStatus = asyncHandler(async (req, res) => {
   if (!doc) {
     res.status(404);
     throw new Error('Document not found');
+  }
+  if (await adminCannotTouchDoc(req, doc)) {
+    res.status(403);
+    throw new Error('You can only verify documents of employees assigned to you');
   }
   doc.status = status;
   doc.reviewNote = note || undefined;

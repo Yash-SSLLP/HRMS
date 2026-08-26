@@ -18,6 +18,7 @@ const { notify } = require('../services/notify');
 const { buildApprovalChain } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { buildDefaultSections } = require('../config/exitClearance');
+const { scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
 const { getBranding } = require('../services/branding');
 const { renderRelievingLetter, resolveLetterBody } = require('../services/letterPdf');
 
@@ -340,6 +341,18 @@ async function getMyProfileOrFail(userId, res) {
   return profile;
 }
 
+// Company wall on a single exit: an admin may only touch exits of employees
+// they may see (own company / HR-partner set — utils/employeeScope). 404, not
+// 403 — an out-of-scope exit's existence is none of the caller's business.
+async function assertExitInScope(req, res, exit) {
+  const profile = await EmployeeProfile.findById(exit.employee?._id || exit.employee)
+    .select('hrPartner company');
+  if (cannotManageProfile(req, profile)) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+}
+
 // ============ Admin ============
 
 /**
@@ -355,6 +368,9 @@ const listExits = asyncHandler(async (req, res) => {
   const filter = {};
   if (status) filter.status = status;
   if (employee) filter.employee = employee;
+  // Company wall: only exits of employees this admin may see (ExitRequest.employee
+  // is an EmployeeProfile id). No-op for SuperAdmin / unrestricted execs.
+  await scopeEmployeeFilter(req, filter);
 
   const exits = await ExitRequest.find(filter)
     .populate({
@@ -388,7 +404,9 @@ const createExit = asyncHandler(async (req, res) => {
     throw new Error('employee and lastWorkingDay are required');
   }
   const profile = await EmployeeProfile.findById(employee).populate('user', 'firstName lastName');
-  if (!profile) {
+  // Company wall: an admin may only initiate exits for employees they may see —
+  // an out-of-scope profile is indistinguishable from a missing one.
+  if (!profile || cannotManageProfile(req, profile)) {
     res.status(404);
     throw new Error('Employee profile not found');
   }
@@ -442,6 +460,7 @@ const getExit = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   res.json({ exit });
 });
 
@@ -511,6 +530,7 @@ const relievingLetterPdf = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   const blocked = relievingLetterBlocker(exit);
   if (blocked) {
     res.status(400);
@@ -589,6 +609,7 @@ const updateExit = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   if (exit.status === 'Completed' || exit.status === 'Cancelled') {
     res.status(400);
     throw new Error(`Cannot edit a ${exit.status} exit request`);
@@ -623,6 +644,7 @@ const cancelExit = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   if (exit.status === 'Completed') {
     res.status(400);
     throw new Error('Cannot cancel a Completed exit');
@@ -654,6 +676,7 @@ const completeExit = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   if (exit.status === 'Completed') {
     res.status(400);
     throw new Error('Exit is already Completed');
@@ -748,6 +771,7 @@ const resendExitEmail = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   if (exit.status !== 'Completed') {
     res.status(400);
     throw new Error('Exit must be Completed before the email can be sent');
@@ -809,6 +833,7 @@ const assignClearanceApprovers = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   if (exit.status === 'Completed' || exit.status === 'Cancelled') {
     res.status(400);
     throw new Error(`Cannot edit clearance on a ${exit.status} exit`);
@@ -893,6 +918,7 @@ const updateClearanceSectionAdmin = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   try {
     await recordClearanceSection(exit, req.params.key, req.user._id, true, req.body);
   } catch (err) {
@@ -915,6 +941,7 @@ const overrideClearance = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Exit request not found');
   }
+  await assertExitInScope(req, res, exit);
   const reason = String(req.body?.reason || '').trim();
   if (!reason) {
     res.status(400);
