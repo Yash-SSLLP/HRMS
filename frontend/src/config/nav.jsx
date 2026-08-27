@@ -65,7 +65,7 @@ export const adminNav = [
       // search never offers a tab the page would refuse to open.
       tabs: [{ id: 'requests', label: 'Requests' }, { id: 'balances', label: 'Balances' },
         { id: 'hierarchy', label: 'Approval hierarchy', roles: ['SuperAdmin'] }] },
-    { to: '/admin/holidays', label: 'Holidays', icon: FiSun, perm: 'leave.manage' },
+    { to: '/admin/holidays', label: 'Holidays & Festivals', icon: FiSun, perm: 'leave.manage' },
   ] },
   { group: 'People & Organization', icon: FiUsers, items: [
     { to: '/admin/employees', label: 'Employees', icon: FiBriefcase, perm: 'employees.manage' },

@@ -128,6 +128,8 @@ app.use(
 );
 
 app.use('/api/holidays', require('./routes/holidayRoutes'));
+// Reminder-only festival calendar — never a non-working day, see models/Festival.js.
+app.use('/api/festivals', require('./routes/festivalRoutes'));
 app.use('/api/events', require('./routes/eventRoutes'));
 app.use('/api/reminders', require('./routes/reminderRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));

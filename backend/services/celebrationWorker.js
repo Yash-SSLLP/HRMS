@@ -5,6 +5,7 @@
  *   - work anniversaries today → notify everyone + the celebrant
  *   - wedding anniversaries today → notify everyone + the celebrant
  *   - holidays today           → notify everyone
+ *   - festivals today and tomorrow → notify everyone (reminder only, not a day off)
  *   - company events today     → notify everyone
  *   - reminders dated today     → notify the reminder's own audience (+ its creator)
  *   - interviews today          → notify the assigned interviewer
@@ -26,6 +27,7 @@ const Task = require('../models/Task');
 const User = require('../models/User');
 const DigestLog = require('../models/DigestLog');
 const { notify, notifyMany } = require('./notify');
+const { festivalsInRange, festivalMessage } = require('../utils/festivalFeed');
 const { scopeRecipientsToCompany } = require('./audience');
 const { resolveRecipients } = require('../controllers/reminderController');
 
@@ -190,6 +192,43 @@ async function runHolidays(dateStr, everyone) {
   console.log(`Morning digest: ${holidays.length} holiday(s) notified.`);
 }
 
+/**
+ * Festival reminders — Holi, Diwali, Raksha Bandhan and friends. Purely
+ * informational: these are NOT holidays and say nothing about time off (see
+ * models/Festival.js). Two nudges per festival, each with its own DigestLog
+ * kind so the eve notice and the day-of greeting can't cancel each other:
+ *   - 'festival-eve' on the day before  → "Tomorrow is Diwali"
+ *   - 'festival'     on the day itself  → "Diwali is today"
+ * A festival that shares its day with a company holiday is dropped by
+ * festivalsInRange — the holiday pass above already announced that day.
+ */
+async function runFestivals(dateStr, everyone, when) {
+  // The eve pass runs today but looks at tomorrow's festivals.
+  const targetStr = when === 'eve'
+    ? istDateString(new Date(new Date(`${dateStr}T12:00:00+05:30`).getTime() + 86400000))
+    : dateStr;
+  const [start, end] = istDayRange(targetStr);
+  const festivals = (await festivalsInRange(start, end, { endExclusive: false }))
+    .filter((f) => f.notify !== false);
+  if (!festivals.length) return;
+
+  // Claimed on today's date so each pass fires once per day, whichever day it reads.
+  if (!(await claim(when === 'eve' ? 'festival-eve' : 'festival', dateStr))) return;
+
+  for (const f of festivals) {
+    const { title, body } = festivalMessage(f, when);
+    await notifyMany(everyone, {
+      type: 'festival',
+      // Personal, non-work content — visible in both portals for dual-role users.
+      audience: 'all',
+      title,
+      body,
+      link: 'calendar',
+    });
+  }
+  console.log(`Morning digest: ${festivals.length} festival(s) notified (${when}).`);
+}
+
 async function runEvents(dateStr, everyone) {
   const [start, end] = istDayRange(dateStr);
   const events = await Event.find({ date: { $gte: start, $lte: end } });
@@ -345,6 +384,8 @@ async function tick() {
       ['anniversary', () => runAnniversaries(dateStr, today, profiles, everyone)],
       ['marriage', () => runMarriageAnniversaries(dateStr, today, profiles, everyone)],
       ['holiday', () => runHolidays(dateStr, everyone)],
+      ['festival', () => runFestivals(dateStr, everyone, 'today')],
+      ['festival-eve', () => runFestivals(dateStr, everyone, 'eve')],
       ['event', () => runEvents(dateStr, everyone)],
       ['reminder', () => runReminders(dateStr, everyone)],
       ['interview', () => runInterviews(dateStr, everyone)],

@@ -1,7 +1,8 @@
 /**
  * Calendar — the company month board, shared by the employee and admin portals.
  *
- * Aggregates everything dated from GET /celebrations/calendar: holidays, company
+ * Aggregates everything dated from GET /celebrations/calendar: holidays,
+ * festival reminders (Holi, Diwali, Rakhi — informational, not days off), company
  * events, birthdays, work anniversaries, the viewer's interviews, their own
  * reminders, reminders HR/Admin/CEO pushed to them, and task deadlines.
  * Reminders can be created, edited and deleted straight from the grid
@@ -33,6 +34,9 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const TYPE_META = {
   holiday:     { label: 'Holiday',              color: '#f43f5e', fg: '#ffffff' },
   compoff:     { label: 'Comp off (company)',   color: '#8b5cf6', fg: '#ffffff' },
+  // Festivals are a reminder only — a normal working day, no comp off. They sit
+  // right after the holidays so the day's occasion survives the MAX_TILES cut.
+  festival:    { label: 'Festival (reminder)',  color: '#f59e0b', fg: '#1f2937' },
   event:       { label: 'Company event',        color: '#3b82f6', fg: '#ffffff' },
   birthday:    { label: 'Birthday',             color: '#ec4899', fg: '#ffffff' },
   anniversary: { label: 'Work anniversary',     color: '#6366f1', fg: '#ffffff' },
@@ -99,9 +103,12 @@ export default function Calendar() {
       // An org-wide comp-off day arrives as a holiday carrying its type. It gets
       // its own chip here — it is the one calendar day that also means "work it
       // and, once approved, you are paid double".
-      setEvents((data.events || []).map((e) => (
-        e.type === 'holiday' && e.meta?.holidayType === 'Comp Off' ? { ...e, type: 'compoff' } : e
-      )));
+      setEvents((data.events || []).map((e) => {
+        if (e.type === 'holiday' && e.meta?.holidayType === 'Comp Off') return { ...e, type: 'compoff' };
+        // Festivals carry their own emoji; it does the work a second colour would.
+        if (e.type === 'festival' && e.meta?.emoji) return { ...e, label: `${e.meta.emoji} ${e.label}` };
+        return e;
+      }));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load calendar');
     } finally {
@@ -176,6 +183,10 @@ export default function Calendar() {
       if (m.holidayType) rows.push(['Type', m.holidayType]);
       if (m.description) rows.push(['Details', m.description]);
       if (e.type === 'compoff') rows.push(['Pay', 'Company-wide day off — working it is paid double, once approved']);
+    } else if (e.type === 'festival') {
+      if (m.description) rows.push(['Details', m.description]);
+      // Say it plainly — a festival chip must never be mistaken for a day off.
+      rows.push(['Note', 'A reminder only — this is a normal working day, not a company holiday.']);
     } else if (e.type === 'event') {
       if (m.time) rows.push(['Time', m.time]);
       if (m.location) rows.push(['Location', m.location]);

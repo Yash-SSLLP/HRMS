@@ -1,7 +1,7 @@
 /**
  * Celebrations controller — surfaces birthdays and work anniversaries (from
- * EmployeeProfile), builds a combined month calendar (holidays, events,
- * celebrations, the viewer's interviews), and lets colleagues send a wish that
+ * EmployeeProfile), builds a combined month calendar (holidays, festival
+ * reminders, events, celebrations, the viewer's interviews), and lets colleagues send a wish that
  * fans out as an in-app notification, a chat message, and a celebratory email.
  */
 const asyncHandler = require('express-async-handler');
@@ -15,6 +15,7 @@ const { enqueueMail } = require('../services/email');
 const { isChatEnabled } = require('../middleware/chatEnabled');
 const { hiddenUserIds } = require('../utils/visibility');
 const { companyScopeFilter } = require('../utils/employeeScope');
+const { festivalsInRange } = require('../utils/festivalFeed');
 const { IST_TZ, istParts, istMonthDay, istMonthRange } = require('../utils/istDate');
 
 // {month, day} of a date **in IST**, for recurring-date matching. Must not use
@@ -239,6 +240,20 @@ const monthCalendar = asyncHandler(async (req, res) => {
       type: 'holiday',
       label: h.name,
       meta: { holidayType: h.type, description: h.description },
+    });
+  }
+
+  // --- Festival reminders (Holi, Diwali, Rakhi …) for the exact month/year ---
+  // Reminder only — these never mark a non-working day. One that shares its day
+  // with a company holiday is dropped inside festivalsInRange, so the calendar
+  // never shows both chips for the same occasion.
+  const festivals = await festivalsInRange(monthStart, monthEnd);
+  for (const f of festivals) {
+    events.push({
+      day: istParts(f.date).d,
+      type: 'festival',
+      label: f.name,
+      meta: { emoji: f.emoji, description: f.description, greeting: f.greeting },
     });
   }
 

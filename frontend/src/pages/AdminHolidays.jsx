@@ -1,12 +1,20 @@
 /**
- * AdminHolidays — holiday calendar management (admin portal). Lists holidays for
- * a year from GET /holidays and creates/edits/deletes via POST/PUT/DELETE
- * /holidays. Holidays feed the shared calendar and attendance status.
+ * AdminHolidays — the two calendars HR maintains, on one screen behind a tab.
  *
- * A whole year can also be loaded in one go: Template downloads the three-sheet
- * workbook (Holidays / Comp Offs / Celebrations) and Import posts it back to
- * POST /holidays/import, which creates the holidays and comp-off days here and
- * the celebrations as company events.
+ * "Holidays" is the company holiday calendar: entries here are real non-working
+ * days and feed attendance, leave and payroll. Lists for a year from
+ * GET /holidays, with create/edit/delete on /holidays. A whole year can be
+ * loaded at once: Template downloads the three-sheet workbook (Holidays /
+ * Comp Offs / Celebrations) and Import posts it back to POST /holidays/import,
+ * which creates the holidays and comp-off days here and the celebrations as
+ * company events.
+ *
+ * "Festivals" is a reminder-only calendar (Holi, Diwali, Raksha Bandhan, Eid,
+ * Christmas …) on /festivals. Those entries change NOTHING — the day stays a
+ * normal working day, with no comp off and no effect on pay or leave. They put
+ * a chip on the shared calendar and send everyone a heads-up the day before and
+ * a greeting on the day itself. A festival that shares its date with a holiday
+ * is hidden automatically, so listing both is safe.
  *
  * "Comp Off" is an org-wide compensatory day off. It behaves like any other
  * holiday, with one difference: an employee who actually works it can be paid
@@ -23,6 +31,7 @@ import { confirmDialog } from '../components/dialogs';
 const COMP_OFF = 'Comp Off';
 const TYPES = ['Public', 'Restricted', 'Company', COMP_OFF];
 const blank = { name: '', date: '', type: 'Public', description: '' };
+const blankFestival = { name: '', date: '', emoji: '', greeting: '', description: '', notify: true };
 
 // Type badge colours — Comp Off stands apart because it carries the double-pay rule.
 const TYPE_TONE = {
@@ -32,8 +41,12 @@ const TYPE_TONE = {
   [COMP_OFF]: 'bg-violet-50 text-violet-700 border-violet-200',
 };
 
+const fmtDay = (d) =>
+  new Date(d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+
 export default function AdminHolidays() {
   const thisYear = new Date().getFullYear();
+  const [tab, setTab] = useState('holidays'); // 'holidays' | 'festivals'
   const [year, setYear] = useState(thisYear);
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,12 +60,26 @@ export default function AdminHolidays() {
   const [importResult, setImportResult] = useState(null);
   const importFileRef = useRef(null);
 
+  // Festival reminders — separate collection, separate endpoints.
+  const [festivals, setFestivals] = useState([]);
+  const [seedableYears, setSeedableYears] = useState([]);
+  const [festivalForm, setFestivalForm] = useState(null); // null = closed
+  const [editingFestivalId, setEditingFestivalId] = useState(null);
+  const [seeding, setSeeding] = useState(false);
+
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.get(`/holidays?year=${year}`);
-      setHolidays(data.holidays);
+      // Festivals are the newer of the two calendars; a backend that predates
+      // them must not take the holiday list down with it.
+      const [hRes, fRes] = await Promise.all([
+        api.get(`/holidays?year=${year}`),
+        api.get(`/festivals?year=${year}`).catch(() => ({ data: {} })),
+      ]);
+      setHolidays(hRes.data.holidays);
+      setFestivals(fRes.data.festivals || []);
+      setSeedableYears(fRes.data.seedableYears || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -136,79 +163,242 @@ export default function AdminHolidays() {
     }
   };
 
+  // ---- Festivals -----------------------------------------------------------
+
+  const openFestivalCreate = () => {
+    setEditingFestivalId(null);
+    setError('');
+    setFestivalForm({ ...blankFestival, date: `${year}-01-01` });
+  };
+
+  const openFestivalEdit = (f) => {
+    setEditingFestivalId(f._id);
+    setError('');
+    setFestivalForm({
+      name: f.name,
+      date: f.date ? f.date.slice(0, 10) : '',
+      emoji: f.emoji || '',
+      greeting: f.greeting || '',
+      description: f.description || '',
+      notify: f.notify !== false,
+    });
+  };
+
+  const saveFestival = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      if (editingFestivalId) {
+        await api.put(`/festivals/${editingFestivalId}`, festivalForm);
+      } else {
+        await api.post('/festivals', festivalForm);
+      }
+      setFestivalForm(null);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeFestival = async (f) => {
+    if (!(await confirmDialog({ message: `Delete the reminder for "${f.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
+    try {
+      await api.delete(`/festivals/${f._id}`);
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Delete failed');
+    }
+  };
+
+  // Fill the year from the built-in Indian festival list. Re-runnable — entries
+  // already on the calendar are skipped, so HR's own edits survive.
+  const seedYear = async () => {
+    setSeeding(true);
+    try {
+      const { data } = await api.post('/festivals/seed', { year });
+      toast.success(
+        data.created
+          ? `${data.created} festival${data.created === 1 ? '' : 's'} added for ${year}`
+          : `Every festival in the ${year} list is already on the calendar`
+      );
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not add the festival list');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  const onHolidays = tab === 'holidays';
+  const tabBtn = (key, label, count) => (
+    <button
+      key={key}
+      onClick={() => { setTab(key); setError(''); }}
+      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+        tab === key
+          ? 'border-gray-900 text-gray-900'
+          : 'border-transparent text-gray-500 hover:text-gray-700'
+      }`}>
+      {label}
+      <span className="ml-2 text-xs text-gray-400">{count}</span>
+    </button>
+  );
+
   return (
     <div>
-      <PageHeader title="Holidays">
+      <PageHeader title="Holidays & Festivals">
         <select value={year} onChange={(e) => setYear(Number(e.target.value))}
           className="border rounded-lg px-3 py-2 text-sm">
           {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
-        <button
-          onClick={() => downloadFile('/holidays/template.xlsx', 'calendar-import-template.xlsx')}
-          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
-          title="Download the blank workbook: holidays, comp-off days and celebrations">
-          Template
-        </button>
-        <button onClick={() => setShowImport(true)}
-          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
-          title="Upload holidays, comp-off days and celebrations in bulk">
-          Import Excel
-        </button>
-        <button onClick={openCreate}
-          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-          + Add Holiday
-        </button>
+        {onHolidays ? (
+          <>
+            <button
+              onClick={() => downloadFile('/holidays/template.xlsx', 'calendar-import-template.xlsx')}
+              className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
+              title="Download the blank workbook: holidays, comp-off days and celebrations">
+              Template
+            </button>
+            <button onClick={() => setShowImport(true)}
+              className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
+              title="Upload holidays, comp-off days and celebrations in bulk">
+              Import Excel
+            </button>
+            <button onClick={openCreate}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
+              + Add Holiday
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={seedYear} disabled={seeding || !seedableYears.includes(year)}
+              className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50"
+              title={seedableYears.includes(year)
+                ? `Add the standard Indian festival list for ${year} — entries already here are skipped`
+                : `No built-in list for ${year} (available: ${seedableYears.join(', ') || 'none'})`}>
+              {seeding ? 'Adding…' : 'Add standard list'}
+            </button>
+            <button onClick={openFestivalCreate}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
+              + Add Festival
+            </button>
+          </>
+        )}
       </PageHeader>
+
+      <div className="mb-4 flex gap-1 border-b border-gray-200">
+        {tabBtn('holidays', 'Holidays', holidays.length)}
+        {tabBtn('festivals', 'Festivals', festivals.length)}
+      </div>
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
-      <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm">
-        <span className="font-medium text-gray-800">Comp Off days are the company-wide days off.</span>
-        <span className="text-gray-600">
-          {' '}They are non-working like any holiday — and an employee who actually works one (or a Sunday)
-          is paid double for that day once it is approved under Attendance → Sunday &amp; comp-off duty.
-        </span>
-      </div>
+      {onHolidays ? (
+        <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm">
+          <span className="font-medium text-gray-800">Comp Off days are the company-wide days off.</span>
+          <span className="text-gray-600">
+            {' '}They are non-working like any holiday — and an employee who actually works one (or a Sunday)
+            is paid double for that day once it is approved under Attendance → Sunday &amp; comp-off duty.
+          </span>
+        </div>
+      ) : (
+        <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm">
+          <span className="font-medium text-gray-800">Festivals are reminders only.</span>
+          <span className="text-gray-600">
+            {' '}They show on everyone&apos;s calendar and send a heads-up the day before and a greeting
+            on the day itself. The day stays a <strong>normal working day</strong> — no comp off, and no
+            effect on attendance, leave or pay. To actually close the office, add a Holiday instead.
+            A festival that falls on a holiday is hidden automatically, so nobody gets it twice.
+          </span>
+        </div>
+      )}
 
       <div className="bg-white shadow rounded-lg overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Name</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Type</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : holidays.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No holidays for {year}</td></tr>
-            ) : holidays.map((h) => (
-              <tr key={h._id}>
-                <td className="px-4 py-3 whitespace-nowrap">
-                  {new Date(h.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
-                </td>
-                <td className="px-4 py-3">
-                  {h.name}
-                  {h.description && <div className="text-xs text-gray-500">{h.description}</div>}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`inline-block px-2 py-0.5 rounded-full border text-xs font-medium ${TYPE_TONE[h.type] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-                    {h.type}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right space-x-2">
-                  <button onClick={() => openEdit(h)} className="text-blue-600 hover:underline">Edit</button>
-                  <button onClick={() => remove(h)} className="text-red-600 hover:underline">Delete</button>
-                </td>
+        {onHolidays ? (
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Name</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Type</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              ) : holidays.length === 0 ? (
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No holidays for {year}</td></tr>
+              ) : holidays.map((h) => (
+                <tr key={h._id}>
+                  <td className="px-4 py-3 whitespace-nowrap">{fmtDay(h.date)}</td>
+                  <td className="px-4 py-3">
+                    {h.name}
+                    {h.description && <div className="text-xs text-gray-500">{h.description}</div>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-block px-2 py-0.5 rounded-full border text-xs font-medium ${TYPE_TONE[h.type] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                      {h.type}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right space-x-2">
+                    <button onClick={() => openEdit(h)} className="text-blue-600 hover:underline">Edit</button>
+                    <button onClick={() => remove(h)} className="text-red-600 hover:underline">Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Festival</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Notification</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              ) : festivals.length === 0 ? (
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">
+                  No festivals for {year}.
+                  {seedableYears.includes(year) && ' Use "Add standard list" to load the usual Indian festivals.'}
+                </td></tr>
+              ) : festivals.map((f) => (
+                <tr key={f._id}>
+                  <td className="px-4 py-3 whitespace-nowrap">{fmtDay(f.date)}</td>
+                  <td className="px-4 py-3">
+                    <span className="mr-1">{f.emoji}</span>{f.name}
+                    {f.description && <div className="text-xs text-gray-500">{f.description}</div>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {f.notify === false ? (
+                      <span className="inline-block px-2 py-0.5 rounded-full border text-xs font-medium bg-gray-50 text-gray-600 border-gray-200">
+                        Silent
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-600">
+                        {f.greeting || `Wishing you a happy ${f.name}.`}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right space-x-2">
+                    <button onClick={() => openFestivalEdit(f)} className="text-blue-600 hover:underline">Edit</button>
+                    <button onClick={() => removeFestival(f)} className="text-red-600 hover:underline">Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {showModal && (
@@ -252,6 +442,71 @@ export default function AdminHolidays() {
               )}
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowModal(false)}
+                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={saving}
+                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {festivalForm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
+            <h2 className="card-title mb-1">{editingFestivalId ? 'Edit Festival' : 'Add Festival'}</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              A reminder only — the day stays a normal working day.
+            </p>
+            <form onSubmit={saveFestival} className="space-y-3">
+              <div className="flex gap-3">
+                <div className="w-20">
+                  <label className="block text-sm text-gray-700">Emoji</label>
+                  <input value={festivalForm.emoji} maxLength={4} placeholder="🪔"
+                    onChange={(e) => setFestivalForm({ ...festivalForm, emoji: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2 text-center" />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm text-gray-700">Name *</label>
+                  <input required value={festivalForm.name} placeholder="Diwali"
+                    onChange={(e) => setFestivalForm({ ...festivalForm, name: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700">Date *</label>
+                <input type="date" required value={festivalForm.date}
+                  onChange={(e) => setFestivalForm({ ...festivalForm, date: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700">Greeting</label>
+                <input value={festivalForm.greeting} placeholder={`Wishing you a happy ${festivalForm.name || 'festival'}.`}
+                  onChange={(e) => setFestivalForm({ ...festivalForm, greeting: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                <p className="mt-1 text-xs text-gray-500">
+                  Sent the day before and again on the day itself. Left blank, a simple greeting is used.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700">Description</label>
+                <input value={festivalForm.description} placeholder="Optional — shown on the calendar"
+                  onChange={(e) => setFestivalForm({ ...festivalForm, description: e.target.value })}
+                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={festivalForm.notify}
+                  onChange={(e) => setFestivalForm({ ...festivalForm, notify: e.target.checked })}
+                  className="rounded border-gray-300" />
+                Send notifications for this festival
+              </label>
+              {error && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+              )}
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setFestivalForm(null)}
                   className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={saving}
                   className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
