@@ -14,6 +14,7 @@ const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const { CANDIDATE_STAGES, ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS } = require('../models/Candidate');
 const User = require('../models/User');
+const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
 const EmailOutbox = require('../models/EmailOutbox');
@@ -1543,9 +1544,11 @@ const convertToEmployee = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('An email address is required to create the login account.');
   }
-  if (await User.findOne({ email })) {
+  // Only an ACTIVE account blocks the address — converting a new hire onto a
+  // resigned employee's old work address is exactly the case this allows.
+  if (await activeAccountWithEmail(email)) {
     res.status(409);
-    throw new Error('A user with this email already exists.');
+    throw new Error('An active user with this email already exists. Deactivate that account first if the address is being reissued.');
   }
 
   const dateOfJoining = req.body.dateOfJoining

@@ -10,6 +10,7 @@ const ChangeRequest = require('../models/ChangeRequest');
 const { FIELD_CATALOG } = require('../models/ChangeRequest');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
+const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const AuditLog = require('../models/AuditLog');
 
 // Read a dot-path value off a doc / plain object.
@@ -55,7 +56,7 @@ async function applyFieldValue(targetUserId, meta, value) {
     if (!user) throw Object.assign(new Error('Target user no longer exists'), { status: 404 });
     if (meta.path === 'email') {
       const email = String(value).toLowerCase().trim();
-      const clash = await User.findOne({ email, _id: { $ne: user._id } });
+      const clash = await activeAccountWithEmail(email, user._id);
       if (clash) throw Object.assign(new Error('That email is already in use'), { status: 409 });
       user.email = email;
     } else {

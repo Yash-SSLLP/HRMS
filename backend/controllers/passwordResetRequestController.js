@@ -6,6 +6,29 @@
 const asyncHandler = require('express-async-handler');
 const PasswordResetRequest = require('../models/PasswordResetRequest');
 const User = require('../models/User');
+const { resolveLoginUser } = require('../utils/loginIdentity');
+
+/**
+ * The account a reset request is for.
+ *
+ * Resolved by EMPLOYEE CODE first and only then by email. A work address can be
+ * held by a resigned account and by the person who inherited the seat, so
+ * matching on it alone could hand an HR Manager the wrong account and let them
+ * overwrite an innocent person's password. The employee code identifies exactly
+ * one person for good. resolveLoginUser refuses an ambiguous match outright, so
+ * the email fallback returns nothing rather than guessing.
+ *
+ * @param {Object} doc - the PasswordResetRequest (uses employeeCode, email)
+ * @returns {Promise<Object|null>} the User (with +password), or null
+ */
+async function accountForRequest(doc) {
+  if (doc.employeeCode) {
+    const { user } = await resolveLoginUser(doc.employeeCode);
+    if (user) return user;
+  }
+  const { user } = await resolveLoginUser(doc.email);
+  return user;
+}
 const Notification = require('../models/Notification');
 const { allowedUserIds, cannotSeeUser } = require('../utils/employeeScope');
 const { scopeRecipientsToCompany } = require('../services/audience');
@@ -46,7 +69,7 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
     role: { $in: ['SuperAdmin', 'HRManager'] },
     isActive: true,
   }).select('_id')).map((a) => ({ _id: a._id }));
-  const requester = await User.findOne({ email: doc.email }).select('_id');
+  const requester = await accountForRequest(doc);
   if (requester) {
     const EmployeeProfile = require('../models/EmployeeProfile');
     const prof = await EmployeeProfile.findOne({ user: requester._id }).select('company').lean();
@@ -142,10 +165,10 @@ const resetUserPassword = asyncHandler(async (req, res) => {
     throw new Error('Request not found');
   }
 
-  const user = await User.findOne({ email: doc.email }).select('+password');
+  const user = await accountForRequest(doc);
   if (!user) {
     res.status(404);
-    throw new Error('No user account found for this email. Check the request details.');
+    throw new Error('No user account found for this employee code or email. Check the request details.');
   }
 
   // Permission gate: HR Managers may only reset Employee accounts; admin accounts are SuperAdmin-only.

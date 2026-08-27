@@ -28,7 +28,10 @@ export default function Login() {
     document.documentElement.removeAttribute('data-portal');
   }, []);
 
-  const [email, setEmail] = useState('');
+  // What the user types to identify themselves: an employee code ("SSL 120"),
+  // a role alias ("admin" / "CEO" / "MD") or, still, an email address.
+  // Matching is case-insensitive and ignores the space inside a code.
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -43,7 +46,11 @@ export default function Login() {
 
   const openReset = () => {
     setResetErr(''); setResetMsg('');
-    setReset({ ...BLANK_RESET, email: email || '' });
+    // Drop what they typed into whichever field it actually is.
+    const typed = identifier.trim();
+    setReset(typed.includes('@')
+      ? { ...BLANK_RESET, email: typed }
+      : { ...BLANK_RESET, employeeCode: typed });
     setShowReset(true);
   };
 
@@ -70,7 +77,7 @@ export default function Login() {
     setError('');
     setSubmitting(true);
     try {
-      const { data } = await api.post('/auth/login', { email, password });
+      const { data } = await api.post('/auth/login', { identifier, password });
       setSession({ user: data.user, token: data.token });
       const from = location.state?.from?.pathname;
       // Employees and Managers use the employee portal; admins and the
@@ -99,16 +106,21 @@ export default function Login() {
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Employee Code</label>
             <input
-              type="email"
+              type="text"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 focus:ring-2 focus:ring-gray-300 focus:border-gray-400 outline-none"
-              autoComplete="email"
-              placeholder="you@company.com"
+              autoComplete="username"
+              autoCapitalize="characters"
+              spellCheck={false}
+              placeholder="SSL 120"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              Your employee code, or your email address. Not case-sensitive.
+            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>

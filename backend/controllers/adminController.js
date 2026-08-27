@@ -7,6 +7,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
+const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const { ROLES } = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Company = require('../models/Company');
@@ -153,10 +154,13 @@ const createUser = asyncHandler(async (req, res) => {
     throw new Error('Only SuperAdmin may create admin accounts. You can only create Employee accounts.');
   }
 
-  const exists = await User.findOne({ email: email.toLowerCase() });
+  // Only a LIVE account blocks the address. A resigned employee's account is
+  // deactivated, which frees their work address for whoever fills the seat —
+  // the reason email is no longer a unique key (see utils/loginIdentity).
+  const exists = await activeAccountWithEmail(email);
   if (exists) {
     res.status(409);
-    throw new Error('Email already registered');
+    throw new Error('That email is already in use by an active account. Deactivate it first if this address is being reissued.');
   }
 
   const user = await User.create({
@@ -246,8 +250,8 @@ const updateUser = asyncHandler(async (req, res) => {
     // Direct apply (Backend / edit-mode exec).
     if (f.isEmail) {
       if (!next) { res.status(400); throw new Error('Email cannot be empty'); }
-      const clash = await User.findOne({ email: next, _id: { $ne: user._id } });
-      if (clash) { res.status(409); throw new Error('That email is already in use by another account'); }
+      const clash = await activeAccountWithEmail(next, user._id);
+      if (clash) { res.status(409); throw new Error('That email is already in use by another active account'); }
       user.email = next;
       emailChanged = true;
     } else {

@@ -16,10 +16,17 @@ const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', '
 
 const userSchema = new mongoose.Schema(
   {
+    // Indexed but deliberately NOT unique. When an employee resigns, their work
+    // address is reissued to the next person in the seat, so two accounts can
+    // legitimately share one — the old (inactive) record and the new hire. The
+    // identity people sign in with is the employee code, not this; see
+    // utils/loginIdentity. An address shared by several accounts simply stops
+    // working as a login identifier and the employee code is used instead.
+    // Run scripts/dropEmailUniqueIndex.js once to drop the legacy unique index.
     email: {
       type: String,
       required: [true, 'Email is required'],
-      unique: true,
+      index: true,
       lowercase: true,
       trim: true,
       match: [/^\S+@\S+\.\S+$/, 'Invalid email address'],

@@ -23,6 +23,26 @@ const { appendEmployee, safe } = require('../services/employeeZip');
 const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
 const { employeeProfileScope, cannotManageProfile, viewerCompanyScope, scopeEmployeeFilter, companyOutOfScope } = require('../utils/employeeScope');
 const { hasPermission, isEditingExec } = require('../middleware/authMiddleware');
+const { activeAccountWithEmail } = require('../utils/loginIdentity');
+
+/**
+ * Find an account by email, preferring the ACTIVE one.
+ *
+ * A work address may be held by a resigned employee's (deactivated) account and
+ * by whoever inherited the seat — email is no longer unique (see
+ * utils/loginIdentity). A bare findOne would return whichever came first, which
+ * could quietly make a resigned person somebody's reporting manager. Falls back
+ * to a deactivated match so lookups that legitimately name one still resolve.
+ * @param {string} email
+ * @param {Object} [extra] - additional filter (e.g. a role restriction)
+ * @returns {Promise<Object|null>}
+ */
+async function findAccountByEmail(email, extra = {}) {
+  const address = String(email ?? '').trim().toLowerCase();
+  if (!address) return null;
+  return (await User.findOne({ email: address, isActive: true, ...extra }))
+    || User.findOne({ email: address, ...extra });
+}
 const { FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange } = require('../services/profileChanges');
 const { notifyMany } = require('../services/notify');
 const ImportFlag = require('../models/ImportFlag');
@@ -972,9 +992,12 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       }
 
       // ----- Skip if email or employeeCode already exists -----
-      const existingUser = await User.findOne({ email: u.email });
+      // Only an ACTIVE account blocks the address: a resigned employee's
+      // account is deactivated, which frees their work address for whoever
+      // fills the seat (see utils/loginIdentity).
+      const existingUser = await activeAccountWithEmail(u.email);
       if (existingUser) {
-        skipped.push({ excelRow, email: u.email, reason: 'Email already exists' });
+        skipped.push({ excelRow, email: u.email, reason: 'Email already in use by an active account' });
         continue;
       }
       // normalizeCode (trim + uppercase) matches what the schema actually
@@ -1016,7 +1039,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       // which used to make importing a whole team in one file impossible.
       let reportingManagerId;
       if (p.reportingManagerEmail) {
-        const mgr = await User.findOne({ email: p.reportingManagerEmail });
+        const mgr = await findAccountByEmail(p.reportingManagerEmail);
         if (!mgr) {
           flag('reportingManager', p.reportingManagerEmail, 'unmatched',
             `No account has the email "${p.reportingManagerEmail}", so no reporting manager was set. `
@@ -1285,7 +1308,7 @@ const FLAG_WRITERS = {
     return st.name;
   },
   reportingManager: async (value, { profile, actor }) => {
-    const mgr = await User.findOne({ email: String(value).trim().toLowerCase() });
+    const mgr = await findAccountByEmail(value);
     if (!mgr) throw new Error(`No account has the email "${value}"`);
     // A Backend account may knowingly cross departments (a dotted line); for
     // anyone else the same-department rule still applies.
@@ -1295,10 +1318,7 @@ const FLAG_WRITERS = {
     return `${mgr.firstName || ''} ${mgr.lastName || ''}`.trim() || mgr.email;
   },
   hrPartner: async (value, { profile }) => {
-    const partner = await User.findOne({
-      email: String(value).trim().toLowerCase(),
-      role: { $in: ['HRManager', 'SuperAdmin'] },
-    });
+    const partner = await findAccountByEmail(value, { role: { $in: ['HRManager', 'SuperAdmin'] } });
     if (!partner) throw new Error(`"${value}" is not an HR Manager or Backend account`);
     profile.hrPartner = partner._id;
     await profile.save();

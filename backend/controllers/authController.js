@@ -8,6 +8,7 @@ const path = require('path');
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
 const storage = require('../services/storage');
+const { resolveLoginUser } = require('../utils/loginIdentity');
 
 /**
  * Public signup — always creates an Employee-role account and returns a JWT.
@@ -51,22 +52,38 @@ const signup = asyncHandler(async (req, res) => {
 });
 
 /**
- * Log in with email/password; rejects invalid credentials and deactivated accounts.
+ * Log in with an employee code, role alias or email, plus the password.
+ *
+ * The identifier arrives as `identifier`; `email` is still read as a fallback so
+ * an older mobile build that has not been updated yet keeps working. See
+ * utils/loginIdentity for what an identifier may be and how it is matched.
+ *
  * @route POST /api/auth/login  (PUBLIC)
- * @param {string} req.body.email - required
+ * @param {string} req.body.identifier - employee code ("SSL 120"), role alias
+ *   ("admin" / "CEO" / "MD") or email address. Case-insensitive.
+ * @param {string} [req.body.email] - legacy alias for `identifier`.
  * @param {string} req.body.password - required
  * @returns {{user: Object, token: string}}; 401 invalid, 403 deactivated
  * @sideeffect stamps lastLoginAt
  */
 // POST /api/auth/login
 const login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
+  const { identifier, email, password } = req.body;
+  const typed = identifier || email;
+  if (!typed || !password) {
     res.status(400);
-    throw new Error('email and password are required');
+    throw new Error('Employee code and password are required');
   }
 
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+  const { user, ambiguous, reason } = await resolveLoginUser(typed);
+  // An identifier matching several accounts is refused outright rather than
+  // signing someone into whichever record came back first. This is the only
+  // case that gets a specific message — it tells the person how to proceed and
+  // reveals nothing about whether any particular account exists.
+  if (ambiguous) {
+    res.status(409);
+    throw new Error(reason);
+  }
   if (!user || !(await user.comparePassword(password))) {
     res.status(401);
     throw new Error('Invalid credentials');
