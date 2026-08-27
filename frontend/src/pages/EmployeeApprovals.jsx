@@ -5,11 +5,7 @@
  * child components; this page just composes them.
  */
 import PageHeader from '../components/PageHeader';
-import LeaveApprovalsInbox from '../components/LeaveApprovalsInbox';
-import ExitApprovalsInbox from '../components/ExitApprovalsInbox';
-import ExitClearanceInbox from '../components/ExitClearanceInbox';
-import RegularizationApprovalsInbox from '../components/RegularizationApprovalsInbox';
-import WorkOnLeaveApprovalsInbox from '../components/WorkOnLeaveApprovalsInbox';
+import ApprovalsBoard from '../components/ApprovalsBoard';
 
 // Approver inbox for the employee portal. Visible to everyone because ANY
 // employee can be someone's reporting manager in the org chart — not just people
@@ -22,20 +18,7 @@ export default function EmployeeApprovals() {
         subtitle="Requests from your team climbing the reporting hierarchy that are waiting on you."
       />
 
-      <h2 className="card-title mb-3">Leave</h2>
-      <LeaveApprovalsInbox />
-
-      <h2 className="card-title mt-8 mb-3">Worked on a leave day</h2>
-      <WorkOnLeaveApprovalsInbox />
-
-      <h2 className="card-title mt-8 mb-3">Attendance regularizations</h2>
-      <RegularizationApprovalsInbox />
-
-      <h2 className="card-title mt-8 mb-3">Resignations</h2>
-      <ExitApprovalsInbox />
-
-      <h2 className="card-title mt-8 mb-3">No-dues clearance</h2>
-      <ExitClearanceInbox />
+      <ApprovalsBoard />
     </div>
   );
 }

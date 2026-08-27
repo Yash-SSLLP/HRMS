@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import useScrollToLatest from '../hooks/useScrollToLatest';
 import { CHART_STATUS } from '../theme/chartColors';
 
 // Combo chart for the daily attendance report.
@@ -48,7 +49,13 @@ export default function AttendanceDayChart({ days = [], height, compact = false,
   // never balloon. Falls back to a sane default before the first measurement.
   const [wrapW, setWrapW] = useState(0);
   const roRef = useRef(null);
+  // The wrapper is also the horizontal scroller, so the same node has to reach
+  // useScrollToLatest. That hook hands back a ref OBJECT while this is a
+  // callback ref, so the callback assigns into it rather than being replaced —
+  // one node, two jobs (measure the width, park the scroll at the latest day).
+  const scrollRef = useScrollToLatest(days);
   const measureRef = useCallback((el) => {
+    scrollRef.current = el;
     if (roRef.current) { roRef.current.disconnect(); roRef.current = null; }
     if (el && typeof ResizeObserver !== 'undefined') {
       const ro = new ResizeObserver(([e]) => setWrapW(Math.round(e.contentRect.width)));
@@ -56,7 +63,7 @@ export default function AttendanceDayChart({ days = [], height, compact = false,
       roRef.current = ro;
       setWrapW(Math.round(el.getBoundingClientRect().width));
     }
-  }, []);
+  }, [scrollRef]);
 
   const times = days.flatMap((d) => [d.login, d.logout]).filter((v) => v != null);
   if (!times.length) {

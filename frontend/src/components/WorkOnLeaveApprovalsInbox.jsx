@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import ApprovalsEmpty from './ApprovalsEmpty';
 import { formatTime12 } from '../utils/time';
 
 const fmtDate = (d) =>
@@ -22,7 +23,7 @@ const empName = (r) =>
   `${r.employee?.user?.firstName || ''} ${r.employee?.user?.lastName || ''}`.trim() || 'Employee';
 const t12 = (v) => formatTime12(v) || '—';
 
-export default function WorkOnLeaveApprovalsInbox() {
+export default function WorkOnLeaveApprovalsInbox({ onCount }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -41,6 +42,13 @@ export default function WorkOnLeaveApprovalsInbox() {
     }
   };
   useEffect(() => { load(); }, []);
+
+  // Report the pending count to the page shell (ApprovalsBoard) so the summary
+  // rail and this section's count pill can show it. Optional — the inbox still
+  // works standalone. Held back until the first load finishes, so "0" always
+  // means "all clear" and never "not fetched yet".
+  useEffect(() => { if (!loading) onCount?.(rows.length); }, [loading, rows, onCount]);
+
 
   const decide = async (id, action) => {
     setBusy(`${id}:${action}`); setError('');
@@ -62,7 +70,7 @@ export default function WorkOnLeaveApprovalsInbox() {
         <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
       )}
       {rows.length === 0 ? (
-        <div className="text-sm text-gray-500">Nothing awaiting your approval.</div>
+        <ApprovalsEmpty message="No punch-ins on a leave day to review." hint="One appears here when somebody clocks in on a day they were approved to be away." />
       ) : (
         <div className="space-y-3">
           {rows.map((r) => (

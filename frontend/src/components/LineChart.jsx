@@ -4,7 +4,11 @@
 // Pass onPointClick(series, point, index) to make the dots interactive — the
 // point object is whatever you put in `data`, so attach extra fields (e.g. an
 // employee list) and read them back in the handler.
+import useScrollToLatest from '../hooks/useScrollToLatest';
 export default function LineChart({ data, series, height = 230, onPointClick }) {
+  // Opens at the newest point on a phone; a no-op once the plot fits.
+  const scrollRef = useScrollToLatest(series || data);
+
   const allSeries = series && series.length
     ? series
     : data
@@ -43,7 +47,7 @@ export default function LineChart({ data, series, height = 230, onPointClick }) 
         </div>
       )}
 
-      <div className="overflow-x-auto">
+      <div ref={scrollRef} className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: W, maxWidth: '100%' }}>
           {/* gridlines + y labels */}
           {ticks.map((t, i) => (

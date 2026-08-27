@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import ApprovalsEmpty from './ApprovalsEmpty';
 import { promptDialog } from './dialogs';
 import { ChainProgress } from './LeaveApprovalsInbox';
 
@@ -20,7 +21,7 @@ const REQ_COLORS = {
 
 const empName = (r) => `${r.employee?.user?.firstName || ''} ${r.employee?.user?.lastName || ''}`.trim() || 'Employee';
 
-export default function ExitApprovalsInbox() {
+export default function ExitApprovalsInbox({ onCount }) {
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -61,6 +62,12 @@ export default function ExitApprovalsInbox() {
   };
 
   // Chain-history minus the ones already shown in the actionable list.
+  // Report the pending count to the page shell (ApprovalsBoard) so the summary
+  // rail and this section's count pill can show it. Optional — the inbox still
+  // works standalone. Held back until the first load finishes, so "0" always
+  // means "all clear" and never "not fetched yet".
+  useEffect(() => { if (!loading) onCount?.(pending.length); }, [loading, pending, onCount]);
+
   const pendingIds = new Set(pending.map((r) => r._id));
   const others = history.filter((r) => !pendingIds.has(r._id));
 
@@ -72,33 +79,48 @@ export default function ExitApprovalsInbox() {
     `${r.noticePeriodDays ?? '-'}d notice`,
   ].join(' · ');
 
-  const tabBtn = (key, label, count) => (
-    <button
-      type="button"
-      onClick={() => setTab(key)}
-      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-        tab === key
-          ? 'border-indigo-600 text-indigo-700'
-          : 'border-transparent text-gray-500 hover:text-gray-700'
-      }`}
-    >
-      {label} <span className="ml-1 text-xs text-gray-400">({count})</span>
-    </button>
-  );
+  // A segmented control, not an underline: these read as the buttons they are,
+  // and the count travels in a chip rather than in dim parentheses. `bg-white`
+  // and `bg-gray-100` both carry a dark-mode remap in index.css, and the active
+  // chip uses the portal accent rather than a hardcoded hue.
+  const tabBtn = (key, label, count) => {
+    const on = tab === key;
+    return (
+      <button
+        type="button"
+        onClick={() => setTab(key)}
+        aria-pressed={on}
+        className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+          on
+            ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
+            : 'text-gray-500 hover:text-gray-800'
+        }`}
+      >
+        {label}
+        <span
+          className={`text-[11px] font-bold leading-none px-1.5 py-0.5 rounded-full tabular-nums ${
+            on ? 'accent-bg on-accent' : 'bg-gray-200 text-gray-600'
+          }`}
+        >
+          {count}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <div>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
-      <div className="flex gap-1 border-b border-gray-200 mb-4">
+      <div className="inline-flex items-center gap-1 p-1 mb-4 rounded-xl bg-gray-100 border border-gray-200">
         {tabBtn('pending', 'To approve', pending.length)}
         {tabBtn('history', 'History', others.length)}
       </div>
 
       {tab === 'pending' && (
-        <div className="bg-white shadow rounded-lg p-5">
+        <div>
           {pending.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">No resignations are waiting on you right now.</p>
+            <ApprovalsEmpty message="No resignations are waiting on you." hint="An exit request lands here once it reaches your step of the approval chain." />
           ) : (
             <ul className="divide-y divide-gray-100">
               {pending.map((r) => (
@@ -127,7 +149,7 @@ export default function ExitApprovalsInbox() {
       )}
 
       {tab === 'history' && (
-        <div className="bg-white shadow rounded-lg p-5">
+        <div>
           {others.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No other resignations reference you.</p>
           ) : (

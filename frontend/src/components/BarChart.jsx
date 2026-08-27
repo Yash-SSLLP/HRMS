@@ -6,8 +6,12 @@
 // gradient, which meant the same bar was two different colours depending on
 // where you looked — the fill has to read as one value, so it is one colour.
 import { seriesColor } from '../theme/chartColors';
+import useScrollToLatest from '../hooks/useScrollToLatest';
 
 export default function BarChart({ data = [], height = 200 }) {
+  // Opens at the newest bar on a phone; a no-op once the plot fits.
+  const scrollRef = useScrollToLatest(data);
+
   if (data.length === 0) {
     return <p className="text-sm text-gray-400 italic">No data to chart</p>;
   }
@@ -16,8 +20,20 @@ export default function BarChart({ data = [], height = 200 }) {
   const plotH = height - 32; // room for the value label above + axis label below
 
   return (
-    <div className="w-full overflow-x-auto">
-      <div className="flex items-end justify-center gap-5 mx-auto w-max px-2" style={{ height }}>
+    <div ref={scrollRef} className="w-full overflow-x-auto">
+      {/* Centring here is `min-w-full` + `safe center`, NOT `mx-auto`.
+          `mx-auto` on an overflowing child splits the overflow across BOTH
+          sides, which strands the first bars off-screen with no way to scroll
+          back to them — that is what opened the chart mid-plot. And
+          `justify-content` alone does nothing on a bare `w-max` box, because a
+          max-content box has no free space to distribute: `min-w-full` is what
+          gives it room to centre in when the bars fit. When they do not fit,
+          `w-max` wins over `min-w-full` and `safe` degrades to start
+          alignment, keeping the left end reachable. */}
+      <div
+        className="flex items-end gap-5 w-max min-w-full px-2 [justify-content:safe_center]"
+        style={{ height }}
+      >
         {data.map((d, i) => {
           const barH = Math.max(3, Math.round(((d.value || 0) / max) * plotH));
           // A per-bar colour wins (semantic categories like Present/Absent);

@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.6",
-  "versionCode": 52,
-  "notes": "Notification icon redrawn from the HRMS logo — the status-bar mark is now the logo's own arrow (one continuous zigzag with square-cut ends) instead of a hand-drawn approximation."
+  "versionName": "2.2.7",
+  "versionCode": 53,
+  "notes": "Sign in with your employee code (for example SSL 120) instead of your email address. It is not case-sensitive and the space is optional. Admin, CEO and MD accounts sign in with \"admin\", \"CEO\" and \"MD\". Email addresses still work."
 }

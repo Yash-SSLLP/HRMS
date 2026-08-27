@@ -7,12 +7,13 @@
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import ApprovalsEmpty from './ApprovalsEmpty';
 import { useAuthStore } from '../store/authStore';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const empName = (r) => `${r.employee?.user?.firstName || ''} ${r.employee?.user?.lastName || ''}`.trim() || 'Employee';
 
-export default function ExitClearanceInbox() {
+export default function ExitClearanceInbox({ onCount }) {
   const me = useAuthStore((s) => s.user);
   const myId = me?._id || me?.id;
   const [rows, setRows] = useState([]);
@@ -32,6 +33,13 @@ export default function ExitClearanceInbox() {
     }
   };
   useEffect(() => { load(); }, []);
+
+  // Report the pending count to the page shell (ApprovalsBoard) so the summary
+  // rail and this section's count pill can show it. Optional — the inbox still
+  // works standalone. Held back until the first load finishes, so "0" always
+  // means "all clear" and never "not fetched yet".
+  useEffect(() => { if (!loading) onCount?.(rows.length); }, [loading, rows, onCount]);
+
 
   // Only the sections assigned to me on a given exit.
   const mySections = (r) =>
@@ -58,9 +66,10 @@ export default function ExitClearanceInbox() {
   return (
     <div>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
-      <div className="bg-white shadow rounded-lg p-5">
+      {/* No inner card — ApprovalsBoard's section card is the surface. */}
+      <div>
         {rows.length === 0 ? (
-          <p className="text-sm text-gray-400 italic">No no-dues clearances are waiting on you right now.</p>
+          <ApprovalsEmpty message="No no-dues clearances are waiting on you." hint="A leaver's checklist appears here while your department still has to sign off." />
         ) : (
           <ul className="divide-y divide-gray-100">
             {rows.map((r) => (
