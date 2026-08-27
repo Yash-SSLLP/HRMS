@@ -24,7 +24,7 @@ import InterviewsBanner from '../components/InterviewsBanner';
 import ManagerTeamStatus from '../components/ManagerTeamStatus';
 // Same icon set as the sidebar (config/nav.jsx): FiTool is Regularization,
 // FiUmbrella is Leave — the banner buttons point at exactly those pages.
-import { FiTool, FiUmbrella, FiClock, FiGift, FiInfo } from 'react-icons/fi';
+import { FiTool, FiUmbrella, FiClock, FiGift, FiInfo, FiX } from 'react-icons/fi';
 import { TbId } from 'react-icons/tb';
 import { formatDateTime12 } from '../utils/time';
 
@@ -59,6 +59,22 @@ export default function EmployeeDashboard() {
   const [balance, setBalance] = useState(() => readCache('emp:balance'));
   const [pendingLeaves, setPendingLeaves] = useState(() => readCache('emp:pendingLeaves') ?? 0);
   const [wishes, setWishes] = useState(() => readCache('emp:wishes') || []);
+
+  // Clear one wish off this card. Optimistic: the row goes immediately and the
+  // cache is rewritten with it, so a dashboard revisit before the next fetch
+  // does not resurrect what the user just dismissed. The server keeps the
+  // notification (it stays in the bell feed) — this only hides the card entry,
+  // which is also why a failure is not worth interrupting anyone over.
+  const dismissWish = async (id) => {
+    setWishes((prev) => {
+      const next = prev.filter((w) => w._id !== id);
+      writeCache('emp:wishes', next);
+      return next;
+    });
+    try {
+      await api.patch(`/celebrations/wishes/${id}/dismiss`);
+    } catch (_) { /* the row is already gone locally; the next fetch reconciles */ }
+  };
   const [errors, setErrors] = useState({});
 
   // Fetch each dashboard section independently so one failure doesn't blank the
@@ -144,12 +160,23 @@ export default function EmployeeDashboard() {
           </h2>
           <ul className="space-y-2">
             {wishes.map((w) => (
-              <li key={w._id} className="text-sm">
-                <span className="font-medium text-gray-800">{w.title}</span>
-                {w.body && <span className="text-gray-600"> · {w.body}</span>}
-                <span className="block text-[11px] text-gray-400">
-                  {formatDateTime12(w.createdAt, { year: false })}
+              <li key={w._id} className="text-sm flex items-start justify-between gap-2 group">
+                <span className="min-w-0">
+                  <span className="font-medium text-gray-800">{w.title}</span>
+                  {w.body && <span className="text-gray-600"> · {w.body}</span>}
+                  <span className="block text-[11px] text-gray-400">
+                    {formatDateTime12(w.createdAt, { year: false })}
+                  </span>
                 </span>
+                <button
+                  type="button"
+                  onClick={() => dismissWish(w._id)}
+                  aria-label="Dismiss this wish"
+                  title="Dismiss"
+                  className="shrink-0 p-1 rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  <FiX size={15} />
+                </button>
               </li>
             ))}
           </ul>

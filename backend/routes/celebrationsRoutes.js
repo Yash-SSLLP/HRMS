@@ -9,7 +9,7 @@ const {
   upcomingCelebrations,
   monthCalendar,
   sendWish,
-  receivedWishes,
+  receivedWishes, dismissWish
 } = require('../controllers/celebrationsController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -26,6 +26,8 @@ router.get('/upcoming', upcomingCelebrations);
 router.get('/calendar', monthCalendar);
 // GET /wishes/received — wishes received by the current user; protected.
 router.get('/wishes/received', receivedWishes);
+// PATCH /wishes/:id/dismiss — clear one wish off the dashboard card; protected.
+router.patch('/wishes/:id/dismiss', dismissWish);
 // POST /wish — send a wish to a colleague; protected.
 router.post('/wish', sendWish);
 

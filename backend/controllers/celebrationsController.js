@@ -1,18 +1,18 @@
 /**
  * Celebrations controller — surfaces birthdays and work anniversaries (from
  * EmployeeProfile), builds a combined month calendar (holidays, festival
- * reminders, events, celebrations, the viewer's interviews), and lets colleagues send a wish that
- * fans out as an in-app notification, a chat message, and a celebratory email.
+ * reminders, events, celebrations, the viewer's interviews), and lets colleagues send a wish.
+ *
+ * A wish is delivered as an in-app NOTIFICATION and nothing else — plus a
+ * celebratory email when, and only when, the sender is the Backend, the CEO or
+ * the MD (see WISH_EMAIL_ROLES). It deliberately no longer opens a chat thread.
  */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Holiday = require('../models/Holiday');
 const Event = require('../models/Event');
 const Notification = require('../models/Notification');
-const Connection = require('../models/Connection');
-const Message = require('../models/Message');
 const { enqueueMail } = require('../services/email');
-const { isChatEnabled } = require('../middleware/chatEnabled');
 const { hiddenUserIds } = require('../utils/visibility');
 const { companyScopeFilter } = require('../utils/employeeScope');
 const { festivalsInRange } = require('../utils/festivalFeed');
@@ -26,6 +26,59 @@ const md = istMonthDay;
 
 function sameMonthDay(a, b) {
   return a.m === b.m && a.d === b.d;
+}
+
+// Only these roles send a WISH BY EMAIL. Everyone else's wish is delivered
+// in-app. Rationale: a birthday used to mean one email per colleague landing in
+// the person's inbox — twenty people wishing you was twenty emails. The
+// greeting itself is not diminished by arriving as a notification, but the
+// mailbox is, so the mail is reserved for the ones that read as being "from the
+// company". Deliberately NOT routed through hasPermission: every branch there
+// ends in a role default, and this is a fixed list, not a grantable capability.
+const WISH_EMAIL_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+const wishGoesByEmail = (user) => !!user && WISH_EMAIL_ROLES.includes(user.role);
+
+// How long a wish stays on the recipient's dashboard card after the occasion.
+const WISH_VISIBLE_DAYS_AFTER = 2;
+
+/**
+ * The occasion date a wish is FOR, as a UTC instant, from a recurring
+ * anniversary date (birthday / joining / marriage).
+ *
+ * A wish can be sent days early — the widget lists a month ahead — so "two days
+ * after the event" cannot be measured from when the wish was sent. This resolves
+ * the occurrence the wish is actually about: this year's, rolled to next year
+ * once this year's is more than the grace window in the past (which is how a
+ * wish sent in December for a January birthday lands on the right date).
+ *
+ * Returns null when the profile has no such date on file, in which case the
+ * caller falls back to counting from "now".
+ * @param {Date|string|null} recurring - the stored anniversary date
+ * @returns {Date|null}
+ */
+function occasionDateFrom(recurring) {
+  if (!recurring) return null;
+  const { m, d } = istMonthDay(new Date(recurring).getTime());
+  const { y } = istParts(new Date());
+  // IST is UTC+5:30, so an IST calendar day starts at 18:30 UTC the day before.
+  const atIstMidnight = (year) => new Date(Date.UTC(year, m - 1, d) - (5.5 * 60 * 60 * 1000));
+  const dayMs = 24 * 60 * 60 * 1000;
+  const graceMs = WISH_VISIBLE_DAYS_AFTER * dayMs;
+  const thisYear = atIstMidnight(y);
+  if (thisYear.getTime() >= Date.now() - graceMs) return thisYear;
+
+  // This year's date has already gone by. Two very different things look like
+  // that, and they must not be treated alike:
+  //   - an EARLY wish (December, for a January birthday) — next year's
+  //     occurrence is close, and that is the occasion being wished;
+  //   - a LATE wish, sent after the day passed — next year's occurrence is ~12
+  //     months out, and pinning the greeting to the dashboard until then would
+  //     leave it sitting there for a year.
+  // The widget only lists ~2 months ahead, so anything further than that is the
+  // late case: fall back to null and let the caller count from now.
+  const nextYear = atIstMidnight(y + 1);
+  const EARLY_WISH_WINDOW_MS = 90 * dayMs;
+  return nextYear.getTime() - Date.now() <= EARLY_WISH_WINDOW_MS ? nextYear : null;
 }
 
 // The next `n` IST calendar days, as {m, d, daysAway}.
@@ -418,11 +471,12 @@ const monthCalendar = asyncHandler(async (req, res) => {
  * @param {string} [req.body.type='birthday'] - 'birthday' | 'anniversary' | 'marriage'
  * @param {string} [req.body.message] - custom note, truncated to 280 chars
  * @returns {{ok: boolean}} (201); 400 if wishing yourself
- * @sideeffect creates a notification, posts a chat message (auto-connecting), and enqueues an email
+ * @sideeffect creates a notification; enqueues an email only for WISH_EMAIL_ROLES senders
  */
 // POST /api/celebrations/wish
 // Send a birthday / work-anniversary greeting to a colleague. Creates an in-app
-// notification for the recipient and enqueues a celebratory email. Body:
+// notification for the recipient; a celebratory email goes out only when the
+// sender is a SuperAdmin / CEO / MD. Body:
 //   { employeeId, type: 'birthday' | 'anniversary', message? }
 const sendWish = asyncHandler(async (req, res) => {
   const { employeeId, type = 'birthday', message } = req.body || {};
@@ -432,10 +486,10 @@ const sendWish = asyncHandler(async (req, res) => {
   }
   const kind = ['anniversary', 'marriage'].includes(type) ? type : 'birthday';
 
-  const profile = await EmployeeProfile.findById(employeeId).populate({
-    path: 'user',
-    select: 'firstName lastName email isActive',
-  });
+  const profile = await EmployeeProfile.findById(employeeId)
+    // The three recurring dates drive the wish's expiry — see occasionDateFrom.
+    .select('user dateOfBirth dateOfJoining dateOfMarriage hrPartner company')
+    .populate({ path: 'user', select: 'firstName lastName email isActive' });
   if (!profile || !profile.user) {
     res.status(404);
     throw new Error('Recipient not found');
@@ -467,48 +521,56 @@ const sendWish = asyncHandler(async (req, res) => {
   const defaultLine = OCCASIONS[kind].line;
   const wishLine = clean || defaultLine;
 
+  // The wish leaves the dashboard card two days after the occasion itself, not
+  // two days after it was sent — wishes arrive early. Falls back to counting
+  // from now when the profile has no date on file for this occasion.
+  const RECURRING = {
+    birthday: profile.dateOfBirth,
+    anniversary: profile.dateOfJoining,
+    marriage: profile.dateOfMarriage,
+  };
+  const occasionAt = occasionDateFrom(RECURRING[kind]) || new Date();
+  const expiresAt = new Date(occasionAt.getTime() + WISH_VISIBLE_DAYS_AFTER * 24 * 60 * 60 * 1000);
+
   await Notification.create({
     recipient: profile.user._id,
     type: 'celebration',
     title: `${emoji} ${fromName} sent you a ${occasion.toLowerCase()} wish`,
     body: wishLine,
+    expiresAt,
   });
 
-  // Also drop the wish into the recipient's chat, from the sender. Ensure an
-  // accepted connection exists between the two so the message has a thread.
-  // Best-effort — never let a chat hiccup block the wish/email. Skipped entirely
-  // while the chat module is switched off (the notification and email still go).
-  if (await isChatEnabled()) {
-    try {
-      const pairKey = Connection.buildPairKey(req.user._id, profile.user._id);
-      let conn = await Connection.findOne({ pairKey });
-      if (!conn) {
-        conn = await Connection.create({ requester: req.user._id, recipient: profile.user._id, status: 'accepted' });
-      } else if (conn.status !== 'accepted') {
-        conn.status = 'accepted';
-        await conn.save();
-      }
-      await Message.create({ connection: conn._id, sender: req.user._id, body: `${emoji} ${wishLine}` });
-    } catch (err) {
-      console.error('Wish chat delivery failed:', err.message);
-    }
+  // NO CHAT MESSAGE. A wish used to also open a chat thread with the sender,
+  // auto-creating an accepted Connection between two people who had never
+  // spoken so the message had somewhere to land. On a birthday that meant a
+  // colleague's greeting arrived three times over — notification, chat thread,
+  // email — and left behind a chat connection nobody asked for. The
+  // notification above is the whole in-app delivery now; only the email below
+  // is added on top, and only for the roles that speak for the company.
+
+  // EMAIL IS THE EXCEPTION, NOT THE RULE. A colleague's wish is delivered as
+  // the in-app notification above and stops there; only a wish from the
+  // Backend, the CEO or the MD also reaches the inbox. See WISH_EMAIL_ROLES.
+  const emailed = wishGoesByEmail(req.user);
+  if (emailed) {
+    await enqueueMail({
+      to: profile.user.email,
+      subject: `${emoji} ${occasion} wishes from ${fromName}`,
+      text: `Hi ${toFirst},\n\n${wishLine}\n\n- ${fromName}`,
+      html: `
+        <div style="font-family:Inter,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+          <div style="font-size:40px;text-align:center;">${emoji}</div>
+          <h2 style="text-align:center;color:#111827;margin:8px 0 16px;">${occasion} Wishes!</h2>
+          <p style="color:#374151;font-size:15px;line-height:1.6;">Hi ${toFirst},</p>
+          <p style="color:#374151;font-size:15px;line-height:1.6;">${wishLine}</p>
+          <p style="color:#6b7280;font-size:14px;margin-top:20px;">- ${fromName}</p>
+        </div>`,
+    });
   }
 
-  await enqueueMail({
-    to: profile.user.email,
-    subject: `${emoji} ${occasion} wishes from ${fromName}`,
-    text: `Hi ${toFirst},\n\n${wishLine}\n\n- ${fromName}`,
-    html: `
-      <div style="font-family:Inter,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
-        <div style="font-size:40px;text-align:center;">${emoji}</div>
-        <h2 style="text-align:center;color:#111827;margin:8px 0 16px;">${occasion} Wishes!</h2>
-        <p style="color:#374151;font-size:15px;line-height:1.6;">Hi ${toFirst},</p>
-        <p style="color:#374151;font-size:15px;line-height:1.6;">${wishLine}</p>
-        <p style="color:#6b7280;font-size:14px;margin-top:20px;">- ${fromName}</p>
-      </div>`,
-  });
-
-  res.status(201).json({ ok: true });
+  // `emailed` lets the client say what actually happened instead of implying
+  // every wish reaches the inbox.
+  res.status(201).json({ ok: true, emailed });
 });
 
 /**
@@ -521,12 +583,52 @@ const sendWish = asyncHandler(async (req, res) => {
 // received by the current user (drives the dashboard "Wishes for you" card).
 const receivedWishes = asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 10, 50);
-  const wishes = await Notification.find({ recipient: req.user._id, type: 'celebration' })
+  const wishes = await Notification.find({
+    recipient: req.user._id,
+    type: 'celebration',
+    // Dismissed by the recipient — gone from the card, kept in the bell feed.
+    dismissedAt: null,
+    // Still within two days of the occasion. `$exists: false` keeps wishes sent
+    // before this field existed visible rather than making them all vanish on
+    // deploy; they age out of the `limit` on their own.
+    $or: [{ expiresAt: null }, { expiresAt: { $exists: false } }, { expiresAt: { $gt: new Date() } }],
+  })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .select('title body createdAt readAt')
+    .select('title body createdAt readAt expiresAt')
     .lean();
   res.json({ count: wishes.length, wishes });
 });
 
-module.exports = { todayCelebrations, upcomingCelebrations, monthCalendar, sendWish, receivedWishes };
+/**
+ * Dismiss one received wish from the dashboard card.
+ * @route PATCH /api/celebrations/wishes/:id/dismiss
+ * @param {string} req.params.id - the celebration notification's id
+ * @returns {{id: string, dismissed: boolean}}; 404 if it is not the caller's
+ * @sideeffect stamps dismissedAt; the notification itself is NOT deleted, so it
+ *   remains in the bell feed — this only clears the dashboard card.
+ */
+// PATCH /api/celebrations/wishes/:id/dismiss
+const dismissWish = asyncHandler(async (req, res) => {
+  // Scoped to the caller AND to celebration notifications: a user must not be
+  // able to dismiss somebody else's item, nor use this to quietly clear an
+  // approval or payslip notification that is not a wish.
+  const wish = await Notification.findOne({
+    _id: req.params.id,
+    recipient: req.user._id,
+    type: 'celebration',
+  });
+  if (!wish) {
+    res.status(404);
+    throw new Error('Wish not found');
+  }
+  if (!wish.dismissedAt) {
+    wish.dismissedAt = new Date();
+    await wish.save();
+  }
+  res.json({ id: wish._id, dismissed: true });
+});
+
+module.exports = {
+  todayCelebrations, upcomingCelebrations, monthCalendar, sendWish, receivedWishes, dismissWish,
+};

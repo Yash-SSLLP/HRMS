@@ -15,6 +15,15 @@ const notificationSchema = new mongoose.Schema(
     // A logical target the frontend resolves to the right portal, e.g. 'calendar'.
     link: { type: String, trim: true },
     readAt: { type: Date },
+    // Cleared from the user's view WITHOUT deleting the record — they chose to
+    // dismiss it. Used by the dashboard "Wishes for you" card, whose whole point
+    // is to be a transient greeting rather than a permanent list.
+    dismissedAt: { type: Date },
+    // When this notification stops being worth showing on a dashboard card.
+    // A celebration wish expires two days after the occasion it celebrates, so
+    // last month's birthday greetings do not pile up on someone's home screen.
+    // Null / absent = never expires (every other notification type today).
+    expiresAt: { type: Date },
   },
   { timestamps: true }
 );
