@@ -14,7 +14,7 @@ const CashAccount = require('../models/CashAccount');
 const CashbookEntry = require('../models/CashbookEntry');
 const { recomputeBalance } = require('./cashbookController');
 const storage = require('../services/storage');
-const { hasPermission } = require('../middleware/authMiddleware');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
 const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
 const { notify, notifyMany } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
@@ -216,7 +216,12 @@ const downloadReceipt = asyncHandler(async (req, res) => {
     throw new Error('Receipt not found');
   }
   const isOwner = String(expense.employee) === String(req.user._id);
-  if (!isOwner && !hasPermission(req.user, 'expenses.manage')) {
+  // isExecViewer as well as hasPermission: a READ-ONLY CEO/MD holds no
+  // capability in the catalog (hasPermission returns false for them) — their
+  // access comes from the safe-method exemption inside requirePermission. That
+  // exemption lets them list the claims, so it must let them open the receipts
+  // attached to the rows they can already see.
+  if (!isOwner && !isExecViewer(req.user) && !hasPermission(req.user, 'expenses.manage')) {
     res.status(403);
     throw new Error('Not allowed');
   }

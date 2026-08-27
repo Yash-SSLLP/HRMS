@@ -16,9 +16,13 @@ const { scopeUserField } = require('../utils/employeeScope');
 
 const USER_FIELDS = 'firstName lastName email role';
 
-// A complaint is confidential to the leadership group — the CEO, HR Managers and
-// SuperAdmins — EXCEPT the person it's raised against (they never see it).
-const COMPLAINT_VIEWER_ROLES = ['SuperAdmin', 'HRManager', 'CEO'];
+// A complaint is confidential to the leadership group — the CEO and MD, HR
+// Managers and SuperAdmins — EXCEPT the person it's raised against (they never
+// see it). MD belongs here for the same reason CEO does: the two are one
+// executive tier everywhere else in the app (EXEC_VIEWERS in authMiddleware,
+// EXECUTIVE_ROLES in utils/visibility), and leaving MD out both 403'd their
+// inbox and dropped them from the new-complaint alert.
+const COMPLAINT_VIEWER_ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD'];
 
 async function findSuperAdmin() {
   return User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 });
@@ -31,7 +35,7 @@ async function findSuperAdmin() {
  * @param {string} req.body.subject - required
  * @param {string} req.body.description - required
  * @returns {{complaint: Object}} (201)
- * @sideeffect notifies leadership (CEO/HR/SuperAdmin) except the accused and complainant, with no sensitive detail
+ * @sideeffect notifies leadership (CEO/MD/HR/SuperAdmin) except the accused and complainant, with no sensitive detail
  */
 // POST /api/complaints  { againstUserId, subject, description }
 // Routing:
@@ -84,7 +88,7 @@ const createComplaint = asyncHandler(async (req, res) => {
     assignedTo,
   });
 
-  // Alert the leadership group — CEO, HR and SuperAdmin — but NEVER the person
+  // Alert the leadership group — CEO/MD, HR and SuperAdmin — but NEVER the person
   // the complaint is about (nor the complainant). Kept deliberately vague (no
   // names/subject) so nothing sensitive leaks into a push/lock-screen preview.
   const viewers = await User.find({ role: { $in: COMPLAINT_VIEWER_ROLES }, isActive: true }).select('_id').lean();
@@ -118,16 +122,16 @@ const myComplaints = asyncHandler(async (req, res) => {
 
 /**
  * Leadership inbox: all complaints except ones raised against the viewer.
- * @route GET /api/complaints/assigned  (CEO / HR / SuperAdmin)
+ * @route GET /api/complaints/assigned  (CEO / MD / HR / SuperAdmin)
  * @returns {{count: number, complaints: Object[]}} with populated complainant/against/assignedTo
  */
-// GET /api/complaints/assigned  — leadership inbox (CEO / HR / SuperAdmin)
+// GET /api/complaints/assigned  — leadership inbox (CEO / MD / HR / SuperAdmin)
 // Everyone in the group sees every complaint EXCEPT ones raised against them.
 const assignedComplaints = asyncHandler(async (req, res) => {
   // Permission gate: only leadership roles have an inbox
   if (!COMPLAINT_VIEWER_ROLES.includes(req.user.role)) {
     res.status(403);
-    throw new Error('Only the CEO, HR and SuperAdmins can view complaints');
+    throw new Error('Only the CEO/MD, HR and SuperAdmins can view complaints');
   }
   const filter = { against: { $ne: req.user._id } };
   // Company wall: a walled leader only sees complaints raised by their own

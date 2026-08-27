@@ -22,6 +22,7 @@ const User = require('../models/User');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
 
 /**
  * Company/ownership wall for a single document: may this ADMIN not touch it?
@@ -62,8 +63,31 @@ async function getMyProfileOrFail(userId, res) {
   return profile;
 }
 
+// The base role pair. Kept as the building block for the two gates below.
 function isAdmin(user) {
   return user.role === 'SuperAdmin' || user.role === 'HRManager';
+}
+
+// Write-side gate: who may upload for / delete somebody ELSE's document. Follows
+// the capability rather than the role pair, so it lines up with the sibling
+// routes that ARE gated (POST / and PATCH /:id/status both require
+// 'documents.manage'): a CEO/MD switched into edit mode writes here like an HR
+// Manager, and a Manager granted the capability can delete what they may upload.
+// A read-only exec is excluded — hasPermission returns false for them, which is
+// exactly the intent. adminCannotTouchDoc still applies the wall per document.
+function canManageOthersDocs(user) {
+  return isAdmin(user) || hasPermission(user, 'documents.manage');
+}
+
+// Read-side gate: who may DOWNLOAD somebody else's document. The same audience
+// the documents admin list is gated on (routes: requirePermission
+// 'documents.manage'), which is wider than isAdmin above — a read-only CEO/MD
+// holds no capability in the catalog (their access is requirePermission's
+// safe-method exemption), and a Manager may be granted 'documents.manage'.
+// Both can already see the rows, so both must be able to open the files.
+// adminCannotTouchDoc still applies the company / hrPartner wall per document.
+function canReadOthersDocs(user) {
+  return isAdmin(user) || isExecViewer(user) || hasPermission(user, 'documents.manage');
 }
 
 // ===== Employee =====
@@ -238,7 +262,7 @@ const download = asyncHandler(async (req, res) => {
 
   // Permission gate: HR/Admin (within their company/assignment scope), or the
   // owner employee.
-  let allowed = isAdmin(req.user) && !(await adminCannotTouchDoc(req, doc));
+  let allowed = canReadOthersDocs(req.user) && !(await adminCannotTouchDoc(req, doc));
   if (!allowed) {
     const profile = await EmployeeProfile.findOne({ user: req.user._id });
     if (profile && profile._id.equals(doc.employee)) allowed = true;
@@ -285,11 +309,11 @@ const remove = asyncHandler(async (req, res) => {
 
   // Permission gate: HR can delete any within their scope; employee only their
   // own non-HR-issued doc.
-  if (isAdmin(req.user) && (await adminCannotTouchDoc(req, doc))) {
+  if (canManageOthersDocs(req.user) && (await adminCannotTouchDoc(req, doc))) {
     res.status(403);
     throw new Error('Not authorized to delete this document');
   }
-  if (!isAdmin(req.user)) {
+  if (!canManageOthersDocs(req.user)) {
     const profile = await EmployeeProfile.findOne({ user: req.user._id });
     const isOwner = profile && profile._id.equals(doc.employee);
     if (!isOwner || HR_ONLY_CATEGORIES.includes(doc.category)) {
@@ -451,12 +475,19 @@ const myReplacementRequests = asyncHandler(async (req, res) => {
  * @route GET /api/documents/replace-requests/assigned  (HR/Admin)
  */
 const assignedReplacementRequests = asyncHandler(async (req, res) => {
-  if (!isAdmin(req.user)) {
+  if (!canReadOthersDocs(req.user)) {
     res.status(403);
     throw new Error('Only HR/Admin have a document-request inbox');
   }
-  const filter = req.user.role === 'SuperAdmin' && req.query.all === 'true'
-    ? {}
+  // An exec is never anybody's assigned HR partner, so "assigned to me" would
+  // always come back empty for them — and the admin Documents page (web and the
+  // mobile Approvals screen) calls this on load. Their oversight view is every
+  // request inside their company wall instead. A SuperAdmin still opts into the
+  // org-wide view with ?all=true; scopeEmployeeFilter is a no-op for them.
+  const orgWide = isExecViewer(req.user)
+    || (req.user.role === 'SuperAdmin' && req.query.all === 'true');
+  const filter = orgWide
+    ? await scopeEmployeeFilter(req, {})
     : { assignedTo: req.user._id };
   const requests = await DocumentChangeRequest.find(filter)
     .populate({ path: 'employee', select: 'employeeCode user', populate: { path: 'user', select: 'firstName lastName' } })

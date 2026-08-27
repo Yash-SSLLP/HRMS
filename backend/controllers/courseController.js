@@ -14,11 +14,19 @@ const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
 const cloudinary = require('../services/cloudinary');
 const { notify, notifyMany } = require('../services/notify');
 const User = require('../models/User');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
 
 // Roles allowed to manage courses / assign / approve. LDManager ("HR L&D") is an
 // LMS-only admin — this is the single place that gates course administration.
 const COURSE_ADMIN_ROLES = ['SuperAdmin', 'HRManager', 'LDManager'];
 const isCourseAdmin = (user) => user && COURSE_ADMIN_ROLES.includes(user.role);
+// Who may PREVIEW a course video without an approved enrollment. Wider than
+// isCourseAdmin (which also drives the notification-recipient queries, so it
+// stays a plain role list): a read-only CEO/MD holds no capability in the
+// catalog yet reaches the LMS admin pages through requirePermission's
+// safe-method exemption, and a Manager can be granted 'courses.manage'.
+const canPreviewCourse = (user) => isCourseAdmin(user) || isExecViewer(user)
+  || hasPermission(user, 'courses.manage');
 
 // Add `daysToDue` / `overdue` to an enrollment-ish object for the client.
 function withDueMeta(obj) {
@@ -240,7 +248,7 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
   }
 
   // Access: a course admin (preview) or an employee with an Approved enrollment.
-  let allowed = isCourseAdmin(req.user);
+  let allowed = canPreviewCourse(req.user);
   if (!allowed) {
     const enr = await Enrollment.findOne({ course: course._id, employee: req.user._id }).select('approvalStatus').lean();
     allowed = enr && enr.approvalStatus === 'Approved';

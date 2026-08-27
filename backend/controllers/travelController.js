@@ -9,6 +9,7 @@ const TravelRequest = require('../models/TravelRequest');
 const { TRAVEL_STATUS } = require('../models/TravelRequest');
 const storage = require('../services/storage');
 const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
 
 const EMPLOYEE_FIELDS = 'firstName lastName email';
 // Statuses an admin may set when reviewing the travel request itself
@@ -16,8 +17,14 @@ const REVIEWABLE_STATUSES = ['Approved', 'Rejected', 'Completed'];
 // Statuses an admin may set when processing the reimbursement claim
 const REIMBURSEMENT_DECISIONS = ['Approved', 'Rejected', 'Reimbursed'];
 
+// Who may open somebody ELSE's reimbursement receipt. Matches the audience the
+// travel admin list is gated on (routes: requirePermission 'travel.manage'),
+// which is wider than SuperAdmin/HRManager: a read-only CEO/MD holds no
+// capability in the catalog, so isExecViewer has to be checked separately, and
+// a Manager granted 'travel.manage' belongs here too. The company wall
+// (cannotSeeUser) still applies per record.
 function isAdmin(user) {
-  return user.role === 'SuperAdmin' || user.role === 'HRManager';
+  return isExecViewer(user) || hasPermission(user, 'travel.manage');
 }
 
 /**

@@ -8,7 +8,7 @@ const asyncHandler = require('express-async-handler');
 const Announcement = require('../models/Announcement');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
-const { hasPermission } = require('../middleware/authMiddleware');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
 
 // A Mongo predicate matching docs whose optional [startDate, endDate] window
 // contains `now`. Absent/null bounds are treated as open-ended.
@@ -29,7 +29,11 @@ const activeWindowQuery = (now) => ({
 // expired ones, so they can manage them. Everyone else only sees announcements
 // whose display window currently contains "now".
 const listAnnouncements = asyncHandler(async (req, res) => {
-  const filter = hasPermission(req.user, 'announcements.manage')
+  // isExecViewer as well as hasPermission: a read-only CEO/MD holds no
+  // capability in the catalog, but requirePermission's safe-method exemption
+  // puts them on the admin Announcements page — where the employee-window
+  // filter would silently hide every scheduled and expired announcement.
+  const filter = isExecViewer(req.user) || hasPermission(req.user, 'announcements.manage')
     ? {}
     : activeWindowQuery(new Date());
   const docs = await Announcement.find(filter)

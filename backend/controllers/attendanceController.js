@@ -26,7 +26,7 @@ const {
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../utils/restDay');
 const { notify, notifyMany } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
-const { hasPermission } = require('../middleware/authMiddleware');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
 const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope } = require('../utils/employeeScope');
 // Punching in on a day you are on approved leave. The leave-side rules (which
 // day a leave still claims, who sits at the top of the ladder, and how a day is
@@ -61,8 +61,14 @@ function capToToday(end) {
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-function isAdmin(user) {
-  return user.role === 'SuperAdmin' || user.role === 'HRManager';
+// Who may look at somebody ELSE's punch selfie. Deliberately the same audience
+// the rest of the attendance admin surface is gated on (routes: requirePermission
+// 'attendance.manage'), which is wider than SuperAdmin/HRManager: a read-only
+// CEO/MD and a Manager holding the grant both see the records in the list, so
+// they must be able to open the photos in those rows too. Per-record company /
+// hrPartner scoping still applies on top (cannotManageProfile).
+function canViewOthersAttendance(user) {
+  return isExecViewer(user) || hasPermission(user, 'attendance.manage');
 }
 
 async function getMyProfileOrFail(userId, res) {
@@ -692,7 +698,7 @@ const getAttendancePhoto = asyncHandler(async (req, res) => {
   // Admins only within their scope — HR of company A must not pull company B's
   // punch selfies by record id. The owning employee always may.
   let allowed = false;
-  if (isAdmin(req.user)) {
+  if (canViewOthersAttendance(req.user)) {
     const recProfile = await EmployeeProfile.findById(record.employee).select('hrPartner company').lean();
     allowed = !cannotManageProfile(req, recProfile);
   }
