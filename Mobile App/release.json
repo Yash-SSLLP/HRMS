@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.5",
-  "versionCode": 51,
-  "notes": "Per-company data isolation across the app (each company sees only its own people and records; Backend account sees all), Companies screen now Backend-only, compact org chart with company-name heading, and the company filter reserved for the Backend account."
+  "versionName": "2.2.6",
+  "versionCode": 52,
+  "notes": "Notification icon redrawn from the HRMS logo — the status-bar mark is now the logo's own arrow (one continuous zigzag with square-cut ends) instead of a hand-drawn approximation."
 }
