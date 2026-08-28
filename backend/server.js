@@ -5,6 +5,7 @@
  * Middleware pipeline (order matters):
  *
  * 1. CORS (exposes Content-Disposition for named file downloads)
+ * 1b. compression — gzip for JSON responses over 1 KB
  * 2. express.json() body parser
  * 3. requestContext — AsyncLocalStorage so the audit plugin can attribute
  *    changes to req.user
@@ -24,6 +25,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const connectDB = require('./config/db');
 
 const { notFound, errorHandler } = require('./middleware/errorHandler');
@@ -50,6 +52,24 @@ app.use(
     origin: process.env.CORS_ORIGIN || '*',
     credentials: true,
     exposedHeaders: ['Content-Disposition'],
+  })
+);
+
+// gzip every response big enough to be worth it. The API is almost entirely
+// JSON, which compresses 70-85%: the win is largest on the list endpoints
+// (employees, attendance months, payroll registers) and on mobile data, where
+// the bytes are the slow part rather than the query. Streamed file downloads
+// (payslip PDFs, Excel exports, GridFS media) are already-compressed binaries,
+// so `filter` lets them through untouched.
+app.use(
+  compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      // Honour an explicit opt-out, then fall back to compression's own
+      // content-type check (which skips images/video/zip and friends).
+      if (req.headers['x-no-compression']) return false;
+      return compression.filter(req, res);
+    },
   })
 );
 

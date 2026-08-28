@@ -12,6 +12,7 @@ const { ROLES } = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Company = require('../models/Company');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
+const { purgePerson } = require('../services/purgePerson');
 const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { scopeUserFilter } = require('../utils/employeeScope');
@@ -366,8 +367,11 @@ const deleteUser = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('You cannot delete your own account');
   }
-  await user.deleteOne();
-  res.json({ id: req.params.id, deleted: true });
+  // Same cascade the employee-delete route runs, so removing someone from either
+  // screen leaves the same (empty) trail. Previously this deleted the login only
+  // and stranded their EmployeeProfile plus everything hanging off it.
+  const report = await purgePerson({ userId: user._id });
+  res.json({ id: req.params.id, deleted: true, purged: report });
 });
 
 /**

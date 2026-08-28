@@ -46,6 +46,7 @@ async function findAccountByEmail(email, extra = {}) {
 const { FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange } = require('../services/profileChanges');
 const { notifyMany } = require('../services/notify');
 const ImportFlag = require('../models/ImportFlag');
+const { purgePerson } = require('../services/purgePerson');
 const orgMasterSync = require('../services/orgMasterSync');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
@@ -516,8 +517,36 @@ const listEmployees = asyncHandler(async (req, res) => {
   if (await shouldExcludeExecutives(req)) {
     excludeUserIds.push(...(await executiveUserIds()));
   }
+
+  // Search in the QUERY rather than over the fetched rows. Name and email live
+  // on the User account, so matching them means resolving the matching user ids
+  // first — one extra query, versus loading every profile in scope and throwing
+  // most of them away in JS. The input is regex-escaped: it is user-supplied and
+  // went straight into `new RegExp` before.
+  let userIdFilter = null;
+  const term = (q || '').trim();
+  if (term) {
+    const re = new RegExp(escapeRegExp(term), 'i');
+    const matchedUsers = await User.find({
+      $or: [{ firstName: re }, { lastName: re }, { email: re }],
+    }).select('_id').lean();
+    userIdFilter = matchedUsers.map((u) => u._id);
+    // Composed via $and rather than assigning filter.$or: the scope fragment
+    // spread in above is a SECURITY filter, and if it ever grows an $or of its
+    // own a bare assignment here would silently drop it.
+    filter.$and = [
+      ...(filter.$and || []),
+      { $or: [{ employeeCode: re }, { designation: re }, { user: { $in: userIdFilter } }] },
+    ];
+  }
   if (excludeUserIds.length) filter.user = { $nin: excludeUserIds };
-  let query = EmployeeProfile.find(filter)
+
+  const profiles = await EmployeeProfile.find(filter)
+    // ctcHistory is an unbounded per-employee array of salary revisions and
+    // docToken is the secret behind that employee's public upload link —
+    // neither is read from a directory row, and both were being shipped to
+    // every HR browser on every load. The single-profile GET still returns them.
+    .select('-ctcHistory -docToken')
     // `updatedAt` on the USER as well as the profile: role, login email and
     // phone are stored on the account, so an edit to any of them moves that
     // stamp and not the profile's. The directory's "last updated" column takes
@@ -525,19 +554,11 @@ const listEmployees = asyncHandler(async (req, res) => {
     .populate('user', 'firstName lastName email role isActive updatedAt')
     .populate('hrPartner', 'firstName lastName email')
     .populate('company', 'name code')
-    .sort({ createdAt: -1 });
-  let profiles = await query;
-  if (q) {
-    const re = new RegExp(q, 'i');
-    profiles = profiles.filter(
-      (p) =>
-        re.test(p.employeeCode || '') ||
-        re.test(p.designation || '') ||
-        re.test(p.user?.firstName || '') ||
-        re.test(p.user?.lastName || '') ||
-        re.test(p.user?.email || '')
-    );
-  }
+    .sort({ createdAt: -1 })
+    // Read-only response — skip hydrating full Mongoose documents (and their
+    // subdocument schemas) only to serialise them straight back out.
+    .lean();
+
   res.json({ count: profiles.length, profiles });
 });
 
@@ -803,11 +824,12 @@ const deleteEmployee = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee profile not found');
   }
-  await profile.deleteOne();
-  // Their import flags point at a profile that is gone, so they can never be
-  // resolved — clear them rather than leaving dead rows in the review list.
-  await ImportFlag.deleteMany({ employee: profile._id }).catch(() => {});
-  res.json({ id: req.params.id, deleted: true });
+  // One cascade for both delete routes (see services/purgePerson.js): this used
+  // to remove the profile and its import flags only, leaving the User login able
+  // to sign in and every other record — attendance, leave, documents and their
+  // files, notifications, chat, khata — orphaned in the database.
+  const report = await purgePerson({ userId: profile.user, profileId: profile._id });
+  res.json({ id: req.params.id, deleted: true, purged: report });
 });
 
 /**

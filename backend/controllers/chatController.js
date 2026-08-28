@@ -194,7 +194,8 @@ const listRequests = asyncHandler(async (req, res) => {
   const pending = await Connection.find({ status: 'pending', $or: [{ requester: meId }, { recipient: meId }] })
     .populate('requester', USER_FIELDS)
     .populate('recipient', USER_FIELDS)
-    .sort({ updatedAt: -1 });
+    .sort({ updatedAt: -1 })
+    .lean();
 
   const incoming = [];
   const outgoing = [];
@@ -248,45 +249,86 @@ const respondRequest = asyncHandler(async (req, res) => {
 // GET /api/chat/connections  — accepted connections with last message + unread count
 const listConnections = asyncHandler(async (req, res) => {
   const meId = req.user._id;
+  // .lean(): this response is read-only — nothing here calls a document method,
+  // and the populated ids stay real ObjectIds so `.equals()` below still works.
+  // (listGroups deliberately does NOT do this: it calls group.memberFor().)
   const conns = await Connection.find({ status: 'accepted', $or: [{ requester: meId }, { recipient: meId }] })
     .populate('requester', USER_FIELDS)
     .populate('recipient', USER_FIELDS)
-    .sort({ updatedAt: -1 });
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  const connIds = conns.map((c) => c._id);
+
+  // Every conversation's last message, unread count and undelivered count in a
+  // SINGLE round-trip. This used to be two queries PER conversation inside a
+  // map(), which the client's poll turned into dozens of round-trips every few
+  // seconds per signed-in user — enough to saturate the connection pool and
+  // slow down every other request in the app.
+  //
+  // Sorting ASCENDING and taking $last is deliberate: it matches the existing
+  // { connection: 1, createdAt: 1 } index exactly, so Mongo streams the scan in
+  // index order instead of buffering a sort.
+  const stats = connIds.length
+    ? await Message.aggregate([
+        { $match: { connection: { $in: connIds }, deletedFor: { $ne: meId } } },
+        { $sort: { connection: 1, createdAt: 1 } },
+        {
+          $group: {
+            _id: '$connection',
+            lastBody: { $last: '$body' },
+            lastAt: { $last: '$createdAt' },
+            lastSender: { $last: '$sender' },
+            // `$eq: [field, null]` is true for null AND missing, which is the
+            // same set the old `readAt: null` / `deliveredAt: null` filters matched.
+            unread: {
+              $sum: {
+                $cond: [{ $and: [{ $ne: ['$sender', meId] }, { $eq: ['$readAt', null] }] }, 1, 0],
+              },
+            },
+            undelivered: {
+              $sum: {
+                $cond: [{ $and: [{ $ne: ['$sender', meId] }, { $eq: ['$deliveredAt', null] }] }, 1, 0],
+              },
+            },
+          },
+        },
+      ])
+    : [];
+  const statsBy = new Map(stats.map((s) => [String(s._id), s]));
 
   // The caller is online and polling — mark messages addressed to them as
-  // delivered so the sender sees double ticks even before they're opened.
-  await Message.updateMany(
-    { connection: { $in: conns.map((c) => c._id) }, sender: { $ne: meId }, deliveredAt: null },
-    { $set: { deliveredAt: new Date() } }
-  );
+  // delivered so the sender sees double ticks even before they're opened. Only
+  // written when the pass above actually found something undelivered, and only
+  // for those conversations: the poll is frequent, so an unconditional write on
+  // every one of them was pure load on the primary.
+  const staleConnIds = stats.filter((s) => s.undelivered > 0).map((s) => s._id);
+  if (staleConnIds.length) {
+    await Message.updateMany(
+      { connection: { $in: staleConnIds }, sender: { $ne: meId }, deliveredAt: null },
+      { $set: { deliveredAt: new Date() } }
+    );
+  }
 
   // Flag the other parties who have left the organization so the client shows a
   // "Resigned" badge and blocks messaging (covers dateOfExit-only departures too).
   const otherIds = conns.map((c) => (c.requester._id.equals(meId) ? c.recipient._id : c.requester._id));
   const departed = await departedUserIdSet(otherIds);
 
-  const out = await Promise.all(
-    conns.map(async (c) => {
-      const other = c.requester._id.equals(meId) ? c.recipient : c.requester;
-      const lastMessage = await Message.findOne({ connection: c._id, deletedFor: { $ne: meId } }).sort({ createdAt: -1 });
-      const unread = await Message.countDocuments({
-        connection: c._id,
-        sender: { $ne: meId },
-        readAt: null,
-        deletedFor: { $ne: meId },
-      });
-      const person = publicUser(other);
-      person.resigned = person.resigned || departed.has(String(other._id));
-      return {
-        connectionId: c._id,
-        person,
-        lastMessage: lastMessage
-          ? { body: lastMessage.body, createdAt: lastMessage.createdAt, mine: lastMessage.sender.equals(meId) }
-          : null,
-        unread,
-      };
-    })
-  );
+  const out = conns.map((c) => {
+    const other = c.requester._id.equals(meId) ? c.recipient : c.requester;
+    const stat = statsBy.get(String(c._id));
+    const person = publicUser(other);
+    person.resigned = person.resigned || departed.has(String(other._id));
+    return {
+      connectionId: c._id,
+      person,
+      lastMessage: stat
+        ? { body: stat.lastBody, createdAt: stat.lastAt, mine: String(stat.lastSender) === String(meId) }
+        : null,
+      unread: stat ? stat.unread : 0,
+    };
+  });
 
   res.json({ count: out.length, connections: out });
 });
@@ -322,14 +364,17 @@ const getMessages = asyncHandler(async (req, res) => {
 
   const now = new Date();
   // Opening the thread marks the other party's messages as both delivered
-  // (if a poll hadn't already) and read/seen.
+  // (if a poll hadn't already) and read/seen. One write rather than two: this
+  // runs on every incremental poll of the open thread, so the second round-trip
+  // was pure latency. `$ifNull` keeps an already-set timestamp instead of
+  // stamping it again, which is what the two separate filters used to guarantee.
   await Message.updateMany(
-    { connection: req.params.connectionId, sender: { $ne: meId }, deliveredAt: null },
-    { $set: { deliveredAt: now } }
-  );
-  await Message.updateMany(
-    { connection: req.params.connectionId, sender: { $ne: meId }, readAt: null },
-    { $set: { readAt: now } }
+    {
+      connection: req.params.connectionId,
+      sender: { $ne: meId },
+      $or: [{ deliveredAt: null }, { readAt: null }],
+    },
+    [{ $set: { deliveredAt: { $ifNull: ['$deliveredAt', now] }, readAt: { $ifNull: ['$readAt', now] } } }]
   );
 
   // Incremental sync: when the client passes ?after=<ISO>, return only messages
@@ -345,10 +390,14 @@ const getMessages = asyncHandler(async (req, res) => {
   // "Read up to" markers so the sender's ticks upgrade to delivered/seen without
   // re-fetching their own old messages: the latest of MY messages the other party
   // has delivered/read. The client marks all its messages up to these as such.
-  const lastSeen = await Message.findOne({ connection: req.params.connectionId, sender: meId, readAt: { $ne: null } })
-    .sort({ readAt: -1 }).select('createdAt').lean();
-  const lastDelivered = await Message.findOne({ connection: req.params.connectionId, sender: meId, deliveredAt: { $ne: null } })
-    .sort({ deliveredAt: -1 }).select('createdAt').lean();
+  // Both receipts in one round-trip — they are independent, and this pair also
+  // runs on every poll of the open thread.
+  const [lastSeen, lastDelivered] = await Promise.all([
+    Message.findOne({ connection: req.params.connectionId, sender: meId, readAt: { $ne: null } })
+      .sort({ readAt: -1 }).select('createdAt').lean(),
+    Message.findOne({ connection: req.params.connectionId, sender: meId, deliveredAt: { $ne: null } })
+      .sort({ deliveredAt: -1 }).select('createdAt').lean(),
+  ]);
 
   res.json({
     incremental,
@@ -550,31 +599,76 @@ const listGroups = asyncHandler(async (req, res) => {
     .populate('members.user', USER_FIELDS)
     .sort({ updatedAt: -1 });
 
+  // Split membership first so the message lookups below can be done in bulk.
+  const accepted = [];
   const mine = [];
   const invites = [];
   for (const g of groups) {
     const mem = g.memberFor(meId);
     if (!mem) continue;
-    if (mem.status === 'accepted') {
-      const lastMessage = await Message.findOne({ group: g._id, deletedFor: { $ne: meId } }).sort({ createdAt: -1 });
-      const unread = await Message.countDocuments({
-        group: g._id,
-        sender: { $ne: meId },
-        deletedFor: { $ne: meId },
-        ...(mem.lastReadAt ? { createdAt: { $gt: mem.lastReadAt } } : {}),
-      });
-      mine.push({
-        groupId: g._id,
-        name: g.name,
-        hasPhoto: Boolean(g.photo),
-        myRole: mem.role,
-        memberCount: g.members.filter((m) => m.status === 'accepted').length,
-        lastMessage: lastMessage
-          ? { body: lastMessage.body, createdAt: lastMessage.createdAt, mine: lastMessage.sender.equals(meId) }
-          : null,
-        unread,
-      });
-    } else if (mem.status === 'invited') {
+    if (mem.status === 'accepted') accepted.push({ g, mem });
+  }
+
+  // Last message + unread per group in two round-trips total, regardless of how
+  // many groups the caller is in. The previous version awaited two queries per
+  // group SERIALLY inside the loop, so 10 groups meant 20 sequential round-trips
+  // on an endpoint the chat dock polls on a timer.
+  const groupIds = accepted.map(({ g }) => g._id);
+  const [lasts, unreads] = groupIds.length
+    ? await Promise.all([
+        // ASC + $last matches the { group: 1, createdAt: 1 } index, so this
+        // streams in index order rather than buffering a sort.
+        Message.aggregate([
+          { $match: { group: { $in: groupIds }, deletedFor: { $ne: meId } } },
+          { $sort: { group: 1, createdAt: 1 } },
+          {
+            $group: {
+              _id: '$group',
+              lastBody: { $last: '$body' },
+              lastAt: { $last: '$createdAt' },
+              lastSender: { $last: '$sender' },
+            },
+          },
+        ]),
+        // Unread is per-member (each member has their own lastReadAt), so the
+        // cutoffs go in as one $or branch per group rather than a shared filter.
+        Message.aggregate([
+          {
+            $match: {
+              sender: { $ne: meId },
+              deletedFor: { $ne: meId },
+              $or: accepted.map(({ g, mem }) => ({
+                group: g._id,
+                ...(mem.lastReadAt ? { createdAt: { $gt: mem.lastReadAt } } : {}),
+              })),
+            },
+          },
+          { $group: { _id: '$group', count: { $sum: 1 } } },
+        ]),
+      ])
+    : [[], []];
+  const lastBy = new Map(lasts.map((l) => [String(l._id), l]));
+  const unreadBy = new Map(unreads.map((u) => [String(u._id), u.count]));
+
+  for (const { g, mem } of accepted) {
+    const last = lastBy.get(String(g._id));
+    mine.push({
+      groupId: g._id,
+      name: g.name,
+      hasPhoto: Boolean(g.photo),
+      myRole: mem.role,
+      memberCount: g.members.filter((m) => m.status === 'accepted').length,
+      lastMessage: last
+        ? { body: last.lastBody, createdAt: last.lastAt, mine: String(last.lastSender) === String(meId) }
+        : null,
+      unread: unreadBy.get(String(g._id)) || 0,
+    });
+  }
+
+  for (const g of groups) {
+    const mem = g.memberFor(meId);
+    if (!mem) continue;
+    if (mem.status === 'invited') {
       const owner = g.members.find((m) => m.role === 'owner');
       invites.push({ groupId: g._id, name: g.name, hasPhoto: Boolean(g.photo), from: publicUser(owner?.user), invitedAt: mem.invitedAt, memberCount: g.members.length });
     }

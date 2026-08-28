@@ -732,7 +732,17 @@ export default function AdminEmployees() {
   };
 
   const onDelete = async (p) => {
-    if (!(await confirmDialog({ message: `Delete profile for ${p.user?.email}?`, tone: 'danger', confirmText: 'Delete' }))) return;
+    // Deleting now cascades (services/purgePerson.js): the login and everything
+    // the person owns goes with the profile, so the warning has to say so.
+    if (!(await confirmDialog({
+      message: `Permanently delete ${p.user?.email}?
+
+This removes their login and every record they own — attendance, leave, documents, notifications and chat. Payroll records and the audit log are kept.
+
+This cannot be undone.`,
+      tone: 'danger',
+      confirmText: 'Delete everything',
+    }))) return;
     try {
       await api.delete(`/employees/${p._id}`);
       await load();

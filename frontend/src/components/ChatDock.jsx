@@ -15,8 +15,16 @@ import { useChatStore } from '../store/chatStore';
 import { confirmDialog } from './dialogs';
 import { formatTime12 } from '../utils/time';
 
-const POLL_MS = 4000;        // conversation-list poll
-const MSG_POLL_MS = 2500;    // active-thread poll (cheap now — incremental)
+// Poll cadence. This dock is mounted by Layout on EVERY page, so an ungated
+// timer meant every signed-in user hit three chat endpoints every 4s forever —
+// on every screen, whether the dock was open or not, and whether the tab was in
+// front or minimised. That load alone was enough to slow the whole portal down.
+// Now the cadence follows attention: fast while you are looking at the dock,
+// slow enough to keep the unread badge honest while you are not, and stopped
+// entirely on a hidden tab (with an immediate catch-up when it comes back).
+const POLL_MS = 4000;          // conversation-list poll, dock open
+const POLL_CLOSED_MS = 30000;  // conversation-list poll, dock closed (badge only)
+const MSG_POLL_MS = 2500;      // active-thread poll (cheap now — incremental)
 
 // ---- tiny localStorage cache so the dock paints instantly on open, then
 // revalidates over the network (keyed per user so accounts don't leak) ----
@@ -241,15 +249,35 @@ export default function ChatDock() {
     } catch (err) { setError(err.response?.data?.message || 'Failed to load messages'); }
   };
 
+  // Paint from cache once on mount, before the first network round-trip lands.
   useEffect(() => {
     const cc = readCache(cacheKey(me, 'connections')); if (cc) setConnections(cc);
     const gg = readCache(cacheKey(me, 'groups')); if (gg) setGroups(gg);
-    loadLists();
-    const t = setInterval(loadLists, POLL_MS);
-    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Conversation-list poll, re-armed whenever the dock opens or closes so the
+  // cadence matches whether anyone is actually reading it.
+  useEffect(() => {
+    loadLists();
+    const t = setInterval(
+      () => { if (!document.hidden) loadLists(); },
+      open ? POLL_MS : POLL_CLOSED_MS
+    );
+    // A tab that was hidden skipped its ticks — catch up the moment it returns
+    // rather than leaving the badge stale until the next interval.
+    const onVisibility = () => { if (!document.hidden) loadLists(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Active-thread poll. Also gated on `open`: closing the dock only returns null
+  // from render, it does not unmount, so without this the 2.5s thread poll kept
+  // running for the rest of the session on whatever chat was last opened.
   useEffect(() => {
     activeRef.current = active;
     cursorRef.current = null;
@@ -257,11 +285,19 @@ export default function ChatDock() {
     // Paint cached tail instantly, then do a full load to fill in older history.
     const cached = readCache(msgsCacheKey(active));
     setMessages(cached || []);
+    if (!open) return undefined;
     loadMessages(active, { incremental: false });
-    const t = setInterval(() => loadMessages(active, { incremental: true }), MSG_POLL_MS);
-    return () => clearInterval(t);
+    const t = setInterval(() => {
+      if (!document.hidden) loadMessages(active, { incremental: true });
+    }, MSG_POLL_MS);
+    const onVisibility = () => { if (!document.hidden) loadMessages(active, { incremental: true }); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
+  }, [active, open]);
 
   useEffect(() => {
     messagesRef.current = messages;

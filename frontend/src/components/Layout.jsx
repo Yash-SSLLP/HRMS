@@ -193,8 +193,15 @@ function NotificationBell({ isAdmin, portal }) {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, NOTIF_POLL_MS);
-    return () => clearInterval(t);
+    // Skip ticks on a hidden tab and catch up when it returns: a portal left
+    // open in a background tab all day should not keep polling.
+    const t = setInterval(() => { if (!document.hidden) load(); }, NOTIF_POLL_MS);
+    const onVisibility = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portal]);
 
@@ -360,10 +367,14 @@ function ApprovalsPill({ to }) {
       }
     };
     load();
-    const t = setInterval(load, NOTIF_POLL_MS);
+    // Same visibility gate as the bell — a background tab polls nothing.
+    const t = setInterval(() => { if (!document.hidden) load(); }, NOTIF_POLL_MS);
+    const onVisibility = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       alive = false;
       clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 

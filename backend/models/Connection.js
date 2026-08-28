@@ -6,8 +6,10 @@ const mongoose = require('mongoose');
 // duplicate/reverse requests via a unique index.
 const connectionSchema = new mongoose.Schema(
   {
-    requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    recipient: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    // Not indexed field-level: the compound indexes below lead with each of
+    // these, and an index's prefix already serves a query on that field alone.
+    requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    recipient: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     status: {
       type: String,
       enum: ['pending', 'accepted', 'declined'],
@@ -18,6 +20,13 @@ const connectionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// The chat dock's list query is { status, $or: [{ requester: me }, { recipient: me }] }.
+// Mongo runs an $or as one index scan PER branch, so each branch wants an index
+// that carries the status too — otherwise it matches on the user id and then
+// filters the status out of the fetched documents.
+connectionSchema.index({ requester: 1, status: 1 });
+connectionSchema.index({ recipient: 1, status: 1 });
 
 // Static: canonical pair key from two user ids (order-independent) used for the unique index.
 connectionSchema.statics.buildPairKey = function buildPairKey(a, b) {

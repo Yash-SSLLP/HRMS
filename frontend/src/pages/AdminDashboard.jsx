@@ -183,7 +183,16 @@ export default function AdminDashboard() {
 
   const onDelete = async (u) => {
     const id = u._id || u.id;
-    if (!(await confirmDialog({ message: `Permanently delete ${u.email}? This cannot be undone.`, tone: 'danger', confirmText: 'Delete' }))) return;
+    // Same cascade as the employee-delete screen — see services/purgePerson.js.
+    if (!(await confirmDialog({
+      message: `Permanently delete ${u.email}?
+
+This removes their login and every record they own — attendance, leave, documents, notifications and chat. Payroll records and the audit log are kept.
+
+This cannot be undone.`,
+      tone: 'danger',
+      confirmText: 'Delete everything',
+    }))) return;
     try {
       await api.delete(`/admin/users/${id}`);
       await load();
