@@ -18,6 +18,35 @@ const {
   recordClearanceSection,
 } = require('./exitController');
 
+/**
+ * Does this account see EVERY inbox, not just its own rung?
+ *
+ * The Backend does. A ladder is a routing device — it says whose turn it is —
+ * and routing must not decide what the person who administers the system is
+ * allowed to know about. Before this, a request addressed to an HR Manager was
+ * invisible to the SuperAdmin unless they went looking for it on the module's
+ * own admin page, which is not where anyone looks for "what needs deciding".
+ *
+ * Deliberately SuperAdmin alone. An HR Manager or a CEO/MD still sees their own
+ * rung: widening it for them would put every employee's leave in the inbox of
+ * people who are not on those ladders for a reason.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+const seesAllApprovals = (user) => user?.role === 'SuperAdmin';
+
+/**
+ * The inbox filter for a chain-driven request type.
+ * @param {object} user - the signed-in user
+ * @param {string} scope - 'pending' | 'history'
+ * @returns {Object} a Mongo filter
+ */
+function chainInboxFilter(user, scope) {
+  const all = seesAllApprovals(user);
+  if (scope === 'history') return all ? {} : { 'approvalChain.approver': user._id };
+  return all ? { status: 'Pending' } : { currentApprover: user._id, status: 'Pending' };
+}
+
 // Rebuild the approval chain for any Pending request that has none yet (created
 // before the hierarchy feature, or by an older backend). Runs on inbox load so
 // stuck requests route to the right approver from the live org-chart hierarchy.
@@ -59,10 +88,7 @@ const listMyLeaveApprovals = asyncHandler(async (req, res) => {
   await healOrphanChains();
   const me = req.user._id;
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
-  const filter =
-    scope === 'history'
-      ? { 'approvalChain.approver': me }
-      : { currentApprover: me, status: 'Pending' };
+  const filter = chainInboxFilter(req.user, scope);
   const requests = await populateLeave(LeaveRequest.find(filter));
   res.json({ scope, count: requests.length, requests });
 });
@@ -82,7 +108,7 @@ const approveLeave = asyncHandler(async (req, res) => {
     throw new Error('Leave request not found');
   }
   try {
-    await advanceApproval(request, req.user._id, 'approve', req.body.note);
+    await advanceApproval(request, req.user._id, 'approve', req.body.note, req.user);
   } catch (err) {
     res.status(err.status || 400);
     throw err;
@@ -105,7 +131,7 @@ const rejectLeave = asyncHandler(async (req, res) => {
     throw new Error('Leave request not found');
   }
   try {
-    await advanceApproval(request, req.user._id, 'reject', req.body.note);
+    await advanceApproval(request, req.user._id, 'reject', req.body.note, req.user);
   } catch (err) {
     res.status(err.status || 400);
     throw err;
@@ -155,10 +181,7 @@ const listMyExitApprovals = asyncHandler(async (req, res) => {
   await healExitOrphanChains();
   const me = req.user._id;
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
-  const filter =
-    scope === 'history'
-      ? { 'approvalChain.approver': me }
-      : { currentApprover: me, status: 'Pending' };
+  const filter = chainInboxFilter(req.user, scope);
   const requests = await populateExit(ExitRequest.find(filter));
   res.json({ scope, count: requests.length, requests });
 });
@@ -179,7 +202,7 @@ const approveExit = asyncHandler(async (req, res) => {
     throw new Error('Exit request not found');
   }
   try {
-    await advanceExitApproval(request, req.user._id, 'approve', req.body.note);
+    await advanceExitApproval(request, req.user._id, 'approve', req.body.note, req.user);
   } catch (err) {
     res.status(err.status || 400);
     throw err;
@@ -202,7 +225,7 @@ const rejectExit = asyncHandler(async (req, res) => {
     throw new Error('Exit request not found');
   }
   try {
-    await advanceExitApproval(request, req.user._id, 'reject', req.body.note);
+    await advanceExitApproval(request, req.user._id, 'reject', req.body.note, req.user);
   } catch (err) {
     res.status(err.status || 400);
     throw err;
@@ -224,10 +247,15 @@ const rejectExit = asyncHandler(async (req, res) => {
 const listMyClearances = asyncHandler(async (req, res) => {
   const me = req.user._id;
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
-  const filter =
-    scope === 'history'
-      ? { 'clearanceSections.assignedTo': me }
-      : { status: 'InClearance', clearanceSections: { $elemMatch: { assignedTo: me, completed: false } } };
+  // Clearance sections are assigned per person rather than laddered, so the
+  // Backend's "everything" view is every section still open, not only its own.
+  const all = seesAllApprovals(req.user);
+  const filter = scope === 'history'
+    ? (all ? { clearanceSections: { $exists: true, $ne: [] } } : { 'clearanceSections.assignedTo': me })
+    : {
+      status: 'InClearance',
+      clearanceSections: { $elemMatch: all ? { completed: false } : { assignedTo: me, completed: false } },
+    };
   const requests = await ExitRequest.find(filter)
     .populate({
       path: 'employee',
@@ -251,10 +279,7 @@ const listMyClearances = asyncHandler(async (req, res) => {
 const listMyRegularizationApprovals = asyncHandler(async (req, res) => {
   const me = req.user._id;
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
-  const filter =
-    scope === 'history'
-      ? { 'approvalChain.approver': me }
-      : { currentApprover: me, status: 'Pending' };
+  const filter = chainInboxFilter(req.user, scope);
   const requests = await Regularization.find(filter)
     .populate('employee', 'firstName lastName email role')
     .sort({ date: -1 })
@@ -365,7 +390,7 @@ const rejectRegularization = decideRegularization('reject');
  */
 const listMyWorkOnLeave = asyncHandler(async (req, res) => {
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
-  const claims = await listWorkOnLeaveClaims(req.user._id, scope);
+  const claims = await listWorkOnLeaveClaims(req.user._id, scope, seesAllApprovals(req.user));
   res.json({ scope, count: claims.length, claims });
 });
 
@@ -412,15 +437,22 @@ const rejectWorkOnLeave = decideWorkOnLeaveRoute('reject');
  */
 const countMyApprovals = asyncHandler(async (req, res) => {
   const me = req.user._id;
+  // The badge has to agree with the lists above, or the Backend sees a count of
+  // 3 and opens an inbox holding 11.
+  const all = seesAllApprovals(req.user);
+  const mine = all ? {} : { currentApprover: me };
+  const section = all ? { completed: false } : { assignedTo: me, completed: false };
   const [leave, exits, clearances, regularizations, workOnLeave] = await Promise.all([
-    LeaveRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
-    ExitRequest.countDocuments({ currentApprover: me, status: 'Pending' }),
+    LeaveRequest.countDocuments({ ...mine, status: 'Pending' }),
+    ExitRequest.countDocuments({ ...mine, status: 'Pending' }),
     ExitRequest.countDocuments({
       status: 'InClearance',
-      clearanceSections: { $elemMatch: { assignedTo: me, completed: false } },
+      clearanceSections: { $elemMatch: section },
     }),
-    Regularization.countDocuments({ currentApprover: me, status: 'Pending' }),
-    Attendance.countDocuments({ 'workOnLeave.approver': me, 'workOnLeave.status': 'Pending' }),
+    Regularization.countDocuments({ ...mine, status: 'Pending' }),
+    Attendance.countDocuments({
+      ...(all ? {} : { 'workOnLeave.approver': me }), 'workOnLeave.status': 'Pending',
+    }),
   ]);
   res.json({
     leave,

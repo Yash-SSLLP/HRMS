@@ -24,7 +24,7 @@ const {
 } = require('../utils/workday');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../utils/restDay');
-const { notify, notifyMany } = require('../services/notify');
+const { notify, notifyMany, notifyBackend } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
 const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope, assertNotOwnRequest } = require('../utils/employeeScope');
@@ -250,12 +250,27 @@ async function openWorkOnLeaveClaim(profile, day, record) {
   return record.workOnLeave;
 }
 
-/** In-app + push nudge to the one person who decides a work-on-leave claim. */
+/**
+ * In-app + push nudge to the one person who decides a work-on-leave claim, and
+ * to the Backend.
+ *
+ * The Backend notice lives inside this function rather than at the call sites
+ * (as it does for leave, exits and regularizations) because a claim is never a
+ * ladder — it is raised and routed in one step and never climbs, so there is no
+ * repeat notification to guard against.
+ */
 async function notifyWorkOnLeaveApprover(record, profile, claim) {
   if (!claim?.approver) return;
   try {
     const user = await require('../models/User').findById(profile.user).select('firstName lastName');
     const name = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'An employee';
+    await notifyBackend({
+      type: 'attendance',
+      title: 'Punch-in on a leave day raised',
+      body: `${name} punched in on ${fmtIstDate(record.date)} while on approved ${leaveLabel(claim.leaveType)}.`,
+      link: 'approvals',
+      exclude: [claim.approver, profile.user],
+    });
     await notify({
       recipient: claim.approver,
       type: 'attendance',
@@ -380,11 +395,15 @@ async function healWorkOnLeaveClaims() {
  * @param {'pending'|'history'} scope
  * @returns {Promise<Object[]>}
  */
-async function listWorkOnLeaveClaims(userId, scope = 'pending') {
+async function listWorkOnLeaveClaims(userId, scope = 'pending', all = false) {
   await healWorkOnLeaveClaims();
+  // `all` is the Backend's everything-view (see approvalController's
+  // seesAllApprovals): claims are routed to one named approver, so without it a
+  // SuperAdmin's inbox shows only the handful pointed at them.
+  const mine = all ? {} : { 'workOnLeave.approver': userId };
   const filter = scope === 'history'
-    ? { 'workOnLeave.approver': userId }
-    : { 'workOnLeave.approver': userId, 'workOnLeave.status': 'Pending' };
+    ? { ...mine, 'workOnLeave.status': { $exists: true, $ne: null } }
+    : { ...mine, 'workOnLeave.status': 'Pending' };
 
   const rows = await Attendance.find(filter)
     .select('employee date checkIn checkOut hoursWorked status remarks workOnLeave')

@@ -10,13 +10,21 @@
  */
 import PageHeader from '../components/PageHeader';
 import ApprovalsBoard from '../components/ApprovalsBoard';
+import { useAuthStore } from '../store/authStore';
 
 export default function AdminApprovals() {
+  // The Backend's inbox is every open request, not only the rungs addressed to
+  // it (see approvalController's seesAllApprovals), so the old "waiting on you"
+  // line would have been wrong for exactly the account that sees the most.
+  const me = useAuthStore((s) => s.user);
+  const seesAll = me?.role === 'SuperAdmin';
   return (
     <div>
       <PageHeader
         title="Approvals"
-        subtitle="Leave and resignation requests climbing the reporting hierarchy that are waiting on you, plus those you sit above."
+        subtitle={seesAll
+          ? 'Every open request across the organisation, whoever it is addressed to. Deciding one here overrides the rungs that have not had their turn, and tells them so.'
+          : 'Leave and resignation requests climbing the reporting hierarchy that are waiting on you, plus those you sit above.'}
       />
 
       <ApprovalsBoard />

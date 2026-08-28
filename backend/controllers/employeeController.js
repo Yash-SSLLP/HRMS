@@ -326,12 +326,20 @@ async function assertWorkLocationCompany(workLocationRefId, companyId, existing 
   throw err;
 }
 
+// Reporting to yourself, or being your own HR partner, is not a hierarchy — it
+// is a loop, and one that quietly disables every control built on those two
+// fields (the leave and exit ladders walk `reportingManager`; `hrPartner` is the
+// whole per-HR employee scope). The admin form has always refused it; the SAME
+// message is used by the Excel import and the import-flag corrections below, so
+// the rule reads identically wherever somebody meets it.
+const SELF_REF_MESSAGE = 'A user cannot be their own manager or HR partner';
+
 async function validateHierarchy(body, linkedUserId, existing = null, allowCrossDepartment = false) {
   const linkedId = String(linkedUserId);
 
   for (const field of ['hrPartner', 'reportingManager']) {
     if (body[field] && String(body[field]) === linkedId) {
-      const err = new Error('A user cannot be their own manager or HR partner');
+      const err = new Error(SELF_REF_MESSAGE);
       err.status = 400;
       throw err;
     }
@@ -1050,7 +1058,14 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
 
       // HR partner email -> User._id (optional).
       let hrPartnerId;
-      if (p.hrPartnerEmail) {
+      const ownEmail = String(u.email || '').trim().toLowerCase();
+      const namesSelf = (email) => !!email && String(email).trim().toLowerCase() === ownEmail;
+      if (namesSelf(p.hrPartnerEmail)) {
+        // Left unset and flagged rather than failing the row — an import never
+        // rejects a person over a reference it cannot honour.
+        flag('hrPartner', p.hrPartnerEmail, 'unmatched',
+          `${SELF_REF_MESSAGE}. This row names its own address, so no HR partner was set.`);
+      } else if (p.hrPartnerEmail) {
         const partner = await User.findOne({
           email: p.hrPartnerEmail,
           role: { $in: ['HRManager', 'SuperAdmin'] },
@@ -1069,7 +1084,10 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       // further down the SAME spreadsheet and does not exist yet at this point,
       // which used to make importing a whole team in one file impossible.
       let reportingManagerId;
-      if (p.reportingManagerEmail) {
+      if (namesSelf(p.reportingManagerEmail)) {
+        flag('reportingManager', p.reportingManagerEmail, 'unmatched',
+          `${SELF_REF_MESSAGE}. This row names its own address, so no reporting manager was set.`);
+      } else if (p.reportingManagerEmail) {
         const mgr = await findAccountByEmail(p.reportingManagerEmail);
         if (!mgr) {
           flag('reportingManager', p.reportingManagerEmail, 'unmatched',
@@ -1341,6 +1359,7 @@ const FLAG_WRITERS = {
   reportingManager: async (value, { profile, actor }) => {
     const mgr = await findAccountByEmail(value);
     if (!mgr) throw new Error(`No account has the email "${value}"`);
+    if (String(mgr._id) === String(profile.user)) throw new Error(SELF_REF_MESSAGE);
     // A Backend account may knowingly cross departments (a dotted line); for
     // anyone else the same-department rule still applies.
     await assertSameDepartment(mgr._id, profile.department, actor.role === 'SuperAdmin');
@@ -1351,6 +1370,7 @@ const FLAG_WRITERS = {
   hrPartner: async (value, { profile }) => {
     const partner = await findAccountByEmail(value, { role: { $in: ['HRManager', 'SuperAdmin'] } });
     if (!partner) throw new Error(`"${value}" is not an HR Manager or Backend account`);
+    if (String(partner._id) === String(profile.user)) throw new Error(SELF_REF_MESSAGE);
     profile.hrPartner = partner._id;
     await profile.save();
     return `${partner.firstName || ''} ${partner.lastName || ''}`.trim() || partner.email;

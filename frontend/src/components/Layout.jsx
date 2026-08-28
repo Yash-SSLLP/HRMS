@@ -921,7 +921,15 @@ export default function Layout({ navItems = [], sectionTitle }) {
               unmistakable. On a phone this strip is the first thing to run out
               of room, so it scrolls sideways rather than shoving the account
               cluster off the edge (min-w-0 is what lets it shrink at all). */}
-          <div className="topbar-scroll flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-1">
+          {/* The padding is not decoration: `overflow-x-auto` forces overflow-y
+              to `auto` as well (CSS won't let one axis scroll while the other
+              stays visible), so this box CLIPS. ApprovalsPill's badge hangs
+              -top-1/-right-1 outside its pill plus a 2px ring, which landed
+              exactly on the clip edge and had its top shaved off. py-2/px-1.5
+              give that overhang room; -mx-1.5 cancels the horizontal padding so
+              the pills sit exactly where they did. Same fix as the tab strip in
+              ApprovalsBoard. */}
+          <div className="topbar-scroll flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-2 px-1.5 -mx-1.5">
             <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
             <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
             {/* Approvals, for the roles that actually decide. Carries a live

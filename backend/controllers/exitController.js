@@ -14,7 +14,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { enqueueMail } = require('../services/email');
 const { buildExitEmail } = require('../services/exitEmails');
-const { notify } = require('../services/notify');
+const { notify, notifyBackend } = require('../services/notify');
 const { buildApprovalChain } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { buildDefaultSections } = require('../config/exitClearance');
@@ -155,6 +155,13 @@ async function initResignationApproval(exit, profile, applicantName) {
   } else {
     await notifyHrExitReview(exit, applicantName);
   }
+  await notifyBackend({
+    type: 'exit',
+    title: 'New resignation',
+    body: `${applicantName} has submitted a resignation.`,
+    link: 'approvals',
+    exclude: [chain.length ? chain[0].approver : null],
+  });
   return exit;
 }
 
@@ -162,13 +169,18 @@ async function initResignationApproval(exit, profile, applicantName) {
 // approver. Approve → advance to the next rung, or (top rung) accept into the
 // notice period (status 'InClearance', login stays active). Reject → 'Cancelled'
 // with the note. Mutates + saves; throws Error with `.status` on a bad transition.
-async function advanceExitApproval(exit, userId, action, note) {
+async function advanceExitApproval(exit, userId, action, note, actor) {
   if (exit.status !== 'Pending') {
     const err = new Error(`Cannot ${action} — this exit is ${exit.status}.`);
     err.status = 400;
     throw err;
   }
-  if (!exit.currentApprover || String(exit.currentApprover) !== String(userId)) {
+  // The Backend decides anything, from anywhere. Unlike leave and
+  // regularization, exits had no admin override at all — the ladder was the only
+  // way through, so a resignation whose named approver was unavailable simply
+  // sat there. This is that valve, and it is deliberately the Backend's alone.
+  const override = !exit.currentApprover || String(exit.currentApprover) !== String(userId);
+  if (override && !(actor && actor.role === 'SuperAdmin')) {
     const err = new Error('This resignation is not awaiting your approval.');
     err.status = 403;
     throw err;
@@ -180,6 +192,41 @@ async function advanceExitApproval(exit, userId, action, note) {
   const step = (exit.approvalChain || []).find(
     (s) => String(s.approver) === String(userId) && s.status === 'Pending'
   );
+
+  // Void the rungs that never got their turn and record who went over them, so
+  // the request cannot sit in someone else's inbox as a ghost. With no Waiting
+  // rung left, the normal flow below takes the top-rung path and finalises —
+  // the same shape as the HR override on leave (applyLeaveDecision).
+  if (override) {
+    const overridden = (exit.approvalChain || []).filter(
+      (st) => st.status === 'Pending' || st.status === 'Waiting'
+    );
+    for (const st of overridden) st.status = 'Skipped';
+    (exit.approvalChain = exit.approvalChain || []).push({
+      approver: userId,
+      approverName: 'Backend override',
+      role: 'Override',
+      order: exit.approvalChain.length,
+      status: action === 'approve' ? 'Approved' : 'Rejected',
+      decidedAt: now,
+      note,
+    });
+    if (overridden.length) {
+      try {
+        const { notifyMany } = require('../services/notify');
+        const who = await applicantNameOf(exit.employee);
+        await notifyMany(overridden.map((st) => st.approver).filter(Boolean), {
+          type: 'exit',
+          audience: 'all',
+          title: `Resignation ${action === 'approve' ? 'accepted' : 'declined'} by the Backend`,
+          body: `${who}'s resignation was decided by a Super Admin - no action is needed from you.`,
+          link: 'approvals',
+        });
+      } catch (err) {
+        console.error('exit override notify failed:', err.message);
+      }
+    }
+  }
 
   if (action === 'reject') {
     if (step) { step.status = 'Rejected'; step.decidedAt = now; step.note = note; }
@@ -242,7 +289,15 @@ async function ensureExitApprovalChain(exit) {
   exit.currentApprover = chain[0].approver;
   await exit.save();
   try {
-    await notifyExitApprover(chain[0].approver, exit, await applicantNameOf(profile));
+    const who = await applicantNameOf(profile);
+    await notifyExitApprover(chain[0].approver, exit, who);
+    await notifyBackend({
+      type: 'exit',
+      title: 'Resignation routed',
+      body: `${who}'s resignation has been routed for approval.`,
+      link: 'approvals',
+      exclude: [chain[0].approver],
+    });
   } catch (err) {
     console.error('ensureExitApprovalChain notify failed:', err.message);
   }

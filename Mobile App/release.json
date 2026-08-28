@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.10",
-  "versionCode": 56,
-  "notes": "Manager records are now protected. Editing an employee whose role is Manager — their details, probation confirmation, salary structure or CTC — needs a permission the Backend gives one HR account at a time, from the Permissions page. Where it has not been given, those buttons are greyed out instead of failing. The in-app guide has a new section explaining it. Also carries the speed improvements from 2.2.9, which was never released."
+  "versionName": "2.2.11",
+  "versionCode": 57,
+  "notes": "Keeps the app in step with new server rules. Nobody can edit their own employee record from the admin side any more — your own details belong on your profile — so the edit pencil no longer appears on your own record, where saving would be refused. For a Super Admin, My Approvals now lists every open request across the organisation instead of only the ones addressed to them."
 }

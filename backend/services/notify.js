@@ -54,4 +54,45 @@ async function notifyMany(recipients, { type = 'general', audience = 'all', titl
   return { created: ids.length };
 }
 
-module.exports = { notify, notifyMany };
+/**
+ * Tell the Backend (every active SuperAdmin) that a request has been raised.
+ *
+ * The approvals inbox already shows a SuperAdmin every open request whoever it
+ * is addressed to (approvalController's `seesAllApprovals`); this is the nudge
+ * that says one has arrived, so nobody has to go and look. Deliberately fired
+ * only when a request is CREATED — not on every rung it climbs — or a four-rung
+ * ladder would produce four notifications for one request.
+ *
+ * Best-effort in the strongest sense: it swallows its own errors rather than
+ * throwing, because a notification must never fail the request that caused it.
+ * Recipients in `exclude` are dropped, so the SuperAdmin who is also the named
+ * approver (or the person who raised it) gets one notification, not two.
+ *
+ * @param {object} input
+ * @param {string} [input.type='general'] - Notification type tag
+ * @param {string} input.title
+ * @param {string} [input.body]
+ * @param {string} [input.link] - 'approvals', so the click lands in the inbox
+ * @param {Array} [input.exclude] - user ids already told about this one
+ * @returns {Promise<{created:number}>}
+ */
+async function notifyBackend({ type = 'general', title, body, link, exclude = [] } = {}) {
+  try {
+    if (!title) return { created: 0 };
+    // Lazy require: models/User pulls in bcrypt and this module is loaded by
+    // nearly every controller.
+    const User = require('../models/User');
+    const admins = await User.find({ role: 'SuperAdmin', isActive: true }).select('_id').lean();
+    const skip = new Set((exclude || []).filter(Boolean).map(String));
+    const ids = admins.map((u) => String(u._id)).filter((id) => !skip.has(id));
+    if (!ids.length) return { created: 0 };
+    // 'admin' — a SuperAdmin only has the admin portal, and the notification
+    // list is filtered by portal (see notificationController's audienceScope).
+    return await notifyMany(ids, { type, audience: 'admin', title, body, link });
+  } catch (err) {
+    console.error('notifyBackend failed:', err.message);
+    return { created: 0 };
+  }
+}
+
+module.exports = { notify, notifyMany, notifyBackend };

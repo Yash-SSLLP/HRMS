@@ -9,7 +9,7 @@ const Regularization = require('../models/Regularization');
 const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
-const { notify } = require('../services/notify');
+const { notify, notifyBackend } = require('../services/notify');
 const { isReadOnlyExec } = require('../middleware/authMiddleware');
 const { scopeUserField } = require('../utils/employeeScope');
 const { startOfDayIST } = require('../utils/dateHelpers');
@@ -259,10 +259,19 @@ const createRequest = asyncHandler(async (req, res) => {
     currentApprover: chain.length ? chain[0].approver : null,
   });
 
+  const name = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
   if (chain.length) {
-    const name = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
     await notifyRegApprover(chain[0].approver, item, name);
   }
+  // Unconditional: with no configured approver the request falls to the flat HR
+  // path, which told NOBODY it had arrived.
+  await notifyBackend({
+    type: 'regularization',
+    title: 'New regularization request',
+    body: `${name} raised a ${item.type} regularization for ${fmtDay(item.date)}.`,
+    link: 'approvals',
+    exclude: [chain.length ? chain[0].approver : null, item.employee],
+  });
 
   res.status(201).json({ item });
 });
@@ -336,7 +345,11 @@ async function advanceRegularizationApproval(item, userId, action, note, actor) 
     err.status = 400;
     throw err;
   }
-  if (!item.currentApprover || String(item.currentApprover) !== String(userId)) {
+  // The Backend decides anything, from anywhere — the same override it already
+  // had from the Regularizations page, now reachable from the approvals inbox
+  // where the request is actually visible to it.
+  const override = !item.currentApprover || String(item.currentApprover) !== String(userId);
+  if (override && !(actor && actor.role === 'SuperAdmin')) {
     const err = new Error('This regularization is not awaiting your approval.');
     err.status = 403;
     throw err;
@@ -352,6 +365,31 @@ async function advanceRegularizationApproval(item, userId, action, note, actor) 
   const step = (item.approvalChain || []).find(
     (s) => String(s.approver) === String(userId) && s.status === 'Pending'
   );
+
+  // Void the rungs that never got their turn and tell them it is off their
+  // plate. With no Waiting rung left, the flow below takes the last-rung path
+  // and the correction is applied — matching what the Regularizations page does.
+  if (override) {
+    const overridden = (item.approvalChain || []).filter(
+      (st) => st.status === 'Pending' || st.status === 'Waiting'
+    );
+    for (const st of overridden) st.status = 'Skipped';
+    if (overridden.length) {
+      try {
+        const { notifyMany } = require('../services/notify');
+        const who = await applicantNameOf(item.employee);
+        await notifyMany(overridden.map((st) => st.approver).filter(Boolean), {
+          type: 'regularization',
+          audience: 'admin',
+          title: `Regularization ${action === 'approve' ? 'approved' : 'rejected'} by the Backend`,
+          body: `${who}'s ${item.type} regularization was decided by a Super Admin - no action is needed from you.`,
+          link: 'regularizations',
+        });
+      } catch (err) {
+        console.error('regularization override notify failed:', err.message);
+      }
+    }
+  }
 
   if (action === 'reject') {
     if (step) { step.status = 'Rejected'; step.decidedAt = now; step.note = note; }

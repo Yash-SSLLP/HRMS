@@ -17,7 +17,7 @@ const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
 const { enqueueMail } = require('../services/email');
-const { notify, notifyMany } = require('../services/notify');
+const { notify, notifyMany, notifyBackend } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { daysInclusive, currentYear, startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
@@ -460,7 +460,17 @@ async function ensureApprovalChain(request) {
   request.currentApprover = chain[0].approver;
   await request.save();
   try {
-    await notifyApprover(chain[0].approver, request, await applicantNameOf(request));
+    const who = await applicantNameOf(request);
+    await notifyApprover(chain[0].approver, request, who);
+    // A request whose chain was only built now was never announced when it was
+    // raised, so this is its first and only "it exists" notice.
+    await notifyBackend({
+      type: 'leave',
+      title: 'Leave request routed',
+      body: `${who}'s leave request has been routed for approval.`,
+      link: 'approvals',
+      exclude: [chain[0].approver],
+    });
   } catch (err) {
     console.error('ensureApprovalChain notify failed:', err.message);
   }
@@ -954,6 +964,15 @@ const applyForLeave = asyncHandler(async (req, res) => {
   });
 
   const applicantName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
+  // The Backend hears about every request as it is raised — including one with
+  // no ladder at all, which used to notify nobody.
+  await notifyBackend({
+    type: 'leave',
+    title: 'New leave request',
+    body: `${applicantName} applied for ${leaveLabel(request.leaveType)}.`,
+    link: 'approvals',
+    exclude: [chain.length ? chain[0].approver : null, req.user._id],
+  });
   if (chain.length) {
     // The first rung gets the actionable "your turn" nudge; everyone above gets a
     // heads-up so the whole approval hierarchy is in the loop from the start.
@@ -1436,13 +1455,21 @@ async function releaseLeaveDay(request, dayKey, wasPaid = true) {
 // approver. Approve → advance to the next rung, or (if last) finalize + deduct
 // balance. Reject → stop the chain, rejection stays visible to rungs above.
 // Mutates + saves the request; throws Error with `.status` on a bad transition.
-async function advanceApproval(request, userId, action, note) {
+async function advanceApproval(request, userId, action, note, actor) {
   if (request.status !== 'Pending') {
     const err = new Error(`Cannot ${action} - this request is ${request.status}.`);
     err.status = 400;
     throw err;
   }
   if (!request.currentApprover || String(request.currentApprover) !== String(userId)) {
+    // The Backend decides anything, from anywhere. It is not on this ladder, so
+    // there is no rung to advance — this is the same top-authority override HR
+    // already has from the Leave page (applyLeaveDecision voids the rungs that
+    // never got their turn and tells those approvers it is off their plate).
+    if (actor && actor.role === 'SuperAdmin') {
+      await assertNotOwnRequest(userId, { profileId: request.employee });
+      return applyLeaveDecision(request, userId, action, note);
+    }
     const err = new Error('This leave request is not awaiting your approval.');
     err.status = 403;
     throw err;
