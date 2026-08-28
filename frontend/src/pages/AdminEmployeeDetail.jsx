@@ -10,7 +10,7 @@ import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
-import { hasPermission, isReadOnlyExec } from '../config/permissions';
+import { hasPermission, isReadOnlyExec, canEditEmployeeProfile } from '../config/permissions';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
@@ -63,13 +63,18 @@ export default function AdminEmployeeDetail() {
   // employees.manage. CEO/MD pass hasPermission but are read-only executives —
   // the server refuses their writes, so they must not be offered the button.
   // Unless a SuperAdmin has switched that exec account into edit mode.
-  const canEdit = me?.role === 'SuperAdmin'
+  const canEditAnyone = me?.role === 'SuperAdmin'
     || (!isReadOnlyExec(me) && hasPermission(me, 'employees.manage'));
   // Setting someone else's password is SuperAdmin-only, matching the server:
   // PUT /admin/users/:id refuses a non-SuperAdmin touching a non-Employee, and
   // handing out passwords is not something an HR Manager should do silently.
   const canSetPassword = me?.role === 'SuperAdmin';
   const [profile, setProfile] = useState(null);
+  // …and, on top of that, editing someone whose role is Manager needs the
+  // separate grant a SuperAdmin gives per account. Derived from the loaded
+  // profile rather than the role alone, because it depends on WHO is being
+  // edited, not only on who is doing the editing.
+  const canEdit = canEditAnyone && canEditEmployeeProfile(me, profile?.user);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [pwBusy, setPwBusy] = useState(false);

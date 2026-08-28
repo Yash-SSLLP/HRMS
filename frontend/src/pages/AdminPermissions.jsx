@@ -78,6 +78,7 @@ const GRANT_HELP = {
   khataExport: 'Download every employee’s balances and full ledger as a spreadsheet. No role grants this on its own — reading the ledger on screen and walking out with a copy of it are different decisions.',
   wfh: 'Lets them tick “working from home” on a punch. That punch is not measured against the office geofence, and the day records as WFH.',
   remotePunch: 'The office geofence stops applying to them entirely — for site, field and travelling staff. Their punches are never flagged as outside the office, and they do not have to declare anything. The GPS location is still recorded and still shown on the punch map.',
+  managerProfiles: 'Lets this HR Manager open and edit the employee profiles of people whose role is Manager — their department, reporting line, grade and pay basis. Off for everyone by default, and never implied by “Create / manage employees”: a Manager approves their own team’s leave and attendance, so who may rearrange their record is named one account at a time. Their role, password and account status stay with Super Admins either way.',
   execEdit: 'A CEO/MD account is view-only by default. In edit mode it can change data anywhere an HR Manager can — but this page, the org settings and the audit log stay with Super Admins.',
 };
 
@@ -268,6 +269,14 @@ export default function AdminPermissions() {
     path: 'khata-export-access', enabled: !u.khataExportAccess, errorText: 'Could not update khata download access',
   });
 
+  // Which HR (or granted Manager) may edit a Manager's employee profile. Kept
+  // out of the capability dialog on purpose: an HR Manager with no capability
+  // list holds every key in that dialog by default, so putting it there would
+  // hand it to every HR account at once — the opposite of a named list.
+  const toggleManagerProfiles = (u) => toggleAccess(u, {
+    path: 'manager-profile-access', enabled: !u.managerProfileAccess, errorText: 'Could not update Manager-profile access',
+  });
+
   // CEO/MD only: flip the account between view-only (the default) and edit mode.
   const toggleExecEdit = (u) => toggleAccess(u, {
     path: 'exec-edit-access', enabled: !u.execEditAccess, errorText: 'Could not update executive access',
@@ -379,7 +388,7 @@ export default function AdminPermissions() {
     );
   }
 
-  const COLS = 9;
+  const COLS = 10;
 
   return (
     <div>
@@ -428,6 +437,7 @@ export default function AdminPermissions() {
               ['Attendance · WFH', GRANT_HELP.wfh],
               ['Attendance · Anywhere', GRANT_HELP.remotePunch],
               ['CEO / MD edit mode', GRANT_HELP.execEdit],
+              ['Manager profiles', GRANT_HELP.managerProfiles],
               ['Capabilities', 'The fine-grained admin list for HR Managers and Managers. An HR Manager with none set keeps full access; a Manager starts with nothing and only sees the admin portal once granted something. Their team duties come from the role and are unaffected.'],
             ].map(([term, meaning]) => (
               <div key={term} className="min-w-0">
@@ -548,6 +558,7 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Khata</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">CEO / MD</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Manager profiles</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Capabilities</th>
             </tr>
           </thead>
@@ -656,6 +667,18 @@ export default function AdminPermissions() {
                       </div>
                     ) : (
                       <NotApplicable hint="Only a CEO or MD account has a view-only mode to lift." />
+                    )}
+                  </td>
+
+                  {/* Only the roles that can edit employee profiles at all have
+                      anything to grant here — a SuperAdmin already may, and
+                      nobody else reaches the employee form. */}
+                  <td className="px-4 py-3">
+                    {GRANTABLE_ROLES.includes(u.role) ? (
+                      <ToggleSwitch checked={!!u.managerProfileAccess} busy={busy} label="May edit Manager profiles"
+                        title={GRANT_HELP.managerProfiles} onChange={() => toggleManagerProfiles(u)} />
+                    ) : (
+                      <NotApplicable hint="Only an HR Manager or Manager account needs this — a Super Admin already edits every profile, and no other role edits any." />
                     )}
                   </td>
 

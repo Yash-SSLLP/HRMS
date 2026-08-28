@@ -331,6 +331,45 @@ const requirePermission = (cap) => makePermissionGuard(cap);
 const requireAnyPermission = (...caps) => makePermissionGuard(caps);
 
 /**
+ * Roles whose employee profile is protected by the manager-profile grant. A
+ * Manager approves their own team's leave and signs off their attendance, so
+ * who they report to, which department they sit in and what they are paid are
+ * not fields an HR Manager should be able to rearrange as a matter of course.
+ */
+const MANAGER_PROFILE_ROLES = ['Manager'];
+
+/**
+ * May this admin edit the employee profile of a Manager?
+ *
+ * Deliberately NOT routed through hasPermission: `employees.manage` is the
+ * capability for looking after ORDINARY staff records, and an HR Manager with no
+ * `permissions` array holds every catalogued key by default — a manager-profile
+ * grant that fell through that default would be held by every HR account in the
+ * org, which is the opposite of what it is for. So it answers on the explicit
+ * flag alone, exactly like canExportKhata.
+ *
+ * SuperAdmin always may. A CEO/MD in edit mode may (they write as an HR Manager
+ * holding everything, and the grant is a SuperAdmin decision they already sit
+ * above); a read-only exec never writes anywhere, so the question does not
+ * arise. Everyone else needs `User.managerProfileAccess`.
+ * @param {object|null} user - The User doc (needs role and managerProfileAccess).
+ * @returns {boolean}
+ */
+function canEditManagerProfiles(user) {
+  if (!user) return false;
+  if (user.role === 'SuperAdmin') return true;
+  if (isEditingExec(user)) return true;
+  return user.managerProfileAccess === true;
+}
+
+/**
+ * Is this the account role the grant above protects?
+ * @param {string} role - a User.role value
+ * @returns {boolean}
+ */
+const isManagerProfileRole = (role) => MANAGER_PROFILE_ROLES.includes(role);
+
+/**
  * May this account sanction an employee's cash-advance request?
  *
  * SuperAdmin, CEO or MD, and nobody else. Deliberately NOT routed through
@@ -377,4 +416,7 @@ module.exports = {
   requireKhataExport,
   canApproveAdvances,
   requireAdvanceApprover,
+  MANAGER_PROFILE_ROLES,
+  isManagerProfileRole,
+  canEditManagerProfiles,
 };

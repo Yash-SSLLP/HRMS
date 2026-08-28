@@ -11,6 +11,8 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { useAuthStore } from '../store/authStore';
+import { canEditEmployeeProfile } from '../config/permissions';
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -53,7 +55,13 @@ const blankForm = () => ({
 
 export default function AdminSalaryStructures() {
   const [structures, setStructures] = useState([]);
+  const currentUser = useAuthStore((s) => s.user);
   const [employees, setEmployees] = useState([]);
+  // Putting somebody on a structure sets their salary basis, so a Manager can
+  // only be assigned by an admin holding the manager-profile grant. They stay in
+  // `employees` (the "who else is on this template" counts must still see them)
+  // and are simply not offered in the picker.
+  const assignable = employees.filter((p) => canEditEmployeeProfile(currentUser, p.user));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -163,6 +171,13 @@ export default function AdminSalaryStructures() {
     const profile = employees.find((p) => p._id === assignParam);
     if (!profile) return; // unknown/stale id — leave the page as it is
     handledAssign.current = true;
+    // The "no salary set up" alert links here for anyone, including managers —
+    // so the same grant the picker applies has to apply to the link.
+    if (!canEditEmployeeProfile(currentUser, profile.user)) {
+      toast.error("Setting a Manager's salary needs a Super Admin's permission.");
+      setSearchParams({}, { replace: true });
+      return;
+    }
 
     const existing = profile.salaryStructure
       && structures.find((s) => s._id === (profile.salaryStructure._id || profile.salaryStructure));
@@ -469,7 +484,7 @@ export default function AdminSalaryStructures() {
                       className="block w-full border rounded-lg px-3 py-2 bg-white"
                     >
                       <option value="">— none —</option>
-                      {employees.map((p) => (
+                      {assignable.map((p) => (
                         <option key={p._id} value={p._id}>
                           {p.employeeCode} · {p.user?.firstName} {p.user?.lastName}
                         </option>

@@ -56,6 +56,45 @@ export const canExportKhata = (user) => !!user
   && (user.role === 'SuperAdmin' || user.khataExportAccess === true);
 
 /**
+ * Roles whose employee profile is protected by the manager-profile grant.
+ * Mirrors MANAGER_PROFILE_ROLES in the backend's authMiddleware.
+ */
+export const MANAGER_PROFILE_ROLES = ['Manager'];
+
+/** Is this the account role the manager-profile grant protects? */
+export const isManagerProfileRole = (role) => MANAGER_PROFILE_ROLES.includes(role);
+
+/**
+ * May this account edit the employee profile of a Manager? Mirrors
+ * canEditManagerProfiles in the backend's authMiddleware — and, like it,
+ * answers on the explicit flag alone rather than through hasPermission, so no
+ * role picks it up by default. Holding `employees.manage` is about ordinary
+ * staff records; editing the people who approve their own team's leave is a
+ * separate, named grant.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const canEditManagerProfiles = (user) => {
+  if (!user) return false;
+  if (user.role === 'SuperAdmin') return true;
+  if (isEditingExec(user)) return true;
+  return user.managerProfileAccess === true;
+};
+
+/**
+ * May this account edit THIS employee's profile? The role check above combined
+ * with the target's account role, so a caller does not have to remember both.
+ * @param {object|null} me - the signed-in user
+ * @param {object|null} target - the linked account of the employee being edited
+ *   (needs `role`), e.g. `profile.user`
+ * @returns {boolean}
+ */
+export const canEditEmployeeProfile = (me, target) => {
+  if (!isManagerProfileRole(target?.role)) return true;
+  return canEditManagerProfiles(me);
+};
+
+/**
  * Can this account open the /admin portal at all?
  *
  * Role alone isn't the answer for a Manager: the role exists for team duties

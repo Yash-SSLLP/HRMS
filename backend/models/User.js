@@ -93,6 +93,17 @@ const userSchema = new mongoose.Schema(
     // flags above it is NOT implied by any role, not even Accounts Manager, so
     // the set of people who can take the data out stays an explicit list.
     khataExportAccess: { type: Boolean, default: false },
+    // May this admin edit the employee profile of someone whose account role is
+    // Manager? Off for everyone by default: a Manager approves their own team's
+    // leave and attendance, so their reporting line, department and grade are
+    // exactly the fields an HR Manager should not be able to quietly rearrange.
+    // A SuperAdmin names the individual HR (or Manager) accounts that may — see
+    // the Permissions page and middleware canEditManagerProfiles. Meaningless on
+    // any other role: SuperAdmin already can, and everyone else cannot edit
+    // profiles at all. Editing the manager's USER ACCOUNT (name, login email,
+    // phone) still routes through the same CEO/MD approval queue as an
+    // employee's; role, password and activation stay SuperAdmin-only.
+    managerProfileAccess: { type: Boolean, default: false },
     // Assets access — same standalone, role-independent grant. Switch it on for
     // the employee who actually looks after company hardware and they get the
     // Assets register in their own portal, without becoming an admin.

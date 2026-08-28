@@ -21,7 +21,7 @@ const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
 const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
 const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
-const { employeeProfileScope, cannotManageProfile, viewerCompanyScope, scopeEmployeeFilter, companyOutOfScope } = require('../utils/employeeScope');
+const { employeeProfileScope, cannotManageProfile, viewerCompanyScope, scopeEmployeeFilter, companyOutOfScope, assertCanEditManagerProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 const { hasPermission, isEditingExec } = require('../middleware/authMiddleware');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
 
@@ -638,6 +638,11 @@ const createEmployee = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
+  // Creating the profile of a Manager account is the same trust decision as
+  // editing one — without this, an ungranted HR could simply build the record
+  // from scratch instead of amending it.
+  assertCanEditManagerProfile(req, user.role);
+
   const exists = await EmployeeProfile.findOne({ user: userId });
   if (exists) {
     res.status(409);
@@ -711,6 +716,11 @@ const updateEmployee = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('You can only manage employees assigned to you');
   }
+  // Editing a Manager's record needs the separate grant. One extra lean read on
+  // the update path: the profile alone doesn't carry the account's role, and
+  // this must be answered before anything is written.
+  const linkedUser = await User.findById(profile.user).select('role firstName lastName').lean();
+  assertCanEditManagerProfile(req, linkedUser?.role);
   // Don't allow changing the linked user
   delete req.body.user;
   normalizeRefFields(req.body);
@@ -787,8 +797,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
 
   // Audit direct edits (Backend / exec edit-mode).
   if (directAudits.length) {
-    const u = await User.findById(profile.user).select('firstName lastName');
-    auditTarget.name = `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
+    auditTarget.name = `${linkedUser?.firstName || ''} ${linkedUser?.lastName || ''}`.trim();
     directAudits.forEach((c) => auditFieldChange(req.user, c.meta, c.from, c.to, auditTarget));
   }
 
@@ -1379,6 +1388,10 @@ const resolveImportFlag = asyncHandler(async (req, res) => {
       res.status(404);
       throw new Error('That employee no longer exists');
     }
+    // A flag writer sets real profile fields (salary structure, reporting
+    // manager, department), so correcting one on a Manager needs the same grant
+    // as editing their profile by hand.
+    await assertCanEditProfileOf(req, profile);
     const write = FLAG_WRITERS[flagDoc.field];
     if (!write) {
       res.status(400);

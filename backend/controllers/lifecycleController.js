@@ -6,9 +6,11 @@
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 // Company wall: confirmations list/act directly on EmployeeProfile.
-const { employeeProfileScope, cannotManageProfile } = require('../utils/employeeScope');
+const { employeeProfileScope, cannotManageProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 
-const USER_FIELDS = 'firstName lastName email';
+// `role` rides along so the client knows which rows are Managers — confirming
+// one needs the manager-profile grant (see assertCanEditProfileOf below).
+const USER_FIELDS = 'firstName lastName email role';
 
 // Add `months` calendar months to a date, returning a new Date.
 const addMonths = (date, months) => {
@@ -47,6 +49,7 @@ const listConfirmations = asyncHandler(async (req, res) => {
       _id: p._id,
       employeeCode: p.employeeCode,
       name: name || u.email || '-',
+      role: u.role,
       designation: p.designation,
       department: p.department,
       dateOfJoining: p.dateOfJoining,
@@ -88,6 +91,10 @@ const updateConfirmation = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee profile not found');
   }
+
+  // Confirming or extending a Manager's probation is a change to a Manager's
+  // record, so it needs the same grant editing their profile does.
+  await assertCanEditProfileOf(req, profile);
 
   const { action, note, probationMonths, confirmationDueDate } = req.body;
 

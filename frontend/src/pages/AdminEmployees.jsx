@@ -17,6 +17,7 @@ import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { ROLES, roleLabel } from '../config/roles';
+import { canEditEmployeeProfile } from '../config/permissions';
 import { formatDateTime12 } from '../utils/time';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
@@ -199,6 +200,12 @@ export default function AdminEmployees() {
   const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
+  // Editing the record of someone whose role is Manager needs a grant a
+  // SuperAdmin gives one account at a time (User.managerProfileAccess). The
+  // server refuses either way — this only keeps a button off the screen that
+  // would always fail.
+  const canEditProfile = (p) => canEditEmployeeProfile(currentUser, p?.user);
+  const NO_MANAGER_EDIT = "Editing a Manager's profile needs a Super Admin's permission.";
   const myId = String(currentUser?._id || currentUser?.id || '');
   const [profiles, setProfiles] = useState([]);
   const [users, setUsers] = useState([]);
@@ -346,6 +353,13 @@ export default function AdminEmployees() {
     const profile = profiles.find((p) => p._id === editParam);
     if (!profile) return; // unknown/stale id — leave the page as it is
     handledEdit.current = true;
+    // A link can outlive the grant (or arrive from someone who never had it),
+    // so the same check the Edit button makes applies to the deep link too.
+    if (!canEditProfile(profile)) {
+      toast.error(NO_MANAGER_EDIT);
+      setSearchParams({}, { replace: true });
+      return;
+    }
     openEdit(profile);
     // Keep `back` (the save handler reads it); drop only the trigger.
     setSearchParams(returnToDetail ? { back: '1' } : {}, { replace: true });
@@ -897,7 +911,11 @@ This cannot be undone.`,
           {p.user?.isActive ? 'Deactivate' : 'Activate'}
         </button>
       )}
-      <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
+      {canEditProfile(p) ? (
+        <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
+      ) : (
+        <span className="text-gray-400 cursor-not-allowed" title={NO_MANAGER_EDIT}>Edit</span>
+      )}
       <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>
     </>
   );

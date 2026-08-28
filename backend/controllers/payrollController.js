@@ -15,7 +15,7 @@ const asyncHandler = require('express-async-handler');
 const crypto = require('crypto');
 const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
-const { employeeProfileScope, scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
+const { employeeProfileScope, scopeEmployeeFilter, cannotManageProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
 const Holiday = require('../models/Holiday');
@@ -1329,7 +1329,9 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
   const month = Number(req.query.month) || now.getMonth() + 1;
   const profile = await EmployeeProfile.findById(req.query.employee)
     .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit')
-    .populate('user', 'firstName lastName email')
+    // `role` rides along so the Hikes page knows a Manager when it sees one —
+    // revising their CTC needs the manager-profile grant.
+    .populate('user', 'firstName lastName email role')
     .populate('salaryStructure');
   if (!profile) {
     res.status(404);
@@ -1903,6 +1905,10 @@ const giveHike = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('You can only manage employees assigned to you');
   }
+  // Revising a Manager's CTC is the same decision as putting them on a salary
+  // structure, so it needs the manager-profile grant too — otherwise the Hikes
+  // page would be the way around the gate on the Salary Structures page.
+  await assertCanEditProfileOf(req, profile);
   const { mode, value, newStructure, effectiveYear, effectiveMonth, reason } = req.body;
   const prevCtc = profile.annualCtc || 0;
   const v = Number(value) || 0;

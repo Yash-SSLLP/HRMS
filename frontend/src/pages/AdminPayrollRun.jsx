@@ -12,6 +12,8 @@ import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { useAuthStore } from '../store/authStore';
+import { canEditEmployeeProfile } from '../config/permissions';
 import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -32,6 +34,7 @@ const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 // lateness) is context for the decision, not an editing surface.
 export default function AdminPayrollRun() {
   const now = new Date();
+  const currentUser = useAuthStore((s) => s.user);
   const [employees, setEmployees] = useState([]);
   const [structures, setStructures] = useState([]);
   const [employee, setEmployee] = useState('');
@@ -145,6 +148,11 @@ export default function AdminPayrollRun() {
 
   const c = run?.computed;
   const slip = run?.payslip;
+  // Setting or revising a Manager's CTC changes a Manager's record, so it needs
+  // the manager-profile grant a SuperAdmin gives per account. The server refuses
+  // either way; this greys the two buttons instead of failing on click.
+  const canRevise = canEditEmployeeProfile(currentUser, run?.employee?.user);
+  const NO_MANAGER_SALARY = "Setting a Manager's salary needs a Super Admin's permission.";
 
   return (
     <div>
@@ -190,8 +198,11 @@ export default function AdminPayrollRun() {
                   <input type="number" min="0" placeholder="Annual CTC (₹)" value={setup.annualCtc}
                     onChange={(e) => setSetup({ ...setup, annualCtc: e.target.value })}
                     className="border rounded-lg px-3 py-2 text-sm w-40" />
-                  <button onClick={saveSetup} disabled={busy} className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">Save</button>
-                  <button onClick={openHike} disabled={busy} title="Revise this employee's CTC (increment)"
+                  <button onClick={saveSetup} disabled={busy || !canRevise}
+                    title={canRevise ? undefined : NO_MANAGER_SALARY}
+                    className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">Save</button>
+                  <button onClick={openHike} disabled={busy || !canRevise}
+                    title={canRevise ? "Revise this employee's CTC (increment)" : NO_MANAGER_SALARY}
                     className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Revise salary</button>
                 </div>
 

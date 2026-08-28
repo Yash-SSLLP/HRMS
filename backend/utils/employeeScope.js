@@ -303,6 +303,52 @@ function execCompanyIds(user) {
   return Array.isArray(user.companies) ? user.companies.filter(Boolean).map(String) : [];
 }
 
+/**
+ * The manager-profile grant, as a per-record guard.
+ *
+ * A `Manager` approves their own team's leave and signs off their attendance, so
+ * their record — reporting line, department, salary, confirmation — is only
+ * editable by an admin a SuperAdmin has explicitly trusted with it
+ * (`User.managerProfileAccess`). This is the sync form, for callers that already
+ * know the linked account's role; `assertCanEditProfileOf` below resolves the
+ * role first.
+ *
+ * Deliberately separate from cannotManageProfile: that one answers "is this
+ * person mine to look after at all" (HR partner, company wall) and applies to
+ * reads as well. This applies only to WRITES, and only to managers.
+ * @param {import('express').Request} req
+ * @param {string} [role] - the linked account's role
+ * @throws 403 via res-less Error with .status when the grant is missing
+ */
+function assertCanEditManagerProfile(req, role) {
+  // Lazy require: authMiddleware is loaded by every route file, and pulling it
+  // in at module init here would tangle the load order (see attachScopeCompany).
+  const { canEditManagerProfiles, isManagerProfileRole } = require('../middleware/authMiddleware');
+  if (!isManagerProfileRole(role)) return; // ordinary staff — nothing extra to check
+  if (canEditManagerProfiles(req.user)) return;
+  const err = new Error("You do not have permission to change a Manager's record. Ask a Super Admin to grant it.");
+  err.status = 403;
+  throw err;
+}
+
+/**
+ * Same guard, for a profile whose linked account role has not been loaded. Uses
+ * an already-populated `profile.user.role` when there is one, so a caller that
+ * populated the user pays nothing extra.
+ * @param {import('express').Request} req
+ * @param {Object} profile - an EmployeeProfile (needs `user`)
+ * @returns {Promise<void>}
+ * @throws 403 (see assertCanEditManagerProfile)
+ */
+async function assertCanEditProfileOf(req, profile) {
+  const linked = profile && profile.user;
+  if (!linked) return; // no account behind this record — nothing to protect
+  if (linked.role !== undefined) return assertCanEditManagerProfile(req, linked.role);
+  const User = require('../models/User');
+  const account = await User.findById(linked._id || linked).select('role').lean();
+  return assertCanEditManagerProfile(req, account && account.role);
+}
+
 module.exports = {
   viewerCompanyScope,
   companyScopeFilter,
@@ -312,6 +358,8 @@ module.exports = {
   allowedEmployeeIds,
   scopeEmployeeFilter,
   cannotManageProfile,
+  assertCanEditManagerProfile,
+  assertCanEditProfileOf,
   allowedUserIds,
   scopeUserFilter,
   scopeUserField,

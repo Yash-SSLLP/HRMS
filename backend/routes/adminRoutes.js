@@ -20,6 +20,7 @@ const {
   setAssetsAccess,
   setKhataAccess,
   setKhataExportAccess,
+  setManagerProfileAccess,
   setExecEditAccess,
   setExecCompanies,
   setWfhAccess,
@@ -79,6 +80,12 @@ router.patch('/users/:id/khata-access', restrictTo('SuperAdmin'), setKhataAccess
 // a file are different decisions. No role confers it.
 // PATCH /users/:id/khata-export-access — grant/revoke the khata download; protected, SuperAdmin only.
 router.patch('/users/:id/khata-export-access', restrictTo('SuperAdmin'), setKhataExportAccess);
+// Editing a Manager's employee profile — SuperAdmin only, and deliberately not
+// part of the 'employees.manage' capability: that one is held by default by
+// every HR account, and this is meant to be an explicit list of who may touch
+// the records of the people who approve their own team's leave.
+// PATCH /users/:id/manager-profile-access — grant/revoke editing Manager profiles; protected, SuperAdmin only.
+router.patch('/users/:id/manager-profile-access', restrictTo('SuperAdmin'), setManagerProfileAccess);
 // CEO/MD view-only ↔ edit mode — SuperAdmin only. Lifting the executive
 // read-only restriction is exactly the kind of decision that stays with the one
 // role that administers the system.

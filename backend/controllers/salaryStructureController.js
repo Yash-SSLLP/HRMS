@@ -7,6 +7,7 @@
 const asyncHandler = require('express-async-handler');
 const SalaryStructure = require('../models/SalaryStructure');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { cannotManageProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 
 // Sum the six component percentages from an arbitrary components object.
 const sumComponentPct = (c = {}) =>
@@ -174,10 +175,16 @@ const assignStructure = asyncHandler(async (req, res) => {
     throw new Error('employee is required');
   }
   const profile = await EmployeeProfile.findById(employee);
-  if (!profile) {
+  // Same per-record wall the rest of the portal applies: an admin may only set
+  // the salary basis of somebody who is theirs to look after (HR partner /
+  // company). Reads as not-found so another company's headcount stays hidden.
+  if (!profile || cannotManageProfile(req, profile)) {
     res.status(404);
     throw new Error('Employee not found');
   }
+  // Putting a Manager on a salary structure — and with it their CTC — is a
+  // change to a Manager's record, so it needs the manager-profile grant.
+  await assertCanEditProfileOf(req, profile);
   profile.salaryStructure = structure._id;
   if (annualCtc !== undefined && annualCtc !== null && annualCtc !== '') {
     const ctc = Number(annualCtc);

@@ -9,6 +9,8 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
+import { useAuthStore } from '../store/authStore';
+import { canEditEmployeeProfile } from '../config/permissions';
 
 const STATUS_FILTERS = ['All', 'Probation', 'Extended', 'Confirmed'];
 const STATUS_STYLES = {
@@ -33,6 +35,7 @@ const daysUntil = (d) => {
 };
 
 export default function AdminConfirmations() {
+  const currentUser = useAuthStore((s) => s.user);
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState('All');
   const [loading, setLoading] = useState(true);
@@ -118,10 +121,16 @@ export default function AdminConfirmations() {
                   <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[row.confirmationStatus] || 'bg-gray-200 text-gray-600'}`}>{row.confirmationStatus}</span></td>
                   <td className="px-4 py-3 text-right space-x-2">
                     {row.confirmationStatus !== 'Confirmed' && (
-                      <>
-                        <button onClick={() => act(row, 'confirm')} className="text-green-700 hover:underline">Confirm</button>
-                        <button onClick={() => act(row, 'extend')} className="text-blue-600 hover:underline">Extend</button>
-                      </>
+                      canEditEmployeeProfile(currentUser, row) ? (
+                        <>
+                          <button onClick={() => act(row, 'confirm')} className="text-green-700 hover:underline">Confirm</button>
+                          <button onClick={() => act(row, 'extend')} className="text-blue-600 hover:underline">Extend</button>
+                        </>
+                      ) : (
+                        <span className="text-xs text-gray-400" title="Confirming a Manager's probation needs a Super Admin's permission.">
+                          Manager — not yours to confirm
+                        </span>
+                      )
                     )}
                   </td>
                 </tr>

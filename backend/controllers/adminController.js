@@ -16,7 +16,7 @@ const { purgePerson } = require('../services/purgePerson');
 const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
 const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { scopeUserFilter } = require('../utils/employeeScope');
-const { isEditingExec } = require('../middleware/authMiddleware');
+const { isEditingExec, canEditManagerProfiles, isManagerProfileRole } = require('../middleware/authMiddleware');
 const { enqueueMail } = require('../services/email');
 const COMPANY = require('../config/company');
 const path = require('path');
@@ -206,7 +206,16 @@ const updateUser = asyncHandler(async (req, res) => {
 
   // Permission gate: HRManagers can only touch Employee accounts. They cannot edit other
   // admins, and they cannot promote anyone to/from an admin role.
-  if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee') {
+  //
+  // The one exception is a MANAGER account, for an admin a SuperAdmin has
+  // granted the manager-profile permission (User.managerProfileAccess). The
+  // employee edit form carries the person's phone and login email alongside
+  // their profile fields, so refusing the account call outright would leave that
+  // grant half-usable — you could correct a manager's department but not their
+  // number. It buys those identity fields only, and they still go to the CEO/MD
+  // for approval below; the role, the password and activation stay SuperAdmin-only.
+  const grantedManagerEdit = isManagerProfileRole(user.role) && canEditManagerProfiles(req.user);
+  if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee' && !grantedManagerEdit) {
     res.status(403);
     throw new Error('Only SuperAdmin may modify admin accounts');
   }
@@ -218,11 +227,24 @@ const updateUser = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error(`role must be one of ${ROLES.join(', ')}`);
     }
-    if (role !== 'Employee' && req.user.role !== 'SuperAdmin') {
+    // What role somebody holds is a SuperAdmin decision, so anyone else may only
+    // send the role the account already has (the edit form does, unchanged).
+    // Comparing against the CURRENT role rather than against 'Employee' is what
+    // stops a granted admin demoting a manager to Employee and then editing the
+    // record with no grant needed at all.
+    if (role !== user.role && req.user.role !== 'SuperAdmin') {
       res.status(403);
       throw new Error('Only SuperAdmin may assign admin roles');
     }
     user.role = role;
+  }
+
+  // Resetting a password or switching an account off are not part of "edit this
+  // manager's details" — they stay where they were, with the SuperAdmin.
+  if (grantedManagerEdit && req.user.role !== 'SuperAdmin'
+      && (password !== undefined || isActive !== undefined)) {
+    res.status(403);
+    throw new Error("Only a Super Admin may set a Manager's password or change their account status.");
   }
 
   // The employee's identity details (name, login email, phone) are catalogue
@@ -231,7 +253,7 @@ const updateUser = asyncHandler(async (req, res) => {
   // employee's company CEO/MD instead. Role / isActive / password are
   // operational and stay direct for whoever is allowed to set them.
   const writesDirectly = req.user.role === 'SuperAdmin' || isEditingExec(req.user);
-  const hrRouting = !writesDirectly && req.user.role === 'HRManager' && user.role === 'Employee';
+  const hrRouting = !writesDirectly && req.user.role === 'HRManager' && (user.role === 'Employee' || grantedManagerEdit);
   const { auditFieldChange } = require('../services/profileChanges');
   const IDENTITY = [
     { key: 'firstName', label: 'First Name', incoming: firstName },
@@ -523,6 +545,36 @@ const setAssetsAccess = asyncHandler(async (req, res) => {
   user.assetsAccess = !!req.body.enabled;
   await user.save();
   res.json({ id: user._id, assetsAccess: user.assetsAccess });
+});
+
+/**
+ * Grant or revoke permission to edit the profiles of MANAGER accounts.
+ *
+ * Its own grant rather than part of `employees.manage`, for the same reason the
+ * khata download is separate from the khata: an HR Manager with no `permissions`
+ * array holds every catalogued capability by default, so anything folded into
+ * that catalogue would land on every HR account at once. This one is meant to be
+ * an explicit, named list — the Backend decides WHICH HR may edit the people who
+ * approve their own team's leave and attendance.
+ * @route PATCH /api/admin/users/:id/manager-profile-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, managerProfileAccess}}
+ */
+const setManagerProfileAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  // Meaningless on any other role — a SuperAdmin already may, and nobody else
+  // can edit employee profiles at all. Refuse rather than store a dead flag.
+  if (!GRANTABLE_ROLES.includes(user.role)) {
+    res.status(400);
+    throw new Error(`Editing Manager profiles applies only to ${GRANTABLE_ROLES.join(' and ')} accounts.`);
+  }
+  user.managerProfileAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, managerProfileAccess: user.managerProfileAccess });
 });
 
 /**
@@ -887,6 +939,7 @@ module.exports = {
   setAssetsAccess,
   setKhataAccess,
   setKhataExportAccess,
+  setManagerProfileAccess,
   setExecEditAccess,
   setExecCompanies,
   setWfhAccess,
