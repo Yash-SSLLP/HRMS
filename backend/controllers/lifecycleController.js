@@ -9,7 +9,8 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const { employeeProfileScope, cannotManageProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 
 // `role` rides along so the client knows which rows are Managers — confirming
-// one needs the manager-profile grant (see assertCanEditProfileOf below).
+// one needs the manager-profile grant (see assertCanEditProfileOf below) — and
+// the user id so it can spot the admin's OWN row, which nobody confirms.
 const USER_FIELDS = 'firstName lastName email role';
 
 // Add `months` calendar months to a date, returning a new Date.
@@ -50,6 +51,7 @@ const listConfirmations = asyncHandler(async (req, res) => {
       employeeCode: p.employeeCode,
       name: name || u.email || '-',
       role: u.role,
+      userId: u._id,
       designation: p.designation,
       department: p.department,
       dateOfJoining: p.dateOfJoining,

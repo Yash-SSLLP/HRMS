@@ -12,7 +12,7 @@ const {
   isUnpaidType, isMaternityType, isEmergencyType,
 } = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
-const { scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
+const { scopeEmployeeFilter, cannotManageProfile, assertNotOwnRequest } = require('../utils/employeeScope');
 const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
@@ -1365,9 +1365,18 @@ async function topLeaveApproverFor(profile) {
   const top = chain.length ? chain[chain.length - 1] : null;
   if (top?.approver) return { approver: top.approver, approverName: top.approverName };
 
-  const fallbackId = profile.hrPartner
+  // The HR Partner stands in when there is no ladder — UNLESS that is the
+  // employee themselves. An HR Manager set as their own HR Partner would
+  // otherwise be handed their own punch-on-a-leave-day claim to rule on, and
+  // approving it gives them the leave day back. The ladder builders already
+  // refuse to seat the applicant; this fallback has to as well, or it is the
+  // way around them.
+  const selfId = String(profile.user || '');
+  const partnerIsSelf = profile.hrPartner && String(profile.hrPartner) === selfId;
+  const fallbackId = (partnerIsSelf ? null : profile.hrPartner)
     || (await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('_id'))?._id;
   if (!fallbackId) return null;
+  if (String(fallbackId) === selfId) return null; // nobody left who isn't them
   const u = await User.findById(fallbackId).select('firstName lastName isActive');
   if (!u || u.isActive === false) return null;
   return {
@@ -1438,6 +1447,9 @@ async function advanceApproval(request, userId, action, note) {
     err.status = 403;
     throw err;
   }
+  // Belt and braces: the chain builders already refuse to seat the applicant,
+  // but a request whose chain was stored before they did could still name them.
+  await assertNotOwnRequest(userId, { profileId: request.employee });
   const now = new Date();
   const step = (request.approvalChain || []).find(
     (s) => String(s.approver) === String(userId) && s.status === 'Pending'

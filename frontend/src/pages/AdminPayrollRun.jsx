@@ -13,7 +13,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
-import { canEditEmployeeProfile } from '../config/permissions';
+import { canAdministerEmployee } from '../config/permissions';
 import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -148,11 +148,11 @@ export default function AdminPayrollRun() {
 
   const c = run?.computed;
   const slip = run?.payslip;
-  // Setting or revising a Manager's CTC changes a Manager's record, so it needs
-  // the manager-profile grant a SuperAdmin gives per account. The server refuses
-  // either way; this greys the two buttons instead of failing on click.
-  const canRevise = canEditEmployeeProfile(currentUser, run?.employee?.user);
-  const NO_MANAGER_SALARY = "Setting a Manager's salary needs a Super Admin's permission.";
+  // Nobody revises their own CTC, and a Manager's needs the manager-profile
+  // grant. The server refuses either way; this greys the two buttons instead of
+  // failing on click.
+  const canRevise = canAdministerEmployee(currentUser, run?.employee?.user);
+  const NO_MANAGER_SALARY = "Not yours to set — you cannot revise your own salary, and a Manager's needs a Super Admin's permission.";
 
   return (
     <div>

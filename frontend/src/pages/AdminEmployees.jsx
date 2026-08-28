@@ -17,7 +17,7 @@ import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { ROLES, roleLabel } from '../config/roles';
-import { canEditEmployeeProfile } from '../config/permissions';
+import { canAdministerEmployee } from '../config/permissions';
 import { formatDateTime12 } from '../utils/time';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
@@ -200,12 +200,15 @@ export default function AdminEmployees() {
   const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
-  // Editing the record of someone whose role is Manager needs a grant a
-  // SuperAdmin gives one account at a time (User.managerProfileAccess). The
-  // server refuses either way — this only keeps a button off the screen that
-  // would always fail.
-  const canEditProfile = (p) => canEditEmployeeProfile(currentUser, p?.user);
-  const NO_MANAGER_EDIT = "Editing a Manager's profile needs a Super Admin's permission.";
+  // Two rules the server applies too, so the button is never offered where it
+  // would fail: nobody edits their OWN record from the admin side (use My
+  // Portal), and a Manager's record needs the manager-profile grant.
+  const canEditProfile = (p) => canAdministerEmployee(currentUser, p?.user);
+  const noEditReason = (p) => (
+    String(p?.user?._id || '') === String(currentUser?._id || currentUser?.id || '')
+      ? 'You cannot edit your own record here — use My Portal.'
+      : "Editing a Manager's profile needs a Super Admin's permission."
+  );
   const myId = String(currentUser?._id || currentUser?.id || '');
   const [profiles, setProfiles] = useState([]);
   const [users, setUsers] = useState([]);
@@ -356,7 +359,7 @@ export default function AdminEmployees() {
     // A link can outlive the grant (or arrive from someone who never had it),
     // so the same check the Edit button makes applies to the deep link too.
     if (!canEditProfile(profile)) {
-      toast.error(NO_MANAGER_EDIT);
+      toast.error(noEditReason(profile));
       setSearchParams({}, { replace: true });
       return;
     }
@@ -914,7 +917,7 @@ This cannot be undone.`,
       {canEditProfile(p) ? (
         <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
       ) : (
-        <span className="text-gray-400 cursor-not-allowed" title={NO_MANAGER_EDIT}>Edit</span>
+        <span className="text-gray-400 cursor-not-allowed" title={noEditReason(p)}>Edit</span>
       )}
       <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>
     </>

@@ -15,15 +15,24 @@ const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD'];
  * stash it on the user object as `scopeCompanyId` for utils/employeeScope's
  * company wall. One indexed findOne per request; SuperAdmin and CEO/MD skip it
  * (their scope lives on the account itself).
- * @param {object} user - the loaded User doc (mutated: gains scopeCompanyId)
- * @sideeffect Sets user.scopeCompanyId (ObjectId|null). Never persisted.
+ *
+ * The same lookup also stashes `scopeProfileId` — the id of the account's OWN
+ * employee record — for the "nobody administers themselves" rule in
+ * cannotManageProfile. It has to come from here rather than from the profile
+ * being judged: fifteen call sites load that profile with
+ * `.select('hrPartner company')`, so a comparison against `profile.user` would
+ * silently never fire on exactly the routes that matter most (approving leave,
+ * salary, attendance edits). Every document carries `_id` whatever the select,
+ * so comparing ids works everywhere.
+ * @param {object} user - the loaded User doc (mutated: gains scopeCompanyId, scopeProfileId)
+ * @sideeffect Sets user.scopeCompanyId / user.scopeProfileId (ObjectId|null). Never persisted.
  */
 // Which company each account belongs to changes only when the Backend
 // reassigns somebody, so a short in-memory cache absorbs the per-request
 // lookup (chat polls alone would otherwise hit the shared cluster once per
 // poll per user). 60s bounds how stale a reassignment can look.
 const SCOPE_COMPANY_TTL_MS = 60 * 1000;
-const scopeCompanyCache = new Map(); // userId -> { companyId, at }
+const scopeCompanyCache = new Map(); // userId -> { companyId, profileId, at }
 
 async function attachScopeCompany(user) {
   if (!user || ACCOUNT_SCOPED_ROLES.includes(user.role)) return;
@@ -31,13 +40,17 @@ async function attachScopeCompany(user) {
   const hit = scopeCompanyCache.get(key);
   if (hit && Date.now() - hit.at < SCOPE_COMPANY_TTL_MS) {
     user.scopeCompanyId = hit.companyId;
+    user.scopeProfileId = hit.profileId;
     return;
   }
   // Lazy require to avoid a model-load cycle at module init.
   const EmployeeProfile = require('../models/EmployeeProfile');
   const prof = await EmployeeProfile.findOne({ user: user._id }).select('company').lean();
   user.scopeCompanyId = (prof && prof.company) || null;
-  scopeCompanyCache.set(key, { companyId: user.scopeCompanyId, at: Date.now() });
+  user.scopeProfileId = (prof && prof._id) || null;
+  scopeCompanyCache.set(key, {
+    companyId: user.scopeCompanyId, profileId: user.scopeProfileId, at: Date.now(),
+  });
   // Keep the cache from growing without bound on a long-lived process.
   if (scopeCompanyCache.size > 5000) scopeCompanyCache.clear();
 }

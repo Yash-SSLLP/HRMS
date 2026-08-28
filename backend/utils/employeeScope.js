@@ -154,6 +154,24 @@ async function scopeEmployeeFilter(req, filter = {}) {
 /**
  * Per-record guard: may this admin NOT view/manage this profile? The counterpart
  * of employeeProfileScope for a single already-loaded profile.
+ *
+ * NOBODY ADMINISTERS THEIR OWN RECORD. An HR Manager set as their own HR Partner
+ * used to pass every check below on themselves, and this guard is the ONLY
+ * per-record gate on approving leave, granting a CTC hike, assigning a salary
+ * structure, confirming probation, editing attendance and verifying documents —
+ * so that one field turned into "approve your own leave, raise your own salary".
+ * Refusing yourself here closes all of them at once, and works on records that
+ * are already partnered that way rather than only on new ones.
+ *
+ * The comparison is on profile ids, not `profile.user`: fifteen callers load the
+ * profile with `.select('hrPartner company')`, so a `user` comparison would be
+ * undefined-vs-id on exactly those routes and silently pass. The requester's own
+ * profile id is stashed by the auth middleware (`scopeProfileId`) from a lookup
+ * it already makes. `profile.user` is still checked when a caller happens to
+ * have it, for paths that build a request without going through `protect`.
+ *
+ * The Backend (SuperAdmin) is deliberately exempt: it sits above every approval
+ * chain, and there is nobody else to unstick it if it locked itself out.
  * @param {import('express').Request} req
  * @param {Object} profile - an EmployeeProfile (needs hrPartner / company)
  * @returns {boolean}
@@ -162,6 +180,9 @@ function cannotManageProfile(req, profile) {
   const u = req && req.user;
   if (!u || u.role === 'SuperAdmin') return false;
   if (!profile) return false;
+  const mine = u.scopeProfileId && String(profile._id || '') === String(u.scopeProfileId);
+  const mineByUser = profile.user && String(profile.user._id || profile.user) === String(u._id);
+  if (mine || mineByUser) return true;
   if (u.role === 'HRManager') {
     if (String(profile.hrPartner || '') !== String(u._id)) return true;
   }
@@ -349,6 +370,39 @@ async function assertCanEditProfileOf(req, profile) {
   return assertCanEditManagerProfile(req, account && account.role);
 }
 
+/**
+ * Approval-ladder backstop: refuse a decision made by the person the request is
+ * ABOUT.
+ *
+ * Every ladder BUILDER already drops the subject — buildApprovalChain and
+ * buildConfiguredLeaveChain seed their `seen` set with the applicant, and
+ * buildRegularizationChain does the same. This exists for the cases a builder
+ * cannot cover: a chain stored on a request BEFORE those guards existed, an
+ * approver resolved by a fallback rather than by a ladder (see
+ * topLeaveApproverFor), and an HR "override" path that bypasses the named
+ * approver entirely. Cheap — one indexed lookup, on an action taken once per
+ * request — and it means a future builder that forgets cannot reopen this.
+ *
+ * @param {*} actorUserId - the User making the decision
+ * @param {{userId?: *, profileId?: *}} subject - who the request is about,
+ *   given either as a User id or (as every request model stores it) an
+ *   EmployeeProfile id
+ * @returns {Promise<void>}
+ * @throws 403 (res-less Error with .status) when they are the same person
+ */
+async function assertNotOwnRequest(actorUserId, subject = {}) {
+  let subjectUserId = subject.userId;
+  if (!subjectUserId && subject.profileId) {
+    const prof = await EmployeeProfile.findById(subject.profileId).select('user').lean();
+    subjectUserId = prof && prof.user;
+  }
+  if (!subjectUserId || !actorUserId) return;
+  if (String(subjectUserId) !== String(actorUserId)) return;
+  const err = new Error('You cannot decide your own request. Ask a Super Admin to route it to someone else.');
+  err.status = 403;
+  throw err;
+}
+
 module.exports = {
   viewerCompanyScope,
   companyScopeFilter,
@@ -358,6 +412,7 @@ module.exports = {
   allowedEmployeeIds,
   scopeEmployeeFilter,
   cannotManageProfile,
+  assertNotOwnRequest,
   assertCanEditManagerProfile,
   assertCanEditProfileOf,
   allowedUserIds,

@@ -12,7 +12,7 @@ import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { useAuthStore } from '../store/authStore';
-import { canEditEmployeeProfile } from '../config/permissions';
+import { canAdministerEmployee } from '../config/permissions';
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -57,11 +57,11 @@ export default function AdminSalaryStructures() {
   const [structures, setStructures] = useState([]);
   const currentUser = useAuthStore((s) => s.user);
   const [employees, setEmployees] = useState([]);
-  // Putting somebody on a structure sets their salary basis, so a Manager can
-  // only be assigned by an admin holding the manager-profile grant. They stay in
+  // Putting somebody on a structure sets their salary basis — so you cannot do
+  // it for yourself, and a Manager needs the manager-profile grant. Both stay in
   // `employees` (the "who else is on this template" counts must still see them)
   // and are simply not offered in the picker.
-  const assignable = employees.filter((p) => canEditEmployeeProfile(currentUser, p.user));
+  const assignable = employees.filter((p) => canAdministerEmployee(currentUser, p.user));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -173,8 +173,8 @@ export default function AdminSalaryStructures() {
     handledAssign.current = true;
     // The "no salary set up" alert links here for anyone, including managers —
     // so the same grant the picker applies has to apply to the link.
-    if (!canEditEmployeeProfile(currentUser, profile.user)) {
-      toast.error("Setting a Manager's salary needs a Super Admin's permission.");
+    if (!canAdministerEmployee(currentUser, profile.user)) {
+      toast.error('You cannot set this salary — your own, or a Manager without permission.');
       setSearchParams({}, { replace: true });
       return;
     }

@@ -27,7 +27,7 @@ const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../
 const { notify, notifyMany } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
-const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope } = require('../utils/employeeScope');
+const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope, assertNotOwnRequest } = require('../utils/employeeScope');
 // Punching in on a day you are on approved leave. The leave-side rules (which
 // day a leave still claims, who sits at the top of the ladder, and how a day is
 // handed back) live in leaveController; this module owns the punch and the
@@ -448,6 +448,12 @@ async function decideWorkOnLeave(record, userId, action, note, actor) {
     err.status = 403;
     throw err;
   }
+  // Neither route may be used on your own day. The named-approver branch can
+  // point at the employee when the ladder is empty and their HR Partner is
+  // themselves; the HR override branch is wider still, and would otherwise let
+  // any HR holding leave.manage approve their own claim and hand themselves the
+  // leave day back.
+  await assertNotOwnRequest(userId, { profileId: record.employee });
 
   const now = new Date();
   const approved = action === 'approve';

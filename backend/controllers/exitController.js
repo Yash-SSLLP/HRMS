@@ -18,7 +18,7 @@ const { notify } = require('../services/notify');
 const { buildApprovalChain } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { buildDefaultSections } = require('../config/exitClearance');
-const { scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
+const { scopeEmployeeFilter, cannotManageProfile, assertNotOwnRequest } = require('../utils/employeeScope');
 const { getBranding } = require('../services/branding');
 const { renderRelievingLetter, resolveLetterBody } = require('../services/letterPdf');
 
@@ -173,6 +173,9 @@ async function advanceExitApproval(exit, userId, action, note) {
     err.status = 403;
     throw err;
   }
+  // Nobody accepts their own resignation — see assertNotOwnRequest for why the
+  // chain builder's guard is not the whole answer.
+  await assertNotOwnRequest(userId, { profileId: exit.employee });
   const now = new Date();
   const step = (exit.approvalChain || []).find(
     (s) => String(s.approver) === String(userId) && s.status === 'Pending'

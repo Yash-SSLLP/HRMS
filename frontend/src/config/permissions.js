@@ -94,6 +94,31 @@ export const canEditEmployeeProfile = (me, target) => {
   return canEditManagerProfiles(me);
 };
 
+/** Is this employee record the signed-in user's own? */
+export const isSelf = (me, target) => {
+  const mine = String(me?._id || me?.id || '');
+  const theirs = String(target?._id || target || '');
+  return !!mine && mine === theirs;
+};
+
+/**
+ * May this account act on THIS employee as an administrator — edit them, confirm
+ * their probation, set their salary?
+ *
+ * Two rules in one, because every admin surface needs both. Nobody administers
+ * their own record (mirrors cannotManageProfile on the server: an HR set as
+ * their own HR Partner could otherwise approve their own leave and raise their
+ * own salary), and a Manager's record needs the manager-profile grant.
+ * The Backend is exempt from the first rule, as it is server-side.
+ * @param {object|null} me - the signed-in user
+ * @param {object|null} target - the employee's linked account (needs `_id`, `role`)
+ * @returns {boolean}
+ */
+export const canAdministerEmployee = (me, target) => {
+  if (me?.role !== 'SuperAdmin' && isSelf(me, target)) return false;
+  return canEditEmployeeProfile(me, target);
+};
+
 /**
  * Can this account open the /admin portal at all?
  *
