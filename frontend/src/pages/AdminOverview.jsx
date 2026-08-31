@@ -66,8 +66,18 @@ export default function AdminOverview() {
 
   // Show only the last 7 days in the two trend charts.
   const last7 = daily.slice(-7);
-  const avgHoursBars = last7.map((d) => ({ label: d.label, value: d.avgHours }));
-  const presentBars = last7.map((d) => ({ label: d.label, value: d.presentCount }));
+  // A Sunday is the company's rest day, so its zero means "closed", not "nobody
+  // came in" — it is labelled down the plot instead of drawn as a bar. Worked
+  // Sundays do plot (someone was in), captioned so the bar is not read as a
+  // normal working day. `presentCount` decides both charts: it is the one that
+  // answers "did anyone log in", and avgHours is 0 whenever it is.
+  const restBar = (d, value) => ({
+    label: d.label,
+    value,
+    ...(d.sunday && (d.presentCount ? { note: 'Sunday working' } : { emptyLabel: 'Sunday' })),
+  });
+  const avgHoursBars = last7.map((d) => restBar(d, d.avgHours));
+  const presentBars = last7.map((d) => restBar(d, d.presentCount));
 
   const c = data?.cards || {};
 

@@ -40,6 +40,8 @@ const ledger = require('../services/khataLedger');
 const { notify, notifyMany } = require('../services/notify');
 const { hasPermission } = require('../middleware/authMiddleware');
 const { scopeUserField, scopeUserFilter, cannotSeeUser } = require('../utils/employeeScope');
+// Admin/service logins are not staff — the khata picker holds them back until searched.
+const { isNonStaffRole } = require('../utils/visibility');
 
 const USER_FIELDS = 'firstName lastName email role photo';
 
@@ -1154,8 +1156,13 @@ const createMyKhata = asyncHandler(async (req, res) => {
  */
 const employeeOptions = asyncHandler(async (req, res) => {
   // Company wall: the picker only offers the caller's own company's people.
+  // `role` is selected because the row carries a systemAccount flag below — this
+  // is the one people-picker endpoint in the app that does not hard-exclude
+  // SuperAdmin (see utils/visibility.js), because an admin login CAN legitimately
+  // hold a khata. It is flagged instead of dropped so the picker can hold it back
+  // until searched for.
   const users = await User.find(await scopeUserFilter(req, { isActive: true, role: { $nin: ['CEO', 'MD'] } }))
-    .select('firstName lastName email photo')
+    .select('firstName lastName email photo role')
     .sort({ firstName: 1 })
     .lean();
 
@@ -1179,6 +1186,12 @@ const employeeOptions = asyncHandler(async (req, res) => {
         employeeCode: profile?.employeeCode,
         designation: profile?.designation,
         department: profile?.department,
+        // An admin/service login rather than a member of staff. Decided by ROLE,
+        // never by "has no employee code" — a real new joiner has no code either
+        // until HR attaches their profile, and hiding those would hide people who
+        // belong in the list. The picker keeps these out of the default view and
+        // surfaces them on a search.
+        systemAccount: isNonStaffRole(u.role),
         // So the picker can warn "already holds ₹4,000" before a second advance.
         balance: ledger.round2(wallet?.balance || 0),
         creditLimit: ledger.round2(wallet?.creditLimit || 0),

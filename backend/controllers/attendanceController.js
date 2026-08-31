@@ -23,7 +23,7 @@ const {
   lateMinutes, statusFromHours, effectiveHours, halfDayCutoffPassed,
 } = require('../utils/workday');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
-const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit } = require('../utils/restDay');
+const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit, isSundayKey } = require('../utils/restDay');
 const { notify, notifyMany, notifyBackend } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
@@ -1696,7 +1696,7 @@ const exportAttendance = asyncHandler(async (req, res) =>
  * Per-day present count and average hours over the trailing N days (dashboard charts).
  * @route GET /api/attendance/daily-stats?days=14  (admin)
  * @param {number} [req.query.days] - clamped 1-60 (default 14)
- * @returns {{days: Array<{date, label, presentCount, avgHours}>}}
+ * @returns {{days: Array<{date, label, sunday, presentCount, avgHours}>}}
  */
 // GET /api/attendance/daily-stats?days=14  (admin)
 // Per-day org attendance for the dashboard bar charts: number of present
@@ -1734,6 +1734,11 @@ const dailyStats = asyncHandler(async (req, res) => {
       return {
         date: b.date,
         label: `${d} ${MONTHS[m - 1]}`,
+        // The chart draws a Sunday differently: nobody in means the day is
+        // labelled rather than plotted as a zero, and anyone in makes it a
+        // Sunday that was worked. Sent per day so the client never has to
+        // re-derive the weekday from a formatted label.
+        sunday: isSundayKey(b.date),
         presentCount: b.present,
         avgHours: b.present ? +(b.hoursSum / b.present).toFixed(1) : 0,
       };

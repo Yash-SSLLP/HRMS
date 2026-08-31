@@ -31,6 +31,25 @@ async function hiddenUserIds(viewer) {
   return User.find({ role: 'SuperAdmin' }).distinct('_id');
 }
 
+// Roles that are NOT people on the payroll: they deliberately have no employee
+// profile, so they carry no employee code, no designation and no department.
+// The same list is stated in scripts/auditImportedAccounts.js and
+// scripts/deleteOrphanAccounts.js, which both rely on it to tell a legitimately
+// profile-less account apart from import damage.
+//
+// Note what this is NOT: "has no employee profile". A real new joiner has no
+// profile either, for as long as it takes HR to attach one — that is the first
+// half of the Add Employee flow — so profile-lessness alone would hide people
+// who very much belong in a picker.
+const NON_STAFF_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+
+/**
+ * Is this account an admin/service login rather than a member of staff?
+ * @param {string} role
+ * @returns {boolean}
+ */
+const isNonStaffRole = (role) => NON_STAFF_ROLES.includes(role);
+
 // Executive roles kept out of "select an employee" pickers by default. They are
 // still fully visible in user management, the org chart, and manager/approver
 // selectors — only the opt-in pickers hide them.
@@ -65,6 +84,8 @@ async function executiveUserIds() {
 module.exports = {
   hideSuperAdminFilter,
   hiddenUserIds,
+  NON_STAFF_ROLES,
+  isNonStaffRole,
   EXECUTIVE_ROLES,
   shouldExcludeExecutives,
   executiveUserIds,

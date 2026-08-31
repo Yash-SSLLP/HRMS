@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.13",
-  "versionCode": 59,
-  "notes": "Adds My Approvals — the reporting-chain inbox that mirrors the web page, covering leave, resignations and no-dues clearances. It shows for every role, because anyone can be someone's reporting manager in the org chart. Its bottom-tab badge counts only requests addressed to you and is kept separate from the HR-wide Approvals badge, so holding both roles no longer shows one merged number. The Attendance screen no longer prints the paragraph explaining the lateness and paid-leave rules; the figures above it are unchanged."
+  "versionName": "2.2.14",
+  "versionCode": 60,
+  "notes": "The per-day attendance charts on the admin hub now read Sundays properly. A Sunday nobody logged into is labelled down the plot instead of being drawn as a bar of zero, so a closed day no longer looks like a catastrophic one; a Sunday somebody did work keeps its bar and is captioned as Sunday working. In Employee Khata, admin logins are no longer mixed into the list of employees when picking somebody — they are held back until you search for them by name, and the picker says how many are hidden."
 }

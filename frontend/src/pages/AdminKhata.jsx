@@ -33,6 +33,42 @@ import api from '../api/client';
 import { useTabParam } from '../hooks/useTabParam';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+
+// NOTE ON THE GROUP LABEL: SearchableSelect searches `group + label`, so the
+// optgroup's own words are matchable. "Admin logins (not employees)" therefore
+// made the query "employees" return ONLY the admin login — the exact opposite of
+// what it asks for. Keep the label free of words someone would type looking for
+// staff.
+//
+// Every people dropdown on this page draws from the same `people` list, and that
+// list comes from /khata/employee-options — the one people endpoint that does NOT
+// hard-exclude admin logins, because an admin CAN legitimately hold a khata.
+//
+// So they are held back rather than dropped: staff render immediately, and the
+// admin/service logins sit in a `searchOnly` optgroup, which SearchableSelect
+// hides until something is typed and then counts in its "N more — type a name to
+// search" footer. Picking one still works; it just no longer pads out a list of
+// real employees. The flag is the server's (decided by role, not by a missing
+// employee code — a new joiner has no code either until HR attaches a profile).
+function peopleOptions(rows, label) {
+  const staff = rows.filter((p) => !p.systemAccount);
+  const system = rows.filter((p) => p.systemAccount);
+  return (
+    <>
+      {staff.map((p) => <option key={p._id} value={p._id}>{label(p)}</option>)}
+      {system.length > 0 && (
+        <optgroup label="Admin logins" searchOnly>
+          {system.map((p) => <option key={p._id} value={p._id}>{label(p)}</option>)}
+        </optgroup>
+      )}
+    </>
+  );
+}
+
+// The label every one of those pickers shows: name, plus the employee code when
+// there is one. An admin login has none, which is exactly why it looked out of
+// place in a list of "Name (SSL nn)" rows.
+const personLabel = (p) => `${p.name}${p.employeeCode ? ` (${p.employeeCode})` : ''}`;
 import CameraCapture from '../components/CameraCapture';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { useAuthStore } from '../store/authStore';
@@ -980,9 +1016,7 @@ export default function AdminKhata() {
                 onChange={(e) => setLedgerFilter({ ...ledgerFilter, employee: e.target.value })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
                 <option value="">Everyone</option>
-                {people.map((p) => (
-                  <option key={p._id} value={p._id}>{p.name}{p.employeeCode ? ` (${p.employeeCode})` : ''}</option>
-                ))}
+                {peopleOptions(people, personLabel)}
               </SearchableSelect>
             </div>
             <select value={ledgerFilter.status}
@@ -1252,11 +1286,8 @@ export default function AdminKhata() {
                 }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2">
                 <option value="">Choose an employee…</option>
-                {people.map((p) => (
-                  <option key={p._id} value={p._id}>
-                    {p.name}{p.employeeCode ? ` (${p.employeeCode})` : ''}
-                    {p.balance ? ` — holds ${money(p.balance)}` : ''}
-                  </option>
+                {peopleOptions(people, (p) => (
+                  `${personLabel(p)}${p.balance ? ` — holds ${money(p.balance)}` : ''}`
                 ))}
               </SearchableSelect>
             </div>
@@ -1490,11 +1521,7 @@ export default function AdminKhata() {
                     onChange={(e) => setKhataModal({ ...khataModal, employee: e.target.value })}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2">
                     <option value="">Choose an employee…</option>
-                    {people.map((p) => (
-                      <option key={p._id} value={p._id}>
-                        {p.name}{p.employeeCode ? ` (${p.employeeCode})` : ''}
-                      </option>
-                    ))}
+                    {peopleOptions(people, personLabel)}
                   </SearchableSelect>
                 </div>
               </>
@@ -1863,9 +1890,10 @@ export default function AdminKhata() {
                 }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2">
                 <option value="">Add a person…</option>
-                {people.filter((p) => !operatorsFor.operators.some((x) => x.user === p._id)).map((p) => (
-                  <option key={p._id} value={p._id}>{p.name}{p.employeeCode ? ` (${p.employeeCode})` : ''}</option>
-                ))}
+                {peopleOptions(
+                  people.filter((p) => !operatorsFor.operators.some((x) => x.user === p._id)),
+                  personLabel,
+                )}
               </SearchableSelect>
             </div>
 
