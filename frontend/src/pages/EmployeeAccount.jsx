@@ -1,7 +1,9 @@
 /**
  * EmployeeAccount — self-service account screen (employee portal). Regular users
  * raise profile change-requests (fields + history) via /change-requests, while a
- * SuperAdmin edits email/password directly via PATCH /auth/me/credentials.
+ * Everyone changes their own PASSWORD directly via PATCH /auth/me/credentials
+ * (the current password is required). SuperAdmin additionally changes the login
+ * email there; for everyone else the email is HR's to change.
  * Also hosts the profile photo card.
  */
 import { useEffect, useState } from 'react';
@@ -81,7 +83,7 @@ export default function EmployeeAccount() {
       // the response is what actually happened.
       if (selected?.isEmpty) {
         await api.post('/change-requests/fill', { field, value: requestedValue });
-        setMsg('Saved to your profile. To change it later, submit a change request.');
+        setMsg('Saved to your profile.');
       } else {
         const { data } = await api.post('/change-requests', { field, requestedValue, reason });
         setMsg(data?.applied
@@ -103,7 +105,15 @@ export default function EmployeeAccount() {
     setCredMsg(''); setCredErr('');
     setCredBusy(true);
     try {
-      const { data } = await api.patch('/auth/me/credentials', cred);
+      // Send `email` ONLY when it is this account's to change. `cred.email` is
+      // seeded from the signed-in user, so posting the whole object would send an
+      // unchanged email for everybody — and the server now refuses an email from
+      // a non-SuperAdmin, which would turn every ordinary password change into a
+      // 403 about a field the user never touched.
+      const payload = isSuperAdmin
+        ? cred
+        : { currentPassword: cred.currentPassword, newPassword: cred.newPassword };
+      const { data } = await api.patch('/auth/me/credentials', payload);
       if (cred.newPassword) {
         // Changing the password invalidates every session (including this one),
         // so log out here and send the user back to the login screen.
@@ -134,9 +144,14 @@ export default function EmployeeAccount() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* --- Credentials --- */}
         <div className={`bg-white shadow rounded-lg p-5 ${isSuperAdmin ? 'lg:col-span-2' : ''}`}>
-          <h2 className="card-title mb-3">Login Credentials</h2>
-          {isSuperAdmin ? (
-            <form onSubmit={submitCredentials} className="space-y-3">
+          <h2 className="card-title mb-3">{isSuperAdmin ? 'Login Credentials' : 'Password'}</h2>
+          {/* Everyone changes their own password here. The current-password box
+              below is what protects it, and it is a better protection than the
+              approval this replaced — that route stored the new password in
+              plain text on a ChangeRequest until somebody approved it. Only the
+              login EMAIL is still SuperAdmin's to change. */}
+          <form onSubmit={submitCredentials} className="space-y-3">
+              {isSuperAdmin && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                 <input
@@ -145,8 +160,9 @@ export default function EmployeeAccount() {
                   className="block w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
                 />
               </div>
+              )}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">New password <span className="text-gray-400 font-normal">(leave blank to keep)</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New password{isSuperAdmin ? <span className="text-gray-400 font-normal"> (leave blank to keep)</span> : null}</label>
                 <input
                   type="password" value={cred.newPassword} autoComplete="new-password"
                   onChange={(e) => setCred({ ...cred, newPassword: e.target.value })}
@@ -165,15 +181,14 @@ export default function EmployeeAccount() {
               {credErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{credErr}</div>}
               {credMsg && <div className="text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">{credMsg}</div>}
               <button type="submit" disabled={credBusy} className="bg-gray-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60">
-                {credBusy ? 'Saving…' : 'Update credentials'}
+                {credBusy ? 'Saving…' : isSuperAdmin ? 'Update credentials' : 'Change password'}
               </button>
+              {!isSuperAdmin && (
+                <p className="text-[11px] text-gray-400">
+                  Your login email is changed by HR — ask for it under Your details.
+                </p>
+              )}
             </form>
-          ) : (
-            <div className="text-sm text-gray-600 space-y-2">
-              <p>For security, you can't change your own email or password directly.</p>
-              <p>Use <span className="font-medium">Request a Change</span> on the right · your admin will review and apply it.</p>
-            </div>
-          )}
         </div>
 
         {/* --- Request a change (not for SuperAdmin, who edits directly) --- */}
@@ -182,8 +197,8 @@ export default function EmployeeAccount() {
           <h2 className="card-title mb-1">Your details</h2>
           <p className="text-xs text-gray-500 mb-3">
             Fill in anything that is missing — it saves straight away.{' '}
-            {fields.some((f) => f.direct)
-              ? 'So do your contact and personal details when you change them. Changing any other filled detail needs a request your HR approves.'
+            {fields.some((f) => f.direct || f.spentToday)
+              ? 'Your contact and personal details save straight away too — once a day each. Change one twice in a day, or change any other filled detail, and it goes to your HR to approve.'
               : 'Once a detail is filled, changing it needs a request your HR approves.'}
           </p>
           <form onSubmit={submitRequest} className="space-y-3">
@@ -215,8 +230,13 @@ export default function EmployeeAccount() {
                 <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 min-h-[2.4rem]">
                   {selected.currentValue || <span className="italic text-gray-400">empty — you can fill this in</span>}
                 </div>
-                {selected.direct && !selected.isEmpty && (
+                {!selected.isEmpty && selected.direct && (
                   <p className="text-[11px] text-gray-500 mt-1">Changing this saves it straight away.</p>
+                )}
+                {selected.spentToday && (
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    You already changed this today — another change now goes to your HR to approve.
+                  </p>
                 )}
               </div>
             )}

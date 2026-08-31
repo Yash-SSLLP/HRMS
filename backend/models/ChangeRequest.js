@@ -23,7 +23,14 @@ const APPROVER_KINDS = ['hr', 'exec'];
 const FIELD_CATALOG = {
   // --- Credentials / account (User) ---
   email: { label: 'Login Email', model: 'User', path: 'email' },
-  password: { label: 'Password', model: 'User', path: 'password', secret: true },
+  // NO `password` entry, deliberately. It used to be here, which meant changing
+  // your password created a ChangeRequest whose `requestedValue` held the new
+  // password in PLAIN TEXT, stored indefinitely and readable by every approver -
+  // the approval workflow was the exposure. Everyone now changes their own
+  // password directly at PATCH /api/auth/me/credentials, which verifies the
+  // current password and lets the User pre-save hook hash the new one.
+  // `secret` handling is kept throughout this file and its controller so that
+  // rows created before the retirement stay redacted.
   firstName: { label: 'First Name', model: 'User', path: 'firstName' },
   lastName: { label: 'Last Name', model: 'User', path: 'lastName' },
   phone: { label: 'Phone', model: 'User', path: 'phone' },
@@ -128,13 +135,58 @@ const SELF_DIRECT_FIELDS = [
 const SELF_DIRECT_ROLES = ['HRManager', 'Manager'];
 
 /**
- * May this actor change this field on their OWN record with no approval?
+ * The capped tier's fields: the same list MINUS date of birth and marriage date.
+ *
+ * Those two are excluded for a specific reason rather than general caution. The
+ * celebration worker matches birthdays and anniversaries on month + day, so a
+ * self-assertable date of birth is a way to make the whole company be notified
+ * that it is your birthday — set it to today, collect the notification, set it
+ * back tomorrow. They are also the two HR checks against PAN/Aadhaar at joining.
+ * An HR Manager or Manager may still change their own (SELF_DIRECT_FIELDS): the
+ * point is that nobody hands themselves a birthday unreviewed.
+ */
+const EMPLOYEE_SELF_DIRECT_FIELDS = SELF_DIRECT_FIELDS
+  .filter((f) => f !== 'dateOfBirth' && f !== 'dateOfMarriage');
+
+/**
+ * Which self-editable fields this actor gets. Derived from SELF_DIRECT_FIELDS
+ * rather than listed again, so adding a field there cannot silently miss a tier.
+ * @param {{role?: string}} actor
+ * @returns {string[]}
+ */
+const selfDirectFieldsFor = (actor) =>
+  (actor && SELF_DIRECT_ROLES.includes(actor.role) ? SELF_DIRECT_FIELDS : EMPLOYEE_SELF_DIRECT_FIELDS);
+
+/**
+ * Is this one of the fields THIS PERSON may change about themselves without an
+ * approval? Says nothing about how OFTEN — the daily allowance is the caller's
+ * business (see SelfEditLog).
+ * @param {string} field - a FIELD_CATALOG key
+ * @param {{role?: string}} [actor]
+ * @returns {boolean}
+ */
+const isSelfDirectField = (field, actor) => selfDirectFieldsFor(actor).includes(field);
+
+/**
+ * May this actor change this field on their own record with no approval AND no
+ * daily limit?
+ *
+ * Everyone else gets the same fields once per IST day per field (models/
+ * SelfEditLog.js), and the day's second change of that field becomes an ordinary
+ * request. HR Managers and Managers are uncapped rather than merely generous:
+ * an HR Manager's approver is forced to be a SuperAdmin, so their capped second
+ * edit would queue behind the Backend — nobody in their own company could
+ * decide it, which is the exact dead end the uncapped rule was added to avoid.
  * @param {{role?: string}} actor
  * @param {string} field - a FIELD_CATALOG key
  * @returns {boolean}
  */
 const selfEditsDirectly = (actor, field) =>
-  !!actor && SELF_DIRECT_ROLES.includes(actor.role) && SELF_DIRECT_FIELDS.includes(field);
+  // Pass the actor through: isSelfDirectField defaults to the CAPPED tier when it
+  // is not given one, which would have wrongly excluded date of birth here even
+  // though the role check on the same line has already established the uncapped
+  // tier.
+  !!actor && SELF_DIRECT_ROLES.includes(actor.role) && isSelfDirectField(field, actor);
 
 const changeRequestSchema = new mongoose.Schema(
   {
@@ -179,3 +231,6 @@ module.exports.FIELD_CATALOG = FIELD_CATALOG;
 module.exports.SELF_DIRECT_FIELDS = SELF_DIRECT_FIELDS;
 module.exports.SELF_DIRECT_ROLES = SELF_DIRECT_ROLES;
 module.exports.selfEditsDirectly = selfEditsDirectly;
+module.exports.isSelfDirectField = isSelfDirectField;
+module.exports.EMPLOYEE_SELF_DIRECT_FIELDS = EMPLOYEE_SELF_DIRECT_FIELDS;
+module.exports.selfDirectFieldsFor = selfDirectFieldsFor;

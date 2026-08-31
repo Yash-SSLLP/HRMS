@@ -140,31 +140,41 @@ const me = asyncHandler(async (req, res) => {
 
 /**
  * SuperAdmin self-service change of their own email and/or password.
- * @route PATCH /api/auth/me/credentials  (protected, SuperAdmin only)
+ * @route PATCH /api/auth/me/credentials  (protected)
  * @param {string} req.body.currentPassword - required for verification
- * @param {string} [req.body.email] - new email (must be unique)
- * @param {string} [req.body.newPassword] - new password
- * @returns {{user: Object}}; 403 for non-SuperAdmin, 401 wrong password, 409 email in use
+ * @param {string} [req.body.email] - new login email (SuperAdmin only, must be unique)
+ * @param {string} [req.body.newPassword] - new password (any signed-in user)
+ * @returns {{user: Object}}; 401 wrong password, 403 non-SuperAdmin changing email,
+ *   409 email in use
  */
-// PATCH /api/auth/me/credentials  (protected, SuperAdmin only)
-// Self-service email / password change. By policy, only SuperAdmin may change
-// their own credentials directly — everyone else must raise a change request
-// that their admin approves.
+// PATCH /api/auth/me/credentials  (protected)
+// Self-service credential change. ANY signed-in user may change their own
+// PASSWORD here: it is not an administrative act, and the guard that matters is
+// the current-password check below, which an attacker holding a stolen session
+// cannot satisfy. Routing it through an approval instead used to mean the new
+// password sat in a ChangeRequest document in plain text until somebody clicked
+// approve — the workflow was the exposure, not the protection.
+//
+// The login EMAIL is different and stays SuperAdmin-only: it decides how the
+// account signs in, is unique-checked across accounts, and is an identity change
+// rather than a secret the owner already knows.
 const updateMyCredentials = asyncHandler(async (req, res) => {
-  // Permission gate: only a SuperAdmin may self-edit credentials
-  if (req.user.role !== 'SuperAdmin') {
-    res.status(403);
-    throw new Error('Only SuperAdmin may change their own credentials. Please raise a change request instead.');
-  }
-
   const { currentPassword, email, newPassword } = req.body;
+
+  if (email && req.user.role !== 'SuperAdmin') {
+    res.status(403);
+    throw new Error('Your login email is changed by HR. You can change your password here.');
+  }
   if (!currentPassword) {
     res.status(400);
     throw new Error('Your current password is required to make changes');
   }
   if (!email && !newPassword) {
     res.status(400);
-    throw new Error('Provide a new email and/or a new password');
+    // Don't offer the email half to somebody who cannot use it.
+    throw new Error(req.user.role === 'SuperAdmin'
+      ? 'Provide a new email and/or a new password'
+      : 'Enter the new password you want.');
   }
 
   const user = await User.findById(req.user._id).select('+password');

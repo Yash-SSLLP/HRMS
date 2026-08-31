@@ -12,7 +12,9 @@
  */
 const asyncHandler = require('express-async-handler');
 const ChangeRequest = require('../models/ChangeRequest');
-const { FIELD_CATALOG, selfEditsDirectly } = require('../models/ChangeRequest');
+const { FIELD_CATALOG, selfEditsDirectly, isSelfDirectField } = require('../models/ChangeRequest');
+const SelfEditLog = require('../models/SelfEditLog');
+const { ymdIST } = require('../utils/dateHelpers');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
@@ -26,6 +28,66 @@ const {
 } = require('../services/profileChanges');
 
 const USER_FIELDS = 'firstName lastName email role';
+
+/**
+ * A change request as it may leave the server.
+ *
+ * `password` used to be a catalogue field, so historical rows hold the new
+ * password in `requestedValue` exactly as it was typed. Every client already
+ * masks it on screen — but masking on DISPLAY does nothing about the value
+ * sitting in the JSON, which is visible in devtools, in any proxy or crash
+ * report, and in the SuperAdmin inbox where `?all=true` filters on `{}` and so
+ * returns every row in the collection at once.
+ *
+ * So it is redacted HERE, on the way out, for every reader. This is belt and
+ * braces on top of scripts/scrubPasswordChangeRequests.js, which destroys the
+ * stored values: the scrub is the fix, and this makes a row that was missed —
+ * or restored from an old backup — harmless anyway.
+ *
+ * Keyed on the field name rather than on FIELD_CATALOG, precisely because
+ * `password` is no longer IN the catalogue and a metadata lookup would come back
+ * undefined and redact nothing.
+ * @param {object} cr - a ChangeRequest document or lean object
+ * @returns {object} safe to serialise
+ */
+function publicChangeRequest(cr) {
+  const o = typeof cr?.toObject === 'function' ? cr.toObject() : { ...cr };
+  if (o.field === 'password') {
+    if (o.requestedValue) o.requestedValue = '••••••';
+    if (o.appliedValue) o.appliedValue = '••••••';
+    if (o.currentValue) o.currentValue = '••••••';
+  }
+  return o;
+}
+
+/**
+ * Claim today's direct change of one field for one person.
+ *
+ * The insert IS the lock: the unique (user, field, day) index means two racing
+ * requests cannot both win, and the loser sees a duplicate key. Anything other
+ * than a duplicate is a real database problem and is re-thrown rather than
+ * quietly granting the edit.
+ * @param {string} userId
+ * @param {string} field - FIELD_CATALOG key
+ * @returns {Promise<boolean>} true if today's allowance was still unspent
+ */
+async function claimDailySelfEdit(userId, field) {
+  try {
+    await SelfEditLog.create({ user: userId, field, day: ymdIST() });
+    return true;
+  } catch (err) {
+    if (err.code === 11000) return false; // already used today
+    throw err;
+  }
+}
+
+/**
+ * Hand back a claim whose edit did not go through — a rejected enum value, say.
+ * Charging somebody a day for a change that errored would be its own small bug.
+ */
+function releaseDailySelfEdit(userId, field) {
+  return SelfEditLog.deleteOne({ user: userId, field, day: ymdIST() }).catch(() => {});
+}
 
 // { name, profileId } for the audit trail, by the employee's User id.
 async function auditTargetOf(userId) {
@@ -45,6 +107,13 @@ async function auditTargetOf(userId) {
  * @route GET /api/change-requests/fields
  */
 const getFields = asyncHandler(async (req, res) => {
+  // Read the whole of today's spend in ONE query and pass a Set into the loop
+  // below. The loop already awaits per field; a lookup inside it would add a
+  // round-trip per catalogue entry on every page load.
+  const spentToday = new Set(
+    (await SelfEditLog.find({ user: req.user._id, day: ymdIST() }).select('field').lean())
+      .map((r) => r.field)
+  );
   const pending = await ChangeRequest.find({ targetUser: req.user._id, status: 'pending' }).select('field').lean();
   const pendingSet = new Set(pending.map((p) => p.field));
 
@@ -62,8 +131,15 @@ const getFields = asyncHandler(async (req, res) => {
       pending: pendingSet.has(key),
       // True when changing this field will apply straight away rather than ask
       // someone. The UI reads it so it never promises an approval step that is
-      // not going to happen.
-      direct: selfEditsDirectly(req.user, key),
+      // not going to happen: uncapped for HR/Manager, and for everybody else
+      // only while today's once-a-day allowance for THIS field is unspent.
+      direct: selfEditsDirectly(req.user, key)
+        || (isSelfDirectField(key, req.user) && !spentToday.has(key)),
+      // Already used today, so the next change of it goes to HR. Distinct from
+      // `direct: false` on a field nobody may self-edit at all (bank, PAN), so
+      // the UI can say "you have already changed this today" rather than the
+      // flatly wrong "this always needs approval".
+      spentToday: isSelfDirectField(key, req.user) && spentToday.has(key),
     });
   }
   res.json({ fields });
@@ -127,21 +203,47 @@ const createChangeRequest = asyncHandler(async (req, res) => {
 
   const currentValue = meta.secret ? '' : await readFieldValue(req.user._id, meta);
 
-  // HR Manager / Manager changing their own contact or life-event details: apply
-  // it, audit it, and raise nothing. Without this an HR's own phone number is a
-  // request addressed to the Backend, because an HR Manager's HR partner is
-  // forced to be a SuperAdmin — there is nobody in their own company to decide
-  // it. The field list is the narrow one; a designation or a bank account still
-  // goes through approval however senior the person asking is.
-  if (selfEditsDirectly(req.user, field)) {
-    const newVal = String(requestedValue).trim();
-    await applyFieldValue(req.user._id, meta, newVal);
-    auditFieldChange(req.user, meta, currentValue, newVal, await auditTargetOf(req.user._id));
-    return res.status(200).json({
-      applied: true,
-      field,
-      value: await readFieldValue(req.user._id, meta),
-    });
+  const newVal = String(requestedValue).trim();
+
+  // Re-submitting the value already on record is a no-op. Worth catching before
+  // anything else: it would otherwise spend the day's allowance on a change that
+  // changes nothing, or — once the allowance is gone — put a request in HR's
+  // inbox asking them to approve the value they are already looking at.
+  if (!meta.secret && String(currentValue ?? '') === newVal) {
+    return res.status(200).json({ applied: true, unchanged: true, field, value: currentValue });
+  }
+
+  // Changing your own contact or life-event details applies immediately rather
+  // than asking anyone. Two tiers:
+  //   - HR Managers and Managers: unlimited (see selfEditsDirectly for why —
+  //     their approver is the Backend, so a queued edit has nobody local to
+  //     decide it);
+  //   - everyone else: once per IST day per field. The day's second change of
+  //     the same field falls through to the ordinary request below, which is the
+  //     point of the rule — a detail can be corrected, not churned.
+  // A designation or a bank account is in neither tier: those always go to
+  // approval, however senior the person asking.
+  if (isSelfDirectField(field, req.user)) {
+    const uncapped = selfEditsDirectly(req.user, field);
+    const claimed = uncapped || await claimDailySelfEdit(req.user._id, field);
+    if (claimed) {
+      try {
+        await applyFieldValue(req.user._id, meta, newVal);
+      } catch (err) {
+        // The value was refused (a gender or marital-status enum, say). Give the
+        // day back — the employee has not spent their change on a failure.
+        if (!uncapped) await releaseDailySelfEdit(req.user._id, field);
+        throw err;
+      }
+      auditFieldChange(req.user, meta, currentValue, newVal, await auditTargetOf(req.user._id));
+      return res.status(200).json({
+        applied: true,
+        field,
+        value: await readFieldValue(req.user._id, meta),
+      });
+    }
+    // Allowance spent — fall through and raise a request, exactly as a field
+    // nobody may self-edit would.
   }
 
   const assignedTo = await resolveHrAssignee(req.user._id);
@@ -154,7 +256,7 @@ const createChangeRequest = asyncHandler(async (req, res) => {
     field,
     fieldLabel: meta.label,
     currentValue,
-    requestedValue: String(requestedValue).trim(),
+    requestedValue: newVal,
     reason: reason ? String(reason).trim() : undefined,
   });
 
@@ -258,7 +360,7 @@ const myChangeRequests = asyncHandler(async (req, res) => {
     .populate('assignedTo', USER_FIELDS)
     .populate('decidedBy', USER_FIELDS)
     .sort({ createdAt: -1 });
-  res.json({ count: changeRequests.length, changeRequests });
+  res.json({ count: changeRequests.length, changeRequests: changeRequests.map(publicChangeRequest) });
 });
 
 // Who has a change-request inbox at all. Exported because the approvals badge
@@ -287,7 +389,7 @@ const assignedChangeRequests = asyncHandler(async (req, res) => {
     .populate('assignedTo', USER_FIELDS)
     .populate('decidedBy', USER_FIELDS)
     .sort({ createdAt: -1 });
-  res.json({ count: changeRequests.length, changeRequests });
+  res.json({ count: changeRequests.length, changeRequests: changeRequests.map(publicChangeRequest) });
 });
 
 /**
@@ -319,6 +421,25 @@ const decideChangeRequest = asyncHandler(async (req, res) => {
 
   const meta = FIELD_CATALOG[cr.field];
   const target = cr.targetUser || cr.requestedBy;
+
+  // A row whose field has since been retired from the catalogue - `password` is
+  // the one that has - has no meta to apply through. It can still be DECLINED,
+  // so a queue full of them can be cleared; it can never be approved, because
+  // there is nothing left to write it to.
+  if (!meta) {
+    if (action === 'approve') {
+      res.status(410);
+      throw new Error(`"${cr.fieldLabel || cr.field}" is no longer changed this way, so this request cannot be approved. Decline it — the person can make the change themselves.`);
+    }
+    cr.status = 'declined';
+    cr.decisionNote = decisionNote ? String(decisionNote).trim() : undefined;
+    cr.decidedBy = req.user._id;
+    cr.decidedAt = new Date();
+    // Retired secret fields (password) must not leave their value behind.
+    cr.requestedValue = '••••••';
+    await cr.save();
+    return res.json({ changeRequest: publicChangeRequest(cr) });
+  }
 
   if (action === 'approve') {
     const valueToApply =
@@ -352,7 +473,7 @@ const decideChangeRequest = asyncHandler(async (req, res) => {
     })
   ));
 
-  res.json({ changeRequest: cr });
+  res.json({ changeRequest: publicChangeRequest(cr) });
 });
 
 module.exports = {

@@ -44,6 +44,9 @@ async function findAccountByEmail(email, extra = {}) {
     || User.findOne({ email: address, ...extra });
 }
 const { FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange } = require('../services/profileChanges');
+// Which fields a person may set on themselves without approval — the birthday
+// endpoint below has to honour the same rule the change-request flow does.
+const { isSelfDirectField } = require('../models/ChangeRequest');
 const { notifyMany } = require('../services/notify');
 const ImportFlag = require('../models/ImportFlag');
 const { purgePerson } = require('../services/purgePerson');
@@ -482,8 +485,36 @@ const updateMyBirthday = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Profile not yet created. Contact HR.');
   }
+
+  // This endpoint used to let ANY signed-in person overwrite their own date of
+  // birth, any number of times, with no approval and no audit entry — a second,
+  // wider door beside the change-request workflow, which deliberately does NOT
+  // let an ordinary employee self-assert this field. The celebration worker
+  // matches birthdays on month + day, so an unreviewed date of birth is a way to
+  // have the whole company told it is your birthday.
+  //
+  // So: filling a BLANK date of birth still applies immediately, matching
+  // fillMissingField — a new joiner completing their own profile is the case this
+  // was built for, and it is a one-way door. CHANGING one that is already set is
+  // the change-request workflow's business, except for the roles that may
+  // self-edit it directly there.
+  const already = profile.dateOfBirth;
+  if (already && !isSelfDirectField('dateOfBirth', req.user)) {
+    res.status(409);
+    throw new Error('Your date of birth is already recorded. To correct it, request the change under Your details and your HR will apply it.');
+  }
+
   profile.dateOfBirth = dob;
   await profile.save();
+  // Audited like every other direct write to a catalogue field; this endpoint
+  // wrote none at all before, so a self-service birthday change was invisible.
+  auditFieldChange(
+    req.user,
+    FIELD_CATALOG.dateOfBirth,
+    already ? fmtFieldVal(already, FIELD_CATALOG.dateOfBirth) : '',
+    fmtFieldVal(profile.dateOfBirth, FIELD_CATALOG.dateOfBirth),
+    { name: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(), profileId: profile._id }
+  );
   res.json({ profile: { _id: profile._id, dateOfBirth: profile.dateOfBirth } });
 });
 
