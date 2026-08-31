@@ -2,14 +2,17 @@
  * Change-request controller. Three ways a whitelisted profile/credential field
  * (FIELD_CATALOG) gets changed:
  *   • Employee fills a MISSING field  → applied immediately (audited), then locked.
- *   • Employee changes a FILLED field → request routed to their HR partner.
+ *   • Employee changes a FILLED field → request routed to their HR partner,
+ *     EXCEPT for an HR Manager / Manager changing a personal-and-contact field
+ *     about themselves, which applies immediately (audited) — see
+ *     selfEditsDirectly in models/ChangeRequest.js for why.
  *   • HR changes an employee's field  → request routed to the company CEO/MD.
  * The Backend (SuperAdmin) edits directly elsewhere; it never raises a request.
  * Secret fields (password) never snapshot or echo their value.
  */
 const asyncHandler = require('express-async-handler');
 const ChangeRequest = require('../models/ChangeRequest');
-const { FIELD_CATALOG } = require('../models/ChangeRequest');
+const { FIELD_CATALOG, selfEditsDirectly } = require('../models/ChangeRequest');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
@@ -57,6 +60,10 @@ const getFields = asyncHandler(async (req, res) => {
       // A secret field is never "fillable" (there's always a password).
       isEmpty: !meta.secret && isEmptyValue(currentValue),
       pending: pendingSet.has(key),
+      // True when changing this field will apply straight away rather than ask
+      // someone. The UI reads it so it never promises an approval step that is
+      // not going to happen.
+      direct: selfEditsDirectly(req.user, key),
     });
   }
   res.json({ fields });
@@ -119,6 +126,24 @@ const createChangeRequest = asyncHandler(async (req, res) => {
   }
 
   const currentValue = meta.secret ? '' : await readFieldValue(req.user._id, meta);
+
+  // HR Manager / Manager changing their own contact or life-event details: apply
+  // it, audit it, and raise nothing. Without this an HR's own phone number is a
+  // request addressed to the Backend, because an HR Manager's HR partner is
+  // forced to be a SuperAdmin — there is nobody in their own company to decide
+  // it. The field list is the narrow one; a designation or a bank account still
+  // goes through approval however senior the person asking is.
+  if (selfEditsDirectly(req.user, field)) {
+    const newVal = String(requestedValue).trim();
+    await applyFieldValue(req.user._id, meta, newVal);
+    auditFieldChange(req.user, meta, currentValue, newVal, await auditTargetOf(req.user._id));
+    return res.status(200).json({
+      applied: true,
+      field,
+      value: await readFieldValue(req.user._id, meta),
+    });
+  }
+
   const assignedTo = await resolveHrAssignee(req.user._id);
 
   const cr = await ChangeRequest.create({

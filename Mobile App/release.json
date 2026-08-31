@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.14",
-  "versionCode": 60,
-  "notes": "The per-day attendance charts on the admin hub now read Sundays properly. A Sunday nobody logged into is labelled down the plot instead of being drawn as a bar of zero, so a closed day no longer looks like a catastrophic one; a Sunday somebody did work keeps its bar and is captioned as Sunday working. In Employee Khata, admin logins are no longer mixed into the list of employees when picking somebody — they are held back until you search for them by name, and the picker says how many are hidden."
+  "versionName": "2.2.15",
+  "versionCode": 61,
+  "notes": "Your past change requests show the right colour again: a declined request now reads red instead of plain grey. This build also carries the app side of a change that lets HR Managers and Managers save their own contact and personal details — phone, date of birth, gender, marital status, marriage date and addresses — without waiting on an approval. That one starts working once the matching server update is live; until then those details still go through the usual approval, exactly as before."
 }

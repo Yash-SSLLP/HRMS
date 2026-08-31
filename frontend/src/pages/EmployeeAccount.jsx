@@ -74,13 +74,19 @@ export default function EmployeeAccount() {
     setSubmitting(true);
     try {
       // An empty field can be filled directly (applied at once). A field that
-      // already has a value goes to HR as a change request.
+      // already has a value goes to HR as a change request — unless the server
+      // says it applied it outright, which it does for an HR Manager / Manager
+      // changing their own contact or life-event details. The server decides,
+      // never the client: `direct` below is only what it told us to expect, and
+      // the response is what actually happened.
       if (selected?.isEmpty) {
         await api.post('/change-requests/fill', { field, value: requestedValue });
         setMsg('Saved to your profile. To change it later, submit a change request.');
       } else {
-        await api.post('/change-requests', { field, requestedValue, reason });
-        setMsg('Request submitted. Your HR will review it.');
+        const { data } = await api.post('/change-requests', { field, requestedValue, reason });
+        setMsg(data?.applied
+          ? 'Saved to your profile.'
+          : 'Request submitted. Your HR will review it.');
       }
       setField(''); setRequestedValue(''); setReason('');
       await load();
@@ -174,7 +180,12 @@ export default function EmployeeAccount() {
         {!isSuperAdmin && (
         <div className="bg-white shadow rounded-lg p-5">
           <h2 className="card-title mb-1">Your details</h2>
-          <p className="text-xs text-gray-500 mb-3">Fill in anything that is missing — it saves straight away. Once a detail is filled, changing it needs a request your HR approves.</p>
+          <p className="text-xs text-gray-500 mb-3">
+            Fill in anything that is missing — it saves straight away.{' '}
+            {fields.some((f) => f.direct)
+              ? 'So do your contact and personal details when you change them. Changing any other filled detail needs a request your HR approves.'
+              : 'Once a detail is filled, changing it needs a request your HR approves.'}
+          </p>
           <form onSubmit={submitRequest} className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Which detail?</label>
@@ -204,6 +215,9 @@ export default function EmployeeAccount() {
                 <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 min-h-[2.4rem]">
                   {selected.currentValue || <span className="italic text-gray-400">empty — you can fill this in</span>}
                 </div>
+                {selected.direct && !selected.isEmpty && (
+                  <p className="text-[11px] text-gray-500 mt-1">Changing this saves it straight away.</p>
+                )}
               </div>
             )}
 
@@ -221,8 +235,10 @@ export default function EmployeeAccount() {
               />
             </div>
 
-            {/* A reason is only meaningful for a change request, not a first fill. */}
-            {selected && !selected.isEmpty && (
+            {/* A reason is only meaningful for a change request — not a first
+                fill, and not a field this account applies directly (there is
+                nobody to read it). */}
+            {selected && !selected.isEmpty && !selected.direct && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Reason <span className="text-gray-400 font-normal">(optional)</span></label>
                 <textarea
@@ -236,7 +252,7 @@ export default function EmployeeAccount() {
 
             {msg && <div className="text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">{msg}</div>}
             <button type="submit" disabled={submitting || selected?.pending} className="bg-gray-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60">
-              {submitting ? 'Saving…' : selected?.isEmpty && !selected?.secret ? 'Save' : 'Submit request'}
+              {submitting ? 'Saving…' : ((selected?.isEmpty && !selected?.secret) || selected?.direct) ? 'Save' : 'Submit request'}
             </button>
           </form>
         </div>
@@ -257,7 +273,14 @@ export default function EmployeeAccount() {
                   <div className="text-sm font-medium text-gray-900">{r.fieldLabel}</div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     {r.currentValue ? <><span className="line-through">{r.currentValue}</span> → </> : null}
-                    <span className="text-gray-700">{r.appliedValue || r.requestedValue}</span>
+                    {/* Mask on the FIELD name: `secret` is FIELD_CATALOG metadata
+                        and is not a path on the ChangeRequest document, so it can
+                        never guard this. While a password request is still pending
+                        `appliedValue` is empty, and the fallback printed the new
+                        password in clear text. */}
+                    <span className="text-gray-700">
+                      {r.field === 'password' ? '••••••' : (r.appliedValue || r.requestedValue)}
+                    </span>
                   </div>
                   {r.reason && <div className="text-xs text-gray-400 mt-0.5 italic">“{r.reason}”</div>}
                   {r.decisionNote && <div className="text-xs text-gray-500 mt-0.5">Admin: {r.decisionNote}</div>}

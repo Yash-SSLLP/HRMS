@@ -559,7 +559,12 @@ const listEmployees = asyncHandler(async (req, res) => {
     // phone are stored on the account, so an edit to any of them moves that
     // stamp and not the profile's. The directory's "last updated" column takes
     // the later of the two, which is the only honest answer.
-    .populate('user', 'firstName lastName email role isActive updatedAt')
+    //
+    // `phone` is selected for the same reason `email` is: the edit modal seeds
+    // its Personal & Contact fields from the directory row it was opened from,
+    // so a field left out here cannot prefill at all — the Phone box opened
+    // blank under a caption promising it was "Saved on the login account".
+    .populate('user', 'firstName lastName email phone role isActive updatedAt')
     .populate('hrPartner', 'firstName lastName email')
     .populate('company', 'name code')
     .sort({ createdAt: -1 })

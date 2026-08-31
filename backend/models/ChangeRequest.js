@@ -76,6 +76,66 @@ const FIELD_CATALOG = {
   'emergencyContact.phone': { label: 'Emergency Contact - Phone', model: 'Profile', path: 'emergencyContact.phone' },
 };
 
+/**
+ * Personal & contact fields a person may change ABOUT THEMSELVES with no
+ * approval step — see SELF_DIRECT_ROLES.
+ *
+ * Deliberately narrower than the admin form's "Personal & Contact" heading.
+ * Left OUT, and still approval-gated:
+ *   - email / password: changing the login email changes how someone signs in,
+ *     is unique-checked and notifies. A credential is not a personal detail.
+ *   - firstName / lastName: the name on payslips, letters and statutory filings,
+ *     which HR checks against documents rather than takes on assertion.
+ *   - statutory IDs, bank details, designation / department / grade: the whole
+ *     point of the gate. Nobody gives themselves a designation or redirects
+ *     their own salary.
+ * What is left is the contact-and-life-events set: how to reach someone, and
+ * facts about them that really only they can know.
+ */
+const SELF_DIRECT_FIELDS = [
+  'phone',
+  'dateOfBirth',
+  'gender',
+  'maritalStatus',
+  'dateOfMarriage',
+  'address.current.line1',
+  'address.current.line2',
+  'address.current.city',
+  'address.current.state',
+  'address.current.pincode',
+  'address.permanent.line1',
+  'address.permanent.line2',
+  'address.permanent.city',
+  'address.permanent.state',
+  'address.permanent.pincode',
+];
+
+/**
+ * Roles that apply those fields to their own record immediately instead of
+ * raising a request.
+ *
+ * Why these two rather than everyone: an HR Manager's HR partner is forced to be
+ * a SuperAdmin, so an HR changing their own phone number today waits on the
+ * Backend - a request nobody in their own company can decide. A Manager's lands
+ * on their HR partner, usually the person sitting next to them. An ordinary
+ * employee keeps the gate: HR checking a joiner's details is the workflow
+ * working, not an obstruction.
+ *
+ * Note this grants no new REACH - every one of these fields is already
+ * submittable about oneself by any role through the same endpoint. It removes an
+ * approval step; it does not open a door.
+ */
+const SELF_DIRECT_ROLES = ['HRManager', 'Manager'];
+
+/**
+ * May this actor change this field on their OWN record with no approval?
+ * @param {{role?: string}} actor
+ * @param {string} field - a FIELD_CATALOG key
+ * @returns {boolean}
+ */
+const selfEditsDirectly = (actor, field) =>
+  !!actor && SELF_DIRECT_ROLES.includes(actor.role) && SELF_DIRECT_FIELDS.includes(field);
+
 const changeRequestSchema = new mongoose.Schema(
   {
     // Who raised the request (an employee for their own record, or an HR Manager
@@ -116,3 +176,6 @@ module.exports = mongoose.model('ChangeRequest', changeRequestSchema);
 module.exports.CHANGE_REQUEST_STATUSES = CHANGE_REQUEST_STATUSES;
 module.exports.APPROVER_KINDS = APPROVER_KINDS;
 module.exports.FIELD_CATALOG = FIELD_CATALOG;
+module.exports.SELF_DIRECT_FIELDS = SELF_DIRECT_FIELDS;
+module.exports.SELF_DIRECT_ROLES = SELF_DIRECT_ROLES;
+module.exports.selfEditsDirectly = selfEditsDirectly;
