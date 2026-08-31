@@ -17,6 +17,19 @@ const {
   ensureExitApprovalChain,
   recordClearanceSection,
 } = require('./exitController');
+// Everything below this line serves countHrApprovals only — the HR-WIDE inbox
+// tally. Each import belongs to one of the seven queues the admin Approvals
+// screen lists, and each is counted with that queue's own gate and company-wall
+// helper (see that function).
+const Expense = require('../models/Expense');
+const TravelRequest = require('../models/TravelRequest');
+const Loan = require('../models/Loan');
+const ChangeRequest = require('../models/ChangeRequest');
+const DocumentChangeRequest = require('../models/DocumentChangeRequest');
+const { CHANGE_INBOX_ROLES } = require('./changeRequestController');
+const { canReadOthersDocs } = require('./documentController');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
+const { scopeEmployeeFilter, scopeUserField } = require('../utils/employeeScope');
 
 /**
  * Does this account see EVERY inbox, not just its own rung?
@@ -465,6 +478,86 @@ const countMyApprovals = asyncHandler(async (req, res) => {
 });
 
 /**
+ * How many items sit in the HR-WIDE approvals inbox — the seven category tabs of
+ * the admin Approvals screen (mobile: screens/admin/ApprovalsScreen). Feeds the
+ * count badge on the menu row and the console tile that open it, so a queue can
+ * announce itself without being opened.
+ *
+ * Distinct from countMyApprovals above, which counts the REPORTING-CHAIN inbox
+ * (things addressed to you personally). The two are different queues and their
+ * two badges deliberately show different numbers.
+ *
+ * WHY SEVEN QUERIES AND NOT ONE. Each category is a different collection behind a
+ * different capability and a different slice of the company wall. So each tally
+ * is built with the SAME gate and the SAME scope helper its own list route uses —
+ * named in the comment on each line — rather than with one invented filter that
+ * would quietly drift from what the screen actually lists. A category the caller
+ * may not see counts 0, never 403: the client fetches all seven and swallows
+ * failures already, and a badge must never break the menu it sits in.
+ *
+ * The keys are mobile ApprovalsScreen's CATEGORIES[].key, so the entry badge and
+ * that screen's per-tab badges cannot disagree about which number is which.
+ * @route GET /api/approvals/hr-count
+ * @returns {{leave:number, expense:number, travel:number, regularization:number,
+ *   loan:number, change:number, docswap:number, total:number}}
+ */
+const countHrApprovals = asyncHandler(async (req, res) => {
+  const me = req.user._id;
+  const may = (cap) => hasPermission(req.user, cap);
+  const NONE = Promise.resolve(0);
+
+  // GET /leave/requests?status=Pending        (leave.manage)      employee = EmployeeProfile
+  const leaveQ = may('leave.manage')
+    ? LeaveRequest.countDocuments(await scopeEmployeeFilter(req, { status: 'Pending' }))
+    : NONE;
+  // GET /expenses?status=Pending              (expenses.manage)   employee = User
+  const expenseQ = may('expenses.manage')
+    ? Expense.countDocuments(await scopeUserField(req, { status: 'Pending' }))
+    : NONE;
+  // GET /travel?status=Pending                (travel.manage)     employee = User
+  const travelQ = may('travel.manage')
+    ? TravelRequest.countDocuments(await scopeUserField(req, { status: 'Pending' }))
+    : NONE;
+  // GET /regularizations?status=Pending       (attendance.manage) employee = User
+  const regularizationQ = may('attendance.manage')
+    ? Regularization.countDocuments(await scopeUserField(req, { status: 'Pending' }))
+    : NONE;
+  // GET /loans?status=Pending                 (loans.manage)      employee = User
+  const loanQ = may('loans.manage')
+    ? Loan.countDocuments(await scopeUserField(req, { status: 'Pending' }))
+    : NONE;
+  // GET /change-requests/assigned             (CHANGE_INBOX_ROLES, mine only —
+  // the client never sends ?all=true, so neither does this).
+  const changeQ = CHANGE_INBOX_ROLES.includes(req.user.role)
+    ? ChangeRequest.countDocuments({ assignedTo: me, status: 'pending' })
+    : NONE;
+  // GET /documents/replace-requests/assigned  (canReadOthersDocs). An exec is
+  // never anybody's assigned HR partner, so "assigned to me" would always be 0
+  // for them — their view is every request inside their company wall instead.
+  const docswapQ = canReadOthersDocs(req.user)
+    ? DocumentChangeRequest.countDocuments(
+      isExecViewer(req.user)
+        ? await scopeEmployeeFilter(req, { status: 'pending' })
+        : { assignedTo: me, status: 'pending' }
+    )
+    : NONE;
+
+  const [leave, expense, travel, regularization, loan, change, docswap] = await Promise.all([
+    leaveQ, expenseQ, travelQ, regularizationQ, loanQ, changeQ, docswapQ,
+  ]);
+  res.json({
+    leave,
+    expense,
+    travel,
+    regularization,
+    loan,
+    change,
+    docswap,
+    total: leave + expense + travel + regularization + loan + change + docswap,
+  });
+});
+
+/**
  * The assigned manager ticks their no-dues section.
  * @route PATCH /api/approvals/clearances/:id/:key
  * @param {Object} req.body.items - array of { done, note } by item index
@@ -496,6 +589,7 @@ module.exports = {
   listMyClearances,
   updateMyClearanceSection,
   countMyApprovals,
+  countHrApprovals,
   listMyRegularizationApprovals,
   approveRegularization,
   rejectRegularization,

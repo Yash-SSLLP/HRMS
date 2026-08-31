@@ -15,6 +15,7 @@ const {
   listMyClearances,
   updateMyClearanceSection,
   countMyApprovals,
+  countHrApprovals,
   listMyRegularizationApprovals,
   approveRegularization,
   rejectRegularization,
@@ -36,6 +37,12 @@ router.use(protect);
 // GET /count — how many items await me, for the top-bar shortcut badge; protected.
 // Declared before the resource routes so the literal path is never shadowed.
 router.get('/count', countMyApprovals);
+// GET /hr-count — how many items sit in the HR-WIDE inbox (the admin Approvals
+// screen's seven category tabs), for the badge on the entry that opens it.
+// Protect-only like /count: the handler gates each category on the capability
+// its own list route requires and counts 0 for the rest, so there is nothing
+// here for a route-level gate to add.
+router.get('/hr-count', countHrApprovals);
 
 // GET /leave — leave requests awaiting the current user's approval; protected (chain-scoped).
 router.get('/leave', listMyLeaveApprovals);

@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.12",
-  "versionCode": 58,
-  "notes": "Updated the in-app handbooks under How to use. The HR and Admin guide now covers the rules added recently: that nobody administers their own employee record, that editing a Manager's record needs its own permission, that a Super Admin sees and can decide every open request, and that nobody can be set as their own manager or HR partner. The Employee handbook explains what happens if a request you raised gets stuck. No other changes in this build."
+  "versionName": "2.2.13",
+  "versionCode": 59,
+  "notes": "Adds My Approvals — the reporting-chain inbox that mirrors the web page, covering leave, resignations and no-dues clearances. It shows for every role, because anyone can be someone's reporting manager in the org chart. Its bottom-tab badge counts only requests addressed to you and is kept separate from the HR-wide Approvals badge, so holding both roles no longer shows one merged number. The Attendance screen no longer prints the paragraph explaining the lateness and paid-leave rules; the figures above it are unchanged."
 }

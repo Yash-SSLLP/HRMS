@@ -575,4 +575,8 @@ module.exports = {
   myReplacementRequests,
   assignedReplacementRequests,
   decideReplacement,
+  // Exported for the approvals badge count (approvalController.countHrApprovals),
+  // which must gate its DocumentChangeRequest tally on the same audience this
+  // inbox is gated on.
+  canReadOthersDocs,
 };

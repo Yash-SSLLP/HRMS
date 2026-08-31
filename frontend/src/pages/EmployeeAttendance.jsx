@@ -61,21 +61,6 @@ const istSeconds = (d = new Date()) => {
 };
 const pastHalfDayCutoffAt = (d) => istSeconds(d) > HALF_DAY_CUTOFF_HOUR * 3600;
 
-// The late rule in force, as a sentence: "10:00 AM (10 min grace, so late from
-// 10:10 AM)". Comes from the payroll policy roll-up, so it always states the
-// SuperAdmin's current setting rather than assuming the old 10:00 AM constant.
-const lateRuleText = (lp) => {
-  if (!lp) return null;
-  const pad = (n) => String(n).padStart(2, '0');
-  const at = (h, m) => `${h % 12 || 12}:${pad(m)} ${h >= 12 ? 'PM' : 'AM'}`;
-  const start = at(Number(lp.hour) || 0, Number(lp.minute) || 0);
-  const grace = Number(lp.graceMinutes) || 0;
-  if (!grace) return `A check-in after ${start} is late.`;
-  const total = ((Number(lp.hour) || 0) * 60 + (Number(lp.minute) || 0) + grace) % (24 * 60);
-  return `The day starts at ${start} with a ${grace} min grace window, so a check-in after `
-    + `${at(Math.floor(total / 60), total % 60)} is late.`;
-};
-
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const fmtTime = (d) => formatTime12(d) || '-';
@@ -402,15 +387,6 @@ export default function EmployeeAttendance() {
                     : (p.doubleDayPay ? `${inr(p.doubleDayPay)} extra` : '-')} />
               )}
             </div>
-            <p className="text-[11px] text-gray-400 mt-3">
-              {lateRuleText(p.latePolicy) ? `${lateRuleText(p.latePolicy)} ` : ''}
-              First {p.lateAllowance} late arrivals each month are free; beyond that, every late day is deducted at {inr(p.lateRate)}/day.
-              {' '}{p.paidLeaveQuota} paid leaves each month - unused days are added to your pay, extra days are unpaid (LOP).
-              {' '}A working day with no punch-in and no punch-out is unpaid (LOP) unless you get it regularised.
-              {' '}Working a Sunday or a company comp-off day is paid double for that day, once HR or your manager approves it.
-              {p.prorated ? ` You were on the payroll for ${p.eligibleDays} of this month's ${p.daysInMonth} days, so the usual ${p.fullPaidLeaveQuota} paid leaves and ${p.fullLateAllowance} free lates are prorated for this month.` : ''}
-              {policy.needsSetup ? ' Amounts finalise once your salary is set up by HR.' : ''}
-            </p>
           </div>
         );
       })()}

@@ -236,13 +236,18 @@ const myChangeRequests = asyncHandler(async (req, res) => {
   res.json({ count: changeRequests.length, changeRequests });
 });
 
+// Who has a change-request inbox at all. Exported because the approvals badge
+// count (approvalController.countHrApprovals) has to gate its ChangeRequest
+// tally on exactly this audience — a second copy of the list would drift.
+const CHANGE_INBOX_ROLES = ['HRManager', 'SuperAdmin', 'CEO', 'MD'];
+
 /**
  * The admin's change-request inbox — HR partners see employee requests routed to
  * them; CEO/MD see HR requests routed to them; a SuperAdmin can see all (?all).
  * @route GET /api/change-requests/assigned
  */
 const assignedChangeRequests = asyncHandler(async (req, res) => {
-  if (!['HRManager', 'SuperAdmin', 'CEO', 'MD'].includes(req.user.role)) {
+  if (!CHANGE_INBOX_ROLES.includes(req.user.role)) {
     res.status(403);
     throw new Error('You do not have a change-request inbox');
   }
@@ -334,4 +339,5 @@ module.exports = {
   myChangeRequests,
   assignedChangeRequests,
   decideChangeRequest,
+  CHANGE_INBOX_ROLES,
 };

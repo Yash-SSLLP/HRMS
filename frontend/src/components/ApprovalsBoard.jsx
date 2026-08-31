@@ -25,8 +25,11 @@
  *
  * Tones are Tailwind hue families index.css remaps for dark mode (see its
  * dark-mode colour accuracy block). The accent is never hardcoded — the active
- * tab and the "waiting" badges use `accent-bg`/`accent-text`, so the bar
+ * tab and the "waiting" line use `accent-bg`/`accent-text`, so the bar
  * follows role and portal (violet/teal admin, teal-then-gold in My Portal).
+ * The one exception is the corner count badge, which is red everywhere — it is
+ * the same "unread" signal as the top-bar bell and Approvals pill, and reading
+ * it as the accent would sink it back into the tab it is meant to stand out of.
  */
 import { useMemo, useState } from 'react';
 import {
@@ -142,7 +145,11 @@ export default function ApprovalsBoard() {
         // overflow-x-auto box clips anything painted outside its padding box,
         // which sheared the left edge off the first tab whenever it was active.
         // The negative margins pull the row back into optical alignment.
-        className="topbar-scroll flex items-stretch gap-2 overflow-x-auto px-1.5 py-2 -mx-1.5 -mt-2 mb-4"
+        // Widened from 1.5/2 to 2.5 when the corner count badge landed: the badge
+        // hangs 6px past the tab plus a 2px ring, and `overflow-x:auto` clips the
+        // OTHER axis too, so 6px of side padding sheared the ring off the last
+        // tab's badge and 8px of top padding grazed its top edge.
+        className="topbar-scroll flex items-stretch gap-2 overflow-x-auto px-2.5 py-2.5 -mx-2.5 -mt-2.5 mb-4"
       >
         {SECTIONS.map((s) => {
           const active = s.key === open.key;
@@ -160,6 +167,20 @@ export default function ApprovalsBoard() {
                   : 'bg-gray-50 border-gray-200 hover:bg-white hover:border-gray-300 hover:shadow-sm'
               }`}
             >
+              {/* Corner count badge. The "N waiting" line below already says
+                  it, but only once you are reading THAT tab — the red dot is
+                  what makes a queue needing you visible while your eye is on
+                  another tab, and it matches the top-bar bell/Approvals badge.
+                  aria-hidden because TabStatus already announces the number. */}
+              {n > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-1.5 min-w-[19px] h-[19px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold tabular-nums flex items-center justify-center leading-none"
+                  style={{ boxShadow: '0 0 0 2px var(--surface)' }}
+                  aria-hidden="true"
+                >
+                  {n > 99 ? '99+' : n}
+                </span>
+              )}
               <span className="flex items-center gap-3">
                 <span
                   className={`flex items-center justify-center w-10 h-10 rounded-xl border shrink-0 transition-colors ${TONE[s.tone]}`}
