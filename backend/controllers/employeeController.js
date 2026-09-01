@@ -552,6 +552,10 @@ const updateMyBirthday = asyncHandler(async (req, res) => {
 const getMyProfile = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findOne({ user: req.user._id })
     .populate('user', 'firstName lastName email role phone isActive')
+    // The site they are actually assigned to. Without this the clients had only
+    // the legacy free-text `workLocation` label to show, which is a different
+    // (and usually stale) piece of data — see models/WorkLocation.js.
+    .populate('workLocationRef', 'name')
     .populate('hrPartner', 'firstName lastName email');
   if (!profile) {
     res.status(404);
@@ -672,6 +676,7 @@ const getEmployee = asyncHandler(async (req, res) => {
     .populate('user', 'firstName lastName email role phone isActive')
     .populate('hrPartner', 'firstName lastName email')
     .populate('company', 'name code')
+    .populate('workLocationRef', 'name')
     .populate('reportingManager', 'firstName lastName email');
   if (!profile) {
     res.status(404);
@@ -1206,7 +1211,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         orgMasterSync.ensureDesignation(p.designation),
         orgMasterSync.ensureDepartment(p.department),
         orgMasterSync.ensureGrade(p.grade),
-        orgMasterSync.ensureLocation(p.workLocation),
+        orgMasterSync.ensureWorkLocation(p.workLocation),
       ]);
       if (newDesignation) {
         flag('designation', p.designation, 'created',
@@ -1222,8 +1227,8 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       }
       if (newLocation) {
         flag('workLocation', p.workLocation, 'created',
-          `"${p.workLocation}" was not a known work location, so it was added to Org Masters. `
-          + 'This is the label only — a geofenced site still has to be set up under Work Locations.');
+          `"${p.workLocation}" was not a known work location, so it was added under Work Locations. `
+          + 'It has no geofence yet — open Work Locations and set its coordinates and radius.');
       }
 
       // ----- Create the account and the employee record, together -----
@@ -1396,7 +1401,7 @@ const FLAG_WRITERS = {
     return value;
   },
   workLocation: async (value, { profile }) => {
-    await orgMasterSync.ensureLocation(value);
+    await orgMasterSync.ensureWorkLocation(value);
     profile.workLocation = value;
     await profile.save();
     return value;

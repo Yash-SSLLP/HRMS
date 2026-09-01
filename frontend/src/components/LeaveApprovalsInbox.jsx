@@ -26,21 +26,46 @@ const REQ_COLORS = {
 
 // Renders the reporting-hierarchy approval ladder as a row of chips so you can
 // see who has approved, whose turn it is, and where a rejection happened.
+//
+// An OVERRIDE rung (somebody senior deciding over the approvers' heads) shows
+// the person's name like any other rung, followed by a small "override" tag —
+// the two facts are separate and both matter: who decided, and that they did it
+// out of turn. It used to render as the bare words "HR override" with no name at
+// all. Rows decided before that was fixed still carry the old text, so they read
+// as "HR override · override"; nothing is lost, and new ones name the person.
 function ChainProgress({ chain = [] }) {
   if (!chain.length) return <span className="text-xs text-gray-400 italic">No hierarchy - HR decides</span>;
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {chain.map((s, i) => (
-        <span key={s._id || i} className="inline-flex items-center gap-1">
-          {i > 0 && <span className="text-gray-300 text-xs">→</span>}
-          <span
-            className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STEP_COLORS[s.status] || 'bg-gray-100 text-gray-600'}`}
-            title={`${s.approverName || 'Approver'}${s.role ? ` (${s.role})` : ''} · ${s.status}`}
-          >
-            {s.approverName || 'Approver'}
+      {chain.map((s, i) => {
+        const name = s.approverName || 'Approver';
+        const isOverride = s.role === 'Override';
+        const when = s.decidedAt ? new Date(s.decidedAt).toLocaleString('en-IN', {
+          day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+        }) : '';
+        return (
+          <span key={s._id || i} className="inline-flex items-center gap-1">
+            {i > 0 && <span className="text-gray-300 text-xs">→</span>}
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg ${STEP_COLORS[s.status] || 'bg-gray-100 text-gray-600'}`}
+              title={[
+                `${name}${s.role && !isOverride ? ` (${s.role})` : ''}`,
+                s.status,
+                isOverride ? 'decided over the remaining approvers' : '',
+                when,
+                s.note ? `Note: ${s.note}` : '',
+              ].filter(Boolean).join(' · ')}
+            >
+              {name}
+              {isOverride && (
+                <span className="px-1 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold uppercase tracking-wide">
+                  override
+                </span>
+              )}
+            </span>
           </span>
-        </span>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -6,6 +6,13 @@ const jwt = require('jsonwebtoken');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 
+// How stale `User.lastSeenAt` is allowed to get before `protect` refreshes it.
+// The Signed-in page reads that stamp, so this is also the resolution of "who
+// is here right now" — two minutes is close enough to live for a person
+// watching a list, and it keeps a busy portal from writing to the user document
+// on every single request.
+const SEEN_THROTTLE_MS = 2 * 60 * 1000;
+
 // Roles whose company wall comes from their own account (`User.companies`) or
 // who have none at all — everyone else's wall is their own profile's company.
 const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD'];
@@ -111,6 +118,17 @@ const protect = asyncHandler(async (req, res, next) => {
   }
 
   await attachScopeCompany(user);
+  // Record that this account is active RIGHT NOW, at most once every
+  // SEEN_THROTTLE_MS. updateOne rather than user.save(): this must not run the
+  // document's validators or pre-save hooks (one of which re-hashes a password
+  // and bumps tokenVersion), and it must not fight a concurrent request.
+  // Fire-and-forget — a failed stamp must never fail the request it rode in on.
+  const now = Date.now();
+  if (!user.lastSeenAt || now - new Date(user.lastSeenAt).getTime() > SEEN_THROTTLE_MS) {
+    user.lastSeenAt = new Date(now);
+    User.updateOne({ _id: user._id }, { lastSeenAt: user.lastSeenAt })
+      .catch((err) => console.error('lastSeenAt stamp failed:', err.message));
+  }
   req.user = user;
   next();
 });

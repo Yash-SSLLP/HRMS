@@ -230,14 +230,34 @@ export default function AdminPermissions() {
   const footerDirty = footer.helpline !== org.documentFooter.helpline
     || footer.note !== org.documentFooter.note;
 
+  /** Merge fields into ONE row of the table, leaving every other row untouched. */
+  const patchRow = (id, patch) => setUsers((rows) => rows.map(
+    (r) => (String(r._id || r.id) === String(id) ? { ...r, ...patch } : r)
+  ));
+
   // Every per-person grant is the same call shape — PATCH one flag on one user
   // — so they share one handler and each toggle below is a single line.
-  const toggleAccess = async (u, { path, enabled, errorText }) => {
-    setBusyId(u._id || u.id); setError('');
+  //
+  // OPTIMISTIC, and deliberately so. This used to `await load()` after every
+  // switch: four requests, the loading skeleton over the whole table, and the
+  // scroll position back at the top — a full page reload to learn one boolean
+  // the click already told us. The switch now paints immediately, the server's
+  // own answer overwrites it, and a failure puts the switch back and says why.
+  // Nothing else on the page moves. (`toggleOrg` above has always worked this
+  // way; this brings the 50-row matrix in line with it.)
+  const toggleAccess = async (u, { path, field, enabled, errorText }) => {
+    const id = u._id || u.id;
+    setBusyId(id); setError('');
+    patchRow(id, { [field]: enabled });
     try {
-      await api.patch(`/admin/users/${u._id || u.id}/${path}`, { enabled });
-      await load();
+      const { data } = await api.patch(`/admin/users/${id}/${path}`, { enabled });
+      // Each of these endpoints answers `{ id, <field>: value }` — apply
+      // whatever it names rather than trusting the guess above, so a server
+      // that refuses or adjusts the value is what ends up on screen.
+      const { id: _saved, ...fields } = data || {};
+      if (Object.keys(fields).length) patchRow(id, fields);
     } catch (err) {
+      patchRow(id, { [field]: !enabled }); // put the switch back
       setError(err.response?.data?.message || errorText);
     } finally {
       setBusyId(null);
@@ -245,15 +265,15 @@ export default function AdminPermissions() {
   };
 
   const toggleCashbook = (u) => toggleAccess(u, {
-    path: 'cashbook-access', enabled: !u.cashbookAccess, errorText: 'Could not update cashbook access',
+    path: 'cashbook-access', field: 'cashbookAccess', enabled: !u.cashbookAccess, errorText: 'Could not update cashbook access',
   });
 
   const toggleExpenses = (u) => toggleAccess(u, {
-    path: 'expenses-access', enabled: !u.expensesAccess, errorText: 'Could not update expenses access',
+    path: 'expenses-access', field: 'expensesAccess', enabled: !u.expensesAccess, errorText: 'Could not update expenses access',
   });
 
   const toggleAssets = (u) => toggleAccess(u, {
-    path: 'assets-access', enabled: !u.assetsAccess, errorText: 'Could not update assets access',
+    path: 'assets-access', field: 'assetsAccess', enabled: !u.assetsAccess, errorText: 'Could not update assets access',
   });
 
   // Two separate khata grants on purpose. The first opens the module so someone
@@ -262,11 +282,11 @@ export default function AdminPermissions() {
   // therefore its own decision. Granting the download alone is allowed — it just
   // does nothing until the person can also reach the module.
   const toggleKhata = (u) => toggleAccess(u, {
-    path: 'khata-access', enabled: !u.khataAccess, errorText: 'Could not update khata access',
+    path: 'khata-access', field: 'khataAccess', enabled: !u.khataAccess, errorText: 'Could not update khata access',
   });
 
   const toggleKhataExport = (u) => toggleAccess(u, {
-    path: 'khata-export-access', enabled: !u.khataExportAccess, errorText: 'Could not update khata download access',
+    path: 'khata-export-access', field: 'khataExportAccess', enabled: !u.khataExportAccess, errorText: 'Could not update khata download access',
   });
 
   // Which HR (or granted Manager) may edit a Manager's employee profile. Kept
@@ -274,16 +294,16 @@ export default function AdminPermissions() {
   // list holds every key in that dialog by default, so putting it there would
   // hand it to every HR account at once — the opposite of a named list.
   const toggleManagerProfiles = (u) => toggleAccess(u, {
-    path: 'manager-profile-access', enabled: !u.managerProfileAccess, errorText: 'Could not update Manager-profile access',
+    path: 'manager-profile-access', field: 'managerProfileAccess', enabled: !u.managerProfileAccess, errorText: 'Could not update Manager-profile access',
   });
 
   // CEO/MD only: flip the account between view-only (the default) and edit mode.
   const toggleExecEdit = (u) => toggleAccess(u, {
-    path: 'exec-edit-access', enabled: !u.execEditAccess, errorText: 'Could not update executive access',
+    path: 'exec-edit-access', field: 'execEditAccess', enabled: !u.execEditAccess, errorText: 'Could not update executive access',
   });
 
   const toggleWfh = (u) => toggleAccess(u, {
-    path: 'wfh-access', enabled: !u.wfhAllowed, errorText: 'Could not update work-from-home access',
+    path: 'wfh-access', field: 'wfhAllowed', enabled: !u.wfhAllowed, errorText: 'Could not update work-from-home access',
   });
 
   /**
@@ -297,7 +317,7 @@ export default function AdminPermissions() {
    * where their job is.
    */
   const toggleRemotePunch = (u) => toggleAccess(u, {
-    path: 'remote-punch-access', enabled: !u.remotePunchAllowed, errorText: 'Could not update punch-location access',
+    path: 'remote-punch-access', field: 'remotePunchAllowed', enabled: !u.remotePunchAllowed, errorText: 'Could not update punch-location access',
   });
 
   // Seed the dialog with what the account effectively holds RIGHT NOW. A null
@@ -314,9 +334,12 @@ export default function AdminPermissions() {
   const savePerms = async () => {
     setPermSaving(true); setError('');
     try {
-      await api.patch(`/admin/users/${permUser._id || permUser.id}/permissions`, { permissions: [...permSel] });
+      const id = permUser._id || permUser.id;
+      const { data } = await api.patch(`/admin/users/${id}/permissions`, { permissions: [...permSel] });
+      // Same reason as toggleAccess: patch the one row instead of reloading the
+      // page behind the modal. This endpoint answers with the whole user.
+      patchRow(id, { permissions: data?.user?.permissions ?? [...permSel] });
       setPermUser(null);
-      await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not save permissions');
     } finally {
@@ -335,9 +358,10 @@ export default function AdminPermissions() {
   const saveCompanies = async () => {
     setCompanySaving(true); setError('');
     try {
-      await api.patch(`/admin/users/${companyUser._id || companyUser.id}/companies`, { companyIds: [...companySel] });
+      const id = companyUser._id || companyUser.id;
+      const { data } = await api.patch(`/admin/users/${id}/companies`, { companyIds: [...companySel] });
+      patchRow(id, { companies: data?.companies ?? [...companySel] });
       setCompanyUser(null);
-      await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not save company access');
     } finally {

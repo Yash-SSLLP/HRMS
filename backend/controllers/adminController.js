@@ -963,8 +963,103 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   res.json(orgSettingsPayload(s));
 });
 
+
+/**
+ * How recently an account must have been seen to count as signed in.
+ *
+ * There are no server-side sessions to enumerate — a JWT is valid wherever it
+ * is held — so "signed in" is inferred from activity: `protect` stamps
+ * `lastSeenAt` on every authenticated request (throttled), and anyone whose
+ * stamp is inside this window has a live token and is using it.
+ */
+const ACTIVE_WINDOW_MS = 15 * 60 * 1000;
+// How far back the page lists at all, so an idle account is still visible with
+// "last seen 3 hours ago" rather than vanishing the moment it goes quiet.
+const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Who is signed in right now (Backend only).
+ * @route GET /api/admin/sessions
+ * @param {number} [req.query.hours] - how far back to list, 1-168 (default 24)
+ * @returns {{activeWindowMinutes, count, activeCount, sessions: Object[]}}
+ */
+// GET /api/admin/sessions
+const listSessions = asyncHandler(async (req, res) => {
+  const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 168);
+  const since = new Date(Date.now() - Math.min(hours * 60 * 60 * 1000, RECENT_WINDOW_MS * 7));
+  const users = await User.find({
+    isActive: true,
+    $or: [{ lastSeenAt: { $gte: since } }, { lastLoginAt: { $gte: since } }],
+  })
+    .select('firstName lastName email role lastSeenAt lastLoginAt')
+    .sort({ lastSeenAt: -1 })
+    .lean();
+
+  const now = Date.now();
+  const sessions = users.map((u) => {
+    const seen = u.lastSeenAt ? new Date(u.lastSeenAt).getTime() : 0;
+    return {
+      _id: u._id,
+      name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      email: u.email,
+      role: u.role,
+      lastSeenAt: u.lastSeenAt || null,
+      lastLoginAt: u.lastLoginAt || null,
+      // The one derived field the client would otherwise have to recompute on a
+      // clock that may not agree with the server's.
+      active: !!seen && now - seen <= ACTIVE_WINDOW_MS,
+      isSelf: String(u._id) === String(req.user._id),
+    };
+  });
+
+  res.json({
+    activeWindowMinutes: ACTIVE_WINDOW_MS / 60000,
+    hours,
+    count: sessions.length,
+    activeCount: sessions.filter((s) => s.active).length,
+    sessions,
+  });
+});
+
+/**
+ * Sign one account out of every device it is signed in on (Backend only).
+ *
+ * Bumping `tokenVersion` is the whole mechanism: every JWT already issued
+ * carries the old number, `protect` compares them, and the next request from
+ * any device is rejected. There is deliberately NO notification, no email and
+ * no message of any kind — the person simply finds themselves at the login
+ * screen and signs in again as normal, which is what was asked for. Nothing
+ * about the account changes: not the password, not the role, not their data.
+ * @route POST /api/admin/sessions/:id/logout
+ * @returns {{id: string, signedOut: boolean, name: string}}
+ */
+// POST /api/admin/sessions/:id/logout
+const signOutUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  // Refused rather than allowed-with-a-warning: an accidental click would end
+  // the session doing the clicking, mid-task, with no way to undo it from here.
+  if (String(user._id) === String(req.user._id)) {
+    res.status(400);
+    throw new Error('That is your own account — use Log out for that.');
+  }
+  // Not user.save(): the pre-save hook re-hashes a password when one is set,
+  // and this must touch nothing but the token counter.
+  await User.updateOne({ _id: user._id }, { $inc: { tokenVersion: 1 }, $unset: { lastSeenAt: 1 } });
+  res.json({
+    id: String(user._id),
+    signedOut: true,
+    name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+  });
+});
+
 module.exports = {
   listUsers,
+  listSessions,
+  signOutUser,
   getUser,
   createUser,
   updateUser,

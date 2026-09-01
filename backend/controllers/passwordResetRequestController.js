@@ -29,7 +29,10 @@ async function accountForRequest(doc) {
   const { user } = await resolveLoginUser(doc.email);
   return user;
 }
-const Notification = require('../models/Notification');
+// Notifications go through the dispatch service, never straight to the
+// collection: notify()/notifyMany() write the row AND send the push, and a row
+// with no push is a request nobody hears about until they next open the portal.
+const { notify, notifyMany } = require('../services/notify');
 const { allowedUserIds, cannotSeeUser } = require('../utils/employeeScope');
 const { scopeRecipientsToCompany } = require('../services/audience');
 
@@ -78,15 +81,19 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
   }
 
   if (admins.length) {
-    await Notification.insertMany(
-      admins.map((a) => ({
-        recipient: a._id,
-        type: 'password_reset_request',
-        title: 'Password reset request',
-        body: `${doc.name} (${doc.employeeCode}) requested a password reset.`,
-        link: '/admin/password-resets',
-      }))
-    );
+    // notifyMany, not Notification.insertMany: this used to write the rows
+    // directly, which skipped the push entirely — the request sat in the bell
+    // until somebody happened to open the admin portal, while the person who
+    // raised it was locked out and waiting. `audience: 'admin'` keeps it out of
+    // My Portal for an HR Manager, who is an employee too and cannot action it
+    // from there.
+    await notifyMany(admins.map((a) => a._id), {
+      type: 'password_reset_request',
+      audience: 'admin',
+      title: 'Password reset request',
+      body: `${doc.name} (${doc.employeeCode}) requested a password reset.`,
+      link: '/admin/password-resets',
+    });
   }
 
   res.status(201).json({ ok: true });
@@ -191,9 +198,12 @@ const resetUserPassword = asyncHandler(async (req, res) => {
   await doc.save();
   await doc.populate('resolvedBy', 'firstName lastName email role');
 
-  await Notification.create({
+  // The person being reset is signed out of every device by the save above, so
+  // this is the one message that has to reach them wherever they are.
+  await notify({
     recipient: user._id,
     type: 'password_reset',
+    audience: 'all',
     title: 'Your password was reset',
     body: 'HR has reset your password. Please sign in again with the new password.',
   });

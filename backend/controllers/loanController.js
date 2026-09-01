@@ -7,6 +7,24 @@ const asyncHandler = require('express-async-handler');
 const Loan = require('../models/Loan');
 const khataSync = require('../services/khataSync');
 const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
+const { istParts } = require('../utils/istDate');
+
+// The longest repayment an employee may propose. A cap rather than a policy
+// argument: without one, a 60,000 advance can be spread over 500 months at 120
+// a month, which is not a repayment plan.
+const MAX_TENURE_MONTHS = 60;
+
+/**
+ * The monthly instalment for a plan — rounded to whole rupees.
+ *
+ * The remainder rides on the LAST month rather than being spread: every
+ * instalment is then a round, predictable number, and the balance still lands
+ * exactly on zero because payroll recovers `min(emi, balance)`.
+ * @param {number} principal
+ * @param {number} months
+ * @returns {number}
+ */
+const emiFor = (principal, months) => (months > 0 ? Math.round(Number(principal) / months) : 0);
 
 // Populated employee sub-fields returned for loan references
 const USER_FIELDS = 'firstName lastName email';
@@ -24,14 +42,26 @@ const listMine = asyncHandler(async (req, res) => {
 
 /**
  * Employee submits a loan request (created with status Pending, balance=principal).
+ *
+ * The employee proposes the REPAYMENT PLAN as well as the amount: over how many
+ * months, and from which salary month the deduction should start. Those two
+ * answers are the difference between "lend me 30,000" and a plan somebody can
+ * actually agree to, and the employee is the one who knows when their next
+ * month can carry it. The EMI is derived rather than typed — principal ÷
+ * tenure, rounded, with the last month absorbing the remainder — so the number
+ * on screen is the number payroll will take. HR can still change any of it when
+ * approving (see reviewLoan); nothing here is binding until then.
  * @route POST /api/loans/me
  * @param {string} [req.body.type]
  * @param {number} req.body.principal - required, > 0
+ * @param {number} req.body.tenureMonths - required, 1-60
+ * @param {number} req.body.recoveryStartYear - required, the salary year to start in
+ * @param {number} req.body.recoveryStartMonth - required, 1-12
  * @param {string} req.body.reason - required
  * @returns {{loan: Object}} the created loan (201)
  */
 const requestLoan = asyncHandler(async (req, res) => {
-  const { type, principal, reason } = req.body;
+  const { type, principal, reason, tenureMonths, recoveryStartYear, recoveryStartMonth } = req.body;
   if (!(Number(principal) > 0)) {
     res.status(400);
     throw new Error('principal must be greater than 0');
@@ -40,12 +70,36 @@ const requestLoan = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('reason is required');
   }
+  const tenure = Math.round(Number(tenureMonths));
+  if (!(tenure >= 1 && tenure <= MAX_TENURE_MONTHS)) {
+    res.status(400);
+    throw new Error(`Choose how many months to repay over, between 1 and ${MAX_TENURE_MONTHS}.`);
+  }
+  const startYear = Math.round(Number(recoveryStartYear));
+  const startMonth = Math.round(Number(recoveryStartMonth));
+  if (!(startMonth >= 1 && startMonth <= 12) || !(startYear >= 2000 && startYear <= 2100)) {
+    res.status(400);
+    throw new Error('Choose the salary month the deduction should start from.');
+  }
+  // Refuse a start that is already in the past: payroll for a month that has
+  // been run cannot go back and take an instalment, so the plan would silently
+  // begin late and end late.
+  const { y: nowY, m: nowM } = istParts(new Date());
+  if (startYear * 12 + startMonth < nowY * 12 + nowM) {
+    res.status(400);
+    throw new Error('That salary month has already passed — pick this month or a later one.');
+  }
+
   const loan = await Loan.create({
     employee: req.user._id,
     type: type || undefined,
     principal,
     balance: principal,
     reason,
+    tenureMonths: tenure,
+    emi: emiFor(principal, tenure),
+    recoveryStartYear: startYear,
+    recoveryStartMonth: startMonth,
     status: 'Pending',
   });
   res.status(201).json({ loan });
@@ -130,7 +184,10 @@ const reviewLoan = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Loan not found');
   }
-  const { status, reviewNote, emi, tenureMonths, disbursedOn } = req.body;
+  const {
+    status, reviewNote, emi, tenureMonths, disbursedOn,
+    recoveryStartYear, recoveryStartMonth,
+  } = req.body;
   // Remembered before the overwrite so the khata is posted only on the FIRST
   // activation, not every time an already-active loan is edited.
   const wasActive = loan.status === 'Active';
@@ -141,6 +198,10 @@ const reviewLoan = asyncHandler(async (req, res) => {
   if (status === 'Approved' || status === 'Active') {
     if (emi !== undefined) loan.emi = emi;
     if (tenureMonths !== undefined) loan.tenureMonths = tenureMonths;
+    // HR can move the start month the employee asked for, e.g. because the
+    // sanction came through after that month's payroll had already run.
+    if (recoveryStartYear !== undefined) loan.recoveryStartYear = Math.round(Number(recoveryStartYear)) || 0;
+    if (recoveryStartMonth !== undefined) loan.recoveryStartMonth = Math.round(Number(recoveryStartMonth)) || 0;
     if (disbursedOn !== undefined) loan.disbursedOn = disbursedOn;
   }
   // Activating a fresh loan seeds the outstanding balance from the principal

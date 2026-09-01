@@ -63,16 +63,37 @@ const ensureDesignation = (name) => ensureMaster('Designation', name);
 const ensureGrade = (name) => ensureMaster('Grade', name);
 
 /**
- * Register a work-location NAME into OrgMaster.
+ * Register a work-location name into the WORK LOCATIONS register.
  *
- * Note this is the free-text `workLocation` label on the profile, not the
- * geofenced WorkLocation site (`workLocationRef`) — a site has coordinates and
- * a radius, which no spreadsheet cell can supply, so one is never auto-created.
- * @param {string} name - Location label to ensure exists.
+ * This used to add an OrgMaster row of kind 'Location' — a second list of the
+ * same places, which nothing offered as options and nobody could give a
+ * geofence. It now creates the real site instead, with its name and nothing
+ * else: a spreadsheet cell cannot supply coordinates or a radius, so the site
+ * lands WITHOUT a geofence and the import flags it, which is the signal for
+ * somebody to open Work Locations and finish it. A site with no coordinates
+ * simply has no geofence to check against (see utils/resolveGeofence), so it is
+ * safe to create in that state — it never silently narrows where anyone may
+ * punch.
+ * @param {string} name - Location name to ensure exists.
  * @returns {Promise<boolean>} true when this call created it.
- * @sideEffects Upserts into the OrgMaster collection.
+ * @sideEffects Upserts into the WorkLocation collection.
  */
-const ensureLocation = (name) => ensureMaster('Location', name);
+async function ensureWorkLocation(name) {
+  const clean = (name || '').trim();
+  if (!clean) return false;
+  try {
+    const WorkLocation = require('../models/WorkLocation');
+    const res = await WorkLocation.updateOne(
+      { name: clean },
+      { $setOnInsert: { name: clean, active: true } },
+      { upsert: true }
+    );
+    return res.upsertedCount === 1;
+  } catch (err) {
+    if (err.code !== 11000) console.error('ensureWorkLocation failed:', err.message);
+    return false;
+  }
+}
 
 /**
  * Register a department name into the managed Department list if missing, so any
@@ -100,5 +121,5 @@ async function ensureDepartment(name) {
 }
 
 module.exports = {
-  ensureMaster, ensureDesignation, ensureGrade, ensureLocation, ensureDepartment,
+  ensureMaster, ensureDesignation, ensureGrade, ensureWorkLocation, ensureDepartment,
 };

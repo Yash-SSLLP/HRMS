@@ -1081,8 +1081,20 @@ async function computeEmployeeRun(profile, year, month) {
   // Salary advances are split out from other loans because the salary slip
   // prints "LOAN" and "Salary In Advance" as two separate deduction lines.
   const userId = profile.user?._id || profile.user;
-  const loans = await Loan.find({ employee: userId, status: { $in: ['Approved', 'Active'] } });
-  const emiOf = (pred) => Math.round(loans.filter(pred).reduce((a, l) => a + (l.emi || 0), 0));
+  const allLoans = await Loan.find({ employee: userId, status: { $in: ['Approved', 'Active'] } });
+  // Honour the month the recovery was agreed to start in. A loan sanctioned in
+  // June but repaid from August must not be deducted in June and July — that is
+  // the whole point of asking for a start month. A loan with none set (every
+  // loan raised before the field existed) starts immediately, exactly as before.
+  const payPeriod = year * 12 + month;
+  const loans = allLoans.filter((l) => {
+    if (!l.recoveryStartYear || !l.recoveryStartMonth) return true;
+    return l.recoveryStartYear * 12 + l.recoveryStartMonth <= payPeriod;
+  });
+  // Never take more than is left: the last instalment is the remainder, which is
+  // what makes a rounded EMI land the balance exactly on zero.
+  const emiOf = (pred) => Math.round(loans.filter(pred)
+    .reduce((a, l) => a + Math.min(Number(l.emi) || 0, Number(l.balance) || 0), 0));
   const salaryAdvance = emiOf((l) => l.type === 'Salary Advance');
   const loanRecovery = emiOf((l) => l.type !== 'Salary Advance');
 

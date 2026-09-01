@@ -308,7 +308,7 @@ export default function AdminEmployeeDetail() {
           <Field label="Designation" value={profile.designation} />
           <Field label="Department" value={profile.department} />
           <Field label="Grade" value={profile.grade} />
-          <Field label="Work location" value={profile.workLocation} />
+          <Field label="Work location" value={profile.workLocationRef?.name || profile.workLocation} />
           <Field label="Employment type" value={profile.employmentType} />
           <Field label="Date of joining" value={fmtDate(profile.dateOfJoining)} />
           <Field label="Reporting manager" value={fullName(profile.reportingManager)} />

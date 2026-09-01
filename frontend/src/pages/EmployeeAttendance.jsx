@@ -100,7 +100,6 @@ export default function EmployeeAttendance() {
   // at all, so a check-in from a site is never flagged. Shown to them because
   // otherwise punching from a site feels like something they are getting away
   // with, and people ring HR to ask.
-  const [remotePunchAllowed, setRemotePunchAllowed] = useState(false);
   // Set when today falls inside an approved leave: { leaveType, approverName, … }.
   // Drives the warning shown BEFORE the punch — punching is still allowed, but
   // the day only counts once the top of the leave hierarchy approves it.
@@ -324,7 +323,6 @@ export default function EmployeeAttendance() {
       setRecords(attRes.data.records);
       setToday(attRes.data.today);
       setWfhAllowed(!!attRes.data.wfhAllowed);
-      setRemotePunchAllowed(!!attRes.data.remotePunchAllowed);
       setTodayLeave(attRes.data.todayLeave || null);
       setPolicy(polRes?.data || null);
     } catch (err) {
@@ -548,14 +546,11 @@ export default function EmployeeAttendance() {
               <div className="mb-3 text-xs text-gray-500 px-2 py-1.5">📍 Getting location info…</div>
             )}
 
-            {/* Told plainly, because the alternative is somebody standing on a
-                site wondering whether punching in from there will count against
-                them. */}
-            {remotePunchAllowed && (
-              <div className="mb-2 text-xs text-sky-800 bg-sky-50 border border-sky-200 px-2 py-1.5 rounded-lg">
-                ✅ You may check in and out from anywhere. Punches away from the office are not flagged.
-              </div>
-            )}
+            {/* The "you may punch from anywhere" banner that used to sit here is
+                gone: it repeated a grant the person cannot change on a card they
+                use twice a day, and the punch dialog is not where standing
+                policy belongs. The grant itself is untouched — their punches
+                are still not flagged. */}
 
             {/* Work-from-home is a privilege granted per employee by the Backend. */}
             {wfhAllowed && (
@@ -571,11 +566,15 @@ export default function EmployeeAttendance() {
                 className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
               Mark as Half Day
             </label>
-            <p className="text-[11px] text-gray-500 mb-3">
-              {capture === 'checkin'
-                ? 'Declaring it now records today as a half day and keeps it that way, however long you stay.'
-                : 'A day under 6 hours is recorded as a half day automatically — raise a regularization if the times are wrong.'}
-            </p>
+            {/* Only on the way IN, where ticking the box has a consequence worth
+                stating. On the way out it explained a rule the day has already
+                followed, which is a paragraph of small print under a checkbox
+                nobody needs to read to punch out. */}
+            {capture === 'checkin' && (
+              <p className="text-[11px] text-gray-500 mb-3">
+                Declaring it now records today as a half day and keeps it that way, however long you stay.
+              </p>
+            )}
             {/* Starting a half day after the cut-off is the afternoon half — it
                 is a normal half day, and not a late arrival. */}
             {halfDay && pastHalfDayCutoff && (

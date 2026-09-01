@@ -151,6 +151,11 @@ export const adminNav = [
   ] },
   { group: 'Reports & Audit', icon: FiBarChart2, items: [
     { to: '/admin/analytics', label: 'Analytics', icon: FiBarChart2, perm: 'analytics.view' },
+    // Who is using the portal right now, and ending a session. Backend-only by
+    // ROLE, matching the server — signing somebody out of every device they
+    // hold is not part of "manage users".
+    { to: '/admin/sessions', label: 'Signed in', icon: FiActivity, roles: ['SuperAdmin'],
+      keywords: ['session', 'logged in', 'log out', 'sign out', 'online'] },
     { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, roles: ['SuperAdmin'] },
     { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'], feature: 'chat' },
   ] },
@@ -212,15 +217,16 @@ export const employeeNav = [
   { group: 'Payroll & Expenses', icon: TbCurrencyRupee, items: [
     { to: '/employee/payslips', label: 'Payslips', icon: TbCurrencyRupee,
       keywords: ['salary', 'slip'] },
-    // Self-service expense claims are no longer offered here: employees file what
-    // they spend through My Cashbook, which covers the same ground against their
-    // advance. The route and page still exist (and HR's review queue still reads
-    // the claims already filed) — only the way in has been taken off the menu.
-    { to: '/employee/cashbook', label: 'Cash Vouchers', icon: TbReceipt,
-      keywords: ['voucher', 'petty cash'] },
+    // Four self-service ways in have been taken off this menu: Expenses, then
+    // Cash Vouchers, Travel and Tax Declaration (2026-09-01). The first three
+    // because employees file what they spend through My Cashbook, which covers
+    // the same ground against their advance; the declaration because it is
+    // collected by HR rather than self-served — it stays under Payroll &
+    // Finance in the admin portal (`declarations.manage`), which is also where
+    // a CEO/MD reads it. Each route and page still exists — admin queues still
+    // read what was already filed, and a saved link still opens — only the
+    // menu entry is gone.
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
-    { to: '/employee/declaration', label: 'Tax Declaration', icon: FiPercent },
-    { to: '/employee/travel', label: 'Travel', icon: FiMap },
     { to: '/employee/khata', label: 'My Cashbook', icon: TbReceipt,
       keywords: ['khata', 'khatabook', 'advance', 'udhar', 'expense'] },
     { to: '/employee/cashbook-manage', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage' },

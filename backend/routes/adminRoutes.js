@@ -7,6 +7,8 @@
 const express = require('express');
 const {
   listUsers,
+  listSessions,
+  signOutUser,
   getUser,
   createUser,
   updateUser,
@@ -55,6 +57,13 @@ router.use(protect);
 // interviewer assignment, etc.). Managing users requires users.manage below.
 // GET /users — user directory list; protected, SuperAdmin/HRManager/CEO/MD/LDManager only.
 router.get('/users', restrictTo('SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager'), listUsers);
+
+// Who is signed in right now, and signing one of them out. Backend ONLY, by
+// role rather than by capability: this is not "managing users", it is ending
+// somebody's session on any device they hold, which is the Backend's alone.
+// Declared before the users.manage gate below so the capability cannot reach it.
+router.get('/sessions', restrictTo('SuperAdmin'), listSessions);
+router.post('/sessions/:id/logout', restrictTo('SuperAdmin'), signOutUser);
 
 // Everything below requires the 'users.manage' capability (SuperAdmin always has it).
 router.use(requirePermission('users.manage'));

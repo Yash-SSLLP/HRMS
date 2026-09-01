@@ -137,7 +137,9 @@ export default function EmployeeProfile() {
             <Field label="Employment Type" value={profile.employmentType} />
             <Field label="Designation" value={profile.designation} />
             <Field label="Department" value={profile.department} />
-            <Field label="Work Location" value={profile.workLocation} />
+            {/* The assigned site, falling back to the legacy free-text label
+                for records that predate the Work Locations register. */}
+            <Field label="Work Location" value={profile.workLocationRef?.name || profile.workLocation} />
           </dl>
         </section>
 

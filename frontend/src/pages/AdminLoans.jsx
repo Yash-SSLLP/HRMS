@@ -21,6 +21,7 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const blank = { employee: '', type: 'Salary Advance', principal: '', emi: '', tenureMonths: '', reason: '' };
 
 export default function AdminLoans() {
@@ -105,15 +106,18 @@ export default function AdminLoans() {
             <th className="px-4 py-3 text-left font-medium text-gray-700">Type</th>
             <th className="px-4 py-3 text-right font-medium text-gray-700">Principal</th>
             <th className="px-4 py-3 text-right font-medium text-gray-700">EMI</th>
+            {/* The plan the employee asked for — what they have committed to and
+                when it starts. HR approves that plan, not just an amount. */}
+            <th className="px-4 py-3 text-left font-medium text-gray-700">Repayment</th>
             <th className="px-4 py-3 text-right font-medium text-gray-700">Balance</th>
             <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
             <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : loans.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No loans</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No loans</td></tr>
             ) : loans.map((l) => (
               <tr key={l._id}>
                 <td className="px-4 py-3 font-medium text-gray-900">
@@ -123,6 +127,12 @@ export default function AdminLoans() {
                 <td className="px-4 py-3 text-gray-600">{l.type}</td>
                 <td className="px-4 py-3 text-right text-gray-700">{inr.format(l.principal || 0)}</td>
                 <td className="px-4 py-3 text-right text-gray-600">{inr.format(l.emi || 0)}</td>
+                <td className="px-4 py-3 text-gray-600 text-xs">
+                  {l.tenureMonths ? `${l.tenureMonths} month${l.tenureMonths === 1 ? '' : 's'}` : '-'}
+                  {l.recoveryStartMonth ? (
+                    <div className="text-gray-500">from {MONTHS[l.recoveryStartMonth - 1]} {l.recoveryStartYear}</div>
+                  ) : null}
+                </td>
                 <td className="px-4 py-3 text-right text-gray-700">{inr.format(l.balance || 0)}</td>
                 <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[l.status] || 'bg-gray-100 text-gray-700'}`}>{l.status}</span></td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">

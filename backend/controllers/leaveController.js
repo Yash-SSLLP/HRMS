@@ -1553,9 +1553,17 @@ async function applyLeaveDecision(request, userId, action, note) {
   for (const s of request.approvalChain || []) {
     if (s.status === 'Pending' || s.status === 'Waiting') s.status = 'Skipped';
   }
+  // WHO overrode it, by name. This rung used to be stamped 'HR override',
+  // which threw the one fact the row was there to record away: the chain showed
+  // that somebody had gone over the approvers' heads and gave no way to tell who
+  // — on a rejected request, the person it was refused to could not be told
+  // either. The `role: 'Override'` below is what still marks it as an override,
+  // so nothing is lost by putting the name where a name belongs.
+  const actor = await User.findById(userId).select('firstName lastName role');
+  const actorName = `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim();
   (request.approvalChain = request.approvalChain || []).push({
     approver: userId,
-    approverName: 'HR override',
+    approverName: actorName || 'HR override',
     role: 'Override',
     order: request.approvalChain.length,
     status: action === 'approve' ? 'Approved' : 'Rejected',

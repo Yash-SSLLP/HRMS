@@ -202,9 +202,13 @@ async function advanceExitApproval(exit, userId, action, note, actor) {
       (st) => st.status === 'Pending' || st.status === 'Waiting'
     );
     for (const st of overridden) st.status = 'Skipped';
+    // Named, for the same reason as the leave override (applyLeaveDecision):
+    // 'Backend override' says what happened but not who did it.
+    const actor = await User.findById(userId).select('firstName lastName role');
+    const actorName = `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim();
     (exit.approvalChain = exit.approvalChain || []).push({
       approver: userId,
-      approverName: 'Backend override',
+      approverName: actorName || 'Backend override',
       role: 'Override',
       order: exit.approvalChain.length,
       status: action === 'approve' ? 'Approved' : 'Rejected',

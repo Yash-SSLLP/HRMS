@@ -1,7 +1,13 @@
 /**
- * AdminOrgMasters — org master data (admin portal): designations, grades and
- * locations. A kind toggle drives GET /org-masters?kind=… and CRUD via
+ * AdminOrgMasters — org master data (admin portal): designations and grades.
+ * A kind toggle drives GET /org-masters?kind=… and CRUD via
  * POST/PUT/DELETE /org-masters. These feed the pickers used across employee forms.
+ *
+ * There was a third tab, Locations, until 2026-09-01. It was a second list of
+ * work locations beside the real one — Work Locations, which carries each site's
+ * geofence and is what an employee is actually assigned to — and the employee
+ * form had long since stopped offering it, so it was a place to type names
+ * nothing read. Sites are created under Work Locations only.
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -12,7 +18,6 @@ import { confirmDialog } from '../components/dialogs';
 const KINDS = [
   { value: 'Designation', label: 'Designations' },
   { value: 'Grade', label: 'Grades' },
-  { value: 'Location', label: 'Locations' },
 ];
 
 const blank = { name: '', code: '', description: '', isActive: true };
@@ -92,7 +97,7 @@ export default function AdminOrgMasters() {
 
   return (
     <div>
-      <PageHeader title="Org Masters" subtitle="Designations, grades & locations">
+      <PageHeader title="Org Masters" subtitle="Designations & grades">
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + Add

@@ -58,7 +58,18 @@ stub('models/User.js', {
   ROLES,
   // Nothing exists in this run: no duplicate account, and neither the reporting
   // manager nor the HR partner the sheet names can be found.
-  findOne: async () => null,
+  //
+  // Returns a THENABLE that also answers .select(), because a real Mongoose
+  // query does both and the code under test uses each form: the duplicate-email
+  // check awaits it directly, while utils/loginIdentity chains
+  // `.select('_id firstName lastName role')`. A plain async function satisfied
+  // only the first, so every row died on "User.findOne(...).select is not a
+  // function" — the whole suite red for a drifted stub rather than a real bug.
+  findOne: () => {
+    const q = Promise.resolve(null);
+    q.select = () => Promise.resolve(null);
+    return q;
+  },
   findById: async () => null,
   find: () => ({ select: () => ({ lean: async () => [] }) }),
   create: async (doc) => {
@@ -95,7 +106,7 @@ stub('services/orgMasterSync.js', {
   ensureDesignation: async (n) => { if (!n) return false; ensured.Designation.push(n); return true; },
   ensureDepartment: async (n) => { if (!n) return false; ensured.Department.push(n); return true; },
   ensureGrade: async (n) => { if (!n) return false; ensured.Grade.push(n); return true; },
-  ensureLocation: async (n) => { if (!n) return false; ensured.Location.push(n); return true; },
+  ensureWorkLocation: async (n) => { if (!n) return false; ensured.Location.push(n); return true; },
 });
 stub('services/notify.js', { notify: async () => {}, notifyMany: async () => {} });
 
@@ -140,6 +151,8 @@ const ctrl = require(path.join(BACKEND, 'controllers/employeeController.js'));
   console.log('\n--- the row imports even though every value is new ---');
   check('one row created', payload.createdCount, 1);
   check('no errors', payload.errorCount, 0);
+  // A failing import that does not say WHY costs a debugging round trip.
+  if (payload.errorCount) console.log('        first error:', JSON.stringify(payload.errors && payload.errors[0]));
   check('nothing skipped', payload.skippedCount, 0);
 
   console.log('\n--- values that are just names get created ---');

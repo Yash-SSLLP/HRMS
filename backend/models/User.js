@@ -59,6 +59,13 @@ const userSchema = new mongoose.Schema(
     // password logs the account out of every device/session.
     tokenVersion: { type: Number, default: 0 },
     lastLoginAt: { type: Date },
+    // Last time a request of theirs was authenticated — which is as close to
+    // "is this person signed in right now" as a stateless JWT setup can get:
+    // there are no server-side sessions to enumerate, only tokens the holder
+    // presents. Stamped by `protect`, and deliberately THROTTLED (see
+    // SEEN_THROTTLE_MS there) so a busy portal does not write to this document
+    // on every request. Drives the Signed-in page.
+    lastSeenAt: { type: Date },
     // Profile photo, stored as a path relative to UPLOAD_DIR (served via the
     // /api/auth/users/:id/avatar endpoint). Null when the user has no photo.
     photo: { type: String, default: null },
