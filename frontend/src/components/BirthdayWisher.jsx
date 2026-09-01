@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
-import { FiAward, FiCheck, FiHeart } from 'react-icons/fi';
+import { FiAward, FiCheck, FiHeart, FiHome } from 'react-icons/fi';
 import { TbCake, TbBalloon } from 'react-icons/tb';
+import { useAuthStore } from '../store/authStore';
 
 // SmartHR-style "Birthdays & Celebrations" widget with a Send-a-wish action.
-// Self-contained: fetches today + the next 7 days of birthdays / work
+// Self-contained: fetches today + the next 30 days of birthdays / work
 // anniversaries and lets the viewer send an in-app + email greeting.
+//
+// Only the first PREVIEW_COUNT are shown; the rest sit behind "See all", which
+// opens a scrolling list rather than letting the card run down the page.
 //
 // The cake / award pair carries the same birthday-vs-anniversary distinction the
 // 🎂/🎊 emoji used to, but as stroke icons they inherit the ink of whatever they
@@ -34,10 +38,24 @@ const OCCASION = {
   birthday: { avatar: 'bg-amber-500', chip: 'bg-amber-100 text-amber-800', Icon: TbCake, noun: 'birthday', label: () => 'Birthday' },
   anniversary: { avatar: 'bg-blue-500', chip: 'bg-blue-100 text-blue-800', Icon: FiAward, noun: 'work anniversary', label: (e) => `${ordinal(e.years)} Work Anniversary` },
   marriage: { avatar: 'bg-rose-500', chip: 'bg-rose-100 text-rose-800', Icon: FiHeart, noun: 'wedding anniversary', label: (e) => `${ordinal(e.years)} Wedding Anniversary` },
+  // The company's own foundation day. `wishable: false` because there is no
+  // person on the other end of it — the row is an announcement, not an action.
+  company: {
+    avatar: 'bg-teal-600', chip: 'bg-teal-100 text-teal-800', Icon: FiHome,
+    noun: 'company anniversary', wishable: false,
+    label: (e) => `${ordinal(e.years)} Company Anniversary`,
+  },
 };
 const occasionOf = (e) => OCCASION[e.type] || OCCASION.birthday;
 
-export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
+// How many rows the card shows before "See all" is offered.
+const PREVIEW_COUNT = 5;
+
+export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
+  // Read from the store rather than a prop: the admin dashboard renders this
+  // with no props at all, and an exec row needs a self-check the profile id
+  // cannot give (a CEO/MD has no employee profile).
+  const me = useAuthStore((s) => s.user);
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openKey, setOpenKey] = useState(null);
@@ -45,14 +63,15 @@ export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState({});
   const [error, setError] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        // Calendar window by default: the rest of this month plus all of next,
-        // so a birthday late in the month doesn't pop into view only days before.
-        // `days` (rolling) still works for callers that want a short list.
-        const q = days ? `days=${days}` : `months=${months}`;
+        // Rolling 30 days by default. A two-month calendar window listed people
+        // 50+ days out, which made the card taller than the page it sits on;
+        // `months` is still honoured for any caller that explicitly wants it.
+        const q = months ? `months=${months}` : `days=${days}`;
         const { data } = await api.get(`/celebrations/upcoming?${q}`);
         setEvents(data.events || []);
       } catch {
@@ -63,7 +82,17 @@ export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
     })();
   }, [days, months]);
 
-  const keyOf = (e) => `${e.employeeId}-${e.type}`;
+  // Collapsed by default; expanding scrolls inside the card instead of growing it.
+  const visible = showAll ? events : events.slice(0, PREVIEW_COUNT);
+  const hiddenCount = events.length - visible.length;
+
+  // Three kinds of row now share this list: staff (profile id), an executive
+  // (user id — they have no profile) and a company (company id).
+  const keyOf = (e) => `${e.employeeId || e.userId || e.companyId}-${e.type}`;
+  const isMe = (e) => {
+    if (e.userId && me?._id) return String(e.userId) === String(me._id);
+    return !!(myEmployeeId && e.employeeId && String(e.employeeId) === String(myEmployeeId));
+  };
 
   const openComposer = (e) => {
     setOpenKey(keyOf(e));
@@ -76,7 +105,8 @@ export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
     setError('');
     try {
       await api.post('/celebrations/wish', {
-        employeeId: e.employeeId,
+        // An exec has no profile, so the server takes their user id instead.
+        ...(e.employeeId ? { employeeId: e.employeeId } : { userId: e.userId }),
         type: e.type,
         message: message.trim() || undefined,
       });
@@ -106,28 +136,41 @@ export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
         <div className="text-center py-6">
           <TbBalloon size={30} className="mx-auto mb-1.5 text-gray-300" aria-hidden="true" />
           <p className="text-sm text-gray-400 italic">
-            {days
-              ? `No celebrations in the next ${days} days.`
-              : 'No birthdays or anniversaries this month or next.'}
+            {months
+              ? 'No birthdays or anniversaries this month or next.'
+              : `No celebrations in the next ${days} days.`}
           </p>
         </div>
       ) : (
-        <ul className="space-y-2">
-          {events.map((e) => {
+        <>
+        <ul className={`space-y-2${showAll ? ' max-h-96 overflow-y-auto pr-1' : ''}`}>
+          {visible.map((e) => {
             const k = keyOf(e);
             const occ = occasionOf(e);
-            const isSelf = myEmployeeId && String(e.employeeId) === String(myEmployeeId);
+            const isSelf = isMe(e);
             const wished = sent[k];
+            // A company anniversary has nobody to wish — the row just says so.
+            const canWish = occ.wishable !== false;
             return (
               <li key={k} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
-                <div className="flex items-center gap-3">
+                {/* The row wraps in one place, so a narrow card gets a second
+                    line instead of overlapping text. `min-w-[9rem]` on the
+                    person column is what triggers it: below roughly 420px the
+                    when + action cluster no longer fits beside a 9rem column
+                    and drops underneath, where it right-aligns via ml-auto. */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <span className={`avatar-circle text-white ${occ.avatar}`}>
                     {initials(e.fullName)}
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-gray-900 truncate">
-                      {e.fullName}
-                      <span className={`ml-2 inline-block px-2 py-0.5 text-[11px] rounded-full ${occ.chip}`}>
+                  <div className="min-w-0 flex-1 basis-36">
+                    {/* Wraps rather than truncates: the name and the chip used to
+                        share one `truncate` line, so on a phone a long name ate
+                        the ellipsis AND the occasion — the one word that says
+                        what is being celebrated. The chip now drops to its own
+                        line when it cannot sit beside the name. */}
+                    <div className="text-sm font-medium text-gray-900 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="truncate min-w-0 max-w-full">{e.fullName}</span>
+                      <span className={`shrink-0 inline-block px-2 py-0.5 text-[11px] rounded-full ${occ.chip}`}>
                         {occ.label(e)}
                       </span>
                     </div>
@@ -135,25 +178,29 @@ export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
                       {(e.designation || '-')}{e.department ? ` · ${e.department}` : ''}
                     </div>
                   </div>
-                  <span className="text-xs text-gray-500 shrink-0">{whenLabel(e.daysAway)}</span>
-                  {isSelf ? (
-                    <span className="text-xs text-gray-400 italic shrink-0">That&apos;s you</span>
-                  ) : wished ? (
-                    <span className="text-xs text-green-600 font-medium shrink-0 inline-flex items-center gap-1">
-                      <FiCheck aria-hidden="true" /> Wish sent
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => (openKey === k ? setOpenKey(null) : openComposer(e))}
-                      className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg hover:bg-gray-700"
-                    >
-                      <occ.Icon size={14} aria-hidden="true" />
-                      Wish
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3 shrink-0 ml-auto">
+                    <span className="text-xs text-gray-500 shrink-0">{whenLabel(e.daysAway)}</span>
+                    {!canWish ? (
+                      <span className="text-xs text-gray-400 italic shrink-0">Everyone</span>
+                    ) : isSelf ? (
+                      <span className="text-xs text-gray-400 italic shrink-0">That&apos;s you</span>
+                    ) : wished ? (
+                      <span className="text-xs text-green-600 font-medium shrink-0 inline-flex items-center gap-1">
+                        <FiCheck aria-hidden="true" /> Wish sent
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => (openKey === k ? setOpenKey(null) : openComposer(e))}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg hover:bg-gray-700"
+                      >
+                        <occ.Icon size={14} aria-hidden="true" />
+                        Wish
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {openKey === k && !isSelf && !wished && (
+                {openKey === k && canWish && !isSelf && !wished && (
                   <div className="mt-3 pl-12">
                     <textarea
                       rows={2}
@@ -178,6 +225,15 @@ export default function BirthdayWisher({ myEmployeeId, days, months = 2 }) {
             );
           })}
         </ul>
+        {(hiddenCount > 0 || showAll) && (
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="mt-3 w-full text-center text-xs font-medium text-gray-600 hover:text-gray-900 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50"
+          >
+            {showAll ? 'Show less' : `See all ${events.length}`}
+          </button>
+        )}
+        </>
       )}
     </div>
   );

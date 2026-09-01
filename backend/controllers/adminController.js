@@ -127,6 +127,34 @@ const getUser = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Celebration dates accepted on a USER account, for CEO/MD only.
+ *
+ * A CEO/MD has no EmployeeProfile by design (utils/visibility NON_STAFF_ROLES),
+ * so there is nowhere else to put their birthday — and without one they never
+ * appeared on anybody's calendar. Every other role DOES have a profile, which
+ * stays the single source of truth for their dates; sending these fields for a
+ * staff account is ignored rather than quietly creating a second copy that
+ * payroll and confirmations would not see.
+ *
+ * `''`/null clears a date; a field that is absent is left alone.
+ * @param {string} role - the role the account will hold
+ * @param {object} body - the request body
+ * @returns {object} a partial User update ({} when the role has a profile)
+ */
+function execCelebrationDates(role, body) {
+  if (!EXECUTIVE_ROLES.includes(role)) return {};
+  const out = {};
+  for (const key of ['dateOfBirth', 'dateOfJoining', 'dateOfMarriage']) {
+    if (body[key] === undefined) continue;
+    const raw = body[key];
+    if (raw === null || raw === '') { out[key] = null; continue; }
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) out[key] = d;
+  }
+  return out;
+}
+
+/**
  * Create a user account (admin roles are SuperAdmin-only).
  * @route POST /api/admin/users
  * @param {string} req.body.email / password / firstName / lastName / role - required
@@ -138,6 +166,9 @@ const getUser = asyncHandler(async (req, res) => {
 // POST /api/admin/users
 const createUser = asyncHandler(async (req, res) => {
   const { email, password, firstName, lastName, role, phone, isActive } = req.body;
+  // CEO/MD celebration dates (see execCelebrationDates below) — every other
+  // role keeps its dates on the employee profile, so nothing is read here.
+  const celebrationDates = execCelebrationDates(role, req.body);
 
   if (!email || !password || !firstName || !lastName || !role) {
     res.status(400);
@@ -172,6 +203,7 @@ const createUser = asyncHandler(async (req, res) => {
     role,
     phone,
     isActive: isActive !== undefined ? isActive : true,
+    ...celebrationDates,
   });
 
   // HR and L&D admins are also employees — give them an employee profile. CEO/MD
@@ -285,6 +317,13 @@ const updateUser = asyncHandler(async (req, res) => {
 
   if (isActive !== undefined) user.isActive = isActive;
   if (password) user.password = password; // pre-save hook re-hashes
+
+  // CEO/MD celebration dates. Keyed on the role the account ENDS UP with, so
+  // dates sent alongside a promotion to CEO are kept; they are not identity
+  // fields and never route through the CEO/MD approval queue — a birthday is a
+  // catalogue entry, and only a Super Admin reaches this branch anyway (an HR
+  // Manager cannot edit an exec account at all).
+  Object.assign(user, execCelebrationDates(user.role, req.body));
 
   await user.save();
 

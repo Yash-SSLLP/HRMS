@@ -26,13 +26,25 @@ Each admin screen is gated by a **capability**, such as `payroll.manage`, `leave
 
 Some actions are reserved for the Backend alone: creating or editing admin-role accounts, setting HR permissions and organisation settings, deleting departments and employee profiles, and reassigning an employee's HR Partner or reporting manager.
 
+### Nobody administers their own record
+
+Whatever your role, your own employee record is not yours to administer. Editing your own details from the admin side, confirming your own probation, setting your own salary structure or CTC, approving your own leave, signing off your own attendance correction, verifying your own documents and deciding your own resignation are all refused — and the buttons are hidden rather than left to fail. Your own details belong on your profile in My Portal, where a change goes to somebody else for approval.
+
+This matters most for an HR Manager, who is an employee as well as an admin. If such an account were ever made its own HR Partner, every one of those controls would have pointed at itself. Two things now prevent that: nobody can be set as their own HR Partner or reporting manager in the first place, and even on an older record that already says so, the actions are refused.
+
+[!NOTE] The Backend is the one exception, because it sits above every approval chain and there would be nobody left to unstick it. It is not an employee either, so in practice it has no record of its own to act on.
+
+### Editing a Manager's record
+
+Employees whose role is **Manager** are held back one extra step. Because a Manager approves their own team's leave and signs off their attendance, their record is not something every HR account should be able to rearrange. Editing a Manager's profile, confirming or extending their probation, putting them on a salary structure and revising their CTC all need a separate permission the Backend gives **one HR account at a time** — the *Manager profiles* switch on the Permissions page. It is off for everyone by default and is never included in *Create / manage employees*. Where it is missing the buttons are greyed out rather than failing on click. A Manager's own role, password and account status stay with the Backend either way.
+
 [!NOTE] Throughout this guide, "HR" means the Backend or an HR Manager holding the relevant capability, unless stated otherwise.
 
 ### Who an HR Manager can see
 
 Every employee record has an **HR Partner** — the HR Manager responsible for that person. An HR Manager sees and manages only the employees whose HR Partner is them. This runs through the people-facing modules: the Employees list and export; the **attendance** boards, registers, punch map and record edits; the **payroll** list, runs, payslips and exports; the **leave** requests and balances; the **dashboard** figures (headcount, present/absent, pending leaves, incomplete documents); and the **HR analytics** charts (headcount, gender, tenure, confirmations, attrition) all count only their assigned people. The Backend sees everyone. This is what lets the same system serve more than one company or team without each HR Manager seeing the others' people.
 
-[!NOTE] Two things stay deliberately org-wide. The **audit log** is Backend-only, and the **approvals inbox** is scoped to "you are the current approver" rather than to your assigned employees — so a manager still decides their own rung on anyone's request, exactly as before.
+[!NOTE] Two things stay deliberately org-wide. The **audit log** is Backend-only, and the **approvals inbox** is scoped to "you are the current approver" rather than to your assigned employees — so a manager still decides their own rung on anyone's request, exactly as before. The Backend's inbox is wider still: it holds every open request in the organisation, whoever it is addressed to (see *The approval inbox*).
 
 - The **HR Partner is set from the Backend** on the employee's record. An HR Manager cannot hand an employee to someone else or grab one — the field is read-only for them.
 - When an HR Manager **creates** a new employee, they are made that employee's HR Partner automatically, so the new joiner stays in their list.
@@ -45,6 +57,7 @@ Every employee record has an **HR Partner** — the HR Manager responsible for t
 The HRMS runs for one or more **companies** (legal entities). The Backend maintains the list under **People & Organization → Companies** and sets each employee's company on their record.
 
 - A **CEO or MD** can be limited to certain companies from the Permissions page (the *Company access* button on their row). With none chosen they see every company; choose one or more and they see and manage only the people in those companies.
+- Each company can carry a **foundation day** — the date it was established, set on the same page. From then on its anniversary appears every year on the calendar and the celebrations card of everyone in that company, employees, HR and the CEO/MD alike, and the morning digest announces it. Leave it blank and nothing shows.
 - The **Backend** is company-agnostic — it always sees all companies.
 - HR Managers are scoped by their assigned employees (above), which in practice keeps them to their own company's people.
 
@@ -100,9 +113,11 @@ A read-only reporting tree built from each person's reporting manager. CEO and M
 
 Login accounts, HR permissions, and organisation settings. Create, edit, deactivate, reactivate and delete accounts; HR Managers can manage Employee accounts only, while admin-role accounts are Backend territory. Creating an HR Manager or L&D Manager creates their employee profile automatically. CEO and MD are not employees and have no profile. You cannot deactivate or delete your own account.
 
+Because a CEO or MD has no employee profile, there is nowhere else to record the dates everyone else keeps on theirs — so the account form shows a **Celebrations** block for those two roles only: date of birth, date of joining and wedding anniversary. Fill any of them in and that executive appears on the calendar, in the celebrations card and in the morning digest for everyone in their companies, exactly as an employee does. Leave one blank and that occasion simply never shows. The block does not appear for any other role, whose dates belong on the employee record.
+
 ### Permissions
 
-One page for every grant the Backend controls: the organisation-wide chat switch, standalone cashbook and expense access for anyone regardless of role, the two per-employee **attendance** grants, and the fine-grained capability list for each HR Manager.
+One page for every grant the Backend controls: the organisation-wide chat switch, standalone cashbook and expense access for anyone regardless of role, the two per-employee **attendance** grants, the **Manager profiles** switch described in section 1, and the fine-grained capability list for each HR Manager.
 
 The Attendance column holds two different grants, and picking the right one matters:
 
@@ -122,6 +137,8 @@ The master employee records. Create a profile — which needs a linked user acco
 Bulk tools cover export to Excel, an import template, import from Excel, a ZIP export of documents, and a documents-status report measured against the required set. You can also generate a tokenised public upload link so somebody without a login can submit their documents.
 
 [!IMPORTANT] A reporting manager must be in the same department. Choose the department first and the manager list offers only that department's people, plus an executive group so a department head still has someone to report to. This is enforced on the server as well, so an Excel import rejects a cross-department manager with a readable error rather than importing it silently. Anyone assigned before this rule stays assigned.
+
+[!IMPORTANT] Nobody can be their own reporting manager or their own HR Partner. The form refuses it, an Excel import leaves the field blank and flags the row rather than failing it, and correcting an imported value to that same person is refused too. A record pointing at itself is not a hierarchy but a loop, and it would quietly disable the things built on those two fields — the leave and exit ladders walk the reporting manager, and the HR-Partner field is the whole of who an HR Manager can see.
 
 This is also where the **approval hierarchies** are configured, each independently of the org chart:
 
@@ -156,6 +173,8 @@ Checklist tasks assigned to a person with a category and a due date. The employe
 ### Confirmations
 
 The probation lifecycle. The due date is the date of joining plus the probation period unless set explicitly. You can confirm, extend, or reset to probation, each with a note.
+
+Confirming or extending a **Manager**'s probation needs the *Manager profiles* permission (section 1), and nobody confirms their own.
 
 ---
 
@@ -197,6 +216,8 @@ The attendance report gives per-day present counts and average hours, plus an or
 
 Define shifts and assign them per employee and day. Regularization requests are reviewed here; approving one applies the corrected times to that day's attendance, creating the record if needed, clearing the no-punch-out mark, flipping Absent to Present, and re-deriving the status from the hours. HR can also regularize directly.
 
+Nobody reviews their own correction, whatever their role, and a **Manager**'s needs the *Manager profiles* permission (section 1).
+
 ---
 
 ## 6. Leave
@@ -216,6 +237,12 @@ This is where whoever is the current approver acts. It is deliberately not admin
 A leave request climbs the configured leave hierarchy if the employee has one, and otherwise walks the reporting-manager chain, stopping at the first CEO or MD. Inactive managers are skipped and cycles are guarded. With no manager at all, it falls to HR.
 
 The same inbox also carries attendance regularizations, work-on-leave claims, resignations, and no-dues clearance sections assigned to you.
+
+**The Backend sees all of it.** For a Super Admin this inbox is not their own rung but every open request in the organisation — leave, regularizations, work-on-leave claims, resignations and clearance sections — whoever it is addressed to, with the shortcut badge counting the same set. Deciding one from there is an **override**: the rungs that never had their turn are marked skipped and those approvers are told it is off their plate, so nothing lingers in anybody's inbox as a ghost. This is how a request stuck behind someone unavailable gets moving again — and for a resignation it is the only way, as exits have no other override.
+
+The Backend is also **notified as each request is raised**, so nothing has to be found by going and looking. That notice goes out once, when the request is filed — not again at every rung it climbs.
+
+[!IMPORTANT] Nobody decides their own request, the Backend included. The ladders never seat the person the request is about, and a decision by that person is refused even on an older stored ladder that still names them.
 
 [!IMPORTANT] On final approval, each covered day is written to the attendance calendar — On Leave for paid types, Absent for unpaid — skipping Sundays and holidays, and never overwriting a day the employee actually worked. Cancelling an approved leave removes those marks again. These stamped days are what feed the two-paid-leave rule in payroll.
 
@@ -263,6 +290,8 @@ Worked examples: no leave taken earns two extra days' pay; three days taken mean
 **Salary structures** are CTC templates expressed as component percentages, which cannot sum to more than one hundred. A preview shows the monthly and annual figures for a given CTC.
 
 **Hikes** is where an employee's structure and annual CTC are set and where increments are recorded, by percentage, by amount, or by setting a new figure, effective from a chosen month. The revision list beneath is the history of who changed what, when and why. Generating and approving payslips happens on the payroll page, not here.
+
+Setting a **Manager**'s structure or CTC needs the *Manager profiles* permission (section 1), nobody sets their own, and — as on every other people screen — you can only do it for the employees assigned to you.
 
 **Loans and advances** — approve requests, set the EMI, tenure and disbursement, and record repayments until the balance closes.
 
@@ -325,7 +354,9 @@ Each person has one **wallet** (the company cash they hold) and as many named **
 
 **Surveys** support single-choice, multi-choice and text questions, with aggregated results that respect anonymity. One response per user.
 
-**Events** feed the shared **calendar** alongside holidays, birthdays, anniversaries and interviews.
+**Events** feed the shared **calendar** alongside holidays, birthdays, work and wedding anniversaries, the company's own anniversary and interviews.
+
+A **morning digest** goes out at 8 AM for whatever falls on that day — birthdays, both kinds of anniversary, holidays, festivals, events, reminders, interviews and task deadlines. It covers the CEO and MD as well as staff, and announces a company anniversary to everyone in that company. Each kind is sent at most once a day however often the server restarts, and everything is walled by company: nobody is told about another company's celebrations.
 
 **Email and letter templates** are editable centrally, so offer letters, appointment letters and payslip emails can be reworded without a code change.
 
@@ -349,8 +380,9 @@ The monthly recognition programme, curated by HR.
 
 **Change requests** carry every edit to an employee's details through approval. The rules are the same for a name, a bank account, an address or a statutory ID:
 
-- An employee **fills in anything that is missing** themselves, from their Account page — it saves straight away. Once a detail has a value, it is locked to them: changing it needs a request.
-- A request to change a **filled** detail goes to that employee's **HR partner**, who approves (applying the value, with validation) or declines with a note.
+- An employee **fills in anything that is missing** themselves, from their Account page (or the Profile tab of the app) — it saves straight away.
+- A short list of **contact and life-event details is theirs to change, once a day each**: phone, gender, marital status, date of birth, wedding anniversary and both addresses. That change applies immediately and is written to the audit log; the day's *second* change to the same detail becomes an ordinary request to you. HR Managers and Managers are not capped on their own record, because their approver is the Backend rather than someone in their own company.
+- Everything else — name, login email, statutory IDs, bank details, designation, department — is a request to that employee's **HR partner**, who approves (applying the value, with validation) or declines with a note.
 - An **HR Manager cannot change an employee's details directly.** When HR edits a detail on the employee record, each change is sent to that employee's **company CEO/MD** for approval instead of saving — the Employees page tells HR how many changes were queued. It applies only once the exec approves it, from their own Change Requests inbox.
 - The **Backend** edits anything directly, with no request — every such change is written to the audit log.
 
@@ -367,6 +399,8 @@ Identity fields (name, login email, phone) work exactly like the profile details
 An exit can be initiated by HR — as a resignation, termination or retirement — or by the employee themselves, who cannot open a second one while one is in progress.
 
 An employee's resignation climbs the same reporting hierarchy for approval. Once approved it enters the **notice period**, during which their login stays active and they keep working normally, while the assigned managers complete their **no-dues clearance** sections. The account is deactivated automatically only once clearance is complete and the last working day has passed — never before.
+
+If a resignation gets stuck — the approver it is waiting on has left, or is unavailable — the Backend can decide it from the approvals inbox, which skips the remaining rungs and tells them so. It is the only override an exit has.
 
 Completing an exit generates a feedback token for a public, no-login feedback form, sets the date of exit, and hands you an editable feedback email to review and send. Nothing is emailed automatically.
 

@@ -43,6 +43,7 @@ The dashboard is your landing page and works as a set of shortcuts. Tapping any 
 - The **Rewards and Recognition** banner during the days after HR announces the month's winners.
 - **Surveys** awaiting your response, and **interviews** you are scheduled to conduct.
 - **Wishes** colleagues have sent you for a birthday or work anniversary.
+- **Birthdays and celebrations** for the next 30 days — birthdays, work and wedding anniversaries, and your company's own anniversary. The card lists the first few; **See all** opens the rest. Tap **Wish** to send someone a greeting.
 - Your **attendance heatmap** — a calendar-style grid of the year so far.
 - **Snapshot cards**: leave remaining, pending requests, and your employee code, designation and department.
 - If you manage people, a **team status** strip showing who is present.
@@ -270,7 +271,9 @@ Active surveys and polls appear as cards with a question count, and an anonymous
 
 ### 10.3 Calendar
 
-A month grid of everything happening: holidays, events, birthdays, work anniversaries, and interviews, colour-coded. Click a day for its detail.
+A month grid of everything happening: holidays, events, birthdays, work and wedding anniversaries, your company's anniversary, and interviews, colour-coded. Click a day for its detail.
+
+Your CEO and MD appear here too, alongside everyone else — they are not on the employee list, so their birthday and joining anniversary are recorded on their account by the Backend and show on the calendar the same way yours does.
 
 ### 10.4 Chat
 
@@ -300,11 +303,19 @@ These appear only when they are relevant to you:
 
 Your full record: personal details, employment information, statutory identifiers with the sensitive ones masked, and bank details.
 
-You can **fill in anything that is missing** yourself — a blank detail (bank account, address, an ID, and so on) saves the moment you enter it, from the **Account** page. Your **profile photograph** and **date of birth** are always yours to set. Once a detail has a value it is locked: to change it, you raise a change request.
+Three things decide what happens when you change a detail:
+
+- **A detail that is blank is yours to fill in.** Enter it and it saves at once — bank account, address, an ID, anything. This is the one-time part: once it has a value, the rules below take over.
+- **Some details you can change yourself, once a day each.** Your phone number, gender, marital status, date of birth, wedding anniversary and both addresses save straight away. The allowance is per detail per day: change your phone number today and your address today and both save, but a *second* change to the same detail today goes to HR instead. Every one of these changes is recorded, so HR can see what moved and when.
+- **Everything else goes to your HR partner.** Your name, login email, statutory IDs and bank details are checked against your documents rather than taken on trust, so they are applied only after HR approves the change.
+
+Your **designation and department** are not yours to set at all — asking to change one always raises a request for HR. Your **profile photograph** is always yours to change, with no request and no daily limit.
 
 ### 12.2 Change requests
 
-From the **Account** page, pick a detail. If it is empty you simply enter it and it saves. If it already has a value, enter what it should be and give a reason — that becomes a request to your HR, who approves (and applies it) or declines with a note. You can track each one from pending to approved or declined. A field with a request already in flight is marked *pending* until it is decided.
+From the **Account** page, pick a detail. If it is empty you simply enter it and it saves. If it is one of the once-a-day details above and you have not used today's change, that saves too. Otherwise, enter what it should be and give a reason — that becomes a request to your HR, who approves (and applies it) or declines with a note. You can track each one from pending to approved or declined. A field with a request already in flight is marked *pending* until it is decided.
+
+[!TIP] The screen always tells you which of the two is about to happen before you save, so you are never guessing whether you are editing something or asking for it.
 
 The same lock applies to **documents**: you upload a required document that is missing, but once it is submitted you cannot delete or replace it. To change one, use **Request replacement** on that document — attach the new file and it goes to HR to approve. A document HR has *rejected* is the one exception: you can simply re-upload that.
 
@@ -337,6 +348,15 @@ Almost everything above is in the Android app, organised under a **Menu**:
 - **Workplace** — Announcements, Surveys, Documents, Assets, Org Chart, and this guide.
 
 **Calendar** and **Notifications** are tabs of their own, and a **search** button in the middle of the tab bar jumps to any screen or looks up a colleague.
+
+Your details are on the **Profile** tab, and the rules there are exactly the ones in section 12. Each line carries the word for what tapping it will do:
+
+- **Add** — the detail is blank, so it saves immediately.
+- **Edit** — one of the once-a-day details, with today's change still unused.
+- **Request** — it goes to HR: either a detail only they can change, or one you have already changed today.
+- **Pending** — a request for it is already with HR.
+
+The same screen shows how many required **documents** you still have to submit, and takes you straight to the upload screen.
 
 [!TIP] Turn on notifications when the app asks. Punch-in and punch-out reminders, approval requests, and announcements all arrive that way, and they are the difference between remembering to punch out and losing the day's hours.
 

@@ -17,7 +17,10 @@ import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 
-const blank = () => ({ name: '', code: '', isActive: true });
+const blank = () => ({ name: '', code: '', isActive: true, foundedOn: '' });
+
+/** ISO date (or blank) → the yyyy-mm-dd an <input type="date"> wants. */
+const dateInput = (v) => (v ? String(v).slice(0, 10) : '');
 
 // The whole page is the Backend's alone — the nav hides it and the routes 403
 // everyone else, but a typed URL still lands here, so the page checks too.
@@ -51,14 +54,14 @@ export default function AdminCompanies() {
   useEffect(() => { load(); }, []);
 
   const openCreate = () => setEditing(blank());
-  const openEdit = (c) => setEditing({ _id: c._id, name: c.name, code: c.code || '', isActive: c.isActive });
+  const openEdit = (c) => setEditing({ _id: c._id, name: c.name, code: c.code || '', isActive: c.isActive, foundedOn: dateInput(c.foundedOn) });
 
   const save = async (e) => {
     e.preventDefault();
     setSaving(true);
     setError('');
     try {
-      const payload = { name: editing.name, code: editing.code, isActive: editing.isActive };
+      const payload = { name: editing.name, code: editing.code, isActive: editing.isActive, foundedOn: editing.foundedOn };
       if (editing._id) await api.put(`/companies/${editing._id}`, payload);
       else await api.post('/companies', payload);
       setEditing(null);
@@ -160,6 +163,13 @@ export default function AdminCompanies() {
                 <div className="min-w-0">
                   <div className="font-semibold text-gray-900 truncate">{c.name}</div>
                   {c.code && <div className="text-xs text-gray-400 mt-0.5 font-mono">{c.code}</div>}
+                  {/* Founded on — shown here because a date nobody can see on
+                      the page it is set from is a date nobody trusts is set. */}
+                  {c.foundedOn && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      Founded {new Date(c.foundedOn).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </div>
+                  )}
                 </div>
                 <span className={`shrink-0 text-xs px-2 py-0.5 rounded-lg ${c.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
                   {c.isActive ? 'Active' : 'Inactive'}
@@ -255,6 +265,19 @@ export default function AdminCompanies() {
               <label className="block text-xs font-medium text-gray-600 mb-1">Short code</label>
               <input value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value })}
                 placeholder="e.g. SSL" className="block w-full border rounded-lg px-3 py-2 uppercase" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Foundation day</label>
+              <input type="date" value={editing.foundedOn}
+                onChange={(e) => setEditing({ ...editing, foundedOn: e.target.value })}
+                className="block w-full border rounded-lg px-3 py-2" />
+              {/* The YEAR is what turns this into "5th Anniversary" rather than
+                  an undated note, so ask for the full date, not a day+month. */}
+              <p className="text-xs text-gray-500 mt-1">
+                The day this company was established. It then appears every year on the calendar and the
+                celebrations card for everyone in this company — employees, HR and the CEO/MD alike.
+                Leave blank for none.
+              </p>
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input type="checkbox" checked={editing.isActive} onChange={(e) => setEditing({ ...editing, isActive: e.target.checked })} />

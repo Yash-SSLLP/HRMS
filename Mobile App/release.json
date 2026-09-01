@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.17",
-  "versionCode": 63,
-  "notes": "You can now correct your own details yourself — phone number and your addresses — and they save straight away, once a day for each detail. Change the same detail again the same day and it goes to your HR to approve, as before; the form tells you which of the two is about to happen. Date of birth and marriage date stay with HR, because they are the ones checked against your documents. This needs the matching server update to be live."
+  "versionName": "2.2.18",
+  "versionCode": 64,
+  "notes": "Your details are now yours to change from the Profile tab, and each line says what tapping it will do. Add fills in anything still blank and saves at once. Edit is for the details you can change yourself once a day — phone, gender, marital status, date of birth, marriage anniversary and your addresses. Request is everything else (name, login email, bank and IDs), and the day's second change to the same detail, which your HR approves as before. Designation and department are always a request. The same screen shows how many documents you still have to submit and takes you straight to the upload. Birthdays and celebrations now cover the next 30 days with a See all instead of one long list, a wedding anniversary finally reads as one rather than a work anniversary, and your CEO/MD's birthdays and your company's own anniversary appear on the calendar and in the morning digest. The in-app guides are updated to match. This needs the matching server update to be live."
 }

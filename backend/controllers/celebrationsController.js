@@ -12,9 +12,11 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Holiday = require('../models/Holiday');
 const Event = require('../models/Event');
 const Notification = require('../models/Notification');
+const User = require('../models/User');
+const Company = require('../models/Company');
 const { enqueueMail } = require('../services/email');
-const { hiddenUserIds } = require('../utils/visibility');
-const { companyScopeFilter } = require('../utils/employeeScope');
+const { hiddenUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
+const { companyScopeFilter, viewerCompanyScope } = require('../utils/employeeScope');
 const { festivalsInRange } = require('../utils/festivalFeed');
 const { IST_TZ, istParts, istMonthDay, istMonthRange } = require('../utils/istDate');
 
@@ -119,12 +121,98 @@ function nextNMonths(months) {
 function personPayload(p) {
   return {
     employeeId: p._id,
+    // Also the user id: the admin dashboard renders the widget with no profile
+    // id to compare against, so "that's you" needs an identity that every
+    // viewer has. Execs are matched the same way (execPayload).
+    userId: p.user?._id,
     employeeCode: p.employeeCode,
     firstName: p.user?.firstName,
     lastName: p.user?.lastName,
     fullName: `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim(),
     designation: p.designation,
     department: p.department,
+  };
+}
+
+/**
+ * The executive (CEO/MD) accounts whose celebrations this viewer should see.
+ *
+ * Execs are not employees — they carry no EmployeeProfile at all — so the
+ * profile sweep below can never find them, and their birthday used to be the
+ * one the calendar never showed. Their dates live on the User document
+ * instead (see models/User.js), set by the Backend on the Users page.
+ *
+ * Company wall, mirroring `User.companies` semantics used everywhere else:
+ * an exec with no companies assigned is company-agnostic and therefore
+ * everybody's exec; a narrowed exec is shown only to viewers whose own scope
+ * includes one of their companies. An unrestricted viewer sees all of them.
+ * @param {import('express').Request} req
+ * @returns {Promise<Object[]>} User docs with at least one celebration date
+ */
+async function loadCelebrationExecs(req) {
+  const execs = await User.find({
+    role: { $in: EXECUTIVE_ROLES },
+    isActive: { $ne: false },
+    $or: [
+      { dateOfBirth: { $ne: null } },
+      { dateOfJoining: { $ne: null } },
+      { dateOfMarriage: { $ne: null } },
+    ],
+  }).select('firstName lastName email role companies dateOfBirth dateOfJoining dateOfMarriage');
+
+  const scope = viewerCompanyScope(req);
+  if (!scope) return execs; // Backend, or an account with no company of its own
+  return execs.filter((u) => {
+    const theirs = (Array.isArray(u.companies) ? u.companies : []).filter(Boolean).map(String);
+    if (!theirs.length) return true; // unnarrowed exec — belongs to every company
+    return theirs.some((id) => scope.ids.includes(id));
+  });
+}
+
+/** Celebration payload for an exec, shaped like personPayload so clients need no branch. */
+function execPayload(u) {
+  return {
+    employeeId: null, // execs have no EmployeeProfile — wishes address userId
+    userId: u._id,
+    employeeCode: null,
+    firstName: u.firstName,
+    lastName: u.lastName,
+    fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+    designation: u.role, // "CEO" / "MD" — what they are, where a title would go
+    department: '',
+    isExecutive: true,
+  };
+}
+
+/**
+ * The companies whose foundation day this viewer should see — their own.
+ *
+ * Same wall as everywhere else: a walled viewer gets only the companies they
+ * are in, an unrestricted one (the Backend, an unnarrowed exec, an account with
+ * no company) gets all of them. Companies with no `foundedOn` are skipped, so
+ * the feature is invisible until somebody sets a date.
+ * @param {import('express').Request} req
+ * @returns {Promise<Object[]>}
+ */
+async function loadCelebrationCompanies(req) {
+  const scope = viewerCompanyScope(req);
+  const filter = { foundedOn: { $ne: null }, isActive: { $ne: false } };
+  if (scope) filter._id = { $in: scope.ids };
+  return Company.find(filter).select('name code foundedOn').lean();
+}
+
+/** Celebration payload for a company anniversary. */
+function companyPayload(c, years) {
+  return {
+    employeeId: null,
+    companyId: c._id,
+    fullName: c.name, // clients render `fullName` as the headline
+    companyName: c.name,
+    employeeCode: c.code || null,
+    designation: 'Foundation day',
+    department: '',
+    years,
+    isCompany: true,
   };
 }
 
@@ -177,11 +265,40 @@ const todayCelebrations = asyncHandler(async (req, res) => {
     }
   }
 
+  // Executives (no profile, dates on the User doc) join the same three lists —
+  // a CEO's birthday is a birthday.
+  for (const u of await loadCelebrationExecs(req)) {
+    if (u.dateOfBirth && sameMonthDay(md(u.dateOfBirth), t)) {
+      birthdays.push({ ...execPayload(u), date: u.dateOfBirth });
+    }
+    if (u.dateOfJoining) {
+      const years = currentYear - istParts(u.dateOfJoining).y;
+      if (years >= 1 && sameMonthDay(md(u.dateOfJoining), t)) {
+        anniversaries.push({ ...execPayload(u), date: u.dateOfJoining, years });
+      }
+    }
+    if (u.dateOfMarriage) {
+      const years = currentYear - istParts(u.dateOfMarriage).y;
+      if (years >= 1 && sameMonthDay(md(u.dateOfMarriage), t)) {
+        marriages.push({ ...execPayload(u), date: u.dateOfMarriage, years });
+      }
+    }
+  }
+
+  // The company's own anniversary — everyone in it celebrates the same day.
+  const companies = [];
+  for (const c of await loadCelebrationCompanies(req)) {
+    if (!sameMonthDay(md(c.foundedOn), t)) continue;
+    const years = currentYear - istParts(c.foundedOn).y;
+    if (years >= 1) companies.push({ ...companyPayload(c, years), date: c.foundedOn });
+  }
+
   res.json({
     today: new Date().toISOString().slice(0, 10),
     birthdays,
     anniversaries,
     marriages,
+    companies,
   });
 });
 
@@ -247,6 +364,43 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
         });
       }
     }
+  }
+
+  // Executives, from their User dates (they have no profile to sweep).
+  for (const u of await loadCelebrationExecs(req)) {
+    const EXEC_DATES = [
+      { type: 'birthday', date: u.dateOfBirth, needsYears: false },
+      { type: 'anniversary', date: u.dateOfJoining, needsYears: true },
+      { type: 'marriage', date: u.dateOfMarriage, needsYears: true },
+    ];
+    for (const d of EXEC_DATES) {
+      if (!d.date) continue;
+      const hit = range.find((r) => sameMonthDay(md(d.date), r));
+      if (!hit) continue;
+      const years = currentYear - istParts(d.date).y;
+      if (d.needsYears && years < 1) continue;
+      events.push({
+        type: d.type,
+        daysAway: hit.daysAway,
+        date: d.date,
+        ...(d.needsYears ? { years } : {}),
+        ...execPayload(u),
+      });
+    }
+  }
+
+  // The company's foundation day, for every company this viewer belongs to.
+  for (const c of await loadCelebrationCompanies(req)) {
+    const hit = range.find((r) => sameMonthDay(md(c.foundedOn), r));
+    if (!hit) continue;
+    const years = currentYear - istParts(c.foundedOn).y;
+    if (years < 1) continue; // the founding day itself is not an anniversary
+    events.push({
+      type: 'company',
+      daysAway: hit.daysAway,
+      date: c.foundedOn,
+      ...companyPayload(c, years),
+    });
   }
 
   events.sort((a, b) => a.daysAway - b.daysAway);
@@ -363,6 +517,55 @@ const monthCalendar = asyncHandler(async (req, res) => {
     }
   }
 
+  // --- Executive (CEO/MD) birthdays & anniversaries ---
+  // Same three chips as an employee's, from the User document, because an exec
+  // has no EmployeeProfile for the loop above to find.
+  for (const u of await loadCelebrationExecs(req)) {
+    if (u.dateOfBirth) {
+      const x = md(u.dateOfBirth);
+      if (x.m === month) {
+        events.push({ day: x.d, type: 'birthday', label: execPayload(u).fullName, meta: execPayload(u) });
+      }
+    }
+    if (u.dateOfJoining) {
+      const joined = istParts(u.dateOfJoining);
+      const years = year - joined.y;
+      if (joined.m === month && years >= 1) {
+        events.push({
+          day: joined.d,
+          type: 'anniversary',
+          label: `${execPayload(u).fullName} (${years} yr)`,
+          meta: { ...execPayload(u), years },
+        });
+      }
+    }
+    if (u.dateOfMarriage) {
+      const wed = istParts(u.dateOfMarriage);
+      const years = year - wed.y;
+      if (wed.m === month && years >= 1) {
+        events.push({
+          day: wed.d,
+          type: 'marriage',
+          label: `${execPayload(u).fullName} (${years} yr)`,
+          meta: { ...execPayload(u), years },
+        });
+      }
+    }
+  }
+
+  // --- Company foundation day (recurring, everyone in that company) ---
+  for (const c of await loadCelebrationCompanies(req)) {
+    const founded = istParts(c.foundedOn);
+    const years = year - founded.y;
+    if (founded.m !== month || years < 1) continue;
+    events.push({
+      day: founded.d,
+      type: 'company',
+      label: `${c.name} (${years} yr)`,
+      meta: companyPayload(c, years),
+    });
+  }
+
   // --- Interviews the viewer is assigned to take (their own calendar) ---
   // Interviews reference the interviewer as a User; the viewer is req.user.
   const Candidate = require('../models/Candidate');
@@ -467,7 +670,8 @@ const monthCalendar = asyncHandler(async (req, res) => {
 /**
  * Send a birthday/anniversary wish to a colleague.
  * @route POST /api/celebrations/wish
- * @param {string} req.body.employeeId - recipient's profile id (required)
+ * @param {string} [req.body.employeeId] - recipient's profile id (staff)
+ * @param {string} [req.body.userId] - recipient's user id (CEO/MD, who have no profile)
  * @param {string} [req.body.type='birthday'] - 'birthday' | 'anniversary' | 'marriage'
  * @param {string} [req.body.message] - custom note, truncated to 280 chars
  * @returns {{ok: boolean}} (201); 400 if wishing yourself
@@ -477,38 +681,66 @@ const monthCalendar = asyncHandler(async (req, res) => {
 // Send a birthday / work-anniversary greeting to a colleague. Creates an in-app
 // notification for the recipient; a celebratory email goes out only when the
 // sender is a SuperAdmin / CEO / MD. Body:
-//   { employeeId, type: 'birthday' | 'anniversary', message? }
+//   { employeeId | userId, type: 'birthday' | 'anniversary', message? }
 const sendWish = asyncHandler(async (req, res) => {
-  const { employeeId, type = 'birthday', message } = req.body || {};
-  if (!employeeId) {
+  const { employeeId, userId, type = 'birthday', message } = req.body || {};
+  if (!employeeId && !userId) {
     res.status(400);
-    throw new Error('employeeId is required');
+    throw new Error('employeeId or userId is required');
   }
   const kind = ['anniversary', 'marriage'].includes(type) ? type : 'birthday';
 
-  const profile = await EmployeeProfile.findById(employeeId)
-    // The three recurring dates drive the wish's expiry — see occasionDateFrom.
-    .select('user dateOfBirth dateOfJoining dateOfMarriage hrPartner company')
-    .populate({ path: 'user', select: 'firstName lastName email isActive' });
-  if (!profile || !profile.user) {
-    res.status(404);
-    throw new Error('Recipient not found');
+  // TWO KINDS OF RECIPIENT. Staff are addressed by profile id and their dates
+  // live on the profile; an exec (CEO/MD) has no profile at all, so the widget
+  // sends their user id and the dates come off the User document. Everything
+  // downstream works off `recipient`, which is the same shape either way.
+  let recipient = null;
+  if (employeeId) {
+    const profile = await EmployeeProfile.findById(employeeId)
+      // The three recurring dates drive the wish's expiry — see occasionDateFrom.
+      .select('user dateOfBirth dateOfJoining dateOfMarriage hrPartner company')
+      .populate({ path: 'user', select: 'firstName lastName email isActive' });
+    // Company wall: you can only wish the colleagues you can see.
+    const { companyOutOfScope } = require('../utils/employeeScope');
+    if (profile && profile.user && !companyOutOfScope(req, profile)) {
+      recipient = {
+        user: profile.user,
+        dates: {
+          birthday: profile.dateOfBirth,
+          anniversary: profile.dateOfJoining,
+          marriage: profile.dateOfMarriage,
+        },
+      };
+    }
+  } else {
+    // Only execs are addressable this way, and only the ones this viewer can
+    // see — loadCelebrationExecs already applies the company wall, so an id
+    // outside it reads as not-found exactly like an out-of-company employee.
+    const exec = (await loadCelebrationExecs(req)).find((u) => String(u._id) === String(userId));
+    if (exec) {
+      recipient = {
+        user: exec,
+        dates: {
+          birthday: exec.dateOfBirth,
+          anniversary: exec.dateOfJoining,
+          marriage: exec.dateOfMarriage,
+        },
+      };
+    }
   }
-  // Company wall: you can only wish the colleagues you can see.
-  const { companyOutOfScope } = require('../utils/employeeScope');
-  if (companyOutOfScope(req, profile)) {
+  if (!recipient) {
     res.status(404);
     throw new Error('Recipient not found');
   }
 
   // Don't let someone wish themselves.
-  if (String(profile.user._id) === String(req.user._id)) {
+  if (String(recipient.user._id) === String(req.user._id)) {
     res.status(400);
     throw new Error('You cannot send a wish to yourself');
   }
 
   const fromName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'A colleague';
-  const toFirst = profile.user.firstName || 'there';
+  const toFirst = recipient.user.firstName || 'there';
   const clean = (message || '').toString().trim().slice(0, 280);
 
   const OCCASIONS = {
@@ -524,16 +756,11 @@ const sendWish = asyncHandler(async (req, res) => {
   // The wish leaves the dashboard card two days after the occasion itself, not
   // two days after it was sent — wishes arrive early. Falls back to counting
   // from now when the profile has no date on file for this occasion.
-  const RECURRING = {
-    birthday: profile.dateOfBirth,
-    anniversary: profile.dateOfJoining,
-    marriage: profile.dateOfMarriage,
-  };
-  const occasionAt = occasionDateFrom(RECURRING[kind]) || new Date();
+  const occasionAt = occasionDateFrom(recipient.dates[kind]) || new Date();
   const expiresAt = new Date(occasionAt.getTime() + WISH_VISIBLE_DAYS_AFTER * 24 * 60 * 60 * 1000);
 
   await Notification.create({
-    recipient: profile.user._id,
+    recipient: recipient.user._id,
     type: 'celebration',
     title: `${emoji} ${fromName} sent you a ${occasion.toLowerCase()} wish`,
     body: wishLine,
@@ -554,7 +781,7 @@ const sendWish = asyncHandler(async (req, res) => {
   const emailed = wishGoesByEmail(req.user);
   if (emailed) {
     await enqueueMail({
-      to: profile.user.email,
+      to: recipient.user.email,
       subject: `${emoji} ${occasion} wishes from ${fromName}`,
       text: `Hi ${toFirst},\n\n${wishLine}\n\n- ${fromName}`,
       html: `

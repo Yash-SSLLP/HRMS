@@ -135,27 +135,24 @@ const SELF_DIRECT_FIELDS = [
 const SELF_DIRECT_ROLES = ['HRManager', 'Manager'];
 
 /**
- * The capped tier's fields: the same list MINUS date of birth and marriage date.
+ * Which self-editable fields this actor gets — the same list for everyone.
  *
- * Those two are excluded for a specific reason rather than general caution. The
- * celebration worker matches birthdays and anniversaries on month + day, so a
- * self-assertable date of birth is a way to make the whole company be notified
- * that it is your birthday — set it to today, collect the notification, set it
- * back tomorrow. They are also the two HR checks against PAN/Aadhaar at joining.
- * An HR Manager or Manager may still change their own (SELF_DIRECT_FIELDS): the
- * point is that nobody hands themselves a birthday unreviewed.
- */
-const EMPLOYEE_SELF_DIRECT_FIELDS = SELF_DIRECT_FIELDS
-  .filter((f) => f !== 'dateOfBirth' && f !== 'dateOfMarriage');
-
-/**
- * Which self-editable fields this actor gets. Derived from SELF_DIRECT_FIELDS
- * rather than listed again, so adding a field there cannot silently miss a tier.
+ * Date of birth and marriage date used to be withheld from ordinary employees
+ * here, because the celebration worker matches on month + day: a self-assertable
+ * date of birth is in principle a way to have the whole company told it is your
+ * birthday, then set it back. Changed on request (2026-09-01): people were
+ * having to raise a ticket to correct their own birthday, which is the more
+ * common case by far. What guards it now is the pair of controls the rest of
+ * this tier already relies on — the ONCE-PER-DAY cap (models/SelfEditLog.js), so
+ * a date cannot be churned, and the AUDIT ENTRY every direct self-edit writes,
+ * so a birthday that moved is visible to HR afterwards rather than silent.
+ *
+ * The two tiers that remain are about FREQUENCY, not about which fields: see
+ * selfEditsDirectly for who is uncapped.
  * @param {{role?: string}} actor
  * @returns {string[]}
  */
-const selfDirectFieldsFor = (actor) =>
-  (actor && SELF_DIRECT_ROLES.includes(actor.role) ? SELF_DIRECT_FIELDS : EMPLOYEE_SELF_DIRECT_FIELDS);
+const selfDirectFieldsFor = () => SELF_DIRECT_FIELDS;
 
 /**
  * Is this one of the fields THIS PERSON may change about themselves without an
@@ -182,10 +179,6 @@ const isSelfDirectField = (field, actor) => selfDirectFieldsFor(actor).includes(
  * @returns {boolean}
  */
 const selfEditsDirectly = (actor, field) =>
-  // Pass the actor through: isSelfDirectField defaults to the CAPPED tier when it
-  // is not given one, which would have wrongly excluded date of birth here even
-  // though the role check on the same line has already established the uncapped
-  // tier.
   !!actor && SELF_DIRECT_ROLES.includes(actor.role) && isSelfDirectField(field, actor);
 
 const changeRequestSchema = new mongoose.Schema(
@@ -232,5 +225,4 @@ module.exports.SELF_DIRECT_FIELDS = SELF_DIRECT_FIELDS;
 module.exports.SELF_DIRECT_ROLES = SELF_DIRECT_ROLES;
 module.exports.selfEditsDirectly = selfEditsDirectly;
 module.exports.isSelfDirectField = isSelfDirectField;
-module.exports.EMPLOYEE_SELF_DIRECT_FIELDS = EMPLOYEE_SELF_DIRECT_FIELDS;
 module.exports.selfDirectFieldsFor = selfDirectFieldsFor;

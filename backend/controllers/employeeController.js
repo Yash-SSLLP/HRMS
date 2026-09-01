@@ -43,10 +43,14 @@ async function findAccountByEmail(email, extra = {}) {
   return (await User.findOne({ email: address, isActive: true, ...extra }))
     || User.findOne({ email: address, ...extra });
 }
-const { FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange } = require('../services/profileChanges');
+const {
+  FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange,
+  claimDailySelfEdit, releaseDailySelfEdit,
+} = require('../services/profileChanges');
 // Which fields a person may set on themselves without approval — the birthday
-// endpoint below has to honour the same rule the change-request flow does.
-const { isSelfDirectField } = require('../models/ChangeRequest');
+// endpoint below has to honour the same rule, AND the same daily allowance, as
+// the change-request flow does.
+const { isSelfDirectField, selfEditsDirectly } = require('../models/ChangeRequest');
 const { notifyMany } = require('../services/notify');
 const ImportFlag = require('../models/ImportFlag');
 const { purgePerson } = require('../services/purgePerson');
@@ -495,17 +499,38 @@ const updateMyBirthday = asyncHandler(async (req, res) => {
   //
   // So: filling a BLANK date of birth still applies immediately, matching
   // fillMissingField — a new joiner completing their own profile is the case this
-  // was built for, and it is a one-way door. CHANGING one that is already set is
-  // the change-request workflow's business, except for the roles that may
-  // self-edit it directly there.
+  // was built for, and it is a one-way door.
+  //
+  // CHANGING one that is already set now spends the SAME once-a-day allowance
+  // the change-request flow spends (models/SelfEditLog.js), rather than being
+  // refused outright: date of birth joined the self-editable tier on
+  // 2026-09-01. Claiming it here is what stops this endpoint from being a way
+  // around the cap — without it, "once a day" on the Your-details screen would
+  // have meant "as often as you like" through this one.
   const already = profile.dateOfBirth;
-  if (already && !isSelfDirectField('dateOfBirth', req.user)) {
-    res.status(409);
-    throw new Error('Your date of birth is already recorded. To correct it, request the change under Your details and your HR will apply it.');
+  let claimedDay = false;
+  if (already) {
+    if (!isSelfDirectField('dateOfBirth', req.user)) {
+      res.status(409);
+      throw new Error('Your date of birth is already recorded. To correct it, request the change under Your details and your HR will apply it.');
+    }
+    if (!selfEditsDirectly(req.user, 'dateOfBirth')) {
+      claimedDay = await claimDailySelfEdit(req.user._id, 'dateOfBirth');
+      if (!claimedDay) {
+        res.status(409);
+        throw new Error('You have already changed your date of birth today. Ask for the correction under Your details and your HR will apply it.');
+      }
+    }
   }
 
   profile.dateOfBirth = dob;
-  await profile.save();
+  try {
+    await profile.save();
+  } catch (err) {
+    // Don't charge the day for a save that failed.
+    if (claimedDay) await releaseDailySelfEdit(req.user._id, 'dateOfBirth');
+    throw err;
+  }
   // Audited like every other direct write to a catalogue field; this endpoint
   // wrote none at all before, so a self-service birthday change was invisible.
   auditFieldChange(

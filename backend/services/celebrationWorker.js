@@ -4,6 +4,9 @@
  *   - birthdays today          → notify everyone + the birthday person
  *   - work anniversaries today → notify everyone + the celebrant
  *   - wedding anniversaries today → notify everyone + the celebrant
+ *   - the same three for CEO/MD → their dates live on the User doc, not a
+ *     profile, so they need their own passes (see runExecOccasion)
+ *   - company foundation day   → notify everyone in that company
  *   - holidays today           → notify everyone
  *   - festivals today and tomorrow → notify everyone (reminder only, not a day off)
  *   - company events today     → notify everyone
@@ -25,6 +28,7 @@ const Reminder = require('../models/Reminder');
 const Candidate = require('../models/Candidate');
 const Task = require('../models/Task');
 const User = require('../models/User');
+const Company = require('../models/Company');
 const DigestLog = require('../models/DigestLog');
 const { notify, notifyMany } = require('./notify');
 const { festivalsInRange, festivalMessage } = require('../utils/festivalFeed');
@@ -173,6 +177,121 @@ async function runMarriageAnniversaries(dateStr, today, profiles, everyone) {
     });
   }
   console.log(`Morning digest: ${people.length} wedding anniversary(ies) notified.`);
+}
+
+/**
+ * Everyone who should hear about an executive's celebration.
+ *
+ * An exec is not placed in a company by a profile — `User.companies` is the
+ * only thing that places them, and an EMPTY list means every company (the same
+ * semantics the read paths use). So: no list → the whole company; a list → the
+ * union of the walls for each company they hold.
+ * @param {Array} everyone - all active user ids
+ * @param {Object} exec - the CEO/MD User doc
+ * @returns {Promise<Array>} recipient ids, the exec themselves removed
+ */
+async function execAudience(everyone, exec) {
+  const others = everyone.filter((id) => String(id) !== String(exec._id));
+  const companies = (Array.isArray(exec.companies) ? exec.companies : []).filter(Boolean);
+  if (!companies.length) return others;
+  const seen = new Set();
+  const out = [];
+  for (const cid of companies) {
+    // eslint-disable-next-line no-await-in-loop
+    for (const id of await scopeRecipientsToCompany(others, cid)) {
+      if (seen.has(String(id))) continue;
+      seen.add(String(id));
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+// The three executive occasions, in the one shape they differ by. Kept beside
+// the staff passes rather than folded into them because the source is a
+// different collection and the DigestLog kind must stay separate: an exec pass
+// failing must never eat the day's staff birthdays.
+const EXEC_OCCASIONS = {
+  birthday: {
+    kind: 'exec-birthday', field: 'dateOfBirth', needsYears: false, type: 'birthday',
+    toEveryone: ({ name }) => ({ title: `🎂 It's ${name}'s birthday today!`, body: 'Send them your wishes.' }),
+    toCelebrant: ({ first }) => ({ title: `🎂 Happy Birthday, ${first}!`, body: 'Wishing you a wonderful day from all of us.' }),
+  },
+  anniversary: {
+    kind: 'exec-anniversary', field: 'dateOfJoining', needsYears: true, type: 'anniversary',
+    toEveryone: ({ name, years }) => ({ title: `🎊 ${name} celebrates ${years} year${years > 1 ? 's' : ''} today!`, body: 'Congratulate them on their work anniversary.' }),
+    toCelebrant: ({ first, years }) => ({ title: `🎊 Happy ${years}-year Work Anniversary, ${first}!`, body: 'Thank you for everything you do.' }),
+  },
+  marriage: {
+    kind: 'exec-marriage', field: 'dateOfMarriage', needsYears: true, type: 'marriage',
+    toEveryone: ({ name, years }) => ({ title: `💍 ${name} celebrates ${years} year${years > 1 ? 's' : ''} of marriage today!`, body: 'Send them your wishes.' }),
+    toCelebrant: ({ first, years }) => ({ title: `💍 Happy ${years}-year Wedding Anniversary, ${first}!`, body: 'Wishing you both many more happy years.' }),
+  },
+};
+
+/**
+ * One executive occasion (birthday / work anniversary / wedding anniversary).
+ * Mirrors the staff passes above, but reads CEO/MD dates off the User document
+ * — execs have no EmployeeProfile, which is why they were silently missing
+ * from the digest entirely.
+ * @param {string} occasion - a key of EXEC_OCCASIONS
+ */
+async function runExecOccasion(occasion, dateStr, today, everyone) {
+  const spec = EXEC_OCCASIONS[occasion];
+  const year = istParts(new Date()).y;
+  const execs = await User.find({
+    role: { $in: ['CEO', 'MD'] },
+    isActive: { $ne: false },
+    [spec.field]: { $ne: null },
+  }).select(`firstName lastName role companies ${spec.field}`).lean();
+
+  const people = execs
+    .filter((u) => monthDay(u[spec.field]).m === today.m && monthDay(u[spec.field]).d === today.d)
+    .map((u) => ({ u, years: year - istParts(u[spec.field]).y }))
+    .filter((x) => !spec.needsYears || x.years >= 1);
+  if (!people.length) return;
+  if (!(await claim(spec.kind, dateStr))) return;
+
+  for (const { u, years } of people) {
+    const name = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+    const first = u.firstName || 'there';
+    // eslint-disable-next-line no-await-in-loop
+    await notifyMany(await execAudience(everyone, u), {
+      type: spec.type, ...spec.toEveryone({ name, years }), link: 'celebrations',
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await notify({
+      recipient: u._id, type: spec.type, ...spec.toCelebrant({ first, years }), link: 'celebrations',
+    });
+  }
+  console.log(`Morning digest: ${people.length} executive ${occasion}(s) notified.`);
+}
+
+/**
+ * The company's own foundation day — one occasion the whole company shares, so
+ * there is no "celebrant" to notify separately, only everybody in it. The
+ * founding year itself is skipped: a company is not 0 years old.
+ */
+async function runCompanyAnniversaries(dateStr, today, everyone) {
+  const year = istParts(new Date()).y;
+  const companies = (await Company.find({ foundedOn: { $ne: null }, isActive: { $ne: false } })
+    .select('name foundedOn').lean())
+    .filter((c) => monthDay(c.foundedOn).m === today.m && monthDay(c.foundedOn).d === today.d)
+    .map((c) => ({ c, years: year - istParts(c.foundedOn).y }))
+    .filter((x) => x.years >= 1);
+  if (!companies.length) return;
+  if (!(await claim('company-anniversary', dateStr))) return;
+
+  for (const { c, years } of companies) {
+    // eslint-disable-next-line no-await-in-loop
+    await notifyMany(await scopeRecipientsToCompany(everyone, c._id), {
+      type: 'company',
+      title: `🏢 ${c.name} turns ${years} today!`,
+      body: `Happy ${years}-year anniversary to everyone at ${c.name}.`,
+      link: 'celebrations',
+    });
+  }
+  console.log(`Morning digest: ${companies.length} company anniversary(ies) notified.`);
 }
 
 async function runHolidays(dateStr, everyone) {
@@ -383,6 +502,10 @@ async function tick() {
       ['birthday', () => runBirthdays(dateStr, today, profiles, everyone)],
       ['anniversary', () => runAnniversaries(dateStr, today, profiles, everyone)],
       ['marriage', () => runMarriageAnniversaries(dateStr, today, profiles, everyone)],
+      ['exec-birthday', () => runExecOccasion('birthday', dateStr, today, everyone)],
+      ['exec-anniversary', () => runExecOccasion('anniversary', dateStr, today, everyone)],
+      ['exec-marriage', () => runExecOccasion('marriage', dateStr, today, everyone)],
+      ['company-anniversary', () => runCompanyAnniversaries(dateStr, today, everyone)],
       ['holiday', () => runHolidays(dateStr, everyone)],
       ['festival', () => runFestivals(dateStr, everyone, 'today')],
       ['festival-eve', () => runFestivals(dateStr, everyone, 'eve')],

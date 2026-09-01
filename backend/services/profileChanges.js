@@ -35,6 +35,44 @@ const isEmptyValue = (v) => v == null || String(v).trim() === '';
  * The current formatted value of one catalogue field for a given employee (by
  * their User id). Secret fields always read back empty.
  */
+/**
+ * Claim today's direct change of one field for one person.
+ *
+ * The insert IS the lock: the unique (user, field, day) index means two racing
+ * requests cannot both win, and the loser sees a duplicate key. Anything other
+ * than a duplicate is a real database problem and is re-thrown rather than
+ * quietly granting the edit.
+ *
+ * Lives here rather than in the change-request controller because it is not that
+ * controller's rule: the self-service birthday endpoint spends the same
+ * allowance, and two copies of "have they already changed this today" is exactly
+ * how a second, wider door gets built by accident.
+ * @param {string} userId
+ * @param {string} field - FIELD_CATALOG key
+ * @returns {Promise<boolean>} true if today's allowance was still unspent
+ */
+async function claimDailySelfEdit(userId, field) {
+  const SelfEditLog = require('../models/SelfEditLog');
+  const { ymdIST } = require('../utils/dateHelpers');
+  try {
+    await SelfEditLog.create({ user: userId, field, day: ymdIST() });
+    return true;
+  } catch (err) {
+    if (err.code === 11000) return false; // already used today
+    throw err;
+  }
+}
+
+/**
+ * Hand back a claim whose edit did not go through — a rejected enum value, say.
+ * Charging somebody a day for a change that errored would be its own small bug.
+ */
+function releaseDailySelfEdit(userId, field) {
+  const SelfEditLog = require('../models/SelfEditLog');
+  const { ymdIST } = require('../utils/dateHelpers');
+  return SelfEditLog.deleteOne({ user: userId, field, day: ymdIST() }).catch(() => {});
+}
+
 async function readFieldValue(targetUserId, meta) {
   if (meta.secret) return '';
   if (meta.model === 'User') {
@@ -138,6 +176,8 @@ function auditFieldChange(actor, meta, from, to, target = {}) {
 }
 
 module.exports = {
+  claimDailySelfEdit,
+  releaseDailySelfEdit,
   FIELD_CATALOG,
   getPath,
   fmtVal,

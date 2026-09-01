@@ -121,6 +121,17 @@ const userSchema = new mongoose.Schema(
     // confers SuperAdmin-only powers (permissions, org settings, audit log).
     // Ignored for every other role. See middleware/authMiddleware.js.
     execEditAccess: { type: Boolean, default: false },
+    // ===== Celebration dates for accounts that have NO employee profile =====
+    // Staff dates live on EmployeeProfile and MUST keep living there — that is
+    // the HR record, it feeds payroll and confirmations, and a second copy here
+    // would be a second truth. These three exist for the exec accounts
+    // (CEO/MD), which deliberately have no profile at all (see
+    // utils/visibility NON_STAFF_ROLES) and so could never appear on the
+    // calendar or in the celebrations widget, however long they had been with
+    // the company. Only read for EXECUTIVE_ROLES; ignored on every other role.
+    dateOfBirth: { type: Date, default: null },
+    dateOfJoining: { type: Date, default: null },
+    dateOfMarriage: { type: Date, default: null },
   },
   { timestamps: true }
 );

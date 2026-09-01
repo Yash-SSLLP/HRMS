@@ -49,6 +49,23 @@ function assertCompanyScope(req, company) {
 }
 
 /**
+ * Read a foundation day off the request body.
+ *
+ * Blank clears it — a company whose founding date was entered wrongly must be
+ * able to go back to having none, and an empty string is what a cleared date
+ * input sends. Anything unparseable is treated as "no date" rather than
+ * throwing: this is one optional field on a form whose real subject is the
+ * company's name.
+ * @param {*} raw
+ * @returns {Date|null}
+ */
+function parseFoundedOn(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * List all companies, each with its assigned-employee count.
  * @route GET /api/companies
  * @returns {{count: number, companies: Object[]}} companies with assignedCount
@@ -79,7 +96,7 @@ const listCompanies = asyncHandler(async (req, res) => {
  */
 const createCompany = asyncHandler(async (req, res) => {
   assertCompanyScope(req, null);
-  const { name, code, isActive } = req.body;
+  const { name, code, isActive, foundedOn } = req.body;
   if (!name || !name.trim()) {
     res.status(400);
     throw new Error('name is required');
@@ -98,6 +115,7 @@ const createCompany = asyncHandler(async (req, res) => {
     name: trimmed,
     code: cleanCode,
     isActive: isActive !== false,
+    foundedOn: parseFoundedOn(foundedOn),
     createdBy: req.user._id,
   });
   res.status(201).json({ company });
@@ -115,7 +133,7 @@ const updateCompany = asyncHandler(async (req, res) => {
     throw new Error('Company not found');
   }
   assertCompanyScope(req, company);
-  const { name, code, isActive } = req.body;
+  const { name, code, isActive, foundedOn } = req.body;
   if (name !== undefined) {
     const trimmed = String(name).trim();
     if (!trimmed) {
@@ -141,6 +159,7 @@ const updateCompany = asyncHandler(async (req, res) => {
     company.code = cleanCode;
   }
   if (isActive !== undefined) company.isActive = !!isActive;
+  if (foundedOn !== undefined) company.foundedOn = parseFoundedOn(foundedOn);
   await company.save();
   res.json({ company });
 });

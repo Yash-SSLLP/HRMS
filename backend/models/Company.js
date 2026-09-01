@@ -12,6 +12,13 @@ const companySchema = new mongoose.Schema(
     // Optional and uppercased; unique when present via a sparse index below.
     code: { type: String, trim: true, uppercase: true },
     isActive: { type: Boolean, default: true, index: true },
+    // Foundation day — the date the company was established. Optional, set by
+    // the Backend on the Companies page. Once set it recurs every year on the
+    // calendar and in the celebrations widget for EVERYONE in that company
+    // (employees, HR, CEO/MD alike), the way a birthday does for one person.
+    // The year matters: it is what makes it "5th Anniversary" rather than an
+    // undated note.
+    foundedOn: { type: Date, default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

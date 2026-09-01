@@ -41,6 +41,9 @@ const TYPE_META = {
   birthday:    { label: 'Birthday',             color: '#ec4899', fg: '#ffffff' },
   anniversary: { label: 'Work anniversary',     color: '#6366f1', fg: '#ffffff' },
   marriage:    { label: 'Wedding anniversary', color: '#e11d48', fg: '#ffffff' },
+  // The company's own foundation day — one entry everybody in that company
+  // shares, unlike the three above which each belong to one person.
+  company:     { label: 'Company anniversary', color: '#0d9488', fg: '#ffffff' },
   interview:   { label: 'Interview',            color: '#eab308', fg: '#1f2937' },
   hrReminder:  { label: 'HR / Admin reminder',  color: '#f97316', fg: '#ffffff' },
   reminder:    { label: 'My reminder',          color: '#10b981', fg: '#06281f' },
@@ -208,6 +211,10 @@ export default function Calendar() {
       if (m.priority) rows.push(['Priority', m.priority]);
       if (m.project) rows.push(['Project', m.project]);
       if (m.assignedTo) rows.push(['Assigned to', m.assignedTo]);
+    } else if (e.type === 'company') {
+      rows.push(['Company', m.companyName || e.label]);
+      if (m.years) rows.push(['Years', `${m.years}`]);
+      rows.push(['Note', 'The company’s foundation day — a normal working day unless HR also marks it a holiday.']);
     } else {
       const role = [m.designation, m.department].filter(Boolean).join(' · ');
       if (role) rows.push(['Role', role]);

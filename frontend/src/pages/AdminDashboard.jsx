@@ -21,7 +21,20 @@ const blankForm = {
   phone: '',
   role: 'Employee',
   isActive: true,
+  // CEO/MD only — see the "Celebrations" block in the form. Sent for every
+  // role, but the server stores them only for an executive account, whose
+  // dates have nowhere else to live (they have no employee profile).
+  dateOfBirth: '',
+  dateOfJoining: '',
+  dateOfMarriage: '',
 };
+
+// Roles with no employee profile of their own, and therefore the only ones
+// whose celebration dates are kept on the login account.
+const EXEC_ROLES = ['CEO', 'MD'];
+
+/** ISO date (or blank) → the yyyy-mm-dd an <input type="date"> wants. */
+const dateInput = (v) => (v ? String(v).slice(0, 10) : '');
 
 // Whether the current viewer is allowed to manage a given user row.
 // SuperAdmin manages everyone; HR Managers can only manage Employee accounts.
@@ -131,6 +144,9 @@ export default function AdminDashboard() {
       phone: u.phone || '',
       role: u.role,
       isActive: u.isActive,
+      dateOfBirth: dateInput(u.dateOfBirth),
+      dateOfJoining: dateInput(u.dateOfJoining),
+      dateOfMarriage: dateInput(u.dateOfMarriage),
     });
     setShowModal(true);
   };
@@ -388,6 +404,42 @@ This cannot be undone.`,
                     placeholder="+91XXXXXXXXXX" className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
               </div>
+
+              {/* Celebrations — executives only.
+                  A CEO/MD deliberately has no employee profile, which is where
+                  everyone else's birthday lives, so theirs never reached the
+                  calendar or the celebrations widget. These three fields are
+                  the only place they can be recorded; leave one blank and that
+                  occasion simply never shows. */}
+              {EXEC_ROLES.includes(form.role) && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+                  <p className="text-sm font-medium text-gray-800">Celebrations</p>
+                  <p className="text-xs text-gray-500 mt-0.5 mb-3">
+                    Shown to everyone in this executive&apos;s companies, on the calendar and the
+                    celebrations card — the same as an employee&apos;s. Optional.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Date of birth</label>
+                      <input type="date" value={form.dateOfBirth}
+                        onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+                        className="block w-full border rounded-lg px-3 py-2" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Date of joining</label>
+                      <input type="date" value={form.dateOfJoining}
+                        onChange={(e) => setForm({ ...form, dateOfJoining: e.target.value })}
+                        className="block w-full border rounded-lg px-3 py-2" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Wedding anniversary</label>
+                      <input type="date" value={form.dateOfMarriage}
+                        onChange={(e) => setForm({ ...form, dateOfMarriage: e.target.value })}
+                        className="block w-full border rounded-lg px-3 py-2" />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <label className="inline-flex items-center gap-2 text-sm text-gray-700">
                 <input type="checkbox" checked={form.isActive}

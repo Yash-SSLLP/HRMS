@@ -2,7 +2,8 @@
  * EmployeeProfile — read-only view of the logged-in employee's HR record
  * (employee portal). Loads the profile from GET /employees/me. Most fields are
  * changed only via change-requests, but date-of-birth is self-service and saved
- * directly through PATCH /employees/me/birthday.
+ * directly through PATCH /employees/me/birthday — once a day, after which the
+ * server refuses it and the correction goes to HR like any other field.
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -45,7 +46,9 @@ export default function EmployeeProfile() {
     })();
   }, []);
 
-  // Self-service birthday update (no HR approval needed, unlike other fields).
+  // Self-service birthday update: no HR approval, but once per day — the
+  // server spends the same allowance the Your-details screen does, so a second
+  // change today comes back as a 409 and is shown below the field.
   const saveBirthday = async () => {
     if (!dob) { setDobMsg('Please pick a date.'); return; }
     setSavingDob(true);
@@ -95,7 +98,7 @@ export default function EmployeeProfile() {
       <div className="bg-white shadow rounded-lg p-5 mb-4">
         <h2 className="card-title mb-1">🎂 Birthday</h2>
         <p className="text-sm text-gray-500 mb-3">
-          Add your date of birth so the team can celebrate with you. You can set this yourself.
+          Add your date of birth so the team can celebrate with you. You can set this yourself — once a day; after that your HR applies the correction.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div>

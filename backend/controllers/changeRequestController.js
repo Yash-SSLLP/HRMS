@@ -25,6 +25,8 @@ const {
   resolveHrAssignee,
   resolveExecAssignee,
   auditFieldChange,
+  claimDailySelfEdit,
+  releaseDailySelfEdit,
 } = require('../services/profileChanges');
 
 const USER_FIELDS = 'firstName lastName email role';
@@ -58,35 +60,6 @@ function publicChangeRequest(cr) {
     if (o.currentValue) o.currentValue = '••••••';
   }
   return o;
-}
-
-/**
- * Claim today's direct change of one field for one person.
- *
- * The insert IS the lock: the unique (user, field, day) index means two racing
- * requests cannot both win, and the loser sees a duplicate key. Anything other
- * than a duplicate is a real database problem and is re-thrown rather than
- * quietly granting the edit.
- * @param {string} userId
- * @param {string} field - FIELD_CATALOG key
- * @returns {Promise<boolean>} true if today's allowance was still unspent
- */
-async function claimDailySelfEdit(userId, field) {
-  try {
-    await SelfEditLog.create({ user: userId, field, day: ymdIST() });
-    return true;
-  } catch (err) {
-    if (err.code === 11000) return false; // already used today
-    throw err;
-  }
-}
-
-/**
- * Hand back a claim whose edit did not go through — a rejected enum value, say.
- * Charging somebody a day for a change that errored would be its own small bug.
- */
-function releaseDailySelfEdit(userId, field) {
-  return SelfEditLog.deleteOne({ user: userId, field, day: ymdIST() }).catch(() => {});
 }
 
 // { name, profileId } for the audit trail, by the employee's User id.
