@@ -16,7 +16,7 @@ import { downloadFile } from '../api/download';
 import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
-import { formatHours, formatTime12 } from '../utils/time';
+import { formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 import { useAuthStore } from '../store/authStore';
 
@@ -37,6 +37,8 @@ const STATUS_COLORS = {
 };
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
+// The years the filter offers: last year, this year, next.
+const thisYear = new Date().getFullYear();
 const fmtTime = (d) => formatTime12(d) || '-';
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -110,9 +112,30 @@ function DistanceTag({ label, loc, distanceM, thresholdM, wfh, locationName }) {
   );
 }
 
+/**
+ * A stored punch as the local-datetime input wants it, and back again.
+ *
+ * `<input type="datetime-local">` speaks wall-clock time with no zone, so both
+ * directions go through the browser's own local time — which for this portal is
+ * IST, the same clock the punch was made on and the same one every other screen
+ * prints. Building the string by hand rather than via toISOString(), because
+ * that converts to UTC and would show a 5:30-earlier time in the box than the
+ * row above it.
+ */
+const toLocalInput = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+/** '' → null (clear the punch); otherwise an ISO instant for the server. */
+const fromLocalInput = (v) => (v ? new Date(v).toISOString() : null);
+
 const blankEntry = {
   employee: '',
-  date: new Date().toISOString().slice(0, 10),
+  date: toYMD(new Date()),
   status: 'Present',
   remarks: '',
 };
@@ -137,7 +160,7 @@ export default function AdminAttendance() {
   const [photoModal, setPhotoModal] = useState(null); // { url, label }
 
   const [exporting, setExporting] = useState(''); // '' | 'month' | 'day'
-  const [exportDay, setExportDay] = useState(new Date().toISOString().slice(0, 10));
+  const [exportDay, setExportDay] = useState(toYMD(new Date()));
 
   // Office / geofence settings (editable by SuperAdmin & HR)
   const [settings, setSettings] = useState({
@@ -306,6 +329,10 @@ export default function AdminAttendance() {
       date: r.date ? r.date.slice(0, 10) : '',
       status: r.status,
       remarks: r.remarks || '',
+      // Only the Backend may change these, but they are prefilled for everyone
+      // so the modal shows what the day actually holds.
+      checkIn: toLocalInput(r.checkIn),
+      checkOut: toLocalInput(r.checkOut),
     });
     setShowModal(true);
   };
@@ -316,7 +343,16 @@ export default function AdminAttendance() {
     setError('');
     try {
       if (editingId) {
-        await api.put(`/attendance/${editingId}`, { status: form.status, remarks: form.remarks });
+        // The times are the Backend's to change; nobody else's form even shows
+        // them, and the server drops them from anyone else in any case.
+        await api.put(`/attendance/${editingId}`, {
+          status: form.status,
+          remarks: form.remarks,
+          ...(isSuperAdmin ? {
+            checkIn: fromLocalInput(form.checkIn),
+            checkOut: fromLocalInput(form.checkOut),
+          } : {}),
+        });
       } else {
         await api.post('/attendance', form);
       }
@@ -355,9 +391,16 @@ export default function AdminAttendance() {
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-3 items-end flex-wrap">
         <div>
           <label className="block text-xs text-gray-600">Year</label>
-          <input type="number" value={filter.year}
+          {/* A select, not a free-typed number. Typing "2026" here used to fire
+              a request per keystroke — three each, with no cancellation — so a
+              slow reply for year 202 could land after the one for 2026 and
+              leave an empty table under a correct-looking filter. Clearing the
+              box asked the server for year 0. */}
+          <select value={filter.year}
             onChange={(e) => setFilter({ ...filter, year: Number(e.target.value) })}
-            className="border rounded-lg px-2 py-1 w-24" />
+            className="border rounded-lg px-2 py-1">
+            {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
         </div>
         <div>
           <label className="block text-xs text-gray-600">Month</label>
@@ -579,7 +622,7 @@ export default function AdminAttendance() {
           <div className="bg-white rounded-xl shadow-lg p-3 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold">{photoModal.label}</span>
-              <button onClick={() => setPhotoModal(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setPhotoModal(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <AuthImage url={photoModal.url} alt={photoModal.label} className="w-full rounded" />
           </div>
@@ -723,6 +766,35 @@ export default function AdminAttendance() {
                   {STATUS.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </div>
+              {/* Correcting the punches themselves — Backend only, and only on an
+                  existing record (a manual entry has no punches to correct).
+                  Everything downstream follows: hours are recomputed on save,
+                  and the late-arrival check reads the new check-in, so a
+                  corrected time fixes the day's pay as well as its display. */}
+              {editingId && isSuperAdmin && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+                  <p className="text-sm font-medium text-gray-800">Punch times</p>
+                  <p className="text-xs text-gray-500 mt-0.5 mb-3">
+                    Changing these changes the day&apos;s hours, its half-day check and any late-arrival
+                    penalty. Every change is recorded in the audit log. Leave one blank to clear it.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Check-in</label>
+                      <input type="datetime-local" value={form.checkIn || ''}
+                        onChange={(e) => setForm({ ...form, checkIn: e.target.value })}
+                        className="block w-full border rounded-lg px-3 py-2" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Check-out</label>
+                      <input type="datetime-local" value={form.checkOut || ''}
+                        onChange={(e) => setForm({ ...form, checkOut: e.target.value })}
+                        className="block w-full border rounded-lg px-3 py-2" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm text-gray-700">Remarks</label>
                 <textarea rows={2} value={form.remarks}

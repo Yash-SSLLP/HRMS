@@ -176,13 +176,18 @@ export default function AdminPermissions() {
     try {
       const [u, c, o, comp] = await Promise.all([
         api.get('/admin/users'),
-        api.get('/admin/permissions/catalog').catch(() => ({ data: { permissions: [] } })),
+        // A catalogue that fails to load is NOT a quiet degradation: the
+        // capability dialog would render empty and its Save would write "no
+        // capabilities" to whoever it was opened on. The rest of the page still
+        // loads; the error below and the disabled Save are what make it safe.
+        api.get('/admin/permissions/catalog').catch(() => ({ data: { permissions: [], failed: true } })),
         api.get('/admin/org-settings').catch(() => ({ data: {} })),
         api.get('/companies').catch(() => ({ data: { companies: [] } })),
       ]);
       setUsers(u.data.users || []);
       setCompanies(comp.data.companies || []);
       setCatalog(c.data.permissions || []);
+      if (c.data.failed) setError('Could not load the permission list — reload the page before changing anyone\u2019s capabilities.');
       const next = readOrg(o.data);
       setOrg(next);
       setFooter(next.documentFooter);
@@ -247,7 +252,7 @@ export default function AdminPermissions() {
   // way; this brings the 50-row matrix in line with it.)
   const toggleAccess = async (u, { path, field, enabled, errorText }) => {
     const id = u._id || u.id;
-    setBusyId(id); setError('');
+    setBusyId(`${id}:${field}`); setError('');
     patchRow(id, { [field]: enabled });
     try {
       const { data } = await api.patch(`/admin/users/${id}/${path}`, { enabled });
@@ -606,10 +611,14 @@ export default function AdminPermissions() {
               </tr>
             ) : filtered.map((u) => {
               const id = u._id || u.id;
-              const busy = busyId === id;
+              // Busy is per SWITCH, not per row: flipping cashbook access used to
+              // spin every other switch on the line and fade the whole row, which
+              // read as "the account is saving" rather than "this grant is".
+              const isBusy = (field) => busyId === `${id}:${field}`;
+              const busy = String(busyId || '').startsWith(`${id}:`);
               const isExec = ['CEO', 'MD'].includes(u.role);
               return (
-                <tr key={id} className={busy ? 'opacity-60' : ''}>
+                <tr key={id}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <span className="avatar-circle bg-gray-100 text-gray-600" aria-hidden="true">
@@ -630,17 +639,17 @@ export default function AdminPermissions() {
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.cashbookAccess} busy={busy} label="Cashbook access"
+                    <ToggleSwitch checked={!!u.cashbookAccess} busy={isBusy('cashbookAccess')} label="Cashbook access"
                       title={GRANT_HELP.cashbook} onChange={() => toggleCashbook(u)} />
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.expensesAccess} busy={busy} label="Expenses access"
+                    <ToggleSwitch checked={!!u.expensesAccess} busy={isBusy('expensesAccess')} label="Expenses access"
                       title={GRANT_HELP.expenses} onChange={() => toggleExpenses(u)} />
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.assetsAccess} busy={busy} label="Assets access"
+                    <ToggleSwitch checked={!!u.assetsAccess} busy={isBusy('assetsAccess')} label="Assets access"
                       title={GRANT_HELP.assets} onChange={() => toggleAssets(u)} />
                   </td>
 
@@ -650,9 +659,9 @@ export default function AdminPermissions() {
                       none of them can download without it. */}
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-2">
-                      <GrantRow label="Module" aria="Khata module access" checked={!!u.khataAccess} busy={busy}
+                      <GrantRow label="Module" aria="Khata module access" checked={!!u.khataAccess} busy={isBusy('khataAccess')}
                         title={GRANT_HELP.khata} onChange={() => toggleKhata(u)} />
-                      <GrantRow label="Export" aria="Khata spreadsheet download" checked={!!u.khataExportAccess} busy={busy}
+                      <GrantRow label="Export" aria="Khata spreadsheet download" checked={!!u.khataExportAccess} busy={isBusy('khataExportAccess')}
                         title={GRANT_HELP.khataExport} onChange={() => toggleKhataExport(u)} />
                     </div>
                   </td>
@@ -662,9 +671,9 @@ export default function AdminPermissions() {
                   <td className="px-4 py-3">
                     {u.hasProfile ? (
                       <div className="flex flex-col gap-2">
-                        <GrantRow label="WFH" aria="May mark a punch as work from home" checked={!!u.wfhAllowed} busy={busy}
+                        <GrantRow label="WFH" aria="May mark a punch as work from home" checked={!!u.wfhAllowed} busy={isBusy('wfhAllowed')}
                           title={GRANT_HELP.wfh} onChange={() => toggleWfh(u)} />
-                        <GrantRow label="Anywhere" aria="May check in and out from anywhere" checked={!!u.remotePunchAllowed} busy={busy}
+                        <GrantRow label="Anywhere" aria="May check in and out from anywhere" checked={!!u.remotePunchAllowed} busy={isBusy('remotePunchAllowed')}
                           title={GRANT_HELP.remotePunch} onChange={() => toggleRemotePunch(u)} />
                       </div>
                     ) : (
@@ -676,7 +685,7 @@ export default function AdminPermissions() {
                     {isExec ? (
                       <div className="flex flex-col gap-2">
                         <div className="flex items-center gap-2">
-                          <ToggleSwitch checked={!!u.execEditAccess} busy={busy} label="Executive edit mode"
+                          <ToggleSwitch checked={!!u.execEditAccess} busy={isBusy('execEditAccess')} label="Executive edit mode"
                             title={GRANT_HELP.execEdit} onChange={() => toggleExecEdit(u)} />
                           <span className="text-[11px] leading-tight text-gray-500 whitespace-nowrap">
                             {u.execEditAccess ? 'Edit mode' : 'View only'}
@@ -699,7 +708,7 @@ export default function AdminPermissions() {
                       nobody else reaches the employee form. */}
                   <td className="px-4 py-3">
                     {GRANTABLE_ROLES.includes(u.role) ? (
-                      <ToggleSwitch checked={!!u.managerProfileAccess} busy={busy} label="May edit Manager profiles"
+                      <ToggleSwitch checked={!!u.managerProfileAccess} busy={isBusy('managerProfileAccess')} label="May edit Manager profiles"
                         title={GRANT_HELP.managerProfiles} onChange={() => toggleManagerProfiles(u)} />
                     ) : (
                       <NotApplicable hint="Only an HR Manager or Manager account needs this — a Super Admin already edits every profile, and no other role edits any." />
@@ -802,10 +811,21 @@ export default function AdminPermissions() {
               </div>
             </div>
 
+            {/* The page's error banner sits UNDER this overlay, so a rejected
+                save used to look exactly like a save that did nothing. */}
+            {error && (
+              <div className="mx-6 mb-1 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                {error}
+              </div>
+            )}
             <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
               <button type="button" onClick={() => setPermUser(null)}
                 className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button type="button" onClick={savePerms} disabled={permSaving}
+              {/* Save is dead while the catalogue is missing: with an empty
+                  `allKeys` the dialog shows no capabilities, and saving would
+                  write an empty list — stripping every capability the account
+                  holds, silently. */}
+              <button type="button" onClick={savePerms} disabled={permSaving || !allKeys.length}
                 className="px-4 py-2 text-sm accent-bg text-white rounded-lg disabled:opacity-45">
                 {permSaving ? 'Saving…' : 'Save permissions'}
               </button>
@@ -827,7 +847,7 @@ export default function AdminPermissions() {
                 </p>
               </div>
               <button type="button" onClick={() => setCompanyUser(null)} aria-label="Close"
-                className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+                className="topbar-icon-btn shrink-0">×</button>
             </div>
             <div className="px-6 py-4 max-h-80 overflow-y-auto">
               {companies.length === 0 ? (

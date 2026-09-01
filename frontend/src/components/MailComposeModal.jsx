@@ -89,7 +89,7 @@ export default function MailComposeModal({
       <div className="bg-white rounded-xl shadow-lg w-full max-w-xl p-6">
         <div className="flex items-start justify-between mb-1">
           <h2 className="card-title">{title}</h2>
-          <button onClick={onClose} className="text-xl leading-none text-gray-400 hover:text-gray-600">×</button>
+          <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         <p className="text-sm text-gray-500 mb-4">
           {note || (onSend

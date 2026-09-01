@@ -1693,8 +1693,20 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
    viewport and let it scroll, so tall forms like the employee editor are fully
    reachable and the action buttons aren't pushed off-screen on phones. */
 .fixed.inset-0 > div {
-  max-height: 92vh;
+  /* min(): 92vh on a short laptop left the panel taller than the space the page
+     chrome leaves it, so the modal scrolled inside a window that was already
+     scrolling. */
+  max-height: min(92vh, calc(100vh - 4.5rem));
   overflow-y: auto;
+}
+/* A chat window opened full-screen on a phone is not a dialog panel: it manages
+   its own header, scroller and composer, and the rules here were giving it a
+   margin, a padding and a 92vh cap. See components/ChatDock.jsx. */
+.fixed.inset-0.chat-fullscreen > div,
+.fixed.inset-0.chat-fullscreen {
+  max-height: none;
+  max-width: none;
+  padding: 0;
 }
 /* Panels built as flex columns WITH their own inner scroller (header and
    footer stay put, the body scrolls) opt back out — forcing the outer box to
@@ -1708,6 +1720,11 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
 @media (max-width: 640px) {
   main { padding-left: 0.85rem; padding-right: 0.85rem; }
   .fixed.inset-0 > div { padding: 1.1rem; max-width: calc(100vw - 1.5rem); }
+  /* A panel that lays itself out as a flex column with its own scroller already
+     owns its padding (header, body, footer each have their own); adding 1.1rem
+     around the outside double-padded the header and pushed the footer in. */
+  .fixed.inset-0 > div.flex-col:has(.overflow-y-auto, .overflow-auto, iframe) { padding: 0; }
+  .fixed.inset-0.chat-fullscreen > div { padding: 0; max-width: none; }
   .menu-pop { max-width: calc(100vw - 1.5rem); }
 }
 

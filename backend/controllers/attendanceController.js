@@ -1991,8 +1991,62 @@ const createRecord = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Write one audit row per punch time the Backend moved.
+ *
+ * Deliberately one row per field rather than a single "record edited": the
+ * audit page lists rows of "X changed from A to B", and a reader should be able
+ * to see that a check-in moved by two hours without opening anything.
+ * Best-effort — the correction itself is already saved, and a failed audit
+ * write must not turn a successful edit into an error.
+ * @param {import('express').Request} req
+ * @param {Object} record - the saved attendance record
+ * @param {{checkIn: Date, checkOut: Date}} before - the times as they were
+ * @param {string[]} changed - which of the two actually moved
+ */
+async function auditPunchEdit(req, record, before, changed) {
+  try {
+    const AuditLog = require('../models/AuditLog');
+    const profile = await EmployeeProfile.findById(record.employee)
+      .select('employeeCode user').populate('user', 'firstName lastName').lean();
+    const who = `${profile?.user?.firstName || ''} ${profile?.user?.lastName || ''}`.trim()
+      || profile?.employeeCode || 'Employee';
+    // ymdLocal, not toISOString(): the stored day is an IST calendar day, and
+    // converting it to UTC labels every record before 5:30 am as the day before
+    // — the trap utils/istDate exists for. A wrong date on an audit row is
+    // worse than none: it is evidence about the wrong day.
+    const day = record.date ? ymdLocal(record.date) : '';
+    const t = (v) => (v ? fmtIstTime(v) : '—');
+    await AuditLog.insertMany(changed.map((field) => ({
+      entity: 'Attendance',
+      entityId: record._id,
+      entityLabel: `${who}${day ? ` · ${day}` : ''}`,
+      field,
+      fromStatus: t(before[field]),
+      toStatus: t(record[field]),
+      by: req.user._id,
+      byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+      byRole: req.user.role,
+    })));
+  } catch (err) {
+    console.error('punch-edit audit failed:', err.message);
+  }
+}
+
+/**
  * Update an attendance record (employee/date immutable here).
- * @route PUT /api/attendance/:id  (HR/Admin)
+ *
+ * THE PUNCH TIMES ARE THE BACKEND'S ALONE. Everyone with `attendance.manage`
+ * may correct the status and the remark; only a Super Admin may move a check-in
+ * or check-out, because those two timestamps are payroll inputs — hours worked
+ * comes off them, the half-day rule reads those hours, and the late-arrival
+ * penalty is measured from the check-in. Anyone else's correction goes through
+ * regularization, where somebody approves it. A time sent by a non-Backend
+ * caller is dropped rather than refused, so HR's ordinary status edits keep
+ * working exactly as before.
+ *
+ * Every time change is written to the audit log: this is a silent edit to
+ * somebody's pay, and it should be answerable for afterwards.
+ * @route PUT /api/attendance/:id  (HR/Admin; times: SuperAdmin only)
  * @param {string} req.params.id - record id
  * @param {Object} req.body - fields to update
  * @returns {{record: Object}}
@@ -2012,12 +2066,51 @@ const updateRecord = asyncHandler(async (req, res) => {
   // Don't allow changing employee or date here
   delete req.body.employee;
   delete req.body.date;
+
+  const isBackend = req.user.role === 'SuperAdmin';
+  const before = { checkIn: record.checkIn, checkOut: record.checkOut };
+  if (!isBackend) {
+    delete req.body.checkIn;
+    delete req.body.checkOut;
+  } else {
+    // Blank clears a punch (a check-out entered by mistake, say); anything
+    // unparseable is refused rather than quietly written as Invalid Date, which
+    // would take the day's hours to zero without anyone noticing.
+    for (const key of ['checkIn', 'checkOut']) {
+      if (req.body[key] === undefined) continue;
+      if (req.body[key] === null || req.body[key] === '') { req.body[key] = null; continue; }
+      const t = new Date(req.body[key]);
+      if (Number.isNaN(t.getTime())) {
+        res.status(400);
+        throw new Error(`${key === 'checkIn' ? 'Check-in' : 'Check-out'} is not a valid time.`);
+      }
+      req.body[key] = t;
+    }
+    const nextIn = req.body.checkIn !== undefined ? req.body.checkIn : record.checkIn;
+    const nextOut = req.body.checkOut !== undefined ? req.body.checkOut : record.checkOut;
+    if (nextIn && nextOut && new Date(nextOut) <= new Date(nextIn)) {
+      res.status(400);
+      throw new Error('Check-out has to be after check-in.');
+    }
+  }
+
   const statusChosen = req.body.status !== undefined;
   Object.assign(record, req.body);
   // HR's explicit status choice is final. When they only corrected the punch
   // times, re-derive from the hours so the half-day rule stays honest.
   if (!statusChosen) record.status = statusFromHours(record) || record.status;
   await record.save();
+
+  // Audit the times, after the save so only a change that stuck is recorded.
+  // hoursWorked is recomputed by the model's pre-save hook, and lateness is
+  // derived from checkIn at read time (payroll calls lateMinutes on the
+  // record), so both follow the corrected times with nothing else to update.
+  const changed = ['checkIn', 'checkOut'].filter(
+    (k) => String(before[k] ? new Date(before[k]).toISOString() : '')
+      !== String(record[k] ? new Date(record[k]).toISOString() : '')
+  );
+  if (changed.length) await auditPunchEdit(req, record, before, changed);
+
   res.json({ record });
 });
 

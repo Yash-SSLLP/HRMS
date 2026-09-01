@@ -92,7 +92,7 @@ export default function AnnouncementsBanner() {
             <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6" onMouseDown={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-3 mb-2">
                 <h2 className="card-title break-words">{openItem.title}</h2>
-                <button type="button" onClick={() => setOpenItem(null)} className="shrink-0 text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+                <button aria-label="Close" title="Close" type="button" onClick={() => setOpenItem(null)} className="topbar-icon-btn shrink-0">×</button>
               </div>
               <div className="flex items-center gap-2 flex-wrap mb-3">
                 {openItem.pinned && <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">Pinned</span>}

@@ -319,7 +319,12 @@ export default function AdminRecruitment() {
   const decideJobCand = async (c, stage) => {
     try {
       await api.put(`/recruitment/candidates/${c._id}`, { stage });
-      await Promise.all([fetchJobCands(jobCandJob._id), load()]);
+      // Patch both lists in place, the way setRound below already does. The
+      // refetch emptied the modal's own list and threw its scroll position away
+      // mid-review.
+      const merge = (list) => list.map((x) => (x._id === c._id ? { ...x, stage } : x));
+      setJobCands(merge);
+      setCandidates(merge);
       toast.success(stage === 'Shortlisted' ? `${c.name} shortlisted` : `${c.name} rejected`);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Update failed');
@@ -962,7 +967,7 @@ export default function AdminRecruitment() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
             <div className="flex items-start justify-between mb-1">
               <h2 className="card-title">Candidate Documents</h2>
-              <button onClick={() => setDocsCand(null)} className="text-xl leading-none text-gray-400 hover:text-gray-700">×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setDocsCand(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <p className="text-sm text-gray-500 mb-4">{docsCand.name}{docsCand.email ? ` · ${docsCand.email}` : ''}</p>
 
@@ -1220,7 +1225,7 @@ export default function AdminRecruitment() {
                 <h2 className="text-lg font-semibold text-gray-900 truncate">Applicants · {jobCandJob.title}</h2>
                 <p className="text-xs text-gray-500 mt-0.5">Shortlist to move a candidate into the interview process, or reject.</p>
               </div>
-              <button type="button" onClick={() => setJobCandJob(null)}
+              <button aria-label="Close" title="Close" type="button" onClick={() => setJobCandJob(null)}
                 className="shrink-0 text-gray-400 hover:text-gray-700 rounded-lg p-1 -mr-1 hover:bg-gray-100 text-xl leading-none">×</button>
             </div>
 

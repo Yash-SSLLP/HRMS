@@ -262,7 +262,7 @@ function ReportModal({ courseId, module, onClose }) {
           <>
             <div className="flex items-center justify-between mb-4">
               <h2 className="card-title">Report an issue</h2>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
             </div>
             {module && <div className="text-xs text-gray-400 mb-3">Lesson: {module.title}</div>}
             <label className="block text-xs font-medium text-gray-600 mb-1">What's wrong?</label>

@@ -22,7 +22,9 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
-const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+// Paise are shown when a claim has them and dropped when it does not, so one
+// claim can no longer read ₹1,250 in the table and ₹1,250.40 in the pay dialog.
+const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 export default function AdminExpenses() {
   const [expenses, setExpenses] = useState([]);
@@ -64,7 +66,6 @@ export default function AdminExpenses() {
     }
   };
 
-  const inr2 = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 
   // Open the reimburse modal and load cashbook accounts to pay from.
   const openReimburse = async (x) => {
@@ -198,7 +199,7 @@ export default function AdminExpenses() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
             <h2 className="card-title mb-1">Reimburse claim</h2>
             <p className="text-sm text-gray-600 mb-4">
-              Paying {inr2.format(payFor.amount)} to{' '}
+              Paying {inr.format(payFor.amount)} to{' '}
               {payFor.employee ? `${payFor.employee.firstName} ${payFor.employee.lastName}` : 'employee'}.
               This posts a cash-out entry to the selected cashbook account.
             </p>
@@ -214,7 +215,7 @@ export default function AdminExpenses() {
                   <option value="">Select an account…</option>
                   {accounts.map((a) => (
                     <option key={a._id} value={a._id}>
-                      {a.name} — {inr2.format(a.currentBalance || 0)}
+                      {a.name} — {inr.format(a.currentBalance || 0)}
                     </option>
                   ))}
                 </SearchableSelect>

@@ -41,7 +41,9 @@ export const adminNav = [
   // Pinned above every category: the landing page is reached constantly and
   // shouldn't need a dropdown opened first. An entry with no `group` renders as
   // a plain top-level link (see NavList in components/Layout.jsx).
-  { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome },
+  // Not offered to a Manager: the dashboard endpoints are gated above them, so
+  // the row would advertise a page that answers 403 (see AdminHome in App.jsx).
+  { to: '/admin/dashboard', label: 'Dashboard', icon: FiHome, roles: ['SuperAdmin', 'HRManager', 'CEO', 'MD'] },
   // Approvals spans leave, resignations, no-dues clearance AND attendance
   // regularizations, so it outgrew the Leave category it used to sit in.
   // Pinned like Dashboard: it is a daily inbox, not an occasional lookup.

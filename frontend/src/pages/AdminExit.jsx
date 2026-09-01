@@ -135,10 +135,16 @@ export default function AdminExit() {
     }
   };
 
+  // Unhandled, this rejection was silent: no modal, no message, nothing to
+  // tell the clicker their click had even been received.
   const openDetail = async (exit) => {
     setActionMsg('');
-    const { data } = await api.get(`/exits/${exit._id}`);
-    setDetail(data.exit);
+    try {
+      const { data } = await api.get(`/exits/${exit._id}`);
+      setDetail(data.exit);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not open this exit record');
+    }
   };
 
   const saveDetail = async () => {
@@ -514,7 +520,7 @@ export default function AdminExit() {
                 <span className={`inline-block px-2 py-1 text-xs rounded-lg ${STATUS_COLORS[detail.status]}`}>
                   {detail.status}
                 </span>
-                <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+                <button type="button" aria-label="Close" title="Close" onClick={() => setDetail(null)} className="topbar-icon-btn shrink-0">×</button>
               </div>
             </div>
 

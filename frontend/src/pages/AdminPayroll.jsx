@@ -624,11 +624,15 @@ export default function AdminPayroll() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Year *</label>
-                  <input type="number" required disabled={!!editingId}
+                  {/* Typing recomputes on BLUR, not per keystroke: "202" is a year
+                      on the way to 2026, and recomputing on it pulled attendance
+                      and salary figures for a year nobody meant. */}
+                  <input type="number" required disabled={!!editingId} min="2000" max="2100"
                     value={form.payPeriodYear}
-                    onChange={(e) => {
+                    onChange={(e) => setForm({ ...form, payPeriodYear: Number(e.target.value) })}
+                    onBlur={(e) => {
                       const payPeriodYear = Number(e.target.value);
-                      setForm({ ...form, payPeriodYear });
+                      if (!(payPeriodYear >= 2000 && payPeriodYear <= 2100)) return;
                       if (form.employee) syncAttendanceDays({ payPeriodYear }).then((days) =>
                         fetchSalaryInfo({ over: { payPeriodYear, paidDays: days?.paidDays, workingDays: days?.workingDays } }));
                     }}
@@ -812,7 +816,7 @@ export default function AdminPayroll() {
             <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
               <div className="flex justify-between items-start mb-1">
                 <h2 className="card-title">Run payroll for everyone</h2>
-                <button onClick={() => setRunModal(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+                <button type="button" aria-label="Close" title="Close" onClick={() => setRunModal(null)} className="topbar-icon-btn shrink-0">×</button>
               </div>
               <p className="text-sm text-gray-500 mb-4">
                 Creates a Draft payslip for every active employee for the selected month. Payslips that already exist

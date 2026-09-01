@@ -508,8 +508,13 @@ export default function ChatDock() {
   const windowStyle = isMobile ? { background: wa.chatBg } : { height: '28rem', background: wa.chatBg, border: `1px solid ${wa.border}` };
   const panelClass = isMobile ? 'absolute inset-0 flex flex-col' : 'w-80 max-w-[92vw] rounded-t-xl shadow-2xl overflow-hidden';
 
+  // `chat-fullscreen` opts the mobile view out of the global modal-panel rules
+  // in index.css, which were padding it, capping it at 92vh and clipping it to
+  // calc(100vw - 1.5rem) — a full-screen chat with a margin. `.inset-0` stays:
+  // GlobalModalEscape finds the dock through that selector, so swapping it for
+  // top/left/right/bottom would silently drop Escape-to-close.
   return (
-    <div className={isMobile ? 'fixed inset-0 z-50 print:hidden' : 'fixed bottom-0 right-4 z-40 flex items-end gap-3 print:hidden'}>
+    <div className={isMobile ? 'fixed inset-0 z-50 print:hidden chat-fullscreen' : 'fixed bottom-0 right-4 z-40 flex items-end gap-3 print:hidden'}>
       {/* Open conversation window */}
       {active && open && (
         <div className={windowClass} style={windowStyle}>
@@ -754,7 +759,7 @@ export default function ChatDock() {
           <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
             <div className="flex items-start justify-between mb-4">
               <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Find people</h2>
-              <button onClick={() => setShowFind(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setShowFind(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
             </div>
             <input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search by name or email…"
               className="w-full rounded-full px-4 py-2 text-sm mb-3 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
@@ -784,7 +789,7 @@ export default function ChatDock() {
           <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
             <div className="flex items-start justify-between mb-4">
               <h2 className="text-lg font-semibold" style={{ color: wa.text }}>New group</h2>
-              <button onClick={() => setShowGroup(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setShowGroup(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
             </div>
             <input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name"
               className="w-full rounded-lg px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
@@ -824,7 +829,7 @@ export default function ChatDock() {
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: `1px solid ${wa.border}` }}>
                 <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Group info</h2>
-                <button onClick={() => { setShowInfo(false); setShowAddMembers(false); }} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+                <button type="button" aria-label="Close" title="Close" onClick={() => { setShowInfo(false); setShowAddMembers(false); }} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
               </div>
 
               <div className="overflow-y-auto p-5">
@@ -926,7 +931,7 @@ export default function ChatDock() {
             <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
               <div className="flex items-start justify-between mb-4">
                 <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Add members</h2>
-                <button onClick={() => setShowAddMembers(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+                <button type="button" aria-label="Close" title="Close" onClick={() => setShowAddMembers(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
               </div>
               <input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search people to add…"
                 className="w-full rounded-full px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />

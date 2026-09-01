@@ -104,7 +104,15 @@ export default function LeaveApprovalsInbox({ onCount }) {
     setBusyId(id); setError('');
     try {
       await api.patch(`/approvals/leave/${id}/${action}`, { note });
-      await load();
+      // Take the decided row out of the queue in place. `await load()` here
+      // unmounted the entire panel behind a "Loading…" line and dropped the
+      // reviewer back at the top of a list they were working down.
+      setPending((prev) => prev.filter((r) => r._id !== id));
+      // The history tab still has to catch up, but quietly: never through
+      // `loading`, which is what caused the collapse.
+      api.get('/approvals/leave?scope=history')
+        .then((h) => setHistory(h.data.requests || []))
+        .catch(() => {});
     } catch (err) {
       setError(err.response?.data?.message || `Could not ${action} the request`);
     } finally {
@@ -145,7 +153,9 @@ export default function LeaveApprovalsInbox({ onCount }) {
   const pendingIds = new Set(pending.map((r) => r._id));
   const others = history.filter((r) => !pendingIds.has(r._id));
 
-  if (loading) return <div className="text-gray-500">Loading…</div>;
+  // Only the FIRST load takes the panel away. Any later refetch happens under
+  // the per-row busy state, so the list a reviewer is reading stays on screen.
+  if (loading && !pending.length && !history.length) return <div className="text-gray-500">Loading…</div>;
 
   // A segmented control, not an underline: these read as the buttons they are,
   // and the count travels in a chip rather than in dim parentheses. `bg-white`

@@ -571,7 +571,7 @@ function Modal({ title, onClose, children }) {
       <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="card-title">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+          <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         {children}
       </div>

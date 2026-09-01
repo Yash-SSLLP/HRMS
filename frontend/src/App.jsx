@@ -133,6 +133,10 @@ function AdminHome() {
   const role = useAuthStore((s) => s.user?.role);
   if (role === 'LDManager') return <Navigate to="courses" replace />;
   if (role === 'AccountsManager') return <Navigate to="cashbook" replace />;
+  // A Manager's admin portal is their team's approvals; the dashboard API is
+  // gated above them, so landing there showed a raw 403 as the first thing they
+  // saw after signing in.
+  if (role === 'Manager') return <Navigate to="approvals" replace />;
   return <Navigate to="dashboard" replace />;
 }
 

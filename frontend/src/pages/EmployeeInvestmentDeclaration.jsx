@@ -47,6 +47,10 @@ function currentFinancialYear() {
 
 export default function EmployeeInvestmentDeclaration() {
   const [financialYear, setFinancialYear] = useState(currentFinancialYear());
+  // The box is a draft until it is committed. Bound straight to
+  // `financialYear`, every keystroke refetched the declaration and replaced the
+  // form — so typing over the year threw away every amount already entered.
+  const [fyDraft, setFyDraft] = useState(currentFinancialYear());
   const [regime, setRegime] = useState('Old');
   const [sections, setSections] = useState(EMPTY_SECTIONS);
   const [proofs, setProofs] = useState([]);
@@ -156,9 +160,12 @@ export default function EmployeeInvestmentDeclaration() {
       >
         <input
           type="text"
-          value={financialYear}
-          onChange={(e) => setFinancialYear(e.target.value)}
+          value={fyDraft}
+          onChange={(e) => setFyDraft(e.target.value)}
+          onBlur={() => setFinancialYear(fyDraft)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setFinancialYear(fyDraft); } }}
           placeholder="2025-26"
+          title="Press Enter or click away to load that year"
           className="border rounded-lg px-3 py-2 text-sm w-32"
         />
       </PageHeader>

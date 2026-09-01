@@ -11,6 +11,7 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import { ROLES, roleLabel } from '../config/roles';
+import { toYMD } from '../utils/time';
 import { confirmDialog } from '../components/dialogs';
 
 const blankForm = {
@@ -84,9 +85,13 @@ export default function AdminDashboard() {
   const savePerms = async () => {
     setPermSaving(true); setError('');
     try {
-      await api.patch(`/admin/users/${permUser._id || permUser.id}/permissions`, { permissions: [...permSel] });
+      const id = permUser._id || permUser.id;
+      const { data } = await api.patch(`/admin/users/${id}/permissions`, { permissions: [...permSel] });
+      // Patch the row from the response rather than reloading the page behind
+      // the modal that is closing.
+      setUsers((rows) => rows.map((r) => (String(r._id || r.id) === String(id)
+        ? { ...r, permissions: data?.user?.permissions ?? [...permSel] } : r)));
       setPermUser(null);
-      await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not save permissions');
     } finally {
@@ -105,7 +110,13 @@ export default function AdminDashboard() {
   // mode, deactivation), so they see them like any other. (They stay in the API
   // for everyone, so they can still be picked as an interviewer or as someone's
   // reporting manager.)
-  const visibleUsers = isSuperAdmin ? users : users.filter((u) => !['CEO', 'MD'].includes(u.role));
+  const [q, setQ] = useState('');
+  const visibleUsers = (isSuperAdmin ? users : users.filter((u) => !['CEO', 'MD'].includes(u.role)))
+    .filter((u) => {
+      const needle = q.trim().toLowerCase();
+      if (!needle) return true;
+      return `${u.firstName} ${u.lastName} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(needle);
+    });
 
   const load = async () => {
     setLoading(true);
@@ -187,12 +198,21 @@ export default function AdminDashboard() {
     }
   };
 
+  /** Merge fields into ONE row, leaving the rest of the table alone. */
+  const patchRow = (id, patch) => setUsers(
+    (rows) => rows.map((r) => (String(r._id || r.id) === String(id) ? { ...r, ...patch } : r))
+  );
+
   const onToggleActive = async (u) => {
     const id = u._id || u.id;
+    // Optimistic, like the Permissions page next door: reloading the whole list
+    // to learn one boolean is the behaviour that made a single switch feel like
+    // a page refresh.
+    patchRow(id, { isActive: !u.isActive });
     try {
       await api.patch(`/admin/users/${id}/${u.isActive ? 'deactivate' : 'activate'}`);
-      await load();
     } catch (err) {
+      patchRow(id, { isActive: u.isActive }); // put it back
       toast.error(err.response?.data?.message || 'Action failed');
     }
   };
@@ -211,7 +231,9 @@ This cannot be undone.`,
     }))) return;
     try {
       await api.delete(`/admin/users/${id}`);
-      await load();
+      // Drop the row; refetching the whole list to notice it is gone is the
+      // slowest possible way to remove one line from a table.
+      setUsers((rows) => rows.filter((r) => String(r._id || r.id) !== String(id)));
     } catch (err) {
       toast.error(err.response?.data?.message || 'Delete failed');
     }
@@ -235,6 +257,14 @@ This cannot be undone.`,
       )}
 
       <div className="bg-white shadow rounded-lg overflow-hidden">
+        {/* Inside the table card so the global `:has(> table)` rule pins it
+            while the table scrolls sideways — same shape as the Permissions
+            page's toolbar. */}
+        <div className="p-3 border-b border-gray-100">
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name, email or role…"
+            className="border rounded-lg px-3 py-2 text-sm w-full max-w-sm" />
+        </div>
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
@@ -421,7 +451,7 @@ This cannot be undone.`,
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">Date of birth</label>
-                      <input type="date" value={form.dateOfBirth}
+                      <input type="date" value={form.dateOfBirth} max={toYMD(new Date())}
                         onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
                         className="block w-full border rounded-lg px-3 py-2" />
                     </div>

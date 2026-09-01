@@ -192,7 +192,7 @@ export default function Login() {
           <div className="bg-white rounded-2xl shadow-lg w-full max-w-lg p-6">
             <div className="flex items-start justify-between mb-1">
               <h2 className="text-lg font-bold text-gray-900">Password reset request</h2>
-              <button onClick={() => setShowReset(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setShowReset(false)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <p className="text-xs text-gray-500 mb-4">
               Fill in your details and HR will reset your password for you.

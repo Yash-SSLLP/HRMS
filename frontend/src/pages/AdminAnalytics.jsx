@@ -246,7 +246,7 @@ export default function AdminAnalytics() {
                   {modal.dept && modal.dept !== 'All' ? ` · ${modal.dept}` : ''}
                 </p>
               </div>
-              <button onClick={() => setModal(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setModal(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <div className="overflow-y-auto p-2">
               {modal.employees.length === 0 ? (

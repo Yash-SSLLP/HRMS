@@ -226,6 +226,7 @@ function NotificationBell({ isAdmin, portal }) {
     if (portal === 'employee') {
       if (n.link === '/admin/expenses') return '/employee/expenses-manage';
       if (n.link === '/admin/cashbook') return '/employee/cashbook-manage';
+      if (n.link === '/admin/khata') return '/employee/khata-manage';
     }
     return n.link;
   };
@@ -838,6 +839,16 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // Close the mobile drawer whenever the route changes.
   const closeMobile = () => setMobileOpen(false);
 
+  // While the drawer is open the page behind it must not scroll: on a phone,
+  // scrolling "the drawer" moved the page underneath it instead, and closing it
+  // left you somewhere you had never navigated to.
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [mobileOpen]);
+
   const sidebar = (
     // w-full is load-bearing: the desktop <aside> is `lg:flex`, so without an
     // explicit width this wrapper is a flex item sized to its CONTENT — the nav
@@ -902,7 +913,10 @@ export default function Layout({ navItems = [], sectionTitle }) {
       {/* Mobile drawer */}
       {mobileOpen && (
         <>
-          <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={closeMobile} />
+          {/* data-modal-close is what GlobalModalEscape looks for first, so
+              Escape now closes the drawer through the click handler already
+              here — no second handler to keep in step. */}
+          <div data-modal-close className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={closeMobile} />
           <aside className="fixed top-0 left-0 bottom-0 w-80 max-w-[85vw] bg-white border-r border-gray-200 z-50 lg:hidden">
             {sidebar}
           </aside>
@@ -931,7 +945,13 @@ export default function Layout({ navItems = [], sectionTitle }) {
               ApprovalsBoard. */}
           <div className="topbar-scroll flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-2 px-1.5 -mx-1.5">
             <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
-            <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
+            {/* In the admin portal this leads to the org-wide attendance page,
+                which the server gates on attendance.manage — so an admin without
+                that capability was being offered a shortcut to a 403. In My
+                Portal it is the employee's own attendance and always applies. */}
+            {(portal === 'employee' || hasPermission(user, 'attendance.manage')) && (
+              <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
+            )}
             {/* Approvals, for the roles that actually decide. Carries a live
                 pending count — see ApprovalsPill. */}
             {showApprovals && <ApprovalsPill to={approvalsPath} />}

@@ -11,7 +11,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
-import { formatDuration, formatHours, formatTime12 } from '../utils/time';
+import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -130,7 +130,9 @@ export default function AdminAttendanceMonth() {
   const openReg = (r) => {
     setForm({
       type: r?.noPunchOut ? 'Forgot Check-out' : r ? 'Wrong Time' : 'Missing Punch',
-      date: r ? new Date(r.date).toISOString().slice(0, 10) : '',
+      // toISOString() shifted this back a day for anyone in IST, so the form
+      // opened on — and saved to — the day before the row that was clicked.
+      date: r ? toYMD(r.date) : '',
       checkIn: toHM(r?.checkIn), checkOut: toHM(r?.checkOut), reason: '',
     });
     setRegOpen(true);

@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
-import { formatTime12 } from '../utils/time';
+import { formatTime12, formatHours } from '../utils/time';
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
@@ -91,7 +91,7 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
                     <span className="text-gray-400 inline-block w-7">Out</span>
                     <span className="font-medium">{t12(r.checkOut)}</span>
                     {r.hoursWorked > 0 && (
-                      <span className="text-gray-400 ml-2">{r.hoursWorked} h</span>
+                      <span className="text-gray-400 ml-2">{formatHours(r.hoursWorked)}</span>
                     )}
                   </div>
                   <p className="text-xs text-gray-500 mt-2 max-w-prose">

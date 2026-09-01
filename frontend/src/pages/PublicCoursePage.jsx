@@ -315,7 +315,7 @@ function FeedbackModal({ token, module, questions, session, onClose, onDone }) {
       <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-base font-semibold text-gray-900">How was this video?</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+          <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         <p className="text-xs text-gray-400 mb-4">{module.title}</p>
 

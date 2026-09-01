@@ -64,8 +64,9 @@ export default function AdminPayslipRequests() {
   const [busyId, setBusyId] = useState(null);
   const [counts, setCounts] = useState({ pending: 0, released: 0 });
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `quiet` keeps the table up while a release step refetches both tabs.
+  const load = useCallback(async ({ quiet } = {}) => {
+    if (!quiet) setLoading(true);
     try {
       // Both tabs are fetched so the counts on them are real, not guesses.
       const [pending, released] = await Promise.all(
@@ -87,7 +88,10 @@ export default function AdminPayslipRequests() {
     try {
       await api.patch(`/payroll/${p._id}/release/${action}`);
       toast.success(confirmText);
-      await load();
+      // Quiet: the counts on both tabs still have to be exact after each step,
+      // but the table must not blank between them — the per-row spinner is the
+      // only movement a three-step release should show.
+      await load({ quiet: true });
     } catch (err) {
       toast.error(err.response?.data?.message || 'Action failed');
     } finally {

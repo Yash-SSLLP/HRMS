@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { ATTENDANCE_COLORS, CHART_SEQUENTIAL, CHART_EMPTY } from '../theme/chartColors';
-import { formatTime12 } from '../utils/time';
+import { formatTime12, formatHours } from '../utils/time';
 
 // Attendance heatmap of the trailing ~12 months, split into month blocks.
 //   • Personal mode (default): each day coloured by the caller's classification.
@@ -220,7 +220,14 @@ export default function AttendanceHeatmap({ days = 365, org = false, scope = 'or
       {tip && (
         <div
           className="fixed z-50 pointer-events-none bg-gray-900 text-white text-xs rounded-lg shadow-lg px-3 py-2"
-          style={{ left: tip.x + 12, top: tip.y + 12, minWidth: 160 }}
+          /* Clamped: near the right or bottom edge the tooltip used to open
+             off-screen, so the last column and the final rows — the most
+             recent days, the ones people actually check — could not be read. */
+          style={{
+            left: Math.min(tip.x + 12, window.innerWidth - 176),
+            top: Math.min(tip.y + 12, window.innerHeight - 200),
+            minWidth: 160,
+          }}
         >
           <div className="font-semibold mb-1">{dateLabel(tip.cell.date)}</div>
           {holidays.has(tip.cell.key) && (
@@ -263,7 +270,7 @@ export default function AttendanceHeatmap({ days = 365, org = false, scope = 'or
               )}
               {tip.cell.rec.noPunchOut && <div className="text-amber-300">Missing punch-out</div>}
               {tip.cell.rec.hoursWorked ? (
-                <div className="text-gray-300">Hours: {tip.cell.rec.hoursWorked}</div>
+                <div className="text-gray-300">Hours: {formatHours(tip.cell.rec.hoursWorked)}</div>
               ) : null}
               {tip.cell.rec.wfh && <div className="text-sky-300">Work from home</div>}
               {tip.cell.rec.remarks && <div className="text-gray-400 italic">{tip.cell.rec.remarks}</div>}
@@ -346,7 +353,7 @@ function DayDetailsModal({ date, endpoint, onClose }) {
               </div>
             )}
           </div>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 text-2xl leading-none -mt-1">×</button>
+          <button type="button" onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         <div className="px-5 py-4 overflow-y-auto">
           {loading && <div className="text-sm text-gray-400">Loading…</div>}

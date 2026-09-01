@@ -224,7 +224,7 @@ const submitVoucher = asyncHandler(async (req, res) => {
   const who = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
   notifyMany(await financeManagerIds(), {
     type: 'cashbook',
-    audience: 'admin',
+    audience: 'all',
     title: 'New cash voucher to review',
     body: `${who} submitted a ₹${amount} petty-cash voucher.`,
     link: '/admin/cashbook',

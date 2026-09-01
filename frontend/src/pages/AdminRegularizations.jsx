@@ -58,8 +58,10 @@ function RequestsTab() {
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const load = async () => {
-    setLoading(true);
+  // `quiet` refetches without taking the table away: after deciding one row the
+  // queue has to stay on screen, or the reviewer loses their place in it.
+  const load = async ({ quiet } = {}) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const { data } = await api.get(`/regularizations${statusFilter ? `?status=${statusFilter}` : ''}`);
@@ -81,7 +83,7 @@ function RequestsTab() {
     }
     try {
       await api.patch(`/regularizations/${r._id}/status`, { status, reviewNote });
-      await load();
+      await load({ quiet: true });
     } catch (err) {
       setError(err.response?.data?.message || 'Update failed');
     }

@@ -131,7 +131,10 @@ export default function EmployeeLeave() {
   };
 
   const cancel = async (id) => {
-    if (!(await confirmDialog({ message: 'Cancel this leave request?' }))) return;
+    if (!(await confirmDialog({ title: 'Withdraw this leave request?',
+      message: 'The request will be withdrawn and the days returned to your balance.',
+      confirmText: 'Withdraw request',
+      cancelText: 'Keep it' }))) return;
     try {
       await api.patch(`/leave/me/requests/${id}/cancel`);
       await load();

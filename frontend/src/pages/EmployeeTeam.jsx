@@ -14,7 +14,7 @@ import AuthImage from '../components/AuthImage';
 import PresenceBoardView from '../components/PresenceBoardView';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import SearchableSelect from '../components/SearchableSelect';
-import { formatTime12 } from '../utils/time';
+import { formatTime12, formatHours, toYMD } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -72,7 +72,7 @@ export default function EmployeeTeam() {
   const [exYear, setExYear] = useState(now.getFullYear());
   const [exMonth, setExMonth] = useState(now.getMonth() + 1);
   const [exEmployee, setExEmployee] = useState(''); // '' = whole team
-  const [exDay, setExDay] = useState(new Date().toISOString().slice(0, 10));
+  const [exDay, setExDay] = useState(toYMD(new Date()));
   const [exporting, setExporting] = useState('');
 
   // Export team attendance as an Excel workbook. The manager endpoint
@@ -307,7 +307,7 @@ export default function EmployeeTeam() {
                             <PunchMeta wfh={m.today.checkOutWfh} distanceM={m.today.checkOutDistanceM} radiusM={m.today.geofenceRadiusM} />
                           )}
                         </td>
-                        <td className="py-2 pr-4 font-mono text-right">{m.today?.hoursWorked || '-'}</td>
+                        <td className="py-2 pr-4 font-mono text-right">{formatHours(m.today?.hoursWorked)}</td>
                       </tr>
                     ))}
                   </tbody>

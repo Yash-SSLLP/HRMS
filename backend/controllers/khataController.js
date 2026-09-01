@@ -527,7 +527,7 @@ const requestAdvance = asyncHandler(async (req, res) => {
   if (needsExec) {
     await notifyMany(await execApproverIds(), {
       type: 'general',
-      audience: 'admin',
+      audience: 'all',
       title: 'Advance request needs your approval',
       body: `${who} requested ₹${amount.toLocaleString('en-IN')} — ${purpose}`,
       link: '/admin/khata',
@@ -535,7 +535,7 @@ const requestAdvance = asyncHandler(async (req, res) => {
   } else {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
-      audience: 'admin',
+      audience: 'all',
       title: 'Cash advance requested',
       body: `${who} requested ₹${amount.toLocaleString('en-IN')} — ${purpose}`,
       link: '/admin/khata',
@@ -616,7 +616,7 @@ const recordMyExpense = asyncHandler(async (req, res) => {
 
   await notifyMany(await khataApproverIds(), {
     type: 'general',
-    audience: 'admin',
+    audience: 'all',
     title: 'Expense recorded against an advance',
     body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
       + ` spent ₹${amount.toLocaleString('en-IN')} on "${khata.name}" — ${purpose}. `
@@ -721,7 +721,7 @@ const updateMyExpense = asyncHandler(async (req, res) => {
   if (changed) {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
-      audience: 'admin',
+      audience: 'all',
       title: 'Expense corrected before confirmation',
       body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
         + ` changed ${saved.code || 'an expense'} — ${summary}. It is still waiting to be confirmed.`,
@@ -809,7 +809,7 @@ const requestReimbursement = asyncHandler(async (req, res) => {
 
   await notifyMany(await khataApproverIds(), {
     type: 'general',
-    audience: 'admin',
+    audience: 'all',
     title: 'Settlement claimed',
     body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
       + ` is owed ₹${asked.toLocaleString('en-IN')} for spending past their advance, and has asked to be paid it back.`,
@@ -856,7 +856,7 @@ const declareSettlement = asyncHandler(async (req, res) => {
 
   await notifyMany(await khataApproverIds(), {
     type: 'general',
-    audience: 'admin',
+    audience: 'all',
     title: 'Cash returned by employee',
     body: `${req.user.firstName} ${req.user.lastName || ''}`.trim() + ` says they returned ₹${amount.toLocaleString('en-IN')} — confirm to update their wallet`,
     link: '/admin/khata',
@@ -1317,7 +1317,7 @@ const createEntry = asyncHandler(async (req, res) => {
   } else {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
-      audience: 'admin',
+      audience: 'all',
       title: 'Khata entry needs approval',
       body: `₹${amount.toLocaleString('en-IN')} for ${target.firstName} is above the operator's limit and is awaiting approval`,
       link: '/admin/khata',
@@ -1475,7 +1475,7 @@ const decideAdvanceApproval = asyncHandler(async (req, res) => {
   if (approve) {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
-      audience: 'admin',
+      audience: 'all',
       title: 'Approved advance ready to pay',
       body: `₹${amount} for ${saved.employee?.firstName || 'an employee'} was approved by ${req.user.role}. Choose an account and pay it out.`,
       link: '/admin/khata',

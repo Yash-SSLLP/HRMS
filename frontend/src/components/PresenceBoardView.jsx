@@ -178,7 +178,7 @@ export default function PresenceBoardView({ board }) {
                 <div className="text-sm font-semibold">{photoModal.name}</div>
                 <div className="text-xs text-gray-500">Check-in selfie · {fmtTime(photoModal.checkIn)}</div>
               </div>
-              <button onClick={() => setPhotoModal(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setPhotoModal(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <AuthImage url={`/attendance/${photoModal.recordId}/photo/checkin`} alt={photoModal.name} className="w-full rounded-lg" />
             {photoModal.hasCheckOutPhoto && (

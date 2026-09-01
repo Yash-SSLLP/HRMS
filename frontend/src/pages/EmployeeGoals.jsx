@@ -33,12 +33,20 @@ export default function EmployeeGoals() {
   useEffect(() => { load(); }, []);
 
   // Optimistically update the local slider while persisting the new progress.
+  // Where the slider sits while it is being dragged, per goal id. Cleared once
+  // the server has the value, so the row falls back to `g.progress`.
+  const [draft, setDraft] = useState({});
+
   const setProgress = async (g, progress) => {
+    if (progress === (g.progress || 0)) return; // nothing moved
     try {
       await api.patch(`/performance/goals/me/${g._id}/progress`, { progress });
       setGoals((prev) => prev.map((x) => (x._id === g._id ? { ...x, progress } : x)));
     } catch (err) {
       setError(err.response?.data?.message || 'Update failed');
+    } finally {
+      // Whether it saved or failed, the row goes back to showing the truth.
+      setDraft((d) => { const n = { ...d }; delete n[g._id]; return n; });
     }
   };
 
@@ -66,10 +74,16 @@ export default function EmployeeGoals() {
 
               <div className="mt-3">
                 <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                  <span>Progress</span><span>{g.progress || 0}%</span>
+                  <span>Progress</span><span>{draft[g._id] ?? g.progress ?? 0}%</span>
                 </div>
-                <input type="range" min="0" max="100" value={g.progress || 0}
-                  onChange={(e) => setProgress(g, Number(e.target.value))}
+                {/* The thumb follows the finger locally; the PATCH goes once, when
+                    the drag ends. Saving on every tick sent ~40 requests per drag
+                    and each late reply snapped the thumb back to an older value. */}
+                <input type="range" min="0" max="100"
+                  value={draft[g._id] ?? g.progress ?? 0}
+                  onChange={(e) => setDraft((d) => ({ ...d, [g._id]: Number(e.target.value) }))}
+                  onPointerUp={(e) => setProgress(g, Number(e.currentTarget.value))}
+                  onKeyUp={(e) => setProgress(g, Number(e.currentTarget.value))}
                   className="w-full" />
               </div>
 

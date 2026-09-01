@@ -71,6 +71,7 @@ function peopleOptions(rows, label) {
 const personLabel = (p) => `${p.name}${p.employeeCode ? ` (${p.employeeCode})` : ''}`;
 import CameraCapture from '../components/CameraCapture';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import { toYMD } from '../utils/time';
 import { useAuthStore } from '../store/authStore';
 import { canExportKhata, isExecViewer } from '../config/permissions';
 import { saveBlobResponse } from '../utils/download';
@@ -78,7 +79,10 @@ import { saveBlobResponse } from '../utils/download';
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
-const today = () => new Date().toISOString().slice(0, 10);
+// toYMD, not toISOString(): the latter converts to UTC, so between midnight
+// and 05:30 IST it returns YESTERDAY — the date this portal runs on is the
+// Indian calendar day (see utils/time.js toYMD).
+const today = () => toYMD(new Date());
 const clean = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v != null));
 
 const STATUS_STYLES = {

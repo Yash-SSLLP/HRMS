@@ -36,6 +36,12 @@ export default function AdminDocuments() {
   const [previewDoc, setPreviewDoc] = useState(null);
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [docs, setDocs] = useState([]);
+  // The page's whole job is verifying what employees submit, and there was no
+  // way to see only what is waiting. Defaults to Submitted for that reason.
+  const [statusFilter, setStatusFilter] = useState('Submitted');
+  // Filtered client-side: the list is one employee's documents, or one
+  // page's worth, so there is nothing here worth another round trip.
+  const shownDocs = statusFilter ? docs.filter((d) => d.status === statusFilter) : docs;
   const [allCategories, setAllCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -155,6 +161,16 @@ export default function AdminDocuments() {
             ))}
           </SearchableSelect>
         </div>
+        <div className="min-w-[160px]">
+          <label className="block text-xs text-gray-600">Status</label>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm">
+            <option value="">All statuses</option>
+            <option value="Submitted">Waiting for review</option>
+            <option value="Verified">Verified</option>
+            <option value="Rejected">Rejected</option>
+          </select>
+        </div>
       </div>
 
       {error && (
@@ -213,9 +229,9 @@ export default function AdminDocuments() {
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr><td colSpan={selectedEmployee ? 6 : 7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : docs.length === 0 ? (
+            ) : shownDocs.length === 0 ? (
               <tr><td colSpan={selectedEmployee ? 6 : 7} className="px-4 py-6 text-center text-gray-500">No documents</td></tr>
-            ) : docs.map((d) => (
+            ) : shownDocs.map((d) => (
               <tr key={d._id}>
                 {!selectedEmployee && (
                   <td className="px-4 py-3">

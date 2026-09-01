@@ -47,6 +47,9 @@ export default function EmployeeAccount() {
   const [credMsg, setCredMsg] = useState('');
   const [credErr, setCredErr] = useState('');
   const [credBusy, setCredBusy] = useState(false);
+  // Typed twice, because getting it wrong signs you out of every device with a
+  // password only the typo knows. There was one box and no confirmation.
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const selected = fields.find((f) => f.key === field);
 
@@ -103,6 +106,10 @@ export default function EmployeeAccount() {
   const submitCredentials = async (e) => {
     e.preventDefault();
     setCredMsg(''); setCredErr('');
+    if (cred.newPassword && cred.newPassword !== confirmPassword) {
+      setCredErr('The two new passwords do not match.');
+      return;
+    }
     setCredBusy(true);
     try {
       // Send `email` ONLY when it is this account's to change. `cred.email` is
@@ -168,6 +175,17 @@ export default function EmployeeAccount() {
                   onChange={(e) => setCred({ ...cred, newPassword: e.target.value })}
                   className="block w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Confirm new password</label>
+                <input
+                  type="password" value={confirmPassword} autoComplete="new-password"
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="block w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-gray-300"
+                />
+                {confirmPassword && cred.newPassword !== confirmPassword && (
+                  <p className="text-xs text-red-600 mt-1">The two new passwords do not match.</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Current password</label>

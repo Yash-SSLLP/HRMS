@@ -761,7 +761,7 @@ function ShareModal({ course, onClose }) {
       <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="card-title">Public link · “{course.title}”</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+          <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
 
         <div className="text-xs text-gray-500 mb-2">Anyone with this link can watch after a short form (name, phone, location) - no login.</div>
@@ -887,7 +887,7 @@ function Modal({ title, onClose, children }) {
       <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="card-title">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+          <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         {children}
       </div>

@@ -18,7 +18,7 @@ import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { ROLES, roleLabel } from '../config/roles';
 import { canAdministerEmployee } from '../config/permissions';
-import { formatDateTime12 } from '../utils/time';
+import { formatDateTime12, toYMD } from '../utils/time';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 // Enums mirrored from models/EmployeeProfile.js — a value outside these fails validation.
@@ -301,6 +301,16 @@ export default function AdminEmployees() {
       setImporting(false);
     }
   };
+
+  /**
+   * Merge fields into ONE row of the directory.
+   *
+   * The alternative, calling load(), fires seven requests and blanks a table of
+   * hundreds to change one flag the click already told us.
+   */
+  const patchProfile = (id, patch) => setProfiles(
+    (rows) => rows.map((r) => (String(r._id) === String(id) ? { ...r, ...patch } : r))
+  );
 
   // Load everything the page needs together: profiles, user lists (for the
   // account + manager pickers), doc-completeness, designations and work locations.
@@ -762,7 +772,8 @@ This cannot be undone.`,
     }))) return;
     try {
       await api.delete(`/employees/${p._id}`);
-      await load();
+      // Drop the row rather than refetching the directory to discover it is gone.
+      setProfiles((rows) => rows.filter((r) => String(r._id) !== String(p._id)));
     } catch (err) {
       toast.error(err.response?.data?.message || 'Delete failed');
     }
@@ -780,10 +791,13 @@ This cannot be undone.`,
         ? `Deactivate ${name}'s account? They will no longer be able to log in.`
         : `Reactivate ${name}'s account? They will be able to log in again.`,
     }))) return;
+    // Patch the one row. `load()` here fired seven requests and blanked the
+    // whole directory to change one boolean the click already told us.
+    patchProfile(p._id, { user: { ...p.user, isActive: !active } });
     try {
       await api.patch(`/admin/users/${uid}/${active ? 'deactivate' : 'activate'}`);
-      await load();
     } catch (err) {
+      patchProfile(p._id, { user: { ...p.user, isActive: active } }); // put it back
       toast.error(err.response?.data?.message || 'Could not update status');
     }
   };
@@ -1575,7 +1589,8 @@ This cannot be undone.`,
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Date of Birth</label>
-                  <input type="date" value={form.dateOfBirth || ''}
+                  {/* max: a mistyped year like 2925 used to save without a word. */}
+                  <input type="date" value={form.dateOfBirth || ''} max={toYMD(new Date())}
                     onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
@@ -1597,7 +1612,7 @@ This cannot be undone.`,
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Marriage Anniversary</label>
-                  <input type="date" value={form.dateOfMarriage || ''}
+                  <input type="date" value={form.dateOfMarriage || ''} max={toYMD(new Date())}
                     onChange={(e) => setForm({ ...form, dateOfMarriage: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                   <p className="text-xs text-gray-500 mt-1">Optional — shows on the celebrations widget each year.</p>
@@ -1749,7 +1764,7 @@ This cannot be undone.`,
                 </p>
               </div>
               <button type="button" onClick={() => setShowFlags(false)} aria-label="Close"
-                className="text-gray-400 hover:text-gray-700 text-xl leading-none shrink-0">×</button>
+                className="topbar-icon-btn shrink-0">×</button>
             </div>
 
             <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-3">
@@ -1849,7 +1864,7 @@ This cannot be undone.`,
                   is left blank. All of them are flagged so you can correct them afterwards.
                 </p>
               </div>
-              <button onClick={closeImport} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              <button onClick={closeImport} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
             </div>
 
             {!importResult && (

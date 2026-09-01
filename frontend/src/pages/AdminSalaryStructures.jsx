@@ -325,8 +325,17 @@ export default function AdminSalaryStructures() {
     // Once it is hand-typed it is no longer anyone's real CTC, so stop
     // attributing it to them.
     if (previewEmp && Number(value) !== Number(previewEmp.annualCtc)) setPreviewEmp(null);
-    if (previewFor) runPreview(previewFor._id, value);
+    // The preview POST is debounced below, not fired here: typing "600000" used
+    // to send six requests whose replies could arrive out of order, leaving a
+    // breakdown for 60,000 under a box reading 600,000.
   };
+
+  useEffect(() => {
+    if (!previewFor) return undefined;
+    const t = setTimeout(() => runPreview(previewFor._id, annualCtc), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annualCtc, previewFor]);
 
   const summary = (c = {}) =>
     `Basic ${c.basicPct || 0}% · HRA ${c.hraPct || 0}% · Special ${c.specialAllowancePct || 0}%`;

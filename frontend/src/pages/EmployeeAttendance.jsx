@@ -420,7 +420,7 @@ export default function EmployeeAttendance() {
         {leaveNotice && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start justify-between gap-3">
             <span>{leaveNotice}</span>
-            <button onClick={() => setLeaveNotice('')}
+            <button type="button" aria-label="Close" title="Close" onClick={() => setLeaveNotice('')}
               className="shrink-0 text-amber-700 hover:text-amber-900 text-lg leading-none">×</button>
           </div>
         )}
@@ -479,7 +479,7 @@ export default function EmployeeAttendance() {
           </div>
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Hours</div>
-            <div className="text-lg font-mono">{today?.hoursWorked ?? '-'}</div>
+            <div className="text-lg font-mono">{formatHours(today?.hoursWorked)}</div>
           </div>
         </div>
         <div className="flex gap-2 items-center">
@@ -502,7 +502,7 @@ export default function EmployeeAttendance() {
               <h2 className="card-title">
                 {capture === 'checkin' ? 'Check In' : 'Check Out'} · take your photo
               </h2>
-              <button onClick={closeCapture} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+              <button onClick={closeCapture} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
             </div>
 
             <div className="bg-gray-900 rounded-lg overflow-hidden aspect-[4/3] flex items-center justify-center mb-3">
@@ -582,6 +582,16 @@ export default function EmployeeAttendance() {
                 Starting after {HALF_DAY_CUTOFF_LABEL}, so this is an <strong>afternoon half day</strong>
                 {' '}— it will <strong>not</strong> count as a late arrival.
               </p>
+            )}
+
+            {/* The punch error belongs INSIDE this overlay. It used to render only
+                in the page banner underneath, so a rejected punch just flipped
+                the button back to "Confirm Check In" and looked like nothing
+                had happened. */}
+            {error && (
+              <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-2 py-1.5 rounded-lg">
+                {error}
+              </div>
             )}
 
             <div className="flex flex-wrap gap-2 justify-end">

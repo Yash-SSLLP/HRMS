@@ -155,7 +155,20 @@ export default function ApplyForm() {
           <label className="block text-sm font-medium text-gray-700 mb-1">Resume * <span className="text-gray-400 font-normal">(PDF or Word, max 5 MB)</span></label>
           <input
             type="file" required accept=".pdf,.doc,.docx,application/pdf,application/msword"
-            onChange={(e) => setResume(e.target.files?.[0] || null)}
+            onChange={(e) => {
+              // Checked here, not by the server after the whole file has been
+              // uploaded: on a phone connection that is a long wait for a
+              // rejection the browser already knew about.
+              const f = e.target.files?.[0] || null;
+              if (f && f.size > 5 * 1024 * 1024) {
+                setError(`That file is ${(f.size / 1024 / 1024).toFixed(1)} MB — please attach a resume under 5 MB.`);
+                e.target.value = '';
+                setResume(null);
+                return;
+              }
+              setError('');
+              setResume(f);
+            }}
             className="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-900 file:text-white hover:file:bg-gray-700"
           />
         </div>

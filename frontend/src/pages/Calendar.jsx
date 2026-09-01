@@ -19,6 +19,8 @@ import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
 import { COMPANY_NAME } from '../config/company';
 import SearchableSelect from '../components/SearchableSelect';
+import { confirmDialog } from '../components/dialogs';
+import { toast } from 'react-toastify';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -297,15 +299,25 @@ export default function Calendar() {
     }
   };
 
+  // Asked first, and told afterwards. This was the one page in the portal
+  // that deleted on a single click, and its failure message rendered in the
+  // page body underneath the z-[60] detail modal, where nobody could see it.
   const deleteReminder = async (e) => {
     const id = e.meta?.reminderId;
     if (!id) return;
+    const ok = await confirmDialog({
+      title: 'Delete this reminder?',
+      message: `“${e.label}” will be removed for everyone it was set for.`,
+      tone: 'danger',
+      confirmText: 'Delete',
+    });
+    if (!ok) return;
     try {
       await api.delete(`/reminders/${id}`);
       setSelected(null);
       await load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not delete the reminder.');
+      toast.error(err.response?.data?.message || 'Could not delete the reminder.');
     }
   };
 

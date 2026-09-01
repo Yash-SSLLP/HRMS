@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
+import { toast } from 'react-toastify';
 import { downloadTableXlsx } from '../api/download';
 
 const inr = new Intl.NumberFormat('en-IN', {
@@ -168,8 +169,10 @@ export default function AdminCompliance() {
         moneyCols,
         totals: totalsRow,
       });
-    } catch {
-      /* surfaced by the axios interceptor; no-op here */
+    } catch (err) {
+      // The axios interceptor only signs you out on a 401 — it shows nothing.
+      // Without this, a failed statutory export produced no file and no message.
+      toast.error(err.response?.data?.message || 'Could not build the Excel file. Please try again.');
     }
   };
 

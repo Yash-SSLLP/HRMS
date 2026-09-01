@@ -56,6 +56,11 @@ export default function EmployeeTravel() {
   const [form, setForm] = useState(emptyForm);
   const [receiptFile, setReceiptFile] = useState(null);
 
+  // Closing the modal has to forget the attachment too. It did not: the file
+  // input showed "No file chosen" on reopening while the previously picked
+  // receipt was still armed and would be uploaded with the next request.
+  const closeModal = () => { setShowModal(false); setForm(emptyForm); setReceiptFile(null); };
+
   const load = async () => {
     setLoading(true);
     setError('');
@@ -113,7 +118,7 @@ export default function EmployeeTravel() {
   return (
     <div>
       <PageHeader title="Travel Requests" subtitle="Request and track your business travel.">
-        <button onClick={() => setShowModal(true)}
+        <button onClick={() => { setForm(emptyForm); setReceiptFile(null); setShowModal(true); }}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + New Request
         </button>
@@ -217,7 +222,8 @@ export default function EmployeeTravel() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">To date *</label>
-                  <input required type="date" value={form.toDate}
+                  {/* Nothing on either side rejected a return before departure. */}
+                  <input required type="date" value={form.toDate} min={form.fromDate || undefined}
                     onChange={(e) => setForm({ ...form, toDate: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
@@ -299,7 +305,7 @@ export default function EmployeeTravel() {
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
               )}
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowModal(false)}
+                <button type="button" onClick={closeModal}
                   className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={saving}
                   className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">

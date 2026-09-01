@@ -24,7 +24,9 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
-const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+// Paise are shown when a claim has them and dropped when it does not, so one
+// claim can no longer read ₹1,250 in the table and ₹1,250.40 in the pay dialog.
+const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 // A claim is nearly always filed for today, so the date opens filled in (and
 // stays editable for a receipt someone is catching up on). Built fresh per
