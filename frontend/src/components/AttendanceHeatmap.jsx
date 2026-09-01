@@ -353,7 +353,7 @@ function DayDetailsModal({ date, endpoint, onClose }) {
               </div>
             )}
           </div>
-          <button type="button" onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         <div className="px-5 py-4 overflow-y-auto">
           {loading && <div className="text-sm text-gray-400">Loading…</div>}

@@ -48,7 +48,7 @@ export default function PromptDialog({
       <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-6" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold text-gray-900">{title}</h2>
-          <button type="button" onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         <form onSubmit={submit}>
           {label && <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>}
