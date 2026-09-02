@@ -17,10 +17,11 @@ const Setting = require('../models/Setting');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
-const { formatDuration } = require('../utils/duration');
+const { formatDuration, formatHours } = require('../utils/duration');
 const {
   HALF_DAY_CUTOFF_HOUR, lateCutoff, getLatePolicy, setLatePolicy, normalizeLatePolicy,
-  lateMinutes, statusFromHours, effectiveHours, halfDayCutoffPassed,
+  lateMinutes, statusFromHours, settleStatus, effectiveHours, halfDayCutoffPassed,
+  getMinPresentHours, setMinPresentHours, normalizeMinPresentHours,
 } = require('../utils/workday');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit, isSundayKey } = require('../utils/restDay');
@@ -511,9 +512,9 @@ async function decideWorkOnLeave(record, userId, action, note, actor) {
     // The punch counts from here on, so the ordinary hours rule decides the day.
     // It has to be taken off the leave status first: statusFromHours refuses to
     // judge a non-working day (by design), and would otherwise return null.
-    record.status = 'Present';
-    if (record.halfDayDeclared) record.status = 'HalfDay';
-    else record.status = statusFromHours(record) || 'Present';
+    // belowDayMinimum() deliberately exempts a work-on-leave day, so a short
+    // approved shift cannot both hand the leave day back AND cost a day's pay.
+    record.status = settleStatus(record) || 'Present';
     record.remarks = appendRemark(
       record.remarks,
       `Worked while on ${leaveLabel(claim.leaveType)} — approved${decidedByName ? ` by ${decidedByName}` : ''}${leaveDayReturned ? '; the leave day was returned' : ''}.`
@@ -690,10 +691,18 @@ const checkOut = asyncHandler(async (req, res) => {
   // punching out must not promote it to a worked day. statusFromHours already
   // refuses to judge a leave day; the half-day declaration is the branch that
   // would otherwise slip past.
-  const heldOnLeave = record.workOnLeave && record.workOnLeave.status !== 'Approved';
-  if (!heldOnLeave) {
-    if (record.halfDayDeclared) record.status = 'HalfDay';
-    else record.status = statusFromHours(record) || record.status;
+  {
+    // settleStatus owns the precedence (declaration > day-minimum > half-day >
+    // present) so the five places that settle a day cannot drift apart. The
+    // undecided-work-on-leave hold that used to be duplicated here now lives in
+    // settleStatus too, so the worker and the HR edit get it as well.
+    record.status = settleStatus(record) || record.status;
+    if (record.status === 'Absent') {
+      record.remarks = appendRemark(
+        record.remarks,
+        `Worked ${formatHours(effectiveHours(record))} — under the ${getMinPresentHours()}h minimum, so the day is marked absent.`
+      );
+    }
   }
   await record.save();
   res.json({ record });
@@ -1261,9 +1270,15 @@ const listAll = asyncHandler(async (req, res) => {
     settings: {
       office,
       geofenceThresholdM: settings.geofenceThresholdM,
-      // The admin page edits this in the same modal as the geofence, so it
-      // travels with the records rather than costing a second round trip.
+      // The admin page edits these in the same modal as the geofence, so they
+      // travel with the records rather than costing a second round trip.
+      //
+      // minPresentHours MUST be here even though only a SuperAdmin can change it:
+      // the modal hydrates its form from this payload and posts every field back,
+      // so omitting it would hydrate the default and silently reset a configured
+      // threshold the next time anyone saved the office address.
       latePolicy: settings.latePolicy,
+      minPresentHours: settings.minPresentHours,
     },
   });
 });
@@ -1750,12 +1765,17 @@ const dailyStats = asyncHandler(async (req, res) => {
  * Today's clock-in/out board split into on-time vs late.
  * @route GET /api/attendance/today-board?department=  (admin)
  * @param {string} [req.query.department] - filter, or 'all'
- * @returns {{date, onTime, late, departments}}
+ * @returns {{date, onTime, late, departments, counts}}
  */
 // GET /api/attendance/today-board?department=
 // Compact "Clock-In/Out" board for the admin dashboard: everyone who has
 // punched in today, split into on-time vs late, with their clock in/out and
 // production hours. "Late" = checked in after the standard start time.
+//
+// Both arrays stay sorted EARLIEST punch first. The web dashboard card shows
+// only the few most recent arrivals and reverses them itself; the order is not
+// flipped here because mobile's TodayAttendanceScreen reads these arrays
+// straight through and reads chronologically.
 const todayBoard = asyncHandler(async (req, res) => {
   const today = startOfDay(new Date());
   const tomorrow = new Date(today);
@@ -1769,7 +1789,9 @@ const todayBoard = asyncHandler(async (req, res) => {
     .populate({
       path: 'employee',
       select: 'employeeCode designation department user',
-      populate: { path: 'user', select: 'firstName lastName' },
+      // `photo` costs nothing extra (a scalar on an already-populated doc) and
+      // is what lets the dashboard card show a real face instead of initials.
+      populate: { path: 'user', select: 'firstName lastName photo' },
     })
     .lean();
 
@@ -1780,6 +1802,10 @@ const todayBoard = asyncHandler(async (req, res) => {
       return {
         id: String(p._id),
         recordId: String(r._id),
+        // The avatar endpoint is keyed by USER id, not profile id — `id` above
+        // is the EmployeeProfile and cannot be used for it.
+        userId: String(p.user._id),
+        employeeCode: p.employeeCode,
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.employeeCode,
         designation: p.designation || '',
         department: p.department || 'Unassigned',
@@ -1787,6 +1813,11 @@ const todayBoard = asyncHandler(async (req, res) => {
         checkOut: r.checkOut || null,
         hoursWorked: r.hoursWorked || 0,
         lateMinutes: lateMinutes(r),
+        checkInWfh: !!r.checkInWfh,
+        // Only whether a face exists — the images themselves stay behind their
+        // own authorised endpoints, same as the presence board does it.
+        hasAvatar: Boolean(p.user.photo),
+        hasCheckInPhoto: !!(r.checkInPhoto || r.checkInPhotoCloud?.publicId),
       };
     });
 
@@ -1795,13 +1826,30 @@ const todayBoard = asyncHandler(async (req, res) => {
 
   rows.sort((a, b) => new Date(a.checkIn) - new Date(b.checkIn));
 
-  const departments = (await EmployeeProfile.distinct('department')).filter(Boolean).sort();
+  // Scoped, not `distinct('department')` bare: an unfiltered distinct hands a
+  // single-company admin every OTHER company's department names, which the
+  // company wall exists to prevent (and selecting one just returns nothing).
+  const departments = (await EmployeeProfile.distinct('department', employeeProfileScope(req)))
+    .filter(Boolean)
+    .sort();
+
+  const onTime = rows.filter((r) => r.lateMinutes === 0);
+  const late = rows.filter((r) => r.lateMinutes > 0);
 
   res.json({
     date: today,
-    onTime: rows.filter((r) => r.lateMinutes === 0),
-    late: rows.filter((r) => r.lateMinutes > 0),
+    onTime,
+    late,
     departments,
+    // Counts describe exactly the rows returned (so they follow the department
+    // filter). They exist so a card can cap its list without losing the totals.
+    counts: {
+      total: rows.length,
+      onTime: onTime.length,
+      late: late.length,
+      clockedOut: rows.filter((r) => r.checkOut).length,
+      stillIn: rows.filter((r) => !r.checkOut).length,
+    },
   });
 });
 
@@ -2098,7 +2146,7 @@ const updateRecord = asyncHandler(async (req, res) => {
   Object.assign(record, req.body);
   // HR's explicit status choice is final. When they only corrected the punch
   // times, re-derive from the hours so the half-day rule stays honest.
-  if (!statusChosen) record.status = statusFromHours(record) || record.status;
+  if (!statusChosen) record.status = settleStatus(record) || record.status;
   await record.save();
 
   // Audit the times, after the save so only a change that stuck is recorded.
@@ -2128,6 +2176,7 @@ const getSettings = asyncHandler(async (req, res) => {
     geofenceThresholdM: s.geofenceThresholdM,
     attendanceReminders: s.attendanceReminders,
     latePolicy: s.latePolicy,
+    minPresentHours: s.minPresentHours,
   });
 });
 
@@ -2138,7 +2187,8 @@ const getSettings = asyncHandler(async (req, res) => {
  * @param {Object} [req.body.office] - {lat, lng, label}
  * @param {number} [req.body.geofenceThresholdM] - clamped >= 0
  * @param {Object} [req.body.latePolicy] - {hour, minute, graceMinutes}; SuperAdmin only
- * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy}}
+ * @param {number} [req.body.minPresentHours] - day-minimum hours, 0-6; SuperAdmin only
+ * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy, minPresentHours}}
  */
 // PUT /api/attendance/settings  (HR/Admin)
 // Update the office coordinates/label and/or the geofence threshold (metres).
@@ -2183,16 +2233,24 @@ const updateSettings = asyncHandler(async (req, res) => {
     s.latePolicy = normalizeLatePolicy({ ...(s.latePolicy || {}), ...req.body.latePolicy });
   }
 
+  // Same gate, same reasoning, one step further: below this many hours the day is
+  // not short, it is absent, and payroll charges the day as loss of pay.
+  if (req.body.minPresentHours !== undefined && req.user.role === 'SuperAdmin') {
+    s.minPresentHours = normalizeMinPresentHours(req.body.minPresentHours);
+  }
+
   await s.save();
   // Push the change into this process's cache immediately — services/latePolicy
   // would otherwise take up to five minutes to notice, and the admin who just
   // saved would see the old rule in the records they are looking at.
   setLatePolicy(s.latePolicy);
+  setMinPresentHours(s.minPresentHours);
   res.json({
     office: s.office,
     geofenceThresholdM: s.geofenceThresholdM,
     attendanceReminders: s.attendanceReminders,
     latePolicy: getLatePolicy(),
+    minPresentHours: getMinPresentHours(),
   });
 });
 

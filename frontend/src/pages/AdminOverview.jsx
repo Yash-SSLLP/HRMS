@@ -173,11 +173,12 @@ export default function AdminOverview() {
         <ClockInOutCard />
 
         {/* Today's attendance — present vs on leave vs absent.
-            This card is a grid twin of the Clock-In/Out board, so it stretches to
-            whatever height that list reaches. Without the flex column below, the
-            donut stayed pinned to the top and left a growing pool of dead space
-            underneath as more people punched in. `flex-1` on the chart row lets
-            it take the leftover height and centre the donut in it. */}
+            This card is a grid twin of the Clock-In/Out board, so grid `stretch`
+            gives it that card's height. That used to be unbounded — the board
+            listed every punch, so a forty-person morning left a matching pool of
+            dead space under this donut. The board now caps its list, so the
+            height is steady (~510px) whatever the headcount; `flex-1` on the
+            chart row still takes the leftover and centres the donut in it. */}
         <div className="bg-white shadow rounded-lg p-5 flex flex-col">
           <div className="flex items-center justify-between mb-3">
             <h2 className="card-title">Today's Attendance</h2>

@@ -13,7 +13,7 @@ const { notify, notifyBackend } = require('../services/notify');
 const { isReadOnlyExec } = require('../middleware/authMiddleware');
 const { scopeUserField } = require('../utils/employeeScope');
 const { startOfDayIST } = require('../utils/dateHelpers');
-const { statusFromHours } = require('../utils/workday');
+const { settleStatus } = require('../utils/workday');
 
 // `role` rides along so the review screen can tell an HR's own request apart
 // from an ordinary employee's (see HR_REVIEW_ROLES below).
@@ -189,15 +189,30 @@ async function applyToAttendance(item, reviewer) {
     record = new Attendance({ employee: profile._id, date: day, status: 'Present' });
   }
   const inAt = timeOnDay(item.date, item.requestedCheckIn);
-  const outAt = timeOnDay(item.date, item.requestedCheckOut);
+  let outAt = timeOnDay(item.date, item.requestedCheckOut);
   if (inAt) record.checkIn = inAt;
+  // A 'Forgot Check-out' request carries only a time-of-day, and timeOnDay can
+  // only anchor it to the request's OWN day — so a shift that ended after
+  // midnight ("00:15") resolves to 00:15 that morning, hours BEFORE the check-in.
+  // Left alone the pair inverts, effectiveHours collapses the negative span to 0,
+  // and the day-minimum rule reads that as a zero-hour day and charges a full
+  // day's pay for a shift that actually ran ten hours. Roll it forward to the
+  // next day instead, which is what an after-midnight close means.
+  //
+  // The sibling HR-edit path already refuses an inverted pair outright
+  // (updateRecord: "Check-out has to be after check-in."); this is the path
+  // employees are actually pointed at, so it had no such protection at all.
+  const effectiveIn = inAt || record.checkIn;
+  if (outAt && effectiveIn && outAt.getTime() <= new Date(effectiveIn).getTime()) {
+    outAt = new Date(outAt.getTime() + 24 * 60 * 60 * 1000);
+  }
   if (outAt) record.checkOut = outAt;
   if (record.checkIn && record.status === 'Absent') record.status = 'Present';
   // Re-derive the day from the corrected punches. This is what "half day until
   // regularization" means: a day auto-halved for short hours (or for a missing
   // punch-out counted to 7 PM) is restored to Present once the real times show
   // a full day — and stays a half day if they don't.
-  record.status = statusFromHours(record) || record.status;
+  record.status = settleStatus(record) || record.status;
   const note = `Regularized (${item.type}) by ${reviewer?.fullName || 'HR'}: ${item.reason}`;
   record.remarks = record.remarks ? `${record.remarks} · ${note}` : note;
   await record.save();

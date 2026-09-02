@@ -1,7 +1,7 @@
 /**
  * Document router — mounted at /api/documents.
  * Employee HR-document self-upload plus HR/Admin management, with
- * multer memory upload (5MB, PDF/image/Word allowlist).
+ * multer memory upload (10MB, PDF/image/Word allowlist by MIME or extension).
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
@@ -24,7 +24,7 @@ const { protect, restrictTo, requirePermission } = require('../middleware/authMi
 
 const router = express.Router();
 
-// 5 MB cap, allowlist common HR document types
+// Allowlist of common HR document types.
 const ALLOWED_MIMES = new Set([
   'application/pdf',
   'image/jpeg',
@@ -34,12 +34,26 @@ const ALLOWED_MIMES = new Set([
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
+// ...and the extensions that mean the same thing. This route used to test the
+// MIME string alone, which made it stricter than every sibling upload route for
+// no reason: a client that labels a PDF anything other than the literal
+// 'application/pdf' — 'application/octet-stream' from an Android file provider
+// that could not identify it, 'application/x-pdf' from an older one, or an empty
+// type — was rejected outright, and the message named a type the person never
+// chose. The filename is the more reliable signal in exactly those cases.
+const ALLOWED_EXTENSIONS = /\.(pdf|jpe?g|png|webp|heic|heif|docx?)$/i;
 
+// 10 MB cap: a phone-scanned multi-page document (the Aadhaar/PAN/marksheet
+// scans this endpoint exists to collect) routinely runs past 5 MB, and the
+// PUBLIC submission link already accepts 10 MB for the very same files — so the
+// old 5 MB here meant a document could be submitted through one door and not the
+// other. See employeeRoutes docUpload.
 const upload = createUpload({
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!ALLOWED_MIMES.has(file.mimetype)) {
-      return cb(new Error(`Unsupported file type: ${file.mimetype}`));
+    const ok = ALLOWED_MIMES.has(file.mimetype) || ALLOWED_EXTENSIONS.test(file.originalname || '');
+    if (!ok) {
+      return cb(new Error('Only PDF, Word or image files are accepted'));
     }
     cb(null, true);
   },

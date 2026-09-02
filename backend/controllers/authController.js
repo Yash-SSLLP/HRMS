@@ -191,7 +191,14 @@ const updateMyCredentials = asyncHandler(async (req, res) => {
     }
     user.email = email.toLowerCase();
   }
-  if (newPassword) user.password = newPassword; // pre-save hook re-hashes
+  if (newPassword) {
+    user.password = newPassword; // pre-save hook re-hashes
+    // Whatever an admin set is now replaced by something only this person knows,
+    // which is exactly what the flag was waiting for. Cleared HERE rather than in
+    // the model hook because the hook cannot tell an admin reset (which SETS the
+    // flag) from the owner's own change (which clears it).
+    user.mustChangePassword = false;
+  }
 
   await user.save();
   res.json({ user: user.toJSON() });

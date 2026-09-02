@@ -19,6 +19,15 @@ const HALF_DAY_MIN_HOURS = 6;    // a day under this is a half day until regular
 // does not start at WORKDAY_START_HOUR and so is never a late arrival — see
 // halfDayCutoffPassed() and lateMinutes().
 const HALF_DAY_CUTOFF_HOUR = 12; // 12:00 PM IST
+// Past this, a day's ONLY punch is a stray one rather than a short workday.
+// Somebody who genuinely worked forty minutes started in the morning; somebody
+// whose single punch pair is at 6 PM forgot to punch in and is punching at the
+// end of the day, or tapped the button twice. Both are corrected by a
+// regularization, not by charging them a day's pay — see belowDayMinimum.
+// Set below WORKDAY_END_HOUR on purpose: the observed mis-punches ran from
+// 5:50 PM to 9:25 PM, so an evening boundary at the close of business would
+// have missed the earliest of them.
+const EVENING_PUNCH_HOUR = 17;   // 5:00 PM IST
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -46,6 +55,22 @@ const DEFAULT_LATE_POLICY = { hour: WORKDAY_START_HOUR, minute: 0, graceMinutes:
 const MAX_GRACE_MINUTES = 240;   // 4h — a window wider than this is a data-entry slip
 
 let latePolicy = { ...DEFAULT_LATE_POLICY };
+
+/* ---------------------------------------------------------------------------
+ * Minimum hours for the day to count at all (SuperAdmin-set, default 1h).
+ *
+ * A day whose MEASURED time falls under this is not a short day, it is a
+ * non-day: status 'Absent', which payroll counts as loss of pay. That is a real
+ * deduction, so the rule is deliberately narrow — see `belowDayMinimum` for the
+ * four cases it refuses to judge.
+ *
+ * Capped at HALF_DAY_MIN_HOURS because the bands have to stay in order: a floor
+ * at or above the half-day line would swallow the half-day band entirely and
+ * turn every short day straight into an absence. 0 switches the rule off.
+ * ------------------------------------------------------------------------- */
+const DEFAULT_MIN_PRESENT_HOURS = 1;
+
+let minPresentHours = DEFAULT_MIN_PRESENT_HOURS;
 
 // Coerce whatever came out of the database / an HTTP body into a usable policy.
 // Anything missing or out of range falls back to the default field rather than
@@ -78,6 +103,95 @@ function setLatePolicy(p) {
  */
 function getLatePolicy() {
   return { ...latePolicy };
+}
+
+/**
+ * Coerce a stored/posted minimum into a usable number of hours.
+ * Clamped to [0, HALF_DAY_MIN_HOURS]; anything unparseable falls back to the
+ * default rather than to NaN, so a bad value can never mark a whole company
+ * absent (NaN comparisons are false, which would silently disable it instead —
+ * either way, guessing beats propagating).
+ * @param {number|string} v
+ * @returns {number} hours, to 2dp
+ */
+function normalizeMinPresentHours(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_MIN_PRESENT_HOURS;
+  return +Math.min(HALF_DAY_MIN_HOURS, Math.max(0, n)).toFixed(2);
+}
+
+/**
+ * Replace the cached day-minimum. Mirrors setLatePolicy — see
+ * services/latePolicy.js for how the cache is kept in step with the Setting.
+ * @param {number|string} v
+ * @returns {number} the value now in force
+ */
+function setMinPresentHours(v) {
+  minPresentHours = normalizeMinPresentHours(v);
+  return minPresentHours;
+}
+
+/** @returns {number} the minimum hours a day must reach to count as worked. */
+function getMinPresentHours() {
+  return minPresentHours;
+}
+
+/**
+ * Is this day's only punch an evening one?
+ *
+ * `date` is IST midnight, so the hour offset applies straight to it — the same
+ * arithmetic halfDayCutoffPassed() uses, and it needs no timezone conversion.
+ *
+ * @param {{checkIn: Date, date: Date}} record
+ * @returns {boolean}
+ */
+function eveningOnlyPunch(record) {
+  if (!record || !record.checkIn) return false;
+  const evening = new Date(record.date).getTime() + EVENING_PUNCH_HOUR * HOUR_MS;
+  return new Date(record.checkIn).getTime() >= evening;
+}
+
+/**
+ * Is this record short enough to be a non-day?
+ *
+ * Everything here is a REFUSAL to judge, and each one exists because judging
+ * would take a day's pay off somebody who earned it:
+ *
+ *  - **No punch-out.** effectiveHours() then assumes the day ran to 7 PM, and an
+ *    assumption must never cost a day. It also makes any check-in after 6 PM
+ *    arithmetically "short" (after 7 PM it clamps to 0), so without this guard
+ *    every evening and night-shift punch would be an absence.
+ *  - **A declared half day.** Attendance.js states the hours rule must not undo
+ *    the employee's own declaration, and this rule is the hours rule.
+ *  - **A rest day.** A Sunday is already paid inside the monthly salary and a
+ *    worked one pays double once approved; marking it absent would take the paid
+ *    day away AND void the duty claim (restDayCredit returns 0 for 'Absent').
+ *  - **A leave day being worked.** The leave day is handed back when the claim is
+ *    approved, so an absence here would leave the employee worse off than if they
+ *    had stayed at home.
+ *  - **A day whose only punch is in the evening.** A real forty-minute day starts
+ *    in the morning. A single pair at 6 PM is somebody who forgot to punch in and
+ *    is punching at the end of the day, or who tapped twice — a stray punch, and
+ *    the remedy for those is a regularization rather than a day's lost pay.
+ *
+ * @param {{checkIn: Date, checkOut: Date, date: Date, halfDayDeclared: boolean, workOnLeave: object}} record
+ * @returns {boolean}
+ */
+function belowDayMinimum(record) {
+  if (!minPresentHours) return false;                 // 0 = rule switched off
+  if (!record || !record.checkIn || !record.checkOut) return false;
+  if (record.halfDayDeclared) return false;
+  if (record.workOnLeave) return false;
+  // Same shape as halfDayCutoffPassed: `date` is IST midnight, so the hour
+  // offset applies straight to it and no timezone conversion is needed.
+  if (eveningOnlyPunch(record)) return false;
+  // Sunday only: an org-wide comp-off day needs the Holiday collection, which
+  // this synchronous path cannot reach. See the note in statusFromHours.
+  const { ymdIST } = require('./dateHelpers');
+  const { isSundayKey } = require('./restDay');
+  if (isSundayKey(ymdIST(record.date))) return false;
+  const hours = effectiveHours(record);
+  return hours != null && hours < minPresentHours;
 }
 
 /**
@@ -188,22 +302,71 @@ function halfDayCutoffPassed(record) {
   return new Date(record.checkIn).getTime() > cutoff;
 }
 
+// Why this is NOT NON_WORKING_STATUSES: that set contains 'Absent', and a day
+// already marked absent has to stay re-judgeable. Otherwise the day-minimum rule
+// becomes a one-way door — the worker marks an unclosed evening absent, HR fills
+// in the real 6 PM punch-out the next morning, and the record refuses to climb
+// back to Present because it is now 'Absent'. Leave, holidays and weekly offs
+// genuinely are untouchable: they say why somebody was away, and no arithmetic
+// over punch times should overwrite that.
+const HOURS_RULE_HOLDS = new Set(['OnLeave', 'Holiday', 'WeeklyOff']);
+
 /**
  * The status a worked day should carry, given the hours it is worth.
  *
- * Only ever returns 'Present' or 'HalfDay' — and only for days that are already
- * a worked day. Leave, holidays, weekly offs and absences are returned
- * unchanged so this can be called unconditionally.
+ * Three bands: under the SuperAdmin-set day minimum the day did not happen
+ * ('Absent'); under HALF_DAY_MIN_HOURS it is a 'HalfDay'; otherwise 'Present'.
+ * Leave, holidays and weekly offs are left alone so this can be called
+ * unconditionally. See belowDayMinimum for the days the lowest band refuses to
+ * judge — notably that it needs a real punch-out, never an assumed one.
+ *
+ * KNOWN GAP: an org-wide comp-off day worked briefly is not exempted here. The
+ * Sunday test is arithmetic on the date, but comp-off days live in the Holiday
+ * collection and this function is called synchronously from payroll and the
+ * punch paths, so it cannot look them up. Rare, and HR can correct the day.
  *
  * @param {{status?: string, date: Date, checkIn?: Date, checkOut?: Date}} record
  * @returns {string|null} the status to apply, or null to leave the record alone
  */
 function statusFromHours(record) {
   if (!record || !record.checkIn) return null;          // nothing punched — not ours to judge
-  if (NON_WORKING_STATUSES.has(record.status)) return null;
+  if (HOURS_RULE_HOLDS.has(record.status)) return null;
+  // The 'Absent' un-latch is deliberately narrow: a day may climb back out of
+  // Absent only when there is a REAL punch-out to re-judge it on. Without this,
+  // the auto-close worker — whose records by definition have no punch-out —
+  // would overturn an absence a human set, on nothing but the 7 PM assumption.
+  if (record.status === 'Absent' && !record.checkOut) return null;
   const hours = effectiveHours(record);
   if (hours == null) return null;
+  if (belowDayMinimum(record)) return 'Absent';
   return hours < HALF_DAY_MIN_HOURS ? 'HalfDay' : 'Present';
+}
+
+/**
+ * The status to settle a day on, declaration included — the single place that
+ * knows the precedence, so the five call sites cannot drift apart.
+ *
+ * `halfDayDeclared` outranks the hours rule (models/Attendance.js says so in as
+ * many words). Three call sites — the auto-close worker, the HR record edit and
+ * regularization approval — used to call statusFromHours directly with no
+ * declaration guard, which was harmless while the worst it could return was
+ * 'HalfDay' and is not harmless now that it can return 'Absent'.
+ *
+ * @param {object} record
+ * @returns {string|null} the status to apply, or null to leave the record alone
+ */
+function settleStatus(record) {
+  if (!record || !record.checkIn) return null;
+  if (HOURS_RULE_HOLDS.has(record.status)) return null;
+  // A day worked while on leave holds its LEAVE status until the claim is
+  // decided — punching does not promote it to a worked day. This lived at the
+  // punch-out call site only, which was fine while that was the one path that
+  // settled a day; now that the worker and the HR edit come through here too, it
+  // has to live where the precedence does. The approval path sets the status
+  // explicitly once the claim is Approved, so it is unaffected.
+  if (record.workOnLeave && record.workOnLeave.status !== 'Approved') return null;
+  if (record.halfDayDeclared) return 'HalfDay';
+  return statusFromHours(record);
 }
 
 module.exports = {
@@ -223,4 +386,12 @@ module.exports = {
   effectiveHours,
   halfDayCutoffPassed,
   statusFromHours,
+  settleStatus,
+  belowDayMinimum,
+  eveningOnlyPunch,
+  EVENING_PUNCH_HOUR,
+  DEFAULT_MIN_PRESENT_HOURS,
+  normalizeMinPresentHours,
+  setMinPresentHours,
+  getMinPresentHours,
 };

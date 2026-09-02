@@ -22,6 +22,14 @@ export default function ProtectedRoute({ children, roles, admin = false }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // A SuperAdmin set this password, so at least two people know it: it is a way
+  // back in, not a password to keep. Held here rather than only redirecting after
+  // login, because the auth store is persisted — without this, typing /admin in
+  // the address bar on the next page load would walk straight past the gate.
+  if (user.mustChangePassword && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
+  }
+
   const roleAllowed = !roles || roles.includes(user.role);
   // The admin tree lists Manager among its roles so a GRANTED manager can enter,
   // but the role by itself isn't enough — most Managers hold no capability.

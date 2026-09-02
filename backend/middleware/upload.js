@@ -37,9 +37,20 @@ const MIDDLEWARE_METHODS = ['single', 'array', 'fields', 'none', 'any'];
  */
 function createUpload(options = {}) {
   const instance = multer({ storage: multer.memoryStorage(), ...options });
+  // Multer's LIMIT_FILE_SIZE error does not carry the limit it tripped, so the
+  // handler could only ever say "too large" without saying too large for what.
+  // The factory is the one place that knows, so it stamps the figure on the way
+  // past and errorHandler turns it into a sentence naming the actual ceiling.
+  const limitMb = options.limits && options.limits.fileSize
+    ? Math.round((options.limits.fileSize / (1024 * 1024)) * 10) / 10
+    : null;
+  const annotate = (mw) => (req, res, next) => mw(req, res, (err) => {
+    if (err && limitMb && err.code === 'LIMIT_FILE_SIZE') err.limitMb = limitMb;
+    next(err);
+  });
   const wrapped = {};
   for (const method of MIDDLEWARE_METHODS) {
-    wrapped[method] = (...args) => preserveContext(instance[method](...args));
+    wrapped[method] = (...args) => preserveContext(annotate(instance[method](...args)));
   }
   return wrapped;
 }

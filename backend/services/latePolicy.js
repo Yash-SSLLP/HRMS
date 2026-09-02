@@ -18,7 +18,7 @@
  */
 
 const Setting = require('../models/Setting');
-const { setLatePolicy, getLatePolicy } = require('../utils/workday');
+const { setLatePolicy, getLatePolicy, setMinPresentHours, getMinPresentHours } = require('../utils/workday');
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -31,6 +31,10 @@ let intervalHandle = null;
 async function refreshLatePolicy() {
   try {
     const s = await Setting.getSettings();
+    // The day-minimum rides along on the same poll: it is read by the same
+    // synchronous status code, from the same Setting singleton, and a second
+    // timer for one number would just be a second thing to forget.
+    setMinPresentHours(s.minPresentHours);
     return setLatePolicy(s.latePolicy);
   } catch (err) {
     console.error('late policy refresh failed, keeping the cached one:', err.message);
@@ -50,6 +54,10 @@ function startWorker() {
       + `${String(p.minute).padStart(2, '0')} IST`
       + (p.graceMinutes ? ` + ${p.graceMinutes} min grace` : ' (no grace window)')
     );
+    const min = getMinPresentHours();
+    console.log(min
+      ? `Day minimum loaded: under ${min}h counts as absent`
+      : 'Day minimum loaded: rule is off (0h)');
   });
   intervalHandle = setInterval(refreshLatePolicy, REFRESH_INTERVAL_MS);
   if (intervalHandle.unref) intervalHandle.unref();

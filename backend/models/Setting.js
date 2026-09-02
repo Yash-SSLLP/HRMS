@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const OFFICE = require('../config/office');
-const { DEFAULT_LATE_POLICY, MAX_GRACE_MINUTES } = require('../utils/workday');
+const { DEFAULT_LATE_POLICY, MAX_GRACE_MINUTES, DEFAULT_MIN_PRESENT_HOURS, HALF_DAY_MIN_HOURS } = require('../utils/workday');
 
 // The signature slots a letter can carry. Fixed rather than free-form so a
 // renderer can ask for a specific one ("the CEO signs appointment letters")
@@ -79,6 +79,22 @@ const settingSchema = new mongoose.Schema(
       hour: { type: Number, default: DEFAULT_LATE_POLICY.hour, min: 0, max: 23 },
       minute: { type: Number, default: DEFAULT_LATE_POLICY.minute, min: 0, max: 59 },
       graceMinutes: { type: Number, default: DEFAULT_LATE_POLICY.graceMinutes, min: 0, max: MAX_GRACE_MINUTES },
+    },
+
+    // The least a day has to run before it counts as worked at all. Under it the
+    // day is marked Absent, which payroll charges as loss of pay — so like
+    // latePolicy above this is SuperAdmin-only, and for the same reason: it
+    // applies to everyone and it costs money.
+    //
+    // Capped at HALF_DAY_MIN_HOURS so the bands stay ordered (a floor above the
+    // half-day line would swallow that band whole); 0 switches the rule off.
+    // utils/workday.js holds the copy this process reads — services/latePolicy.js
+    // keeps the two in step, the same way it does for latePolicy.
+    minPresentHours: {
+      type: Number,
+      default: DEFAULT_MIN_PRESENT_HOURS,
+      min: 0,
+      max: HALF_DAY_MIN_HOURS,
     },
 
     // The contact strip printed along the bottom of the documents an employee

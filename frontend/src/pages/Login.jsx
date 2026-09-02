@@ -79,6 +79,14 @@ export default function Login() {
     try {
       const { data } = await api.post('/auth/login', { identifier, password });
       setSession({ user: data.user, token: data.token });
+      // Straight to the change screen, ignoring any remembered destination: an
+      // admin set this password, so nothing else is reachable until it is
+      // replaced. ProtectedRoute enforces the same thing on every later
+      // navigation — this only spares them a redirect bounce right now.
+      if (data.user.mustChangePassword) {
+        navigate('/change-password', { replace: true });
+        return;
+      }
       const from = location.state?.from?.pathname;
       // Employees and Managers use the employee portal; admins and the
       // read-only CEO/MD executives use the admin portal.

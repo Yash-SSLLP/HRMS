@@ -9,6 +9,8 @@ const {
   listUsers,
   listSessions,
   signOutUser,
+  listAccountSecurity,
+  resetUserPassword,
   getUser,
   createUser,
   updateUser,
@@ -64,6 +66,22 @@ router.get('/users', restrictTo('SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManag
 // Declared before the users.manage gate below so the capability cannot reach it.
 router.get('/sessions', restrictTo('SuperAdmin'), listSessions);
 router.post('/sessions/:id/logout', restrictTo('SuperAdmin'), signOutUser);
+
+// Account security (credential state + password reset). SuperAdmin ONLY, and
+// deliberately NOT restrictTo('SuperAdmin') — that helper waves CEO/MD through
+// on safe methods (EXEC_VIEWERS in authMiddleware), which would hand a read-only
+// executive the whole directory's login state. Same reasoning, same shape as
+// routes/auditRoutes.js. Declared above the users.manage gate so no granted
+// capability can reach it either.
+const superAdminOnly = (req, res, next) => {
+  if (req.user.role !== 'SuperAdmin') {
+    res.status(403);
+    return next(new Error('Not authorised to manage account security'));
+  }
+  return next();
+};
+router.get('/account-security', superAdminOnly, listAccountSecurity);
+router.post('/users/:id/reset-password', superAdminOnly, resetUserPassword);
 
 // Everything below requires the 'users.manage' capability (SuperAdmin always has it).
 router.use(requirePermission('users.manage'));

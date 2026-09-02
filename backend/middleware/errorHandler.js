@@ -65,10 +65,43 @@ function castMessage(e) {
   return empty ? `Please provide a valid ${label}.` : `The value for ${label} is not valid.`;
 }
 
+// Multer's own errors, in the words the person uploading needs.
+//
+// Multer throws before any handler sets a status, and carries none of its own,
+// so every one of these used to fall through as a 500 with a bare message like
+// "File too large" — which reads as the server breaking rather than as "your
+// file is too big", and told nobody what the limit actually is. The fileFilter
+// message is worse: "Unsupported file type: application/octet-stream" names a
+// MIME type the person never chose and cannot act on.
+const MULTER_MESSAGES = {
+  LIMIT_FILE_SIZE: 'That file is too large. Please attach a smaller copy.',
+  LIMIT_FILE_COUNT: 'Too many files at once. Please attach fewer.',
+  LIMIT_UNEXPECTED_FILE: 'That file was sent under an unexpected name.',
+  LIMIT_PART_COUNT: 'Too many parts in the upload.',
+  LIMIT_FIELD_KEY: 'One of the field names in the upload is too long.',
+  LIMIT_FIELD_VALUE: 'One of the fields in the upload is too long.',
+  LIMIT_FIELD_COUNT: 'Too many fields in the upload.',
+};
+
 function errorHandler(err, req, res, next) {
   let status = err.status || err.statusCode
     || (res.statusCode && res.statusCode !== 200 ? res.statusCode : 500);
   let message = err.message || 'Server error';
+
+  // Upload problems are the caller's to fix, never the server's fault — and the
+  // specific codes say WHICH problem, so a client can tell "too big" from
+  // "wrong type" without parsing prose.
+  if (err.name === 'MulterError') {
+    status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    message = MULTER_MESSAGES[err.code] || 'That file could not be uploaded.';
+    // createUpload stamps the route's own ceiling on, so the message can name it.
+    if (err.code === 'LIMIT_FILE_SIZE' && err.limitMb) {
+      message = `That file is larger than the ${err.limitMb} MB limit. Please attach a smaller copy.`;
+    }
+  } else if (/^Unsupported file type:/.test(message) || /^Only .* (are accepted|files are accepted)/.test(message)) {
+    // Thrown by a route's own fileFilter — already readable, just mis-statused.
+    status = 415;
+  }
 
   // Mongoose validation — build a readable sentence per failing field, and
   // translate any nested cast failure so a raw "Cast to ObjectId failed…" never

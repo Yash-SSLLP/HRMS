@@ -30,6 +30,9 @@ const STATUS_STYLES = {
 // Show enum keys ("RelievingLetter") with spaces ("Relieving Letter").
 const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
 
+// Mirrors backend/routes/documentRoutes.js's ceiling — keep the two in step.
+const MAX_UPLOAD_MB = 10;
+
 export default function AdminDocuments() {
   const [employees, setEmployees] = useState([]);
   // The document open in the preview modal (see the View action).
@@ -91,6 +94,14 @@ export default function AdminDocuments() {
     const list = Array.from(fileRef.current?.files || []);
     if (!list.length) {
       setError('Please choose a file first');
+      return;
+    }
+    // Same reasoning as the employee page: multer aborts a too-large upload
+    // without draining the request, so the browser sees the socket close and
+    // reports "Network Error" instead of the server's explanation. Refuse here.
+    const tooBig = list.filter((f) => f.size > MAX_UPLOAD_MB * 1024 * 1024);
+    if (tooBig.length) {
+      setError(`${tooBig.map((f) => f.name).join(', ')} — over ${MAX_UPLOAD_MB} MB. Please attach a smaller copy.`);
       return;
     }
     setUploading(true);

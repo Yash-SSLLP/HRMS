@@ -978,6 +978,137 @@ const ACTIVE_WINDOW_MS = 15 * 60 * 1000;
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Every account's credential state (Backend only).
+ *
+ * There is deliberately NO password field in this response, and there cannot be
+ * one: passwords are bcrypt-hashed by the User pre-save hook, which is one-way,
+ * so the server has never held anyone's actual password — only a verifier to
+ * compare a login attempt against. What this screen answers instead is the
+ * question a plaintext list is usually reached for: who can still get in, who
+ * has never signed in, whose password is old, and who is still sitting on one an
+ * admin handed them.
+ *
+ * @route GET /api/admin/account-security
+ * @param {string} [req.query.q] - name / email / employee-code search
+ * @returns {{count, accounts: Object[]}}
+ */
+// GET /api/admin/account-security
+const listAccountSecurity = asyncHandler(async (req, res) => {
+  const users = await User.find({})
+    .select('firstName lastName email role isActive lastLoginAt passwordChangedAt mustChangePassword createdAt')
+    .sort({ isActive: -1, firstName: 1 })
+    .lean();
+
+  // One query for the whole page rather than a lookup per row. CEO/MD have no
+  // employee profile at all, so they simply come back without a code — they
+  // sign in with the "CEO"/"MD" alias instead (see utils/loginIdentity).
+  const codeByUser = new Map(
+    (await EmployeeProfile.find({ user: { $in: users.map((u) => u._id) } })
+      .select('user employeeCode department').lean())
+      .map((p) => [String(p.user), { code: p.employeeCode || '', department: p.department || '' }])
+  );
+
+  let accounts = users.map((u) => {
+    const p = codeByUser.get(String(u._id));
+    return {
+      _id: String(u._id),
+      name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      email: u.email,
+      employeeCode: p?.code || '',
+      department: p?.department || '',
+      role: u.role,
+      isActive: u.isActive !== false,
+      lastLoginAt: u.lastLoginAt || null,
+      // Null means "not recorded since this field was added", which the client
+      // must show as unknown — NOT as "never changed", which would be a lie
+      // about an account that may well have been updated last week.
+      passwordChangedAt: u.passwordChangedAt || null,
+      mustChangePassword: !!u.mustChangePassword,
+      isSelf: String(u._id) === String(req.user._id),
+    };
+  });
+
+  const q = (req.query.q || '').trim().toLowerCase();
+  if (q) {
+    accounts = accounts.filter((a) => `${a.name} ${a.email} ${a.employeeCode}`.toLowerCase().includes(q));
+  }
+
+  res.json({ count: accounts.length, accounts });
+});
+
+/**
+ * Set another account's password (Backend only).
+ *
+ * The new password is chosen by the admin, applied through the normal pre-save
+ * hook (so it is hashed exactly like any other), and flagged
+ * `mustChangePassword` — an admin-chosen password is known to at least two
+ * people, so it is a way back IN, never a password to keep. Hashing also means
+ * this is strictly one-way: the admin has to tell the person what they typed,
+ * because nothing here can read it back afterwards.
+ *
+ * Side effect, inherited from the hook: `tokenVersion` bumps, which signs the
+ * account out of every device it was signed in on.
+ *
+ * @route POST /api/admin/users/:id/reset-password
+ * @param {string} req.body.password - the new password (min 8)
+ * @returns {{ok: true, name, mustChangePassword: true}}
+ */
+// POST /api/admin/users/:id/reset-password
+const resetUserPassword = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  if (!password || String(password).length < 8) {
+    res.status(400);
+    throw new Error('The new password must be at least 8 characters');
+  }
+
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  // Refused rather than allowed: resetting your own password here would flag
+  // your own account and bounce you to the change-password screen mid-task.
+  // Account → Change password is the route for that, and it asks for the
+  // current one, which is the check that belongs on your own credentials.
+  if (String(user._id) === String(req.user._id)) {
+    res.status(400);
+    throw new Error('That is your own account — use Account → Change password.');
+  }
+
+  user.password = password; // pre-save hook hashes it and bumps tokenVersion
+  user.mustChangePassword = true;
+  await user.save();
+
+  const targetName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+
+  // Best-effort, both of them: the reset itself is already saved, and neither a
+  // failed audit write nor a failed notification may turn it into an error.
+  const AuditLog = require('../models/AuditLog');
+  AuditLog.create({
+    entity: 'User',
+    entityId: user._id,
+    entityLabel: targetName,
+    field: 'password',
+    fromStatus: 'set by owner',
+    toStatus: 'reset by admin',
+    by: req.user._id,
+    byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    byRole: req.user.role,
+  }).catch((err) => console.error('password-reset audit failed:', err.message));
+
+  const { notify } = require('../services/notify');
+  notify({
+    recipient: user._id,
+    type: 'general',
+    audience: 'all',
+    title: 'Your password was reset',
+    body: 'An administrator set a new password for your account. Sign in with it and you will be asked to choose your own.',
+  }).catch((err) => console.error('password-reset notify failed:', err.message));
+
+  res.json({ ok: true, name: targetName, mustChangePassword: true });
+});
+
+/**
  * Who is signed in right now (Backend only).
  * @route GET /api/admin/sessions
  * @param {number} [req.query.hours] - how far back to list, 1-168 (default 24)
@@ -1060,6 +1191,8 @@ module.exports = {
   listUsers,
   listSessions,
   signOutUser,
+  listAccountSecurity,
+  resetUserPassword,
   getUser,
   createUser,
   updateUser,

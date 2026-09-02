@@ -66,6 +66,16 @@ const userSchema = new mongoose.Schema(
     // SEEN_THROTTLE_MS there) so a busy portal does not write to this document
     // on every request. Drives the Signed-in page.
     lastSeenAt: { type: Date },
+    // When the password was last set, by anyone (the owner or a Super Admin).
+    // Stamped by the pre-save hook below, so it cannot drift from the hash it
+    // describes. Null on accounts whose password has not been touched since this
+    // field was added — the Credentials screen reads that as "unknown", not "never".
+    passwordChangedAt: { type: Date, default: null },
+    // Set when a Super Admin resets somebody else's password, cleared the moment
+    // that person sets their own. While it is true the clients hold the account
+    // on a change-password screen: an admin-chosen password is known to at least
+    // two people, so it is a way back IN, never a password to keep.
+    mustChangePassword: { type: Boolean, default: false },
     // Profile photo, stored as a path relative to UPLOAD_DIR (served via the
     // /api/auth/users/:id/avatar endpoint). Null when the user has no photo.
     photo: { type: String, default: null },
@@ -149,6 +159,9 @@ userSchema.pre('save', async function hashPassword(next) {
   if (!this.isModified('password')) return next();
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+  // Stamped here rather than at each call site so it can never disagree with the
+  // hash: every route that sets a password goes through this hook.
+  this.passwordChangedAt = new Date();
   // Invalidate all previously-issued tokens whenever the password changes.
   // Skip the initial hash on a brand-new account (no sessions to invalidate yet).
   if (!this.isNew) this.tokenVersion = (this.tokenVersion || 0) + 1;

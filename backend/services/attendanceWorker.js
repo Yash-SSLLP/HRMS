@@ -13,10 +13,15 @@
 // idempotent (the flag itself prevents re-processing), so no DigestLog needed.
 const Attendance = require('../models/Attendance');
 const { startOfDayIST } = require('../utils/dateHelpers');
-const { statusFromHours, effectiveHours, WORKDAY_END_HOUR } = require('../utils/workday');
+const { settleStatus, effectiveHours, WORKDAY_END_HOUR } = require('../utils/workday');
 const { formatHours } = require('../utils/duration');
 
 const POLL_INTERVAL_MS = 60 * 60 * 1000; // hourly
+
+// Spelled out because the remark used to be a two-way ternary that printed
+// "Present" for anything that was not 'HalfDay' — which would have written
+// "→ Present" onto a record it had just marked Absent.
+const STATUS_LABEL = { Present: 'Present', HalfDay: 'Half Day', Absent: 'Absent' };
 
 // "7:00 PM" / "7:30 PM" for the remark, from the WORKDAY_END_HOUR constant.
 const endLabel = () => {
@@ -47,18 +52,18 @@ async function tick() {
     });
 
     let closed = 0;
-    let halved = 0;
+    let downgraded = 0;
     for (const record of stale) {
       record.noPunchOut = true;
-      const next = statusFromHours(record);
+      const next = settleStatus(record);
       if (next && next !== record.status) {
         const hours = effectiveHours(record);
         record.status = next;
         record.remarks = [
           record.remarks,
-          `No punch-out; counted to ${endLabel()} = ${formatHours(hours)} → ${next === 'HalfDay' ? 'Half Day' : 'Present'}.`,
+          `No punch-out; counted to ${endLabel()} = ${formatHours(hours)} → ${STATUS_LABEL[next] || next}.`,
         ].filter(Boolean).join(' · ');
-        halved += 1;
+        downgraded += 1;
       }
       await record.save();
       closed += 1;
@@ -66,7 +71,7 @@ async function tick() {
 
     if (closed) {
       console.log(`Attendance worker: marked ${closed} record(s) as no punch-out`
-        + (halved ? `, ${halved} downgraded to half day` : ''));
+        + (downgraded ? `, ${downgraded} downgraded` : ''));
     }
   } catch (err) {
     console.error('Attendance worker tick failed:', err.message);

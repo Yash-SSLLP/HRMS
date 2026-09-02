@@ -75,6 +75,8 @@ const AdminHiringOnboarding = lazy(() => import('./pages/AdminHiringOnboarding.j
 const AdminNewJoinees = lazy(() => import('./pages/AdminNewJoinees.jsx'));
 const AdminAuditLog = lazy(() => import('./pages/AdminAuditLog.jsx'));
 const AdminSessions = lazy(() => import('./pages/AdminSessions.jsx'));
+const AdminAccountSecurity = lazy(() => import('./pages/AdminAccountSecurity.jsx'));
+const ChangePassword = lazy(() => import('./pages/ChangePassword.jsx'));
 const AdminAppRelease = lazy(() => import('./pages/AdminAppRelease.jsx'));
 const AdminTemplates = lazy(() => import('./pages/AdminTemplates.jsx'));
 const AdminChatExport = lazy(() => import('./pages/AdminChatExport.jsx'));
@@ -163,6 +165,15 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/privacy" element={<PrivacyPolicy />} />
 
+      {/* Forced password change after an admin reset. Inside ProtectedRoute (it
+          needs the session to call PATCH /me/credentials) but OUTSIDE both portal
+          trees, because the guard redirects every portal route here while
+          user.mustChangePassword is set. */}
+      <Route
+        path="/change-password"
+        element={<ProtectedRoute><ChangePassword /></ProtectedRoute>}
+      />
+
       {/* Public — ex-employees access via tokenised link in email */}
       <Route path="/exit-feedback/:token" element={<ExitFeedback />} />
 
@@ -250,6 +261,7 @@ export default function App() {
         <Route path="password-resets" element={<AdminPasswordResets />} />
         <Route path="audit-log" element={<AdminAuditLog />} />
         <Route path="sessions" element={<AdminSessions />} />
+        <Route path="account-security" element={<AdminAccountSecurity />} />
         <Route path="app-release" element={<AdminAppRelease />} />
         <Route path="templates" element={<AdminTemplates />} />
         <Route path="chat-export" element={<AdminChatExport />} />

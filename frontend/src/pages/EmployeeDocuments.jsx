@@ -30,6 +30,11 @@ const STATUS_STYLES = {
 // Show enum keys ("ExperienceLetter") with spaces ("Experience Letter").
 const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
 
+// Mirrors the ceiling on the server's document route (backend/routes/documentRoutes.js).
+// Kept in step by hand: the two must agree or the client either blocks a file the
+// server would take, or lets through one it will abort mid-stream.
+const MAX_UPLOAD_MB = 10;
+
 export default function EmployeeDocuments() {
   const [docs, setDocs] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -73,6 +78,17 @@ export default function EmployeeDocuments() {
     const list = Array.from(fileRef.current?.files || []);
     if (!list.length) {
       setError('Please choose a file first');
+      return;
+    }
+    // Checked here, before a byte is sent. Multer enforces the same ceiling, but
+    // it aborts the request the moment the limit trips WITHOUT draining what the
+    // browser is still sending — so the socket is torn down mid-upload and the
+    // client sees "Network Error" with no message rather than the server's
+    // perfectly good explanation. Refusing up front is the only way the person
+    // actually gets told why.
+    const tooBig = list.filter((f) => f.size > MAX_UPLOAD_MB * 1024 * 1024);
+    if (tooBig.length) {
+      setError(`${tooBig.map((f) => f.name).join(', ')} — over ${MAX_UPLOAD_MB} MB. Please attach a smaller copy.`);
       return;
     }
     setUploading(true);
@@ -192,7 +208,7 @@ export default function EmployeeDocuments() {
               </SearchableSelect>
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm text-gray-700">File (PDF / JPG / PNG / DOCX, max 5 MB) - you can select several</label>
+              <label className="block text-sm text-gray-700">{`File (PDF / JPG / PNG / DOCX, max ${MAX_UPLOAD_MB} MB) - you can select several`}</label>
               <input ref={fileRef} type="file" required multiple
                 accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx"
                 className="mt-1 block w-full text-sm" />

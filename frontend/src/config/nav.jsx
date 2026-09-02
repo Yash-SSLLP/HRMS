@@ -16,7 +16,7 @@ import {
   FiShoppingBag, FiMap, FiPercent, FiTrendingUp, FiEdit, FiBookOpen, FiBook,
   FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
-  FiKey, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell, FiSmartphone,
+  FiKey, FiLock, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell, FiSmartphone,
 } from 'react-icons/fi';
 // Feather has no money-ledger glyph, and its only currency mark is a dollar sign
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
@@ -158,6 +158,11 @@ export const adminNav = [
     // hold is not part of "manage users".
     { to: '/admin/sessions', label: 'Signed in', icon: FiActivity, roles: ['SuperAdmin'],
       keywords: ['session', 'logged in', 'log out', 'sign out', 'online'] },
+    // Credential state for every account + setting somebody a new password.
+    // Backend-only by ROLE for the same reason as Signed in and the Audit Log: a
+    // read-only exec must not be handed the whole directory's login state.
+    { to: '/admin/account-security', label: 'Passwords & Access', icon: FiLock, roles: ['SuperAdmin'],
+      keywords: ['password', 'reset password', 'credentials', 'forgot', 'locked out', 'login'] },
     { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, roles: ['SuperAdmin'] },
     { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'], feature: 'chat' },
   ] },

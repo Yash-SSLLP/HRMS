@@ -23,7 +23,11 @@ const router = express.Router();
 const receiptUpload = createUpload({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf';
+    // Extension as well as MIME: an Android file provider that cannot identify a
+    // PDF sends application/octet-stream, and matching on the type alone
+    // rejected a perfectly good receipt. Same fix as documentRoutes.
+    const ok = file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf'
+      || /\.(pdf|jpe?g|png|webp|heic|heif)$/i.test(file.originalname || '');
     cb(ok ? null : new Error('Only image or PDF receipts are accepted'), ok);
   },
 });

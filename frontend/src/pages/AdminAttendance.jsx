@@ -167,6 +167,7 @@ export default function AdminAttendance() {
     office: { lat: 0, lng: 0, label: '' },
     geofenceThresholdM: 200,
     latePolicy: { hour: 10, minute: 0, graceMinutes: 0 },
+    minPresentHours: 1,
   });
   const [settingsForm, setSettingsForm] = useState(null); // non-null while the editor is open
   const [savingSettings, setSavingSettings] = useState(false);
@@ -259,12 +260,27 @@ export default function AdminAttendance() {
     }
   };
 
-  const openSettings = () =>
+  // Always fetches before opening rather than snapshotting whatever `settings`
+  // happens to hold. The gear button paints before the records call returns (and
+  // still works when it fails), so opening early used to snapshot the hard-coded
+  // client defaults — and since the form posts every field back, saving an office
+  // address would silently reset a configured day-minimum or late policy to them.
+  const openSettings = async () => {
+    let live = settings;
+    try {
+      const { data } = await api.get('/attendance/settings');
+      live = data;
+      setSettings(data);
+    } catch {
+      // Fall back to whatever is loaded; the fields below still show it.
+    }
     setSettingsForm({
-      office: { ...settings.office },
-      geofenceThresholdM: settings.geofenceThresholdM,
-      latePolicy: { hour: 10, minute: 0, graceMinutes: 0, ...(settings.latePolicy || {}) },
+      office: { ...(live.office || {}) },
+      geofenceThresholdM: live.geofenceThresholdM,
+      latePolicy: { hour: 10, minute: 0, graceMinutes: 0, ...(live.latePolicy || {}) },
+      minPresentHours: live.minPresentHours ?? 1,
     });
+  };
 
   const useMyLocation = () => {
     if (!('geolocation' in navigator)) {
@@ -297,6 +313,7 @@ export default function AdminAttendance() {
         // Sent only by a SuperAdmin — the server ignores it from anyone else,
         // and sending it anyway would make a disabled field look editable.
         ...(isSuperAdmin ? {
+          minPresentHours: Number(settingsForm.minPresentHours) || 0,
           latePolicy: {
             hour: Number(settingsForm.latePolicy.hour),
             minute: Number(settingsForm.latePolicy.minute),
@@ -714,6 +731,42 @@ export default function AdminAttendance() {
                 <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
                   A check-in after <b>{graceEnds12(settingsForm.latePolicy)}</b> is marked late.
                   {' '}Payroll allows five late days a month; each one beyond that costs ₹200 or ₹400.
+                </p>
+              </div>
+
+              {/* ---- Day minimum (SuperAdmin only) ---- */}
+              <div className="pt-3 border-t">
+                <div className="flex items-baseline justify-between">
+                  <h3 className="text-sm font-semibold text-gray-800">Minimum hours for a day to count</h3>
+                  {!isSuperAdmin && <span className="text-[11px] text-amber-700">Super Admin only</span>}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  A day whose logged time falls under this is marked <b>Absent</b> rather than a short
+                  day. Payroll charges an absence as loss of pay, so this is a deduction, not a label.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                  <div>
+                    <label className="block text-sm text-gray-700">Minimum hours</label>
+                    <input type="number" min="0" max="6" step="0.25" disabled={!isSuperAdmin}
+                      value={settingsForm.minPresentHours}
+                      onChange={(e) => setSettingsForm((f) => ({ ...f, minPresentHours: e.target.value }))}
+                      className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:opacity-60 disabled:bg-gray-50" />
+                    <div className="text-[11px] text-gray-400 mt-1">0 = rule off · max 6h (the half-day line)</div>
+                  </div>
+                </div>
+                {/* Stated because each one is a day of pay somebody would otherwise lose. */}
+                <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
+                  {Number(settingsForm.minPresentHours) > 0 ? (
+                    <>
+                      A day under <b>{settingsForm.minPresentHours}h</b> is marked absent. Never applied to:
+                      a day with no punch-out (the hours are only assumed), a day whose only punch is after
+                      5 PM (a stray end-of-day punch, not a short day), a declared half day, a Sunday, or a
+                      leave day being worked. Existing records are not changed — the rule applies from the
+                      next time a day is settled.
+                    </>
+                  ) : (
+                    <>The rule is off: short days stay half days, however brief.</>
+                  )}
                 </p>
               </div>
 
