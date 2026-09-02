@@ -1173,6 +1173,99 @@ const requirePasswordChange = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Which app build each person is running (Backend only).
+ *
+ * THREE ANSWERS, and the difference between them matters:
+ *   - a version  — the phone registered for push and told us its native build;
+ *   - "Web only" — the account has NO device registration at all, so as far as
+ *     the server knows this person has never opened the Android app;
+ *   - "Unknown"  — a device IS registered but recorded no version, which means
+ *     it last checked in from a build older than the one that started sending it.
+ *     An app that never reported its version cannot be asked retrospectively, so
+ *     this is read as "not known", never as "old".
+ *
+ * The version refreshes on every app open (registerForPush runs on launch), so a
+ * row goes stale only when the phone stops opening the app — `lastSeenAt` says
+ * how long ago that was, which is what separates "on an old build" from "gone".
+ *
+ * @route GET /api/admin/app-versions
+ * @returns {{latest, count, summary, accounts: Object[]}}
+ */
+// GET /api/admin/app-versions
+const listAppVersions = asyncHandler(async (req, res) => {
+  const DeviceToken = require('../models/DeviceToken');
+
+  const users = await User.find({ isActive: true })
+    .select('firstName lastName email role')
+    .sort({ firstName: 1 })
+    .lean();
+
+  const [profiles, devices] = await Promise.all([
+    EmployeeProfile.find({ user: { $in: users.map((u) => u._id) } })
+      .select('user employeeCode department').lean(),
+    DeviceToken.find({ user: { $in: users.map((u) => u._id) } })
+      .select('user platform deviceName appVersion appVersionCode lastSeenAt')
+      .sort({ lastSeenAt: -1 })
+      .lean(),
+  ]);
+
+  const profileByUser = new Map(profiles.map((p) => [String(p.user), p]));
+  // One person can hold several devices (two phones, or a reinstall leaving a
+  // stale row). The sort above is newest-first, so the first hit per user is the
+  // device they used most recently — the honest answer to "what are they on".
+  const deviceByUser = new Map();
+  const deviceCount = new Map();
+  for (const d of devices) {
+    const k = String(d.user);
+    if (!deviceByUser.has(k)) deviceByUser.set(k, d);
+    deviceCount.set(k, (deviceCount.get(k) || 0) + 1);
+  }
+
+  // What "up to date" means right now. Null when nothing has been published.
+  let latest = null;
+  try {
+    const { currentRelease } = require('./appReleaseController');
+    const rel = typeof currentRelease === 'function' ? await currentRelease() : null;
+    if (rel) latest = { versionName: rel.versionName, versionCode: rel.versionCode };
+  } catch {
+    // The release store is not essential to this list — carry on without it.
+  }
+
+  const accounts = users.map((u) => {
+    const p = profileByUser.get(String(u._id));
+    const d = deviceByUser.get(String(u._id));
+    const code = d && Number.isFinite(d.appVersionCode) ? d.appVersionCode : null;
+    return {
+      _id: String(u._id),
+      name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      email: u.email,
+      employeeCode: p?.employeeCode || '',
+      department: p?.department || '',
+      role: u.role,
+      // 'web' = no device row at all; 'unknown' = a device that never said.
+      state: !d ? 'web' : (d.appVersion ? 'app' : 'unknown'),
+      appVersion: d?.appVersion || null,
+      appVersionCode: code,
+      deviceName: d?.deviceName || '',
+      platform: d?.platform || null,
+      deviceSeenAt: d?.lastSeenAt || null,
+      deviceCount: deviceCount.get(String(u._id)) || 0,
+      upToDate: latest && code != null ? code >= latest.versionCode : null,
+    };
+  });
+
+  const summary = {
+    total: accounts.length,
+    onLatest: accounts.filter((a) => a.upToDate === true).length,
+    behind: accounts.filter((a) => a.upToDate === false).length,
+    unknown: accounts.filter((a) => a.state === 'unknown').length,
+    webOnly: accounts.filter((a) => a.state === 'web').length,
+  };
+
+  res.json({ latest, count: accounts.length, summary, accounts });
+});
+
+/**
  * Who is signed in right now (Backend only).
  * @route GET /api/admin/sessions
  * @param {number} [req.query.hours] - how far back to list, 1-168 (default 24)
@@ -1258,6 +1351,7 @@ module.exports = {
   listAccountSecurity,
   resetUserPassword,
   requirePasswordChange,
+  listAppVersions,
   getUser,
   createUser,
   updateUser,

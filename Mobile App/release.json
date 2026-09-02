@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.23",
-  "versionCode": 69,
-  "notes": "Your location is now needed to check in or out. The app asks for it before opening the camera, so you are never made to take a selfie only to be told the punch cannot be saved, and it says which thing to fix — allow access, switch location on, or move somewhere with a signal. Being outside the office range still does not block anything; that is only flagged for HR, as before. If the app is closed by the phone while the camera is open, the punch is now finished using the location taken when you punched, not wherever you happened to reopen it. If an administrator asks you to change your password, the screen no longer claims they set it for you — your own password still works and you simply choose a new one. Uploading a document was fixed in the previous release and is included here: PDFs picked from Downloads or Drive now attach properly, any image is accepted, and the size limit is 10 MB. Every password box has an eye to show what you are typing. Needs the matching server update to be live."
+  "versionName": "2.2.24",
+  "versionCode": 70,
+  "notes": "A housekeeping update — nothing on screen changes. The app now tells the company which version it is running, so HR can see who is up to date and who still needs to install a new build. Everything from the last release is included: your location is needed to check in or out, and the app asks for it before opening the camera so you are never made to take a selfie only to be told the punch cannot be saved; being outside the office range still does not block a punch, it is only flagged. Uploading documents accepts PDFs and any image up to 10 MB, and every password box has an eye to show what you are typing."
 }

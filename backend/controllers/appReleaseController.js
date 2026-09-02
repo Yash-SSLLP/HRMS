@@ -60,6 +60,47 @@ const getLatest = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Tell every active device about a release.
+ *
+ * Shared by the manual "Ask everyone to update" button and by publish(), so the
+ * two cannot word the same event differently.
+ *
+ * Deactivated and resigned accounts keep their device rows until the token
+ * expires, so the audience is intersected with active users — otherwise the
+ * push goes to people who have left and the reported count overstates who will
+ * actually read it.
+ *
+ * @param {object} release - the AppRelease being announced
+ * @param {string} [message] - overrides the release notes as the body
+ * @returns {Promise<number>} how many people were notified (0 = nobody to tell)
+ */
+async function broadcastUpdate(release, message) {
+  const DeviceToken = require('../models/DeviceToken');
+  const User = require('../models/User');
+  const withDevices = await DeviceToken.distinct('user');
+  const recipients = withDevices.length
+    ? (await User.find({ _id: { $in: withDevices }, isActive: true }).select('_id').lean()).map((u) => u._id)
+    : [];
+  if (!recipients.length) return 0;
+
+  const { notifyMany } = require('../services/notify');
+  const custom = typeof message === 'string' ? message.trim() : '';
+  await notifyMany(recipients, {
+    type: 'general',
+    audience: 'all',
+    title: `Update the app to ${release.versionName}`,
+    body: custom
+      || (release.notes
+        ? `${release.notes.slice(0, 160)}${release.notes.length > 160 ? '…' : ''}`
+        : 'A new version is available. Open Settings → Check for updates to install it.'),
+    // The app routes this to its own update check rather than a browser.
+    link: 'app-update',
+    data: { versionName: release.versionName, versionCode: release.versionCode },
+  });
+  return recipients.length;
+}
+
+/**
  * POST /api/app/notify-update — nudge everyone to install the current build.
  *
  * A broadcast, not a targeted one: DeviceToken records the platform and the
@@ -84,36 +125,12 @@ const notifyUpdate = asyncHandler(async (req, res) => {
     throw new Error('No build has been published yet, so there is nothing to tell anyone about.');
   }
 
-  const DeviceToken = require('../models/DeviceToken');
-  const User = require('../models/User');
-  const withDevices = await DeviceToken.distinct('user');
-  // Deactivated and resigned accounts keep their device rows until the token
-  // expires, so a bare distinct() both pushes at people who have left and
-  // reports a recipient count higher than the number of people who will read it.
-  const recipients = withDevices.length
-    ? (await User.find({ _id: { $in: withDevices }, isActive: true }).select('_id').lean()).map((u) => u._id)
-    : [];
-  if (!recipients.length) {
+  const notified = await broadcastUpdate(release, req.body?.message);
+  if (!notified) {
     res.status(400);
     throw new Error('No active devices are registered for notifications yet.');
   }
-
-  const { notifyMany } = require('../services/notify');
-  const custom = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-  await notifyMany(recipients, {
-    type: 'general',
-    audience: 'all',
-    title: `Update the app to ${release.versionName}`,
-    body: custom
-      || (release.notes
-        ? `${release.notes.slice(0, 160)}${release.notes.length > 160 ? '…' : ''}`
-        : 'A new version is available. Open Settings → Check for updates to install it.'),
-    // The app routes this to its own update check rather than a browser.
-    link: 'app-update',
-    data: { versionName: release.versionName, versionCode: release.versionCode },
-  });
-
-  res.json({ ok: true, version: release.versionName, notified: recipients.length });
+  res.json({ ok: true, version: release.versionName, notified });
 });
 
 /**
@@ -251,6 +268,17 @@ const publish = asyncHandler(async (req, res) => {
   // Now that nothing points at it any more.
   if (current) await store.driverFor(current).remove(current).catch(() => {});
 
+  // Tell everyone, automatically. Publishing IS the announcement — the app's own
+  // check is silent by design (it only puts a dot in Settings), so without this
+  // a release reaches a phone whenever its owner happens to wander in there.
+  //
+  // Fire-and-forget: the release is already written and served, and a push
+  // outage must not turn a successful publish into a failed request. Republishing
+  // cannot double-notify — the versionCode guard above rejects anything not newer.
+  broadcastUpdate(release)
+    .then((n) => console.log(`App release ${release.versionName}: notified ${n} user(s).`))
+    .catch((err) => console.error('release notify failed:', err.message));
+
   res.status(201).json({ release: publicView(release) });
 });
 
@@ -276,4 +304,7 @@ const getRelease = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  notifyUpdate, getLatest, download, getPublishTarget, publish, getRelease };
+  notifyUpdate, getLatest, download, getPublishTarget, publish, getRelease,
+  // Exported for the admin app-version screen, which needs to know what "up to
+  // date" currently means in order to mark anybody behind.
+  currentRelease };

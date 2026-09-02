@@ -12,6 +12,7 @@ const {
   listAccountSecurity,
   resetUserPassword,
   requirePasswordChange,
+  listAppVersions,
   getUser,
   createUser,
   updateUser,
@@ -84,6 +85,9 @@ const superAdminOnly = (req, res, next) => {
 router.get('/account-security', superAdminOnly, listAccountSecurity);
 router.post('/users/:id/reset-password', superAdminOnly, resetUserPassword);
 router.post('/users/:id/require-password-change', superAdminOnly, requirePasswordChange);
+// Which app build each person is on. Same Backend-only gate: it is a device
+// inventory of the whole company.
+router.get('/app-versions', superAdminOnly, listAppVersions);
 
 // Everything below requires the 'users.manage' capability (SuperAdmin always has it).
 router.use(requirePermission('users.manage'));

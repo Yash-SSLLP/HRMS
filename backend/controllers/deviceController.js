@@ -11,17 +11,29 @@ const DeviceToken = require('../models/DeviceToken');
  * @param {string} req.body.token - Expo push token (required)
  * @param {string} [req.body.platform='android']
  * @param {string} [req.body.deviceName]
+ * @param {string} [req.body.appVersion] - e.g. '2.2.23'; only overwrites when sent
+ * @param {number} [req.body.appVersionCode] - e.g. 69
  * @returns {{ok: boolean, device: {id: string, token: string}}} (201)
  */
-// POST /api/devices/register  { token, platform?, deviceName? }
+// POST /api/devices/register  { token, platform?, deviceName?, appVersion?, appVersionCode? }
 // The mobile app calls this after login once it has an Expo push token.
 // Upsert on the token: if the device was previously owned by another user
 // (shared phone, re-login), reassign it to the current caller.
 const registerDevice = asyncHandler(async (req, res) => {
-  const { token, platform = 'android', deviceName } = req.body || {};
+  const { token, platform = 'android', deviceName, appVersion, appVersionCode } = req.body || {};
   if (!token) {
     res.status(400);
     throw new Error('token is required');
+  }
+
+  // Only overwrite the version when the client actually sent one. An older build
+  // that does not send it must not blank what a newer one recorded.
+  const versionFields = {};
+  if (typeof appVersion === 'string' && appVersion.trim()) {
+    versionFields.appVersion = appVersion.trim().slice(0, 20);
+  }
+  if (Number.isFinite(Number(appVersionCode)) && Number(appVersionCode) > 0) {
+    versionFields.appVersionCode = Number(appVersionCode);
   }
 
   const device = await DeviceToken.findOneAndUpdate(
@@ -31,6 +43,7 @@ const registerDevice = asyncHandler(async (req, res) => {
         user: req.user._id,
         platform,
         deviceName,
+        ...versionFields,
         lastSeenAt: new Date(),
       },
     },

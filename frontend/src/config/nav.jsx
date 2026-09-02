@@ -163,6 +163,10 @@ export const adminNav = [
     // read-only exec must not be handed the whole directory's login state.
     { to: '/admin/account-security', label: 'Passwords & Access', icon: FiLock, roles: ['SuperAdmin'],
       keywords: ['password', 'reset password', 'credentials', 'forgot', 'locked out', 'login'] },
+    // Who is on which app build, and who has never installed it at all.
+    // Backend-only by ROLE, like its neighbours: it is a device inventory.
+    { to: '/admin/app-versions', label: 'App Versions', icon: FiList, roles: ['SuperAdmin'],
+      keywords: ['app version', 'update', 'apk', 'phone', 'mobile', 'who has the app'] },
     { to: '/admin/audit-log', label: 'Audit Log', icon: FiFileText, roles: ['SuperAdmin'] },
     { to: '/admin/chat-export', label: 'Chat Export', icon: FiMessageSquare, roles: ['SuperAdmin'], feature: 'chat' },
   ] },
