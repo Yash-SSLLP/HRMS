@@ -199,7 +199,11 @@ export default function EmployeeAttendance() {
         if (!best) {
           setGeoError(
             err.code === err.PERMISSION_DENIED
-              ? 'Location permission denied. Allow location access in your browser to record your punch location.'
+              // Retry cannot re-prompt: once the browser has been told no for
+              // this site, only the site-settings panel (the padlock in the
+              // address bar) can undo it. Saying "allow it" without saying WHERE
+              // leaves people clicking Retry forever.
+              ? 'Location is blocked for this site. Click the padlock in the address bar, allow Location, then retry.'
               : 'Could not get your location. Move near a window or outdoors, then retry.'
           );
         }
@@ -223,6 +227,10 @@ export default function EmployeeAttendance() {
     setCamError('');
     setGeo(null);
     setGeoError('');
+    // A failure from a previous punch (or from the month load) otherwise renders
+    // inside the freshly opened camera modal, reading as though this punch has
+    // already gone wrong before it started.
+    setError('');
     // Preserve an existing half-day mark when re-opening at checkout.
     setHalfDay(action === 'checkout' ? today?.status === 'HalfDay' : false);
     // At checkout, default WFH to whatever was recorded at check-in.
@@ -241,14 +249,20 @@ export default function EmployeeAttendance() {
   };
 
   // Start/stop the camera as the modal opens/closes, and warm up a GPS fix.
+  //
+  // The fix is only re-acquired when we do not already hold one. Retake clears
+  // `snapshot`, which re-runs this effect — and captureLocation() begins by
+  // setting geo to null, so a retake used to throw away a good fix and leave
+  // Confirm disabled for another watch cycle. The person has not moved; the fix
+  // is still good.
   useEffect(() => {
     if (capture && !snapshot) {
       startCamera();
-      captureLocation();
+      if (!geo) captureLocation();
     } else stopStream();
     return stopStream;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capture, snapshot]);
+  }, [capture, snapshot, geo]);
 
   useEffect(() => () => { stopStream(); clearWatch(); }, []);
 
@@ -283,12 +297,17 @@ export default function EmployeeAttendance() {
     try {
       const fd = new FormData();
       fd.append('photo', snapshot.blob, 'punch.jpg');
-      // Attach the GPS location captured with the photo, if available.
-      if (geo) {
-        fd.append('latitude', geo.lat);
-        fd.append('longitude', geo.lng);
-        if (geo.accuracy != null) fd.append('accuracy', geo.accuracy);
+      // Not optional any more — the server refuses a punch with no location, so
+      // sending one without would only produce a 400 the person cannot act on.
+      // The button is already disabled without `geo`; this is the backstop.
+      if (!geo) {
+        setError('Your location is needed to record this punch. Allow location access and try again.');
+        setBusy(false);
+        return;
       }
+      fd.append('latitude', geo.lat);
+      fd.append('longitude', geo.lng);
+      if (geo.accuracy != null) fd.append('accuracy', geo.accuracy);
       fd.append('wfh', wfh ? 'true' : 'false');
       // Half-day can be declared at either punch: up front at check-in (a
       // planned half day) or at check-out. A declaration at check-in sticks —
@@ -528,15 +547,15 @@ export default function EmployeeAttendance() {
               </div>
             )}
 
-            {/* Location status — deliberately contentless. The punch still captures
-                GPS and the server still flags an out-of-range punch for HR, but the
-                employee is never shown coordinates, a map link, accuracy, distance,
-                or whether they are inside or outside the office range. Only the
-                acquisition STATE is surfaced, because the Confirm button waits on it
-                and a silent disabled button would look broken. */}
+            {/* Location status — deliberately contentless about WHERE. The employee
+                is never shown coordinates, a map link, accuracy, distance, or
+                whether they are inside or outside the office range. Only the
+                acquisition STATE is surfaced — which now matters more, because a
+                punch cannot be recorded without a location and a silent disabled
+                button would just look broken. */}
             {geoError ? (
               <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg flex items-center justify-between gap-2">
-                <span>{geoError}</span>
+                <span>{geoError} Your punch cannot be recorded without it.</span>
                 <button type="button" onClick={() => captureLocation()}
                   className="shrink-0 font-medium text-amber-800 underline hover:no-underline">Retry</button>
               </div>
@@ -603,13 +622,20 @@ export default function EmployeeAttendance() {
               ) : (
                 <>
                   <button onClick={retake} className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Retake</button>
-                  <button onClick={submitPunch} disabled={busy || locating || (!geo && !geoError)}
+                  {/* Enabled ONLY with a location in hand. This used to allow the
+                      punch through whenever `geoError` was set, which is exactly
+                      the case where there is no location — so a denied or failed
+                      fix still recorded a punch. The server now refuses those
+                      too; this keeps the button honest about it. */}
+                  <button onClick={submitPunch} disabled={busy || locating || !geo}
                     className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">
                     {busy
                       ? 'Submitting…'
-                      : locating || (!geo && !geoError)
+                      : locating
                         ? 'Getting location info…'
-                        : `Confirm ${capture === 'checkin' ? 'Check In' : 'Check Out'}`}
+                        : !geo
+                          ? 'Location needed'
+                          : `Confirm ${capture === 'checkin' ? 'Check In' : 'Check Out'}`}
                   </button>
                 </>
               )}

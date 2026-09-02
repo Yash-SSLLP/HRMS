@@ -216,6 +216,11 @@ function NotificationBell({ isAdmin, portal }) {
 
   const resolveLink = (n) => {
     if (!n.link) return null;
+    // 'app-update' asks people to install the Android build — there is nothing
+    // for the WEB portal to open, and the bare slug is not a route, so returning
+    // it would navigate to a blank page. Null leaves the notification readable
+    // and inert, which is the honest result on a desktop.
+    if (n.link === 'app-update') return null;
     if (n.link === 'calendar') return isAdmin ? '/admin/calendar' : '/employee/calendar';
     // Legacy course links were stored as "/learning"; the actual route lives
     // under the employee portal. Normalise so older notifications still land.

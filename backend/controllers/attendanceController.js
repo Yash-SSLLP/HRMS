@@ -117,6 +117,14 @@ function parsePunchLocation(body) {
   const lat = parseFloat(body.latitude);
   const lng = parseFloat(body.longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  // Out of range is not a location. Now that a punch is REFUSED without one,
+  // the difference between "no location" and "a nonsense location" stops being
+  // cosmetic — without this, a client sending latitude=999 would satisfy the
+  // requirement and store a coordinate the punch map cannot plot.
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return undefined;
+  // Exactly 0,0 is in the Gulf of Guinea and is what a failed fix serialises to
+  // far more often than anyone is genuinely standing there.
+  if (lat === 0 && lng === 0) return undefined;
   const accuracy = parseFloat(body.accuracy);
   return { lat, lng, accuracy: Number.isFinite(accuracy) ? accuracy : undefined };
 }
@@ -551,10 +559,43 @@ async function decideWorkOnLeave(record, userId, action, note, actor) {
 }
 
 /**
- * Punch in for today with a selfie and optional GPS (geofence captured, not blocked).
+ * A self-service punch must carry a location.
+ *
+ * Throws 400 rather than recording the punch without one. Deliberately checked
+ * BEFORE savePunchPhoto at both call sites: the selfie is uploaded to storage,
+ * so refusing after it has been saved leaves an orphaned file behind for a punch
+ * that never happened.
+ *
+ * This is the SELF-SERVICE rule only. HR corrections (updateRecord, adminCreate),
+ * regularization approvals and imports legitimately have no GPS — somebody typing
+ * yesterday's forgotten punch is not standing at the gate — and they do not come
+ * through here.
+ *
+ * The exemptions that already exist (a WFH punch, and the standing "punch
+ * anywhere" grant) are about being outside the GEOFENCE, not about withholding
+ * coordinates, so they do not exempt anyone from this. Where you are is still
+ * recorded; it just is not compared against the fence.
+ *
+ * @param {object|undefined} loc - the output of parsePunchLocation
+ * @param {import('express').Response} res
+ * @throws {Error} 400 when there is no usable location
+ */
+function requirePunchLocation(loc, res) {
+  if (loc) return;
+  res.status(400);
+  throw new Error(
+    'Your location is needed to record this punch. Allow location access, '
+    + 'make sure location is switched on, and try again.'
+  );
+}
+
+/**
+ * Punch in for today with a selfie and a REQUIRED GPS location (the geofence itself
+ * is captured, not blocked — see requirePunchLocation).
  * @route POST /api/attendance/me/checkin  (multipart field: photo)
  * @param {File} req.file - selfie (required)
- * @param {string} [req.body.latitude] / [req.body.longitude] / [req.body.accuracy]
+ * @param {string} req.body.latitude / req.body.longitude - required; 400 without them
+ * @param {string} [req.body.accuracy]
  * @param {string} [req.body.wfh] - 'true' exempts the geofence check
  * @param {string} [req.body.halfDay] - 'true' declares the day a half day up front
  * @returns {{record: Object}} (201); 400 if already checked in
@@ -569,6 +610,9 @@ const checkIn = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Already checked in today');
   }
+  // Before the photo: a refusal here must not leave an uploaded selfie behind.
+  const loc = parsePunchLocation(req.body);
+  requirePunchLocation(loc, res);
   const photo = await savePunchPhoto(req, profile._id);
   if (!record) {
     record = new Attendance({ employee: profile._id, date: today });
@@ -576,8 +620,7 @@ const checkIn = asyncHandler(async (req, res) => {
   record.checkIn = new Date();
   record.checkInPhoto = photo.path;
   record.checkInPhotoCloud = photo.cloud;
-  const loc = parsePunchLocation(req.body);
-  if (loc) record.checkInLocation = loc;
+  record.checkInLocation = loc;
   // A WFH punch is exempt from the geofence check, so the claim is only honoured
   // for employees a SuperAdmin has granted it to — never on the client's word.
   record.checkInWfh = req.body.wfh === 'true' && profile.wfhAllowed === true;
@@ -661,12 +704,15 @@ const checkOut = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Already checked out today');
   }
+  // Before the photo, for the same reason as check-in: a refusal must not leave
+  // an uploaded selfie behind for a punch that was never recorded.
+  const loc = parsePunchLocation(req.body);
+  requirePunchLocation(loc, res);
   const photo = await savePunchPhoto(req, profile._id);
   record.checkOut = new Date();
   record.checkOutPhoto = photo.path;
   record.checkOutPhotoCloud = photo.cloud;
-  const loc = parsePunchLocation(req.body);
-  if (loc) record.checkOutLocation = loc;
+  record.checkOutLocation = loc;
   // Same grant check as check-in — see the note there.
   record.checkOutWfh = req.body.wfh === 'true' && profile.wfhAllowed === true;
   // Geofence rule: capture (but never block) a punch outside the employee's

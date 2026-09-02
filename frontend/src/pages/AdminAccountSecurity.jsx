@@ -18,7 +18,8 @@
  * sitting on one an admin handed them — and offers the only safe way to act on
  * it: set a new password, tell the person, and make them replace it on the way in.
  *
- * Backend: GET /admin/account-security, POST /admin/users/:id/reset-password.
+ * Backend: GET /admin/account-security, POST /admin/users/:id/reset-password,
+ * POST /admin/users/:id/require-password-change.
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -158,6 +159,7 @@ export default function AdminAccountSecurity() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [resetting, setResetting] = useState(null);
+  const [busyId, setBusyId] = useState(null);
 
   const load = async () => {
     try {
@@ -171,6 +173,24 @@ export default function AdminAccountSecurity() {
   };
 
   useEffect(() => { if (isSuperAdmin) load(); }, [isSuperAdmin]);
+
+  // Ask somebody to choose a new password at their next sign-in, WITHOUT setting
+  // one for them. The password they have keeps working until they change it —
+  // which is the difference from Reset, and the reason both actions exist.
+  const toggleMustChange = async (row, required) => {
+    setBusyId(row._id);
+    try {
+      await api.post(`/admin/users/${row._id}/require-password-change`, { required });
+      setRows((list) => list.map((r) => (r._id === row._id ? { ...r, mustChangePassword: required } : r)));
+      toast.success(required
+        ? `${row.name} will be asked to choose a new password at their next sign-in.`
+        : `${row.name} will no longer be asked to change their password.`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update that');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   if (!isSuperAdmin) {
     return (
@@ -208,6 +228,8 @@ export default function AdminAccountSecurity() {
             only enough to check a login attempt, never the password itself. Nothing on this screen, in the
             database, or in a backup can turn that back into readable text. If someone is locked out, set
             them a new password below and tell them what you typed — then they replace it on the way in.
+            If they can still sign in and the password is merely stale, use <b>Ask to change</b> instead: it leaves
+            their password working and makes them choose a new one at their next sign-in.
           </p>
         </div>
       </div>
@@ -279,8 +301,11 @@ export default function AdminAccountSecurity() {
                     <td className="px-4 py-3 text-gray-600">{ago(r.lastLoginAt)}</td>
                     <td className="px-4 py-3">
                       {r.mustChangePassword ? (
+                        // Says only what is true: a change is being asked for. It
+                        // no longer implies an admin set the password, because the
+                        // flag can now be raised on its own.
                         <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
-                          <FiLock size={12} /> Admin-set · must change
+                          <FiLock size={12} /> Must change at next sign-in
                         </span>
                       ) : (
                         // Null is "not recorded", not "never" — the field only
@@ -292,9 +317,22 @@ export default function AdminAccountSecurity() {
                       {r.isSelf ? (
                         <span className="text-xs text-gray-400 italic">That&apos;s you</span>
                       ) : (
-                        <button onClick={() => setResetting(r)} className="text-blue-600 hover:underline">
-                          Reset password
-                        </button>
+                        <span className="inline-flex items-center gap-2 justify-end flex-wrap">
+                          <button
+                            onClick={() => toggleMustChange(r, !r.mustChangePassword)}
+                            disabled={busyId === r._id}
+                            className="text-sm text-gray-600 hover:underline disabled:opacity-50"
+                            title={r.mustChangePassword
+                              ? 'Stop asking for a new password'
+                              : 'They keep their current password, but must replace it when they next sign in'}
+                          >
+                            {busyId === r._id ? 'Saving…'
+                              : r.mustChangePassword ? 'Cancel request' : 'Ask to change'}
+                          </button>
+                          <button onClick={() => setResetting(r)} className="text-sm text-blue-600 hover:underline">
+                            Reset password
+                          </button>
+                        </span>
                       )}
                     </td>
                   </tr>

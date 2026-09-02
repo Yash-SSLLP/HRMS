@@ -353,6 +353,29 @@ export default function AdminPushNotifications() {
     }
   };
 
+  // Ask everyone to install the current app build. A broadcast, because the
+  // server records no per-device app version — anyone already up to date gets a
+  // notification about something they have done, which is the lesser problem.
+  const [nudging, setNudging] = useState(false);
+  const nudgeUpdate = async () => {
+    const ok = await confirmDialog({
+      title: 'Ask everyone to update the app?',
+      message: 'Everyone with the app installed gets a notification asking them to install the '
+        + 'latest build. Phones already on it will simply find nothing to download.',
+      confirmText: 'Send',
+    });
+    if (!ok) return;
+    setNudging(true);
+    try {
+      const { data } = await api.post('/app/notify-update');
+      toast.success(`Asked ${data.notified} ${data.notified === 1 ? 'person' : 'people'} to update to ${data.version}.`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not send that');
+    } finally {
+      setNudging(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -360,10 +383,16 @@ export default function AdminPushNotifications() {
         subtitle="When the daily attendance reminders are pushed to the mobile app."
       >
         {isSuperAdmin && (
-          <button onClick={save} disabled={saving || !dirty || loading}
-            className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
-            {saving ? 'Saving…' : 'Save'}
-          </button>
+          <>
+            <button onClick={nudgeUpdate} disabled={nudging}
+              className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+              {nudging ? 'Sending…' : 'Ask everyone to update the app'}
+            </button>
+            <button onClick={save} disabled={saving || !dirty || loading}
+              className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
         )}
       </PageHeader>
 

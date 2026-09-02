@@ -60,6 +60,63 @@ const getLatest = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /api/app/notify-update — nudge everyone to install the current build.
+ *
+ * A broadcast, not a targeted one: DeviceToken records the platform and the
+ * device name but NOT the installed app version, so the server cannot tell who
+ * is already up to date. Anyone on the latest build simply gets a notification
+ * that asks them to do something they have already done — mildly redundant, and
+ * far better than the alternative of nobody being told at all.
+ *
+ * The app decides what to do with the tap: its own update check compares
+ * versionCode against the installed package and offers the download only when
+ * this build is genuinely newer, so a phone already on it cannot be talked into
+ * a pointless download.
+ *
+ * SuperAdmin only (publisherOnly), because it pushes to every phone in the company.
+ *
+ * @returns {{ok: true, version: string, notified: number}}
+ */
+const notifyUpdate = asyncHandler(async (req, res) => {
+  const release = await currentRelease();
+  if (!release) {
+    res.status(404);
+    throw new Error('No build has been published yet, so there is nothing to tell anyone about.');
+  }
+
+  const DeviceToken = require('../models/DeviceToken');
+  const User = require('../models/User');
+  const withDevices = await DeviceToken.distinct('user');
+  // Deactivated and resigned accounts keep their device rows until the token
+  // expires, so a bare distinct() both pushes at people who have left and
+  // reports a recipient count higher than the number of people who will read it.
+  const recipients = withDevices.length
+    ? (await User.find({ _id: { $in: withDevices }, isActive: true }).select('_id').lean()).map((u) => u._id)
+    : [];
+  if (!recipients.length) {
+    res.status(400);
+    throw new Error('No active devices are registered for notifications yet.');
+  }
+
+  const { notifyMany } = require('../services/notify');
+  const custom = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+  await notifyMany(recipients, {
+    type: 'general',
+    audience: 'all',
+    title: `Update the app to ${release.versionName}`,
+    body: custom
+      || (release.notes
+        ? `${release.notes.slice(0, 160)}${release.notes.length > 160 ? '…' : ''}`
+        : 'A new version is available. Open Settings → Check for updates to install it.'),
+    // The app routes this to its own update check rather than a browser.
+    link: 'app-update',
+    data: { versionName: release.versionName, versionCode: release.versionCode },
+  });
+
+  res.json({ ok: true, version: release.versionName, notified: recipients.length });
+});
+
+/**
  * GET /api/app/download — the APK itself. Public.
  *
  * Delegates to whichever store holds THIS release, which is not necessarily the
@@ -218,4 +275,5 @@ const getRelease = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { getLatest, download, getPublishTarget, publish, getRelease };
+module.exports = {
+  notifyUpdate, getLatest, download, getPublishTarget, publish, getRelease };

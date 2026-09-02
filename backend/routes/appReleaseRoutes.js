@@ -21,7 +21,8 @@ const multer = require('multer');
 const express = require('express');
 
 const {
-  getLatest, download, getPublishTarget, publish, getRelease,
+  getLatest, download, getPublishTarget,
+  notifyUpdate, publish, getRelease,
 } = require('../controllers/appReleaseController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { preserveContext } = require('../middleware/requestContext');
@@ -87,6 +88,8 @@ router.get('/latest', getLatest);
 router.get('/download', download);
 
 // GET /publish-target — whether to send the file or a reference; publisher only.
+// Nudge every registered device to install the current build. SuperAdmin only.
+router.post('/notify-update', publisherOnly, notifyUpdate);
 router.get('/publish-target', publisherOnly, getPublishTarget);
 // GET /release — full current release + store status, for the admin screen.
 router.get('/release', publisherOnly, getRelease);

@@ -1,10 +1,15 @@
 /**
- * ChangePassword — the screen a user is held on after a SuperAdmin has reset
- * their password (`user.mustChangePassword`).
+ * ChangePassword — the screen a user is held on while `user.mustChangePassword`
+ * is set.
  *
- * An admin-set password is known to at least two people, so it is only ever a way
- * back IN. ProtectedRoute redirects every portal route here until the flag clears,
- * and the flag clears server-side the moment PATCH /auth/me/credentials succeeds.
+ * TWO paths raise that flag and this copy must be true for both: a SuperAdmin
+ * RESET the password (it is then known to at least two people, so it is only ever
+ * a way back IN), or a SuperAdmin merely ASKED for a change, in which case the
+ * person's own password still works and nobody gave them anything. The wording
+ * below therefore never asserts a reset happened.
+ *
+ * ProtectedRoute redirects every portal route here until the flag clears, and the
+ * flag clears server-side the moment PATCH /auth/me/credentials succeeds.
  *
  * The sign-out at the end is not a failure mode, it is the system working: setting
  * a password bumps `tokenVersion`, which invalidates every token issued before it
@@ -59,8 +64,8 @@ export default function ChangePassword() {
   const [error, setError] = useState('');
 
   const mismatch = confirm.length > 0 && next !== confirm;
-  // Refusing the same password back is the whole point: the admin knows the one
-  // they typed, so re-entering it would leave the account exactly where it was.
+  // Refusing the same password back is the whole point: re-entering it would
+  // leave the account exactly where it was.
   const sameAsCurrent = next.length > 0 && next === current;
   const ready = current.length > 0 && next.length >= MIN_LEN && next === confirm && !sameAsCurrent && !busy;
 
@@ -88,13 +93,13 @@ export default function ChangePassword() {
         <span className="stat-icon bg-amber-100 text-amber-600"><FiLock /></span>
         <h1 className="text-lg font-semibold text-gray-900 mt-3">Choose your own password</h1>
         <p className="text-sm text-gray-500 mt-1">
-          {user?.firstName ? `${user.firstName}, an` : 'An'} administrator set the password you just signed in
-          with, so it isn&apos;t private to you. Pick one only you know to carry on.
+          {user?.firstName ? `${user.firstName}, you have` : 'You have'} been asked to set a new password
+          before carrying on. Choose one only you know.
         </p>
 
         <form onSubmit={submit} className="mt-5 space-y-3">
           <Field
-            label="The password the administrator gave you"
+            label="Your current password"
             value={current}
             onChange={setCurrent}
             autoFocus
@@ -110,7 +115,7 @@ export default function ChangePassword() {
 
           {sameAsCurrent && (
             <p className="text-xs text-amber-700">
-              That is the password you were given — choose a different one.
+              The new password has to differ from your current one.
             </p>
           )}
           {mismatch && <p className="text-xs text-red-600">The two passwords don&apos;t match.</p>}

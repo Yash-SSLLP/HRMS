@@ -11,6 +11,7 @@ const {
   signOutUser,
   listAccountSecurity,
   resetUserPassword,
+  requirePasswordChange,
   getUser,
   createUser,
   updateUser,
@@ -82,6 +83,7 @@ const superAdminOnly = (req, res, next) => {
 };
 router.get('/account-security', superAdminOnly, listAccountSecurity);
 router.post('/users/:id/reset-password', superAdminOnly, resetUserPassword);
+router.post('/users/:id/require-password-change', superAdminOnly, requirePasswordChange);
 
 // Everything below requires the 'users.manage' capability (SuperAdmin always has it).
 router.use(requirePermission('users.manage'));

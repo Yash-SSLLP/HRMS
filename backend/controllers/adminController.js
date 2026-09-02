@@ -1109,6 +1109,70 @@ const resetUserPassword = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Ask (or stop asking) an account to choose a new password at its next sign-in.
+ *
+ * Distinct from resetUserPassword: that one SETS a password, which the admin then
+ * has to read out. This changes nothing about the current password — the person
+ * signs in with the one they already know and is then held on the change screen.
+ * It is the right tool when the password is merely stale or was shared, and the
+ * wrong one when they are locked out (they have to be able to sign in first).
+ *
+ * Deliberately does NOT bump tokenVersion. Doing so would sign the person out of
+ * every device the moment an admin ticked a box, mid-task; the flag is about the
+ * NEXT sign-in, and it takes hold there on its own.
+ *
+ * @route POST /api/admin/users/:id/require-password-change
+ * @param {boolean} [req.body.required=true] - false clears the request
+ * @returns {{ok: true, name, mustChangePassword: boolean}}
+ */
+// POST /api/admin/users/:id/require-password-change
+const requirePasswordChange = asyncHandler(async (req, res) => {
+  const required = req.body.required !== false;
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  if (String(user._id) === String(req.user._id)) {
+    res.status(400);
+    throw new Error('That is your own account — use Account → Change password.');
+  }
+
+  // updateOne, not save(): nothing here touches the password, and save() would
+  // run the hashing hook for no reason. (An in-memory assignment on `user` would
+  // be dead code — it is never saved — so there deliberately isn't one.)
+  await User.updateOne({ _id: user._id }, { $set: { mustChangePassword: required } });
+
+  const targetName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+
+  const AuditLog = require('../models/AuditLog');
+  AuditLog.create({
+    entity: 'User',
+    entityId: user._id,
+    entityLabel: targetName,
+    field: 'mustChangePassword',
+    fromStatus: required ? 'not required' : 'required',
+    toStatus: required ? 'required' : 'not required',
+    by: req.user._id,
+    byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    byRole: req.user.role,
+  }).catch((err) => console.error('require-password-change audit failed:', err.message));
+
+  if (required) {
+    const { notify } = require('../services/notify');
+    notify({
+      recipient: user._id,
+      type: 'general',
+      audience: 'all',
+      title: 'Choose a new password',
+      body: 'You will be asked to set a new password the next time you sign in.',
+    }).catch((err) => console.error('require-password-change notify failed:', err.message));
+  }
+
+  res.json({ ok: true, name: targetName, mustChangePassword: required });
+});
+
+/**
  * Who is signed in right now (Backend only).
  * @route GET /api/admin/sessions
  * @param {number} [req.query.hours] - how far back to list, 1-168 (default 24)
@@ -1193,6 +1257,7 @@ module.exports = {
   signOutUser,
   listAccountSecurity,
   resetUserPassword,
+  requirePasswordChange,
   getUser,
   createUser,
   updateUser,
