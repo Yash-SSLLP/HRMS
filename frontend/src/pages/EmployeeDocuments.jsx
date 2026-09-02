@@ -154,7 +154,7 @@ export default function EmployeeDocuments() {
   return (
     <div>
       <PageHeader title="My Documents" />
-      <input ref={replaceRef} type="file" hidden accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx" onChange={onReplaceFile} />
+      <input ref={replaceRef} type="file" hidden accept=".pdf,image/*,.doc,.docx" onChange={onReplaceFile} />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
@@ -210,7 +210,7 @@ export default function EmployeeDocuments() {
             <div className="md:col-span-2">
               <label className="block text-sm text-gray-700">{`File (PDF / JPG / PNG / DOCX, max ${MAX_UPLOAD_MB} MB) - you can select several`}</label>
               <input ref={fileRef} type="file" required multiple
-                accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx"
+                accept=".pdf,image/*,.doc,.docx"
                 className="mt-1 block w-full text-sm" />
             </div>
           </div>

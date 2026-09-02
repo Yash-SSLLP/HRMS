@@ -27,13 +27,14 @@ const router = express.Router();
 // Allowlist of common HR document types.
 const ALLOWED_MIMES = new Set([
   'application/pdf',
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/heic',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
+// ANY image, not a fixed list of four. The old set named jpeg/png/webp/heic, so
+// a scan saved as TIFF or BMP — what a flatbed scanner and some Windows tools
+// produce by default — was refused for no reason anybody could act on. If it is
+// an image, an HR document can be it.
+const isImage = (mime) => String(mime || '').startsWith('image/');
 // ...and the extensions that mean the same thing. This route used to test the
 // MIME string alone, which made it stricter than every sibling upload route for
 // no reason: a client that labels a PDF anything other than the literal
@@ -41,7 +42,7 @@ const ALLOWED_MIMES = new Set([
 // that could not identify it, 'application/x-pdf' from an older one, or an empty
 // type — was rejected outright, and the message named a type the person never
 // chose. The filename is the more reliable signal in exactly those cases.
-const ALLOWED_EXTENSIONS = /\.(pdf|jpe?g|png|webp|heic|heif|docx?)$/i;
+const ALLOWED_EXTENSIONS = /\.(pdf|jpe?g|png|webp|heic|heif|gif|bmp|tiff?|docx?)$/i;
 
 // 10 MB cap: a phone-scanned multi-page document (the Aadhaar/PAN/marksheet
 // scans this endpoint exists to collect) routinely runs past 5 MB, and the
@@ -51,7 +52,8 @@ const ALLOWED_EXTENSIONS = /\.(pdf|jpe?g|png|webp|heic|heif|docx?)$/i;
 const upload = createUpload({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = ALLOWED_MIMES.has(file.mimetype) || ALLOWED_EXTENSIONS.test(file.originalname || '');
+    const ok = ALLOWED_MIMES.has(file.mimetype) || isImage(file.mimetype)
+      || ALLOWED_EXTENSIONS.test(file.originalname || '');
     if (!ok) {
       return cb(new Error('Only PDF, Word or image files are accepted'));
     }
