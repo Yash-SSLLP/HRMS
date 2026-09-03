@@ -165,7 +165,13 @@ export default function ExitFeedback() {
                 <div className="flex gap-2">
                   {[1, 2, 3, 4, 5].map((n) => (
                     <label key={n} className={`flex-1 text-center border rounded-lg px-3 py-2 cursor-pointer text-sm ${
-                      String(form.recommendScore) === String(n) ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'
+                      // The ring, not just the fill: on a public page in dark mode the
+                      // accent fill and the card were within 1.00:1 of each other, so the
+                      // chip you had picked looked exactly like the four you had not.
+                      // ring-gray-900 is remapped to a light ink in dark (index.css).
+                      String(form.recommendScore) === String(n)
+                        ? 'bg-gray-900 text-white ring-2 ring-gray-900 font-semibold'
+                        : 'hover:bg-gray-50'
                     }`}>
                       <input type="radio" name="recommendScore" value={n} className="hidden"
                         checked={String(form.recommendScore) === String(n)}

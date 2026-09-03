@@ -782,7 +782,7 @@ const contentTypeFor = (p) => CONTENT_TYPES[path.extname(String(p || '')).toLowe
 
 /**
  * Upload the company logo used on every letterhead.
- * @route POST /api/admin/org-settings/logo  (SuperAdmin, multipart field "image")
+ * @route POST /api/admin/org-settings/logo  (requires 'branding.manage', multipart field "image")
  */
 const uploadBrandingLogo = asyncHandler(async (req, res) => {
   if (!req.file) { res.status(400); throw new Error('No image uploaded'); }
@@ -802,12 +802,12 @@ const uploadBrandingLogo = asyncHandler(async (req, res) => {
   // Only after the new pointer is safely persisted — a failed delete must never
   // orphan the record we just wrote.
   if (previous && previous !== storagePath) storage.remove(previous).catch(() => {});
-  res.json(orgSettingsPayload(s));
+  res.json(brandingPayload(s));
 });
 
 /**
  * Remove the company logo, reverting letters to the bundled default.
- * @route DELETE /api/admin/org-settings/logo  (SuperAdmin)
+ * @route DELETE /api/admin/org-settings/logo  (requires 'branding.manage')
  */
 const deleteBrandingLogo = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');
@@ -817,13 +817,13 @@ const deleteBrandingLogo = asyncHandler(async (req, res) => {
   await s.save();
   invalidateBranding();
   if (previous) storage.remove(previous).catch(() => {});
-  res.json(orgSettingsPayload(s));
+  res.json(brandingPayload(s));
 });
 
 /**
  * Stream the company logo back. Protected: it is only ever shown inside the
  * admin UI, and the PDF renderers read the bytes from GridFS directly.
- * @route GET /api/admin/org-settings/logo  (SuperAdmin)
+ * @route GET /api/admin/org-settings/logo  (requires 'branding.manage')
  */
 const getBrandingLogo = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');
@@ -837,7 +837,7 @@ const getBrandingLogo = asyncHandler(async (req, res) => {
 
 /**
  * Upload (or replace) one signature slot, and optionally its printed name/title.
- * @route POST /api/admin/org-settings/signature/:key  (SuperAdmin, field "image")
+ * @route POST /api/admin/org-settings/signature/:key  (requires 'branding.manage', field "image")
  * @param {'ceo'|'md'|'hr'} req.params.key
  */
 const uploadBrandingSignature = asyncHandler(async (req, res) => {
@@ -881,12 +881,12 @@ const uploadBrandingSignature = asyncHandler(async (req, res) => {
   await s.save();
   invalidateBranding();
   if (req.file && previous && previous !== storagePath) storage.remove(previous).catch(() => {});
-  res.json(orgSettingsPayload(s));
+  res.json(brandingPayload(s));
 });
 
 /**
  * Clear one signature slot.
- * @route DELETE /api/admin/org-settings/signature/:key  (SuperAdmin)
+ * @route DELETE /api/admin/org-settings/signature/:key  (requires 'branding.manage')
  */
 const deleteBrandingSignature = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');
@@ -900,12 +900,12 @@ const deleteBrandingSignature = asyncHandler(async (req, res) => {
     invalidateBranding();
     if (hit.storagePath) storage.remove(hit.storagePath).catch(() => {});
   }
-  res.json(orgSettingsPayload(s));
+  res.json(brandingPayload(s));
 });
 
 /**
  * Stream one signature image back for the admin preview.
- * @route GET /api/admin/org-settings/signature/:key  (SuperAdmin)
+ * @route GET /api/admin/org-settings/signature/:key  (requires 'branding.manage')
  */
 const getBrandingSignature = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');
@@ -929,6 +929,45 @@ const getBrandingSignature = asyncHandler(async (req, res) => {
 const getOrgSettings = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');
   res.json(orgSettingsPayload(await Setting.getSettings()));
+});
+
+// What a `branding.manage` holder may see and change: the letterhead images and
+// the footer printed under them. Deliberately NOT the whole org-settings payload
+// — chat being on, or whether executives appear in pickers, are the Backend's
+// preferences and have nothing to do with what a letter looks like.
+const brandingPayload = (s) => {
+  const full = orgSettingsPayload(s);
+  return { branding: full.branding, documentFooter: full.documentFooter };
+};
+
+/**
+ * The letterhead: logo, signature captions and the printed footer.
+ * @route GET /api/admin/org-settings/branding  (requires 'branding.manage')
+ * @returns {{branding: object, documentFooter: {helpline: string, note: string}}}
+ */
+const getBrandingSettings = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  res.json(brandingPayload(await Setting.getSettings()));
+});
+
+/**
+ * Update the footer printed on generated documents.
+ * @route PUT /api/admin/org-settings/branding  (requires 'branding.manage')
+ * @param {{helpline?: string, note?: string}} [req.body.documentFooter]
+ * @returns {{branding: object, documentFooter: object}}
+ */
+const updateBrandingSettings = asyncHandler(async (req, res) => {
+  const Setting = require('../models/Setting');
+  const s = await Setting.getSettings();
+  // Each half is settable on its own, and an empty string is a real value —
+  // clearing the helpline is how you take the number off the document.
+  if (req.body.documentFooter && typeof req.body.documentFooter === 'object') {
+    const f = req.body.documentFooter;
+    if (f.helpline !== undefined) s.documentFooter.helpline = String(f.helpline).trim().slice(0, 40);
+    if (f.note !== undefined) s.documentFooter.note = String(f.note).trim().slice(0, 120);
+  }
+  await s.save();
+  res.json(brandingPayload(s));
 });
 
 /**
@@ -1372,6 +1411,8 @@ module.exports = {
   setRemotePunchAccess,
   getOrgSettings,
   updateOrgSettings,
+  getBrandingSettings,
+  updateBrandingSettings,
   uploadBrandingLogo,
   deleteBrandingLogo,
   getBrandingLogo,

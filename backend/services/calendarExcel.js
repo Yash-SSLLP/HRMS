@@ -187,7 +187,9 @@ async function parseWorkbook(buffer) {
     // The label column (Name / Title) — used to spot the shipped example row.
     const labelKey = sheet.columns[1].key;
 
-    for (let r = 2; r <= ws.actualRowCount; r += 1) {
+    // rowCount, NOT actualRowCount — a count of non-empty rows would stop the
+    // scan early on any sheet with a gap in it (same fix as employeeExcel).
+    for (let r = 2; r <= ws.rowCount; r += 1) {
       const row = ws.getRow(r);
       if (row.actualCellCount === 0) continue;
 

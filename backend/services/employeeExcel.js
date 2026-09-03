@@ -335,7 +335,10 @@ async function parseWorkbook(buffer) {
   }));
 
   const rows = [];
-  const lastRow = ws.actualRowCount;
+  // rowCount, NOT actualRowCount: the latter is a COUNT of non-empty rows, so a
+  // blank row in the middle of a sheet cut the import short and left every
+  // employee below it out, silently.
+  const lastRow = ws.rowCount;
   for (let r = 2; r <= lastRow; r++) {
     const excelRow = ws.getRow(r);
     if (excelRow.actualCellCount === 0) continue;

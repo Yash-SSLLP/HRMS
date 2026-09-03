@@ -16,6 +16,8 @@
     "test:khata:db": "node scripts/testKhataIntegration.js",
     "test:salary": "node scripts/testSalaryRevision.js",
     "test:import": "node scripts/testEmployeeImport.js",
+    "test:salary-import": "node scripts/testSalaryStructureImport.js",
+    "test:salary-excel": "node scripts/testSalaryStructureExcel.js",
     "test:org": "node scripts/testOrgChart.js",
     "audit:accounts": "node scripts/auditImportedAccounts.js",
     "cleanup:orphans": "node scripts/cleanupOrphans.js",

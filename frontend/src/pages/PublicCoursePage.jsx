@@ -322,7 +322,10 @@ function FeedbackModal({ token, module, questions, session, onClose, onDone }) {
         <div className="flex items-center gap-1 mb-4">
           {[1, 2, 3, 4, 5].map((n) => (
             <button key={n} type="button" onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(0)} onClick={() => setRating(n)}
-              className={`text-3xl leading-none ${(hover || rating) >= n ? 'text-amber-500' : 'text-gray-300'}`}>★</button>
+              // .star-btn / .is-on rather than raw utilities: text-gray-300 is outside
+              // the dark ink remap, so an unlit star stayed #d1d5db and read as BRIGHTER
+              // than a lit one. The component class carries both themes already.
+              className={`star-btn text-3xl leading-none ${(hover || rating) >= n ? 'is-on' : ''}`}>★</button>
           ))}
         </div>
 

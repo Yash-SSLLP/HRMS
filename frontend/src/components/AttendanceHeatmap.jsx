@@ -219,7 +219,7 @@ export default function AttendanceHeatmap({ days = 365, org = false, scope = 'or
 
       {tip && (
         <div
-          className="fixed z-50 pointer-events-none bg-gray-900 text-white text-xs rounded-lg shadow-lg px-3 py-2"
+          className="fixed z-50 pointer-events-none chart-tip text-white text-xs rounded-lg shadow-lg px-3 py-2"
           /* Clamped: near the right or bottom edge the tooltip used to open
              off-screen, so the last column and the final rows — the most
              recent days, the ones people actually check — could not be read. */

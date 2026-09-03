@@ -3,11 +3,18 @@
  * from GET /salary-structures and CRUDs them via /salary-structures; each stores
  * component percentages of CTC. A preview modal posts an annual CTC to
  * POST /salary-structures/:id/preview to show the monthly/annual breakdown.
+ *
+ * Bulk Excel lives here too: Template / Export / Import against
+ * /salary-structures/template.xlsx, /export.xlsx and /import. One sheet row is
+ * one person's monthly breakup plus their annual CTC — the upload turns those
+ * amounts into a structure's percentages and puts the employee on it, which is
+ * the same two steps the modal below does by hand, for a whole company at once.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
+import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
@@ -75,6 +82,12 @@ export default function AdminSalaryStructures() {
   const [sharedCount, setSharedCount] = useState(0);
   const [saving, setSaving] = useState(false);
 
+  // ----- Bulk Excel -----
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const importFileRef = useRef(null);
+
   // Preview modal
   const [previewFor, setPreviewFor] = useState(null);
   const [previewEmp, setPreviewEmp] = useState(null);      // whose CTC the preview is using
@@ -109,7 +122,10 @@ export default function AdminSalaryStructures() {
     (sum, [key]) => sum + (Number(form.components[key]) || 0),
     0
   );
-  const overLimit = totalPct > 100;
+  // The epsilon matches PCT_TOTAL_EPSILON on the server. Six decimals cannot
+  // always add back to exactly 100, and a strict `> 100` would disable Save on a
+  // fully-allocated imported structure with no way for anyone to tell why.
+  const overLimit = totalPct > 100 + 1e-6;
 
   const openCreate = () => {
     setEditingId(null);
@@ -262,6 +278,42 @@ export default function AdminSalaryStructures() {
     }
   };
 
+  const closeImport = () => {
+    setShowImport(false);
+    setImportResult(null);
+    if (importFileRef.current) importFileRef.current.value = '';
+  };
+
+  /**
+   * Upload the salary sheet. The response is kept on screen rather than
+   * toasted: an import that touched fifty people has more to say than a tick,
+   * and the rows it could not place are the whole point of reading it.
+   */
+  const runImport = async (e) => {
+    e.preventDefault();
+    const file = importFileRef.current?.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post('/salary-structures/import', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportResult(data);
+      // Both lists move: structures were created, and employees were put on them.
+      await load();
+      api.get('/employees?excludeExecutives=true')
+        .then(({ data: d }) => setEmployees((d.profiles || []).filter((x) => x.user)))
+        .catch(() => {});
+    } catch (err) {
+      setImportResult({ errorBanner: err.response?.data?.message || 'Import failed' });
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const remove = async (s) => {
     if (!(await confirmDialog({ message: `Delete salary structure "${s.name}"?`, tone: 'danger', confirmText: 'Delete' }))) return;
     try {
@@ -337,12 +389,36 @@ export default function AdminSalaryStructures() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [annualCtc, previewFor]);
 
+  // An imported structure carries percentages to six decimals — that precision is
+  // what makes the rupees come back exactly, but "Basic 46.315789%" is not a
+  // summary. Trimmed for DISPLAY only; the stored value is never rounded.
+  const pct = (v) => `${Number(Number(v || 0).toFixed(2))}`;
   const summary = (c = {}) =>
-    `Basic ${c.basicPct || 0}% · HRA ${c.hraPct || 0}% · Special ${c.specialAllowancePct || 0}%`;
+    `Basic ${pct(c.basicPct)}% · HRA ${pct(c.hraPct)}% · Special ${pct(c.specialAllowancePct)}%`;
 
   return (
     <div>
       <PageHeader title="Salary Structures" subtitle="Reusable CTC templates">
+        <button
+          onClick={() => downloadFile('/salary-structures/export.xlsx', 'salary-structures.xlsx')}
+          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
+          title="Download every employee's structure and CTC as an Excel file"
+        >
+          Export Excel
+        </button>
+        <button
+          onClick={() => downloadFile('/salary-structures/template.xlsx', 'salary-structure-import-template.xlsx')}
+          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
+          title="Download the blank import template"
+        >
+          Template
+        </button>
+        <button
+          onClick={() => setShowImport(true)}
+          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
+        >
+          Import Excel
+        </button>
         <button
           onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm"
@@ -464,6 +540,11 @@ export default function AdminSalaryStructures() {
                         type="number"
                         min="0"
                         max="100"
+                        // step="any": an imported structure carries percentages to
+                        // six decimals, and the default step of 1 makes the browser
+                        // call 46.315789 invalid — the form then refuses to submit
+                        // with no visible reason.
+                        step="any"
                         value={form.components[key]}
                         onChange={(e) => setPct(key, e.target.value)}
                         className="block w-full border rounded-lg px-3 py-2"
@@ -646,6 +727,227 @@ export default function AdminSalaryStructures() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------- Bulk import ---------------- */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h2 className="card-title">Import salary structures from Excel</h2>
+                <p className="text-xs text-gray-500 mt-1">
+                  One row per employee: <strong>Name</strong>, <strong>SSL Code</strong>, the monthly
+                  <strong> Basic, HRA, Special Allowance, Conveyance, Medical, LTA</strong>, and their
+                  annual <strong>CTC</strong>. Each row becomes a salary structure and the employee is
+                  put on it with that CTC.
+                </p>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Amounts are per <strong>month</strong>; CTC is per <strong>year</strong>. Leave the
+                  optional <strong>Salary Structure</strong> column blank and the structure is named
+                  after the person — fill it in to put several people on one shared template.
+                </p>
+                <p className="text-[11px] text-amber-700 mt-1">
+                  A row that cannot be matched to an employee is reported, never guessed at, and the
+                  rest of the sheet still imports. Re-uploading a corrected file is safe.
+                </p>
+              </div>
+              <button onClick={closeImport} type="button" aria-label="Close" title="Close"
+                className="topbar-icon-btn shrink-0">×</button>
+            </div>
+
+            {!importResult && (
+              <form onSubmit={runImport} className="space-y-3">
+                <input ref={importFileRef} type="file" required accept=".xlsx"
+                  className="block w-full text-sm border rounded-lg px-3 py-2" />
+                <p className="text-xs text-gray-500">
+                  Use <strong>Template</strong> for a correctly-formatted file, or{' '}
+                  <strong>Export Excel</strong> to start from what is already set up.
+                </p>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button type="button" onClick={closeImport}
+                    className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                  <button type="submit" disabled={importing}
+                    className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                    {importing ? 'Importing…' : 'Upload & Import'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {importResult && (
+              <div className="space-y-4">
+                {importResult.errorBanner ? (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                    {importResult.errorBanner}
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                        <div className="text-2xl font-semibold text-green-800">{importResult.assignedCount}</div>
+                        <div className="text-xs text-green-700">Employees set up</div>
+                      </div>
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <div className="text-2xl font-semibold text-blue-800">{importResult.createdCount}</div>
+                        <div className="text-xs text-blue-700">Structures created</div>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                        <div className="text-2xl font-semibold text-amber-800">{importResult.updatedCount}</div>
+                        <div className="text-xs text-amber-700">Structures updated</div>
+                      </div>
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                        <div className="text-2xl font-semibold text-red-800">{importResult.errorCount}</div>
+                        <div className="text-xs text-red-700">Rows not imported</div>
+                      </div>
+                    </div>
+
+                    {/* Pay columns the sheet did not carry at all. Loudest thing
+                        on the screen on purpose: every row that imported is
+                        paying zero for these, and the counts above look fine. */}
+                    {importResult.missingComponents?.length > 0 && (
+                      <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2.5">
+                        <div className="text-sm font-semibold text-red-900">
+                          No {importResult.missingComponents.join(' or ')} column in this sheet
+                        </div>
+                        <p className="text-xs text-red-800 mt-0.5">
+                          Everyone imported above is set to <strong>₹0</strong> for{' '}
+                          {importResult.missingComponents.length === 1 ? 'that component' : 'those components'}.
+                          If that is wrong, add the column{importResult.missingComponents.length === 1 ? '' : 's'} and
+                          upload again — re-importing overwrites what just went in.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* What each person will actually be paid, recomputed the way
+                        payroll does it — the proof the sheet survived the trip. */}
+                    {importResult.assigned?.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-semibold mb-1">Set up</h3>
+                        <div className="max-h-56 overflow-auto text-xs border rounded">
+                          <table className="w-full">
+                            <thead className="bg-gray-50 sticky top-0">
+                              <tr>
+                                <th className="px-2 py-1 text-left">Employee</th>
+                                <th className="px-2 py-1 text-left">Structure</th>
+                                <th className="px-2 py-1 text-right">Monthly gross</th>
+                                <th className="px-2 py-1 text-right">Annual CTC</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importResult.assigned.map((a) => {
+                                const gross = Object.values(a.monthly || {}).reduce((x, y) => x + (y || 0), 0);
+                                return (
+                                  <tr key={`${a.excelRow}-${a.employeeCode}`} className="border-t">
+                                    <td className="px-2 py-1">
+                                      {a.name} <span className="text-gray-400 font-mono">{a.employeeCode}</span>
+                                    </td>
+                                    <td className="px-2 py-1">{a.structure}</td>
+                                    <td className="px-2 py-1 text-right">{inr.format(gross)}</td>
+                                    <td className="px-2 py-1 text-right">{inr.format(a.annualCtc || 0)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Two headers that meant the same column to us: only the
+                        first was read, so say which pair and let HR decide. */}
+                    {importResult.ambiguousColumns?.length > 0 && (
+                      <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5">
+                        <div className="text-sm font-medium text-amber-900">
+                          Two columns read as the same thing
+                        </div>
+                        <p className="text-xs text-amber-800 mt-0.5">
+                          {importResult.ambiguousColumns.join('; ')} — only the first was used. Rename or
+                          remove one and upload again if that is not what you wanted.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Which existing templates were rewritten. A count alone
+                        does not say whose pay may have moved with them. */}
+                    {importResult.updated?.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-semibold mb-1">Templates updated</h3>
+                        <ul className="text-xs text-gray-600 space-y-1 max-h-32 overflow-y-auto">
+                          {importResult.updated.map((u, i) => (
+                            <li key={i}>Row {u.excelRow}: {u.name} — now {u.totalPct}% of CTC</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Decisions the import made on its own — a name matched
+                        without a code, a shared template left alone, a sheet read
+                        as annual. Each one is a thing HR would want to know. */}
+                    {importResult.notes?.length > 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                        <div className="text-sm font-medium text-amber-900 mb-1">Worth a look</div>
+                        <ul className="text-xs text-amber-800 space-y-1 max-h-40 overflow-y-auto">
+                          {importResult.notes.map((n, i) => (
+                            <li key={i}>Row {n.excelRow}: {n.message}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {importResult.skipped?.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-semibold mb-1">Skipped</h3>
+                        <ul className="text-xs text-gray-600 space-y-1 max-h-32 overflow-y-auto">
+                          {importResult.skipped.map((k, i) => (
+                            <li key={i}>Row {k.excelRow}: {k.name || k.employeeCode} — {k.reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {importResult.errors?.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-semibold mb-1">Not imported</h3>
+                        <div className="max-h-40 overflow-auto text-xs border rounded">
+                          <table className="w-full">
+                            <thead className="bg-gray-50 sticky top-0">
+                              <tr>
+                                <th className="px-2 py-1 text-left">Row</th>
+                                <th className="px-2 py-1 text-left">Reason</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importResult.errors.map((e, i) => (
+                                <tr key={i} className="border-t">
+                                  <td className="px-2 py-1 whitespace-nowrap">
+                                    {e.excelRow}{e.name ? ` · ${e.name}` : ''}
+                                  </td>
+                                  <td className="px-2 py-1">{e.message}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {importResult.errorCount > importResult.errors.length
+                            && `Showing the first ${importResult.errors.length} of ${importResult.errorCount}. `}
+                          Fix those rows in the sheet and upload it again — the rows that worked are
+                          already in, and re-importing them changes nothing.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button type="button" onClick={closeImport}
+                    className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

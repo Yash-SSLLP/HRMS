@@ -33,6 +33,8 @@ const {
   setRemotePunchAccess,
   getOrgSettings,
   updateOrgSettings,
+  getBrandingSettings,
+  updateBrandingSettings,
   uploadBrandingLogo,
   deleteBrandingLogo,
   getBrandingLogo,
@@ -89,6 +91,35 @@ router.post('/users/:id/require-password-change', superAdminOnly, requirePasswor
 // inventory of the whole company.
 router.get('/app-versions', superAdminOnly, listAppVersions);
 
+// ----- Letterhead branding: company logo + CEO/MD/HR signatures -----
+// Edited from Admin → Email & Letter Templates; the images are applied to every
+// generated letter and payslip. Gated on 'branding.manage' rather than on the
+// SuperAdmin role so an HR who already owns the letter wording can own the
+// letterhead too. Declared ABOVE the users.manage gate below — the capability
+// is about letters, and nothing here should also demand user administration.
+// GET/PUT /org-settings/branding — the letterhead slice of the settings doc
+// (images + printed footer). Separate from GET /org-settings, which is the
+// Backend's own org preferences and stays SuperAdmin-only: holding the
+// letterhead grant is not a reason to read whether chat is switched on.
+router.route('/org-settings/branding')
+  .all(requirePermission('branding.manage'))
+  .get(getBrandingSettings)
+  .put(updateBrandingSettings);
+
+// GET/POST/DELETE /org-settings/logo
+router.route('/org-settings/logo')
+  .all(requirePermission('branding.manage'))
+  .get(getBrandingLogo)
+  .post(brandingUpload.single('image'), uploadBrandingLogo)
+  .delete(deleteBrandingLogo);
+
+// GET/POST/DELETE /org-settings/signature/:key  (key = ceo | md | hr)
+router.route('/org-settings/signature/:key')
+  .all(requirePermission('branding.manage'))
+  .get(getBrandingSignature)
+  .post(brandingUpload.single('image'), uploadBrandingSignature)
+  .delete(deleteBrandingSignature);
+
 // Everything below requires the 'users.manage' capability (SuperAdmin always has it).
 router.use(requirePermission('users.manage'));
 
@@ -142,21 +173,6 @@ router.patch('/users/:id/remote-punch-access', restrictTo('SuperAdmin'), setRemo
 router.route('/org-settings')
   .get(restrictTo('SuperAdmin'), getOrgSettings)
   .put(restrictTo('SuperAdmin'), updateOrgSettings);
-
-// ----- Letterhead branding: company logo + CEO/MD/HR signatures -----
-// SuperAdmin only; edited from Admin → Email & Letter Templates. The images are
-// applied to every generated letter and payslip.
-// GET/POST/DELETE /org-settings/logo
-router.route('/org-settings/logo')
-  .get(restrictTo('SuperAdmin'), getBrandingLogo)
-  .post(restrictTo('SuperAdmin'), brandingUpload.single('image'), uploadBrandingLogo)
-  .delete(restrictTo('SuperAdmin'), deleteBrandingLogo);
-
-// GET/POST/DELETE /org-settings/signature/:key  (key = ceo | md | hr)
-router.route('/org-settings/signature/:key')
-  .get(restrictTo('SuperAdmin'), getBrandingSignature)
-  .post(restrictTo('SuperAdmin'), brandingUpload.single('image'), uploadBrandingSignature)
-  .delete(restrictTo('SuperAdmin'), deleteBrandingSignature);
 
 // POST /users — create a user; protected, requires 'users.manage'.
 router.post('/users', createUser);

@@ -143,7 +143,12 @@ export const adminNav = [
     { to: '/admin/events', label: 'Events', icon: FiFlag, perm: 'events.manage' },
     { to: '/admin/rnr', label: 'Rewards & Recognition', icon: FiAward, perm: 'announcements.manage' },
     { to: '/admin/surveys', label: 'Surveys', icon: FiPieChart, perm: 'surveys.manage' },
-    { to: '/admin/templates', label: 'Email & Letter Templates', icon: FiEdit3, perm: 'templates.manage' },
+    { to: '/admin/templates', label: 'Email & Letter Templates', icon: FiEdit3,
+      // Two grants share this page — the letter wording and the letterhead
+      // itself — and either one on its own is enough to have something to do here.
+      anyPerm: ['templates.manage', 'branding.manage'],
+      tabs: [{ id: 'templates', label: 'Templates', perm: 'templates.manage' },
+        { id: 'branding', label: 'Logo & signatures', perm: 'branding.manage' }] },
     // Push reminder schedule — SuperAdmin-only, matching the server, which
     // ignores the reminder block from anyone else.
     { to: '/admin/push-notifications', label: 'Push Notification', icon: FiBell, roles: ['SuperAdmin'] },

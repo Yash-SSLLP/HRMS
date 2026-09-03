@@ -41,7 +41,10 @@ const BAR_FILL = 'var(--chart-1)';
 const BAR_LABEL = 'var(--chart-1)';
 
 // White halo behind label text so it stays legible over lines/bars/gridlines.
-const halo = { paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3, strokeLinejoin: 'round' };
+// The halo that lets a label read over a bar. It is the CARD punched out around
+// the glyph, not the colour white — hardcoded, it drew a white outline around
+// dark text in dark mode, which is the effect in reverse.
+const halo = { paintOrder: 'stroke', stroke: 'var(--surface)', strokeWidth: 3, strokeLinejoin: 'round' };
 
 export default function AttendanceDayChart({ days = [], height, compact = false, showAverages }) {
   // Measure the wrapper so the chart can fill the full card width. Keeping the
@@ -227,7 +230,7 @@ export default function AttendanceDayChart({ days = [], height, compact = false,
             <g key={`pt-${i}`}>
               {d.login != null && (
                 <>
-                  <circle cx={x(i)} cy={y(d.login)} r={ptR} fill={LOGIN_COLOR} stroke="#fff" strokeWidth="1.5">
+                  <circle cx={x(i)} cy={y(d.login)} r={ptR} fill={LOGIN_COLOR} style={{ stroke: 'var(--surface)' }} strokeWidth="1.5">
                     <title>{`${d.label} · Login ${hhmm(d.login)}`}</title>
                   </circle>
                   {showLabels && (
@@ -237,7 +240,7 @@ export default function AttendanceDayChart({ days = [], height, compact = false,
               )}
               {d.logout != null && (
                 <>
-                  <circle cx={x(i)} cy={y(d.logout)} r={ptR} fill={LOGOUT_COLOR} stroke="#fff" strokeWidth="1.5">
+                  <circle cx={x(i)} cy={y(d.logout)} r={ptR} fill={LOGOUT_COLOR} style={{ stroke: 'var(--surface)' }} strokeWidth="1.5">
                     <title>{`${d.label} · Logout ${hhmm(d.logout)}`}</title>
                   </circle>
                   {showLabels && (

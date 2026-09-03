@@ -72,6 +72,11 @@ const PERMISSIONS = [
   // decision, so it is its own capability rather than riding on the module that
   // happens to send the mail.
   { key: 'templates.manage', label: 'Email & letter templates', group: 'Engagement' },
+  // The letterhead itself — company logo and the CEO/MD/HR signature images
+  // stamped on every generated letter and payslip. Separate from
+  // templates.manage on purpose: one changes what a letter SAYS, this one
+  // changes whose signature appears at the bottom of it.
+  { key: 'branding.manage', label: 'Letterhead logo & signatures', group: 'Engagement' },
 
   // Reports & insights
   { key: 'analytics.view', label: 'HR analytics', group: 'Reports & Insights' },

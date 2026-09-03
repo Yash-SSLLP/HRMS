@@ -90,10 +90,27 @@ html {
 }
 
 html[data-role="SuperAdmin"] { --accent: #7c3aed; --accent-700: #6d28d9; } /* violet */
-html[data-role="HRManager"]  { --accent: #0d9488; --accent-700: #0f766e; } /* teal   */
+/* Teal SEVEN hundred, not six. Teal-600 (#0d9488) carries white at only 3.74:1
+   — as a button label, as an accent-filled chip, and as the link colour, since
+   `.text-blue-600` is repointed at this same token. The pill fill had already
+   been moved down a step for exactly this reason (see --pill-bg in the My
+   Portal block); this brings the accent itself with it. Same hue, white clears
+   at 5.47:1. */
+html[data-role="HRManager"]  { --accent: #0f766e; --accent-700: #115e59; } /* teal   */
 html[data-role="Employee"]   { --accent: #2563eb; --accent-700: #1d4ed8; } /* blue   */
 
 html.dark {
+  /* THE DARK FALLBACK ACCENT. `:root` falls back to #111827, which in dark is
+     the card itself — measured 1.00:1, so a primary button was not dim, it was
+     invisible. Three groups landed there: signed-out visitors on the public
+     pages, and — on any page outside the portal frame, i.e. the forced
+     /change-password screen — the five roles that never got an accent of their
+     own (CEO, MD, Manager, Accounts Manager, L&D Manager). Blue-400 is light
+     enough to carry the onyx ink every dark accent now takes, and reads at ~7:1
+     as link text on the card. Every role/portal block below overrides it. */
+  --accent: #60a5fa;
+  --accent-700: #3b82f6;
+
   /* Neutral graphite palette — a warmer, near-neutral charcoal that replaces the
      old blue-navy tint. Shared by every role (only --accent varies per role). */
   --bg: #0e0f13;
@@ -1280,7 +1297,13 @@ html.dark .bg-gray-300 { background-color: var(--border) !important; }
    surface — on the now-dark off-track it would sink to 1.6:1. Keep the knob
    light so it reads against both the off-track and the accent-filled on-track
    (pages/AdminEmployees.jsx, the "show CEO & MD" toggle). */
-html.dark [role="switch"] > span { background-color: var(--dk-ink-3) !important; }
+html.dark [role="switch"] > span,
+/* …and the theme toggle itself (components/ThemeToggle.jsx), which is an
+   aria-pressed button rather than a role="switch", so the rule above never
+   reached it: its white knob was remapped to the dark surface and sat at 1.87:1
+   on its own track. Scoped to a bg-white span DIRECTLY inside the button, which
+   is the knob and nothing else. */
+html.dark button[aria-pressed] > span.bg-white { background-color: var(--dk-ink-3) !important; }
 
 html.dark .text-gray-900 { color: var(--dk-ink-1) !important; }
 html.dark .text-gray-800 { color: var(--dk-ink-2) !important; }
@@ -1288,6 +1311,43 @@ html.dark .text-gray-700 { color: var(--dk-ink-3) !important; }
 html.dark .text-gray-600 { color: var(--dk-ink-5) !important; }
 html.dark .text-gray-500 { color: var(--dk-ink-6) !important; }
 html.dark .text-gray-400 { color: var(--dk-ink-7) !important; }
+
+/* CHART PAINT, everywhere — not just the pie.
+   `fill-*` is a different utility family from `text-*`, so none of the remaps
+   above reach it, and the two SVG charts (AttendanceDayChart, LineChart) were
+   drawing their axis labels in the light-mode inks: measured on the admin dark
+   card, fill-gray-600 came out at 2.3:1 and fill-gray-500 at 3.6:1 — an axis
+   nobody can read. fill-gray-400 already measured 6.9:1 and is left alone.
+   Mapped onto the same ink ramp the text remap uses, so a label and its axis
+   title stay in the same relationship they have in light mode. */
+html.dark .fill-gray-600 { fill: var(--dk-ink-5) !important; }
+html.dark .fill-gray-500 { fill: var(--dk-ink-6) !important; }
+
+/* The gridlines those charts draw take their colour from `currentColor` on a
+   `text-gray-200` element — two shades OUTSIDE the 400–900 band the text remap
+   covers, so they stayed #e5e7eb: 14:1 against the card, a white cage brighter
+   than the data inside it. A gridline is furniture; it belongs at the hairline. */
+html.dark .text-gray-200 { color: var(--border) !important; }
+
+/* SELECTION MARKS. `border-gray-900` / `ring-gray-900` is how the app says
+   "this one is chosen" (a picked asset, the course being edited, the khata row
+   in focus) — the strongest neutral there is in light mode, and 1.02:1 against
+   a dark card, which is nothing at all. The strongest neutral in dark is at the
+   other end of the ramp, so the mark inverts with the theme instead of vanishing
+   with it. */
+html.dark .border-gray-900 { border-color: var(--dk-ink-2) !important; }
+html.dark .ring-gray-900 { --tw-ring-color: var(--dk-ink-2) !important; }
+
+/* …and the same trap in reverse for the quiet rings. `ring-gray-200/300` is an
+   input's resting edge and a card's hairline; left literal they became a
+   17:1 white outline around every field on the page. */
+html.dark .ring-gray-200,
+html.dark .ring-gray-300 { --tw-ring-color: var(--border) !important; }
+
+/* `border-gray-50` is the frame's own hairline (Layout's top bar, sidebar and
+   drawer edges). Near-white by definition, so in dark it drew a bright line
+   across the chrome — 14.9:1 — where the intent was the faintest edge available. */
+html.dark .border-gray-50 { border-color: var(--border) !important; }
 
 /* PieChart SVG text uses Tailwind fill-* utilities (not covered by the text-*
    remap above), so the centre number/label stay near-black in dark mode. Make
@@ -1302,6 +1362,20 @@ html.dark .border-gray-200,
 html.dark .border-gray-300 { border-color: var(--border) !important; }
 
 html.dark [class*="divide-gray-"] > * { border-color: var(--border) !important; }
+/* `divide-{hue}` is a separate family from `border-{hue}`, so the coloured-border
+   remap never reached it: the amber hairlines between document-replacement
+   requests kept #fde68a and sat at 10.6:1 on their own dark amber panel — five
+   times brighter than the panel's own frame. Softened to the hue at the strength
+   the frame uses. */
+html.dark [class*="divide-amber-"] > *,
+html.dark [class*="divide-yellow-"] > * { border-color: color-mix(in srgb, #f59e0b 34%, transparent) !important; }
+html.dark [class*="divide-green-"] > *,
+html.dark [class*="divide-emerald-"] > * { border-color: color-mix(in srgb, #22c55e 34%, transparent) !important; }
+html.dark [class*="divide-red-"] > *,
+html.dark [class*="divide-rose-"] > * { border-color: color-mix(in srgb, #ef4444 34%, transparent) !important; }
+html.dark [class*="divide-blue-"] > *,
+html.dark [class*="divide-sky-"] > *,
+html.dark [class*="divide-indigo-"] > * { border-color: color-mix(in srgb, #3b82f6 34%, transparent) !important; }
 
 html.dark .hover\:bg-gray-50:hover { background-color: var(--surface-2) !important; }
 html.dark .hover\:bg-gray-100:hover { background-color: var(--surface-3) !important; }
@@ -1316,6 +1390,49 @@ html.dark button.disabled\:bg-gray-50:disabled { background-color: var(--surface
 html.dark .disabled\:bg-gray-100:disabled,
 html.dark button.disabled\:bg-gray-100:disabled { background-color: var(--surface-3) !important; }
 
+/* The same trap once more, and the last variant family nobody had covered: an
+   OPACITY modifier. `bg-gray-50/60` compiles to its own class — `.bg-gray-50\/60`
+   — so every remap above, which matches the plain `.bg-gray-50`, walked straight
+   past it. The birthday rows, the two dashboard/attendance detail panels and the
+   course-lesson cards therefore stayed near-white blocks in dark mode while the
+   `text-gray-500` ink on them was remapped light: grey on grey, with the
+   designation and the "in 2 days" line effectively invisible. It is the same bug
+   the seg-track and the salary-setup alert each had to be rewritten to escape.
+
+   Matched on the class ATTRIBUTE rather than on each compiled name, so a new
+   opacity anywhere in the app is covered the day it is written.
+
+   White keeps its alpha semantics instead of becoming a surface: a translucent
+   white veil means "lift this slightly off whatever is behind it", which on a
+   dark ground is a faint light wash — not a near-white slab. That also leaves
+   the course player's `bg-white/20` progress track reading as a track. */
+html.dark [class*="bg-gray-50/"] { background-color: var(--surface-2) !important; }
+html.dark [class*="bg-gray-100/"] { background-color: var(--surface-3) !important; }
+html.dark [class*="bg-white/"] { background-color: rgba(255, 255, 255, .08) !important; }
+
+/* The same escape, one hue over. A TINTED wash carrying an opacity —
+   `bg-amber-50/40` on a pending Sunday-duty row, `bg-green-50/40` and
+   `bg-red-50/40` on verified and rejected candidate documents — is its own class
+   too, so the hue remap above (which matches the plain `.bg-amber-50`) never
+   reached it either: those rows stayed near-white in dark mode with their
+   remapped light ink on top. Each is re-mixed from its own hue at the same
+   strength the plain wash uses, so the row still reads as amber, green or red
+   rather than collapsing to a neutral. */
+html.dark [class*="bg-amber-50/"] { background-color: color-mix(in srgb, #f59e0b 15%, var(--surface)) !important; }
+html.dark [class*="bg-yellow-50/"] { background-color: color-mix(in srgb, #eab308 15%, var(--surface)) !important; }
+html.dark [class*="bg-green-50/"] { background-color: color-mix(in srgb, #22c55e 15%, var(--surface)) !important; }
+html.dark [class*="bg-emerald-50/"] { background-color: color-mix(in srgb, #10b981 15%, var(--surface)) !important; }
+html.dark [class*="bg-teal-50/"] { background-color: color-mix(in srgb, #14b8a6 15%, var(--surface)) !important; }
+html.dark [class*="bg-red-50/"] { background-color: color-mix(in srgb, #ef4444 15%, var(--surface)) !important; }
+html.dark [class*="bg-rose-50/"] { background-color: color-mix(in srgb, #f43f5e 15%, var(--surface)) !important; }
+html.dark [class*="bg-orange-50/"] { background-color: color-mix(in srgb, #f97316 15%, var(--surface)) !important; }
+html.dark [class*="bg-blue-50/"] { background-color: color-mix(in srgb, #3b82f6 15%, var(--surface)) !important; }
+html.dark [class*="bg-sky-50/"] { background-color: color-mix(in srgb, #0ea5e9 15%, var(--surface)) !important; }
+html.dark [class*="bg-cyan-50/"] { background-color: color-mix(in srgb, #06b6d4 15%, var(--surface)) !important; }
+html.dark [class*="bg-indigo-50/"] { background-color: color-mix(in srgb, #6366f1 15%, var(--surface)) !important; }
+html.dark [class*="bg-violet-50/"] { background-color: color-mix(in srgb, #8b5cf6 15%, var(--surface)) !important; }
+html.dark [class*="bg-purple-50/"] { background-color: color-mix(in srgb, #a855f7 15%, var(--surface)) !important; }
+
 /* Same trap for `bg-white`, which is remapped above but only in its plain form.
    These are all "hover/focus lifts to a brighter surface" — the outline buttons
    on the mail composer and course player, the translucent complaint cards, and
@@ -1325,6 +1442,15 @@ html.dark .hover\:bg-white:hover,
 html.dark .focus\:bg-white:focus {
   background-color: color-mix(in srgb, #ffffff 9%, var(--surface-3)) !important;
 }
+
+/* The review sheet's comment fields are underline-only inputs that opt out of
+   the app-wide focus glow (`focus:ring-0`), and their `focus:border-gray-400`
+   carries no !important — so in dark mode the remap below pinned resting AND
+   focused to the same hairline, and the field gave no sign it had focus at all.
+   Scoped to that shape (a transparent, border-b-only input) so nothing else
+   moves. */
+html.dark input.bg-transparent.border-0:focus,
+html.dark textarea.bg-transparent.border-0:focus { border-bottom-color: var(--accent) !important; }
 
 html.dark input,
 html.dark select,
@@ -1541,11 +1667,16 @@ html.dark[data-portal="admin"] {
 
 /* Employee / My Portal — light */
 html[data-portal="employee"] {
-  --accent: #0d9488;
-  --accent-700: #0f766e;
-  /* Teal-600 carries neither ink at 4.5:1 (white 3.74, onyx 4.46), so the pill
-     fills with teal-700 instead — same hue, and white clears at 5.47:1. */
-  --pill-bg: var(--accent-700);
+  /* Teal-700. The pill already sat here because teal-600 carries neither ink at
+     4.5:1 (white 3.74, onyx 4.46) — but everything ELSE the accent paints kept
+     the 600: every primary button's label, every accent-filled chip, and every
+     link (`.text-blue-600` is repointed at this token), all at 3.74:1. The whole
+     accent now sits where the pill did; white clears at 5.47:1 and the hue is
+     unchanged. --pill-bg follows the accent so pills stay exactly as they are
+     rather than stepping down again to teal-800. */
+  --accent: #0f766e;
+  --accent-700: #115e59;
+  --pill-bg: var(--accent);
   --bg: #ecf5f2;
   --surface-3: #e3f1ec;
 }
@@ -1562,10 +1693,9 @@ html.dark[data-portal="employee"] {
      use the brand gold in dark mode, so nothing is left teal against it. */
   --accent: #fbbf24;
   --accent-700: #f59e0b;
-  /* Brand gold: white on it is 1.67:1, the onyx 10:1 — same ink-on-gold rule
-     the accent FILLS below already follow. --pill-bg is re-stated because the
-     LIGHT employee block above points it at --accent-700, and that would
-     otherwise cascade in and dull the pill to amber-500. */
+  /* Brand gold: white on it is 1.67:1, the onyx 10:1 — same ink-on-accent rule
+     the FILLS below already follow. --pill-bg is re-stated so the pill tracks
+     this block's own accent rather than inheriting the light block's teal. */
   --pill-bg: var(--accent);
   --pill-ink: var(--onyx);
   --bg: #0b0d11;                     /* one step under the board, so cards lift off it */
@@ -1574,24 +1704,66 @@ html.dark[data-portal="employee"] {
   --surface-3: var(--cal-cell);      /* #23262e — its day cell */
   --border: #2b2f39;                 /* hairline in the same neutral family */
 }
-/* Ink on gold. Everywhere else the accent is dark enough to carry white text;
-   on gold white is ~1.9:1 — unreadable. So in this portal every accent-FILLED
-   surface takes the onyx ink instead (gold tile + near-black glyph, exactly the
-   brand lockup). Descendants are included because these fills often wrap text
-   that was styled pale for a near-black chip (a tooltip's .text-gray-300), which
-   would otherwise stay pale on gold. Danger nav items are excluded — they are
-   red, not gold, and keep their white glyph. */
-html.dark[data-portal="employee"] .bg-gray-900,
-html.dark[data-portal="employee"] .bg-gray-900 *,
-html.dark[data-portal="employee"] .accent-bg,
-html.dark[data-portal="employee"] .accent-bg *,
-html.dark[data-portal="employee"] .on-accent,
-html.dark[data-portal="employee"] .nav-link-active:not(.nav-link-danger) .nav-icon,
-html.dark[data-portal="employee"] .nav-link-highlight:not(.nav-link-danger) .nav-icon,
-html.dark[data-portal="employee"] .nav-section-link.is-active:not(.nav-link-danger) .nav-icon,
-html.dark[data-portal="employee"] .cal-cell.is-today .cal-daynum,
-html.dark[data-portal="employee"] .adp-day.is-sel,
-html.dark[data-portal="employee"] .cal-add { color: var(--onyx) !important; }
+/* The org chart's ROOT colour (pages/AdminOrgChart.jsx). Applied inline, so it
+   is unreachable by every utility remap; near-black, so on a dark card the
+   company node and its legend swatch measured 1.02:1. Light keeps the black
+   root of the decision-tree scheme; dark inverts just that one node. */
+:root { --org-root: #111827; }
+html.dark { --org-root: #e2e8f0; }
+
+/* A floating tooltip chip (components/AttendanceHeatmap.jsx). It used
+   `bg-gray-900`, which means "near-black chip" in Tailwind but is repointed at
+   the ROLE ACCENT here in both themes — so the chip turned teal in My Portal
+   and sky in the Admin portal, while the lines inside it (.text-gray-300,
+   .text-pink-300) stayed the pale inks that only work on near-black: measured
+   2.5:1 in light and 1.8:1 in dark. A tooltip is furniture, not an action, so
+   it keeps its own dark panel in BOTH themes and the pale lines read as
+   designed. */
+.chart-tip {
+  background-color: #111827 !important;
+  color: #fff;
+}
+html.dark .chart-tip { background-color: #0f1319 !important; }
+
+/* Ink on a LIGHT accent — every signed-in dark context, portal or not.
+   My Portal's gold carries white at 1.67:1 and the Admin portal's sky accent at
+   2.71:1 (measured), so an accent-FILLED surface in either takes the onyx ink
+   instead: 10:1 on gold, 6.2:1 on sky. The admin block above already SAYS its
+   fills keep the onyx ink — it set --pill-ink for the component classes but this
+   rule, which is what reaches the Tailwind-utility buttons, chips and the
+   heatmap tooltip, was scoped to the employee portal alone, so every primary
+   button in the admin dark portal stayed white-on-sky.
+   Unconditional within dark, because EVERY accent this theme can resolve to is
+   a light one: gold #fbbf24, sky #00a6f4, teal-400 #2dd4bf, blue-400 #60a5fa and
+   the new dark fallback. That includes the pages outside the portal frame
+   (/change-password, where a forced reset lands), which carry a role but no
+   portal and were running at 1.67-2.54:1.
+   Descendants are included because these fills often wrap text styled pale for a
+   near-black chip (a tooltip's .text-gray-300), which would otherwise stay pale.
+   Danger nav items are excluded — they are red, not accent, and keep white. */
+html.dark :is(
+  .bg-gray-900,
+  .bg-gray-900 *,
+  .accent-bg,
+  .accent-bg *,
+  .on-accent,
+  .nav-link-active:not(.nav-link-danger) .nav-icon,
+  .nav-link-highlight:not(.nav-link-danger) .nav-icon,
+  .nav-section-link.is-active:not(.nav-link-danger) .nav-icon,
+  .cal-cell.is-today .cal-daynum,
+  .adp-day.is-sel,
+  .cal-add
+):not(.login-submit) { color: var(--onyx) !important; }
+
+/* The login button keeps WHITE ink in dark. It carries `bg-gray-900` in the
+   markup but paints its own dark indigo→blue gradient below, so the onyx flip
+   above — which assumes an accent FILL, and every dark accent is light — would
+   have put near-black text on it (measured 2.66:1).
+   The exception is written INSIDE that rule as `:not(.login-submit)` rather than
+   as an override here, because :is() takes the specificity of its most specific
+   branch and applies it to all of them: `.nav-link-active:not(...) .nav-icon`
+   drags the whole list to (0,4,1), which quietly outranks anything a sane
+   override would carry. Two attempts at overriding it from here both lost. */
 
 /* ---------------------------------------------------------------------------
    Login submit button — the login page has no role accent, so its default
@@ -2351,7 +2523,11 @@ html.dark .skeleton::after { background: linear-gradient(90deg, transparent, rgb
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
   transform: translateY(-1px);
 }
-.adp-day.is-sel::after { background-color: #fff; }
+/* The today-dot on the SELECTED day. White so it reads on the accent fill —
+   but the employee dark portal's accent is gold, where white is 1.67:1 and the
+   dot vanished. --pill-ink is the app's existing "ink that works on this
+   accent" token: #fff by default, onyx where the accent is light. */
+.adp-day.is-sel::after { background-color: var(--pill-ink, #fff); }
 .adp-day.is-busy { color: transparent; background-color: var(--cal-cell); }
 
 .adp-legend {

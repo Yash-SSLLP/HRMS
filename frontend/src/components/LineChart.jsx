@@ -79,7 +79,7 @@ export default function LineChart({ data, series, height = 230, onPointClick }) 
                     style={clickable ? { cursor: 'pointer' } : undefined}>
                     {/* Generous invisible hit area so the small dot is easy to tap. */}
                     {clickable && <circle cx={x(i)} cy={y(d.value || 0)} r="14" fill="transparent" />}
-                    <circle className="line-pt" cx={x(i)} cy={y(d.value || 0)} r={clickable ? 4.5 : 3.5} fill={s.color} stroke="#fff" strokeWidth="1.5">
+                    <circle className="line-pt" cx={x(i)} cy={y(d.value || 0)} r={clickable ? 4.5 : 3.5} fill={s.color} style={{ stroke: 'var(--surface)' }} strokeWidth="1.5">
                       <title>{`${s.name ? s.name + ' · ' : ''}${d.label}: ${d.value}${clickable ? ' — click for details' : ''}`}</title>
                     </circle>
                     {(d.value || 0) > 0 && (

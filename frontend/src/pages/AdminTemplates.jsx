@@ -7,7 +7,8 @@
  * wording. Page layout of the letter PDFs (letterhead, fonts, signature block)
  * is not editable here — only the text.
  *
- * Gated by the 'templates.manage' capability.
+ * Gated by 'templates.manage' (the wording) and 'branding.manage' (the logo &
+ * signatures tab) — either grant on its own opens the page at its own tab.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -17,6 +18,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import BrandingSettings from '../components/BrandingSettings';
 import { useAuthStore } from '../store/authStore';
+import { hasPermission } from '../config/permissions';
 import { useTabParam } from '../hooks/useTabParam';
 import { confirmDialog } from '../components/dialogs';
 
@@ -32,8 +34,13 @@ const TABS = [
 
 export default function AdminTemplates() {
   const me = useAuthStore((s) => s.user);
-  const canBrand = me?.role === 'SuperAdmin';
-  const [tab, setTab] = useTabParam('templates', TABS.map((t) => t.id));
+  const canBrand = hasPermission(me, 'branding.manage');
+  // The two halves of this page are separate grants, so either one can be held
+  // alone: someone with only the letterhead grant opens straight on that tab
+  // and never asks the server for the wording it would refuse them.
+  const canWording = hasPermission(me, 'templates.manage');
+  const visibleTabs = TABS.filter((t) => (t.id === 'branding' ? canBrand : canWording));
+  const [tab, setTab] = useTabParam(canWording ? 'templates' : 'branding', visibleTabs.map((t) => t.id));
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -45,6 +52,7 @@ export default function AdminTemplates() {
   const bodyRef = useRef(null);
 
   const load = async () => {
+    if (!canWording) { setLoading(false); return; }
     setLoading(true);
     setError('');
     try {
@@ -171,13 +179,13 @@ export default function AdminTemplates() {
         subtitle="Change what the system says when it emails a candidate or an employee, and the wording of the offer and appointment letters."
       />
 
-      {/* Branding is a SuperAdmin control (the API refuses anyone else), so the
-          tab strip only appears for them — an HR with templates.manage sees the
-          page exactly as before. */}
-      {canBrand && (
+      {/* Branding is its own capability (the API refuses anyone without it), so
+          the tab strip only appears for whoever holds it — an HR with
+          templates.manage alone sees the page exactly as before. */}
+      {visibleTabs.length > 1 && (
         <div className="mb-5">
           <nav className="seg-track">
-            {TABS.map((t) => (
+            {visibleTabs.map((t) => (
               <button key={t.id} type="button" onClick={() => setTab(t.id)}
                 aria-current={tab === t.id ? 'page' : undefined}
                 className={`seg-btn${tab === t.id ? ' is-active' : ''}`}>

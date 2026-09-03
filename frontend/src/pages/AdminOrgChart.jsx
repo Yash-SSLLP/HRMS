@@ -36,7 +36,10 @@ const ZOOM_STEP = 0.1;
 const ASSIGNABLE_ROLES = ROLES;
 
 // Node colours, decision-tree style: black root, orange branches, blue leaves.
-const ROOT_COLOR = '#111827';
+// The root is read from a token because it is applied as an INLINE style, which
+// no dark-mode rule can reach: at #111827 on the dark card (#1a1a1a) the company
+// dot and its legend swatch were 1.02:1 — gone. See --org-root in index.css.
+const ROOT_COLOR = 'var(--org-root, #111827)';
 const BRANCH_COLOR = '#f59e0b';
 const LEAF_COLOR = '#2563eb';
 

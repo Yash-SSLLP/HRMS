@@ -7,7 +7,8 @@
  * question that page does — "what do our outgoing documents look like?" — the
  * templates control the words, this controls the letterhead.
  *
- * SuperAdmin only; the API refuses anyone else, and the page hides the tab.
+ * Needs the 'branding.manage' capability; the API refuses anyone else, and the
+ * page hides the tab.
  * Images are stored in GridFS and read back through protected endpoints, hence
  * AuthImage rather than a plain <img src> (a bare img can't send the token).
  */
@@ -85,7 +86,10 @@ export default function BrandingSettings() {
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const { data } = await api.get('/admin/org-settings');
+      // The branding slice, not the whole settings doc: this panel is open to
+      // anyone with 'branding.manage', and GET /admin/org-settings is the
+      // Backend's own preferences (SuperAdmin only).
+      const { data } = await api.get('/admin/org-settings/branding');
       setBranding(data.branding);
       const c = {};
       (data.branding?.signatures || []).forEach((s) => {

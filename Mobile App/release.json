@@ -1,5 +1,5 @@
 {
-  "versionName": "2.2.24",
-  "versionCode": 70,
-  "notes": "A housekeeping update — nothing on screen changes. The app now tells the company which version it is running, so HR can see who is up to date and who still needs to install a new build. Everything from the last release is included: your location is needed to check in or out, and the app asks for it before opening the camera so you are never made to take a selfie only to be told the punch cannot be saved; being outside the office range still does not block a punch, it is only flagged. Uploading documents accepts PDFs and any image up to 10 MB, and every password box has an eye to show what you are typing."
+  "versionName": "2.3.0",
+  "versionCode": 72,
+  "notes": "Checking in no longer restarts the app. The selfie is taken inside SSLLP HRMS now instead of handing you over to the phone's camera app \u2014 that hand-off was what closed the app and lost the punch, so you had to start again. If your connection drops while the punch is being saved the photo is kept and one tap tries again, and if it had already reached us the app says so rather than asking you to punch twice. For HR and admins the console gains six screens: Payslip Requests, where a payslip is approved, previewed and released; a Leave Desk carrying every request with the HR override and each person's yearly leave grants; Holidays and Festivals; Tasks; Analytics; and Announcements you can post from your phone. The Backend account can also set who approves whose leave, and Logo and Signatures is now open to anyone holding the letterhead permission rather than the Backend account alone."
 }

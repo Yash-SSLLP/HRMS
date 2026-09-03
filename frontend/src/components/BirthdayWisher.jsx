@@ -131,11 +131,11 @@ export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-400 italic">Loading…</p>
+        <p className="text-sm text-gray-500 italic">Loading…</p>
       ) : events.length === 0 ? (
         <div className="text-center py-6">
-          <TbBalloon size={30} className="mx-auto mb-1.5 text-gray-300" aria-hidden="true" />
-          <p className="text-sm text-gray-400 italic">
+          <TbBalloon size={30} className="mx-auto mb-1.5 text-gray-400" aria-hidden="true" />
+          <p className="text-sm text-gray-500 italic">
             {months
               ? 'No birthdays or anniversaries this month or next.'
               : `No celebrations in the next ${days} days.`}
@@ -181,9 +181,9 @@ export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
                   <div className="flex items-center gap-3 shrink-0 ml-auto">
                     <span className="text-xs text-gray-500 shrink-0">{whenLabel(e.daysAway)}</span>
                     {!canWish ? (
-                      <span className="text-xs text-gray-400 italic shrink-0">Everyone</span>
+                      <span className="text-xs text-gray-500 italic shrink-0">Everyone</span>
                     ) : isSelf ? (
-                      <span className="text-xs text-gray-400 italic shrink-0">That&apos;s you</span>
+                      <span className="text-xs text-gray-500 italic shrink-0">That&apos;s you</span>
                     ) : wished ? (
                       <span className="text-xs text-green-600 font-medium shrink-0 inline-flex items-center gap-1">
                         <FiCheck aria-hidden="true" /> Wish sent

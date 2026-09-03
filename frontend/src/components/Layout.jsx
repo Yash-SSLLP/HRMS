@@ -440,7 +440,9 @@ function ChatLauncher() {
       <span className="hidden 2xl:inline">Chats</span>
       {unread > 0 && (
         <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none"
-          style={{ boxShadow: '0 0 0 2px #fff' }}>
+          /* The ring is the bar punched out around the badge, so it follows the
+             surface token — a literal white left a halo on the dark top bar. */
+          style={{ boxShadow: '0 0 0 2px var(--surface)' }}>
           {unread > 9 ? '9+' : unread}
         </span>
       )}
