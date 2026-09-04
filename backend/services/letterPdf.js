@@ -157,9 +157,9 @@ function para(doc, F, text, opts = {}) {
  * signatory (HR left, CEO right, as on the printed letters), and optionally the
  * candidate's acceptance stub.
  *
- * Each column prints the uploaded signature image above a hairline, with the
- * name and title beneath. A slot with no uploaded image prints the rule alone,
- * so the letter still reads as a signable document instead of losing the column.
+ * Each column prints the uploaded signature image with the name and title
+ * directly beneath it — no rule, so the stamp reads as an applied signature
+ * rather than a blank line waiting to be signed.
  *
  * Everything here scales with the fit factor `s` — including the image height.
  * That matters: the offer letter's one-page fit loop compresses type and gaps,
@@ -181,7 +181,7 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
   // acceptance stub alone on the next reads as a printing error. Reserve the
   // whole thing up front (greeting + columns +, when present, the stub) and
   // break the page once, here, if it will not fit.
-  const needed = (columns.length ? 130 : 110) * s + (withAcceptance ? 78 * s : 0);
+  const needed = (columns.length ? 156 : 110) * s + (withAcceptance ? 78 * s : 0);
   ensureRoom(doc, needed);
 
   doc.moveDown(1 * s);
@@ -195,7 +195,7 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
     para(doc, F, signatoryTitle || COMPANY.defaultSignatoryTitle, { bold: true, gap: 0.1 });
     para(doc, F, signatoryName || COMPANY.defaultSignatoryName, { bold: true });
   } else {
-    const imgH = 34 * s;              // scales with the fit loop
+    const imgH = 60 * s;              // scales with the fit loop
     const colW = columns.length > 1 ? (CW - 40) / 2 : CW * 0.46;
     const top = doc.y + 6 * s;
 
@@ -205,23 +205,24 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
         try {
           doc.image(c.image, x, top, { fit: [colW, imgH], align: 'left', valign: 'bottom' });
         } catch (err) {
-          // The rule below still prints, so the letter stays signable — but say
-          // so, otherwise a corrupt upload silently disappears from every letter
-          // with nothing to diagnose.
+          // The name and title below still print, so the column survives — but
+          // say so, otherwise a corrupt upload silently disappears from every
+          // letter with nothing to diagnose.
           console.error(`Signature image for "${c.slot}" could not be drawn:`, err.message);
         }
       }
-      const lineY = top + imgH + 2;
-      doc.moveTo(x, lineY).lineTo(x + colW * 0.72, lineY).strokeColor(RULE).lineWidth(0.8).stroke();
+      // No rule under the image: the signature/stamp sits directly above the
+      // name, the way it does on the company's printed and hand-signed letters.
+      const nameY = top + imgH + 4 * s;
       doc.font(F.bold).fontSize(10 * s).fillColor(INK)
-        .text(c.name || signatoryName || COMPANY.defaultSignatoryName, x, lineY + 4 * s, { width: colW, lineBreak: false });
+        .text(c.name || signatoryName || COMPANY.defaultSignatoryName, x, nameY, { width: colW, lineBreak: false });
       doc.font(F.regular).fontSize(9 * s).fillColor(MUTED)
         .text(c.title || c.fallbackTitle, x, doc.y + 1, { width: colW, lineBreak: false });
     });
 
     // Both columns were drawn from the same `top`, so put the cursor below the
     // taller one rather than wherever the last column happened to end.
-    doc.y = top + imgH + 2 + 26 * s;
+    doc.y = top + imgH + 30 * s;
     doc.x = X0;
     doc.fillColor(INK);
   }
