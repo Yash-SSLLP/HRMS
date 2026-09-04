@@ -307,6 +307,29 @@ function hasPermission(user, cap) {
  * @param {object|null} user - The User doc (needs role and khataExportAccess).
  * @returns {boolean}
  */
+/**
+ * Does this account hold `cap` because somebody TICKED IT, rather than because a
+ * role default swept it in?
+ *
+ * `hasPermission` answers an HR Manager with no `permissions` array with "yes,
+ * everything" — the rule that let existing HRs keep working when granular
+ * permissions arrived. That default is fine for a capability that HR always had,
+ * and wrong for one being taken AWAY from them: every unconfigured HR would be
+ * handed the new key the moment it appears in the catalog, which is the opposite
+ * of adding a gate. Same reasoning as canExportKhata below.
+ *
+ * Use this for a capability whose whole point is that it is granted per account.
+ * @param {object|null} user - The User doc (needs role and permissions).
+ * @param {string} cap - Capability key from config/permissions.js.
+ * @returns {boolean}
+ */
+function hasExplicitPermission(user, cap) {
+  if (!user) return false;
+  if (user.role === 'SuperAdmin') return true;
+  if (isEditingExec(user)) return true;
+  return Array.isArray(user.permissions) && user.permissions.includes(cap);
+}
+
 function canExportKhata(user) {
   if (!user) return false;
   return user.role === 'SuperAdmin' || user.khataExportAccess === true;
@@ -441,6 +464,7 @@ module.exports = {
   isEditingExec,
   isReadOnlyExec,
   hasPermission,
+  hasExplicitPermission,
   requirePermission,
   requireAnyPermission,
   canExportKhata,

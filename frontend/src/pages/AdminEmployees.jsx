@@ -17,7 +17,7 @@ import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { ROLES, roleLabel } from '../config/roles';
-import { canAdministerEmployee } from '../config/permissions';
+import { canAdministerEmployee, hasExplicitPermission, isEditingExec } from '../config/permissions';
 import { formatDateTime12, toYMD } from '../utils/time';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
@@ -38,6 +38,7 @@ const FLAG_LABELS = {
   workLocation: 'Work location',
   company: 'Company',
   salaryStructure: 'Salary structure',
+  shift: 'Shift',
   reportingManager: 'Reporting manager',
   hrPartner: 'HR partner',
 };
@@ -48,6 +49,7 @@ const PLACEHOLDERS = {
   reportingManager: 'Their manager’s email address',
   hrPartner: 'The HR partner’s email address',
   salaryStructure: 'An existing salary structure name',
+  shift: 'An existing shift name',
   role: 'Pick a system role',
 };
 const MARITAL_STATUSES = ['Single', 'Married', 'Other'];
@@ -200,6 +202,30 @@ export default function AdminEmployees() {
   const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
+  // Reporting manager, HR partner and the regularization ladder: Backend by
+  // default, or anyone a Super Admin has granted the permission to. Mirrors
+  // canSetHierarchy on the server, so a field is never offered where the save
+  // would silently drop it.
+  // hasExplicitPermission, not hasPermission: the latter hands an unconfigured
+  // HR Manager every capability and a read-only exec every capability, neither of
+  // which the server agrees with here — they would be offered a picker whose
+  // value the save silently drops.
+  const canSetHierarchy = hasExplicitPermission(currentUser, 'hierarchy.manage');
+  // Moving somebody between companies stays with the Backend and an executive
+  // in edit mode. An HR Manager works inside one company - and the company is
+  // what every scoping wall is built on - so the field is hidden from them
+  // rather than shown read-only: there is nothing for them to decide.
+  const canSetCompany = isSuperAdmin || isEditingExec(currentUser);
+  // Correcting an import flag writes the same field the form writes, so it
+  // answers to the same grant. An import run without the grant deliberately
+  // flags the relationship columns it ignored — so without this the flag would
+  // be a text box that always ends in a 403. The flag still shows; it is the
+  // record of what the sheet said, and it can still be marked as seen.
+  const canFixFlagField = (field) => {
+    if (field === 'hrPartner' || field === 'reportingManager') return canSetHierarchy;
+    if (field === 'company') return canSetCompany;
+    return true;
+  };
   // Two rules the server applies too, so the button is never offered where it
   // would fail: nobody edits their OWN record from the admin side (use My
   // Portal), and a Manager's record needs the manager-profile grant.
@@ -216,6 +242,9 @@ export default function AdminEmployees() {
   const [allUsers, setAllUsers] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [workLocations, setWorkLocations] = useState([]);
+  // Only the names — this list exists solely to suggest values in the import
+  // review box, so a shift with no hours set is still a legitimate suggestion.
+  const [shiftNames, setShiftNames] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [docStatus, setDocStatus] = useState({}); // employeeId -> { complete, verified, missing }
   const [loading, setLoading] = useState(true);
@@ -318,7 +347,7 @@ export default function AdminEmployees() {
     setLoading(true);
     setError('');
     try {
-      const [profilesRes, usersRes, allUsersRes, docRes, desigRes, wlRes, companiesRes] = await Promise.all([
+      const [profilesRes, usersRes, allUsersRes, docRes, desigRes, wlRes, companiesRes, shiftsRes] = await Promise.all([
         api.get('/employees'),
         api.get('/admin/users?role=Employee'),
         api.get('/admin/users'),
@@ -326,6 +355,7 @@ export default function AdminEmployees() {
         api.get('/org-masters?kind=Designation'),
         api.get('/work-locations').catch(() => ({ data: { locations: [] } })),
         api.get('/companies').catch(() => ({ data: { companies: [] } })),
+        api.get('/shifts').catch(() => ({ data: { shifts: [] } })),
       ]);
       setProfiles(profilesRes.data.profiles);
       setUsers(usersRes.data.users);
@@ -335,6 +365,7 @@ export default function AdminEmployees() {
       ));
       setWorkLocations(wlRes.data.locations || []);
       setCompanies(companiesRes.data.companies || []);
+      setShiftNames((shiftsRes.data.shifts || []).map((sh) => sh.name).filter(Boolean));
       setDesignations(
         (desigRes.data.masters || [])
           .filter((m) => m.isActive !== false)
@@ -678,12 +709,18 @@ export default function AdminEmployees() {
       // Empty work-location select must clear the ref (null), not send '' (bad ObjectId).
       const payload = { ...form, workLocationRef: form.workLocationRef || null };
       // Company: '' → null so an empty select clears it rather than sending a bad ObjectId.
-      payload.company = form.company || null;
-      // Assigning the HR partner is Backend-only; the server ignores this field
-      // for non-SuperAdmins, but strip it here too so a blank never clobbers an
-      // existing assignment through some other path.
-      if (isSuperAdmin) payload.hrPartner = form.hrPartner || null;
-      else delete payload.hrPartner;
+      // Without the grant the field is not shown at all, so sending it could only
+      // ever clear a company nobody meant to touch.
+      if (canSetCompany) payload.company = form.company || null;
+      else delete payload.company;
+      // The server ignores these without the grant, but strip them here too so a
+      // blank never clobbers an existing assignment through some other path.
+      if (canSetHierarchy) payload.hrPartner = form.hrPartner || null;
+      else {
+        delete payload.hrPartner;
+        delete payload.reportingManager;
+        delete payload.regularizationApprovers;
+      }
       if (crossDept) payload.allowCrossDepartment = true;
       // Blank enums must be dropped, not sent as '' — the schema would reject it.
       if (!payload.gender) delete payload.gender;
@@ -1352,6 +1389,7 @@ This cannot be undone.`,
                   </SearchableSelect>
                   {form.company && <p className="text-xs text-gray-400 mt-1">Showing sites for the selected company, plus shared sites.</p>}
                 </div>
+                {canSetCompany && (
                 <div>
                   <label className="block text-sm text-gray-700">Company</label>
                   <SearchableSelect value={form.company || ''} onChange={(e) => {
@@ -1372,9 +1410,10 @@ This cannot be undone.`,
                   </SearchableSelect>
                   <p className="text-xs text-gray-500 mt-1">The company this employee belongs to. A CEO/MD limited to certain companies only sees people in them.</p>
                 </div>
+                )}
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">Reporting Manager</label>
-                  {isSuperAdmin ? (
+                  {canSetHierarchy ? (
                     <SearchableSelect
                       value={form.reportingManager || ''}
                       onChange={(e) => setForm({ ...form, reportingManager: e.target.value })}
@@ -1431,17 +1470,18 @@ This cannot be undone.`,
                     </div>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
-                    {isSuperAdmin && !form.department
+                    {canSetHierarchy && !form.department
                       ? 'Pick a department first — managers are chosen from within it.'
                       : 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'}
                   </p>
                 </div>
                 {/* HR Partner: the HR Manager who owns this employee. With per-HR
                     scoping on, an HR Manager sees and manages only the employees
-                    they partner. Backend-only, like the reporting manager. */}
+                    they partner. Needs the hierarchy grant, like the reporting
+                    manager - handing an employee over is not an ordinary edit. */}
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">HR Partner</label>
-                  {isSuperAdmin ? (
+                  {canSetHierarchy ? (
                     <SearchableSelect
                       value={form.hrPartner || ''}
                       onChange={(e) => setForm({ ...form, hrPartner: e.target.value })}
@@ -1462,16 +1502,21 @@ This cannot be undone.`,
                       })()}
                     </div>
                   )}
-                  <p className="text-xs text-gray-500 mt-1">The HR Manager who sees and manages this employee. Only the Backend can change it.</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    The HR Manager who sees and manages this employee.
+                    {canSetHierarchy
+                      ? ' Any change requests they are still waiting on move to the new partner.'
+                      : ' Changing it needs a Super Admin’s permission.'}
+                  </p>
                 </div>
                 {/* Attendance-regularization approval ladder: 1 or 2 named people,
                     in order. Deliberately separate from the reporting manager —
                     a correction is often signed off by a shift/ops lead. Step 2
                     only appears once step 1 is chosen, so the ladder can never be
-                    configured with a gap. SuperAdmin-only, matching the backend. */}
+                    configured with a gap. Behind the hierarchy grant, matching the backend. */}
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">Regularization approval</label>
-                  {isSuperAdmin ? (
+                  {canSetHierarchy ? (
                     <div className="mt-1 space-y-2">
                       {[0, 1].map((idx) => {
                         const chain = form.regularizationApprovers || [];
@@ -1784,6 +1829,7 @@ This cannot be undone.`,
                   : f.field === 'designation' ? designations
                     : f.field === 'company' ? companies.map((c) => c.name)
                       : f.field === 'workLocation' ? workLocations.map((w) => w.name)
+                        : f.field === 'shift' ? shiftNames
                         : ['reportingManager', 'hrPartner'].includes(f.field)
                           ? allUsers.map((u) => u.email).filter(Boolean)
                           : [];
@@ -1810,7 +1856,17 @@ This cannot be undone.`,
 
                     <p className="text-xs text-gray-600 leading-relaxed">{f.note}</p>
 
+                    {!canFixFlagField(f.field) && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        {f.field === 'company'
+                          ? 'Only the Backend account can move someone to another company.'
+                          : 'Setting who an employee reports to, or which HR looks after them, needs a Super Admin’s permission.'}
+                        {' '}Clearing this only marks it as seen.
+                      </p>
+                    )}
+
                     <div className="flex flex-wrap items-center gap-2 mt-3">
+                      {canFixFlagField(f.field) && (
                       <input
                         list={suggestions.length ? listId : undefined}
                         value={flagEdits[f._id] ?? ''}
@@ -1818,7 +1874,8 @@ This cannot be undone.`,
                         placeholder={PLACEHOLDERS[f.field] || `Correct value (was “${f.rawValue || '—'}”)`}
                         className="flex-1 min-w-[14rem] border rounded-lg px-3 py-2 text-sm"
                       />
-                      {suggestions.length > 0 && (
+                      )}
+                      {canFixFlagField(f.field) && suggestions.length > 0 && (
                         <datalist id={listId}>
                           {suggestions.slice(0, 200).map((s) => <option key={s} value={s} />)}
                         </datalist>
@@ -1830,7 +1887,8 @@ This cannot be undone.`,
                         className="px-3.5 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 shrink-0"
                       >
                         {flagBusy === f._id ? 'Saving…'
-                          : (flagEdits[f._id] || '').trim() ? 'Save & clear' : 'Looks right'}
+                          : !canFixFlagField(f.field) ? 'Mark as seen'
+                            : (flagEdits[f._id] || '').trim() ? 'Save & clear' : 'Looks right'}
                       </button>
                     </div>
                   </div>

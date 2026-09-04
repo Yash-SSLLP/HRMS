@@ -36,6 +36,9 @@ const FLAG_FIELDS = [
   'workLocation',
   'company',
   'salaryStructure',
+  // Like salaryStructure, never auto-created: a shift is its hours, and one
+  // conjured from a spreadsheet cell would judge nothing while looking set.
+  'shift',
   'reportingManager',
   'hrPartner',
 ];

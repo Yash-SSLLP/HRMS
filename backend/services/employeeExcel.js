@@ -9,7 +9,7 @@ const ExcelJS = require('exceljs');
 // path-style key reaches into nested objects, e.g. bankDetails.ifsc.
 // `ref` columns are resolved in the controller: reportingManagerEmail /
 // hrPartnerEmail → a User by email; salaryStructureName → a SalaryStructure by
-// name; companyName → a Company by name (or code).
+// name; companyName → a Company by name (or code); shiftName → a Shift by name.
 const COLUMNS = [
   { key: 'employeeCode', header: 'Employee Code', width: 14, required: true },
   // `type: 'name'` tidies the capitalisation on the way IN only — see
@@ -34,6 +34,9 @@ const COLUMNS = [
   { key: 'department',      header: 'Department',        width: 18 },
   { key: 'companyName',     header: 'Company',           width: 22 },
   { key: 'workLocation',    header: 'Work Location',     width: 18 },
+  // The employee's STANDING shift, matched by name. Blank means the company's
+  // ordinary hours, which is what everyone had before shifts existed.
+  { key: 'shiftName',       header: 'Shift',             width: 18 },
   { key: 'grade',           header: 'Grade',             width: 10 },
   { key: 'reportingManagerEmail', header: 'Reporting Manager Email', width: 28 },
   { key: 'probationMonths', header: 'Probation Months',  width: 16, type: 'number' },
@@ -235,6 +238,8 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
         v = p.salaryStructure?.name || '';
       } else if (c.key === 'companyName') {
         v = p.company?.name || '';
+      } else if (c.key === 'shiftName') {
+        v = p.shiftRef?.name || '';
       } else {
         const source = c.on === 'user' ? p.user : p;
         v = source ? getNested(source, c.key) : undefined;
@@ -264,6 +269,7 @@ async function writeWorkbook(res, profiles, { sheetName = 'Employees', includeSa
       department: 'Engineering',
       companyName: 'Sequence Surfaces LLP',
       workLocation: 'Ahmedabad',
+      shiftName: 'Day Shift',
       grade: 'L3',
       reportingManagerEmail: 'manager@example.com',
       probationMonths: 6,
@@ -373,6 +379,12 @@ async function parseWorkbook(buffer) {
       // controller can resolve them to ObjectIds once it hits the DB.
       if (c.key === 'hrPartnerEmail' || c.key === 'reportingManagerEmail') {
         profile[c.key] = String(value).trim().toLowerCase();
+        continue;
+      }
+      // Not lower-cased like the email columns: a shift is matched by its
+      // display name, and the controller matches it case-insensitively anyway.
+      if (c.key === 'shiftName') {
+        profile.shiftName = String(value).trim();
         continue;
       }
 

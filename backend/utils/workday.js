@@ -147,6 +147,21 @@ function getMinPresentHours() {
  */
 function eveningOnlyPunch(record) {
   if (!record || !record.checkIn) return false;
+  const dur = Number(record.shiftDurationMin);
+  if (record.shiftStart && Number.isFinite(dur) && dur > 0) {
+    // The record knows its own window, so "a stray punch" can finally be stated
+    // properly: one in the LAST QUARTER of this person's shift.
+    //
+    // The blanket 5 PM rule below exists only because, without a shift, an
+    // evening punch was indistinguishable from a night-shift punch — so it had
+    // to let every one of them through rather than mark a night worker absent
+    // (see the EVENING_PUNCH_HOUR comment). That amnesty also meant a night
+    // employee who punched in at 7:05 PM and out at 7:20 PM could never be
+    // marked absent, while a day employee working the same fifteen minutes was.
+    // With a window there is no need to guess, and the two are judged alike.
+    const strayFrom = shiftStartAt(record).getTime() + dur * 0.75 * 60000;
+    return new Date(record.checkIn).getTime() >= strayFrom;
+  }
   const evening = new Date(record.date).getTime() + EVENING_PUNCH_HOUR * HOUR_MS;
   return new Date(record.checkIn).getTime() >= evening;
 }
@@ -194,30 +209,80 @@ function belowDayMinimum(record) {
   return hours != null && hours < minPresentHours;
 }
 
+/* ---------------------------------------------------------------------------
+ * Per-employee shift windows
+ *
+ * A record may carry a FROZEN copy of the shift it was worked under (see
+ * models/Attendance.js). When it does, the two functions below answer "when was
+ * this person due in?" and "when was their day due to end?" from that copy
+ * instead of from the org-wide policy — which is what lets a 7 PM night shift
+ * be judged as a 7 PM night shift.
+ *
+ * When it does not — every record written before shifts were honoured, and
+ * every day worked by somebody with no shift — they reproduce the previous
+ * expressions exactly. That is the whole safety argument for this change: it is
+ * not "close enough", it is the same arithmetic, so no historic day can move.
+ *
+ * Both stay synchronous. The callers below are reached from payroll's month-long
+ * filter and from two synchronous Excel-export builders; making them async would
+ * push an `await` into the code path that decides pay.
+ * ------------------------------------------------------------------------- */
+
 /**
- * The instant a check-in stops being on time, for a given attendance date.
+ * When this record's holder was due to start.
+ * @param {{date: Date, shiftStart?: string}} record
+ * @returns {Date}
+ */
+function shiftStartAt(record) {
+  const base = new Date(record.date).getTime();
+  const { parseHm } = require('./shiftWindow');
+  const startMin = record && record.shiftStart ? parseHm(record.shiftStart) : null;
+  if (startMin != null) return new Date(base + startMin * 60000);
+  const { hour, minute } = latePolicy;
+  return new Date(base + hour * HOUR_MS + minute * 60000);
+}
+
+/**
+ * When this record's day was due to END. For a shift that crosses midnight this
+ * is on the following calendar date — which is the point of storing the
+ * duration rather than re-deriving it from two wall-clock strings.
+ * @param {{date: Date, shiftStart?: string, shiftDurationMin?: number}} record
+ * @returns {Date}
+ */
+function shiftEndAt(record) {
+  const dur = Number(record && record.shiftDurationMin);
+  if (record && record.shiftStart && Number.isFinite(dur) && dur > 0) {
+    return new Date(shiftStartAt(record).getTime() + dur * 60000);
+  }
+  return new Date(new Date(record.date).getTime() + WORKDAY_END_HOUR * HOUR_MS);
+}
+
+/**
+ * The instant a check-in stops being on time for this record.
  *
  * `date` is IST midnight (startOfDayIST), so the offsets apply directly. The
  * grace window is included: this is the moment lateness actually begins.
  *
- * @param {Date|number|string} date - the attendance day (IST midnight)
+ * Grace stays the LIVE org-wide setting rather than being frozen with the
+ * shift. That is deliberate: freezing it would introduce a second retroactivity
+ * rule, where a SuperAdmin's change to the grace window applied to unstamped
+ * records but not to stamped ones. One value, one behaviour.
+ *
+ * @param {{date: Date, shiftStart?: string}} record - the attendance record
  * @returns {Date}
  */
-function lateCutoff(date) {
-  const base = new Date(date).getTime();
-  const { hour, minute, graceMinutes } = latePolicy;
-  return new Date(base + hour * HOUR_MS + (minute + graceMinutes) * 60000);
+function lateCutoff(record) {
+  return new Date(shiftStartAt(record).getTime() + latePolicy.graceMinutes * 60000);
 }
 
 /**
- * The scheduled start of the workday (grace excluded) for a given date.
+ * The scheduled start of the workday (grace excluded) for this record.
  * "Late by" figures are measured from here — see lateMinutes().
- * @param {Date|number|string} date - the attendance day (IST midnight)
+ * @param {{date: Date, shiftStart?: string}} record - the attendance record
  * @returns {Date}
  */
-function workdayStart(date) {
-  const { hour, minute } = latePolicy;
-  return new Date(new Date(date).getTime() + hour * HOUR_MS + minute * 60000);
+function workdayStart(record) {
+  return shiftStartAt(record);
 }
 
 // Statuses that describe why someone was away. The hours rule must never
@@ -252,10 +317,10 @@ function lateMinutes(record) {
   if (record.halfDayDeclared && halfDayCutoffPassed(record)) return 0;
   const arrival = new Date(record.checkIn).getTime();
   // Inside the grace window is not late at all...
-  if (arrival <= lateCutoff(record.date).getTime()) return 0;
+  if (arrival <= lateCutoff(record).getTime()) return 0;
   // ...but once it is late, the figure counts from the scheduled start, so a
   // 10-minute window does not quietly shrink every late arrival by 10 minutes.
-  const ms = arrival - workdayStart(record.date).getTime();
+  const ms = arrival - workdayStart(record).getTime();
   return ms > 0 ? Math.round(ms / 60000) : 0;
 }
 
@@ -275,7 +340,7 @@ function effectiveHours(record) {
   const inMs = new Date(record.checkIn).getTime();
   const outMs = record.checkOut
     ? new Date(record.checkOut).getTime()
-    : new Date(record.date).getTime() + WORKDAY_END_HOUR * HOUR_MS;
+    : shiftEndAt(record).getTime();
   const hours = (outMs - inMs) / HOUR_MS;
   return hours > 0 ? +hours.toFixed(2) : 0;
 }
@@ -298,6 +363,16 @@ function effectiveHours(record) {
  */
 function halfDayCutoffPassed(record) {
   if (!record || !record.checkIn) return false;
+  const dur = Number(record.shiftDurationMin);
+  if (record.shiftStart && Number.isFinite(dur) && dur > 0) {
+    // The midpoint of THEIR shift, not of the calendar day. Judging a night
+    // shift against noon would put every single night check-in after the
+    // cut-off, so every night worker would read as an "afternoon half day" —
+    // and lateMinutes returns 0 for those, which would silently exempt night
+    // staff from late marking altogether the moment one declared a half day.
+    const mid = shiftStartAt(record).getTime() + (dur / 2) * 60000;
+    return new Date(record.checkIn).getTime() > mid;
+  }
   const cutoff = new Date(record.date).getTime() + HALF_DAY_CUTOFF_HOUR * HOUR_MS;
   return new Date(record.checkIn).getTime() > cutoff;
 }
@@ -371,6 +446,8 @@ function settleStatus(record) {
 
 module.exports = {
   WORKDAY_START_HOUR,
+  shiftStartAt,
+  shiftEndAt,
   DEFAULT_LATE_POLICY,
   MAX_GRACE_MINUTES,
   normalizeLatePolicy,

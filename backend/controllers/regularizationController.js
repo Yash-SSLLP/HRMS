@@ -14,6 +14,8 @@ const { isReadOnlyExec } = require('../middleware/authMiddleware');
 const { scopeUserField } = require('../utils/employeeScope');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { settleStatus } = require('../utils/workday');
+const { resolveShiftForDay } = require('../services/shiftResolver');
+const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow');
 
 // `role` rides along so the review screen can tell an HR's own request apart
 // from an ordinary employee's (see HR_REVIEW_ROLES below).
@@ -190,6 +192,14 @@ async function applyToAttendance(item, reviewer) {
   }
   const inAt = timeOnDay(item.date, item.requestedCheckIn);
   let outAt = timeOnDay(item.date, item.requestedCheckOut);
+  // This path writes a check-in, so lateMinutes WILL judge the day — it needs
+  // to know which shift it is being judged against. Resolved as of the RECORD'S
+  // day, never today's: a regularization filed on Friday for Tuesday must be
+  // measured against Tuesday's shift.
+  if (!record.shift) {
+    const shift = await resolveShiftForDay(profile, day);
+    Object.assign(record, shiftSnapshot(shift) || {});
+  }
   if (inAt) record.checkIn = inAt;
   // A 'Forgot Check-out' request carries only a time-of-day, and timeOnDay can
   // only anchor it to the request's OWN day — so a shift that ended after
@@ -202,10 +212,10 @@ async function applyToAttendance(item, reviewer) {
   // The sibling HR-edit path already refuses an inverted pair outright
   // (updateRecord: "Check-out has to be after check-in."); this is the path
   // employees are actually pointed at, so it had no such protection at all.
+  // Shared with the HR-edit path (attendanceController.updateRecord) so the two
+  // cannot disagree about what an after-midnight close means.
   const effectiveIn = inAt || record.checkIn;
-  if (outAt && effectiveIn && outAt.getTime() <= new Date(effectiveIn).getTime()) {
-    outAt = new Date(outAt.getTime() + 24 * 60 * 60 * 1000);
-  }
+  if (outAt && effectiveIn) outAt = rollForwardIfInverted(new Date(effectiveIn), outAt);
   if (outAt) record.checkOut = outAt;
   if (record.checkIn && record.status === 'Absent') record.status = 'Present';
   // Re-derive the day from the corrected punches. This is what "half day until

@@ -22,7 +22,7 @@ const archiver = require('archiver');
 const { appendEmployee, safe } = require('../services/employeeZip');
 const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
 const { employeeProfileScope, cannotManageProfile, viewerCompanyScope, scopeEmployeeFilter, companyOutOfScope, assertCanEditManagerProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
-const { hasPermission, isEditingExec } = require('../middleware/authMiddleware');
+const { hasPermission, hasExplicitPermission, isEditingExec } = require('../middleware/authMiddleware');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
 
 /**
@@ -53,6 +53,7 @@ const {
 const { isSelfDirectField, selfEditsDirectly } = require('../models/ChangeRequest');
 const { notifyMany } = require('../services/notify');
 const ImportFlag = require('../models/ImportFlag');
+const Shift = require('../models/Shift');
 const { purgePerson } = require('../services/purgePerson');
 const orgMasterSync = require('../services/orgMasterSync');
 
@@ -195,7 +196,7 @@ const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Empty-string ObjectId refs (e.g. "None (top level)" → reportingManager: "")
 // can't be cast and would blow up on save. Normalise them: scalar refs → null,
 // array refs → drop the blanks. Run before validate/assign on create & update.
-const SCALAR_REF_FIELDS = ['reportingManager', 'hrPartner', 'company', 'workLocationRef', 'salaryStructure'];
+const SCALAR_REF_FIELDS = ['reportingManager', 'hrPartner', 'company', 'workLocationRef', 'shiftRef', 'salaryStructure'];
 const ARRAY_REF_FIELDS = ['regularizationApprovers', 'leaveApprovers', 'leaveFinalHrRecipients'];
 function normalizeRefFields(body) {
   if (!body || typeof body !== 'object') return;
@@ -246,6 +247,61 @@ const hrCannotManage = (req, profile) => cannotManageProfile(req, profile);
  * @param {*} companyId - the requested `company` value (falsy = unassigned, allowed)
  * @throws 403 via res-less Error with .status when out of scope
  */
+/**
+ * May this account set the RELATIONSHIP fields — reporting manager, HR partner,
+ * regularization approvers?
+ *
+ * The Backend always may. Anyone else needs `hierarchy.manage` TICKED on their
+ * account: the fields decide who approves whose attendance and which HR owns
+ * which employee, so holding them is a separate decision from being able to edit
+ * a record at all (see config/permissions.js).
+ *
+ * `hasExplicitPermission`, not `hasPermission` — the latter answers an HR Manager
+ * with no permissions array with "everything", so every unconfigured HR would be
+ * handed this key the moment it appeared in the catalog, which is the opposite of
+ * adding a gate. These three fields were Backend-only before this key existed and
+ * must stay that way until somebody says otherwise.
+ *
+ * The LEAVE ladder is not included — it has its own screen and stays Backend-only.
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+const canSetHierarchy = (req) => hasExplicitPermission(req.user, 'hierarchy.manage');
+
+/**
+ * May this account move an employee between COMPANIES? The Backend and an
+ * executive in edit mode only — an HR Manager works inside one company, and the
+ * company is what the whole scoping wall is built on, so moving somebody across
+ * it is not an ordinary edit. (Executives are additionally walled to their own
+ * companies by assertAssignableCompany below.)
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+const canSetCompany = (req) => req.user.role === 'SuperAdmin' || isEditingExec(req.user);
+
+/**
+ * Which company a joiner should INHERIT from whoever is creating them, for a
+ * creator who is not allowed to choose one (see canSetCompany).
+ *
+ * Normally their creator's own company. When the creator has none — an HR admin
+ * login whose own profile was never placed in one — there are three cases:
+ *   • the org keeps NO companies at all → leave it unset, exactly as before;
+ *     there is nothing to belong to and nothing is scoped by it.
+ *   • the org keeps exactly ONE → that is the answer, unambiguously.
+ *   • the org keeps SEVERAL → nobody can guess, and the creator can no longer
+ *     set it by hand, so the caller refuses instead of writing a record that is
+ *     invisible to every company-scoped view and that only the Backend can fix.
+ * @param {import('express').Request} req
+ * @returns {Promise<{companyId: (import('mongoose').Types.ObjectId|undefined), ambiguous: boolean}>}
+ */
+async function inheritedCompanyFor(req) {
+  if (req.user.scopeCompanyId) return { companyId: req.user.scopeCompanyId, ambiguous: false };
+  const active = await Company.find({ isActive: { $ne: false } }).select('_id').limit(2).lean();
+  if (!active.length) return { companyId: undefined, ambiguous: false };
+  if (active.length === 1) return { companyId: active[0]._id, ambiguous: false };
+  return { companyId: undefined, ambiguous: true };
+}
+
 function assertAssignableCompany(req, companyId) {
   if (!companyId) return; // clearing / leaving unassigned is always fine
   const scope = viewerCompanyScope(req);
@@ -556,6 +612,7 @@ const getMyProfile = asyncHandler(async (req, res) => {
     // the legacy free-text `workLocation` label to show, which is a different
     // (and usually stale) piece of data — see models/WorkLocation.js.
     .populate('workLocationRef', 'name')
+    .populate('shiftRef', 'name code startTime endTime')
     .populate('hrPartner', 'firstName lastName email');
   if (!profile) {
     res.status(404);
@@ -627,6 +684,10 @@ const listEmployees = asyncHandler(async (req, res) => {
     .populate('user', 'firstName lastName email phone role isActive updatedAt')
     .populate('hrPartner', 'firstName lastName email')
     .populate('company', 'name code')
+    // The directory shows the standing shift, and the edit modal seeds its
+    // Shift field from the row it was opened from — unpopulated it would render
+    // a raw ObjectId and the modal would open on a blank shift.
+    .populate('shiftRef', 'name code startTime endTime')
     .sort({ createdAt: -1 })
     // Read-only response — skip hydrating full Mongoose documents (and their
     // subdocument schemas) only to serialise them straight back out.
@@ -677,6 +738,7 @@ const getEmployee = asyncHandler(async (req, res) => {
     .populate('hrPartner', 'firstName lastName email')
     .populate('company', 'name code')
     .populate('workLocationRef', 'name')
+    .populate('shiftRef', 'name code startTime endTime')
     .populate('reportingManager', 'firstName lastName email');
   if (!profile) {
     res.status(404);
@@ -727,28 +789,50 @@ const createEmployee = asyncHandler(async (req, res) => {
   // as "already exists" rather than as a duplicate-key error from the index.
   req.body.employeeCode = await assertCodeAvailable(res, employeeCode);
 
-  // Same rule as updateEmployee: assigning the HR Partner / reporting manager is
-  // SuperAdmin-only. Without this an HR Manager could set them on create and
-  // simply never edit them again.
-  if (req.user.role !== 'SuperAdmin') {
+  // Same rule as updateEmployee: assigning the HR Partner / reporting manager
+  // needs the hierarchy grant. Without this an HR Manager could set them on
+  // create and simply never edit them again.
+  if (!canSetHierarchy(req)) {
     delete req.body.hrPartner;
     delete req.body.reportingManager;
-    // Who signs off this employee's attendance corrections is a control an HR
-    // Manager must not be able to point at themselves.
+    // Who signs off this employee's attendance corrections is a control nobody
+    // without the grant may point at themselves.
     delete req.body.regularizationApprovers;
-    // Same reasoning for leave: the approval ladder and who is told once leave
-    // is fully approved are both SuperAdmin controls.
+  }
+  if (req.user.role !== 'SuperAdmin') {
+    // The leave ladder and who is told once leave is fully approved stay with
+    // the Backend account whatever else has been granted — they are set from
+    // their own screen, not from this form.
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;
-    // With per-HR scoping on, an HR Manager only sees the employees they partner.
-    // Make them the partner of anyone they create, or the new joiner would drop
-    // straight out of their directory the moment it was saved.
-    if (req.user.role === 'HRManager') req.body.hrPartner = req.user._id;
   }
+  if (!canSetCompany(req)) {
+    delete req.body.company;
+    // A new joiner with no company falls outside every company-scoped view,
+    // including the creator's own. Place them in the creator's company, the
+    // same way the HR partner is defaulted just below.
+    const inherited = await inheritedCompanyFor(req);
+    if (inherited.ambiguous) {
+      res.status(400);
+      throw new Error(
+        'Your account is not in a company yet, so there is no company for this employee to inherit. '
+        + 'Ask the Backend account to set your company, or to add this employee.'
+      );
+    }
+    if (inherited.companyId) req.body.company = inherited.companyId;
+  }
+  // With per-HR scoping on, an HR Manager only sees the employees they partner.
+  // Make them the partner of anyone they create (unless they set one and hold
+  // the grant), or the new joiner would drop straight out of their directory
+  // the moment it was saved.
+  if (req.user.role === 'HRManager' && !req.body.hrPartner) req.body.hrPartner = req.user._id;
 
   // Consent flag, not profile data: pull it off the body so it is never stored,
   // and honour it only for the role that is allowed to set a manager at all.
-  const allowCrossDept = req.body.allowCrossDepartment === true && req.user.role === 'SuperAdmin';
+  // The flag is an ACKNOWLEDGEMENT of the warning the client showed, so it is
+  // honoured for anyone who may set the manager at all — otherwise a granted HR
+  // could pick a cross-department manager and have no way to confirm it.
+  const allowCrossDept = req.body.allowCrossDepartment === true && canSetHierarchy(req);
   delete req.body.allowCrossDepartment;
 
   await validateHierarchy(req.body, userId, null, allowCrossDept);
@@ -807,22 +891,32 @@ const updateEmployee = asyncHandler(async (req, res) => {
     }
     req.body.employeeCode = await assertCodeAvailable(res, req.body.employeeCode, profile._id);
   }
-  // Reassigning the HR Partner is a SuperAdmin-only action — an HR Manager must
-  // not be able to hand an employee off (or grab one) by editing this field.
-  if (req.user.role !== 'SuperAdmin') {
+  // Reassigning the HR Partner hands an employee off (or grabs one), and the
+  // regularization ladder decides who signs off their attendance — so both sit
+  // behind the hierarchy grant, not behind plain employees.manage.
+  if (!canSetHierarchy(req)) {
     delete req.body.hrPartner;
     delete req.body.reportingManager;
-    // Who signs off this employee's attendance corrections is a control an HR
-    // Manager must not be able to point at themselves.
     delete req.body.regularizationApprovers;
-    // Same reasoning for leave: the approval ladder and who is told once leave
-    // is fully approved are both SuperAdmin controls.
+  }
+  if (req.user.role !== 'SuperAdmin') {
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;
   }
+  if (!canSetCompany(req)) delete req.body.company;
+
+  // Whether this write hands the employee to a different HR — read BEFORE the
+  // assign below overwrites it, and acted on after the save.
+  const previousHrPartner = String(profile.hrPartner || '');
+  const nextHrPartner = req.body.hrPartner === undefined
+    ? previousHrPartner
+    : String(req.body.hrPartner || '');
 
   // See createEmployee: consent flag, stripped before the payload is persisted.
-  const allowCrossDept = req.body.allowCrossDepartment === true && req.user.role === 'SuperAdmin';
+  // The flag is an ACKNOWLEDGEMENT of the warning the client showed, so it is
+  // honoured for anyone who may set the manager at all — otherwise a granted HR
+  // could pick a cross-department manager and have no way to confirm it.
+  const allowCrossDept = req.body.allowCrossDepartment === true && canSetHierarchy(req);
   delete req.body.allowCrossDepartment;
 
   await validateHierarchy(req.body, profile.user, profile, allowCrossDept);
@@ -867,6 +961,16 @@ const updateEmployee = asyncHandler(async (req, res) => {
   // applies on their next request, not after the auth cache's TTL.
   if (req.body.company !== undefined) {
     require('../middleware/authMiddleware').invalidateScopeCompany([profile.user]);
+  }
+
+  // Giving an employee an HR partner hands over their WAITING requests too.
+  // A request raised while nobody was assigned falls back to the Backend
+  // account (resolveHrAssignee), so it sits in an inbox its new owner never
+  // sees — the change of partner is exactly the moment to move it.
+  if (nextHrPartner && nextHrPartner !== previousHrPartner) {
+    const { reassignPendingHrRequests } = require('./changeRequestController');
+    reassignPendingHrRequests(profile.user, nextHrPartner)
+      .catch((err) => console.error('Could not hand over change requests:', err.message));
   }
 
   // Audit direct edits (Backend / exec edit-mode).
@@ -1010,6 +1114,7 @@ const exportEmployeesXlsx = asyncHandler(async (req, res) => {
     .populate('reportingManager', 'firstName lastName email')
     .populate('salaryStructure', 'name')
     .populate('company', 'name code')
+    .populate('shiftRef', 'name')
     .sort({ employeeCode: 1 });
   const stamp = new Date().toISOString().slice(0, 10);
   res.setHeader('Content-Disposition', `attachment; filename="employees-${stamp}.xlsx"`);
@@ -1126,6 +1231,23 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       let hrPartnerId;
       const ownEmail = String(u.email || '').trim().toLowerCase();
       const namesSelf = (email) => !!email && String(email).trim().toLowerCase() === ownEmail;
+      // The relationship columns sit behind the same grant as the form
+      // (canSetHierarchy) — a spreadsheet must not be a second door to a field
+      // the form refuses. The column is IGNORED and flagged rather than failing
+      // the row: an import never rejects a person over a value it cannot honour.
+      if (!canSetHierarchy(req)) {
+        if (p.hrPartnerEmail) {
+          flag('hrPartner', p.hrPartnerEmail, 'defaulted',
+            'Choosing who the HR partner is needs a Super Admin’s permission, so this column was ignored.');
+        }
+        if (p.reportingManagerEmail) {
+          flag('reportingManager', p.reportingManagerEmail, 'defaulted',
+            'Choosing a reporting manager needs a Super Admin’s permission, so this column was ignored. '
+            + 'Ask the Backend account to set it, or to grant you the permission.');
+        }
+        p.hrPartnerEmail = '';
+        p.reportingManagerEmail = '';
+      }
       if (namesSelf(p.hrPartnerEmail)) {
         // Left unset and flagged rather than failing the row — an import never
         // rejects a person over a reference it cannot honour.
@@ -1187,9 +1309,36 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         }
       }
 
+      // Shift name -> Shift._id (case-insensitive; optional).
+      //
+      // Deliberately NOT auto-created, for the same reason as the salary
+      // structure above: a shift IS its hours. One invented from a spreadsheet
+      // cell would have a name and no start or end time, which reads as
+      // configured on every screen while judging nothing — attendance would
+      // quietly fall back to the company's ordinary hours and nobody would know
+      // why the night staff were still being marked late. Blank is the honest
+      // state, and the flag says exactly what to do about it.
+      let shiftId;
+      if (p.shiftName) {
+        const sh = await Shift.findOne({ name: new RegExp(`^${escapeRegExp(p.shiftName)}$`, 'i') });
+        if (sh) shiftId = sh._id;
+        else {
+          flag('shift', p.shiftName, 'unmatched',
+            `There is no shift called "${p.shiftName}", so it was left unset and this employee `
+            + 'keeps the company’s ordinary hours. Create the shift with its start and end times '
+            + 'under Shifts & Roster, then assign them there.');
+        }
+      }
+
       // Company name (or code) -> Company._id (case-insensitive; optional).
       // A company IS just a name here, so an unknown one is created.
       let companyId;
+      if (!canSetCompany(req) && p.companyName) {
+        flag('company', p.companyName, 'defaulted',
+          'Placing someone in another company is the Backend account’s call, so this column was '
+          + 'ignored and they were placed in your own company.');
+        p.companyName = '';
+      }
       if (p.companyName) {
         const needle = new RegExp(`^${escapeRegExp(p.companyName)}$`, 'i');
         let co = await Company.findOne({ $or: [{ name: needle }, { code: needle }] });
@@ -1200,6 +1349,21 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
             + 'Check the name and fill in its details under Companies.');
         }
         companyId = co._id;
+      }
+      // Same rule as the form: an importer who may not choose a company has
+      // their joiners placed in their own, or the row lands outside every
+      // company-scoped view — the importer's directory included.
+      if (!canSetCompany(req) && !companyId) {
+        // Same answer the form gives. An import is not refused over an
+        // ambiguous one though: it flags instead, like every other value it
+        // cannot resolve, so one unplaceable column never fails a whole sheet.
+        const inherited = await inheritedCompanyFor(req);
+        if (inherited.companyId) companyId = inherited.companyId;
+        else if (inherited.ambiguous) {
+          flag('company', '', 'defaulted',
+            'Your account is not in a company, and there are several to choose from, so this person was '
+            + 'left unassigned. The Backend account can place them under Employees.');
+        }
       }
 
       // ----- Free-text values backed by a managed list -----
@@ -1241,7 +1405,13 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       // with the User already saved, leaving a login belonging to nobody. That
       // is how 17 profile-less accounts appeared in one import. Keep these two
       // creates adjacent, and put new can-throw work ABOVE this line.
-      const { hrPartnerEmail, reportingManagerEmail, salaryStructureName, companyName, ...profileFields } = p;
+      // With per-HR scoping on, an HR Manager sees only the employees they
+      // partner — so, exactly as createEmployee does, they become the partner of
+      // anyone they import who has none. Without this an HR's own import lands
+      // outside their directory and only the Backend can see it.
+      if (req.user.role === 'HRManager' && !hrPartnerId) hrPartnerId = req.user._id;
+
+      const { hrPartnerEmail, reportingManagerEmail, salaryStructureName, companyName, shiftName, ...profileFields } = p;
       const userDoc = await User.create({
         email: u.email,
         password: DEFAULT_IMPORT_PASSWORD,
@@ -1263,6 +1433,7 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
           reportingManager: reportingManagerId,
           salaryStructure: salaryStructureId,
           company: companyId,
+          shiftRef: shiftId,
         });
       } catch (err) {
         // The account must not outlive the failure that stopped its employee
@@ -1371,6 +1542,9 @@ const listImportFlags = asyncHandler(async (req, res) => {
  * one table rather than a switch so the set of settable fields is visibly the
  * same set the flag model enumerates.
  */
+/** Flag fields that write a relationship, and so answer to `hierarchy.manage`. */
+const HIERARCHY_FLAG_FIELDS = ['hrPartner', 'reportingManager'];
+
 const FLAG_WRITERS = {
   role: async (value, { profile, user, actor }) => {
     if (!ROLES.includes(value)) throw new Error(`"${value}" is not a system role`);
@@ -1406,10 +1580,22 @@ const FLAG_WRITERS = {
     await profile.save();
     return value;
   },
-  company: async (value, { profile }) => {
+  shift: async (value, { profile }) => {
+    const sh = await Shift.findOne({ name: new RegExp(`^${escapeRegExp(value)}$`, 'i') });
+    // Not created on the fly here either — same reason as the import. The
+    // reviewer is being told to go and define the hours, because a shift
+    // without them changes nothing about how the day is judged.
+    if (!sh) throw new Error(`No shift called "${value}" — add it, with its start and end times, under Shifts & Roster first`);
+    profile.shiftRef = sh._id;
+    await profile.save();
+    return sh.name;
+  },
+  company: async (value, { profile, actor }) => {
     const needle = new RegExp(`^${escapeRegExp(value)}$`, 'i');
     const co = await Company.findOne({ $or: [{ name: needle }, { code: needle }] });
     if (!co) throw new Error(`No company called "${value}" — add it under Companies first`);
+    // An exec is walled to their own companies here exactly as on the form.
+    assertAssignableCompany({ user: actor }, co._id);
     profile.company = co._id;
     await profile.save();
     require('../middleware/authMiddleware').invalidateScopeCompany([profile.user]);
@@ -1437,8 +1623,15 @@ const FLAG_WRITERS = {
     const partner = await findAccountByEmail(value, { role: { $in: ['HRManager', 'SuperAdmin'] } });
     if (!partner) throw new Error(`"${value}" is not an HR Manager or Backend account`);
     if (String(partner._id) === String(profile.user)) throw new Error(SELF_REF_MESSAGE);
+    const previous = String(profile.hrPartner || '');
     profile.hrPartner = partner._id;
     await profile.save();
+    // Same promise as the form: the employee's waiting requests go with them.
+    if (String(partner._id) !== previous) {
+      const { reassignPendingHrRequests } = require('./changeRequestController');
+      reassignPendingHrRequests(profile.user, partner._id)
+        .catch((err) => console.error('Could not hand over change requests:', err.message));
+    }
     return `${partner.firstName || ''} ${partner.lastName || ''}`.trim() || partner.email;
   },
 };
@@ -1478,6 +1671,19 @@ const resolveImportFlag = asyncHandler(async (req, res) => {
     // manager, department), so correcting one on a Manager needs the same grant
     // as editing their profile by hand.
     await assertCanEditProfileOf(req, profile);
+    // …and correcting one of the RELATIONSHIP fields is the same act as setting
+    // it on the form, so it answers to the same grant. Without this the import
+    // review is a second door: the import itself now REFUSES those columns for
+    // an ungranted reviewer and writes a flag saying so — and that very flag
+    // would then be the place they could type the value in by hand.
+    if (HIERARCHY_FLAG_FIELDS.includes(flagDoc.field) && !canSetHierarchy(req)) {
+      res.status(403);
+      throw new Error('Setting who an employee reports to, or which HR looks after them, needs a Super Admin’s permission');
+    }
+    if (flagDoc.field === 'company' && !canSetCompany(req)) {
+      res.status(403);
+      throw new Error('Moving an employee to another company is the Backend account’s call');
+    }
     const write = FLAG_WRITERS[flagDoc.field];
     if (!write) {
       res.status(400);

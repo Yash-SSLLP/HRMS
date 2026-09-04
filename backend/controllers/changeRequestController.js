@@ -351,10 +351,28 @@ const assignedChangeRequests = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('You do not have a change-request inbox');
   }
-  const filter =
+  let filter =
     req.user.role === 'SuperAdmin' && req.query.all === 'true'
       ? {}
       : { assignedTo: req.user._id };
+
+  // An HR Manager also sees the WAITING requests of everyone they now partner,
+  // whoever they were assigned to at the time. Requests raised before an HR
+  // partner existed are assigned to the Backend account (resolveHrAssignee), so
+  // without this they would stay invisible to the HR who has since taken the
+  // employee on — the request is theirs to answer, and the employee is waiting.
+  if (req.user.role === 'HRManager') {
+    const mine = await EmployeeProfile.find({ hrPartner: req.user._id }).select('user').lean();
+    const userIds = mine.map((p) => p.user).filter(Boolean);
+    if (userIds.length) {
+      filter = {
+        $or: [
+          { assignedTo: req.user._id },
+          { approverKind: 'hr', status: 'pending', targetUser: { $in: userIds } },
+        ],
+      };
+    }
+  }
 
   const changeRequests = await ChangeRequest.find(filter)
     .populate('requestedBy', USER_FIELDS)
@@ -377,7 +395,15 @@ const decideChangeRequest = asyncHandler(async (req, res) => {
     throw new Error('Change request not found');
   }
   const isAssignee = cr.assignedTo && cr.assignedTo.equals(req.user._id);
-  if (!isAssignee && req.user.role !== 'SuperAdmin') {
+  // …and the employee's CURRENT HR partner, for a request that was assigned
+  // elsewhere because nobody was their partner when they raised it. Seeing it in
+  // the inbox without being able to answer it would be worse than not seeing it.
+  let isTheirHrPartner = false;
+  if (!isAssignee && cr.approverKind === 'hr' && cr.targetUser) {
+    const target = await EmployeeProfile.findOne({ user: cr.targetUser }).select('hrPartner').lean();
+    isTheirHrPartner = String(target?.hrPartner || '') === String(req.user._id);
+  }
+  if (!isAssignee && !isTheirHrPartner && req.user.role !== 'SuperAdmin') {
     res.status(403);
     throw new Error('Only the assigned approver or a SuperAdmin can decide this request');
   }
@@ -449,6 +475,50 @@ const decideChangeRequest = asyncHandler(async (req, res) => {
   res.json({ changeRequest: publicChangeRequest(cr) });
 });
 
+/**
+ * Hand an employee's WAITING change requests to their new HR partner.
+ *
+ * A request raised while nobody was their partner is assigned to the Backend
+ * account (resolveHrAssignee), which is a safe place to park it but not a place
+ * the incoming HR will ever look. Assigning the partner is the moment it becomes
+ * theirs, so the request moves with the employee and the new owner is told —
+ * otherwise it waits in an inbox nobody is watching on that employee's behalf.
+ *
+ * Only PENDING, HR-decided requests move: a decided one is history, and an
+ * exec-decided one (an HR-raised change) belongs to the CEO/MD, not to HR.
+ *
+ * @param {string|import('mongoose').Types.ObjectId} targetUser - the employee's User id
+ * @param {string|import('mongoose').Types.ObjectId} hrPartner - their new HR partner's User id
+ * @returns {Promise<number>} how many requests moved
+ * @sideeffect Notifies the new partner once, however many moved.
+ */
+async function reassignPendingHrRequests(targetUser, hrPartner) {
+  if (!targetUser || !hrPartner) return 0;
+  const res = await ChangeRequest.updateMany(
+    {
+      targetUser,
+      approverKind: 'hr',
+      status: 'pending',
+      assignedTo: { $ne: hrPartner },
+    },
+    { $set: { assignedTo: hrPartner } }
+  );
+  const moved = res.modifiedCount || 0;
+  if (moved) {
+    const who = await User.findById(targetUser).select('firstName lastName').lean();
+    const name = `${who?.firstName || ''} ${who?.lastName || ''}`.trim() || 'An employee';
+    await Notification.create({
+      recipient: hrPartner,
+      type: 'change_request',
+      audience: 'admin',
+      title: moved === 1 ? 'A change request is now yours' : `${moved} change requests are now yours`,
+      body: `${name} is now yours to look after, and ${moved === 1 ? 'a request they raised is' : `${moved} requests they raised are`} still waiting for a decision.`,
+      link: 'change-requests',
+    });
+  }
+  return moved;
+}
+
 module.exports = {
   getFields,
   fillMissingField,
@@ -458,5 +528,6 @@ module.exports = {
   myChangeRequests,
   assignedChangeRequests,
   decideChangeRequest,
+  reassignPendingHrRequests,
   CHANGE_INBOX_ROLES,
 };

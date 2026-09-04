@@ -113,6 +113,32 @@ const attendanceSchema = new mongoose.Schema(
     // office coordinates / threshold are changed later. WFH punches are exempt.
     checkInOutsideGeofence: { type: Boolean, default: false },
     checkOutOutsideGeofence: { type: Boolean, default: false },
+    // The shift this day was worked under, FROZEN at the moment the day was
+    // first punched — exactly like checkInOutsideGeofence six lines above, and
+    // for the same reason: a judgement has to be reproducible from the record.
+    //
+    // The times are denormalized alongside the ref rather than looked up. Two
+    // things would otherwise rewrite settled history: deleteShift hard-deletes
+    // with no reference check, and an HR edit to the Night Shift's hours would
+    // re-judge — and so re-price — every night already worked under the old
+    // ones. Late arrivals are recomputed on every read and payroll recomputes
+    // any month that is not Paid, so "look it up when you need it" is not a
+    // neutral choice here; it is a decision to let today's configuration change
+    // what somebody was paid last month.
+    //
+    // All six are unset on every record written before shifts were honoured.
+    // utils/workday.js treats an unstamped record exactly as it always did (the
+    // org-wide latePolicy and a 7 PM assumed close), which is what makes this
+    // change forward-only.
+    shift: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
+    shiftName: { type: String },
+    shiftStart: { type: String },        // 'HH:mm' IST
+    shiftEnd: { type: String },          // 'HH:mm' IST — may be earlier than shiftStart
+    shiftDurationMin: { type: Number },  // authoritative length; survives a midnight crossing
+    // True when the shift runs past midnight, so this record's day ends on the
+    // FOLLOWING calendar date. The punch-out lookup and the auto-close worker
+    // both key off this, so it is stored rather than re-derived from the strings.
+    shiftCrossesMidnight: { type: Boolean, default: false },
     hoursWorked: { type: Number, default: 0, min: 0 },
     // Set by the nightly auto-close worker when the day ended with a check-in
     // but no check-out ("forgot to punch out"). Cleared automatically if a

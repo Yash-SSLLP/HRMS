@@ -19,10 +19,12 @@ const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
 const { formatDuration, formatHours } = require('../utils/duration');
 const {
-  HALF_DAY_CUTOFF_HOUR, lateCutoff, getLatePolicy, setLatePolicy, normalizeLatePolicy,
+  HALF_DAY_CUTOFF_HOUR, getLatePolicy, setLatePolicy, normalizeLatePolicy,
   lateMinutes, statusFromHours, settleStatus, effectiveHours, halfDayCutoffPassed,
   getMinPresentHours, setMinPresentHours, normalizeMinPresentHours,
 } = require('../utils/workday');
+const { resolveShiftDay, openShiftRecord } = require('../services/shiftResolver');
+const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit, isSundayKey } = require('../utils/restDay');
 const { notify, notifyMany, notifyBackend } = require('../services/notify');
@@ -603,7 +605,13 @@ function requirePunchLocation(loc, res) {
 // POST /api/attendance/me/checkin   (multipart: photo)
 const checkIn = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
-  const today = startOfDay(new Date());
+  // Not simply today: someone on a 19:00-04:00 shift punching in at 00:20 is
+  // arriving late for YESTERDAY's shift. Bucketing that under today would open
+  // a second record, leave last night unclosed for the auto-close worker to
+  // settle from an assumption, and then refuse their real punch tomorrow
+  // evening with 'Already checked in today'. For everyone not on a shift that
+  // crosses midnight this returns exactly what startOfDay(new Date()) did.
+  const { day: today, shift } = await resolveShiftDay(profile, new Date());
 
   let record = await Attendance.findOne({ employee: profile._id, date: today });
   if (record && record.checkIn) {
@@ -617,6 +625,12 @@ const checkIn = asyncHandler(async (req, res) => {
   if (!record) {
     record = new Attendance({ employee: profile._id, date: today });
   }
+  // Freeze the shift onto the day the first time it is punched. Guarded, so a
+  // re-punch or a later re-assignment can never move the hours a day that has
+  // already been judged was judged under. Stamped here rather than in the
+  // Attendance constructor above because the record may already exist without
+  // a punch - the leave auto-stamp and an HR pre-created day both do that.
+  if (!record.shift) Object.assign(record, shiftSnapshot(shift) || {});
   record.checkIn = new Date();
   record.checkInPhoto = photo.path;
   record.checkInPhotoCloud = photo.cloud;
@@ -695,7 +709,13 @@ const checkOut = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
   const today = startOfDay(new Date());
 
-  const record = await Attendance.findOne({ employee: profile._id, date: today });
+  // An overnight shift's punch-out lands on the NEXT calendar day, so looking
+  // only at today's record is why a 19:00-04:00 employee punching out at 04:05
+  // was told 'No check-in found for today' and left with an unclosed day the
+  // worker then downgraded to a half day. The open-record lookup is filtered on
+  // shiftCrossesMidnight, so it can never claim a day-shift record.
+  const record = await openShiftRecord(profile._id, new Date())
+    || await Attendance.findOne({ employee: profile._id, date: today });
   if (!record || !record.checkIn) {
     res.status(400);
     throw new Error('No check-in found for today');
@@ -851,7 +871,7 @@ const myHeatmap = asyncHandler(async (req, res) => {
 
   const [records, leaves, comps] = await Promise.all([
     Attendance.find({ employee: profile._id, date: { $gte: start, $lte: end } })
-      .select('date status checkIn checkOut hoursWorked noPunchOut checkInWfh checkOutWfh remarks').lean(),
+      .select('date status checkIn checkOut hoursWorked noPunchOut checkInWfh checkOutWfh remarks halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight').lean(),
     LeaveRequest.find({ employee: profile._id, status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start } })
       .select('startDate endDate isHalfDay halfDaySession leaveType').lean(),
     CompOff.find({ employee: req.user._id, status: 'Availed', availedOn: { $gte: start, $lte: end } })
@@ -957,7 +977,7 @@ const computeHeatmapWindow = async ({ empIds, span }) => {
   }
 
   const [records, leaves, comps] = await Promise.all([
-    Attendance.find(attFilter).select('employee date status checkIn').lean(),
+    Attendance.find(attFilter).select('employee date status checkIn halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight').lean(),
     LeaveRequest.find(leaveFilter).select('employee startDate endDate').lean(),
     CompOff.find(compFilter).select('employee availedOn').lean(),
   ]);
@@ -1030,8 +1050,6 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
   const day = new Date(`${dateStr}T00:00:00+05:30`); // IST midnight of that day
   const next = new Date(day);
   next.setDate(day.getDate() + 1);
-  // Same cut-off lateMinutes() judges by, grace window included.
-  const cutoff = lateCutoff(day);
 
   const profiles = await EmployeeProfile.find(empIds ? { _id: { $in: empIds } } : {})
     .select('_id user employeeCode designation department dateOfJoining dateOfExit')
@@ -1051,7 +1069,9 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
   }
 
   const [records, leaves, comps, holidays] = await Promise.all([
-    Attendance.find(attFilter).select('employee status checkIn checkOut date').lean(),
+    Attendance.find(attFilter)
+      .select('employee status checkIn checkOut date halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight')
+      .lean(),
     LeaveRequest.find(leaveFilter).select('employee leaveType isHalfDay halfDaySession').lean(),
     CompOff.find(compFilter).select('employee availedOn').lean(),
     require('../models/Holiday').find({ date: { $gte: day, $lt: next } }).select('_id').lean().catch(() => []),
@@ -1071,7 +1091,12 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
     const id = String(r.employee);
     if (!byId.has(id)) continue;
     if (r.status === 'Present') {
-      const late = r.checkIn ? new Date(r.checkIn) > cutoff : false;
+      // Judged per record, not against one hoisted org-wide cut-off: with
+      // per-employee shifts there is no single instant the whole company is
+      // late after. lateMinutes() reads each record's own frozen shift, so a
+      // night worker is not reported late here after payroll has stopped
+      // charging them for it.
+      const late = r.checkIn ? lateMinutes(r) > 0 : false;
       cat.set(id, 'full');
       info.set(id, { checkIn: r.checkIn || null, checkOut: r.checkOut || null, late });
     } else if (r.status === 'HalfDay') { cat.set(id, 'half'); info.set(id, { checkIn: r.checkIn || null }); }
@@ -1204,8 +1229,15 @@ const listMine = asyncHandler(async (req, res) => {
     require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date type').lean().catch(() => []),
   ]);
 
+  // The day the punch buttons act on. For an overnight shift that is still
+  // running past midnight this is LAST NIGHT's record, not today's empty one:
+  // showing a night worker a fresh day with a Punch In button at 00:30 is how
+  // a second record gets created for a shift they are in the middle of.
   const todayKey = startOfDay(new Date()).getTime();
-  const today = records.find((r) => startOfDay(r.date).getTime() === todayKey) || null;
+  const openShift = await openShiftRecord(profile._id, new Date());
+  const today = (openShift && records.find((r) => String(r._id) === String(openShift._id)))
+    || records.find((r) => startOfDay(r.date).getTime() === todayKey)
+    || null;
 
   // Employees see their own lateness — the penalty comes out of their pay, so
   // the figure that drives it should not be admin-only. Same reasoning for the
@@ -1771,7 +1803,7 @@ const dailyStats = asyncHandler(async (req, res) => {
 
   const statsFilter = await scopeEmployeeFilter(req, { date: { $gte: start, $lte: end } });
   const records = await Attendance.find(statsFilter)
-    .select('date status checkIn hoursWorked')
+    .select('date status checkIn hoursWorked halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight')
     .lean();
 
   // Seed every day in the window so the chart has no gaps.
@@ -1925,7 +1957,7 @@ const presenceBoard = asyncHandler(async (req, res) => {
       .populate('user', 'firstName lastName photo isActive')
       .lean(),
     Attendance.find({ date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
-      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInPhotoCloud checkOutPhotoCloud checkInWfh hoursWorked status workOnLeave')
+      .select('employee date checkIn checkOut checkInPhoto checkOutPhoto checkInPhotoCloud checkOutPhotoCloud checkInWfh hoursWorked status workOnLeave halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight')
       .lean(),
     LeaveRequest.find({ status: 'Approved', startDate: { $lt: tomorrow }, endDate: { $gte: today } })
       .select('employee leaveType isHalfDay halfDaySession startDate endDate reason workedDays')
@@ -2181,10 +2213,22 @@ const updateRecord = asyncHandler(async (req, res) => {
       req.body[key] = t;
     }
     const nextIn = req.body.checkIn !== undefined ? req.body.checkIn : record.checkIn;
-    const nextOut = req.body.checkOut !== undefined ? req.body.checkOut : record.checkOut;
+    let nextOut = req.body.checkOut !== undefined ? req.body.checkOut : record.checkOut;
+    // On a shift that runs past midnight an inverted pair is the NORMAL case,
+    // not an error: the month editor builds both instants as record.date +
+    // 'HH:mm', so a 4 AM close reads as 4 AM on the morning the shift started —
+    // earlier than the 7 PM check-in. Refusing it meant HR could not correct a
+    // night shift at all. Rolled forward with the same helper the employee-facing
+    // regularization path uses, so the two cannot disagree about what 4 AM means.
+    if (record.shiftCrossesMidnight && nextIn && nextOut) {
+      nextOut = rollForwardIfInverted(new Date(nextIn), new Date(nextOut));
+      if (req.body.checkOut !== undefined) req.body.checkOut = nextOut;
+    }
     if (nextIn && nextOut && new Date(nextOut) <= new Date(nextIn)) {
       res.status(400);
-      throw new Error('Check-out has to be after check-in.');
+      throw new Error(record.shiftCrossesMidnight
+        ? 'Check-out has to be after check-in. For an overnight shift, enter the time it actually ended (for example 4:00 AM).'
+        : 'Check-out has to be after check-in.');
     }
   }
 
@@ -2342,7 +2386,7 @@ async function buildRestDayClaims({ empIds = null, year, month, state = 'all', e
 
   const [records, holidays] = await Promise.all([
     Attendance.find(attFilter)
-      .select('employee date status checkIn checkOut hoursWorked doublePay remarks')
+      .select('employee date status checkIn checkOut hoursWorked doublePay remarks halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight')
       .populate({ path: 'employee', select: 'employeeCode designation user', populate: { path: 'user', select: 'firstName lastName' } })
       .sort({ date: 1 })
       .lean(),

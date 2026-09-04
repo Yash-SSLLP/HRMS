@@ -45,6 +45,23 @@ export function hasPermission(user, cap) {
 }
 
 /**
+ * Does this account hold `cap` because somebody TICKED IT, rather than because a
+ * role default swept it in? Mirrors hasExplicitPermission in the backend's
+ * authMiddleware — `hasPermission` answers an HR Manager with no permissions
+ * array with "everything", which is the right default for a capability HR always
+ * had and the wrong one for a capability being taken away from them.
+ * @param {object|null} user
+ * @param {string} cap
+ * @returns {boolean}
+ */
+export function hasExplicitPermission(user, cap) {
+  if (!user) return false;
+  if (user.role === 'SuperAdmin') return true;
+  if (isEditingExec(user)) return true;
+  return Array.isArray(user.permissions) && user.permissions.includes(cap);
+}
+
+/**
  * May this account download the khata as a spreadsheet? Mirrors canExportKhata
  * in the backend's authMiddleware — and, like it, deliberately answers on the
  * flag alone rather than through hasPermission, so no role picks it up by

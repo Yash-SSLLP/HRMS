@@ -13,7 +13,8 @@
 // idempotent (the flag itself prevents re-processing), so no DigestLog needed.
 const Attendance = require('../models/Attendance');
 const { startOfDayIST } = require('../utils/dateHelpers');
-const { settleStatus, effectiveHours, WORKDAY_END_HOUR } = require('../utils/workday');
+const { settleStatus, effectiveHours, shiftEndAt } = require('../utils/workday');
+const { CARRY_GRACE_MS } = require('../utils/shiftWindow');
 const { formatHours } = require('../utils/duration');
 
 const POLL_INTERVAL_MS = 60 * 60 * 1000; // hourly
@@ -23,10 +24,14 @@ const POLL_INTERVAL_MS = 60 * 60 * 1000; // hourly
 // "→ Present" onto a record it had just marked Absent.
 const STATUS_LABEL = { Present: 'Present', HalfDay: 'Half Day', Absent: 'Absent' };
 
-// "7:00 PM" / "7:30 PM" for the remark, from the WORKDAY_END_HOUR constant.
-const endLabel = () => {
-  const h = WORKDAY_END_HOUR % 12 || 12;
-  return `${h}:00 ${WORKDAY_END_HOUR >= 12 ? 'PM' : 'AM'}`;
+// When this record was due to end, in words, for the remark. Derived from the
+// record's own frozen shift rather than from one org-wide constant: a night
+// shift closed at 4 AM, and a remark that says it was counted to 7:00 PM is
+// not a rounding error, it is the record explaining itself incorrectly to the
+// person disputing it.
+const endLabel = (record) => {
+  const d = shiftEndAt(record);
+  return d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 };
 
 /**
@@ -54,6 +59,17 @@ async function tick() {
     let closed = 0;
     let downgraded = 0;
     for (const record of stale) {
+      // A shift that has not finished yet is not a forgotten punch-out.
+      // This worker wakes hourly and picks up anything dated before today, so
+      // the first tick after midnight used to catch a night-shift employee who
+      // was still at their desk: it stamped noPunchOut, measured the day to an
+      // assumed 7 PM close that had already passed, and settled it as a half
+      // day - half a day of pay, every night worked.
+      //
+      // Provably a no-op for a record with no shift: its close works out to
+      // 7 PM + 4h = 11 PM on its own day, and the query only sees a record once
+      // the day is already over.
+      if (Date.now() < shiftEndAt(record).getTime() + CARRY_GRACE_MS) continue;
       record.noPunchOut = true;
       const next = settleStatus(record);
       if (next && next !== record.status) {
@@ -61,7 +77,7 @@ async function tick() {
         record.status = next;
         record.remarks = [
           record.remarks,
-          `No punch-out; counted to ${endLabel()} = ${formatHours(hours)} → ${STATUS_LABEL[next] || next}.`,
+          `No punch-out; counted to ${endLabel(record)} = ${formatHours(hours)} → ${STATUS_LABEL[next] || next}.`,
         ].filter(Boolean).join(' · ');
         downgraded += 1;
       }

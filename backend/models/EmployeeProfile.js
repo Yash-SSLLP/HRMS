@@ -75,6 +75,16 @@ const employeeProfileSchema = new mongoose.Schema(
     // Assigned work site whose geofence a punch is measured against. Unset ⇒
     // falls back to the global office (Setting.office).
     workLocationRef: { type: mongoose.Schema.Types.ObjectId, ref: 'WorkLocation' },
+    // The employee's STANDING shift — the one they work until it is changed.
+    // Unset ⇒ their day is judged by the org-wide policy (Setting.latePolicy
+    // and WORKDAY_END_HOUR), exactly as every day was judged before shifts
+    // existed. A RosterEntry for a specific date overrides this for that date.
+    //
+    // Note this is only ever read to decide what to stamp on a NEW attendance
+    // record (services/shiftResolver.js). Days already recorded carry their own
+    // frozen copy of the shift, so assigning someone a shift today can never
+    // re-judge — or re-price — a day they have already worked.
+    shiftRef: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift' },
     // Whether this employee may mark a punch as work-from-home. Granted per
     // person by a SuperAdmin — a WFH punch is exempt from the geofence check,
     // so it is a privilege, not a self-service checkbox.

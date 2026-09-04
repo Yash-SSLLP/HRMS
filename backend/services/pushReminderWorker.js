@@ -41,6 +41,8 @@ const { notify } = require('./notify');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { istDateString, IST_TZ } = require('../utils/istDate');
 const { WORKDAY_END_HOUR, NON_WORKING_STATUSES } = require('../utils/workday');
+const Shift = require('../models/Shift');
+const { parseHm, crossesMidnight, to12h } = require('../utils/shiftWindow');
 
 // Every 5 minutes, so a 09:45 reminder actually lands near 09:45 rather than up
 // to a quarter of an hour late. The DigestLog claim makes extra ticks harmless.
@@ -111,13 +113,18 @@ async function pushEach(userIds, payload) {
  * get people to mute the app's notifications entirely.
  * @returns {Promise<number>} reminders sent
  */
-async function remindPunchIn(today) {
+async function remindPunchIn(today, shiftId = null) {
   // Sunday, or a listed holiday → nobody is expected in.
   if (istDayOfWeek() === 0) return 0;
   if (await Holiday.exists({ date: today })) return 0;
 
+  // Split by shift so nobody is nudged twice. A shift-timed run takes only that
+  // shift's people; the org-wide run takes only those with NO shift, rather than
+  // everyone — otherwise a night worker would get the 09:45 nudge as well as
+  // their own, which is the noise that teaches people to mute the app.
   const profiles = await EmployeeProfile.find({
     $or: [{ dateOfExit: null }, { dateOfExit: { $exists: false } }],
+    ...(shiftId ? { shiftRef: shiftId } : { shiftRef: null }),
   })
     .select('user')
     .populate({ path: 'user', select: 'isActive' })
@@ -164,8 +171,16 @@ async function remindPunchIn(today) {
  * 19:00 — nudge anyone still checked in with no check-out.
  * @returns {Promise<number>} reminders sent
  */
-async function remindPunchOut(today) {
-  const open = await Attendance.find({ date: today, checkIn: { $ne: null }, checkOut: null })
+async function remindPunchOut(today, shiftId = null) {
+  // Keyed off the record's own frozen shift rather than the employee's current
+  // one: if somebody was moved between shifts today, the day being closed
+  // belongs to the shift they actually worked.
+  const open = await Attendance.find({
+    date: today,
+    checkIn: { $ne: null },
+    checkOut: null,
+    ...(shiftId ? { shift: shiftId } : { shift: null }),
+  })
     .populate({ path: 'employee', select: 'user', populate: { path: 'user', select: 'isActive' } })
     .lean();
 
@@ -249,6 +264,71 @@ async function customReminders(dow) {
     }));
 }
 
+// How long before a shift starts its people are nudged to punch in. Matches the
+// 15 minutes the org-wide default leaves between 09:45 and a 10:00 start, so a
+// shift-timed nudge feels like the same reminder, not a new one.
+const PUNCH_IN_LEAD_MIN = 15;
+
+/**
+ * Punch reminders timed to each SHIFT rather than to one org-wide clock.
+ *
+ * Without this a night-shift employee gets "don't forget to punch in" at 09:45,
+ * eleven hours before their shift starts, and "don't forget to punch out" at
+ * 19:00, ten minutes after they arrived. Both are noise, and noise is what
+ * teaches people to mute the app.
+ *
+ * Each shift gets its own DigestLog claim key (`punchin-reminder:<shiftId>`) so
+ * the once-per-day guard is per shift, not shared — otherwise the first shift to
+ * fire would claim the day and silence every other one.
+ *
+ * Employees with no shift are untouched here; they stay with the built-in
+ * org-wide reminders above.
+ *
+ * @param {{leadMin: number, enabled: boolean}} inCfg
+ * @param {{enabled: boolean}} outCfg
+ * @returns {Promise<Array>} schedule entries shaped like the built-ins
+ */
+async function shiftSchedule(inCfg, outCfg) {
+  let shifts = [];
+  try {
+    shifts = await Shift.find({ isActive: true }).select('name startTime endTime').lean();
+  } catch (err) {
+    console.error('shift reminder load failed:', err.message);
+    return [];
+  }
+
+  const out = [];
+  for (const s of shifts) {
+    const startMin = parseHm(s.startTime);
+    const endMin = parseHm(s.endTime);
+    if (startMin == null || endMin == null) continue; // half-configured shift
+
+    const inAt = (startMin - inCfg.leadMin + 1440) % 1440;
+    out.push({
+      kind: `punchin-reminder:${s._id}`,
+      at: { h: Math.floor(inAt / 60), m: inAt % 60 },
+      enabled: inCfg.enabled,
+      run: (today) => remindPunchIn(today, s._id),
+    });
+
+    // The punch-out nudge for an overnight shift fires on the calendar day AFTER
+    // the one the record is dated. A 04:00 close is reminded at 04:00 on the 6th
+    // about a shift dated the 5th — so this run is handed yesterday, or it would
+    // look for open records on a day that has barely started and find none.
+    const overnight = crossesMidnight(s.startTime, s.endTime);
+    out.push({
+      kind: `punchout-reminder:${s._id}`,
+      at: { h: Math.floor(endMin / 60), m: endMin % 60 },
+      enabled: outCfg.enabled,
+      run: (today) => remindPunchOut(
+        overnight ? new Date(today.getTime() - 24 * 60 * 60 * 1000) : today,
+        s._id,
+      ),
+    });
+  }
+  return out;
+}
+
 /**
  * The two reminders with their CURRENT schedule, read fresh from settings each
  * tick so a SuperAdmin's change takes effect on the next pass — no restart.
@@ -277,6 +357,7 @@ async function schedule() {
   return [
     { kind: 'punchin-reminder', at: { h: pin.h, m: pin.m }, enabled: pin.enabled, run: remindPunchIn },
     { kind: 'punchout-reminder', at: { h: pout.h, m: pout.m }, enabled: pout.enabled, run: remindPunchOut },
+    ...(await shiftSchedule({ leadMin: PUNCH_IN_LEAD_MIN, enabled: pin.enabled }, { enabled: pout.enabled })),
   ];
 }
 

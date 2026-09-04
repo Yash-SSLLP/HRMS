@@ -24,6 +24,13 @@ const PERMISSIONS = [
   { key: 'users.manage', label: 'Create / manage users', group: 'People' },
   { key: 'employees.manage', label: 'Create / manage employees', group: 'People' },
   { key: 'org.manage', label: 'Org masters, departments, work locations', group: 'People' },
+  // Who an employee REPORTS to, which HR owns them, and who signs off their
+  // attendance corrections. Backend-only until now, and deliberately its own
+  // key rather than part of employees.manage: an HR holding it can hand an
+  // employee to another HR — or take one — and can point a regularization
+  // approval at themselves. That is a decision to make per account, not a side
+  // effect of being able to edit a phone number.
+  { key: 'hierarchy.manage', label: 'Reporting manager, HR partner & approvers', group: 'People' },
   { key: 'lifecycle.manage', label: 'Confirmations / probation', group: 'People' },
   { key: 'onboarding.manage', label: 'Onboarding tasks', group: 'People' },
   { key: 'exit.manage', label: 'Exits / offboarding', group: 'People' },

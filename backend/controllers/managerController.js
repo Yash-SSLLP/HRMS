@@ -135,7 +135,11 @@ const teamPresence = asyncHandler(async (req, res) => {
 
   const [records, leaves] = await Promise.all([
     Attendance.find({ employee: { $in: ids }, date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
-      .select('employee checkIn checkOut checkInPhoto checkOutPhoto checkInWfh hoursWorked status')
+      // `date` is not decoration here: lateMinutes() measures from it, and
+      // without it the arithmetic runs on undefined and silently reports every
+      // person as 0 minutes late. The shift fields let it measure from each
+      // person's own start time rather than the org-wide one.
+      .select('employee date checkIn checkOut checkInPhoto checkOutPhoto checkInWfh hoursWorked status halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight')
       .lean(),
     LeaveRequest.find({ employee: { $in: ids }, status: 'Approved', startDate: { $lt: tomorrow }, endDate: { $gte: today } })
       .select('employee leaveType isHalfDay halfDaySession startDate endDate reason')

@@ -1,5 +1,5 @@
 {
-  "versionName": "2.3.0",
-  "versionCode": 72,
-  "notes": "Checking in no longer restarts the app. The selfie is taken inside SSLLP HRMS now instead of handing you over to the phone's camera app \u2014 that hand-off was what closed the app and lost the punch, so you had to start again. If your connection drops while the punch is being saved the photo is kept and one tap tries again, and if it had already reached us the app says so rather than asking you to punch twice. For HR and admins the console gains six screens: Payslip Requests, where a payslip is approved, previewed and released; a Leave Desk carrying every request with the HR override and each person's yearly leave grants; Holidays and Festivals; Tasks; Analytics; and Announcements you can post from your phone. The Backend account can also set who approves whose leave, and Logo and Signatures is now open to anyone holding the letterhead permission rather than the Backend account alone."
+  "versionName": "2.3.2",
+  "versionCode": 74,
+  "notes": "The punch selfie is now square. The camera shows you a square frame and saves exactly what is inside it, so the photo HR sees is the one you lined yourself up for — until now the picture was taken tall and then cropped to a square afterwards, off-centre, with the top and bottom of the frame quietly cut off. Nothing about punching in or out changes otherwise: the same one tap, and a photo you have already taken is still kept on screen with Try again if the signal drops before it saves. The Punch Map has been removed from the app; HR and admins still have it on the web portal, where it is easier to read on a big screen, and taking it out made this download smaller."
 }
