@@ -15,6 +15,7 @@ import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog } from '../components/dialogs';
 import SalarySetupAlert from '../components/SalarySetupAlert';
 import SearchableSelect from '../components/SearchableSelect';
+import { useAuthStore } from '../store/authStore';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -35,6 +36,10 @@ const STATUS_COLORS = {
   Approved: 'bg-blue-100 text-blue-800',
   Paid: 'bg-green-100 text-green-800',
   OnHold: 'bg-amber-100 text-amber-800',
+  // A cancelled payslip. Kept in the list on purpose — it is the record that the
+  // month was paid and then voided, and the row is what stops the month being
+  // generated and disbursed again.
+  Void: 'bg-red-100 text-red-800 line-through',
 };
 
 // Custody of the document, separate from `status`, which is about the money.
@@ -89,6 +94,13 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
 
 export default function AdminPayroll() {
+  // A Paid payslip is closed to HR — the money has gone and the figures are what
+  // the register and the employee's own copy say. The Backend alone may reopen
+  // one to fix a real mistake, and the server audits it when they do
+  // (payrollController → canOverridePaidLock). A ROLE check, not a capability:
+  // every HR account holds payroll.manage, and this is the authority they must
+  // not have.
+  const isBackend = useAuthStore((st) => st.user?.role) === 'SuperAdmin';
   const [payslips, setPayslips] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +111,11 @@ export default function AdminPayroll() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [editingId, setEditingId] = useState(null);
+  // Whether the slip in the editor has already been PAID. Only the Backend
+  // can open one, and the banner below tells them what saving will do.
+  // '' when the slip in the editor is not settled; otherwise its status word
+  // ('Paid' / 'Void'), which the banner prints.
+  const [editingPaid, setEditingPaid] = useState('');
   const [form, setForm] = useState(blankSlip());
   const [saving, setSaving] = useState(false);
   const [mail, setMail] = useState(null); // editable compose modal payload
@@ -138,6 +155,7 @@ export default function AdminPayroll() {
 
   const openCreate = () => {
     setEditingId(null);
+    setEditingPaid('');
     setForm(blankSlip());
     setSalaryInfo(null);
     setBonusCalc({ type: 'fixed', value: '' });
@@ -206,6 +224,7 @@ export default function AdminPayroll() {
 
   const openEdit = (p) => {
     setEditingId(p._id);
+    setEditingPaid(p.status === 'Paid' || p.status === 'Void' ? p.status : '');
     const employee = p.employee?._id || p.employee;
     setForm({
       employee,
@@ -225,6 +244,14 @@ export default function AdminPayroll() {
     setSalaryInfo(null);
     setBonusCalc({ type: 'fixed', value: '' });
     setShowModal(true);
+    // A settled slip's day counts are FROZEN. syncAttendanceDays re-queries
+    // attendance and writes paidDays/lopDays/halfDays straight into the form, so
+    // merely opening a Paid or Void payslip — months later, after a
+    // regularisation or a leave correction — would silently replace the figures
+    // the payment was actually made on, and saving would commit them. The
+    // Backend opens one of these to change a specific number, not to re-derive
+    // the month.
+    if (p.status === 'Paid' || p.status === 'Void') return;
     // Refresh the day counts from attendance, then reflect them in the derived
     // preview (without applying — the saved earnings/deductions are left intact).
     syncAttendanceDays({
@@ -392,10 +419,22 @@ export default function AdminPayroll() {
     }
   };
 
-  const doAction = async (id, action) => {
+  const doAction = async (id, action, payslip) => {
     try {
       if (action === 'delete') {
-        if (!(await confirmDialog({ message: 'Delete this draft payslip?', tone: 'danger', confirmText: 'Delete' }))) return;
+        // A draft is deleted; a PAID payslip is VOIDED — the row survives, because
+        // it is what stops the month being generated and paid a second time and
+        // what the year's totals are summed from. Two different acts, so two
+        // different questions.
+        const paid = payslip?.status === 'Paid';
+        const message = paid
+          ? `Void ${payslip.employee?.user?.firstName || 'this employee'}'s payslip for `
+            + `${MONTHS[payslip.payPeriodMonth - 1]} ${payslip.payPeriodYear}? The payment itself already `
+            + 'happened — voiding cancels the payslip, takes it out of the employee\'s view and out of '
+            + 'the year\'s totals, and leaves it on the record as cancelled. The month stays locked, so '
+            + 'it cannot be paid twice. This is logged against your account.'
+          : 'Delete this draft payslip?';
+        if (!(await confirmDialog({ message, tone: 'danger', confirmText: paid ? 'Void payslip' : 'Delete' }))) return;
         await api.delete(`/payroll/${id}`);
       } else {
         await api.patch(`/payroll/${id}/${action}`);
@@ -485,7 +524,7 @@ export default function AdminPayroll() {
           <select value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })}
             className="border rounded-lg px-2 py-1">
             <option value="">All</option>
-            {['Draft', 'Approved', 'Paid', 'OnHold'].map((s) => <option key={s}>{s}</option>)}
+            {['Draft', 'Approved', 'Paid', 'OnHold', 'Void'].map((s) => <option key={s}>{s}</option>)}
           </select>
         </div>
       </div>
@@ -565,11 +604,28 @@ export default function AdminPayroll() {
                     <>
                       <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
                       <button onClick={() => doAction(p._id, 'approve')} className="text-green-700 hover:underline">Approve</button>
-                      <button onClick={() => doAction(p._id, 'delete')} className="text-red-600 hover:underline">Delete</button>
+                      <button onClick={() => doAction(p._id, 'delete', p)} className="text-red-600 hover:underline">Delete</button>
                     </>
                   )}
                   {p.status === 'Approved' && (
                     <button onClick={() => doAction(p._id, 'pay')} className="text-green-700 hover:underline">Mark Paid</button>
+                  )}
+                  {/* Correcting a payslip after it has been paid. Hidden from
+                      everyone but the Backend — the server refuses it for anyone
+                      else, so showing the buttons would only produce an error.
+                      Editing one that was already finalised pulls the release
+                      back, so the employee cannot download a half-corrected
+                      document while it is being fixed. */}
+                  {p.status === 'Paid' && isBackend && (
+                    <>
+                      <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
+                      <button onClick={() => doAction(p._id, 'delete', p)} className="text-red-600 hover:underline">Void</button>
+                    </>
+                  )}
+                  {/* A voided slip is not gone — the Backend can correct it back
+                      to Paid if it was cancelled by mistake. */}
+                  {p.status === 'Void' && isBackend && (
+                    <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
                   )}
                   {(p.status === 'Approved' || p.status === 'Paid') && (
                     <>
@@ -599,6 +655,18 @@ export default function AdminPayroll() {
                   here too, so HR can correct one before handing it over. */}
               {editingId ? 'Edit Payslip' : 'New Payslip'}
             </h2>
+            {/* Editing a slip whose money has already gone out. Two consequences
+                worth saying before the figures change rather than after: the
+                employee's access is pulled until HR finalises it again, and the
+                change is written to the audit log against this account. */}
+            {editingPaid && (
+              <div className="mb-3 text-sm bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 rounded-lg">
+                This payslip is already <strong>{editingPaid}</strong>. Correcting it does not move any
+                money — the payment has happened. Its day counts are left exactly as they were paid on
+                rather than re-derived from today&apos;s attendance. If it was released to the employee
+                they lose access until it is finalised again, and this edit is logged against your account.
+              </div>
+            )}
             <form onSubmit={onSave} className="space-y-3">
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-1">

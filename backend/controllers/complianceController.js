@@ -53,7 +53,10 @@ function initTotals(keys) {
 // Scoped like the payroll module itself — these reports were the back door
 // around its per-admin scoping, handing company B's salaries to company A.
 async function fetchPayslips(req, { month, year }) {
-  const filter = { payPeriodYear: year };
+  // A cancelled payslip is not a payment. It stays in the collection so a paid
+  // month cannot be regenerated (models/Payroll.js status enum), but it must not
+  // reach PF/ESI/PT/TDS totals or the Form 16 basis.
+  const filter = { payPeriodYear: year, status: { $ne: 'Void' } };
   if (month) filter.payPeriodMonth = month;
   await scopeEmployeeFilter(req, filter);
 

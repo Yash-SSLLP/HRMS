@@ -1,5 +1,5 @@
 {
-  "versionName": "2.3.3",
-  "versionCode": 75,
-  "notes": "Nearly the whole admin portal is now in the app. Payroll, salary structures and salary revisions; the cashbook, employee advances, expense claims and travel; documents, assets, projects and tasks; offers and joining, onboarding and confirmations; courses, training, appraisals and performance; shifts and rosters, departments, user accounts, permissions and password resets; surveys, events and the audit log. Around thirty screens that until now needed a laptop, so approving something, paying someone or checking a record no longer means finding a desk. Two things anyone can use: you can send a birthday or work-anniversary wish straight from the home screen, and a petty-cash voucher can now be filed with the bill photographed and attached to it. The rest of the app is unchanged — the same one tap to punch in, and the same screens you already know."
+  "versionName": "2.3.4",
+  "versionCode": 76,
+  "notes": "For the Backend account only: a payslip that has already been paid can now be corrected, or cancelled, from the Payroll screen. Correcting one moves no money — the payment has happened — and its day counts are left exactly as they were paid on rather than being re-derived from the current attendance, so opening an old payslip cannot quietly change the figures it was paid on. Cancelling marks the payslip void instead of deleting it: it disappears from the employee's payslips and from the year's totals, but the month stays locked so it can never be generated and paid a second time. Both actions are recorded against the account that made them. Nothing changes for anyone else, and nothing changes elsewhere in the app."
 }

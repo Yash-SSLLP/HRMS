@@ -670,7 +670,9 @@ async function buildRunRows(year, month, scope = {}) {
     // A Paid payslip is never overwritten; anything else can be recomputed as
     // long as there is a structure + CTC to recompute it from (a hand-entered or
     // copied payslip has no source to re-derive from, so it is left alone).
-    const existingLocked = !!cur && cur.status === 'Paid';
+    // Void counts as locked: a cancelled paid month must not be silently
+    // regenerated and disbursed again. The Backend restores it by editing.
+    const existingLocked = !!cur && (cur.status === 'Paid' || cur.status === 'Void');
     return {
       profile: p,
       existing: cur || null,
@@ -766,7 +768,7 @@ const runPayroll = asyncHandler(async (req, res) => {
       const asked = regenAll ? r.row.canRegenerate : regenSet.has(String(r.profile._id));
       if (!asked) { skippedExisting += 1; continue; }
       // A disbursed payslip is a financial record — never rewrite it.
-      if (r.existing.status === 'Paid') { regenBlockedPaid.push(r.row.name); continue; }
+      if (r.existing.status === 'Paid' || r.existing.status === 'Void') { regenBlockedPaid.push(r.row.name); continue; }
       // Nothing to recompute from: the payslip was hand-entered or copied, and
       // overwriting it would wipe HR's work.
       if (!r.hasSalarySetup) { regenBlockedNoSetup.push(r.row.name); continue; }
@@ -1396,7 +1398,7 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
   let payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
   // A disbursed payslip is a financial record; an Approved one can still be
   // recomputed (it drops back to Draft, which the audit log records).
-  if (payslip && payslip.status === 'Paid') {
+  if (payslip && (payslip.status === 'Paid' || payslip.status === 'Void')) {
     res.status(400);
     throw new Error(`The ${MONTH_NAMES[month]} payslip is already ${payslip.status} - it can't be regenerated.`);
   }
@@ -1462,11 +1464,80 @@ const createPayslip = asyncHandler(async (req, res) => {
 });
 
 /**
- * Update a payslip (not once Paid; identity fields immutable).
- * @route PUT /api/payroll/:id  (HR/Admin)
+ * Is this actor allowed to reach past a payslip's normal locks?
+ *
+ * A Paid payslip is finished business — the money left the company and the
+ * figures are what the payslip register, the statutory returns and the employee's
+ * own copy all say. So HR cannot edit or delete one, and that stays true.
+ *
+ * The Backend can, because somebody has to be able to fix a genuine mistake
+ * discovered after payment, and the alternative people reach for otherwise is
+ * editing the database by hand — which leaves no trace at all. This leaves one.
+ *
+ * Deliberately a ROLE check and not a capability: `payroll.manage` is held by
+ * every HR account (and by an exec in edit mode), and this is precisely the
+ * authority those accounts must not have.
+ *
+ * @param {Object} user - req.user
+ * @returns {boolean}
+ */
+const canOverridePaidLock = (user) => user?.role === 'SuperAdmin';
+
+/**
+ * Record that a payslip's post-approval lock was overridden.
+ *
+ * `before` is captured by the caller BEFORE the document is touched: the pre-save
+ * hook recomputes netPay from the new figures, so reading it off the document
+ * afterwards would record the corrected amount as though it were the original —
+ * which is exactly the fact the audit exists to preserve.
+ *
+ * Best-effort. That is defensible now only because nothing is destroyed any
+ * more: an edit leaves the document, and a void leaves it too. If a hard delete
+ * is ever reintroduced here, this must become fail-closed.
+ *
+ * @param {Object} payslip - the payslip, already mutated
+ * @param {Object} user - req.user
+ * @param {{status: string, netPay: number}} before - its state before the change
+ * @param {string} action - 'edited' | 'voided'
+ * @returns {Promise<void>}
+ */
+async function auditLockOverride(payslip, user, before, action) {
+  try {
+    const AuditLog = require('../models/AuditLog');
+    const prof = await EmployeeProfile.findById(payslip.employee)
+      .select('employeeCode user')
+      .populate('user', 'firstName lastName')
+      .lean();
+    const name = prof
+      ? `${prof.user?.firstName || ''} ${prof.user?.lastName || ''}`.trim() || prof.employeeCode
+      : '';
+    const period = `${String(payslip.payPeriodMonth).padStart(2, '0')}/${payslip.payPeriodYear}`;
+    await AuditLog.create({
+      entity: 'Payroll',
+      entityId: payslip._id,
+      entityLabel: [name, period].filter(Boolean).join(' — '),
+      field: 'payslipLock',
+      // Both amounts on one row is what makes a correction readable later.
+      fromStatus: `${before.status} · net ${before.netPay}`,
+      toStatus: `${action} by Backend · net ${payslip.netPay}`,
+      by: user?._id,
+      byName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim(),
+      byRole: user?.role,
+    });
+  } catch (err) {
+    console.error('payslip lock-override audit failed:', err.message);
+  }
+}
+
+/**
+ * Update a payslip. Identity fields are immutable; a Paid payslip is editable
+ * only by the Backend (SuperAdmin), and that override is written to the audit
+ * log. Editing a released payslip pulls the release back to Approved so the
+ * employee cannot download a half-corrected document.
+ * @route PUT /api/payroll/:id  (HR/Admin; Paid requires SuperAdmin)
  * @param {string} req.params.id - payslip id
  * @param {Object} req.body - fields to update
- * @returns {{payslip: Object}}
+ * @returns {{payslip: Object}}; 400 when Paid and the caller is not the Backend
  */
 // PUT /api/payroll/:id  (HR/Admin)
 const updatePayslip = asyncHandler(async (req, res) => {
@@ -1476,10 +1547,22 @@ const updatePayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
-  if (payslip.status === 'Paid') {
+  // A Paid payslip is closed to everyone but the Backend, who may correct a
+  // mistake found after payment. The override is audited below, once the edit
+  // has actually saved.
+  // Paid is closed to everyone but the Backend. Void is too, so the Backend can
+  // put a wrongly-cancelled payslip back rather than the void being one-way.
+  const locked = payslip.status === 'Paid' || payslip.status === 'Void';
+  if (locked && !canOverridePaidLock(req.user)) {
     res.status(400);
-    throw new Error('Paid payslips cannot be edited');
+    throw new Error(
+      `${payslip.status === 'Void' ? 'Voided' : 'Paid'} payslips cannot be edited. `
+      + 'Ask the Backend account if this one has to be corrected.'
+    );
   }
+  // Read BEFORE Object.assign: the pre-save hook recomputes netPay, so afterwards
+  // the "from" figure would be the corrected one.
+  const before = { status: payslip.status, netPay: payslip.netPay };
   // Don't allow changing identity fields
   delete req.body.employee;
   delete req.body.payPeriodYear;
@@ -1502,6 +1585,7 @@ const updatePayslip = asyncHandler(async (req, res) => {
   }
 
   await payslip.save();
+  if (locked) await auditLockOverride(payslip, req.user, before, 'edited');
   res.json({ payslip });
 });
 
@@ -1789,9 +1873,37 @@ const deletePayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  // Anything past Draft has been approved, and possibly paid and sent — deleting
+  // it destroys the record of a payment that really happened. Only the Backend
+  // may, and only ever as a correction; the audit line below is what makes that
+  // recoverable as knowledge even though the row is not.
   if (payslip.status !== 'Draft') {
-    res.status(400);
-    throw new Error('Only Draft payslips can be deleted');
+    // A PAID payslip is cancelled, not destroyed. The row is what every
+    // "never overwrite a Paid payslip" guard in the run reads (buildRunRows,
+    // runPayroll, runEmployeePayroll) and what the year's YTD, the Form 16 basis
+    // and the statutory returns are summed from. Delete it and the month reads
+    // as never paid: HR can generate, approve and disburse it a second time, and
+    // the hand-entered TDS and bonus the engine cannot re-derive are gone.
+    if (payslip.status !== 'Paid') {
+      res.status(400);
+      throw new Error(`Only Draft payslips can be deleted. This one is ${payslip.status}.`);
+    }
+    if (!canOverridePaidLock(req.user)) {
+      res.status(400);
+      throw new Error('Paid payslips cannot be removed. Ask the Backend account if this one has to be cancelled.');
+    }
+    const before = { status: payslip.status, netPay: payslip.netPay };
+    payslip.voided = {
+      at: new Date(),
+      by: req.user._id,
+      reason: (req.body?.reason || '').toString().trim().slice(0, 500) || undefined,
+      netPayAtVoid: payslip.netPay,
+      statusAtVoid: payslip.status,
+    };
+    payslip.status = 'Void';
+    await payslip.save();
+    await auditLockOverride(payslip, req.user, before, 'voided');
+    return res.json({ id: req.params.id, voided: true, payslip });
   }
   await payslip.deleteOne();
   res.json({ id: req.params.id, deleted: true });

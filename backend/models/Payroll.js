@@ -142,7 +142,14 @@ const payrollSchema = new mongoose.Schema(
     // Draft -> being prepared; Approved -> signed off; Paid -> disbursed; OnHold -> payment withheld.
     status: {
       type: String,
-      enum: ['Draft', 'Approved', 'Paid', 'OnHold'],
+      // 'Void' is a CANCELLED payslip that is deliberately still here. A paid
+      // month cannot be deleted: this row is what every "never overwrite a Paid
+      // payslip" guard in the payroll run reads, so removing it would let the
+      // month be generated and disbursed a second time — and it is what the
+      // year's YTD, the Form 16 basis and the statutory returns are summed from.
+      // Voiding keeps the slot and the history and hides the slip everywhere it
+      // would otherwise be counted or read.
+      enum: ['Draft', 'Approved', 'Paid', 'OnHold', 'Void'],
       default: 'Draft',
     },
     paymentDate: Date,
@@ -160,6 +167,19 @@ const payrollSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Cancelling a payslip after payment. `status` becomes 'Void'; this records who
+// did it, when, and why — the row itself is never removed (see the status enum).
+payrollSchema.add({
+  voided: {
+    at: Date,
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reason: { type: String, trim: true, maxlength: 500 },
+    // What the slip said when it was voided, so the figures survive a later edit.
+    netPayAtVoid: Number,
+    statusAtVoid: String,
+  },
+});
 
 // One payslip per employee per month
 payrollSchema.index(
