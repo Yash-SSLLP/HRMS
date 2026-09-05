@@ -79,6 +79,11 @@ const OWNED_BY_USER = [
 // The person is one entry in a list that belongs to somebody else.
 const PULL_FROM = [
   ['Announcement', 'dismissedBy'],
+  // The executives a leave request must tell once HR approves it. A LeaveRequest
+  // is only DELETED when the applicant is purged, so purging an executive would
+  // otherwise leave their id embedded in other people's live requests and post
+  // notifications to an account that no longer exists.
+  ['LeaveRequest', 'execsToNotify'],
   ['RnrAward', 'dismissedBy'],
   ['RnrAward', 'winners', 'user'], // array of subdocuments keyed by .user
   ['Project', 'members'],

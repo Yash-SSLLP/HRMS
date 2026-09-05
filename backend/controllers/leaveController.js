@@ -111,20 +111,141 @@ async function buildConfiguredLeaveChain(profile) {
   return chain;
 }
 
+// Roles that must never sit on a LEAVE ladder. An executive is the top of the
+// org chart, so the reportingManager walk used to end on them and every leave
+// request in the company eventually landed in a CEO/MD inbox. They are told the
+// outcome instead — see buildLeaveRouting.
+//
+// This is leave-only. Resignations still climb to the executive and still need
+// their signature (exitController uses buildApprovalChain directly).
+const NON_APPROVER_ROLES = ['CEO', 'MD'];
+
 /**
- * The ladder a LEAVE request should climb.
+ * The HR person who signs off this employee's leave — the rung every leave
+ * ladder now ends on.
  *
- * Prefers the configured `leaveApprovers` ladder; falls back to the org-chart
- * walk (`buildApprovalChain`) when the employee has not been configured. That
- * fallback is why this is a separate function rather than a change inside
- * `buildApprovalChain` — that builder is also used by the exit/resignation flow
- * (controllers/exitController.js), which must keep walking reportingManager
- * regardless of how leave is configured.
+ * WHY A NAMED PERSON. A rung stores one approver and `currentApprover` is
+ * indexed so "what is waiting on me" is a single cheap query. "Any HR" would
+ * mean rewriting that inbox as a capability scan on every read, so the rung
+ * names somebody: the employee's own HR Partner, who is already the person
+ * recorded as handling them.
+ *
+ * The fallbacks exist so leave is never stranded on an unset field. In order:
+ * their HR Partner, then a real HR Manager on the leave desk for their company,
+ * then whoever else holds `leave.manage` there. Never the applicant (an HR
+ * Manager set as their own HR Partner would otherwise approve their own leave),
+ * never an inactive account, and never a CEO/MD — handing it back to an
+ * executive is the exact thing this change exists to stop.
+ *
+ * Returns null when there is genuinely nobody, which leaves the ladder as it
+ * was; a request with no ladder at all already falls through to the HR override.
+ *
+ * @param {Object} profile - EmployeeProfile (needs user, hrPartner, company)
+ * @returns {Promise<Object|null>} an approval-chain rung, or null
+ */
+async function hrApproverFor(profile) {
+  const selfId = String(profile.user || '');
+  const rung = (u) => ({
+    approver: u._id,
+    approverName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+    role: u.role,
+    order: 0,
+    status: 'Waiting',
+  });
+
+  if (profile.hrPartner && String(profile.hrPartner) !== selfId) {
+    const u = await User.findById(profile.hrPartner).select('firstName lastName role isActive');
+    if (u && u.isActive !== false && !NON_APPROVER_ROLES.includes(u.role)) return rung(u);
+  }
+
+  // Nobody usable is named: fall back to the leave desk for their company.
+  const ids = await scopeRecipientsToCompany(await usersHoldingAny('leave.manage'), profile.company);
+  if (!ids.length) return null;
+  const rows = await User.find({ _id: { $in: ids }, isActive: true })
+    .select('firstName lastName role')
+    .sort({ createdAt: 1 })
+    .lean();
+  const usable = rows.filter((u) => String(u._id) !== selfId && !NON_APPROVER_ROLES.includes(u.role));
+  // Prefer an actual HR Manager. The Backend holds every capability and would
+  // otherwise win this on seniority, but it is a break-glass account, not a
+  // person with an inbox somebody watches.
+  // ...and a company whose leave desk is a Manager or an Accounts Manager holding
+  // the capability should get THAT person, not the Backend, which holds every
+  // capability and would otherwise win on seniority alone.
+  const pick = usable.find((u) => u.role === 'HRManager')
+    || usable.find((u) => u.role !== 'SuperAdmin')
+    || usable[0];
+  return pick ? rung(pick) : null;
+}
+
+/**
+ * Where a LEAVE request should be routed: the ladder it climbs, and the
+ * executives who are only told the outcome.
+ *
+ * Starts from the configured `leaveApprovers` ladder, falling back to the
+ * org-chart walk (`buildApprovalChain`) when the employee has not been
+ * configured. That fallback is why this is separate from `buildApprovalChain` —
+ * that builder is also used by the exit/resignation flow
+ * (controllers/exitController.js), which must keep walking reportingManager and
+ * must keep ending on the executive.
+ *
+ * Then two rules are applied to whichever ladder came back, and they are applied
+ * to BOTH kinds so there is one answer to "who approves leave" rather than one
+ * per configuration state:
+ *
+ *   1. CEO/MD rungs are removed and collected into `execsToNotify`. An executive
+ *      is informed once the leave is approved, not asked to approve it.
+ *   2. HR is appended as the LAST rung. Leave is not final until HR has it —
+ *      they are the ones who have to make the payroll and the attendance record
+ *      agree with it.
+ *
+ * De-duplicated by approver, so an HR Partner who is also somebody's manager
+ * approves once rather than twice, and the orders are renumbered afterwards
+ * because removing a rung leaves a hole in them.
+ *
+ * @param {Object} profile - EmployeeProfile (needs user, reportingManager,
+ *   leaveApprovers, hrPartner, company)
+ * @returns {Promise<{chain: Object[], execsToNotify: Array}>}
+ */
+async function buildLeaveRouting(profile) {
+  const configured = await buildConfiguredLeaveChain(profile);
+  const base = configured.length ? configured : await buildApprovalChain(profile);
+
+  const execsToNotify = [];
+  const chain = [];
+  const seen = new Set();
+  for (const step of base) {
+    if (NON_APPROVER_ROLES.includes(step.role)) {
+      if (!execsToNotify.some((id) => String(id) === String(step.approver))) execsToNotify.push(step.approver);
+      continue;
+    }
+    if (seen.has(String(step.approver))) continue;
+    seen.add(String(step.approver));
+    chain.push(step);
+  }
+
+  // HR goes on the END, not merely "somewhere". When the HR Partner is also one
+  // of this person's managers they are already on the ladder — appending would
+  // seat them twice, but skipping would leave a MANAGER with the final word,
+  // which is the one thing this rule exists to prevent. So the rung is moved.
+  const hr = await hrApproverFor(profile);
+  if (hr) {
+    const at = chain.findIndex((s) => String(s.approver) === String(hr.approver));
+    if (at >= 0) chain.push(chain.splice(at, 1)[0]);
+    else chain.push(hr);
+  }
+
+  chain.forEach((step, i) => { step.order = i; step.status = 'Waiting'; });
+  return { chain, execsToNotify, hrApprover: hr };
+}
+
+/**
+ * Just the ladder, for callers that do not care who is merely informed.
+ * @param {Object} profile - EmployeeProfile
+ * @returns {Promise<Object[]>} the approval chain
  */
 async function buildLeaveChain(profile) {
-  const configured = await buildConfiguredLeaveChain(profile);
-  if (configured.length) return configured;
-  return buildApprovalChain(profile);
+  return (await buildLeaveRouting(profile)).chain;
 }
 
 // Every leaveType already ends in the word "Leave" ("Paid Leave", "Unpaid
@@ -318,6 +439,12 @@ async function notifyHrInformational(request, verb, actorId, excludeIds = []) {
     for (const s of request.approvalChain || []) {
       if (s.approver) ids.delete(String(s.approver));
     }
+    // A CEO/MD switched into edit mode holds every capability, so taking them
+    // OFF the chain quietly moved them INTO this capability-derived audience —
+    // they started hearing the applied/rejected/cancelled chatter the chain
+    // exclusion used to spare them. Their one touchpoint is the outcome notice
+    // (notifyExecsFinalApproval); this keeps it that way.
+    for (const id of request.execsToNotify || []) ids.delete(String(id));
     if (actorId) ids.delete(String(actorId));
     const applicantUserId = prof?.user?._id || prof?.user;
     if (applicantUserId) ids.delete(String(applicantUserId));
@@ -386,6 +513,11 @@ async function notifyHrFinalApproval(request, actorId, { configuredOnly = false 
       for (const s of request.approvalChain || []) {
         if (s.approver) ids.delete(String(s.approver));
       }
+      // Same reason as notifyHrInformational: an edit-mode CEO/MD holds
+      // leave.manage and so lands in this derived audience, which would tell
+      // them the leave was approved twice — once here and once from
+      // notifyExecsFinalApproval, which is their channel.
+      for (const id of request.execsToNotify || []) ids.delete(String(id));
     }
     if (actorId) ids.delete(String(actorId));
     const applicantUserId = prof?.user?._id || prof?.user;
@@ -451,12 +583,33 @@ async function notifyChainAbove(request, rejectedStep) {
 async function ensureApprovalChain(request) {
   if (!request || request.status !== 'Pending') return false;
   if (request.currentApprover || (request.approvalChain && request.approvalChain.length)) return false;
-  const profile = await EmployeeProfile.findById(request.employee).select('user reportingManager leaveApprovers');
+  // Do not resurrect a request whose leave is already in a closed month.
+  //
+  // This guard became necessary when HR was made the last rung: an employee with
+  // no reporting manager used to produce an EMPTY chain, so their request stayed
+  // permanently inert and this healer left it alone. Now an HR rung almost
+  // always resolves, so the chain is no longer empty — and healOrphanChains runs
+  // on every Approvals inbox load with no date scope, which would have swept the
+  // whole historical backlog into HR's queue looking current. Approving one of
+  // those writes OnLeave/Absent onto an attendance month whose payroll has been
+  // run and paid (stampLeaveAttendance has no closed-period guard).
+  //
+  // Anything ending inside the current month is still live and still heals.
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  if (request.endDate && new Date(request.endDate) < monthStart) return false;
+  // hrPartner and company are part of the routing now (the ladder ends on HR),
+  // so a narrower projection would silently heal the request onto a chain with
+  // no HR rung on it.
+  const profile = await EmployeeProfile.findById(request.employee)
+    .select('user reportingManager leaveApprovers hrPartner company');
   if (!profile) return false;
-  const chain = await buildLeaveChain(profile);
-  if (!chain.length) return false; // no manager in the hierarchy → HR decides
+  const { chain, execsToNotify } = await buildLeaveRouting(profile);
+  if (!chain.length) return false; // nobody to ask → HR override decides
   chain[0].status = 'Pending';
   request.approvalChain = chain;
+  request.execsToNotify = execsToNotify;
   request.currentApprover = chain[0].approver;
   await request.save();
   try {
@@ -728,9 +881,18 @@ async function countEmergencyInMonth(employeeId, date, excludeRequestId = null) 
 // Tell the hierarchy + HR. Best-effort: never blocks the leave being granted.
 // Returns the names of the people informed, so the employee sees who was told.
 async function notifyEmergencyTaken(request, profile, chain) {
+  // Built from the chain, then topped up below with the executives who are no
+  // longer ON the chain but are still told. This list is handed back to the
+  // employee as `emergency.informed`, so it has to match who was really
+  // messaged — telling them "your manager and HR were informed" while quietly
+  // emailing the MD is the wrong kind of surprise.
   const names = chain.map((s) => s.approverName).filter(Boolean);
   try {
     const ids = new Set(chain.filter((s) => s.approver).map((s) => String(s.approver)));
+    // The executive above them used to BE a rung of this chain, so taking them
+    // off the ladder would have quietly stopped telling them their own report
+    // had gone out on emergency leave. Informing was always the point here.
+    for (const id of request.execsToNotify || []) ids.add(String(id));
     if (profile.hrPartner) ids.add(String(profile.hrPartner));
     const sa = await User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 }).select('_id');
     if (sa) ids.add(String(sa._id));
@@ -751,7 +913,12 @@ async function notifyEmergencyTaken(request, profile, chain) {
     });
 
     // Email the same people, so it reaches them even if they aren't in the app.
-    const users = await User.find({ _id: { $in: [...ids] } }).select('email');
+    const users = await User.find({ _id: { $in: [...ids] } }).select('email firstName lastName');
+    for (const id of request.execsToNotify || []) {
+      const u = users.find((x) => String(x._id) === String(id));
+      const n = u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : '';
+      if (n && !names.includes(n)) names.push(n);
+    }
     const to = users.map((u) => u.email).filter(Boolean);
     if (to.length) {
       const fmt = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -789,7 +956,8 @@ async function grantEmergencyLeave(profile, data) {
   const now = new Date();
   // The ladder is recorded so the request still shows WHO was informed, with
   // every rung marked Skipped — nobody's decision was ever required.
-  const chain = (await buildLeaveChain(profile)).map((s) => ({
+  const { chain: ladder, execsToNotify } = await buildLeaveRouting(profile);
+  const chain = ladder.map((s) => ({
     ...s,
     status: 'Skipped',
     decidedAt: now,
@@ -810,6 +978,7 @@ async function grantEmergencyLeave(profile, data) {
     reason,
     status: 'Approved',
     approvalChain: chain,
+    execsToNotify,
     currentApprover: null,
     decisionAt: now,
     decisionNote: 'Emergency leave — granted on filing; reporting hierarchy and HR informed',
@@ -945,7 +1114,7 @@ const applyForLeave = asyncHandler(async (req, res) => {
   // Build the approval ladder — the configured `leaveApprovers` if this employee
   // has one, otherwise the reportingManager walk. The first rung is Pending
   // (their turn); the rest wait. Empty chain = nobody to ask → HR decides.
-  const chain = await buildLeaveChain(profile);
+  const { chain, execsToNotify } = await buildLeaveRouting(profile);
   if (chain.length) chain[0].status = 'Pending';
 
   const request = await LeaveRequest.create({
@@ -960,6 +1129,7 @@ const applyForLeave = asyncHandler(async (req, res) => {
     lopDays: split.lopDays,
     reason,
     approvalChain: chain,
+    execsToNotify,
     currentApprover: chain.length ? chain[0].approver : null,
   });
 
@@ -1066,8 +1236,13 @@ const setDoubleCut = asyncHandler(async (req, res) => {
   }
 
   // Either HR (leave.manage) or someone on this employee's reporting ladder.
+  // `execsToNotify` counts as the ladder: a CEO/MD is no longer seated on the
+  // chain, but they are still sent the "repeat emergency leave" notice whose
+  // body tells them they can charge the day double — so the authority has to
+  // follow them off the chain, or that notice points at a 403.
   const onLadder = (request.approvalChain || [])
-    .some((s) => s.approver && String(s.approver) === String(req.user._id));
+    .some((s) => s.approver && String(s.approver) === String(req.user._id))
+    || (request.execsToNotify || []).some((id) => String(id) === String(req.user._id));
   const isHrActor = hasPermission(req.user, 'leave.manage');
   if (!isHrActor && !onLadder) {
     res.status(403);
@@ -1367,8 +1542,10 @@ async function leaveCoveringDay(employeeId, day) {
 
 /**
  * The single person who decides whether a day worked on leave counts: the TOP
- * rung of this employee's leave hierarchy — the last step of the configured
- * `leaveApprovers` ladder, or the highest manager the org-chart walk reaches.
+ * MANAGERIAL rung of this employee's leave hierarchy — the last step of the
+ * configured `leaveApprovers` ladder, or the highest manager the org-chart walk
+ * reaches, in both cases excluding the HR rung that now terminates every leave
+ * ladder (see buildLeaveRouting).
  *
  * Unlike a leave request this never climbs step by step: the employee has
  * already been granted the leave by the whole ladder, so only the person who had
@@ -1380,8 +1557,16 @@ async function leaveCoveringDay(employeeId, day) {
  * @returns {Promise<{approver: ObjectId, approverName: string}|null>}
  */
 async function topLeaveApproverFor(profile) {
-  const chain = await buildLeaveChain(profile);
-  const top = chain.length ? chain[chain.length - 1] : null;
+  // NOT simply the last rung any more. HR is now always last on a leave ladder,
+  // and "did this person actually work on their day off?" is not a question HR
+  // can answer — only the manager who would have seen them can. So this takes
+  // the last rung ABOVE the HR one, and falls back to HR only when HR is the
+  // whole ladder (somebody with no manager at all).
+  const { chain, hrApprover } = await buildLeaveRouting(profile);
+  const managerRungs = hrApprover
+    ? chain.filter((s) => String(s.approver) !== String(hrApprover.approver))
+    : chain;
+  const top = (managerRungs.length ? managerRungs : chain).slice(-1)[0] || null;
   if (top?.approver) return { approver: top.approver, approverName: top.approverName };
 
   // The HR Partner stands in when there is no ladder — UNLESS that is the
@@ -1481,6 +1666,19 @@ async function advanceApproval(request, userId, action, note, actor) {
   const step = (request.approvalChain || []).find(
     (s) => String(s.approver) === String(userId) && s.status === 'Pending'
   );
+  // `currentApprover` says it is your turn but no rung agrees. That can only be
+  // a chain written inconsistently (an interrupted reroute, an old record), and
+  // carrying on would advance or finalise the request with NOTHING recording who
+  // decided it — the balance moves against an approval no rung attests to. Fail
+  // loudly instead; the HR override can still clear it.
+  if ((request.approvalChain || []).length && !step) {
+    const err = new Error(
+      'The approval chain on this request is out of step with whose turn it is. '
+      + 'Ask a Super Admin to re-route it from the Leave page.'
+    );
+    err.status = 409;
+    throw err;
+  }
 
   if (action === 'reject') {
     if (step) { step.status = 'Rejected'; step.decidedAt = now; step.note = note; }
@@ -1526,7 +1724,54 @@ async function advanceApproval(request, userId, action, note, actor) {
   await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
   await notifyHrFinalApproval(request, userId);
+  await notifyExecsFinalApproval(request, userId);
   return request;
+}
+
+/**
+ * Tell the executives the leave was approved.
+ *
+ * These are the CEO/MD who would have been rungs on the ladder before leave
+ * stopped asking them to sign each request (`execsToNotify`, stamped when the
+ * request was raised). They are told the OUTCOME, once, after HR has had the
+ * last word — which is the whole trade: an executive keeps the visibility and
+ * loses the queue.
+ *
+ * Best-effort: a failure here never unwinds an approval that has already been
+ * saved and already moved a balance.
+ *
+ * @param {Object} request - the approved LeaveRequest
+ * @param {*} actorId - whoever recorded the final approval (never notified)
+ * @returns {Promise<void>}
+ */
+async function notifyExecsFinalApproval(request, actorId) {
+  try {
+    const ids = new Set((request.execsToNotify || []).map(String));
+    if (actorId) ids.delete(String(actorId));
+    const prof = await EmployeeProfile.findById(request.employee).select('user');
+    const applicantUserId = prof?.user ? String(prof.user) : '';
+    if (applicantUserId) ids.delete(applicantUserId);
+    if (!ids.size) return;
+
+    const who = await applicantNameOf(request);
+    const fmt = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const span = String(request.startDate) === String(request.endDate)
+      ? fmt(request.startDate)
+      : `${fmt(request.startDate)} – ${fmt(request.endDate)}`;
+    const approver = await User.findById(actorId).select('firstName lastName');
+    const by = approver ? `${approver.firstName || ''} ${approver.lastName || ''}`.trim() : '';
+
+    await notifyMany([...ids], {
+      type: 'leave',
+      audience: 'admin',
+      title: 'Leave approved',
+      body: `${who}'s ${leaveLabel(request.leaveType)} (${request.totalDays}d, ${span}) has been approved`
+        + `${by ? ` by ${by}` : ''}. You are being informed — no action is needed.`,
+      link: 'leave',
+    });
+  } catch (err) {
+    console.error('exec final-approval notify failed:', err.message);
+  }
 }
 
 // HR/SuperAdmin emergency OVERRIDE — force a final decision regardless of where
@@ -1589,6 +1834,10 @@ async function applyLeaveDecision(request, userId, action, note) {
     userId,
     toldInDetail
   );
+  // An override approval is a final approval, so the executives hear the outcome
+  // from here too — otherwise the one route that skips the ladder would also be
+  // the one route that never told them.
+  if (action === 'approve') await notifyExecsFinalApproval(request, userId);
   return request;
 }
 
@@ -1719,6 +1968,14 @@ module.exports = {
   advanceApproval,
   buildApprovalChain,
   ensureApprovalChain,
+  // The leave-only routing rules (HR is the last rung, CEO/MD are told the
+  // outcome). Exported for scripts/backfillLeaveHrRung.js, which has to apply
+  // the same rules to requests that were raised before them — one source of
+  // truth for "who approves leave" rather than a second copy in the script.
+  buildLeaveRouting,
+  buildLeaveChain,
+  hrApproverFor,
+  NON_APPROVER_ROLES,
   // Working through your own leave — used by the attendance punch + approval path.
   leaveCoveringDay,
   topLeaveApproverFor,

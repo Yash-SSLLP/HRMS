@@ -42,7 +42,7 @@ const nameOf = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || '(u
   console.log(`\n=== Work-on-leave check for ${key} (IST) ===\n`);
 
   const profiles = await EmployeeProfile.find({})
-    .select('employeeCode user reportingManager leaveApprovers hrPartner dateOfExit')
+    .select('employeeCode user reportingManager leaveApprovers hrPartner company dateOfExit')
     .populate('user', 'firstName lastName isActive');
 
   let onLeaveCount = 0;

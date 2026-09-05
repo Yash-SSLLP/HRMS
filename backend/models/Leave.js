@@ -37,9 +37,14 @@ const isEmergencyType = (t) => t === EMERGENCY_LEAVE;
 // Pending -> in approval chain; Approved/Rejected -> final decision; Cancelled -> withdrawn.
 const LEAVE_STATUS = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
 
-// One rung of the reporting-hierarchy approval ladder. A request climbs the
-// chain: the applicant's manager, then that manager's manager, … up to the first
-// CEO/MD, who gives final approval. HR is informed only (not a rung).
+// One rung of the leave approval ladder. A request climbs the chain: the
+// applicant's manager, then that manager's manager, and finally HR, who has the
+// last word on every leave request.
+//
+// CEO/MD are deliberately NOT rungs — the walk used to end on the first
+// executive it reached, and now drops them into `execsToNotify` instead, so an
+// executive hears the outcome rather than being asked to sign each request.
+// See buildLeaveRouting in controllers/leaveController.js.
 const CHAIN_STEP_STATUS = ['Waiting', 'Pending', 'Approved', 'Rejected', 'Skipped'];
 const approvalStepSchema = new mongoose.Schema(
   {
@@ -94,6 +99,15 @@ const leaveRequestSchema = new mongoose.Schema(
     decisionNote: String,
     // Ordered reporting-hierarchy approval ladder built at apply time.
     approvalChain: [approvalStepSchema],
+    // The CEO/MD who WOULD have been rungs on that ladder before leave stopped
+    // asking executives to approve it. They are told the outcome once HR signs
+    // off instead (buildLeaveRouting → notifyExecsFinalApproval).
+    //
+    // Stored rather than re-derived at notify time on purpose: the org chart can
+    // change between filing and the final approval, and the person entitled to
+    // hear how their report's leave ended is the one who was above them WHEN IT
+    // WAS ASKED FOR.
+    execsToNotify: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     // The user whose turn it is right now (null once fully decided). Indexed so
     // an approver's inbox query (currentApprover === me) is cheap.
     currentApprover: {

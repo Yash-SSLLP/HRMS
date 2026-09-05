@@ -171,6 +171,12 @@ const publicEntry = (e) => ({
   reviewedAt: e.reviewedAt,
   balanceAfter: e.balanceAfter,
   hasAttachment: !!e.attachment?.storagePath,
+  // Name and type of the receipt, so a client that DOWNLOADS it (the phone app
+  // saves to disk and hands the file to the OS) can save it under a name the
+  // OS will open. Without these it had to guess ".jpg", and a PDF receipt
+  // opened as a broken image.
+  attachmentName: e.attachment?.name || undefined,
+  attachmentMime: e.attachment?.mime || undefined,
   transferGroup: e.transferGroup || null,
   createdAt: e.createdAt,
 });

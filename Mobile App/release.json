@@ -1,5 +1,5 @@
 {
-  "versionName": "2.3.2",
-  "versionCode": 74,
-  "notes": "The punch selfie is now square. The camera shows you a square frame and saves exactly what is inside it, so the photo HR sees is the one you lined yourself up for — until now the picture was taken tall and then cropped to a square afterwards, off-centre, with the top and bottom of the frame quietly cut off. Nothing about punching in or out changes otherwise: the same one tap, and a photo you have already taken is still kept on screen with Try again if the signal drops before it saves. The Punch Map has been removed from the app; HR and admins still have it on the web portal, where it is easier to read on a big screen, and taking it out made this download smaller."
+  "versionName": "2.3.3",
+  "versionCode": 75,
+  "notes": "Nearly the whole admin portal is now in the app. Payroll, salary structures and salary revisions; the cashbook, employee advances, expense claims and travel; documents, assets, projects and tasks; offers and joining, onboarding and confirmations; courses, training, appraisals and performance; shifts and rosters, departments, user accounts, permissions and password resets; surveys, events and the audit log. Around thirty screens that until now needed a laptop, so approving something, paying someone or checking a record no longer means finding a desk. Two things anyone can use: you can send a birthday or work-anniversary wish straight from the home screen, and a petty-cash voucher can now be filed with the bill photographed and attached to it. The rest of the app is unchanged — the same one tap to punch in, and the same screens you already know."
 }

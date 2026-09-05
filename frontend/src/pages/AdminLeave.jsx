@@ -410,6 +410,17 @@ function BalancesTab() {
  * Leaving an employee unconfigured is legal and keeps the original behaviour:
  * the chain is derived by walking their reportingManager up to the first CEO/MD.
  * So this tab is an override, not a prerequisite.
+ *
+ * TWO RULES ARE APPLIED TO WHATEVER IS SET HERE, server-side, and they cannot be
+ * configured away (controllers/leaveController.js → buildLeaveRouting):
+ *   - HR is appended as the LAST step. Leave is not final until the employee's
+ *     HR Partner has it, because they are the ones who have to make payroll and
+ *     the attendance record agree with it.
+ *   - A CEO/MD step is DROPPED. Executives are told the outcome once HR
+ *     approves; they are not asked to sign each request.
+ * Naming an executive below is therefore accepted and then ignored, which is why
+ * the picker says so rather than letting somebody configure a step that never
+ * happens.
  */
 
 const MAX_STEPS = 4;
