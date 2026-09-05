@@ -74,7 +74,7 @@ const GRANT_HELP = {
   cashbook: 'Open the cashbook: record money in and out of the company’s cash accounts. A standalone grant — any account can hold it, whatever their role.',
   expenses: 'Review, approve and settle staff expense claims.',
   assets: 'Issue, return and track company assets.',
-  khata: 'Open the employee-khata module: give cash advances to staff, confirm what they spend, and settle up.',
+  khata: 'Open the employee cashbook: give cash advances to staff, confirm what they spend, and settle up.',
   khataExport: 'Download every employee’s balances and full ledger as a spreadsheet. No role grants this on its own — reading the ledger on screen and walking out with a copy of it are different decisions.',
   wfh: 'Lets them tick “working from home” on a punch. That punch is not measured against the office geofence, and the day records as WFH.',
   remotePunch: 'The office geofence stops applying to them entirely — for site, field and travelling staff. Their punches are never flagged as outside the office, and they do not have to declare anything. The GPS location is still recorded and still shown on the punch map.',
@@ -287,11 +287,11 @@ export default function AdminPermissions() {
   // therefore its own decision. Granting the download alone is allowed — it just
   // does nothing until the person can also reach the module.
   const toggleKhata = (u) => toggleAccess(u, {
-    path: 'khata-access', field: 'khataAccess', enabled: !u.khataAccess, errorText: 'Could not update khata access',
+    path: 'khata-access', field: 'khataAccess', enabled: !u.khataAccess, errorText: 'Could not update cashbook access',
   });
 
   const toggleKhataExport = (u) => toggleAccess(u, {
-    path: 'khata-export-access', field: 'khataExportAccess', enabled: !u.khataExportAccess, errorText: 'Could not update khata download access',
+    path: 'khata-export-access', field: 'khataExportAccess', enabled: !u.khataExportAccess, errorText: 'Could not update cashbook download access',
   });
 
   // Which HR (or granted Manager) may edit a Manager's employee profile. Kept
@@ -458,11 +458,11 @@ export default function AdminPermissions() {
           </div>
           <dl className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-3.5">
             {[
-              ['Cashbook', GRANT_HELP.cashbook],
+              ['Company Accounts', GRANT_HELP.cashbook],
               ['Expenses', GRANT_HELP.expenses],
               ['Assets', GRANT_HELP.assets],
-              ['Khata · Module', GRANT_HELP.khata],
-              ['Khata · Export', GRANT_HELP.khataExport],
+              ['Employee Cashbook · Module', GRANT_HELP.khata],
+              ['Employee Cashbook · Export', GRANT_HELP.khataExport],
               ['Attendance · WFH', GRANT_HELP.wfh],
               ['Attendance · Anywhere', GRANT_HELP.remotePunch],
               ['CEO / MD edit mode', GRANT_HELP.execEdit],
@@ -509,7 +509,7 @@ export default function AdminPermissions() {
           <div className="py-4">
             <div className="text-sm font-medium text-gray-900">Statement footer</div>
             <p className="text-xs text-gray-500 mt-1 mb-3 max-w-3xl leading-relaxed">
-              Printed along the bottom of every khata statement PDF, next to the company logo. Leave the number
+              Printed along the bottom of every cashbook statement PDF, next to the company logo. Leave the number
               blank to print no help line at all — a statement often leaves the building, so &quot;no number&quot;
               is a real choice.
             </p>
@@ -581,10 +581,10 @@ export default function AdminPermissions() {
             <tr>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Account</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Role</th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">Cashbook</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Company Accounts</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">Khata</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Employee Cashbook</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">CEO / MD</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Manager profiles</th>
@@ -659,9 +659,9 @@ export default function AdminPermissions() {
                       none of them can download without it. */}
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-2">
-                      <GrantRow label="Module" aria="Khata module access" checked={!!u.khataAccess} busy={isBusy('khataAccess')}
+                      <GrantRow label="Module" aria="Employee cashbook module access" checked={!!u.khataAccess} busy={isBusy('khataAccess')}
                         title={GRANT_HELP.khata} onChange={() => toggleKhata(u)} />
-                      <GrantRow label="Export" aria="Khata spreadsheet download" checked={!!u.khataExportAccess} busy={isBusy('khataExportAccess')}
+                      <GrantRow label="Export" aria="Employee cashbook spreadsheet download" checked={!!u.khataExportAccess} busy={isBusy('khataExportAccess')}
                         title={GRANT_HELP.khataExport} onChange={() => toggleKhataExport(u)} />
                     </div>
                   </td>

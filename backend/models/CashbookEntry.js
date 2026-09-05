@@ -32,6 +32,10 @@ const MOVEMENTS = [
   'advance',        // to_employee   — advance paid into the person's wallet
   'settlement',     // from_employee — unspent cash handed back
   'expense',        // from_employee — spend filed against an expense book
+  'refund',         // to_employee   — money came BACK into an expense book (a
+                    //                 supplier refund, a cancelled booking, unused
+                    //                 material returned). The mirror of 'expense':
+                    //                 same book, same bill rule, opposite direction.
   'reimbursement',  // to_employee   — company pays back spend they funded
   'salary_recovery',// from_employee — outstanding advance recovered via payroll
   'opening',        // either        — balance carried in when the wallet was opened

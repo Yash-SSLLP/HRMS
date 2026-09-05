@@ -204,7 +204,7 @@ export default function AdminCashbook() {
 
   return (
     <div>
-      <PageHeader title="Cashbook" />
+      <PageHeader title="Company Accounts" />
 
       <div className="flex gap-1 border-b border-gray-200 mb-4 overflow-x-auto">
         {TABS.map(([k, label]) => (

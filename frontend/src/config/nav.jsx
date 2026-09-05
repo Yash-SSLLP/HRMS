@@ -36,7 +36,7 @@ import { TbCashBanknote, TbReceipt, TbCurrencyRupee } from 'react-icons/tb';
 // leaving a stray chat page behind.
 // `keywords` = extra lower-case terms the global search should match that do not
 // appear in the label — the other names people actually type ("khatabook" for
-// Employee Advances). They never render; GlobalSearch is the only consumer.
+// Employee Cashbook). They never render; GlobalSearch is the only consumer.
 export const adminNav = [
   // Pinned above every category: the landing page is reached constantly and
   // shouldn't need a dropdown opened first. An entry with no `group` renders as
@@ -101,20 +101,26 @@ export const adminNav = [
   // Folded in with the other money-out modules so it gets a real nav row.
   { group: 'Expenses & Cashbook', icon: FiShoppingBag, items: [
     { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage' },
-    { to: '/admin/cashbook', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage',
-      keywords: ['petty cash', 'voucher', 'cash account'],
+    { to: '/admin/cashbook', label: 'Company Accounts', icon: TbCashBanknote, perm: 'cashbook.manage',
+      keywords: ['cashbook', 'company cashbook', 'petty cash', 'voucher', 'cash account', 'tin'],
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'ledger', label: 'Ledger' }, { id: 'vouchers', label: 'Vouchers' },
         { id: 'accounts', label: 'Accounts' }, { id: 'categories', label: 'Categories' }, { id: 'reports', label: 'Reports' }] },
     // The per-employee side of the cashbook — advances people hold and the
     // expenses they file against them. (Formerly "Employee Khata".)
-    { to: '/admin/khata', label: 'Employee Advances', icon: TbReceipt, perm: 'khata.manage',
-      keywords: ['khata', 'khatabook', 'advance', 'udhar', 'cash ledger'],
+    // `sanctions` is listed even though only a SuperAdmin/CEO/MD can open it:
+    // the page hides the tab from everyone else, but global search deep-links by
+    // id and a tab missing from here is a tab nobody can be sent to. The order
+    // matches TABS in pages/AdminKhata.jsx.
+    { to: '/admin/khata', label: 'Employee Cashbook', icon: TbReceipt, perm: 'khata.manage',
+      keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'cash ledger', 'book', 'books', 'cashbook'],
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'people', label: 'People' }, { id: 'ledger', label: 'Ledger' },
-        { id: 'approvals', label: 'Approvals' }, { id: 'accounts', label: 'Accounts' }] },
+        { id: 'sanctions', label: 'Advance approvals', roles: ['SuperAdmin', 'CEO', 'MD'] },
+        { id: 'approvals', label: 'Approvals' },
+        { id: 'accounts', label: 'Accounts' }] },
     // CEO/MD have no employee portal, so their own cash account (advances they
     // take, expenses they file) lives here in the admin portal.
     { to: '/admin/my-khata', label: 'My Cashbook', icon: TbReceipt, roles: ['CEO', 'MD'],
-      keywords: ['khata', 'advance'] },
+      keywords: ['khata', 'advance', 'book', 'books', 'cashbook'] },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
@@ -202,11 +208,16 @@ export const ldNav = [
 // Account Manager (AccountsManager) is a cashbook-only admin: they enter the
 // admin portal but see only the Cashbook page. Same flat-nav pattern as ldNav.
 export const accountsNav = [
-  { to: '/admin/cashbook', label: 'Cashbook', end: true, icon: TbCashBanknote },
+  { to: '/admin/cashbook', label: 'Company Accounts', end: true, icon: TbCashBanknote,
+    keywords: ['cashbook', 'company cashbook', 'petty cash', 'voucher', 'cash account'] },
   // Account Managers settle reimbursements, so they get the expense queue too.
   { to: '/admin/expenses', label: 'Expenses', end: true, icon: FiShoppingBag },
-  // Handing cash to staff is the other half of the accounts job.
-  { to: '/admin/khata', label: 'Employee Advances', end: true, icon: TbReceipt },
+  // Handing cash to staff is the other half of the accounts job. Global search
+  // reads whichever nav the signed-in role was given, so the aliases have to be
+  // repeated here or an Accounts Manager typing "cashbook" finds only the
+  // company cashbook and not the one their own team runs.
+  { to: '/admin/khata', label: 'Employee Cashbook', end: true, icon: TbReceipt,
+    keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'book', 'books', 'cashbook'] },
 ];
 
 export const employeeNav = [
@@ -244,11 +255,12 @@ export const employeeNav = [
     // menu entry is gone.
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/employee/khata', label: 'My Cashbook', icon: TbReceipt,
-      keywords: ['khata', 'khatabook', 'advance', 'udhar', 'expense'] },
-    { to: '/employee/cashbook-manage', label: 'Cashbook', icon: TbCashBanknote, perm: 'cashbook.manage' },
-    // The employee-advances admin surface, for standalone-grant holders with no admin portal.
-    { to: '/employee/khata-manage', label: 'Employee Advances', icon: TbCashBanknote, perm: 'khata.manage',
-      keywords: ['khata', 'khatabook', 'advance', 'udhar'] },
+      keywords: ['khata', 'khatabook', 'advance', 'udhar', 'expense', 'book', 'books', 'cashbook'] },
+    { to: '/employee/cashbook-manage', label: 'Company Accounts', icon: TbCashBanknote, perm: 'cashbook.manage',
+      keywords: ['cashbook', 'company cashbook', 'petty cash', 'voucher', 'cash account'] },
+    // The Employee Cashbook admin surface, for standalone-grant holders with no admin portal.
+    { to: '/employee/khata-manage', label: 'Employee Cashbook', icon: TbCashBanknote, perm: 'khata.manage',
+      keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'book', 'books', 'cashbook'] },
     // The review queue, for standalone-grant holders with no admin portal. Named
     // apart from the self-service "Expenses" row above, which lists only my own.
     { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },

@@ -485,7 +485,7 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
       items.forEach((i) => {
         if (!i.to || !canSee(i)) return;
         // `keywords` are the other names people type for a page ("khatabook"
-        // for Employee Advances) — carried through so the filter can match them.
+        // for Employee Cashbook) — carried through so the filter can match them.
         out.push({ to: i.to, label: i.label, icon: i.icon, group: g.group || '', keywords: i.keywords });
         // Index each in-page tab too, so searching "approval setup" or "ledger"
         // lands ON that tab rather than only on the page that hides it. The
@@ -520,7 +520,7 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
         ? p.label.toLowerCase().includes(term)
         : p.label.toLowerCase().includes(term) || p.group.toLowerCase().includes(term)
           // …and the terms people actually type, which are often not the label
-          // ("khatabook" finds Employee Advances). Same rule as the mobile search.
+          // ("khatabook" finds Employee Cashbook). Same rule as the mobile search.
           || (p.keywords || []).some((k) => k.includes(term))))
       .slice(0, 8)
     : [];

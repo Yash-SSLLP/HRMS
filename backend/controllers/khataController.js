@@ -27,10 +27,23 @@ const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const ExcelJS = require('exceljs');
 const EmployeeKhata = require('../models/EmployeeKhata');
+// What a collaborator may do on somebody else's book. The owner is never a
+// member row — see models/EmployeeKhata.js.
+const { MEMBER_ROLES } = require('../models/EmployeeKhata');
 const EmployeeWallet = require('../models/EmployeeWallet');
 // The employee ledger is part of the cashbook collection now (one row per movement).
 const KhataEntry = require('../models/CashbookEntry').EmployeeLedgerEntry;
-const { ENTRY_TYPES, PAYMENT_MODES } = require('../models/KhataEntry');
+// The LIVE vocabularies, used by the filter parser and by the ?type= fix in
+// listEntries. The legacy models/KhataEntry lists below are frozen at the
+// pre-merge set and no longer describe what a row can be — ENTRY_TYPES there is
+// the old movement list, while `type` on the live model is 'in'|'out'. Mixing
+// the two up is exactly the bug the filter parser had to fix.
+const { MOVEMENTS, ENTRY_STATUS } = require('../models/CashbookEntry');
+// PAYMENT_MODES still comes from the legacy model: it is the wider list (it
+// carries 'Adjustment', which the cashbook's own list does not) and it is what
+// expenseChanges validates an edit against. ENTRY_TYPES is deliberately NOT
+// imported any more — every check that used it now asks MOVEMENTS.
+const { PAYMENT_MODES } = require('../models/KhataEntry');
 const CashAccount = require('../models/CashAccount');
 const Setting = require('../models/Setting');
 const User = require('../models/User');
@@ -41,9 +54,21 @@ const { notify, notifyMany } = require('../services/notify');
 const { hasPermission } = require('../middleware/authMiddleware');
 const { scopeUserField, scopeUserFilter, cannotSeeUser } = require('../utils/employeeScope');
 // Admin/service logins are not staff — the khata picker holds them back until searched.
-const { isNonStaffRole } = require('../utils/visibility');
+// hideSuperAdminFilter keeps a Backend login out of the colleague picker, exactly
+// as it does in the chat directory this module's sharing flow was copied from.
+const { isNonStaffRole, hideSuperAdminFilter } = require('../utils/visibility');
 
 const USER_FIELDS = 'firstName lastName email role photo';
+
+/**
+ * How many colleagues one book may be shared with.
+ *
+ * A soft cap in the same spirit as the 25-book one: sharing a site book with a
+ * handful of people is the case this exists for, and a book with fifty
+ * contributors is somebody using it as a company ledger, which is what the
+ * cashbook itself is for.
+ */
+const MAX_BOOK_MEMBERS = 10;
 
 // ---------------------------------------------------------------------------
 // Small shared helpers
@@ -126,6 +151,35 @@ function parseFiledLocation(body) {
 }
 
 /**
+ * Which of these user ids belong to people who have LEFT the organisation —
+ * their login is deactivated, or their profile carries a date of exit that has
+ * already passed.
+ *
+ * Copied out of chatController rather than imported: it is not exported there,
+ * and pulling in the whole messaging controller for one helper would put the
+ * chat module in this module's load graph for no other reason. If a third caller
+ * ever needs it, it belongs in utils/ — two copies is the point at which that
+ * becomes worth doing, not one.
+ *
+ * Used by the colleague picker: you cannot share a book with somebody who has
+ * gone, any more than you can start a chat with them.
+ * @param {Array<string|import('mongoose').Types.ObjectId>} userIds
+ * @returns {Promise<Set<string>>} The ids, as strings, of those who have left.
+ */
+async function departedUserIdSet(userIds) {
+  const ids = [...new Set((userIds || []).map(String))].filter(Boolean);
+  if (!ids.length) return new Set();
+  const departed = new Set();
+  const [inactive, profiles] = await Promise.all([
+    User.find({ _id: { $in: ids }, isActive: false }).select('_id').lean(),
+    EmployeeProfile.find({ user: { $in: ids }, dateOfExit: { $ne: null, $lte: new Date() } }).select('user').lean(),
+  ]);
+  inactive.forEach((u) => departed.add(String(u._id)));
+  profiles.forEach((p) => departed.add(String(p.user)));
+  return departed;
+}
+
+/**
  * Allowlist mapper for a ledger entry. A field not named here never reaches a
  * client, however it happens to be stored.
  *
@@ -135,12 +189,25 @@ function parseFiledLocation(body) {
  * not the employee. Passing no viewer therefore means "show nobody", so a call
  * site that has not thought about it leaks nothing by omission.
  */
-const publicEntry = (e, viewer) => ({
+const publicEntry = (e, viewer, opts = {}) => ({
   _id: e._id,
   code: e.code,
   employee: e.employee && e.employee.firstName
     ? { _id: e.employee._id, name: `${e.employee.firstName} ${e.employee.lastName || ''}`.trim(), email: e.employee.email }
     : (e.employee?._id || e.employee || null),
+  // Who filed it, ready to print. `employee` above is the same person but comes
+  // out as a bare id whenever the caller did not populate it, and a feed on a
+  // SHARED book has to be able to say "Added by Rahul" against every row without
+  // each client working out which of the two shapes it received.
+  by: e.employee && e.employee.firstName
+    ? { _id: e.employee._id, name: `${e.employee.firstName} ${e.employee.lastName || ''}`.trim() }
+    : null,
+  // Did the person reading this file it? Drives "You" instead of a name, and the
+  // edit affordance. Left UNDEFINED — and so absent from the JSON — when no
+  // viewer was passed, the same defensive default as `filedLocation` below: a
+  // client cannot draw a wrong conclusion from a key it never received, whereas
+  // a hardcoded `false` would quietly tell everyone the row is somebody else's.
+  mine: viewer ? String(e.employee?._id || e.employee) === String(viewer._id) : undefined,
   // Which expense book this was filed under. Null for anything that moves the
   // wallet itself — an advance, a settlement, a reimbursement.
   // The API keeps calling this `khata` so existing clients are unaffected; the
@@ -165,7 +232,20 @@ const publicEntry = (e, viewer) => ({
   // separate mirrored entry. Legacy rows may still carry the old link.
   cashbookEntry: e.cashbookEntry || (e.affectsCompanyCash ? e._id : null),
   raisedByEmployee: e.raisedByEmployee,
-  balanceAfter: e.walletBalanceAfter,
+  // THE RUNNING BALANCE IS A PRIVATE FIGURE, and on a shared book it is not
+  // yours. `walletBalanceAfter` is how much company cash THE PERSON WHO FILED
+  // THIS ROW was holding immediately afterwards — their whole advance position,
+  // which has nothing to do with the book being read and is nobody else's
+  // business. A book feed returns every contributor's rows, so sending it
+  // unconditionally handed a colleague (even a read-only viewer) a running
+  // read-out of everyone else's wallet. `opts.ownBalancesOnly` is set by the
+  // book feed; the key is OMITTED rather than nulled on somebody else's row, so
+  // a client cannot print a figure it never received.
+  ...(opts.ownBalancesOnly
+    && viewer
+    && String(e.employee?._id || e.employee) !== String(viewer._id)
+    ? {}
+    : { balanceAfter: e.walletBalanceAfter }),
   hasAttachment: !!e.attachment?.storagePath,
   // Has anybody on the company side actually looked at this expense? 'Approved'
   // does not answer that for an expense, which posts unreviewed — see the
@@ -215,16 +295,100 @@ const publicEntry = (e, viewer) => ({
   createdAt: e.createdAt,
 });
 
-/** Allowlist mapper for one expense book. `spent` is a total, not a balance. */
-const publicKhata = (k) => ({
-  _id: k._id,
-  name: k.name,
-  isDefault: k.isDefault,
-  spent: ledger.round2(k.spent || 0),
-  entryCount: k.entryCount || 0,
-  lastEntryAt: k.lastEntryAt,
-  isActive: k.isActive,
-  note: k.note,
+/**
+ * Allowlist mapper for one expense book. `spent` is a total, not a balance.
+ *
+ * `viewerId` is the user the payload is being built FOR, and it decides the four
+ * sharing fields — whose book this is, and where the reader stands on it. Every
+ * key that existed before this module learned about sharing is untouched, so a
+ * client that has not been updated sees exactly what it always saw.
+ *
+ * Passing no viewer omits `myRole`/`myStatus` entirely rather than guessing at
+ * them (the same defensive default as `publicEntry`'s `viewer`), and leaves
+ * `owner` null — with nobody to compare against there is no such thing as
+ * "somebody else's book".
+ * @param {object} k - An EmployeeKhata document or lean object.
+ * @param {string|import('mongoose').Types.ObjectId} [viewerId] - Who is reading.
+ */
+const publicKhata = (k, viewerId) => {
+  const members = Array.isArray(k.members) ? k.members : [];
+  // Tolerates a populated `employee`, because a shared book has to be loaded
+  // with its owner attached so the card can say whose it is.
+  const mine = viewerId ? String(k.employee?._id || k.employee) === String(viewerId) : false;
+  const mem = viewerId && !mine
+    ? members.find((m) => String(m.user?._id || m.user) === String(viewerId))
+    : null;
+
+  return {
+    _id: k._id,
+    name: k.name,
+    isDefault: k.isDefault,
+    spent: ledger.round2(k.spent || 0),
+    entryCount: k.entryCount || 0,
+    lastEntryAt: k.lastEntryAt,
+    isActive: k.isActive,
+    note: k.note,
+    // Whose book it is, but only when it is not the reader's own — a card
+    // captioned "Rahul's book" on your own book would read as somebody else's.
+    owner: viewerId && !mine && k.employee?.firstName
+      ? { _id: k.employee._id, name: `${k.employee.firstName} ${k.employee.lastName || ''}`.trim() }
+      : null,
+    // Has this book been shared with anybody at all? A DECLINED row does not
+    // count: the owner asked, they said no, and the book is private again.
+    shared: members.some((m) => m.status !== 'declined'),
+    // Accepted collaborators, EXCLUDING the owner — the owner is not a member
+    // row, so "3 people" means three besides you.
+    memberCount: members.filter((m) => m.status === 'accepted').length,
+    ...(viewerId
+      ? {
+        myRole: mine ? 'owner' : (mem ? mem.role : null),
+        myStatus: mine ? 'owner' : (mem ? mem.status : null),
+      }
+      : {}),
+  };
+};
+
+/**
+ * Allowlist mapper for one collaborator on a book.
+ *
+ * The member sub-schema is declared `_id: false`, so a member row has no id of
+ * its own — the PERSON is the identity, and `_id` here is their user id. That is
+ * also what every route that addresses a member takes (`/members/:userId`).
+ * @param {object} m - A member sub-doc with `user` populated.
+ */
+const publicMember = (m) => ({
+  _id: m.user?._id || m.user,
+  name: `${m.user?.firstName || ''} ${m.user?.lastName || ''}`.trim(),
+  email: m.user?.email,
+  role: m.role,
+  status: m.status,
+  invitedAt: m.invitedAt,
+  respondedAt: m.respondedAt || null,
+  hasPhoto: Boolean(m.user?.photo),
+  // The owner is prepended to a members list by the handler, not stored as a
+  // row, so anything coming through here is by definition not them.
+  isOwner: false,
+});
+
+/**
+ * The owner's row at the head of a members list.
+ *
+ * Ownership is not an invitation — there is no member sub-doc for it and no
+ * `status` to answer — so the row is synthesised here rather than stored. It
+ * reads as 'accepted' because from a reader's point of view the owner is
+ * obviously on the book.
+ * @param {object} employee - A populated User doc (the book's `employee`).
+ */
+const ownerMemberRow = (employee) => ({
+  _id: employee?._id || employee || null,
+  name: employee?.firstName ? `${employee.firstName} ${employee.lastName || ''}`.trim() : '',
+  email: employee?.email,
+  role: 'owner',
+  status: 'accepted',
+  invitedAt: null,
+  respondedAt: null,
+  hasPhoto: Boolean(employee?.photo),
+  isOwner: true,
 });
 
 /** Allowlist mapper for a wallet, from the company's side. */
@@ -267,7 +431,7 @@ async function advanceApprovalRequired() {
  */
 async function openKhata({ employee, name: rawName, note, actor, res }) {
   const name = String(rawName || '').trim();
-  if (!name) bad(res, 'Give the khata a name — what will you be spending on?');
+  if (!name) bad(res, 'Give the book a name — what will you be spending on?');
   if (name.length > 80) bad(res, 'That name is too long (80 characters max)');
 
   // Make sure their default exists first, so the FIRST book somebody opens by
@@ -294,9 +458,9 @@ async function openKhata({ employee, name: rawName, note, actor, res }) {
     //      SECOND book whatever it is called.
     // So: look before speaking.
     const clash = await EmployeeKhata.findOne({ employee, name });
-    if (clash) bad(res, `There is already a khata called "${name}" for this employee.`);
+    if (clash) bad(res, `There is already a book called "${name}" for this employee.`);
 
-    bad(res, 'This database still has the old one-khata-per-employee index, so a second khata cannot be '
+    bad(res, 'This database still has the old one-book-per-employee index, so a second book cannot be '
       + 'created. It should have been removed automatically — ask an administrator to run '
       + '"node scripts/migrateMultiKhata.js --apply" on the server.', 500);
   }
@@ -340,13 +504,31 @@ async function requireOperableAccount(user, accountId, res) {
   return { account, rights };
 }
 
-/** Who handles the cash: SuperAdmins, Accounts Managers, khata-grant holders. */
+/**
+ * Who handles the cash — everybody who actually holds `khata.manage`.
+ *
+ * DECIDED BY THE PERMISSION, NOT BY A HAND-WRITTEN LIST OF ROLES. The gate on
+ * every route in this module is hasPermission(user, 'khata.manage'), and this
+ * used to be an approximation of it: SuperAdmin, AccountsManager, or the
+ * standalone khataAccess flag. That quietly missed an HR Manager or a Manager
+ * who had been granted the capability through their `permissions` array — they
+ * could open the module and act on the queue, but were never told there was
+ * anything in it. So candidates are fetched broadly and then filtered through
+ * the SAME function the route gate uses, which is the only way the audience and
+ * the gate cannot drift apart.
+ * @returns {Promise<Array<import('mongoose').Types.ObjectId>>}
+ */
 async function khataApproverIds() {
   const users = await User.find({
     isActive: true,
-    $or: [{ role: { $in: ['SuperAdmin', 'AccountsManager'] } }, { khataAccess: true }],
-  }).select('_id');
-  return users.map((u) => u._id);
+    $or: [
+      // Every role that can carry the capability, by grant or by definition.
+      { role: { $in: ['SuperAdmin', 'AccountsManager', 'HRManager', 'Manager'] } },
+      // ...plus anyone at all given the standalone flag, no admin role required.
+      { khataAccess: true },
+    ],
+  }).select('_id role permissions khataAccess').lean();
+  return users.filter((u) => hasPermission(u, 'khata.manage')).map((u) => u._id);
 }
 
 /**
@@ -361,6 +543,37 @@ async function khataApproverIds() {
 async function execApproverIds() {
   const users = await User.find({ isActive: true, role: { $in: ['CEO', 'MD', 'SuperAdmin'] } }).select('_id');
   return users.map((u) => u._id);
+}
+
+/**
+ * Tell a book's owner that somebody else has filed into it.
+ *
+ * Sharing a book means giving colleagues a heading to file under, and the owner
+ * is the person the site's total belongs to — so they have to hear about a row
+ * they did not type. Silent on your OWN book: nobody needs a notification about
+ * a thing they just did.
+ *
+ * `audience: 'employee'` because this is the owner's own money story, not an
+ * accounts-team event; a dual-role HR manager must not meet it in the admin
+ * portal (see services/notify.js).
+ * @param {object|null} khata - The book that was filed into.
+ * @param {object} actor - Who filed the entry.
+ * @param {string} title
+ * @param {string} body
+ * @returns {Promise<void>}
+ */
+async function notifyBookOwner(khata, actor, title, body) {
+  if (!khata) return;
+  const ownerId = khata.employee?._id || khata.employee;
+  if (!ownerId || String(ownerId) === String(actor?._id)) return;
+  await notify({
+    recipient: ownerId,
+    type: 'general',
+    audience: 'employee',
+    title,
+    body,
+    link: '/employee/khata',
+  });
 }
 
 /**
@@ -400,7 +613,16 @@ function summariseEntries(entries = []) {
   for (const e of entries) {
     const amt = Number(e.amount) || 0;
     if (e.status === 'Approved') {
-      if (e.direction === 'to_employee') s.advanced += amt;
+      // A REFUND IS TESTED BEFORE THE DIRECTION, and it is the only movement
+      // that has to be. It is 'to_employee', so the direction test alone filed
+      // it under `advanced` — money the company had handed over, which it never
+      // was — while `spent` went on counting the full cost of a purchase that
+      // had been partly refunded. recomputeKhataSpent already nets a refund off
+      // the book, and both clients caption this figure "less anything
+      // refunded", so this arm is what makes the wallet card, the book card and
+      // the report agree on one number.
+      if (e.movement === 'refund') s.spent -= amt;
+      else if (e.direction === 'to_employee') s.advanced += amt;
       else if (e.movement === 'expense') s.spent += amt;
       else s.returned += amt;
     } else if (e.status === 'AwaitingApproval' || e.status === 'Pending') {
@@ -420,6 +642,159 @@ function summariseEntries(entries = []) {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// The shared entry filter
+// ---------------------------------------------------------------------------
+
+/**
+ * How a feed may be ordered. Named rather than free-form so a client cannot
+ * hand us an arbitrary sort key and have it reach the database.
+ *
+ * Every one of them tie-breaks, because two entries filed on the same day at the
+ * same figure would otherwise come back in whatever order the index felt like —
+ * and a list that reshuffles between two identical requests looks broken.
+ */
+const ENTRY_SORTS = {
+  date_desc: { date: -1, createdAt: -1 },
+  date_asc: { date: 1, createdAt: 1 },
+  amount_desc: { amount: -1, date: -1, createdAt: -1 },
+  amount_asc: { amount: 1, date: -1, createdAt: -1 },
+};
+
+/** The three shapes a report can take. `category` is the older summary sheet. */
+const REPORT_KINDS = ['entries', 'daywise', 'category'];
+
+/**
+ * How each status is worded to a human. 'AwaitingApproval' is the only one that
+ * cannot be shown raw — nobody outside this codebase knows that it means "still
+ * with the CEO/MD", which is the entire information in it.
+ */
+const STATUS_WORDS = {
+  AwaitingApproval: 'With CEO/MD',
+  Pending: 'Pending',
+  Approved: 'Approved',
+  Rejected: 'Rejected',
+  Reversed: 'Reversed',
+};
+
+/** 'salary_recovery' → 'Salary recovery', for a filter line a person reads. */
+const movementWords = (m) => {
+  const words = String(m).replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+/** Escape a person's search text so a stray '(' cannot break the query. */
+const escapeRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Read a comma-separated query value into a validated, de-duplicated list.
+ * An unknown value is dropped rather than rejected: a client sending a status
+ * this build has never heard of should get a narrower list, not a 400.
+ * @param {string} raw
+ * @param {string[]} [allowed] - Omit for free text (categories are user-typed).
+ * @returns {string[]}
+ */
+function commaList(raw, allowed) {
+  const wanted = String(raw || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const list = [...new Set(wanted)];
+  return allowed ? list.filter((v) => allowed.includes(v)) : list;
+}
+
+/**
+ * Turn the query string into the ONE filter every list, total and export shares.
+ *
+ * THIS IS WHAT MAKES "WHAT YOU SEE IS WHAT YOU EXPORT" TRUE. The entry feed, the
+ * summary card above it, the PDF and the .xlsx all call this with the same query
+ * and all get the same Mongo filter back, so a person who narrows the screen to
+ * "Site A, this month, cash only" and then hits Download cannot be handed a
+ * document covering something else. The moment any one of those four grows its
+ * own parsing, that guarantee is gone — so add a filter HERE and nowhere else.
+ *
+ * The SCOPE is deliberately not this function's business: which book (or whose
+ * wallet) the rows come from is an authorisation question, and each caller has
+ * already settled it before it gets here. It merges its own `{ expenseBook }` or
+ * `{ employee }` over the top of `mongo`.
+ *
+ * @param {object} [query] - req.query.
+ * @returns {{mongo: object, sort: object, sortKey: string, q: string,
+ *            report: string, summary: Array<{label: string, value: string}>,
+ *            from: Date|null, to: Date|null}}
+ *   `summary` is the human-readable version of the same filters, printed under
+ *   the duration box on a report so two downloads of one book cannot look
+ *   identical and disagree about the money.
+ */
+function parseEntryFilters(query = {}) {
+  const mongo = {};
+  const summary = [];
+
+  // Inclusive both ends: somebody asking for "to the 30th" means the whole of
+  // the 30th, not up to midnight at the start of it.
+  const from = parseDate(query.from);
+  const to = parseDate(query.to);
+  if (from || to) {
+    mongo.date = {};
+    if (from) mongo.date.$gte = from;
+    if (to) { to.setHours(23, 59, 59, 999); mongo.date.$lte = to; }
+  }
+  // The date range is NOT added to `summary` — every report prints it in its own
+  // duration box, and saying it twice reads like two different filters.
+
+  const status = commaList(query.status, ENTRY_STATUS);
+  if (status.length) {
+    mongo.status = status.length === 1 ? status[0] : { $in: status };
+    summary.push({ label: 'Status', value: status.map((s) => STATUS_WORDS[s] || s).join(', ') });
+  }
+
+  // `movement` is the person's view of the event (advance, expense, refund…).
+  // NOT `type`, which on the live model is the company's 'in'|'out' view — see
+  // the note on the imports.
+  const movement = commaList(query.movement, MOVEMENTS);
+  if (movement.length) {
+    mongo.movement = movement.length === 1 ? movement[0] : { $in: movement };
+    summary.push({ label: 'Type', value: movement.map(movementWords).join(', ') });
+  }
+
+  // The Cash In / Cash Out chip.
+  if (['to_employee', 'from_employee'].includes(query.direction)) {
+    mongo.direction = query.direction;
+    summary.push({ label: 'Direction', value: query.direction === 'to_employee' ? 'Cash in' : 'Cash out' });
+  }
+
+  // Categories are typed by the person filing, so there is no list to validate
+  // against — an unknown one simply matches nothing, which is the honest answer.
+  const category = commaList(query.category);
+  if (category.length) {
+    mongo.category = category.length === 1 ? category[0] : { $in: category };
+    summary.push({ label: 'Category', value: category.join(', ') });
+  }
+
+  const paymentMode = commaList(query.paymentMode, PAYMENT_MODES);
+  if (paymentMode.length) {
+    mongo.paymentMode = paymentMode.length === 1 ? paymentMode[0] : { $in: paymentMode };
+    summary.push({ label: 'Mode', value: paymentMode.join(', ') });
+  }
+
+  // Free text across everything a person might remember about a row — what it
+  // was for, how it was filed, the bill number, the KHT code — AND the amount,
+  // because "that 4500 one" is how people actually look for an entry.
+  const q = String(query.q || '').trim();
+  if (q) {
+    const rx = new RegExp(escapeRx(q), 'i');
+    const or = [{ purpose: rx }, { category: rx }, { referenceNo: rx }, { code: rx }];
+    // Only an EXACT amount match: a substring search on a number would return
+    // ₹4,500 and ₹145,003 for "4500" and look like a broken filter.
+    const asNumber = Number(q.replace(/[₹,\s]/g, ''));
+    if (Number.isFinite(asNumber)) or.push({ amount: asNumber });
+    mongo.$or = or;
+    summary.push({ label: 'Search', value: q });
+  }
+
+  const sortKey = ENTRY_SORTS[query.sort] ? query.sort : 'date_desc';
+  const report = REPORT_KINDS.includes(query.report) ? query.report : 'entries';
+
+  return { mongo, sort: ENTRY_SORTS[sortKey], sortKey, q, report, summary, from, to };
+}
+
 // ============================ Employee self-service ============================
 
 /**
@@ -430,7 +805,7 @@ function summariseEntries(entries = []) {
  * remaining figure applies to every book, which is exactly the point: the money
  * is one pot however many ways the spending is filed.
  * @route GET /api/khata/me
- * @returns {{wallet: object, khatas: Object[], totals: object, entries: Object[]}}
+ * @returns {{wallet: object, khatas: Object[], invites: Object[], totals: object, entries: Object[]}}
  */
 const getMyKhata = asyncHandler(async (req, res) => {
   // Opens their wallet and first book on first visit, so the screen is never
@@ -439,7 +814,24 @@ const getMyKhata = asyncHandler(async (req, res) => {
     ledger.getOrCreateWallet(req.user._id, req.user),
     ledger.getOrCreateDefaultKhata(req.user._id, req.user),
   ]);
+  // Their own books plus the ones colleagues have shared with them and they
+  // accepted. `members.user` comes back populated from the ledger; the OWNER
+  // has to be attached here, because a shared book's card is captioned
+  // "Rahul's book" and cannot say so from an id. One query for the lot rather
+  // than one per row.
   const khatas = await ledger.listKhatasOf(req.user._id, true);
+  await EmployeeKhata.populate(khatas, { path: 'employee', select: USER_FIELDS });
+
+  // Invitations still waiting on an answer. Fetched separately from the list
+  // above and NOT folded into it: an invitation is not a book you have — you
+  // cannot file into it, and showing it among your books would offer a heading
+  // that will vanish the moment you decline it.
+  const pending = await EmployeeKhata.find({
+    isActive: true,
+    members: { $elemMatch: { user: req.user._id, status: 'invited' } },
+  })
+    .populate('employee', USER_FIELDS)
+    .sort({ updatedAt: -1 });
 
   const entries = await KhataEntry.find({ employee: req.user._id })
     .populate('account', 'name')
@@ -457,7 +849,25 @@ const getMyKhata = asyncHandler(async (req, res) => {
     },
     // Every book, each with what it has cost — and the SAME remaining advance,
     // because there is only one pot behind all of them.
-    khatas: khatas.map(publicKhata),
+    khatas: khatas.map((k) => publicKhata(k, req.user._id)),
+    // Book invitations waiting on me. Deliberately thin: enough to word the
+    // "Rahul invited you to keep entries in Site A" card and show what it would
+    // let them into, and nothing about the spending itself, which they have no
+    // standing to read until they accept.
+    invites: pending.map((k) => {
+      const mem = k.memberFor(req.user._id);
+      return {
+        khata: k._id,
+        name: k.name,
+        owner: k.employee?.firstName
+          ? { _id: k.employee._id, name: `${k.employee.firstName} ${k.employee.lastName || ''}`.trim() }
+          : null,
+        role: mem?.role || 'operator',
+        invitedAt: mem?.invitedAt || null,
+        spent: ledger.round2(k.spent || 0),
+        entryCount: k.entryCount || 0,
+      };
+    }),
     totals: {
       ...sums,
       remaining: ledger.round2(wallet.balance),
@@ -474,7 +884,189 @@ const getMyKhata = asyncHandler(async (req, res) => {
       ? false
       : await advanceApprovalRequired(),
     count: entries.length,
-    entries: entries.map(publicEntry),
+    // Passed explicitly rather than as `entries.map(publicEntry)`: Array.map
+    // hands its callback the INDEX as a second argument, which would arrive as
+    // the `viewer` and make `mine` answer a question about the row number.
+    entries: entries.map((e) => publicEntry(e, req.user)),
+  });
+});
+
+/**
+ * One book — or the whole wallet — opened as a filtered, totalled entry feed.
+ *
+ * The screen this backs is the heart of the reworked module: a search box, a row
+ * of filter chips, a summary card and the feed itself. All four are driven by
+ * ONE parse of the query string (see parseEntryFilters), which is what
+ * guarantees the card's figures describe the rows underneath it and that the
+ * download button hands over the same set.
+ *
+ * TWO SCOPES, and the difference matters:
+ *   a book   — every row filed under it, WHOEVER filed them. A shared site book
+ *              totals what the site cost between the people running it, which is
+ *              the only figure anybody wants from one.
+ *   'wallet' — every row of the caller's own, filed or not. This is the "All
+ *              entries" view behind the wallet card, and it is the only place an
+ *              advance or a settlement shows up, since neither belongs to a book.
+ *
+ * THE TOTALS ARE COMPUTED IN THE DATABASE, over the whole filtered set, not over
+ * the page of rows returned. The feed is capped at 500 for the client's sake;
+ * the summary card is money and must not quietly describe the most recent 500
+ * rows while calling itself the total. `count` and `total` say which is which so
+ * the feed can admit it is truncated.
+ * @route GET /api/khata/me/books/:id  — `:id` may be the literal 'wallet'.
+ * @param {string} [req.query.q] [req.query.from] [req.query.to] [req.query.status]
+ *   [req.query.direction] [req.query.movement] [req.query.category]
+ *   [req.query.paymentMode] [req.query.sort] - see parseEntryFilters.
+ * @returns {{book: object|null, members: Object[], totals: object, canPost: boolean,
+ *            entries: Object[], count: number, total: number}}
+ */
+const getMyBook = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const isWallet = id === 'wallet';
+
+  let book = null;
+  if (!isWallet) {
+    if (!isId(id)) bad(res, 'That book no longer exists.', 404);
+    // Throws 404/403 with a message of its own — a book somebody has no standing
+    // on must not read as an empty book.
+    book = await ledger.loadKhataForViewer(id, req.user._id);
+    // The owner, for "Rahul's book" and for the head of the members list.
+    await book.populate('employee', USER_FIELDS);
+  }
+
+  const { mongo, sort } = parseEntryFilters(req.query);
+  const scope = isWallet ? { employee: req.user._id } : { expenseBook: book._id };
+  const filter = { ...mongo, ...scope };
+
+  const [rows, total, agg] = await Promise.all([
+    KhataEntry.find(filter)
+      .populate('employee', USER_FIELDS)
+      .populate('expenseBook', 'name')
+      .populate('account', 'name')
+      // The names behind an entry's history, so the detail sheet can show who
+      // confirmed, reviewed or sanctioned it without a lookup per row.
+      .populate('confirmedBy', 'firstName lastName')
+      .populate('reviewedBy', 'firstName lastName')
+      .populate('execApprovedBy', 'firstName lastName role')
+      .sort(sort)
+      .limit(500),
+    KhataEntry.countDocuments(filter),
+    // One pass over the filtered set for every figure on the summary card.
+    // `filter` carries dates, strings and regexes but no id STRINGS — the two
+    // scope keys are already ObjectIds — which matters because an aggregation
+    // $match is not cast the way a find() filter is.
+    KhataEntry.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 },
+          // ONLY 'Approved' IS MONEY. A rejected row never happened, a pending
+          // one has not happened yet, and counting both halves of a reversed
+          // pair counts the same rupee twice. They are all still RETURNED in
+          // `entries` so the feed can show them struck through — they are simply
+          // never added up.
+          in: {
+            $sum: {
+              $cond: [{ $and: [{ $eq: ['$status', 'Approved'] }, { $eq: ['$direction', 'to_employee'] }] },
+                '$amount', 0],
+            },
+          },
+          out: {
+            $sum: {
+              $cond: [{ $and: [{ $eq: ['$status', 'Approved'] }, { $eq: ['$direction', 'from_employee'] }] },
+                '$amount', 0],
+            },
+          },
+          // What the book COST, on the same rule as khataLedger.recomputeKhataSpent:
+          // spending adds, a refund or a reversal of one takes back off. Signed
+          // rather than a plain addition, which is what lets a refund subtract
+          // with no special case of its own.
+          spent: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$status', 'Approved'] },
+                    { $in: ['$movement', [...ledger.BOOK_MOVEMENTS, 'reversal']] },
+                  ],
+                },
+                { $cond: [{ $eq: ['$direction', 'from_employee'] }, '$amount', { $multiply: ['$amount', -1] }] },
+                0,
+              ],
+            },
+          },
+          // Posted, but nobody on the company side has looked at it yet — the
+          // rows that are still correctable. "Not confirmed" has to mean false OR
+          // MISSING: rows written before the flag existed carry no field at all.
+          unconfirmed: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$status', 'Approved'] },
+                    { $in: ['$movement', ledger.BOOK_MOVEMENTS] },
+                    { $ne: ['$confirmedByCompany', true] },
+                  ],
+                },
+                1, 0,
+              ],
+            },
+          },
+          // Rows that have not moved any money yet and are waiting on somebody.
+          waiting: {
+            $sum: { $cond: [{ $in: ['$status', ['AwaitingApproval', 'Pending']] }, 1, 0] },
+          },
+        },
+      },
+    ]),
+  ]);
+
+  const sums = agg[0] || {};
+  const totals = {
+    in: ledger.round2(sums.in || 0),
+    out: ledger.round2(sums.out || 0),
+    net: ledger.round2((sums.in || 0) - (sums.out || 0)),
+    count: sums.count || 0,
+    spent: ledger.round2(sums.spent || 0),
+    // Counts of rows, not sums of money — "3 waiting on the company" is the
+    // thing the card is telling you, and a rupee figure there would read as
+    // another balance.
+    unconfirmed: sums.unconfirmed || 0,
+    waiting: sums.waiting || 0,
+  };
+
+  // Owner first, then the people who accepted, then the ones still deciding.
+  // A declined invitation is left out entirely: the answer was no, and the row
+  // only survives so that re-inviting them is a flip rather than a duplicate.
+  const members = book
+    ? [
+      ownerMemberRow(book.employee),
+      ...book.members
+        .filter((m) => m.user && m.status !== 'declined')
+        .sort((a, b) => (a.status === b.status ? 0 : (a.status === 'accepted' ? -1 : 1)))
+        .map(publicMember),
+    ]
+    : [];
+
+  res.json({
+    book: book ? publicKhata(book, req.user._id) : null,
+    members,
+    totals,
+    // Whether this reader may add to it. Answered by the server so the two
+    // clients cannot each re-derive "owner or accepted operator, and the book is
+    // open" and drift apart on it. The wallet view always can — an advance
+    // request needs no book at all.
+    canPost: book ? book.canPost(req.user._id) : true,
+    // `count` is what came back, `total` is what matched. They differ once a
+    // book runs past the cap, and the feed says so rather than pretending.
+    count: rows.length,
+    total,
+    // `ownBalancesOnly` because a BOOK feed carries every contributor's rows.
+    // The running balance on a row is the filer's own wallet position, so it
+    // goes out only on the reader's own rows — see publicEntry. The wallet feed
+    // is single-person by definition, so the flag costs it nothing.
+    entries: rows.map((e) => publicEntry(e, req.user, { ownBalancesOnly: true })),
   });
 });
 
@@ -523,21 +1115,65 @@ const requestAdvance = asyncHandler(async (req, res) => {
     idempotencyKey: req.body.idempotencyKey,
   }, req.user);
 
+  // ---------------------------------------------------------------------
+  // TELL EVERYONE WHO HAS A PART IN THIS, not only whoever is next in line.
+  //
+  // A request used to notify one side or the other: the executives when the
+  // sanction gate was on, the cash team when it was off. Each half was then
+  // blind to the other. An Accounts Manager had no idea a request existed until
+  // it landed in their queue already sanctioned, and a CEO never heard about
+  // the advances being paid out under the gate they had switched off. Both are
+  // the same event and both audiences want it.
+  //
+  // So both are told, every time, and only the WORDING changes: whoever has to
+  // act reads an instruction, everybody else reads a heads-up. Nobody is told
+  // twice — a SuperAdmin is in both lists, so the informational pass subtracts
+  // whoever already got the actionable one — and the requester is never told
+  // about their own request, however senior they are.
   const who = `${req.user.firstName} ${req.user.lastName || ''}`.trim();
+  const money = `₹${amount.toLocaleString('en-IN')}`;
+  const [execIds, cashIds] = await Promise.all([execApproverIds(), khataApproverIds()]);
+  const me = String(req.user._id);
+  const drop = (ids, alreadyTold) => ids.filter(
+    (id) => String(id) !== me && !alreadyTold.has(String(id)),
+  );
+
   if (needsExec) {
-    await notifyMany(await execApproverIds(), {
+    // The executives decide whether this person should have the money at all.
+    const toAct = drop(execIds, new Set());
+    await notifyMany(toAct, {
       type: 'general',
       audience: 'all',
       title: 'Advance request needs your approval',
-      body: `${who} requested ₹${amount.toLocaleString('en-IN')} — ${purpose}`,
+      body: `${who} requested ${money} — ${purpose}`,
       link: '/admin/khata',
     });
-  } else {
-    await notifyMany(await khataApproverIds(), {
+    // The cash team cannot act yet, but they are the ones who will pay it, so
+    // they get to see it coming rather than being surprised by it.
+    await notifyMany(drop(cashIds, new Set(toAct.map(String))), {
       type: 'general',
       audience: 'all',
       title: 'Cash advance requested',
-      body: `${who} requested ₹${amount.toLocaleString('en-IN')} — ${purpose}`,
+      body: `${who} requested ${money} — ${purpose}. With the CEO/MD for sanction; it reaches your queue once they approve.`,
+      link: '/admin/khata',
+    });
+  } else {
+    // No executive gate: it goes straight to whoever handles the cash.
+    const toAct = drop(cashIds, new Set());
+    await notifyMany(toAct, {
+      type: 'general',
+      audience: 'all',
+      title: 'Cash advance requested',
+      body: `${who} requested ${money} — ${purpose}`,
+      link: '/admin/khata',
+    });
+    // The executives are not in the loop on this one by design, but company
+    // money is still leaving on their watch, so they are told it happened.
+    await notifyMany(drop(execIds, new Set(toAct.map(String))), {
+      type: 'general',
+      audience: 'all',
+      title: 'Cash advance requested',
+      body: `${who} requested ${money} — ${purpose}. Sanction is switched off, so the accounts team will pay it out.`,
       link: '/admin/khata',
     });
   }
@@ -624,12 +1260,101 @@ const recordMyExpense = asyncHandler(async (req, res) => {
     link: '/admin/khata',
   });
 
+  // A collaborator filing into somebody else's book. The money came out of the
+  // POSTER's wallet — the owner's balance has not moved an inch — but the book's
+  // total has, and that total is what the owner is answerable for.
+  await notifyBookOwner(khata, req.user, 'A new entry on your book',
+    `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+    + ` recorded ₹${amount.toLocaleString('en-IN')} on "${khata.name}" — ${purpose}.`);
+
   res.status(201).json({
-    entry: publicEntry(entry),
-    khata: publicKhata(khata),
+    entry: publicEntry(entry, req.user),
+    khata: publicKhata(khata, req.user._id),
     wallet: publicWallet(wallet),
     message: `Recorded. ₹${ledger.round2(Math.abs(wallet.balance)).toLocaleString('en-IN')} `
       + `${wallet.balance < 0 ? 'is now owed to you' : 'left in your wallet'}.`,
+  });
+});
+
+/**
+ * Record money that came BACK into one of your books.
+ *
+ * The mirror image of recording an expense, and it exists because a book with
+ * only an out-going side tells a lie about what the job cost: a supplier refunds
+ * a damaged delivery, a booking is cancelled, unused material goes back to the
+ * yard — and until now the only way to show it was a settlement, which says the
+ * cash went to the COMPANY when in fact it is sitting in the employee's pocket
+ * against the same site.
+ *
+ * So it behaves exactly like an expense, in the same direction of trust: it
+ * POSTS ON THE SPOT, the bill (a credit note, a refund slip) is MANDATORY and
+ * checked before anything posts, and the company reviews it afterwards and
+ * reverses it if it should not stand. The only differences are the direction
+ * (money towards the employee, so their advance goes back UP) and that a book is
+ * required — a refund with nothing to refund is not a refund.
+ * @route POST /api/khata/me/refund
+ * @param {string} req.body.khata - Which book the money came back into; REQUIRED.
+ * @param {number} req.body.amount
+ * @param {string} req.body.purpose - What was returned, and why.
+ * @param {file} req.file - The credit note; REQUIRED (multer field 'receipt').
+ * @returns {{entry: object, khata: object, wallet: object, message: string}} 201
+ */
+const recordMyRefund = asyncHandler(async (req, res) => {
+  const amount = toNum(req.body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) bad(res, 'Enter how much came back');
+  const purpose = String(req.body.purpose || '').trim();
+  if (!purpose) bad(res, 'Say what the money is for');
+  // Before anything posts, exactly as for an expense: a refund raises the
+  // employee's advance, so it needs the same paper behind it.
+  if (!req.file) bad(res, 'Attach the credit note or receipt — it is required for a refund.');
+  // No fallback to the default book here, unlike an expense. Money coming back
+  // has to come back INTO something: filed nowhere it is a settlement (cash
+  // handed to the company), which is a different event with a different gate.
+  if (!isId(req.body.khata)) bad(res, 'Say which book the money came back into.');
+
+  const { entry, khata } = await ledger.postEntry({
+    employee: req.user._id,
+    khata: req.body.khata,
+    direction: 'to_employee',
+    type: 'refund',
+    amount,
+    purpose,
+    category: req.body.category || 'Refund',
+    paymentMode: req.body.paymentMode || 'Cash',
+    referenceNo: req.body.referenceNo,
+    date: parseDate(req.body.date) || new Date(),
+    // No company cash moves: the notes went from the supplier into the same
+    // pocket the advance is already in. Only the employee's position changes.
+    affectsCompanyCash: false,
+    filedLocation: parseFiledLocation(req.body),
+    autoApprove: true,
+    raisedByEmployee: true,
+    idempotencyKey: req.body.idempotencyKey,
+  }, req.user);
+
+  await attachReceipt(entry, req.file);
+
+  const wallet = await ledger.getOrCreateWallet(req.user._id);
+
+  await notifyMany(await khataApproverIds(), {
+    type: 'general',
+    audience: 'all',
+    title: 'Refund recorded against a book',
+    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+      + ` put ₹${amount.toLocaleString('en-IN')} back on "${khata.name}" — ${purpose}. `
+      + 'It has gone back onto their advance; reject it if it should not stand.',
+    link: '/admin/khata',
+  });
+
+  await notifyBookOwner(khata, req.user, 'Money back on your book',
+    `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+    + ` recorded a ₹${amount.toLocaleString('en-IN')} refund on "${khata.name}" — ${purpose}.`);
+
+  res.status(201).json({
+    entry: publicEntry(entry, req.user),
+    khata: publicKhata(khata, req.user._id),
+    wallet: publicWallet(wallet),
+    message: `Recorded. ₹${amount.toLocaleString('en-IN')} is back on "${khata.name}".`,
   });
 });
 
@@ -657,7 +1382,7 @@ function expenseChanges(body, res) {
     if (!Number.isFinite(amount) || amount <= 0) bad(res, 'Enter an amount greater than zero');
     out.amount = amount;
   }
-  if (out.khata !== undefined && !isId(out.khata)) bad(res, 'That is not a khata we can file this under');
+  if (out.khata !== undefined && !isId(out.khata)) bad(res, 'That is not a book we can file this under');
   return out;
 }
 
@@ -767,11 +1492,17 @@ const requestReimbursement = asyncHandler(async (req, res) => {
   // Anything already asked for and not yet paid. Without this the same debt
   // could be claimed twice over simply by submitting the form again before the
   // accounts team had got to the first one.
+  //
+  // Keyed on `movement`, NOT on `type`. This match used to read
+  // `type: 'reimbursement'`, which on the merged cashbook model can only ever be
+  // 'in' or 'out' — so it matched nothing, `pending` was always zero, and the
+  // guard this whole block exists to be was silently open. Same confusion as the
+  // one fixed in listEntries.
   const waiting = await KhataEntry.aggregate([
     {
       $match: {
         employee: new mongoose.Types.ObjectId(String(req.user._id)),
-        type: 'reimbursement',
+        movement: 'reimbursement',
         status: { $in: ['Pending', 'AwaitingApproval'] },
       },
     },
@@ -1023,7 +1754,17 @@ const getKhata = asyncHandler(async (req, res) => {
     ledger.getOrCreateWallet(employeeId, req.user),
     ledger.getOrCreateDefaultKhata(employeeId, req.user),
   ]);
-  const khatas = await ledger.listKhatasOf(employeeId, true);
+  // BOOKS THIS PERSON OWNS, and deliberately not the ones shared WITH them.
+  // ledger.listKhatasOf() widened to include accepted-member books so the
+  // employee's own screen shows what they can file against — but this is the
+  // company's page about one person, and a colleague's book listed here reads
+  // as theirs. Worse, the cards carry owner-only actions (Settings, Add
+  // expense, Statement), so an operator would have been editing somebody else's
+  // book from the wrong person's page, and the statement route would 404
+  // because the book does not belong to the employee it was asked for.
+  const khatas = await EmployeeKhata.find({ employee: employeeId })
+    .sort({ isDefault: -1, name: 1 })
+    .populate('members.user', 'firstName lastName email photo');
 
   const profile = await EmployeeProfile.findOne({ user: employeeId })
     .select('employeeCode designation department').lean();
@@ -1052,7 +1793,11 @@ const getKhata = asyncHandler(async (req, res) => {
 
   res.json({
     wallet: publicWallet(wallet),
-    khatas: khatas.map(publicKhata),
+    // No viewer: this is the company looking at somebody else's books, so the
+    // "where do I stand on this one" fields have no meaning and are omitted.
+    // Wrapped rather than passed bare, because Array.map would otherwise hand
+    // publicKhata the row INDEX as its viewer.
+    khatas: khatas.map((k) => publicKhata(k)),
     employee: {
       _id: employee._id,
       name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
@@ -1066,7 +1811,11 @@ const getKhata = asyncHandler(async (req, res) => {
     balance: describeBalance(wallet.balance),
     // Summed over the WHOLE ledger, not the filtered slice, so narrowing to one
     // book never makes the headline figures disagree with the wallet.
-    totals: summariseEntries(await KhataEntry.find({ employee: employeeId }).select('status direction type amount').lean()),
+    // `movement`, not `type` — summariseEntries asks what the event WAS (an
+    // expense, a reimbursement), and `type` on this model is the company's
+    // 'in'/'out' view. Selecting the wrong one left every row falling through to
+    // the "returned" bucket.
+    totals: summariseEntries(await KhataEntry.find({ employee: employeeId }).select('status direction movement amount').lean()),
     count: entries.length,
     // The viewer decides whether the filing locations travel — SuperAdmin only.
     entries: entries.map((e) => publicEntry(e, req.user)),
@@ -1107,8 +1856,8 @@ const createKhata = asyncHandler(async (req, res) => {
     recipient: employee,
     type: 'general',
     audience: 'employee',
-    title: 'New khata opened',
-    body: `A khata called "${khata.name}" was opened for you. You can record expenses against it from My Khata.`,
+    title: 'New book opened',
+    body: `A book called "${khata.name}" was opened for you. You can record expenses against it from My Cashbook.`,
     link: '/employee/khata',
   });
 
@@ -1131,7 +1880,7 @@ const createMyKhata = asyncHandler(async (req, res) => {
   // tester should not be able to fill the list with hundreds.
   const existing = await EmployeeKhata.countDocuments({ employee: req.user._id });
   if (existing >= 25) {
-    bad(res, 'You already have 25 khatas. Close one you have finished with before opening another.');
+    bad(res, 'You already have 25 books. Close one you have finished with before opening another.');
   }
 
   const khata = await openKhata({
@@ -1142,7 +1891,310 @@ const createMyKhata = asyncHandler(async (req, res) => {
     res,
   });
 
-  res.status(201).json({ khata: publicKhata(khata), message: `"${khata.name}" opened.` });
+  res.status(201).json({ khata: publicKhata(khata, req.user._id), message: `"${khata.name}" opened.` });
+});
+
+/**
+ * Rename or re-note a book you opened.
+ *
+ * Owner only — a collaborator files entries into somebody else's book, they do
+ * not get to re-shape it underneath them.
+ *
+ * CLOSING IS NOT HERE, deliberately. Closing a book is the company saying "that
+ * job is done and its figures are ours now" (see updateKhataSettings, behind
+ * `khata.manage`); it takes the employee's own correction window away with it,
+ * so it cannot be a thing the employee does to themselves.
+ * @route PUT /api/khata/me/khatas/:id
+ * @param {string} [req.body.name] [req.body.note]
+ * @returns {{khata: object, message: string}}
+ */
+const updateMyKhata = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'That book no longer exists.', 404);
+  const khata = await ledger.loadKhataForOwner(req.params.id, req.user._id);
+
+  if (req.body.name !== undefined) {
+    const name = String(req.body.name).trim();
+    if (!name) bad(res, 'A book needs a name');
+    if (name.length > 80) bad(res, 'That name is too long (80 characters max)');
+    khata.name = name;
+  }
+  if (req.body.note !== undefined) khata.note = String(req.body.note).slice(0, 300);
+
+  try {
+    await khata.save();
+  } catch (err) {
+    if (err.code !== 11000) throw err;
+    // The clash is on the COMPOUND { employee, name } index, so the generic
+    // duplicate-key handler in middleware/errorHandler would name the first key
+    // it finds — the employee id — and tell the person their own account already
+    // exists. Answer it here, where we know which field they actually typed.
+    bad(res, `You already have a book called "${khata.name}". Give this one a different name.`, 409);
+  }
+
+  res.json({ khata: publicKhata(khata, req.user._id), message: 'Saved' });
+});
+
+// ============================ Sharing a book ============================
+
+/**
+ * Invite colleagues onto one of your books.
+ *
+ * WHAT SHARING IS, because it is easy to read as something bigger. It shares the
+ * HEADING and nothing else: an invited operator's spending still comes out of
+ * their OWN wallet and their own advance, and the owner's balance does not move
+ * an inch. What the book gains is one honest total for the site instead of three
+ * partial ones nobody can add up.
+ *
+ * THE COMPANY WALL IS APPLIED TO THE WRITE, not just to the picker that feeds
+ * it. `GET /me/colleagues` already narrows the list to the caller's own company,
+ * but a crafted request carrying another company's user id must fail the same
+ * way — so the ids are re-read through `scopeUserFilter` here before anything is
+ * stored. Copied straight from chatController.createGroup, which learned this
+ * the same way.
+ * @route POST /api/khata/me/khatas/:id/members
+ * @param {string[]} req.body.memberIds - Who to invite.
+ * @param {'operator'|'viewer'} [req.body.role='operator']
+ * @returns {{ok: true, added: number, khata: object}}
+ */
+const addKhataMembers = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'That book no longer exists.', 404);
+  const khata = await ledger.loadKhataForOwner(req.params.id, req.user._id);
+  if (khata.isActive === false) {
+    bad(res, `"${khata.name}" is closed, so it cannot be shared with anybody new.`);
+  }
+
+  const role = MEMBER_ROLES.includes(req.body.role) ? req.body.role : 'operator';
+
+  let ids = Array.isArray(req.body.memberIds) ? [...new Set(req.body.memberIds.map(String))] : [];
+  // The owner is not a member row and never can be — silently dropped rather
+  // than refused, because a picker that pre-selects "me" is a UI slip, not an
+  // error the person needs to read about.
+  ids = ids.filter((id) => isId(id) && id !== String(req.user._id));
+  if (!ids.length) bad(res, 'Pick at least one colleague to share this book with.');
+
+  const valid = await User.find(await scopeUserFilter(req, {
+    _id: { $in: ids }, isActive: true, ...hideSuperAdminFilter(req.user),
+  })).select('_id firstName lastName');
+
+  // Who would be NEW. Somebody already invited or already accepted is skipped
+  // (re-inviting them would only reset the clock on an invitation they can see);
+  // somebody who DECLINED is re-invited by flipping their row back, exactly as
+  // ChatGroup does, so the history stays one row per person.
+  const incoming = valid.filter((u) => {
+    const mem = khata.memberFor(u._id);
+    return !mem || mem.status === 'declined';
+  });
+
+  // A seat is taken by anybody who has not said no. Checked up front rather than
+  // inside the loop so the request either shares with everyone named or with
+  // nobody — a half-applied invitation list is impossible to reason about.
+  const seatsTaken = khata.members.filter((m) => m.status !== 'declined').length;
+  if (seatsTaken + incoming.length > MAX_BOOK_MEMBERS) {
+    bad(res, `A book can be shared with up to ${MAX_BOOK_MEMBERS} people.`);
+  }
+
+  const invited = [];
+  for (const u of incoming) {
+    const mem = khata.memberFor(u._id);
+    if (mem) {
+      mem.status = 'invited';
+      mem.role = role;
+      mem.invitedBy = req.user._id;
+      mem.invitedAt = new Date();
+      mem.respondedAt = null;
+    } else {
+      khata.members.push({
+        user: u._id, role, status: 'invited', invitedBy: req.user._id, invitedAt: new Date(),
+      });
+    }
+    invited.push(u._id);
+  }
+  await khata.save();
+
+  if (invited.length) {
+    const who = `${req.user.firstName} ${req.user.lastName || ''}`.trim();
+    await notifyMany(invited, {
+      type: 'general',
+      audience: 'employee',
+      title: 'You have been added to a cashbook',
+      // Worded for the role they were actually given. Telling a read-only
+      // invitee to "start adding" would be an instruction they cannot follow.
+      body: role === 'viewer'
+        ? `${who} shared "${khata.name}" with you to read. Accept to open it.`
+        : `${who} invited you to keep entries in "${khata.name}". Accept to start adding.`,
+      link: '/employee/khata',
+    });
+  }
+
+  res.json({ ok: true, added: invited.length, khata: publicKhata(khata, req.user._id) });
+});
+
+/**
+ * Change what a collaborator may do on your book.
+ * @route PATCH /api/khata/me/khatas/:id/members/:userId
+ * @param {'operator'|'viewer'} req.body.role
+ * @returns {{ok: true}}
+ */
+const setKhataMemberRole = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'That book no longer exists.', 404);
+  if (!MEMBER_ROLES.includes(req.body.role)) {
+    bad(res, 'Say whether they can add entries or only view.');
+  }
+  const khata = await ledger.loadKhataForOwner(req.params.id, req.user._id);
+
+  const mem = khata.memberFor(req.params.userId);
+  // A declined row is a record that they said no, not a standing to be edited.
+  if (!mem || mem.status === 'declined') bad(res, 'That person is not on this book.', 404);
+
+  mem.role = req.body.role;
+  await khata.save();
+  res.json({ ok: true });
+});
+
+/**
+ * Remove somebody from a book — or leave one yourself.
+ *
+ * The owner may remove anybody; anybody else may remove only themselves, which
+ * is what "Leave book" is. Removing the owner is refused: `employee` is the
+ * owner, there is exactly one, and a book with nobody's name on it has no
+ * namespace to live in (the unique index is `{ employee, name }`).
+ *
+ * REMOVING SOMEBODY NEVER TOUCHES THEIR ENTRIES. The rows they filed stay on the
+ * book, still counted in its total, still carrying their name — the money was
+ * spent on this job and unsharing the folder afterwards does not un-spend it.
+ * Their access ends; the record does not.
+ * @route DELETE /api/khata/me/khatas/:id/members/:userId
+ * @returns {{ok: true, left: boolean}}
+ */
+const removeKhataMember = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'That book no longer exists.', 404);
+  const khata = await EmployeeKhata.findById(req.params.id);
+  if (!khata) bad(res, 'That book no longer exists.', 404);
+
+  const targetId = req.params.userId;
+  const owner = khata.isOwner(req.user._id);
+  const self = String(targetId) === String(req.user._id);
+  if (!owner && !self) {
+    bad(res, 'Only the person who opened this book can take somebody else off it.', 403);
+  }
+  if (khata.isOwner(targetId)) {
+    bad(res, 'The person who opened the book cannot be taken off it.');
+  }
+
+  const mem = khata.memberFor(targetId);
+  if (!mem) bad(res, 'That person is not on this book.', 404);
+
+  khata.members = khata.members.filter((m) => String(m.user?._id || m.user) !== String(targetId));
+  await khata.save();
+
+  // The owner hears about somebody walking away from their book; nobody needs
+  // telling about a removal they performed themselves.
+  if (self) {
+    await notifyBookOwner(khata, req.user, 'A colleague left your book',
+      `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+      + ` left "${khata.name}". Everything they recorded is still on it.`);
+  }
+
+  res.json({ ok: true, left: self });
+});
+
+/**
+ * Accept or decline an invitation to somebody else's book.
+ *
+ * Declining does not delete the row — it records the answer, so the owner can
+ * see they were asked and said no, and so re-inviting them later is a flip
+ * rather than a second row against the same person.
+ * @route PATCH /api/khata/me/book-invites/:khataId
+ * @param {'accept'|'decline'} req.body.action
+ * @returns {{ok: true, khata?: object, message: string}}
+ */
+const respondToBookInvite = asyncHandler(async (req, res) => {
+  const { action } = req.body;
+  if (!['accept', 'decline'].includes(action)) {
+    bad(res, 'Say whether you are accepting or declining the invitation.');
+  }
+  if (!isId(req.params.khataId)) bad(res, 'No pending invitation for that book.', 404);
+
+  const khata = await EmployeeKhata.findById(req.params.khataId).populate('employee', USER_FIELDS);
+  const mem = khata && khata.memberFor(req.user._id);
+  // One message for "no such book", "never invited" and "already answered": all
+  // three mean there is nothing here to decide, and distinguishing them would
+  // tell somebody guessing at ids which of them exist.
+  if (!khata || !mem || mem.status !== 'invited') {
+    bad(res, 'No pending invitation for that book.', 404);
+  }
+
+  mem.status = action === 'accept' ? 'accepted' : 'declined';
+  mem.respondedAt = new Date();
+  await khata.save();
+
+  if (action === 'accept') {
+    await notifyBookOwner(khata, req.user, 'Your invitation was accepted',
+      `${req.user.firstName} ${req.user.lastName || ''}`.trim()
+      + ` has joined "${khata.name}"`
+      + `${mem.role === 'viewer' ? ' and can read it.' : ' and can add entries to it.'}`);
+  }
+
+  res.json({
+    ok: true,
+    // Only on accept: a book they just declined is not one they may read, so
+    // handing its figures back in the response would undo the decision.
+    ...(action === 'accept' ? { khata: publicKhata(khata, req.user._id) } : {}),
+    message: action === 'accept'
+      ? `You are on "${khata.name}".`
+      : 'Invitation declined.',
+  });
+});
+
+/**
+ * Colleagues this person could share a book with.
+ *
+ * The same shape and the same wall as the chat directory (chatController.directory),
+ * because it answers the same question — "who is there?" — and two people-pickers
+ * in one app that disagree about who exists is a bug waiting to be reported.
+ * Deliberately thin: name, email, role and designation, never anything about
+ * their pay or their own books.
+ * @route GET /api/khata/me/colleagues
+ * @param {string} [req.query.q] - Name/email search, case-insensitive.
+ * @returns {{count: number, people: Object[]}}
+ */
+const listColleagues = asyncHandler(async (req, res) => {
+  // Company wall: the picker only offers people of the caller's own company, and
+  // a Backend login stays out of it (hideSuperAdminFilter).
+  const users = await User.find(await scopeUserFilter(req, {
+    isActive: true, _id: { $ne: req.user._id }, ...hideSuperAdminFilter(req.user),
+  }))
+    .select(USER_FIELDS)
+    .sort({ firstName: 1, lastName: 1 })
+    .lean();
+
+  // Somebody whose last day has passed is gone even if their login has not been
+  // switched off yet — you cannot hand them a book any more than a chat.
+  const departed = await departedUserIdSet(users.map((u) => u._id));
+  let people = users.filter((u) => !departed.has(String(u._id)));
+
+  // Filtered in memory rather than in the query: the wall and the departure
+  // check have already been applied, so this is a short list, and a regex on
+  // two fields in the database would only make the same list twice.
+  const q = String(req.query.q || '').trim().toLowerCase();
+  if (q) {
+    people = people.filter((u) => `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase().includes(q)
+      || String(u.email || '').toLowerCase().includes(q));
+  }
+
+  const profiles = await profilesFor(people.map((u) => u._id));
+
+  res.json({
+    count: people.length,
+    people: people.map((u) => ({
+      _id: u._id,
+      name: `${u.firstName} ${u.lastName || ''}`.trim(),
+      email: u.email,
+      role: u.role,
+      designation: profiles.get(String(u._id))?.designation,
+      hasPhoto: Boolean(u.photo),
+    })),
+  });
 });
 
 /**
@@ -1233,7 +2285,10 @@ const createEntry = asyncHandler(async (req, res) => {
   // Company wall: money cannot be posted to another company's employee.
   if (await cannotSeeUser(req, employee)) bad(res, 'Employee not found', 404);
 
-  const type = ENTRY_TYPES.includes(req.body.type)
+  // Validated against the LIVE movement list, not the legacy one. The two differ
+  // by exactly one value — 'refund' — and validating against the frozen list
+  // would silently rewrite an operator's refund into an advance.
+  const type = MOVEMENTS.includes(req.body.type)
     ? req.body.type
     : (direction === 'to_employee' ? 'advance' : 'settlement');
   // A reversal row is only ever written by the reverse endpoint, so that the
@@ -1243,13 +2298,17 @@ const createEntry = asyncHandler(async (req, res) => {
   // khata id sent alongside it would be silently dropped, so refuse it loudly
   // rather than record something the operator did not mean.
   if (ledger.needsKhata(type)) {
-    if (!isId(req.body.khata)) bad(res, 'Choose which khata this expense belongs to.');
-    // Spending only ever reduces what somebody is holding. A row typed as an
-    // expense but pointed the other way would ADD to their advance while
-    // charging the cost to a book — wrong in both directions at once, and
-    // silently so, since nothing else about it would look unusual.
-    if (direction !== 'from_employee') {
-      bad(res, 'An expense is money going out of the advance. Record money out to an employee as an advance instead.');
+    if (!isId(req.body.khata)) bad(res, 'Choose which book this belongs to.');
+    // A book movement pointed the wrong way is wrong in both directions at once,
+    // and silently so, since nothing else about the row would look unusual: an
+    // "expense" recorded towards the employee would ADD to their advance while
+    // charging the cost to a book, and a "refund" recorded away from them would
+    // take money off their advance while crediting the site with it.
+    const wanted = type === 'refund' ? 'to_employee' : 'from_employee';
+    if (direction !== wanted) {
+      bad(res, type === 'refund'
+        ? 'A refund is money coming back into a book. Record money going out of the advance as an expense instead.'
+        : 'An expense is money going out of the advance. Record money out to an employee as an advance instead.');
     }
   }
 
@@ -1307,7 +2366,7 @@ const createEntry = asyncHandler(async (req, res) => {
       recipient: employee,
       type: 'general',
       audience: 'employee',
-      title: direction === 'to_employee' ? 'Cash advance received' : 'Khata entry recorded',
+      title: direction === 'to_employee' ? 'Cash advance received' : 'Cashbook entry recorded',
       body: direction === 'to_employee'
         ? `₹${amount.toLocaleString('en-IN')} was added to your advance. You now have ₹${inHand} in hand.`
         : `₹${amount.toLocaleString('en-IN')} was recorded${khata ? ` against "${khata.name}"` : ''}. `
@@ -1318,7 +2377,7 @@ const createEntry = asyncHandler(async (req, res) => {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
       audience: 'all',
-      title: 'Khata entry needs approval',
+      title: 'Cashbook entry needs approval',
       body: `₹${amount.toLocaleString('en-IN')} for ${target.firstName} is above the operator's limit and is awaiting approval`,
       link: '/admin/khata',
     });
@@ -1338,14 +2397,41 @@ const createEntry = asyncHandler(async (req, res) => {
 /**
  * List ledger entries across all employees, for the operator's ledger tab.
  * @route GET /api/khata/entries  (khata.manage)
- * @param {string} [req.query.status] [req.query.employee] [req.query.type] [req.query.from] [req.query.to]
+ * @param {string} [req.query.status] [req.query.employee] [req.query.from] [req.query.to]
+ * @param {string} [req.query.movement] - advance|expense|refund|… (the clear name).
+ * @param {string} [req.query.type] - The same thing, or 'in'|'out'; see below.
  * @returns {{count: number, entries: Object[]}}
  */
 const listEntries = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (isId(req.query.employee)) filter.employee = req.query.employee;
-  if (req.query.type && ENTRY_TYPES.includes(req.query.type)) filter.type = req.query.type;
+
+  // WHAT KIND OF ENTRY, and the reason this is three lines rather than one.
+  // `type` used to be the movement ('expense', 'advance'), and every client still
+  // sends it that way. On the merged cashbook model `type` is the COMPANY's view
+  // of the same row — 'in' or 'out' — and `movement` is the person's. So the old
+  // one-liner tested the value against the legacy model's MOVEMENT list and then
+  // wrote it onto a field that can only ever hold 'in' or 'out': `?type=expense`
+  // matched no row at all, and the "Expenses to confirm" queue on the admin
+  // screen was permanently empty with no error to show for it.
+  //
+  // Both spellings are honoured, mapped onto whichever field they actually mean,
+  // and `?movement=` is offered as the alias that cannot be misread.
+  // `?movement=` takes a COMMA LIST, as parseEntryFilters already does, so a
+  // queue can ask for more than one kind of row in one call — the review queue
+  // wants `expense,refund`, because both post on the spot and both wait to be
+  // confirmed. A single value still works and is the common case.
+  const wantMovements = commaList(req.query.movement, MOVEMENTS);
+  if (wantMovements.length === 1) {
+    [filter.movement] = wantMovements;
+  } else if (wantMovements.length > 1) {
+    filter.movement = { $in: wantMovements };
+  } else if (req.query.type) {
+    if (MOVEMENTS.includes(req.query.type)) filter.movement = req.query.type;
+    else if (['in', 'out'].includes(req.query.type)) filter.type = req.query.type;
+  }
+
   if (isId(req.query.cashAccount)) filter.account = req.query.cashAccount;
   if (isId(req.query.khata)) filter.expenseBook = req.query.khata;
   // The expense review queue: everything that posted without anybody checking
@@ -1520,7 +2606,7 @@ const approveEntry = asyncHandler(async (req, res) => {
       bad(res, 'You can record entries on this account but not approve them. Ask a Super Admin.', 403);
     }
   } else if (req.user.role !== 'SuperAdmin' && !hasPermission(req.user, 'khata.manage')) {
-    bad(res, 'You do not have permission to approve khata entries', 403);
+    bad(res, 'You do not have permission to approve cashbook entries', 403);
   }
 
   const { entry: saved, wallet, khata } = await ledger.approveEntry(entry, req.user, {
@@ -1532,11 +2618,14 @@ const approveEntry = asyncHandler(async (req, res) => {
     recipient: saved.employee,
     type: 'general',
     audience: 'employee',
-    title: saved.type === 'expense' ? 'Expense confirmed' : 'Khata entry approved',
-    body: saved.type === 'expense'
-      ? `₹${saved.amount.toLocaleString('en-IN')} on "${khata?.name || 'your khata'}" was confirmed. `
+    // `type` is the company's view of the cash ('in'/'out'); the person's view
+    // of the event is `movement`. Reading `type` here was always false, so a
+    // confirmed expense was announced with the generic wording.
+    title: saved.movement === 'expense' ? 'Expense confirmed' : 'Cashbook entry approved',
+    body: saved.movement === 'expense'
+      ? `₹${saved.amount.toLocaleString('en-IN')} on "${khata?.name || 'your book'}" was confirmed. `
         + `You have ₹${Math.abs(wallet.balance).toLocaleString('en-IN')} in hand.`
-      : `₹${saved.amount.toLocaleString('en-IN')} has been posted to your khata (${saved.code || 'entry'}).`,
+      : `₹${saved.amount.toLocaleString('en-IN')} has been posted to your cashbook (${saved.code || 'entry'}).`,
     link: '/employee/khata',
   });
 
@@ -1570,7 +2659,7 @@ const rejectEntry = asyncHandler(async (req, res) => {
     recipient: saved.employee,
     type: 'general',
     audience: 'employee',
-    title: 'Khata request declined',
+    title: 'Cashbook request declined',
     body: req.body.note
       ? `Your ₹${saved.amount.toLocaleString('en-IN')} entry was declined: ${req.body.note}`
       : `Your ₹${saved.amount.toLocaleString('en-IN')} entry was declined.`,
@@ -1607,7 +2696,7 @@ const updateEntry = asyncHandler(async (req, res) => {
   // correct a confirmed expense in place, so a mistake caught after sign-off does
   // not force a reversal. A reversed entry stays untouchable.
   const superAdminAfterConfirm = req.user.role === 'SuperAdmin'
-    && entry.movement === 'expense' && entry.status === 'Approved'
+    && ledger.BOOK_MOVEMENTS.includes(entry.movement) && entry.status === 'Approved'
     && !entry.reversedBy && entry.confirmedByCompany;
   if (!rights.company && !superAdminAfterConfirm) bad(res, rights.reason || 'This entry can no longer be edited.');
 
@@ -1689,14 +2778,15 @@ const reverseEntry = asyncHandler(async (req, res) => {
     if (entry.affectsCompanyCash && entry.account) {
       const { rights } = await requireOperableAccount(req.user, entry.account, res);
       if (!rights.canApprove) bad(res, 'Only an approver on this account can reverse a posted entry.', 403);
-    } else if (entry.movement === 'expense') {
-      // Rejecting an employee's expense. Any khata operator may do it: an
-      // expense self-approves, so this reversal IS the company's review of it,
+    } else if (ledger.BOOK_MOVEMENTS.includes(entry.movement)) {
+      // Rejecting an employee's expense — or a refund, which behaves the same
+      // way. Any khata operator may do it: both self-approve, so this reversal
+      // IS the company's review of them,
       // and reserving that for a SuperAdmin would leave the accounts team
       // watching wrong entries they could not correct. Safe because no company
       // cash moves either way — it only restores the employee's wallet.
       if (!hasPermission(req.user, 'khata.manage')) {
-        bad(res, 'You do not have permission to reject khata expenses', 403);
+        bad(res, 'You do not have permission to reject cashbook expenses', 403);
       }
     } else {
       bad(res, 'Only a Super Admin can reverse this entry.', 403);
@@ -1708,12 +2798,15 @@ const reverseEntry = asyncHandler(async (req, res) => {
   // An expense that self-approved was never "approved" by anybody, so calling
   // its reversal a reversal would puzzle the employee. From their side it was
   // simply rejected, and the money is back in their wallet.
-  const wasExpense = original.type === 'expense';
+  // `type` is the company's view ('in'/'out'); the person's view is `movement`.
+  // Reading `type` here made this always-false, so a rejected expense was
+  // announced to the employee as a bare 'reversal'.
+  const wasExpense = ledger.BOOK_MOVEMENTS.includes(original.movement);
   await notify({
     recipient: original.employee,
     type: 'general',
     audience: 'employee',
-    title: wasExpense ? 'Expense rejected' : 'Khata entry reversed',
+    title: wasExpense ? 'Expense rejected' : 'Cashbook entry reversed',
     body: wasExpense
       ? `Your ₹${original.amount.toLocaleString('en-IN')} expense (${original.code || 'entry'}) was rejected: `
         + `${req.body.reason}. It has been added back to your advance.`
@@ -1795,15 +2888,15 @@ const updateWalletSettings = asyncHandler(async (req, res) => {
  */
 const updateKhataSettings = asyncHandler(async (req, res) => {
   const { khataId } = req.params;
-  if (!isId(khataId)) bad(res, 'Invalid khata');
+  if (!isId(khataId)) bad(res, 'Invalid book');
 
   const khata = await EmployeeKhata.findById(khataId);
-  if (!khata) bad(res, 'Khata not found', 404);
-  if (await cannotSeeUser(req, khata.employee)) bad(res, 'Khata not found', 404);
+  if (!khata) bad(res, 'Book not found', 404);
+  if (await cannotSeeUser(req, khata.employee)) bad(res, 'Book not found', 404);
 
   if (req.body.name !== undefined) {
     const name = String(req.body.name).trim();
-    if (!name) bad(res, 'A khata needs a name');
+    if (!name) bad(res, 'A book needs a name');
     if (name.length > 80) bad(res, 'That name is too long (80 characters max)');
     khata.name = name;
   }
@@ -1819,7 +2912,7 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
     // The fallback book has to stay open, or self-service has nowhere to file
     // an expense from somebody with no other book.
     if (!nextActive && khata.isDefault) {
-      bad(res, 'This is the default khata and cannot be closed. Make another one the default first.');
+      bad(res, 'This is the default book and cannot be closed. Make another one the default first.');
     }
     if (nextActive !== khata.isActive) closureChanged = nextActive ? 'reopened' : 'closed';
     khata.isActive = nextActive;
@@ -1827,7 +2920,7 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
 
   // Exactly one default per employee, so promoting one demotes the rest.
   if (req.body.isDefault === true || req.body.isDefault === 'true') {
-    if (!khata.isActive) bad(res, 'A closed khata cannot be the default.');
+    if (!khata.isActive) bad(res, 'A closed book cannot be the default.');
     await EmployeeKhata.updateMany(
       { employee: khata.employee, _id: { $ne: khata._id } },
       { $set: { isDefault: false } }
@@ -1845,7 +2938,7 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
       recipient: khata.employee,
       type: 'general',
       audience: 'employee',
-      title: closureChanged === 'closed' ? 'A khata was closed' : 'A khata was re-opened',
+      title: closureChanged === 'closed' ? 'A book was closed' : 'A book was re-opened',
       body: closureChanged === 'closed'
         ? `"${khata.name}" has been closed by the company. Its record stays on your statement, but you `
           + 'can no longer add to it or change the expenses in it.'
@@ -1885,7 +2978,7 @@ const recomputeWallet = asyncHandler(async (req, res) => {
   res.json({
     balance,
     display: describeBalance(balance),
-    message: `Rebuilt from the ledger — ${khatas.length} khata(s) and the wallet.`,
+    message: `Rebuilt from the ledger — ${khatas.length} book(s) and the wallet.`,
   });
 });
 
@@ -2179,10 +3272,10 @@ const exportExcel = asyncHandler(async (req, res) => {
   }
 
   // ---- Sheet 2: expense books ----
-  const ks = wb.addWorksheet('Khatas');
+  const ks = wb.addWorksheet('Books');
   ks.columns = [
     { header: 'Employee', key: 'employee', width: 26 },
-    { header: 'Khata', key: 'khata', width: 28 },
+    { header: 'Book', key: 'khata', width: 28 },
     { header: 'Spent', key: 'spent', width: 14 },
     { header: 'Entries', key: 'entries', width: 10 },
     { header: 'Last Entry', key: 'last', width: 14 },
@@ -2207,7 +3300,7 @@ const exportExcel = asyncHandler(async (req, res) => {
     { header: 'Code', key: 'code', width: 18 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Employee', key: 'employee', width: 24 },
-    { header: 'Khata', key: 'khata', width: 22 },
+    { header: 'Book', key: 'khata', width: 22 },
     { header: 'Reason', key: 'type', width: 16 },
     { header: 'Purpose', key: 'purpose', width: 34 },
     { header: 'Given To Employee', key: 'given', width: 18 },
@@ -2265,7 +3358,7 @@ const exportExcel = asyncHandler(async (req, res) => {
     timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   }).formatToParts(new Date()).reduce((a, p) => { a[p.type] = p.value; return a; }, {});
-  const fname = `employee_khata_${parts.year}-${parts.month}-${parts.day}_${parts.hour}-${parts.minute}-${parts.second}.xlsx`;
+  const fname = `employee-cashbook-${parts.year}-${parts.month}-${parts.day}_${parts.hour}-${parts.minute}-${parts.second}.xlsx`;
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
@@ -2273,63 +3366,150 @@ const exportExcel = asyncHandler(async (req, res) => {
   res.end();
 });
 
-// ============================ Receipts ============================
+// ============================ Reports: PDF and .xlsx ============================
 
-// ---------------------------------------------------------------------------
-// Statement PDF
-// ---------------------------------------------------------------------------
-
-
-/** Rows a statement is built from: the posted money, plus the cancelled rows
- *  it keeps on the record. Reversed rows are excluded from the category totals —
- *  see services/cashbookSummaryPdf.js. */
+/** Rows a category summary is built from: the posted money, plus the cancelled
+ *  rows it keeps on the record. Reversed rows are excluded from the category
+ *  totals — see services/cashbookSummaryPdf.js. */
 const STATEMENT_STATUSES = ['Approved', 'Reversed'];
 
 /**
- * Gather everything one statement needs and render it.
+ * How many bills one report embeds, and how many bytes of them.
  *
- * Shared by the operator route and the employee's own-statement route; the
- * two differ only in who they are allowed to ask about, which the callers
- * settle before they get here.
+ * A year of a busy site book is a few hundred phone photos at up to 5 MB each —
+ * embedding all of them would build a document nobody can email, and would hold
+ * the request (and that much memory) open while it did. There is no image
+ * library in the renderer to downscale with, so the only honest guard is to stop
+ * at a budget.
+ *
+ * BOTH caps are needed: the count bounds the page-turning, the byte budget
+ * bounds the memory, and either alone lets the other run away. Whatever is left
+ * off is COUNTED and printed on the report — a document that quietly drops bills
+ * reads exactly like one that never had any.
+ */
+const RECEIPT_PAGE_CAP = 60;
+const RECEIPT_BYTES_CAP = 24 * 1024 * 1024;
+
+/**
+ * Pull the bill bytes for a set of rows out of storage, under both caps.
+ *
+ * DONE HERE, IN THE CONTROLLER, and not in the renderer: a pdfkit document is
+ * built inside a synchronous Promise executor, so it cannot await a single byte
+ * of storage. Everything the page needs has to be in memory before the renderer
+ * is called.
+ *
+ * One at a time rather than one Promise.all: sixty GridFS downloads fired at
+ * once is a burst the connection pool does not need, and the loop stops the
+ * moment a cap is reached instead of paying for reads nothing will draw.
+ * @param {Array<object>} rows - Lean entries, in the order they will be printed.
+ * @returns {Promise<{bills: Map<string, Buffer>, billsSkipped: number}>}
+ */
+async function readBillsFor(rows) {
+  const bills = new Map();
+  let bytes = 0;
+  let billsSkipped = 0;
+  for (const e of rows) {
+    if (!e.attachment?.storagePath) continue;
+    if (bills.size >= RECEIPT_PAGE_CAP || bytes >= RECEIPT_BYTES_CAP) {
+      billsSkipped += 1;
+      continue;
+    }
+    try {
+      const buffer = await storage.readBuffer(e.attachment.storagePath);
+      if (!buffer) { billsSkipped += 1; continue; }
+      bills.set(String(e._id), buffer);
+      bytes += buffer.length;
+    } catch (_) {
+      // A missing or unreadable bill must not sink the whole report — but it is
+      // still a bill the reader was expecting to see, so it is counted.
+      billsSkipped += 1;
+    }
+  }
+  return { bills, billsSkipped };
+}
+
+/**
+ * Everything a filter-driven report needs, gathered once.
+ *
+ * Shared by the PDF and the .xlsx so the two cannot disagree: they run the SAME
+ * parseEntryFilters over the SAME query, hit the same scope and get the same
+ * rows back. Add a filter to parseEntryFilters and both exports learn it in the
+ * same breath — which, together with the on-screen feed calling the same parser,
+ * is the whole of "what you see is what you export".
+ *
+ * WHICH ROWS, and the one place this differs from the on-screen feed. A named
+ * book is scoped by `expenseBook` ALONE — every contributor's rows, exactly as
+ * `/me/books/:id` does — because a shared site book's document has to show what
+ * the site cost, not one person's slice of it. With no book named it falls back
+ * to the employee's own wallet, which is the only view an advance or a
+ * settlement appears in.
+ *
+ * ROWS COME BACK OLDEST FIRST whatever `?sort=` says. A ledger is read top-down:
+ * a running balance that counts backwards is not a ledger, it is a list. The
+ * sort control belongs to the screen.
  * @param {object} req
  * @param {object} res
- * @param {string} employeeId
- * @sideEffects Reads GridFS for the logo and every embedded bill; writes the PDF to `res`.
+ * @param {string} employeeId - Whose report this is.
+ * @param {{asSelf?: boolean}} [opts] - True when the caller IS the employee, which
+ *   is what lets a book somebody shared with them be reported on.
+ * @returns {Promise<object>} Employee, book, rows, range, opening, filters, branding.
  */
-async function streamStatement(req, res, employeeId) {
+async function gatherReport(req, res, employeeId, opts = {}) {
   const employee = await User.findById(employeeId).select(USER_FIELDS);
   if (!employee) bad(res, 'Employee not found', 404);
 
-  // A named book must belong to the person the statement is about, or an id
-  // guessed from another employee's page would print their spending here.
+  const { mongo, report, summary, from, to } = parseEntryFilters(req.query);
+
+  // Which book. 'wallet' is spelled out for symmetry with /me/books/:id, where
+  // it is a path segment; here an absent ?khata= means the same thing.
   let khata = null;
-  if (req.query.khata) {
-    if (!isId(req.query.khata)) bad(res, 'Invalid khata', 400);
-    khata = await EmployeeKhata.findById(req.query.khata).lean();
-    if (!khata || String(khata.employee) !== String(employeeId)) bad(res, 'Khata not found', 404);
+  if (req.query.khata && req.query.khata !== 'wallet') {
+    if (!isId(req.query.khata)) bad(res, 'That book no longer exists.', 404);
+    if (opts.asSelf) {
+      // A book a colleague shared with them is theirs to read and to report on —
+      // that is what accepting the invitation bought. Throws 404/403 itself.
+      khata = await ledger.loadKhataForViewer(req.query.khata, req.user._id);
+      await khata.populate('employee', USER_FIELDS);
+    } else {
+      // The company's route. A named book must belong to the person the report
+      // is about, or an id guessed from another employee's page would print
+      // their spending here.
+      khata = await EmployeeKhata.findById(req.query.khata).populate('employee', USER_FIELDS);
+      if (!khata || String(khata.employee?._id || khata.employee) !== String(employeeId)) {
+        bad(res, 'That book no longer exists.', 404);
+      }
+    }
   }
 
-  const from = parseDate(req.query.from);
-  const to = parseDate(req.query.to);
-  if (to) to.setHours(23, 59, 59, 999);
+  const scope = khata ? { expenseBook: khata._id } : { employee: employeeId };
 
-  const base = { employee: employeeId, status: { $in: STATEMENT_STATUSES } };
-  if (khata) base.expenseBook = khata._id;
-
-  const inRange = { ...base };
-  if (from || to) {
-    inRange.date = {};
-    if (from) inRange.date.$gte = from;
-    if (to) inRange.date.$lte = to;
-  }
+  // WHAT COUNTS AS "no status filter" differs between the two documents, and
+  // deliberately. The category summary has always been a statement of money that
+  // moved, so with nothing asked for it keeps its Approved+Reversed set and the
+  // document does not change under anybody. The two new reports mirror the feed
+  // on screen, which shows a rejected row struck through — and a report that
+  // silently dropped the rows the screen displays would be the exact opposite of
+  // what these filters are for.
+  const statusDefault = report === 'category' && !mongo.status
+    ? { status: { $in: STATEMENT_STATUSES } }
+    : {};
+  const filter = { ...mongo, ...scope, ...statusDefault };
 
   const [entries, before, wallet, profile, branding, settings] = await Promise.all([
-    KhataEntry.find(inRange).populate('expenseBook', 'name').populate('account', 'name')
-      .sort({ date: 1, createdAt: 1 }).limit(2000).lean(),
-    // Everything that happened BEFORE the window, so the statement opens on the
-    // figure the previous one closed at instead of at zero.
+    KhataEntry.find(filter)
+      .populate('expenseBook', 'name')
+      .populate('account', 'name')
+      .populate('employee', 'firstName lastName')
+      .sort({ date: 1, createdAt: 1 })
+      .limit(2000)
+      .lean(),
+    // Everything that happened BEFORE the window, so the report opens on the
+    // figure the previous one closed at instead of at zero. Scope only — the
+    // other filters describe what the reader wanted to LOOK at, not what had
+    // already happened by the time they started looking.
     from
-      ? KhataEntry.find({ ...base, date: { $lt: from } }).select('direction amount status').lean()
+      ? KhataEntry.find({ ...scope, status: 'Approved', date: { $lt: from } })
+        .select('direction amount status').lean()
       : Promise.resolve([]),
     ledger.getOrCreateWallet(employeeId, req.user),
     EmployeeProfile.findOne({ user: employeeId }).select('employeeCode designation department').lean(),
@@ -2337,61 +3517,167 @@ async function streamStatement(req, res, employeeId) {
     Setting.getSettings().catch(() => null),
   ]);
 
-  // The renderer takes flat names rather than populated sub-documents, so it can
-  // be driven from a fixture in scripts/testKhataLedger.js without a database
-  // behind it.
-  const rows = entries.map((e) => ({
-    ...e,
-    khataName: e.expenseBook?.name || '',
-    cashAccountName: e.account?.name || '',
-  }));
-
-  // The statement is now a CATEGORY-WISE SUMMARY (services/cashbookSummaryPdf.js).
-  // It replaced the day-by-day statement, so it carries neither the individual
-  // entries nor the embedded receipt images — the .xlsx export still has every row.
-  const { renderKhataStatement, movement } = require('../services/cashbookSummaryPdf');
-  const scope = khata ? 'khata' : 'wallet';
-  const opening = ledger.round2(
-    (khata ? 0 : wallet.openingBalance || 0)
-    + before.filter((e) => e.status !== 'Reversed').reduce((sum, e) => sum + movement(e, scope), 0)
-  );
-
-  // No receipts are read here any more: the summary prints category totals, not
-  // individual entries, so pulling every bill out of storage would be a burst of
-  // downloads for bytes nothing renders. The bills stay on their entries in the
-  // app, and the .xlsx export still lists every row.
-
-  const pdf = await renderKhataStatement({
-    company: require('../config/company'),
-    logo: branding.logo || null,
-    employee: {
-      name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
-      employeeCode: profile?.employeeCode,
-      designation: profile?.designation,
-      department: profile?.department,
-    },
-    khata: khata ? { name: khata.name, note: khata.note } : null,
-    range: { from, to },
-    opening,
-    entries: rows,
-    footer: {
-      helpline: settings?.documentFooter?.helpline || '',
-      note: settings?.documentFooter?.note || '',
-    },
-    generatedAt: new Date(),
-    generatedBy: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+  // The renderers take flat names rather than populated sub-documents, so they
+  // can be driven from a fixture in scripts/testKhataLedger.js without a
+  // database behind them.
+  const rows = entries.map((e) => {
+    const row = {
+      ...e,
+      khataName: e.expenseBook?.name || '',
+      cashAccountName: e.account?.name || '',
+      byName: e.employee?.firstName ? `${e.employee.firstName} ${e.employee.lastName || ''}`.trim() : '',
+      hasAttachment: !!e.attachment?.storagePath,
+    };
+    // Where the person was standing when they filed it is SuperAdmin-only and
+    // never goes into a document — see publicEntry. Dropped at the source rather
+    // than trusted not to be printed.
+    delete row.filedLocation;
+    return row;
   });
 
-  const slug = (khata ? khata.name : `${employee.firstName}-all-khatas`)
-    .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'khata';
+  // The opening running balance. `movement` states the sign convention once, so
+  // the controller and the renderer cannot disagree about which way a row goes.
+  //
+  // The two new reports carry `walletBalanceAfter` in their Balance column, so
+  // their opening has to be in the WALLET's convention (money towards the person
+  // is positive). The category summary reads a book from the book's side, where
+  // spending is the positive figure, so it keeps its own flip.
+  const { movement } = require('../services/cashbookSummaryPdf');
+  const sense = report === 'category' && khata ? 'khata' : 'wallet';
+  const opening = ledger.round2(
+    (khata ? 0 : wallet.openingBalance || 0)
+    + before.reduce((sum, e) => sum + movement(e, sense), 0)
+  );
+
+  const ownerName = khata?.employee?.firstName
+    ? `${khata.employee.firstName} ${khata.employee.lastName || ''}`.trim()
+    : '';
+
+  return {
+    employee,
+    profile,
+    khata,
+    ownerName,
+    rows,
+    from,
+    to,
+    opening,
+    report,
+    summary,
+    branding,
+    settings,
+  };
+}
+
+/** `Site A — materials` → `site-a-materials`, for a download filename. */
+const reportSlug = (name, fallback) => String(name || fallback || '')
+  .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'cashbook';
+
+/**
+ * Gather everything one report needs and render it as a PDF.
+ *
+ * Shared by the operator route and the employee's own route; the two differ only
+ * in who they are allowed to ask about, which the callers settle before they get
+ * here.
+ *
+ * THREE DOCUMENTS, one endpoint, chosen by `?report=`:
+ *   entries  (default) — every row, oldest first, with a running balance and
+ *                        optionally the bills embedded.
+ *   daywise            — one line per calendar day.
+ *   category           — the category summary that used to be the only statement.
+ * @param {object} req
+ * @param {object} res
+ * @param {string} employeeId
+ * @param {{asSelf?: boolean}} [opts]
+ * @sideEffects Reads storage for the logo and every embedded bill; writes the PDF to `res`.
+ */
+async function streamStatement(req, res, employeeId, opts = {}) {
+  const {
+    employee, profile, khata, ownerName, rows, from, to, opening, report, summary, branding, settings,
+  } = await gatherReport(req, res, employeeId, opts);
+
+  const footer = {
+    helpline: settings?.documentFooter?.helpline || '',
+    note: settings?.documentFooter?.note || '',
+  };
+  const employeeBlock = {
+    name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
+    employeeCode: profile?.employeeCode,
+    designation: profile?.designation,
+    department: profile?.department,
+  };
+
+  // Who pressed the button, which is NOT necessarily who the report is about:
+  // `profile` above belongs to the SUBJECT, and on the operator's route those are
+  // two different people. Stamping the subject's code next to the operator's name
+  // would make the document say a thing that is simply untrue.
+  const byProfile = String(req.user._id) === String(employee._id)
+    ? profile
+    : await EmployeeProfile.findOne({ user: req.user._id }).select('employeeCode designation').lean();
+  const generatedBy = [
+    `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    [byProfile?.employeeCode, byProfile?.designation].filter(Boolean).join(', '),
+  ].filter(Boolean).join(' — ');
+
+  let pdf;
+  if (report === 'category') {
+    // Untouched: the same call, the same inputs and therefore the same document
+    // this route has always produced.
+    const { renderKhataStatement } = require('../services/cashbookSummaryPdf');
+    pdf = await renderKhataStatement({
+      company: require('../config/company'),
+      logo: branding.logo || null,
+      employee: employeeBlock,
+      khata: khata ? { name: khata.name, note: khata.note } : null,
+      range: { from, to },
+      opening,
+      entries: rows,
+      footer,
+      generatedAt: new Date(),
+      generatedBy: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    });
+  } else {
+    const { renderEntriesReport, renderDaywiseReport } = require('../services/cashbookEntriesPdf');
+    // Only on request, and only for the document that draws them: a day-wise
+    // summary has no row to hang a thumbnail on, so reading the bytes for it
+    // would be a burst of downloads for an image nothing renders.
+    const wantBills = report === 'entries' && String(req.query.bills) === '1';
+    const { bills, billsSkipped } = wantBills
+      ? await readBillsFor(rows)
+      : { bills: null, billsSkipped: 0 };
+
+    const render = report === 'daywise' ? renderDaywiseReport : renderEntriesReport;
+    pdf = await render({
+      company: require('../config/company'),
+      logo: branding.logo || null,
+      employee: employeeBlock,
+      book: khata ? { name: khata.name, note: khata.note, ownerName } : null,
+      range: { from, to },
+      opening,
+      entries: rows,
+      bills,
+      billsSkipped,
+      // The filters that produced these rows, printed under the duration box, so
+      // two downloads of the same book cannot look identical and disagree about
+      // the money.
+      filterSummary: summary,
+      footer,
+      generatedAt: new Date(),
+      // Fuller than the summary sheet's plain name: on a shared book "generated
+      // by" is the difference between two people's copies of one document.
+      generatedBy,
+    });
+  }
+
+  const slug = reportSlug(khata ? khata.name : `${employee.firstName}-all-books`);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="khata-statement-${slug}.pdf"`);
+  res.setHeader('Content-Disposition', `attachment; filename="cashbook-${slug}-${report}.pdf"`);
   res.setHeader('Content-Length', pdf.length);
   res.send(pdf);
 }
 
 /**
- * One employee's khata (or whole wallet) as a statement PDF.
+ * One employee's book (or whole wallet) as a report PDF.
  *
  * Sits under `khata.manage` with the rest of the operator views rather than
  * behind the export grant: this is one person's book laid out for reading, not
@@ -2399,8 +3685,10 @@ async function streamStatement(req, res, employeeId) {
  * exists to gate.
  * @route GET /api/khata/employees/:employeeId/statement.pdf  (khata.manage)
  * @param {string} [req.query.khata] - one expense book; omitted prints every book
- * @param {string} [req.query.from] - inclusive
- * @param {string} [req.query.to] - inclusive
+ * @param {string} [req.query.report] - entries|daywise|category
+ * @param {string} [req.query.bills] - '1' to embed the bills (entries only)
+ * @param {string} [req.query.from] [req.query.to] - inclusive; plus every filter
+ *   in parseEntryFilters
  * @returns {binary} application/pdf
  */
 const statementPdf = asyncHandler(async (req, res) => {
@@ -2411,17 +3699,158 @@ const statementPdf = asyncHandler(async (req, res) => {
 });
 
 /**
- * The same statement, for the signed-in employee's own khatas.
+ * The same report, for the signed-in employee's own books.
  *
  * No permission beyond being logged in: it is their money and their bills, and
  * the employee id is taken from the token rather than the URL so there is
- * nothing to tamper with.
+ * nothing to tamper with. `asSelf` additionally lets them report on a book a
+ * colleague shared with them, which is the whole point of having accepted it.
  * @route GET /api/khata/me/statement.pdf
  * @returns {binary} application/pdf
  */
 const myStatementPdf = asyncHandler(async (req, res) => {
-  await streamStatement(req, res, req.user._id);
+  await streamStatement(req, res, req.user._id, { asSelf: true });
 });
+
+/**
+ * The same filtered rows as the PDF, as a spreadsheet.
+ *
+ * NO EXPORT GRANT. `khataExportAccess` exists to gate walking out with the whole
+ * company's ledger as a file (see reports/export); this is one person's own
+ * book, which they can already read on the screen and print as a PDF. Gating it
+ * would stop somebody exporting their own spending while leaving the PDF of the
+ * identical rows one click away — a rule that protects nothing and only teaches
+ * people to work around it.
+ *
+ * One sheet, a header block naming what was asked for, the rows, and a bold
+ * total. Money goes in as NUMBERS with a format on them, never as strings: a
+ * spreadsheet whose figures cannot be summed is a picture of a spreadsheet.
+ * @route GET /api/khata/me/report.xlsx
+ * @param {string} [req.query.khata] - a book id, 'wallet', or omitted for every book
+ * @param {string} [req.query.report] - carried for symmetry; the sheet is the same rows
+ * @param {string} [req.query.from] [req.query.to] [req.query.q] [req.query.status]
+ *   [req.query.movement] [req.query.direction] [req.query.category] [req.query.paymentMode]
+ * @returns {binary} An .xlsx stream.
+ */
+const myReportXlsx = asyncHandler(async (req, res) => {
+  const {
+    employee, profile, khata, ownerName, rows, from, to, opening, summary,
+  } = await gatherReport(req, res, req.user._id, { asSelf: true });
+
+  const MONEY = '#,##0.00';
+  const IST = 'Asia/Kolkata';
+  const fmtDay = new Intl.DateTimeFormat('en-GB', { timeZone: IST, day: '2-digit', month: 'short', year: 'numeric' });
+  // 12-hour, like every other time-of-day in the portal.
+  const fmtClock = new Intl.DateTimeFormat('en-IN', { timeZone: IST, hour: '2-digit', minute: '2-digit', hour12: true });
+  const day = (d) => (d ? fmtDay.format(new Date(d)) : '');
+  const clock = (d) => (d ? fmtClock.format(new Date(d)) : '');
+
+  // Only 'Approved' is money — the same rule the PDF and the app use. Rejected,
+  // reversed and still-waiting rows are LISTED (with their status in its own
+  // column) and added into nothing.
+  const counts = (e) => e.status === 'Approved';
+  const totalIn = ledger.round2(rows.filter((e) => counts(e) && e.direction === 'to_employee')
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0));
+  const totalOut = ledger.round2(rows.filter((e) => counts(e) && e.direction === 'from_employee')
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0));
+  const closing = ledger.round2(opening + totalIn - totalOut);
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Sequence - HRMS';
+  wb.created = new Date();
+
+  const ws = wb.addWorksheet('Cashbook');
+  ws.columns = [
+    { width: 13 }, { width: 10 }, { width: 22 }, { width: 16 }, { width: 40 },
+    { width: 16 }, { width: 11 }, { width: 14 }, { width: 14 }, { width: 14 },
+    { width: 16 }, { width: 20 }, { width: 8 },
+  ];
+
+  /** A "Label: value" line in the header block, label bold. */
+  const heading = (label, value) => {
+    const row = ws.addRow([label, value]);
+    row.getCell(1).font = { bold: true };
+    return row;
+  };
+
+  const who = `${employee.firstName} ${employee.lastName || ''}`.trim();
+  const title = ws.addRow([khata ? khata.name : `${who} — all books`]);
+  title.font = { bold: true, size: 14 };
+
+  heading('Employee', [who, profile?.employeeCode, profile?.designation].filter(Boolean).join(' · '));
+  if (khata) heading('Book', [khata.name, ownerName && `kept by ${ownerName}`].filter(Boolean).join(' · '));
+  // The ACTUAL span when none was asked for, never "All time" — a document has
+  // to say which days it covers, and the rows already know.
+  heading('Duration', rows.length
+    ? `${day(from || rows[0].date)} to ${day(to || rows[rows.length - 1].date)}`
+    : 'No entries match these filters');
+  // Everything else the person narrowed to, so a sheet mailed on cannot be read
+  // as the whole book.
+  for (const f of summary) heading(f.label, f.value);
+  heading('Total cash in', totalIn).getCell(2).numFmt = MONEY;
+  heading('Total cash out', totalOut).getCell(2).numFmt = MONEY;
+  heading('Final balance', closing).getCell(2).numFmt = MONEY;
+  ws.addRow([]);
+
+  const head = ws.addRow([
+    'Date', 'Time', 'Book', 'Reference', 'Details', 'Category', 'Mode',
+    'Cash in', 'Cash out', 'Balance', 'Status', 'Added by', 'Bill',
+  ]);
+  head.font = { bold: true };
+  head.alignment = { vertical: 'middle' };
+  head.height = 20;
+  head.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFD4D4D8' } } };
+  });
+  // Freeze everything above the table as well as the header itself, so scrolling
+  // a long book never loses which book it is.
+  ws.views = [{ state: 'frozen', ySplit: head.number }];
+
+  const firstDataRow = head.number + 1;
+  for (const e of rows) {
+    const row = ws.addRow([
+      day(e.date),
+      clock(e.date),
+      e.khataName || '',
+      e.referenceNo || e.code || '',
+      e.purpose || '',
+      e.category || '',
+      e.paymentMode || '',
+      counts(e) && e.direction === 'to_employee' ? e.amount : null,
+      counts(e) && e.direction === 'from_employee' ? e.amount : null,
+      // The person's running balance as it stood after this row — a historical
+      // fact stamped on the entry, not a figure re-derived here. Blank on a row
+      // that never moved money, because there is no "after".
+      counts(e) ? e.walletBalanceAfter : null,
+      STATUS_WORDS[e.status] || e.status,
+      e.byName || '',
+      e.hasAttachment ? 'Yes' : '',
+    ]);
+    [8, 9, 10].forEach((c) => { row.getCell(c).numFmt = MONEY; });
+  }
+
+  if (rows.length) {
+    const last = firstDataRow + rows.length - 1;
+    // Addressed by column letter and summed in the sheet rather than written as
+    // a constant, so somebody who deletes a row sees the total follow.
+    const totals = ws.addRow(['', '', '', '', 'Total', '', '',
+      { formula: `SUM(H${firstDataRow}:H${last})` },
+      { formula: `SUM(I${firstDataRow}:I${last})` },
+      closing, '', '', '']);
+    [8, 9, 10].forEach((c) => { totals.getCell(c).numFmt = MONEY; });
+    totals.font = { bold: true };
+    totals.eachCell((cell) => { cell.border = { top: { style: 'thin', color: { argb: 'FFD4D4D8' } } }; });
+  }
+
+  const slug = reportSlug(khata ? khata.name : `${employee.firstName}-all-books`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="cashbook-${slug}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
+});
+
+// ============================ Receipts ============================
 
 /**
  * Stream an entry's receipt.
@@ -2433,7 +3862,7 @@ const myStatementPdf = asyncHandler(async (req, res) => {
  * @returns {binary} 403 if not allowed, 404 if missing.
  */
 const getReceipt = asyncHandler(async (req, res) => {
-  const entry = await KhataEntry.findById(req.params.id).select('attachment employee');
+  const entry = await KhataEntry.findById(req.params.id).select('attachment employee expenseBook');
   if (!entry || !entry.attachment?.storagePath) bad(res, 'Receipt not found', 404);
 
   const isOwner = String(entry.employee) === String(req.user._id);
@@ -2441,7 +3870,21 @@ const getReceipt = asyncHandler(async (req, res) => {
   // another company's receipts.
   const isManager = (hasPermission(req.user, 'khata.manage') || ['CEO', 'MD'].includes(req.user.role))
     && !(await cannotSeeUser(req, entry.employee));
-  if (!isOwner && !isManager) bad(res, 'Not allowed', 403);
+
+  // A COLLABORATOR ON THE BOOK MAY READ THE BOOK'S BILLS. Without this the
+  // three read paths disagreed: a member could see the row in the feed and
+  // could pull every bill on it through the report PDF, but tapping "View
+  // bill" on the same row came back 403. A shared book means shared evidence —
+  // the whole point of adding somebody to a site book is that they can see
+  // what the site cost and check it — so the row-level view matches what the
+  // report already hands them. Read access only; nothing here lets a member
+  // change a row that is not theirs.
+  const isBookMember = !isOwner && !isManager && entry.expenseBook
+    ? !!(await EmployeeKhata.findById(entry.expenseBook)
+      .select('employee members isActive'))?.canView(req.user._id)
+    : false;
+
+  if (!isOwner && !isManager && !isBookMember) bad(res, 'Not allowed', 403);
 
   if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
   if (!(await storage.streamTo(entry.attachment.storagePath, res))) bad(res, 'Receipt file missing', 404);
@@ -2449,7 +3892,14 @@ const getReceipt = asyncHandler(async (req, res) => {
 
 module.exports = {
   // employee self-service
-  getMyKhata, requestAdvance, recordMyExpense, updateMyExpense, declareSettlement, requestReimbursement,
+  getMyKhata, getMyBook, requestAdvance, recordMyExpense, recordMyRefund, updateMyExpense,
+  declareSettlement, requestReimbursement,
+  // sharing a book with a colleague
+  updateMyKhata, addKhataMembers, setKhataMemberRole, removeKhataMember,
+  respondToBookInvite, listColleagues,
+  // the one filter parser behind every list, total and export — exported so a
+  // test (or a future endpoint) can build the same filter without a request
+  parseEntryFilters,
   // operator lists
   overview, listMyAccounts, listKhatas, getKhata, employeeOptions, listEntries, listPending,
   // executive sanction
@@ -2459,7 +3909,7 @@ module.exports = {
   // settings
   createKhata, createMyKhata, updateKhataSettings, updateWalletSettings, recomputeWallet,
   // reports
-  outstandingReport, sendSettleReminders, exportExcel, statementPdf, myStatementPdf,
+  outstandingReport, sendSettleReminders, exportExcel, statementPdf, myStatementPdf, myReportXlsx,
   // account operators
   listOperators, setOperators,
   // receipts

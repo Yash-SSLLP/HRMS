@@ -345,7 +345,7 @@ function canExportKhata(user) {
 const requireKhataExport = (req, res, next) => {
   if (canExportKhata(req.user)) return next();
   res.status(403);
-  return next(new Error('You do not have permission to download the khata. Ask a Super Admin to grant it.'));
+  return next(new Error('You do not have permission to download the cashbook. Ask a Super Admin to grant it.'));
 };
 
 /**

@@ -1,27 +1,36 @@
-# Employee Khata — one advance wallet per person, and the books they spend it under
+# Employee Cashbook — one advance wallet per person, and the books they spend it under
 
-Khatabook-style cash accounting between the company and each member of staff.
+CashBook-app-style cash accounting between the company and each member of staff.
 The company advances money into an employee's **wallet**; the employee then
-records what they spent it on against whichever **khata** (expense book) the
-spend belongs to. What is left over is one figure, and it reads the same
-whichever book you have open.
+records what they spent it on against whichever **book** — a named expense
+heading — the spend belongs to. What is left over is one figure, and it reads
+the same whichever book you have open.
 
-**One wallet. Many khatas.** A site supervisor holds one advance and files their
+**One wallet. Many books.** A site supervisor holds one advance and files their
 purchases under "Site A — materials", "Vehicle & fuel", "Client hospitality".
 The books say what the money went *on*; the wallet says how much is *left*.
 
-It sits **on top of** the existing cashbook rather than replacing it. The
-cashbook answers *"how much is in the tin?"*. The wallet answers *"how much is
-Rahul holding right now?"* — a question the cashbook could never answer, because
-there a payout is just a flat line with a party name on it. The khatas answer
-*"and what did he spend it on?"*.
+> **On the word "khata".** The module was built as *Employee Khata* and every
+> identifier still says so: the model `EmployeeKhata`, the routes under
+> `/api/khata`, the permission `khata.manage`, the `?khata=` query parameter,
+> the `khataAccess` flag. **Nothing a human reads says it any more.** A *khata*
+> is a **book**; the module as a whole is the **cashbook**. This document uses
+> the reader's words in prose and the code's words in backticks, and the two are
+> deliberately allowed to differ — renaming the wire would have been a migration
+> across two clients and a live database in exchange for nothing anybody sees.
 
-> **Why it works this way.** Advances used to be given to a *specific khata*, so
+It sits **on top of** the company cashbook rather than replacing it. The company
+cashbook answers *"how much is in the tin?"*. The wallet answers *"how much is
+Rahul holding right now?"* — a question the company cashbook could never answer,
+because there a payout is just a flat line with a party name on it. The books
+answer *"and what did he spend it on?"*.
+
+> **Why it works this way.** Advances used to be given to a *specific book*, so
 > an employee with three books had three separate pots and had to ask for money
 > against the right one — and could be flush on one while unable to spend on
 > another. That is not how carrying cash works: notes in a pocket are fungible,
 > and only the *reason* they were spent needs separating. So the balance moved
-> to the wallet and the khata kept the categorisation, which was the genuinely
+> to the wallet and the book kept the categorisation, which was the genuinely
 > useful half. See **Migration** below.
 
 ---
@@ -39,18 +48,25 @@ direction of the money is the only thing that sets the sign:
 A negative wallet means the employee spent past their advance, so the company
 owes them the difference.
 
-`type` (`advance`, `settlement`, `expense`, `reimbursement`, `salary_recovery`,
-`opening`, `reversal`, `other`) is a reporting label and never changes the
-arithmetic — but it *does* decide which book a row is filed under:
+The **movement** (`advance`, `settlement`, `expense`, `refund`, `reimbursement`,
+`salary_recovery`, `opening`, `reversal`, `other`) is a reporting label and never
+changes the arithmetic — but it *does* decide which book a row is filed under:
 
-| `type` | `khata` | Because |
+| Movement | Book | Because |
 |---|---|---|
 | `expense` | **required** | Spending is the thing that needs a heading. |
+| `refund` | **required** | Money coming back is the mirror of the spending it undoes, so it belongs under the same heading. See **Cash In on a book** below. |
 | everything else | `null` | An advance, a return, a reimbursement or a payroll recovery moves the pot itself and belongs to no one book. |
 
-`KhataEntry.balanceAfter` is therefore always the **wallet** balance after that
-row, even on a row filed under a khata — the wallet is the only thing that has a
-balance.
+> The field is `movement` on `CashbookEntry`. It was `type` on the legacy
+> `KhataEntry`, and `type` on the current model means something else entirely —
+> the company's own `'in'`/`'out'` view — so a filter written as
+> `type: 'expense'` matches nothing at all. The two movements filed under a book
+> are `khataLedger.BOOK_MOVEMENTS`; ask that, never a hand-written list.
+
+`KhataEntry.balanceAfter` — `walletBalanceAfter` on the current
+`CashbookEntry` — is therefore always the **wallet** balance after that row, even
+on a row filed under a book. The wallet is the only thing that has a balance.
 
 The words "debit" and "credit" appear nowhere in the UI. Both apps take their
 wording from the server (`describeBalance` / `describeWalletForEmployee`) so
@@ -62,7 +78,7 @@ they cannot drift apart on the most confusable thing in the module.
    change the employee's whole ledger is replayed from the opening balance
    (`replayBalance` → `recomputeWalletBalance`), so a back-dated entry also
    re-stamps every later running balance.
-2. **The books add up to the pot.** A khata's `spent` is replayed from the same
+2. **The books add up to the pot.** A book's `spent` is replayed from the same
    rows (`recomputeKhataSpent`), so "what is left" and "what it went on" can
    never tell two different stories. Both are driven from one call,
    `recomputeFor(entry)`, so a new posting path cannot update one and forget the
@@ -99,13 +115,13 @@ the cost back off the book it was charged to, and both rows stay on the record.
 The employee is told it was *rejected* rather than *reversed*, because from
 their side nobody ever approved it.
 
-Any khata operator may reject one, not just a SuperAdmin. An expense
+Any cashbook operator may reject one, not just a SuperAdmin. An expense
 self-approves, so this reversal **is** the company's review of it; reserving it
 for a SuperAdmin would leave the accounts team watching wrong entries they could
 not correct. Safe because no company cash moves either way — it only restores
 the employee's wallet.
 
-Find them under **Admin → Employee Khata → Approvals → Expenses to confirm**
+Find them under **Admin → Employee Cashbook → Approvals → Expenses to confirm**
 (they never reach `/pending`, having never been pending). Rows with no bill are
 flagged there, since that should not be possible through either client.
 
@@ -180,7 +196,7 @@ Both apps say so on the form, in plain words, before the employee submits.
 Captured on FILING only — a later correction does not overwrite it, since the
 question it answers is where the expense was originally declared.
 
-## Closing a khata is the company's act
+## Closing a book is the company's act
 
 Only `khata.manage` can close a book (`PUT /khatas/:khataId`, `isActive:false`).
 There is no self-service equivalent anywhere in the API or either client, and
@@ -271,7 +287,7 @@ not answer it.
 
 Holding the capability opens the module. It pays nobody on its own.
 
-**Gate 1 — `khata.manage`** opens the khata screens. Granted by: SuperAdmin
+**Gate 1 — `khata.manage`** opens the cashbook screens. Granted by: SuperAdmin
 (implicitly), AccountsManager (by role), an HR Manager or Manager holding the
 capability, or **anyone at all** via the standalone `User.khataAccess` flag — so
 the branch supervisor who actually hands out cash needs no admin role.
@@ -293,9 +309,9 @@ is what makes a newly created account usable before anyone is listed on it.
 So: *Amit can pay ₹5,000 out of Petty Cash directly, anything larger goes for
 approval, and he cannot touch the Main Bank account at all.*
 
-Managed at **Admin → Employee Khata → Accounts** (SuperAdmin only).
+Managed at **Admin → Employee Cashbook → Accounts** (SuperAdmin only).
 
-**Gate 4 — `User.khataExportAccess`** decides who may *download* the khata. The
+**Gate 4 — `User.khataExportAccess`** decides who may *download* the cashbook. The
 **Export to Excel** buttons (Overview and Ledger tabs) and
 `GET /reports/export` need it on top of Gate 1. **No role confers it** — not
 Accounts Manager, not an HR Manager with every capability. Only a SuperAdmin
@@ -317,25 +333,29 @@ no free pass on the GET either.
 
 | Rule | Why |
 |---|---|
-| Names are unique per employee | "Site A" must mean one thing for one person. A duplicate is rejected, not silently created alongside. |
-| Exactly one `isDefault` book | Where an expense lands when no book is named. Opened lazily as **"General"** on first use, so an employee can file a purchase before anyone has organised anything. |
+| Names are unique per **owner** | "Site A" must mean one thing for one person. A duplicate is rejected, not silently created alongside. Two different people may each have a "Site A" and that is fine — the unique index is `{ employee, name }`, the owner's own namespace, not the company's. |
+| Exactly one `isDefault` book | Where an expense lands when no book is named. Opened lazily as **"General"** on first use, so an employee can file a purchase before anyone has organised anything. `isDefault` only ever means something on your *own* books — a book shared with you is nobody's default but its owner's. |
 | A book **with spend on it can** be closed | `spent` is history, not an outstanding amount, and the money itself is on the wallet where closing a folder cannot hide it. (This is the opposite of the old rule, and the reason the old rule existed is gone.) |
 | The default book cannot be closed | Self-service would have nowhere to file an expense. Promote another book first. |
-| An entry naming another employee's book is refused | Without this check, a request carrying somebody else's khata id would file one person's spending under another person's book. |
+| An entry naming a book you are not on is refused | Without this check, a request carrying somebody else's book id would file one person's spending under another person's book. Being *invited* to a book is not being on it either — the invitation has to be accepted first. See **Sharing a book with a colleague** below. |
 
 `spent` is a running **total**, not a balance: what this heading has cost. It is
 a cache, replayed from the ledger, and it goes down only when a row filed under
 it is reversed.
 
-`recomputeKhataSpent` filters on **type**, counting only spending and the
-reversals that cancel it, rather than summing everything in the book. A book can
-still contain rows that do not belong to it — a database migrated from the
-per-khata era has advances and settlements filed under one, and the module has
-to read correctly before anybody runs the migration. An advance counted there
-comes out *negative* under the sign flip and prints as "-₹4,500 spent", which is
-not a thing that can happen to a cost.
+`recomputeKhataSpent` filters on **movement** — `BOOK_MOVEMENTS` plus the
+`reversal`s that cancel them, so spending, the refunds that come back off it and
+nothing else — rather than summing everything in the book. A book can still
+contain rows that do not belong to it: a database migrated from the days of
+per-book advances has advances and settlements filed under one, and the module
+has to read correctly before anybody runs the migration. An advance counted
+there comes out *negative* under the sign flip and prints as "-₹4,500 spent",
+which is not a thing that can happen to a cost.
 
-**Both sides can open a book.** A khata operator opens one for anybody
+It queries by `expenseBook` alone and never by employee, which is what lets a
+**shared** book total every contributor's spending without a line of extra code.
+
+**Both sides can open a book.** A cashbook operator opens one for anybody
 (`POST /khatas`); an employee opens one on their own account
 (`POST /me/khatas`, capped at 25). Deciding that spending needs its own heading
 is part of doing the job, and a book holds no money — so it needs no approval and
@@ -347,6 +367,159 @@ carries no limit of its own.
 show `get` and `give` side by side. One person holding ₹5,000 of our cash while
 the company owes somebody else ₹2,000 is two separate facts; collapsing that to
 "₹3,000 receivable" is how a company forgets to pay somebody back.
+
+---
+
+## Sharing a book with a colleague
+
+A book is a heading, and headings are shared work. Two people fitting out the
+same site both buy things for it, and until now each had to keep a private book
+with the same name — so "Site A" cost whatever was in *your* Site A, the real
+figure lived in somebody's head, and the only way to see it was to open two
+statements and add them up by hand.
+
+The owner of a book can now invite colleagues onto it.
+
+**The owner is `EmployeeKhata.employee` and is never a member row.** There is
+exactly one owner; they cannot be removed and cannot leave. Everybody else is a
+row in `members[]`, carrying a role and a standing:
+
+| Role | May |
+|---|---|
+| **Can add entries** (`operator`) | File their own spending and refunds into the book, and read everyone's. |
+| **Can only view** (`viewer`) | Read the book and download its reports. Posts nothing. |
+
+| Standing | Means |
+|---|---|
+| `invited` | Asked, not answered. They see the invitation; they do not see the book. |
+| `accepted` | In. |
+| `declined` | Said no. The row is kept rather than deleted, so a second invitation flips it back to `invited` instead of piling duplicates up in the array. `ChatGroup` handles its own invitations exactly this way, and the two invite flows behaving alike is worth more than a tidier array. |
+
+Membership is asked for and answered, never assigned. An owner adding somebody
+creates an `invited` row and a notification; the colleague accepts or declines
+from their own screen. Nobody wakes up responsible for a book they never agreed
+to keep.
+
+**An invitation is not a book.** `GET /me` serves pending ones in their own
+`invites[]` array rather than folding them into `khatas[]`, because a book you
+have been *offered* is not a book you can file into, and a client that treated
+the two alike would happily post an expense into a book its owner is still
+waiting to hear about.
+
+### The rule everything else rests on: a collaborator spends their own money
+
+**A book is a folder for spending, not a pot of money.** What an operator files
+into somebody else's book comes out of **their own wallet** — never the owner's.
+The owner's advance stays the owner's, the guest's advance stays the guest's,
+and the book totals both, because what a book is *for* is answering "what has
+Site A cost?" — a question that does not care whose pocket each note came out
+of.
+
+This is why sharing needed no new money code at all:
+
+* `recomputeKhataSpent` has always queried by `expenseBook` alone, so a shared
+  book's `spent` already totals every contributor.
+* The wallet replay has always keyed on the person on the row, so a guest's
+  spending has always landed on the guest's wallet.
+* `resolveKhata` decides only *which book may be named*; the entry is still
+  posted against the poster's own employee id.
+
+Nothing about the arithmetic changed. Only who is allowed to file changed.
+
+It is also why an invitation needs no approval from finance. Inviting somebody
+onto a book hands them no money and costs the owner nothing; the worst that can
+happen is spending filed under the wrong heading — a data error, correctable,
+and carrying the name of whoever made it.
+
+### Sharing is the one form of access nobody in the company grants
+
+Every other door in this module is opened by somebody with authority:
+`khata.manage`, the standalone `khataAccess` flag, `khataExportAccess`, the
+CEO/MD sanction. This one is opened by the owner of the book and by nobody
+else — not a SuperAdmin, not the accounts team, not the owner's manager.
+
+That is why the collaborator routes sit **above**
+`router.use(requirePermission('khata.manage'))` in `khataRoutes.js`, among the
+other `/me` self-service routes, and why their checks are per book
+(`khata.canView` / `khata.canPost`) rather than per role. There is no permission
+to hold, so there is no permission to check.
+
+The **company wall still applies, and applies on the write**: the ids sent to
+`POST /me/khatas/:id/members` are re-read through `scopeUserFilter` before
+anything is saved, exactly as `chatController.createGroup` does it, so an id
+pasted in by hand cannot reach somebody in another company. Departed people are
+filtered out of the colleague picker for the same reason.
+
+A book caps at **10 members**, checked up front so the call is all-or-nothing. A
+half-applied invitation list — four in, three rejected, no way to tell which
+from the response — is worse than a refusal.
+
+### Removing somebody never touches their entries
+
+The owner may remove anyone; a member may remove only themselves, which is
+leaving. Either way, the rows that person filed **stay on the book, with their
+name still on them**.
+
+That is a decision, not an oversight. Money that was spent was spent: lifting
+their entries out would change what the book cost and would silently push that
+spending back onto a wallet with no claim to it. Access and history are separate
+questions and only access is being withdrawn. A former collaborator loses the
+book from their list and can no longer post into it; their name goes on reading
+"Added by" for as long as the book exists, which is exactly what an audit of the
+book's figures needs.
+
+The owner cannot be removed at all, by anybody. There would be nobody left who
+could rename the book, answer for its figures, or be asked to close it.
+
+---
+
+## Cash In on a book — the `refund` movement
+
+A book only ever went one way. Every movement filed under one was an `expense`,
+so a book could grow, and could be corrected by reversal, but nothing could come
+*back* into it — and both clients carried a **Cash In** button on a book with
+nothing honest to put behind it.
+
+Real spending goes both ways. A supplier refunds a cancelled order, a hotel
+booking is dropped, unused material goes back to the yard. Before `refund` there
+were two ways to record that and both were wrong:
+
+* **Reverse the original expense.** Correct only when the expense should never
+  have been recorded at all. A refund is a *later, separate event*; reversing
+  the purchase erases the fact that it happened, and the ledger stops telling
+  the truth about what was bought.
+* **File it as a `settlement`.** That means "I am handing unspent cash back to
+  the company". It moves the wallet and belongs to **no book**, so the site is
+  left carrying the full cost of goods it does not have.
+
+`refund` is the exact mirror of `expense`: the same book, the same mandatory
+bill, the same post-on-the-spot-and-review-afterwards rule, the same editing
+window until the company confirms it — and the opposite direction.
+
+| Movement | Direction | Book | Wallet |
+|---|---|---|---|
+| `expense` | `from_employee` | `spent` rises | falls — they are holding less |
+| `refund` | `to_employee` | `spent` falls | rises — the notes are back in their pocket |
+
+**The arithmetic needed no change whatsoever.** `recomputeKhataSpent` sums
+`-signedAmount(e)` over the book's rows, and `signedAmount` is already `+amount`
+for `to_employee` and `−amount` for `from_employee`, so a refund comes off
+`spent` on its own — from code written long before refunds existed. The only
+edit was the *filter*: `BOOK_MOVEMENTS = ['expense', 'refund']` in
+`services/khataLedger.js`, now the single answer to "is this a movement filed
+under a book?", asked by `needsKhata`, by `recomputeKhataSpent` (paired with
+`'reversal'`) and by `expenseEditability`.
+
+A refund with **no book named is refused**, not defaulted. A refund is defined
+by the heading the money comes back to; without one it is a `settlement`, and
+quietly crediting "General" would refund a book that never paid for the thing.
+
+> `spent` can therefore go **negative** on a book refunded more than it was ever
+> charged. That is a real state and prints as one. It is not the same as the
+> negative `spent` described under **Migration** below, which means advances are
+> still filed under books and the migration has not been run.
+
+---
 
 ## Guard rails
 
@@ -377,14 +550,29 @@ Mounted at `/api/khata`. All routes authenticated.
 
 | Route | Purpose |
 |---|---|
-| `GET /me` | My wallet, my books (each with its `spent`), the totals (including `claimable`), one statement, and whether a request will need a CEO/MD sanction |
+| `GET /me` | My wallet, my books (owned **and** shared with me, each with its `spent`, owner and member count), the invitations waiting on me, the totals (including `claimable`), one statement, and whether a request will need a CEO/MD sanction |
+| `GET /me/books/:id` | One book opened — its members, the filtered entry feed (**every** contributor's rows, not just mine), the summary card's totals over the whole filtered set, and `canPost`. `:id` may be the literal `wallet`, meaning every row on my wallet, filed or not |
 | `POST /me/request` | Ask for an advance into my wallet — no `khata`, there is one pot |
 | `POST /me/expense` | Log what I spent it on — `khata` **required**, receipt **required**. Posts immediately |
+| `POST /me/refund` | Money that came **back** into a book — `khata` **required**, receipt **required**. The mirror of `/me/expense` and posts the same way |
 | `PUT /me/expenses/:id` | Correct one of mine the company has not confirmed yet — amount, purpose, book, date, mode, and optionally a replacement bill. Refused once it is confirmed or its book is closed |
 | `POST /me/settle` | Declare unspent cash returned — no `khata`, optional receipt |
 | `POST /me/reimbursement` | Claim back what the company owes, when the wallet has gone negative. Amount defaults to everything outstanding and is capped at `totals.claimable` |
 | `POST /me/khatas` | Open an expense book on my own account |
-| `GET /me/statement.pdf` | My khata as a printable statement, bills bound in (`?khata=` narrows it). The employee id comes from the token, never the URL |
+| `PUT /me/khatas/:id` | Rename or re-note a book I own. **Not** `isActive` — closing stays the company's act |
+| `GET /me/statement.pdf` | A printable report of my cashbook — `?report=entries\|daywise\|category`, `?bills=1`, and every filter in **Reports** below (`?khata=` narrows it to one book). The employee id comes from the token, never the URL |
+| `GET /me/report.xlsx` | The same filtered rows as a spreadsheet. **No** `khataExportAccess` — it is the caller's own book, not the company's ledger |
+
+**Book sharing** — owner or member of the book in question; **no permission of
+any kind**, see *Sharing a book with a colleague* above
+
+| Route | Purpose |
+|---|---|
+| `GET /me/colleagues` | The people I may invite — my own company, departed staff and myself excluded |
+| `POST /me/khatas/:id/members` | Invite up to 10 people onto a book I own, as `operator` or `viewer`. All-or-nothing |
+| `PATCH /me/khatas/:id/members/:userId` | Change a member's role. Owner only. `:userId` is the **user** id — member sub-documents carry no `_id` of their own |
+| `DELETE /me/khatas/:id/members/:userId` | Remove somebody, or leave a book myself. Never touches their entries |
+| `PATCH /me/book-invites/:khataId` | `{ action: 'accept' \| 'decline' }` on an invitation addressed to me |
 
 **Advance sanction** — SuperAdmin / CEO / MD only, **no** `khata.manage` needed
 
@@ -402,12 +590,12 @@ Mounted at `/api/khata`. All routes authenticated.
 | `GET /employee-options` | Thin employee picker (no salary or personal data) |
 | `GET /employees` | One row per person — their wallet plus their books |
 | `GET /employees/:id` | One person's wallet, books and statement (`?khata=` narrows it) |
-| `GET /employees/:id/statement.pdf` | The same book as a **printable statement PDF** with every photo bill embedded — `?khata=`, `?from=`, `?to=`. **Not** behind `khataExportAccess`: that gate is about walking out with the whole ledger as data, this is one person's book laid out to be read |
+| `GET /employees/:id/statement.pdf` | The same book as a **printable report PDF** with the photo bills embedded — `?report=`, `?khata=`, `?from=`, `?to=` and the rest of the filters. **Not** behind `khataExportAccess`: that gate is about walking out with the whole ledger as data, this is one person's book laid out to be read |
 | `PUT /wallets/:employeeId` | Advance limit and note (opening balance ⇒ SuperAdmin) |
 | `POST /khatas` | Open a new named expense book for someone |
 | `PUT /khatas/:khataId` | Rename, note, make default, close / re-open |
-| `POST /entries` | Give an advance, record cash back, or file an expense (`type: 'expense'` ⇒ `khata` required) |
-| `GET /entries` · `GET /pending` | Ledger · the accounts team's queue. `?confirmed=false` on `/entries` is the expenses-to-confirm queue |
+| `POST /entries` | Give an advance, record cash back, or file an expense or a refund (either of those ⇒ `khata` required) |
+| `GET /entries` · `GET /pending` | Ledger · the accounts team's queue. `?confirmed=false` on `/entries` is the expenses-to-confirm queue. Filter the movement with `?movement=`; `?type=` still works and takes either a movement or the company's `in`/`out` view |
 | `PATCH /entries/:id/approve` · `/reject` | Release · decline (approve needs `canApprove`) |
 | `PUT /entries/:id` | Correct an unconfirmed expense on the employee's behalf — including one in a closed book, which the employee can no longer touch |
 | `PATCH /entries/:id/confirm` | Accept a posted expense. Moves no money; **locks** the row against further edits on both sides |
@@ -423,25 +611,56 @@ backup).
 
 ---
 
-## The statement PDF
+## Reports — three documents, one filter
 
-`services/cashbookSummaryPdf.js`. The `.xlsx` export answers *"give me the
-data"*; this answers *"show this to the person who paid for it"* — a
-day-by-day statement with **every photo bill bound in behind it**, so the
-document still works once it has been emailed, printed, or opened next year.
+The `.xlsx` export answers *"give me the data"*; the PDFs answer *"show this to
+the person who paid for it"* — laid out to be read, so the document still works
+once it has been emailed, printed, or opened next year.
 
-Reachable from the web and the mobile app alike, all producing the same
-document:
+There are three of them, chosen with `?report=`:
 
-* **Admin → Khata → People → someone** — *Statement PDF* on the person (every
-  book, or whichever one is currently being viewed), or on any khata card. A
-  small dialog asks for an optional date range first.
-* **My Khata → Statement → Download PDF** — an employee's own books, no extra
-  permission. The employee id comes from the token, so there is nothing in the
-  URL to tamper with.
+| `?report=` | The document | Renderer |
+|---|---|---|
+| `entries` (default) | **All entries** — one row per entry, oldest first, with the running balance and the bill thumbnails inline | `services/cashbookEntriesPdf.js` |
+| `daywise` | **Day-wise summary** — one row per IST calendar day: how many entries, cash in, cash out, closing balance | `services/cashbookEntriesPdf.js` |
+| `category` | **Category-wise summary** — what each heading cost | `services/cashbookSummaryPdf.js` |
+
+`GET /me/report.xlsx` is the same filtered rows as a spreadsheet: one sheet named
+`Cashbook`, a header block repeating the employee, the book, the duration and
+the totals, then the table, then a bold `SUM()` line. Money goes in as
+**numbers** with a `#,##0.00` format, never as strings, because a spreadsheet
+whose figures cannot be added up is a screenshot with extra steps.
+
+### What you see is what you export
+
+Every filter — `khata`, `from`, `to`, `q`, `status`, `movement`, `direction`,
+`category`, `paymentMode`, `sort` — is read by **one** exported helper,
+`parseEntryFilters(query)` in the controller, and that one helper sits behind the
+on-screen feed, the summary card, all three PDFs and the spreadsheet. Add a
+filter there and nowhere else. The moment two layers parse the same query string
+separately, a downloaded report starts quietly disagreeing with the screen it was
+downloaded from, and there is no worse bug to have on a document about money.
+
+Which filters were applied is **printed on the document**, under the duration
+box, for the same reason: two downloads of one book must never look identical
+and carry different figures.
+
+Only `status === 'Approved'` counts toward any total, on every one of them.
+Rejected and Reversed rows are still *listed* — financial history is never
+hidden — struck through, and counted nowhere.
+
+Reachable from the web and the mobile app alike:
+
+* **Admin → Employee Cashbook → People → someone** — *Statement PDF* on the
+  person (every book, or whichever one is currently being viewed), or on any
+  book card. A small dialog asks for the report type and an optional date range
+  first.
+* **My Cashbook → Statement → Download PDF / Download Excel** — an employee's own
+  books, no extra permission. The employee id comes from the token, so there is
+  nothing in the URL to tamper with.
 * **Mobile, same two places** — the *Statement PDF* button on a person and on
-  each khata card in the admin screen, and the *PDF* action on the Statement
-  header in My Khata. The file goes straight to the OS share sheet, so it can be
+  each book card in the admin screen, and *View Reports* on a book in My
+  Cashbook. The file goes straight to the OS share sheet, so it can be
   WhatsApped or emailed from the site without a laptop.
 
 ### Two scopes, one renderer, and why the arithmetic differs
@@ -452,8 +671,16 @@ is only what the running total means:
 
 | Scope | Running total | IN | OUT |
 |---|---|---|---|
-| One khata | what that book has **cost**, cumulatively | a reversal crediting spend back | spending charged to it |
+| One book | what that book has **cost**, cumulatively | a refund coming back, or a reversal crediting spend back | spending charged to it |
 | Whole wallet | the **wallet balance** — company cash still in hand | advances, reimbursements | spending, cash returned |
+
+A **shared** book is scoped by the book alone, so its report covers every
+contributor's rows, not only the reader's. That is deliberate: it is the only
+way the document can agree with the `spent` figure on the card and with the
+on-screen feed, both of which already total the whole book. The per-row Balance
+column is each filer's own wallet balance after their row, so on a shared book
+that column belongs to several different people and is read as history rather
+than as a running total.
 
 In both, a positive running total is **Dr** (the company is owed / out of
 pocket) and a negative one is **Cr**, so the label means one thing everywhere.
@@ -471,16 +698,28 @@ rather than at zero, so consecutive statements join up.
   → `ORG_LOGO_PATH` → the bundled `assets/logo.png`, via `services/branding.js`)
   on a white plate — the plate is there so a dark uploaded logo does not vanish
   into a dark bar.
-* One block per **IST calendar day** with its own IN / OUT / net / running
-  total, and the individual entries nested under it with time (12-hour), payment
-  mode, kind, note, reference code and a bill thumbnail.
-* **Reversed** rows still print, greyed and marked — financial history is never
-  hidden — but they count for nothing; the mirror row is what moves the money.
-* A **receipt page per bill** at the back, numbered `#N` to match the thumbnail,
-  captioned with the entry's date, code and amount. Only JPEG and PNG can be
-  drawn into a PDF, so the bytes are sniffed rather than the stored mime
-  trusted; a PDF bill is noted as *"Bill on file"* instead. `RECEIPT_PAGE_CAP`
-  (60) stops a year of a busy site book building a document nobody can email.
+* A **duration strip** — and when no range was asked for it prints the real
+  first and last entry dates rather than the words "All time", because "All
+  time" tells a reader nothing they can check.
+* **Totals boxes** — Total Cash in, Total Cash out, Final Balance, and a fourth
+  *Awaiting confirmation* box that appears only when there are unconfirmed rows.
+* The **rows**, oldest first — a ledger reads top down, which is the reverse of
+  the on-screen feed. Each carries the date and 12-hour time, the remark, and a
+  small second line with the book, the reference code and *Added by* whoever
+  filed it. That last part is what makes a shared book's report readable.
+* **Rejected and Reversed** rows still print, greyed with the figure struck
+  through — financial history is never hidden — but they count for nothing; on a
+  reversal it is the mirror row that moves the money.
+* **Bill thumbnails** inline in the row, on `?bills=1` and on the *All entries*
+  report only. Only JPEG and PNG can be drawn into a PDF, so the bytes are
+  sniffed rather than the stored mime trusted; a PDF bill prints as a
+  *"bill on file"* note instead. `RECEIPT_PAGE_CAP` (60) and a total byte budget
+  stop a year of a busy site book building a document nobody can email, and
+  whatever they skip is counted and printed under the table rather than silently
+  dropped.
+* Every bill Buffer is read in the **controller**, before the renderer is called.
+  The renderer body is a synchronous Promise executor and cannot await storage,
+  so a bill fetched anywhere else simply does not appear.
 
 ### The footer is SuperAdmin-editable
 
@@ -510,7 +749,7 @@ approval or reimbursement it mirrors.
 > An expense **claim** posts as `settlement`, not `expense`. A claim is money the
 > employee spent out of their *own* pocket, so it is not spending down an
 > advance and belongs in no expense book — filing it as `expense` would demand a
-> khata and would charge a site or a vehicle for something it never paid for.
+> book and would charge a site or a vehicle for something it never paid for.
 > The wallet effect is identical either way.
 
 The two expense legs net to zero. The reimbursement hook posts the approval leg
@@ -519,10 +758,10 @@ as though the employee *owed* what they were just paid back.
 
 > **Known gap.** Payroll deducts an active loan EMI onto the payslip but does not
 > reduce `Loan.balance` — only an explicit repayment does. That is pre-existing
-> loan-module behaviour; the khata mirrors the loan's own balance movements
-> exactly, so it is neither more nor less current than the loan record. A
-> salary-recovered loan stays outstanding in the khata until the repayment is
-> recorded against it.
+> loan-module behaviour; the employee cashbook mirrors the loan's own balance
+> movements exactly, so it is neither more nor less current than the loan
+> record. A salary-recovered loan stays outstanding in the cashbook until the
+> repayment is recorded against it.
 
 ---
 
@@ -556,14 +795,14 @@ reversals, back-dated re-stamping, and the executive sanction gate.
 
 | Layer | Files |
 |---|---|
-| Models | `backend/models/EmployeeWallet.js` (the pot), `EmployeeKhata.js` (the books), `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` on `CashbookEntry.js`; `khataAdvanceApprovalRequired` and `documentFooter` on `Setting.js` |
-| Money rules | `backend/services/khataLedger.js` — the only place balance arithmetic happens |
-| Statement PDF | `backend/services/cashbookSummaryPdf.js` (category-wise summary layout + `summariseByCategory`), `streamStatement` in the controller (gathering the rows) |
+| Models | `backend/models/EmployeeWallet.js` (the pot), `EmployeeKhata.js` (the books, and `members[]` — who else may keep one), `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` and `MOVEMENTS` on `CashbookEntry.js`; `khataAdvanceApprovalRequired` and `documentFooter` on `Setting.js` |
+| Money rules | `backend/services/khataLedger.js` — the only place balance arithmetic happens, and the home of `BOOK_MOVEMENTS` |
+| Report PDFs | `backend/services/cashbookEntriesPdf.js` (all-entries and day-wise layouts + the pure `groupByDay`), `cashbookSummaryPdf.js` (category-wise summary + `summariseByCategory`), `streamStatement` in the controller (choosing the renderer, gathering the rows and reading the bills) |
 | Integrations | `backend/services/khataSync.js` |
 | API | `backend/controllers/khataController.js`, `backend/routes/khataRoutes.js` |
 | Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` and `khataExportAccess` on `User`; `canExportKhata` + `requireKhataExport` + `canApproveAdvances` + `requireAdvanceApprover` in `backend/middleware/authMiddleware.js`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |
 | Web | `frontend/src/pages/AdminKhata.jsx`, `EmployeeKhata.jsx`; the org switch and the statement-footer fields on `AdminPermissions.jsx`; `frontend/src/utils/download.js` |
-| Mobile | `mobile/src/screens/KhataScreen.js`, `mobile/src/screens/admin/KhataAdminScreen.js`; the footer fields on `admin/BrandingScreen.js`; `mobile/src/utils/downloadFile.js` |
+| Mobile | `mobile/src/screens/KhataScreen.js` (the books list), `BookDetailScreen.js`, `BookReportScreen.js`, `BookMembersScreen.js`, `mobile/src/screens/admin/KhataAdminScreen.js`; the footer fields on `admin/BrandingScreen.js`; `mobile/src/utils/downloadFile.js` |
 
 ---
 
@@ -573,7 +812,7 @@ Three scripts. All are dry-run by default and safe to re-run.
 
 ```bash
 cd backend
-node scripts/migrateMultiKhata.js --apply      # only if the database predates multi-khata
+node scripts/migrateMultiKhata.js --apply      # only if the database predates multiple books per person
 node scripts/migrateKhataWallet.js             # report what it would do
 node scripts/migrateKhataWallet.js --apply     # do it
 node scripts/confirmLegacyExpenses.js --apply  # when deploying the confirm/edit change
@@ -598,7 +837,7 @@ the deliberate version.
 
 `migrateKhataWallet.js` is the one that matters for this change:
 
-1. Opens an `EmployeeWallet` for everyone who has a khata, carrying in the **sum**
+1. Opens an `EmployeeWallet` for everyone who has a book, carrying in the **sum**
    of their old per-book opening balances and the **largest** limit any of their
    books carried. Summed because every one of those openings was money genuinely
    in that person's hand; the limit is a maximum rather than a total because
@@ -611,32 +850,35 @@ the deliberate version.
    the new figures are **derived** rather than copied.
 
 **The total is preserved.** A person's new wallet balance is the sum of their old
-khata balances, because the same rows are being replayed — just against one pot
-instead of several. The script prints both figures per person, so the dry run
+per-book balances, because the same rows are being replayed — just against one
+pot instead of several. The script prints both figures per person, so the dry run
 shows you that before you commit to `--apply`, and flags anyone who comes out
-different (which happens only where an old per-khata balance had drifted from
-its own ledger — in which case the new figure is the correct one).
+different (which happens only where an old per-book balance had drifted from its
+own ledger — in which case the new figure is the correct one).
 
 ## Setting it up
 
-1. **Grant access** — Permissions page → *Khata* column: **Grant access** opens
-   the module for anyone (or switch on `khata.manage` for the HR Managers who
-   need it). **Allow export** is the separate download grant — give it only to
-   the people who should be able to take the whole ledger out as a spreadsheet.
+1. **Grant access** — Permissions page → the **Cashbook** column: **Module**
+   opens the module for anyone (or switch on `khata.manage` for the HR Managers
+   who need it). **Export** is the separate download grant — give it only to the
+   people who should be able to take the whole ledger out as a spreadsheet.
 2. **Decide on the approval gate** — Permissions page → **CEO / MD approval for
    cash advances**. On by default. Turn it off if the accounts team should
    handle requests directly.
-3. **Name the operators** — Admin → Employee Khata → Accounts → *Manage
+3. **Name the operators** — Admin → Employee Cashbook → Accounts → *Manage
    operators* on each cash account. Until you do, only a SuperAdmin can pay
    anyone from it. Set each person's direct-payout limit here.
-4. **Set advance limits** (optional) — Admin → Employee Khata → People → a
+4. **Set advance limits** (optional) — Admin → Employee Cashbook → People → a
    person → **Wallet settings**. Per person, across all their books.
 5. **Carry balances in** (optional) — a SuperAdmin can set an opening balance on
    any wallet, for money already in someone's hand before the module existed.
-6. **Let people open their own books** — employees name them from My Khata as
-   they take on new work; everyone gets a "General" one automatically.
+6. **Let people open their own books** — employees name them from My Cashbook as
+   they take on new work; everyone gets a "General" one automatically. Nothing
+   needs setting up for them to **share** one: that is theirs to do, and there is
+   no grant behind it.
 
-> **A khata card reading a negative "spent" means the migration has not been
-> run** on that database. The books still contain advances filed under them from
-> the per-khata era; `migrateKhataWallet.js --apply` detaches those and replays
-> every total.
+> **A book card reading a negative "spent"** either means the book has been
+> refunded more than it was ever charged — a real state, see **Cash In on a
+> book** — or that the migration has not been run on that database and the books
+> still contain advances filed under them from the days of per-book advances.
+> `migrateKhataWallet.js --apply` detaches those and replays every total.

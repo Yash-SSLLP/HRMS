@@ -24,6 +24,14 @@ const mongoose = require('mongoose');
  * the KhataEntry rows after any change — see services/khataLedger.js →
  * recomputeKhataSpent — so it cannot drift from the ledger behind it.
  *
+ * SHARING A BOOK. A job is rarely run by one person, so the owner can invite
+ * colleagues onto their book (`members`). This shares the HEADING, never the
+ * money: an invited operator's spending still comes out of that operator's own
+ * wallet, and the owner's balance does not move an inch. What the sharing buys
+ * is a single honest total for the site — `spent` sums the book, not one
+ * person's share of it. Ownership itself is not a member row: `employee` is the
+ * owner, there is exactly one, and they cannot be removed.
+ *
  * The cashbook (CashAccount/CashbookEntry) answers "how much cash is in the
  * tin?"; the wallet answers "how much is Rahul holding?"; this answers "and
  * what did he spend it on?".
@@ -35,6 +43,36 @@ const mongoose = require('mongoose');
  * their books lands here rather than being told to go and create something.
  */
 const DEFAULT_KHATA_NAME = 'General';
+
+// An invited colleague's standing on somebody else's book. Mirrors ChatGroup's
+// member lifecycle (models/ChatGroup.js) so the two invite flows behave alike.
+const MEMBER_STATUS = ['invited', 'accepted', 'declined'];
+
+// What a collaborator may do. The BOOK OWNER is EmployeeKhata.employee and is
+// never a member row — there is exactly one owner and they cannot be removed.
+//   operator — post their own spending into this book and read everyone's.
+//              Their entries come out of THEIR OWN wallet, never the owner's:
+//              a book is a folder for spending, not a pot of money.
+//   viewer   — read the book and download its reports. Posts nothing.
+const MEMBER_ROLES = ['operator', 'viewer'];
+
+/**
+ * One colleague the owner has shared this book with.
+ *
+ * An invitation is a standing, not an act: the row is written the moment the
+ * owner invites somebody and stays there whatever they answer, so "declined"
+ * is a fact on the record rather than a missing row that looks like nobody was
+ * ever asked. Re-inviting somebody who declined flips the status back rather
+ * than pushing a second row — exactly what ChatGroup does.
+ */
+const memberSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  role: { type: String, enum: MEMBER_ROLES, default: 'operator' },
+  status: { type: String, enum: MEMBER_STATUS, default: 'invited' },
+  invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  invitedAt: { type: Date, default: Date.now },
+  respondedAt: { type: Date, default: null },
+}, { _id: false });
 
 const employeeKhataSchema = new mongoose.Schema(
   {
@@ -75,6 +113,14 @@ const employeeKhataSchema = new mongoose.Schema(
 
     note: { type: String, trim: true, maxlength: 300 },
 
+    // Colleagues the owner has shared this book with. A site is rarely run by
+    // one person: the supervisor opens "Site A — materials" and the two people
+    // buying for that site need to file their purchases under the same
+    // heading. Sharing gives them the heading, NOT the money — each of them
+    // still spends out of their own wallet, and the book simply totals what
+    // the site cost between them.
+    members: { type: [memberSchema], default: [] },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
     // ---- legacy, pre-wallet ----
@@ -97,5 +143,43 @@ employeeKhataSchema.index({ employee: 1, name: 1 }, { unique: true });
 // The "where has this person's money gone" query: their books, biggest first.
 employeeKhataSchema.index({ employee: 1, spent: -1 });
 
+// "Which books have been shared with me?" — the other half of every books list
+// now that a list is owned books plus accepted invitations. Keyed on status too
+// because a declined invitation must not drag a book back into anybody's list.
+employeeKhataSchema.index({ 'members.user': 1, 'members.status': 1 });
+
+// Convenience: this user's member sub-doc (or null). Copied from ChatGroup's
+// memberFor — it has to work whether members.user was populated into a doc or
+// left as a raw ObjectId, because half the call sites populate and half do not.
+employeeKhataSchema.methods.memberFor = function memberFor(userId) {
+  return this.members.find((m) => String(m.user?._id || m.user) === String(userId)) || null;
+};
+
+// The one person who opened this book. Never a member row: ownership is not an
+// invitation that could be declined, and there is exactly one of it.
+employeeKhataSchema.methods.isOwner = function isOwner(userId) {
+  return String(this.employee?._id || this.employee) === String(userId);
+};
+
+// May read the book and its reports. An invitation that has not been accepted
+// yet buys nothing — you see the invitation, not the spending behind it.
+employeeKhataSchema.methods.canView = function canView(userId) {
+  if (this.isOwner(userId)) return true;
+  const mem = this.memberFor(userId);
+  return Boolean(mem && mem.status === 'accepted');
+};
+
+// May file entries into it. A closed book takes nothing from anybody, owner
+// included — closing is the company saying the job's figures are final — and a
+// 'viewer' never posts, which is the whole point of the two roles.
+employeeKhataSchema.methods.canPost = function canPost(userId) {
+  if (this.isActive === false) return false;
+  if (this.isOwner(userId)) return true;
+  const mem = this.memberFor(userId);
+  return Boolean(mem && mem.status === 'accepted' && mem.role === 'operator');
+};
+
 module.exports = mongoose.model('EmployeeKhata', employeeKhataSchema);
 module.exports.DEFAULT_KHATA_NAME = DEFAULT_KHATA_NAME;
+module.exports.MEMBER_STATUS = MEMBER_STATUS;
+module.exports.MEMBER_ROLES = MEMBER_ROLES;

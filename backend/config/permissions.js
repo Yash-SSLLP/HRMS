@@ -55,7 +55,7 @@ const PERMISSIONS = [
   // is a different trust decision from editing the company's own books. Note
   // that holding it is necessary but not sufficient to pay anyone — the operator
   // must also be listed on the specific CashAccount (CashAccount.operators).
-  { key: 'khata.manage', label: 'Employee khata (cash advances & settlements)', group: 'Payroll & Finance' },
+  { key: 'khata.manage', label: 'Employee cashbook (cash advances & settlements)', group: 'Payroll & Finance' },
   { key: 'travel.manage', label: 'Travel requests', group: 'Payroll & Finance' },
   { key: 'compliance.view', label: 'Compliance reports', group: 'Payroll & Finance' },
 

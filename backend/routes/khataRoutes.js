@@ -22,6 +22,15 @@
  *      of (1): `khataExportAccess`, which only a SuperAdmin can set and which
  *      no role confers. See middleware/authMiddleware.js → canExportKhata.
  *
+ * AND ONE THAT IS NOT A GRANT AT ALL. An employee can share one of their own
+ * expense books with a colleague, who accepts and can then file into it (or just
+ * read it). Nobody in the company hands that out — it is one employee lending
+ * another a heading to file under — so those routes sit in the self-service
+ * block above the `khata.manage` gate, and the standing they confer is checked
+ * per book in services/khataLedger.js (canView / canPost), never per role.
+ * Sharing moves no money: a collaborator's spending comes out of their OWN
+ * wallet, and the owner's balance does not move.
+ *
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
@@ -54,12 +63,32 @@ router.get('/entries/:id/receipt', protectMedia, ctrl.getReceipt);
 router.use(protect);
 
 // ----- Employee self-service — every authenticated user, own wallet only -----
-// GET /me — my wallet, my expense books and my statement; protected.
+//
+// ROUTE ORDER MATTERS in this block. Express matches in declaration order, so
+// every literal path (`/me/colleagues`, `/me/report.xlsx`) and every longer
+// pattern (`/me/khatas/:id/members`) has to be declared BEFORE the shorter,
+// greedier one it would otherwise be swallowed by. Same rule, same reason, as
+// chatRoutes.
+//
+// GET /me — my wallet, my expense books, my invitations and my statement; protected.
 router.get('/me', ctrl.getMyKhata);
+// GET /me/colleagues — people I could share a book with (own company, minus anyone who has left); protected.
+router.get('/me/colleagues', ctrl.listColleagues);
+// GET /me/statement.pdf — my book (or every book) as a report PDF: all entries,
+// day-wise or category-wise per ?report=, with the same filters as the screen;
+// protected, own or shared books only (the employee id comes from the token).
+router.get('/me/statement.pdf', ctrl.myStatementPdf);
+// GET /me/report.xlsx — the same filtered rows as a spreadsheet; protected, no
+// export grant needed (it is the caller's own book, not the company's ledger).
+router.get('/me/report.xlsx', ctrl.myReportXlsx);
+// GET /me/books/:id — one book (or the literal 'wallet') as a filtered, totalled entry feed; protected.
+router.get('/me/books/:id', ctrl.getMyBook);
 // POST /me/request — ask for an advance into my wallet (always parks); protected.
 router.post('/me/request', ctrl.requestAdvance);
 // POST /me/expense — log what I spent the advance on, against one of my books; protected + multer single 'receipt'.
 router.post('/me/expense', receiptUpload.single('receipt'), ctrl.recordMyExpense);
+// POST /me/refund — log money that came BACK into one of my books; protected + multer single 'receipt' (required).
+router.post('/me/refund', receiptUpload.single('receipt'), ctrl.recordMyRefund);
 // PUT /me/expenses/:id — correct an expense of mine the company has not confirmed yet; protected + multer single 'receipt'.
 router.put('/me/expenses/:id', receiptUpload.single('receipt'), ctrl.updateMyExpense);
 // POST /me/reimbursement — claim back what the company owes me, when I have spent past my advance; protected.
@@ -68,9 +97,19 @@ router.post('/me/reimbursement', ctrl.requestReimbursement);
 router.post('/me/settle', receiptUpload.single('receipt'), ctrl.declareSettlement);
 // POST /me/khatas — open an expense book on my own account; protected.
 router.post('/me/khatas', ctrl.createMyKhata);
-// GET /me/statement.pdf — my khata as a printable statement with the bills
-// attached; protected, own ledger only (the id comes from the token).
-router.get('/me/statement.pdf', ctrl.myStatementPdf);
+
+// ----- Sharing one of my books with a colleague -----
+// The member routes go above the bare /me/khatas/:id so the longer pattern wins.
+// POST /me/khatas/:id/members — invite colleagues onto a book I opened; protected, owner only.
+router.post('/me/khatas/:id/members', ctrl.addKhataMembers);
+// PATCH /me/khatas/:id/members/:userId — change what a collaborator may do; protected, owner only.
+router.patch('/me/khatas/:id/members/:userId', ctrl.setKhataMemberRole);
+// DELETE /me/khatas/:id/members/:userId — take somebody off a book, or leave one myself; protected, owner or self.
+router.delete('/me/khatas/:id/members/:userId', ctrl.removeKhataMember);
+// PUT /me/khatas/:id — rename or re-note a book I opened (closing stays the company's act); protected, owner only.
+router.put('/me/khatas/:id', ctrl.updateMyKhata);
+// PATCH /me/book-invites/:khataId — accept or decline an invitation to somebody else's book; protected.
+router.patch('/me/book-invites/:khataId', ctrl.respondToBookInvite);
 
 // ----- Executive sanction — SuperAdmin / CEO / MD only -----
 // Mounted ABOVE the khata.manage gate on purpose: an executive holds no khata
@@ -96,7 +135,8 @@ router.get('/employees', ctrl.listKhatas);
 // GET /employees/:employeeId — one employee's wallet, books and statement; requires 'khata.manage'.
 router.get('/employees/:employeeId', ctrl.getKhata);
 // GET /employees/:employeeId/statement.pdf — that book (or every book) as a
-// printable statement with the bills embedded; requires 'khata.manage'.
+// report PDF: all entries, day-wise or category-wise per ?report=, with the
+// bills embedded on ?bills=1; requires 'khata.manage'.
 // Deliberately NOT behind requireKhataExport: that grant gates walking out with
 // the whole company's ledger as data, not reading one person's book.
 router.get('/employees/:employeeId/statement.pdf', ctrl.statementPdf);

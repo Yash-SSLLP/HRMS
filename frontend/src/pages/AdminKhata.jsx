@@ -33,6 +33,11 @@ import api from '../api/client';
 import { useTabParam } from '../hooks/useTabParam';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+// The portal-wide date-order control, so this table reverses the way every
+// other dated table in the portal does. `useDateSort` sorts a COPY, which
+// matters here: `entries` is refetched whenever a server-side filter changes
+// and the toggle must not fight the fetched order.
+import { DateSortButton, useDateSort } from '../components/DateSort';
 
 // NOTE ON THE GROUP LABEL: SearchableSelect searches `group + label`, so the
 // optgroup's own words are matchable. "Admin logins (not employees)" therefore
@@ -107,16 +112,54 @@ const TABS = [
 const ENTRY_TYPES = [
   ['advance', 'Advance given'],
   ['settlement', 'Cash returned'],
-  ['expense', 'Expense against a khata'],
+  ['expense', 'Expense against a book'],
+  ['refund', 'Money back into a book'],
   ['reimbursement', 'Reimbursed to employee'],
   ['other', 'Other'],
 ];
 
 // Types filed against an expense book rather than moving the wallet on its own.
-// Mirrors KHATA_TYPES on the server; the form uses it to decide whether to ask
-// which book, and (because spending an advance moves no company cash) whether
-// to demand an account.
-const KHATA_TYPES = new Set(['expense']);
+// Mirrors BOOK_MOVEMENTS on the server (services/khataLedger.js), which gained
+// 'refund' when a book learned to take money back in — a supplier refund, a
+// cancelled booking, unused material returned. Leaving it out here would have
+// meant an operator-recorded refund was never asked which book it belonged to
+// and WAS asked for a cash account it does not touch. The form uses this to
+// decide both questions.
+const KHATA_TYPES = new Set(['expense', 'refund']);
+
+// Which way a book entry has to go. An expense leaves the wallet, a refund comes
+// back into it, and the server refuses the other pairing outright — so the form
+// fixes the direction rather than letting somebody submit into an error.
+const BOOK_DIRECTIONS = { expense: 'from_employee', refund: 'to_employee' };
+
+// The Ledger tab's "Type" filter. These are MOVEMENT values and they go out as
+// `?movement=`, the alias that cannot be misread: `type` on the live model is
+// the company's 'in'/'out' view of a row, and sending a movement under that name
+// is exactly the bug that kept the "Expenses to confirm" queue empty for months.
+// 'refund' is listed because a book can now take money back in, and a filter
+// unable to name those rows would quietly hide them from the one screen that is
+// supposed to list every entry there is.
+const MOVEMENT_FILTERS = [
+  ['advance', 'Advance given'],
+  ['settlement', 'Cash returned'],
+  ['expense', 'Expense'],
+  ['refund', 'Refund into a book'],
+  ['reimbursement', 'Reimbursement'],
+  ['salary_recovery', 'Recovered from salary'],
+  ['opening', 'Opening balance'],
+  ['reversal', 'Reversal'],
+  ['other', 'Other'],
+];
+
+// The three shapes the statement PDF comes in, and what each is for. The server
+// picks its renderer off `?report=`. Until it learned to, the only document it
+// could produce was the category summary — a useful sheet, but not the one
+// somebody asking "show me every entry" is after, and there was no way to say so.
+const REPORT_TYPES = [
+  ['entries', 'All entries', 'Every row in date order, with the running balance and the bills.'],
+  ['daywise', 'Day-wise summary', 'One line per day — what went in, what went out, where it closed.'],
+  ['category', 'Category-wise summary', 'What was spent under each heading, with no individual rows.'],
+];
 
 const blankEntry = {
   employee: '', khata: '', direction: 'to_employee', type: 'advance', amount: '',
@@ -156,6 +199,49 @@ function FiledFrom({ location }) {
       📍 Filed from {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
       {location.accuracy != null ? ` (±${Math.round(location.accuracy)} m)` : ''}
     </a>
+  );
+}
+
+/**
+ * Does one ledger row match what was typed into the Ledger search box?
+ *
+ * The fields are deliberately the same ones the server's own `parseEntryFilters`
+ * searches — remark, category, reference, code — plus the two this table also
+ * puts on screen, the person and the book, because a word somebody can SEE in a
+ * row ought to be a word that finds it.
+ *
+ * A number matches the amount EXACTLY rather than as a substring. Searching
+ * "4500" and being handed ₹145,003 because the digits happen to appear inside it
+ * is worse than being handed nothing at all; commas and a rupee sign are
+ * stripped first so that pasting a figure straight off the screen still works.
+ */
+function matchesQuery(e, q) {
+  const needle = (q || '').trim().toLowerCase();
+  if (!needle) return true;
+  const asNumber = Number(needle.replace(/[,₹\s]/g, ''));
+  if (Number.isFinite(asNumber) && Number(e.amount) === asNumber) return true;
+  return [e.purpose, e.category, e.referenceNo, e.code, e.khataName, e.employee?.name]
+    .some((v) => v && String(v).toLowerCase().includes(needle));
+}
+
+/**
+ * The "this book is not one person's any more" marker.
+ *
+ * A book can be shared with colleagues, who post their own spending into it out
+ * of their OWN advances. That matters to whoever reads the figure on the card:
+ * a shared book's `spent` totals every contributor, not just the person whose
+ * name is above it. Renders nothing at all on a private book, so the ordinary
+ * case stays uncluttered.
+ */
+function SharedPill({ khata }) {
+  if (!khata?.shared) return null;
+  const n = khata.memberCount || 0;
+  return (
+    <span
+      title="Shared with colleagues — what they spend against it is counted here too"
+      className="px-2 py-0.5 rounded-full text-xs whitespace-nowrap bg-indigo-100 text-indigo-800">
+      Shared{n > 0 ? ` · ${n} ${n === 1 ? 'person' : 'people'}` : ''}
+    </span>
   );
 }
 
@@ -239,7 +325,19 @@ export default function AdminKhata() {
   const [saving, setSaving] = useState(false);
 
   const [peopleFilter, setPeopleFilter] = useState({ q: '', filter: 'all' });
-  const [ledgerFilter, setLedgerFilter] = useState({ employee: '', status: '', type: '', from: '', to: '' });
+  // What is being TYPED into the People search box, which is 350ms ahead of the
+  // filter actually in force. Both search boxes on this page used to refetch on
+  // every keystroke: typing "Ramesh" was six round trips to /khata/employees,
+  // five of them thrown away, with the list flickering through the answers to
+  // half-typed names on the way. The applied value is what the loader depends
+  // on, so a burst of typing now costs one request.
+  const [peopleSearch, setPeopleSearch] = useState('');
+  // The ledger's server-side filters. `movement` (not `type`) is the parameter
+  // name: see MOVEMENT_FILTERS above for why the distinction is not cosmetic.
+  const [ledgerFilter, setLedgerFilter] = useState({ employee: '', status: '', movement: '', from: '', to: '' });
+  // The Ledger free-text search: what is typed, and what is applied behind it.
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerQuery, setLedgerQuery] = useState('');
 
   const [detail, setDetail] = useState(null);   // one employee's khata + statement
   const [entryModal, setEntryModal] = useState(null); // { data, file }
@@ -264,7 +362,7 @@ export default function AdminKhata() {
 
   const loadOverview = useCallback(() => api.get('/khata/overview')
     .then((r) => { setOv(r.data); setAccounts(r.data.accounts || []); })
-    .catch((e) => errToast(e, 'Could not load the khata overview')), []);
+    .catch((e) => errToast(e, 'Could not load the cashbook overview')), []);
   const loadRows = useCallback(() => api.get('/khata/employees', { params: clean(peopleFilter) })
     .then((r) => setRows(r.data.rows || [])).catch(() => {}), [peopleFilter]);
   const loadPeople = useCallback(() => api.get('/khata/employee-options')
@@ -280,8 +378,17 @@ export default function AdminKhata() {
   // that nobody on the company side has yet looked at, newest first. Each can be
   // confirmed (which locks it), corrected, or rejected. Confirming is what takes
   // a row OUT of this list, which is why the query asks for unconfirmed only.
+  //
+  // `movement`, not `type`. This queue asked for `?type=expense` for as long as
+  // it has existed, and on the merged cashbook model `type` can only ever hold
+  // 'in' or 'out' — so the query matched no row at all and the list below was
+  // permanently, silently empty. The server now understands both spellings, but
+  // the parameter that says what it means is the one worth sending.
   const loadExpenses = useCallback(() => api.get('/khata/entries', {
-    params: { type: 'expense', status: 'Approved', confirmed: 'false', limit: 100 },
+    // 'expense,refund' — a refund posts on the spot and stays editable exactly
+    // like an expense, so it needs confirming exactly like one. Asking for the
+    // expense alone left every refund unconfirmed and correctable forever.
+    params: { movement: 'expense,refund', status: 'Approved', confirmed: 'false', limit: 100 },
   }).then((r) => setExpenses(r.data.entries || []))
     .catch(() => {}), []);
   const loadSanctions = useCallback(() => (isApprover
@@ -295,6 +402,50 @@ export default function AdminKhata() {
   useEffect(() => { if (tab === 'people') loadRows(); }, [tab, loadRows]);
   useEffect(() => { if (tab === 'ledger') loadEntries(); }, [tab, loadEntries]);
 
+  // The two debounces. Same shape as AdminAuditLog's: a timer set on every
+  // change and cleared by the cleanup, so only the last keystroke of a burst
+  // survives. The People one guards a REQUEST (loadRows depends on the applied
+  // filter object, which is why the identity is left alone when nothing
+  // actually changed); the Ledger one guards a re-filter of rows already here.
+  useEffect(() => {
+    const t = setTimeout(
+      () => setPeopleFilter((f) => (f.q === peopleSearch ? f : { ...f, q: peopleSearch })),
+      350,
+    );
+    return () => clearTimeout(t);
+  }, [peopleSearch]);
+  useEffect(() => {
+    const t = setTimeout(() => setLedgerQuery(ledgerSearch), 350);
+    return () => clearTimeout(t);
+  }, [ledgerSearch]);
+
+  // WHERE EACH LEDGER FILTER IS APPLIED, and why it is split in two.
+  //
+  // Employee, status, type and the two dates are query parameters that
+  // GET /khata/entries takes, so the SERVER applies them — which also means its
+  // 200-row cap lands on the filtered set rather than on the whole ledger, and
+  // an old entry can still be found by narrowing the dates.
+  //
+  // The free-text search and the date order are not parameters that endpoint
+  // takes. They are applied here, over the rows already loaded, which is why the
+  // count reads "N of M" instead of claiming to have searched the whole ledger,
+  // and why the Excel export — a fresh query against a DIFFERENT endpoint, which
+  // takes only employee/status/from/to — cannot be an exact copy of what is on
+  // screen. It never was: that download is the whole workbook, not this table.
+  const searchedEntries = useMemo(
+    () => entries.filter((e) => matchesQuery(e, ledgerQuery)),
+    [entries, ledgerQuery],
+  );
+  const [visibleEntries, dateDir, toggleDateDir] = useDateSort(searchedEntries);
+
+  const ledgerActiveCount = [ledgerFilter.employee, ledgerFilter.status, ledgerFilter.movement,
+    ledgerFilter.from, ledgerFilter.to, ledgerQuery].filter(Boolean).length;
+  const clearLedgerFilters = () => {
+    setLedgerFilter({ employee: '', status: '', movement: '', from: '', to: '' });
+    setLedgerSearch('');
+    setLedgerQuery('');
+  };
+
   /** Reload whatever the current view shows, plus the headline figures. */
   const refresh = async () => {
     await Promise.all([loadOverview(), loadPending(), loadSanctions(), loadExpenses(), loadRows(),
@@ -307,7 +458,7 @@ export default function AdminKhata() {
       const res = await api.get(`/khata/employees/${employeeId}`);
       if (!keepFilter) setViewKhata('');
       setDetail(res.data);
-    } catch (err) { errToast(err, 'Could not open that khata'); }
+    } catch (err) { errToast(err, 'Could not open that book'); }
   };
 
   // ---------- give / record money ----------
@@ -374,7 +525,14 @@ export default function AdminKhata() {
     if (!data.employee) { toast.error('Choose an employee'); return; }
     if (!(Number(data.amount) > 0)) { toast.error('Enter an amount greater than zero'); return; }
     const cashless = KHATA_TYPES.has(data.type);
-    if (cashless && !data.khata) { toast.error('Choose which khata this expense belongs to'); return; }
+    if (cashless && !data.khata) {
+      // Worded for whichever way the money went: a refund with no book is a
+      // settlement, not a refund, and the server says so in those words too.
+      toast.error(data.type === 'refund'
+        ? 'Choose which book the money came back into'
+        : 'Choose which book this expense belongs to');
+      return;
+    }
     if (!cashless && !data.cashAccount) { toast.error('Choose which company account the money moves through'); return; }
 
     setSaving(true);
@@ -447,7 +605,7 @@ export default function AdminKhata() {
         ? `Reject this ₹${Number(entry.amount).toLocaleString('en-IN')} expense?`
         : `Reverse ${entry.code || 'this entry'}?`,
       message: asRejection
-        ? `${entry.employee?.name || 'The employee'} recorded this against "${entry.khataName || 'their khata'}". `
+        ? `${entry.employee?.name || 'The employee'} recorded this against "${entry.khataName || 'their book'}". `
           + 'Rejecting adds it back to their advance and tells them why. Both rows stay on the record. '
           + 'Why is it being rejected?'
         : `${money(entry.amount)}. Nothing is deleted — a matching opposite entry is written, `
@@ -475,7 +633,7 @@ export default function AdminKhata() {
   const confirmExpense = async (entry) => {
     const ok = await confirmDialog({
       title: `Confirm this ${money(entry.amount)} expense?`,
-      message: `${entry.employee?.name || 'The employee'} recorded it against "${entry.khataName || 'their khata'}". `
+      message: `${entry.employee?.name || 'The employee'} recorded it against "${entry.khataName || 'their book'}". `
         + 'It has already come off their advance; confirming says you have checked it. '
         + 'After this neither of you can edit it — a mistake would have to be reversed.',
       confirmText: 'Confirm',
@@ -556,7 +714,7 @@ export default function AdminKhata() {
   const submitKhata = async (e) => {
     e.preventDefault();
     if (!khataModal.employee) { toast.error('Choose an employee'); return; }
-    if (!khataModal.name.trim()) { toast.error('Give the khata a name'); return; }
+    if (!khataModal.name.trim()) { toast.error('Give the book a name'); return; }
     setSaving(true);
     try {
       const res = await api.post('/khata/khatas', {
@@ -564,7 +722,7 @@ export default function AdminKhata() {
         name: khataModal.name,
         note: khataModal.note || undefined,
       });
-      toast.success(res.data.message || 'Khata opened');
+      toast.success(res.data.message || 'Book opened');
       const created = res.data.khata;
       // Opened from inside the entry form? Select it there straight away, so the
       // operator carries on with the payment they were in the middle of.
@@ -577,7 +735,7 @@ export default function AdminKhata() {
       }
       setKhataModal(null);
       await refresh();
-    } catch (err) { errToast(err, 'Could not open the khata'); } finally { setSaving(false); }
+    } catch (err) { errToast(err, 'Could not open the book'); } finally { setSaving(false); }
   };
 
   // ---------- reports ----------
@@ -586,32 +744,38 @@ export default function AdminKhata() {
     try {
       const res = await api.get('/khata/reports/export', { params: clean(ledgerFilter), responseType: 'blob' });
       // Server names the file via Content-Disposition; honour it, else fall back.
-      saveBlobResponse(res, 'employee_khata.xlsx');
+      saveBlobResponse(res, 'employee-cashbook.xlsx');
     } catch (err) {
       // A blob responseType means the 403 body arrives as a Blob, so the usual
       // err.response.data.message is not there to read — say it plainly instead.
-      if (err.response?.status === 403) toast.error('You do not have permission to download the khata.');
+      if (err.response?.status === 403) toast.error('You do not have permission to download the cashbook.');
       else errToast(err, 'Could not export');
     }
   };
 
   /**
-   * The printable statement — one khata, or everything the person holds.
+   * The printable statement — one book, or everything the person holds.
    *
    * Separate from the .xlsx export in both shape and gate: that one hands over
    * the whole company's ledger as data and needs the export grant, this is one
    * person's book laid out to be read (and to be handed to whoever funded it),
    * with the bills bound in behind it.
+   *
+   * `report` picks which of the three documents the server renders, and `bills`
+   * is only ever sent for the one that has rows to hang a thumbnail on — asking
+   * for them on a day-wise summary would be a burst of image downloads for a
+   * page that draws none of them.
    */
   const downloadStatement = async (e) => {
     e?.preventDefault?.();
-    const { employee, khata, from, to } = statementModal;
+    const { employee, khata, from, to, report, bills } = statementModal;
     setSaving(true);
     try {
       const res = await api.get(`/khata/employees/${employee}/statement.pdf`, {
-        params: clean({ khata, from, to }), responseType: 'blob',
+        params: clean({ khata, from, to, report, bills: report === 'entries' && bills ? '1' : '' }),
+        responseType: 'blob',
       });
-      saveBlobResponse(res, 'khata-statement.pdf');
+      saveBlobResponse(res, 'cashbook-statement.pdf');
       setStatementModal(null);
     } catch (err) {
       // A blob responseType means an error body arrives as a Blob, so the usual
@@ -699,7 +863,7 @@ export default function AdminKhata() {
 
   return (
     <div>
-      <PageHeader title="Employee Advances">
+      <PageHeader title="Employee Cashbook">
         <button onClick={() => openEntry('')}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + New entry
@@ -708,7 +872,7 @@ export default function AdminKhata() {
 
       <p className="text-sm text-gray-500 mb-4">
         Every rupee moving between the company and its people. Each person has one wallet that advances are paid
-        into, and as many khatas as they need to record what they spent it on. Money movements also post to the
+        into, and as many books as they need to record what they spent it on. Money movements also post to the
         cashbook, so the company&apos;s cash and each person&apos;s wallet can never disagree.
       </p>
 
@@ -805,9 +969,11 @@ export default function AdminKhata() {
       {tab === 'people' && !detail && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3">
+            {/* Bound to the typed value, not the applied one — the debounce
+                above is what turns a burst of typing into one request. */}
             <input type="search" placeholder="Search by name or email"
-              value={peopleFilter.q}
-              onChange={(e) => setPeopleFilter({ ...peopleFilter, q: e.target.value })}
+              value={peopleSearch}
+              onChange={(e) => setPeopleSearch(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]" />
             <select value={peopleFilter.filter}
               onChange={(e) => setPeopleFilter({ ...peopleFilter, filter: e.target.value })}
@@ -821,7 +987,7 @@ export default function AdminKhata() {
                 here first — so it is on the list as well. */}
             <button onClick={() => setKhataModal({ employee: '', name: '', note: '' })}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">
-              + New khata
+              + New book
             </button>
           </div>
 
@@ -849,11 +1015,18 @@ export default function AdminKhata() {
                         </p>
                         <div className="flex flex-wrap gap-1.5 mt-1.5">
                           {/* What each book has COST — books hold no balance of
-                              their own, so a colour-by-sign would be a lie. */}
+                              their own, so a colour-by-sign would be a lie.
+                              A shared book carries a marker, because its figure
+                              is the whole book's spending and not only this
+                              person's. */}
                           {r.khatas.filter((k) => k.spent > 0 || k.isActive).map((k) => (
                             <span key={k._id}
+                              title={k.shared
+                                ? `Shared${k.memberCount ? ` with ${k.memberCount} ${k.memberCount === 1 ? 'colleague' : 'colleagues'}` : ''} — this total covers everyone who files against it`
+                                : undefined}
                               className="text-xs px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600">
                               {k.name} {money(k.spent)}
+                              {k.shared && <span className="text-indigo-700"> · shared{k.memberCount ? ` ${k.memberCount}` : ''}</span>}
                             </span>
                           ))}
                         </div>
@@ -910,7 +1083,7 @@ export default function AdminKhata() {
               </button>
               <button onClick={() => setKhataModal({ employee: detail.employee._id, name: '', note: '' })}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
-                + New khata
+                + New book
               </button>
               <button onClick={() => setWalletModal({
                 employee: detail.employee._id,
@@ -930,7 +1103,7 @@ export default function AdminKhata() {
                 employeeName: detail.employee.name,
                 khata: viewKhata,
                 khataName: (detail.khatas || []).find((k) => k._id === viewKhata)?.name || '',
-                from: '', to: '',
+                from: '', to: '', report: 'entries', bills: true,
               })}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
                 Statement PDF
@@ -940,7 +1113,7 @@ export default function AdminKhata() {
 
           {/* Their books — a breakdown of where the one wallet went, not
               balances of their own. */}
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Khatas</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Books</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
             {(detail.khatas || []).map((k) => {
               const active = viewKhata === k._id;
@@ -953,6 +1126,9 @@ export default function AdminKhata() {
                       <p className="text-xs text-gray-500">
                         {k.isDefault ? 'Default · ' : ''}{k.isActive ? 'Open' : 'Closed'}
                       </p>
+                      {/* Shared books total every contributor's spending, so the
+                          figure to the right is not this person's alone. */}
+                      {k.shared && <p className="mt-1"><SharedPill khata={k} /></p>}
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-semibold text-gray-900">{money(k.spent)}</p>
@@ -988,7 +1164,7 @@ export default function AdminKhata() {
                       employeeName: detail.employee.name,
                       khata: k._id,
                       khataName: k.name,
-                      from: '', to: '',
+                      from: '', to: '', report: 'entries', bills: true,
                     })}
                       className="text-xs text-gray-600 hover:text-gray-900 underline">
                       Statement PDF
@@ -1013,42 +1189,101 @@ export default function AdminKhata() {
       {/* ---------------- Ledger ---------------- */}
       {tab === 'ledger' && (
         <div>
-          <div className="flex flex-wrap gap-2 mb-3">
-            <div className="min-w-[220px]">
-              <SearchableSelect
-                value={ledgerFilter.employee}
-                onChange={(e) => setLedgerFilter({ ...ledgerFilter, employee: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                <option value="">Everyone</option>
-                {peopleOptions(people, personLabel)}
-              </SearchableSelect>
+          <div className="bg-white shadow rounded-lg px-4 py-3.5 mb-4">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* A real form, so Enter applies the search immediately rather
+                  than making somebody wait out the debounce they cannot see. */}
+              <form
+                onSubmit={(e) => { e.preventDefault(); setLedgerQuery(ledgerSearch); }}
+                className="flex items-center gap-2 flex-1 min-w-[16rem]">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+                  <input
+                    value={ledgerSearch}
+                    onChange={(e) => setLedgerSearch(e.target.value)}
+                    placeholder="Search by remark, amount, category or reference"
+                    aria-label="Search the ledger"
+                    className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
+                </div>
+                <button type="submit" className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 shrink-0">
+                  Search
+                </button>
+              </form>
+
+              <div className="min-w-[220px]">
+                <SearchableSelect
+                  value={ledgerFilter.employee}
+                  onChange={(e) => setLedgerFilter({ ...ledgerFilter, employee: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                  <option value="">Everyone</option>
+                  {peopleOptions(people, personLabel)}
+                </SearchableSelect>
+              </div>
+              <select value={ledgerFilter.status}
+                onChange={(e) => setLedgerFilter({ ...ledgerFilter, status: e.target.value })}
+                aria-label="Filter by status"
+                className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+                <option value="">Any status</option>
+                {['AwaitingApproval', 'Pending', 'Approved', 'Rejected', 'Reversed'].map((v) => (
+                  <option key={v} value={v}>{STATUS_LABELS[v] || v}</option>
+                ))}
+              </select>
+              {/* Goes out as ?movement=, never ?type= — see MOVEMENT_FILTERS. */}
+              <select value={ledgerFilter.movement}
+                onChange={(e) => setLedgerFilter({ ...ledgerFilter, movement: e.target.value })}
+                aria-label="Filter by type of entry"
+                className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+                <option value="">Any type</option>
+                {MOVEMENT_FILTERS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              </select>
+              <input type="date" value={ledgerFilter.from} aria-label="From date"
+                onChange={(e) => setLedgerFilter({ ...ledgerFilter, from: e.target.value })}
+                className="border rounded-lg px-3 py-2 text-sm text-gray-700" />
+              <input type="date" value={ledgerFilter.to} aria-label="To date"
+                onChange={(e) => setLedgerFilter({ ...ledgerFilter, to: e.target.value })}
+                className="border rounded-lg px-3 py-2 text-sm text-gray-700" />
+              {/* The same order the Date column header drives, offered here too
+                  because the filters are where somebody looks for it. */}
+              <DateSortButton dir={dateDir} onToggle={toggleDateDir} compact />
+
+              <div className="flex flex-wrap items-center gap-3 ml-auto shrink-0">
+                {ledgerActiveCount > 0 && (
+                  <button type="button" onClick={clearLedgerFilters} className="text-xs text-gray-600 hover:underline">
+                    Clear {ledgerActiveCount === 1 ? 'filter' : 'filters'}
+                  </button>
+                )}
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  {visibleEntries.length === entries.length
+                    ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`
+                    : `${visibleEntries.length} of ${entries.length}`}
+                </span>
+                {/* Same download as the overview. It is a whole workbook —
+                    wallets, books and the ledger — built by a fresh query on
+                    the server, so it honours the person, the status and the two
+                    dates. It does NOT narrow by the type filter or the text
+                    box: /khata/reports/export takes neither, and the text
+                    search is applied here over the rows already loaded. */}
+                {mayExport && (
+                  <button type="button" onClick={exportXlsx}
+                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                    Export to Excel
+                  </button>
+                )}
+              </div>
             </div>
-            <select value={ledgerFilter.status}
-              onChange={(e) => setLedgerFilter({ ...ledgerFilter, status: e.target.value })}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-              <option value="">Any status</option>
-              {['AwaitingApproval', 'Pending', 'Approved', 'Rejected', 'Reversed'].map((v) => (
-                <option key={v} value={v}>{STATUS_LABELS[v] || v}</option>
-              ))}
-            </select>
-            <input type="date" value={ledgerFilter.from}
-              onChange={(e) => setLedgerFilter({ ...ledgerFilter, from: e.target.value })}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-            <input type="date" value={ledgerFilter.to}
-              onChange={(e) => setLedgerFilter({ ...ledgerFilter, to: e.target.value })}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-            {/* Same download as the overview, but here the filters above are
-                already the ones the export honours — so what lands in the file
-                is what is on screen. */}
-            {mayExport && (
-              <button type="button" onClick={exportXlsx}
-                className="ml-auto px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                Export to Excel
-              </button>
+            {/* The server caps the ledger at its 200 most recent matching rows.
+                Saying so is the difference between "there is nothing older" and
+                "you have not asked for anything older yet". */}
+            {entries.length >= 200 && (
+              <p className="text-xs text-amber-700 mt-2">
+                Showing the 200 most recent entries that match these filters, and searching within them.
+                Narrow the dates or pick a person to look further back.
+              </p>
             )}
           </div>
-          <EntryTable entries={entries} onReverse={reverse} onEdit={openExpenseEdit}
-            onConfirm={confirmExpense} showEmployee />
+          <EntryTable entries={visibleEntries} onReverse={reverse} onEdit={openExpenseEdit}
+            onConfirm={confirmExpense} showEmployee
+            dateDir={dateDir} onToggleDate={toggleDateDir} />
         </div>
       )}
 
@@ -1173,7 +1408,7 @@ export default function AdminKhata() {
           already counted, and the action is to reject what should not stand. */}
       {tab === 'approvals' && (
         <div className="mt-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">Expenses to confirm</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Expenses and refunds to confirm</h3>
           <p className="text-xs text-gray-500 mb-2">
             Already counted against the employee&apos;s advance, but not yet checked by anyone here. Confirm what
             stands — which also locks it, so neither side can edit it afterwards. Correct a wrong figure while
@@ -1247,7 +1482,7 @@ export default function AdminKhata() {
         <div>
           <p className="text-sm text-gray-500 mb-3">
             Who may hand company money to staff, out of which account, and how much they may release before
-            someone else has to sign it off. Holding the khata permission alone pays nobody.
+            someone else has to sign it off. Holding the cashbook permission alone pays nobody.
           </p>
           <div className="bg-white shadow rounded-lg overflow-hidden">
             <ul className="divide-y divide-gray-100">
@@ -1273,7 +1508,7 @@ export default function AdminKhata() {
       {entryModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submitEntry} className="bg-white rounded-xl shadow-xl w-full max-w-lg p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Record a khata entry</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Record a cashbook entry</h3>
             <p className="text-xs text-gray-500 mb-4">
               Fields marked <span aria-hidden="true" className="text-red-600">*</span> are required.
             </p>
@@ -1322,12 +1557,13 @@ export default function AdminKhata() {
                   data: {
                     ...entryForm,
                     type,
-                    // An expense is always money leaving the wallet. Letting the
+                    // An expense is always money leaving the wallet, and a
+                    // refund is always money coming back into it. Letting the
                     // two disagree would ADD to somebody's advance while
                     // charging the cost to a book — wrong both ways at once,
                     // and the server refuses it, so fix it here rather than
                     // letting them submit into an error.
-                    direction: KHATA_TYPES.has(type) ? 'from_employee' : entryForm.direction,
+                    direction: BOOK_DIRECTIONS[type] || entryForm.direction,
                   },
                 });
               }}
@@ -1335,19 +1571,19 @@ export default function AdminKhata() {
               {ENTRY_TYPES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
 
-            {/* Only spending is filed under a book. An advance goes into the one
-                wallet, so asking which khata it belongs to would be a question
-                with no answer — and a wrong one recorded is as bad as a wrong
-                amount. */}
+            {/* Only money that belongs to a book is filed under one. An advance
+                goes into the one wallet, so asking which book it belongs to
+                would be a question with no answer — and a wrong one recorded is
+                as bad as a wrong amount. */}
             {isKhataEntry && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Khata<Req /></label>
+                <label className="block text-sm text-gray-700 mb-1">Book<Req /></label>
                 <select value={entryForm.khata} required
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, khata: e.target.value } })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
                   disabled={!entryForm.employee}>
                   <option value="">
-                    {entryForm.employee ? 'Choose a khata…' : 'Choose an employee first'}
+                    {entryForm.employee ? 'Choose a book…' : 'Choose an employee first'}
                   </option>
                   {(entryModal.khatas || []).map((k) => (
                     <option key={k._id} value={k._id}>
@@ -1356,12 +1592,16 @@ export default function AdminKhata() {
                   ))}
                 </select>
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs text-gray-500">Which book this spend is filed under.</p>
+                  <p className="text-xs text-gray-500">
+                    {entryForm.type === 'refund'
+                      ? 'Which book the money is coming back into.'
+                      : 'Which book this spend is filed under.'}
+                  </p>
                   {entryForm.employee && (
                     <button type="button"
                       onClick={() => setKhataModal({ employee: entryForm.employee, name: '', note: '', fromEntry: true })}
                       className="text-xs text-gray-600 hover:text-gray-900 underline">
-                      + New khata
+                      + New book
                     </button>
                   )}
                 </div>
@@ -1405,8 +1645,12 @@ export default function AdminKhata() {
               </>
             ) : (
               <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 mb-3">
-                No company account is involved: the cash left the tin when the advance was paid. This records
-                what the advance was spent on and takes it off what they are holding.
+                {entryForm.type === 'refund'
+                  ? 'No company account is involved: the money never went back into the tin, it went back to the '
+                    + 'person who is holding the advance. This takes it off what the book has cost and adds it to '
+                    + 'what they are holding.'
+                  : 'No company account is involved: the cash left the tin when the advance was paid. This records '
+                    + 'what the advance was spent on and takes it off what they are holding.'}
               </p>
             )}
 
@@ -1508,7 +1752,7 @@ export default function AdminKhata() {
       {khataModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <form onSubmit={submitKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
-            <h3 className="text-lg font-semibold text-gray-900">Open a new khata</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Add a new book</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
               A separate heading for spending — a site, a vehicle, a particular job. It holds no money of its
               own: expenses filed under it come out of the employee&apos;s one wallet, like every other book.
@@ -1547,30 +1791,70 @@ export default function AdminKhata() {
                 className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
               <button type="submit" disabled={saving}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
-                {saving ? 'Opening…' : 'Open khata'}
+                {saving ? 'Opening…' : 'Open book'}
               </button>
             </div>
           </form>
         </div>
       )}
 
+      {/* Scrolls, like the other tall modals here: the report picker roughly
+          doubled its height and a laptop in a 768px window would otherwise lose
+          the Download button off the bottom of the sheet. */}
       {statementModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={downloadStatement} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={downloadStatement} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">Statement PDF</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
               {statementModal.khataName
                 ? <>A printable statement of <strong>{statementModal.khataName}</strong> for {statementModal.employeeName}.</>
-                : <>A printable statement of every khata {statementModal.employeeName} holds.</>}
-              {' '}Every photo bill in the period is embedded, so the document stands on its own once it leaves here.
+                : <>A printable statement of every book {statementModal.employeeName} holds.</>}
             </p>
 
             {statementModal.khataName && (
               <button type="button"
                 onClick={() => setStatementModal({ ...statementModal, khata: '', khataName: '' })}
                 className="text-xs text-gray-600 hover:text-gray-900 underline mb-3">
-                Cover every khata instead
+                Cover every book instead
               </button>
+            )}
+
+            {/* Which document. The three answer different questions and the
+                server renders each one differently, so it is asked here rather
+                than handing over whichever one used to be hard-coded. */}
+            <fieldset className="mb-3">
+              <legend className="block text-sm text-gray-700 mb-1">What should it show?</legend>
+              <div className="space-y-1.5">
+                {REPORT_TYPES.map(([value, label, hint]) => (
+                  <label key={value} className="flex items-start gap-2 text-sm text-gray-700">
+                    <input type="radio" name="report" className="mt-1" value={value}
+                      checked={statementModal.report === value}
+                      onChange={() => setStatementModal({ ...statementModal, report: value })} />
+                    <span>
+                      {label}
+                      <span className="block text-xs text-gray-500">{hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            {/* Bills are drawn into the rows themselves, so they only mean
+                anything on the document that HAS rows. Asking for them on a
+                summary would fetch every image for a page that draws none. */}
+            {statementModal.report === 'entries' && (
+              <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
+                <input type="checkbox" className="mt-1"
+                  checked={statementModal.bills !== false}
+                  onChange={(e) => setStatementModal({ ...statementModal, bills: e.target.checked })} />
+                <span>
+                  Include the bills
+                  <span className="block text-xs text-gray-500">
+                    Every photo bill in the period is embedded, so the document stands on its own once it leaves
+                    here. It takes longer to build and the file is much larger.
+                  </span>
+                </span>
+              </label>
             )}
 
             <div className="grid grid-cols-2 gap-3">
@@ -1619,11 +1903,11 @@ export default function AdminKhata() {
               straight away. They are told what changed.
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">Khata</label>
+            <label className="block text-sm text-gray-700 mb-1">Book</label>
             <select value={expenseEdit.data.khata}
               onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, khata: e.target.value } })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
-              {expenseEdit.khatas.length === 0 && <option value={expenseEdit.data.khata}>{expenseEdit.entry.khataName || 'Their khata'}</option>}
+              {expenseEdit.khatas.length === 0 && <option value={expenseEdit.data.khata}>{expenseEdit.entry.khataName || 'Their book'}</option>}
               {expenseEdit.khatas.map((k) => (
                 <option key={k._id} value={k._id}>{k.name}{k.isActive ? '' : ' (closed)'}</option>
               ))}
@@ -1706,7 +1990,7 @@ export default function AdminKhata() {
       {settingsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <form onSubmit={saveSettings} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Khata settings</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Book settings</h3>
             <p className="text-xs text-gray-500 mb-4">
               {money(settingsModal.spent)} spent under this heading so far. The advance limit is set on the
               person&apos;s wallet, not here — a book holds no money of its own.
@@ -1726,7 +2010,7 @@ export default function AdminKhata() {
                   checked={!!settingsModal.makeDefault}
                   onChange={(e) => setSettingsModal({ ...settingsModal, makeDefault: e.target.checked })} />
                 <span>
-                  Make this their default khata
+                  Make this their default book
                   <span className="block text-xs text-gray-500">
                     Where a request lands when they do not pick a book.
                   </span>
@@ -1744,10 +2028,10 @@ export default function AdminKhata() {
                   checked={settingsModal.close === true}
                   onChange={(e) => setSettingsModal({ ...settingsModal, close: e.target.checked })} />
                 <span>
-                  Close this khata
+                  Close this book
                   <span className="block text-xs text-gray-500">
                     {settingsModal.isDefault
-                      ? 'The default khata cannot be closed. Make another one the default first.'
+                      ? 'The default book cannot be closed. Make another one the default first.'
                       : 'It stays readable, with its spending on the record, but takes no new entries.'}
                   </span>
                 </span>
@@ -1757,7 +2041,7 @@ export default function AdminKhata() {
                 <input type="checkbox" className="mt-1"
                   checked={settingsModal.reopen === true}
                   onChange={(e) => setSettingsModal({ ...settingsModal, reopen: e.target.checked })} />
-                <span>Re-open this khata</span>
+                <span>Re-open this book</span>
               </label>
             )}
 
@@ -1791,7 +2075,7 @@ export default function AdminKhata() {
               onChange={(e) => setWalletModal({ ...walletModal, creditLimit: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
             <p className="text-xs text-gray-500 mb-3">
-              The most this person may hold at any one time, across every khata. An advance taking them past it
+              The most this person may hold at any one time, across every book. An advance taking them past it
               is refused. 0 means no limit.
             </p>
 
@@ -1976,16 +2260,25 @@ export default function AdminKhata() {
 
 /**
  * Shared statement table for the ledger and the per-employee view.
- * @param {{entries: Object[], onReverse: Function, showEmployee: boolean}} props
+ *
+ * `onToggleDate` is optional and is what makes the Date column clickable. The
+ * per-employee view leaves it out on purpose: those rows come straight from the
+ * server in date order and there is no sort state behind them to reverse, and a
+ * header that looks sortable but is not is worse than a plain one.
+ * @param {{entries: Object[], onReverse: Function, showEmployee: boolean,
+ *   dateDir?: 'asc'|'desc', onToggleDate?: Function}} props
  */
-function EntryTable({ entries, onReverse, onEdit, onConfirm, showEmployee }) {
+function EntryTable({ entries, onReverse, onEdit, onConfirm, showEmployee, dateDir, onToggleDate }) {
   return (
     <div className="bg-white shadow rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-700"
+                aria-sort={onToggleDate ? (dateDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                {onToggleDate ? <DateSortButton dir={dateDir} onToggle={onToggleDate} /> : 'Date'}
+              </th>
               {showEmployee && <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>}
               <th className="px-4 py-3 text-left font-medium text-gray-700">Details</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Given</th>

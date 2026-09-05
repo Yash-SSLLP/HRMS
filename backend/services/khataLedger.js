@@ -45,13 +45,31 @@ const { DEFAULT_KHATA_NAME } = require('../models/EmployeeKhata');
 const EmployeeWallet = require('../models/EmployeeWallet');
 // The employee ledger now lives in the cashbook collection — same rows, one book.
 const KhataEntry = require('../models/CashbookEntry').EmployeeLedgerEntry;
-const { KHATA_TYPES } = require('../models/KhataEntry'); // legacy enum helper only
+// This file no longer imports KHATA_TYPES from the legacy models/KhataEntry —
+// see BOOK_MOVEMENTS below for what replaced it and why. The migration scripts
+// that still need the old model require it themselves.
 const CashAccount = require('../models/CashAccount');
 const CashbookEntry = require('../models/CashbookEntry');
 const User = require('../models/User');
 
 /** Money is stored to 2 decimals; every computed figure goes through this. */
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * Movements filed under an expense book. Everything else moves the wallet itself.
+ *
+ * This used to be `KHATA_TYPES` from the legacy models/KhataEntry, which is
+ * frozen at `['expense']` and describes a collection nothing writes to any
+ * more. A book now has two sides — money spent out of it and money that came
+ * back into it — so the set the live code asks about has to live here, where it
+ * can grow, rather than in a model kept only for migration scripts.
+ *
+ * A 'refund' is the mirror of an 'expense': same book, same mandatory bill,
+ * opposite direction. That is exactly why it belongs in this set and not in the
+ * wallet-only group — a supplier's money handed back is not a fresh advance,
+ * it is the site costing less than it did an hour ago.
+ */
+const BOOK_MOVEMENTS = ['expense', 'refund'];
 
 /** Cashbook category used for the company-cash leg of each khata movement. */
 const CASH_CATEGORY = {
@@ -72,12 +90,12 @@ const signedAmount = (entry) => (entry.direction === 'to_employee' ? entry.amoun
  * Does this kind of movement belong to an expense book, or to the wallet alone?
  *
  * The one question the whole wallet/khata split turns on, so it is answered
- * here and nowhere else. Spending is filed under a book; money entering or
- * leaving the pot is not.
- * @param {string} type - A KhataEntry.ENTRY_TYPES value.
+ * here and nowhere else. Spending — and a refund of it — is filed under a book;
+ * money entering or leaving the pot is not.
+ * @param {string} type - A CashbookEntry.MOVEMENTS value.
  * @returns {boolean}
  */
-const needsKhata = (type) => KHATA_TYPES.includes(type);
+const needsKhata = (type) => BOOK_MOVEMENTS.includes(type);
 
 /**
  * Human name for a user doc or id, for the `party` column on the cashbook leg.
@@ -228,17 +246,29 @@ async function getOrCreateDefaultKhata(employeeId, actor) {
  * Resolve which expense book a spend belongs to, and confirm it can take entries.
  *
  * Every posting path goes through this so the rules are stated once: a named
- * book must exist, must belong to the employee whose money is moving, and must
+ * book must exist, must be one this person is allowed to file into, and must
  * still be open. Naming nothing falls back to their default.
  *
- * The ownership check is the important one — without it, a request naming
+ * THE STANDING CHECK IS THE IMPORTANT ONE — without it, a request naming
  * somebody else's khata id would file one person's spending under another
- * person's book.
- * @param {string|import('mongoose').Types.ObjectId} employeeId
+ * person's book. It used to be a bare ownership test; now that a book can be
+ * shared it delegates to `khata.canPost`, which says the same thing for a book
+ * nobody has shared and additionally lets an accepted 'operator' in.
+ *
+ * NOTE WHAT SHARING DOES NOT DO. The entry is still posted against
+ * `employeeId`'s own wallet — a collaborator spends their own advance and the
+ * owner's balance never moves. All the book gives them is the heading to file
+ * it under.
+ *
+ * The refusal is split into four separate messages rather than one, because
+ * "you cannot post here" is four genuinely different situations and each has a
+ * different next step: ask for an invitation, accept the one you have, ask to
+ * be upgraded from read-only, or accept that the book is finished.
+ * @param {string|import('mongoose').Types.ObjectId} employeeId - Whose money is moving.
  * @param {string|import('mongoose').Types.ObjectId} [khataId] - Omit for the default.
  * @param {object} [actor] - The acting user.
  * @returns {Promise<object>} The EmployeeKhata document.
- * @throws {Error} `.statusCode = 400/404` if unknown, closed, or not theirs.
+ * @throws {Error} `.statusCode = 400/403/404` if unknown, closed, or not theirs to write.
  */
 async function resolveKhata(employeeId, khataId, actor) {
   if (!khataId) {
@@ -253,33 +283,146 @@ async function resolveKhata(employeeId, khataId, actor) {
 
   const khata = await EmployeeKhata.findById(khataId);
   if (!khata) {
-    const err = new Error('That khata no longer exists.');
+    const err = new Error('That book no longer exists.');
     err.statusCode = 404;
     throw err;
   }
-  if (String(khata.employee) !== String(employeeId)) {
-    const err = new Error('That khata belongs to a different employee.');
+
+  if (!khata.canPost(employeeId)) {
+    // Work out WHICH of the reasons applies. Standing is diagnosed before
+    // closure: an owner (or an accepted operator) who lands here can only be
+    // looking at a closed book, so that case falls through to the bottom.
+    const owner = khata.isOwner(employeeId);
+    const mem = owner ? null : khata.memberFor(employeeId);
+    if (!owner) {
+      // A declined invitation is not a standing — they said no, so as far as
+      // posting goes they are a stranger to this book and get the same message.
+      if (!mem || mem.status === 'declined') {
+        const err = new Error('That book belongs to a different employee.');
+        err.statusCode = 400;
+        throw err;
+      }
+      if (mem.status === 'invited') {
+        const err = new Error(`Accept the invitation to "${khata.name}" before adding entries.`);
+        err.statusCode = 403;
+        throw err;
+      }
+      if (mem.role !== 'operator') {
+        const err = new Error(`You can read "${khata.name}" but not add entries to it.`);
+        err.statusCode = 403;
+        throw err;
+      }
+    }
+    const err = new Error(`"${khata.name}" is closed and cannot take new entries.`);
     err.statusCode = 400;
     throw err;
   }
-  if (!khata.isActive) {
-    const err = new Error(`"${khata.name}" is closed and cannot take new entries.`);
-    err.statusCode = 400;
+
+  return khata;
+}
+
+/**
+ * Every expense book this person may work in — the ones they opened, plus the
+ * ones a colleague has shared with them and they accepted.
+ *
+ * ORDERING. The query sorts the way it always did, and then JavaScript puts the
+ * owned books in front, because `isDefault` only ever means something on your
+ * own books: somebody else's "General" is not where YOUR unfiled spending goes,
+ * so letting their default flag float to the top of your picker would offer the
+ * wrong book first every time.
+ *
+ * `members.user` is populated here rather than by the callers so a list of
+ * books can print "shared with 3 people" without a query per row.
+ * @param {string|import('mongoose').Types.ObjectId} employeeId
+ * @param {boolean} [includeClosed=false]
+ * @returns {Promise<object[]>} Owned books first, then shared ones.
+ */
+async function listKhatasOf(employeeId, includeClosed = false) {
+  const filter = {
+    $or: [
+      { employee: employeeId },
+      { members: { $elemMatch: { user: employeeId, status: 'accepted' } } },
+    ],
+  };
+  if (!includeClosed) filter.isActive = true;
+
+  const khatas = await EmployeeKhata.find(filter)
+    .populate('members.user', 'firstName lastName email photo')
+    .sort({ isDefault: -1, name: 1 });
+
+  return khatas.sort((a, b) => {
+    const mine = (k) => (k.isOwner(employeeId) ? 0 : 1);
+    if (mine(a) !== mine(b)) return mine(a) - mine(b);
+    if (Boolean(a.isDefault) !== Boolean(b.isDefault)) return a.isDefault ? -1 : 1;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+}
+
+/**
+ * Books this user may READ — owned or accepted-member. The reading half of
+ * `listKhatasOf`, named for what the caller is asking so a reports screen does
+ * not have to know that the two questions currently have the same answer.
+ * @param {string|import('mongoose').Types.ObjectId} userId
+ * @param {boolean} [includeClosed=false]
+ * @returns {Promise<object[]>}
+ */
+async function listVisibleKhatas(userId, includeClosed = false) {
+  return listKhatasOf(userId, includeClosed);
+}
+
+/**
+ * Load a book and assert this user may read it.
+ *
+ * Reading is deliberately looser than posting: a closed book is still readable
+ * (financial history is never destroyed) and a 'viewer' gets everything a
+ * detail screen or a report shows. What it will not do is hand a book to
+ * somebody with no standing on it at all.
+ * @param {string|import('mongoose').Types.ObjectId} khataId
+ * @param {string|import('mongoose').Types.ObjectId} userId
+ * @returns {Promise<object>} The EmployeeKhata document.
+ * @throws {Error} `.statusCode = 404` if it is gone, `403` if it is not theirs to read.
+ */
+async function loadKhataForViewer(khataId, userId) {
+  const khata = await EmployeeKhata.findById(khataId)
+    .populate('members.user', 'firstName lastName email photo');
+  if (!khata) {
+    const err = new Error('That book no longer exists.');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (!khata.canView(userId)) {
+    const err = new Error('You do not have access to that book.');
+    err.statusCode = 403;
     throw err;
   }
   return khata;
 }
 
 /**
- * Every expense book an employee holds, with the default first.
- * @param {string|import('mongoose').Types.ObjectId} employeeId
- * @param {boolean} [includeClosed=false]
- * @returns {Promise<object[]>}
+ * Load a book and assert this user OWNS it.
+ *
+ * The gate on everything that changes the book itself rather than what is in
+ * it — renaming it, inviting people, changing what they may do. A collaborator
+ * files entries; they do not get to re-shape somebody else's book under them.
+ * @param {string|import('mongoose').Types.ObjectId} khataId
+ * @param {string|import('mongoose').Types.ObjectId} userId
+ * @returns {Promise<object>} The EmployeeKhata document.
+ * @throws {Error} `.statusCode = 404` if it is gone, `403` if they are not the owner.
  */
-async function listKhatasOf(employeeId, includeClosed = false) {
-  const filter = { employee: employeeId };
-  if (!includeClosed) filter.isActive = true;
-  return EmployeeKhata.find(filter).sort({ isDefault: -1, name: 1 });
+async function loadKhataForOwner(khataId, userId) {
+  const khata = await EmployeeKhata.findById(khataId)
+    .populate('members.user', 'firstName lastName email photo');
+  if (!khata) {
+    const err = new Error('That book no longer exists.');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (!khata.isOwner(userId)) {
+    const err = new Error('Only the person who opened this book can do that.');
+    err.statusCode = 403;
+    throw err;
+  }
+  return khata;
 }
 
 /**
@@ -378,11 +521,18 @@ async function recomputeWalletBalance(employeeId) {
  * Replay one expense book's total from the spending filed under it.
  *
  * `spent` is a TOTAL, not a balance, so it is summed rather than run: what did
- * this book cost. A reversal filed under the book nets back off it, which is why
- * the sum is signed rather than a plain addition of amounts.
+ * this book cost. A reversal filed under the book nets back off it, and so does
+ * a refund, which is why the sum is signed rather than a plain addition of
+ * amounts.
  *
- * ONLY SPENDING COUNTS. The query filters on type rather than taking everything
- * in the book, because a book can still contain rows that do not belong to it:
+ * IT SUMS THE WHOLE BOOK, NOT ONE PERSON'S SHARE OF IT. The query is keyed on
+ * `expenseBook` alone and never on the employee, so a book several colleagues
+ * file into totals what the job cost between them — which is the only figure
+ * anybody wants from a shared site book. Keep it that way.
+ *
+ * ONLY BOOK MOVEMENTS COUNT. The query filters on movement rather than taking
+ * everything in the book, because a book can still contain rows that do not
+ * belong to it:
  * a database migrated from the per-khata era has advances and settlements filed
  * under one (scripts/migrateKhataWallet.js detaches them, but the module has to
  * read correctly before anybody runs it), and an advance counted here would come
@@ -400,10 +550,11 @@ async function recomputeKhataSpent(khataId) {
   const entries = await KhataEntry.find({
     expenseBook: khata._id,
     status: 'Approved',
-    // Spending, plus the reversals that cancel it — a reversal is filed under
-    // whatever it reverses, so one against an expense has to come back off the
-    // book it was charged to.
-    movement: { $in: [...KHATA_TYPES, 'reversal'] },
+    // Everything filed under a book — spending and the refunds of it — plus the
+    // reversals that cancel either. A reversal is filed under whatever it
+    // reverses, so one against an expense has to come back off the book it was
+    // charged to.
+    movement: { $in: [...BOOK_MOVEMENTS, 'reversal'] },
   })
     .sort({ date: 1, createdAt: 1 })
     .select('direction amount date');
@@ -411,6 +562,12 @@ async function recomputeKhataSpent(khataId) {
   // Spending is 'from_employee', so it is NEGATIVE under the wallet sign rule.
   // Flip it: a book's total reads as a positive cost, which is the only way
   // anybody ever talks about what a site or a vehicle has run to.
+  //
+  // THE SAME FLIP HANDLES A REFUND with no special case, which is why the sum
+  // is signed rather than a plain addition of amounts: a refund is
+  // 'to_employee', so it comes through as positive and the flip turns it into a
+  // subtraction. Money back into the book makes the site cost less, exactly as
+  // a reversal of an expense does.
   const spent = round2(entries.reduce((sum, e) => sum - signedAmount(e), 0));
 
   khata.spent = spent;
@@ -550,6 +707,13 @@ async function listOperableAccounts(user) {
  */
 function assertWithinCreditLimit(wallet, entry) {
   if (entry.direction !== 'to_employee') return;
+  // A REFUND IS NOT THE COMPANY HANDING ANYTHING OVER. The limit caps how much
+  // of our cash one person may be carrying on our say-so; money coming back
+  // into a book — a supplier refund, a cancelled booking — was already theirs
+  // to hold and is simply returning to their pocket. Refusing it would leave
+  // the ledger unable to record cash that physically exists, which is worse
+  // than the limit being briefly exceeded by money we never paid out.
+  if (BOOK_MOVEMENTS.includes(entry.movement)) return;
   const limit = Number(wallet?.creditLimit) || 0;
   if (!limit) return;
   const projected = round2((wallet.balance || 0) + entry.amount);
@@ -622,7 +786,7 @@ async function postCashLeg(entry, actor, employee) {
  * @param {'to_employee'|'from_employee'} input.direction - Which way the money went.
  * @param {number} input.amount - Positive amount; the sign comes from `direction`.
  * @param {string} [input.type='other'] - Reporting label (see KhataEntry.ENTRY_TYPES).
- * @param {string} [input.khata] - The expense book, for an 'expense'; ignored otherwise.
+ * @param {string} [input.khata] - The expense book, for a BOOK_MOVEMENTS row; ignored otherwise.
  * @param {Date} [input.date]
  * @param {string} [input.purpose]
  * @param {string} [input.category]
@@ -963,8 +1127,11 @@ async function reverseEntry(entry, actor, reason) {
 function expenseEditability(entry, khata) {
   const no = (reason) => ({ employee: false, company: false, reason });
 
-  if (!entry || entry.movement !== 'expense') {
-    return no('Only an expense can be edited. Anything else is corrected by reversing it.');
+  // A refund is the mirror of an expense — posted on the spot, with a bill,
+  // before anybody checked it — so it earns the same correction window for the
+  // same reason. Everything else went through a reviewer before it posted.
+  if (!entry || !BOOK_MOVEMENTS.includes(entry.movement)) {
+    return no('Only an expense or a refund can be edited. Anything else is corrected by reversing it.');
   }
   if (entry.status === 'Reversed' || entry.reversedBy) {
     return no('This expense has been reversed, so it can no longer be changed.');
@@ -1127,6 +1294,9 @@ module.exports = {
   getOrCreateDefaultKhata,
   resolveKhata,
   listKhatasOf,
+  listVisibleKhatas,
+  loadKhataForViewer,
+  loadKhataForOwner,
   replayBalance,
   recomputeWalletBalance,
   recomputeKhataSpent,
@@ -1146,4 +1316,5 @@ module.exports = {
   applyExpenseEdit,
   confirmExpense,
   CASH_CATEGORY,
+  BOOK_MOVEMENTS,
 };
