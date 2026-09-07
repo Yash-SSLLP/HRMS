@@ -10,6 +10,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import PromptDialog from '../components/PromptDialog';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
@@ -28,6 +29,8 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-di
 const personName = (u) => (u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email : '-');
 
 export default function AdminAssets() {
+  // A view-only account reads the register and issues nothing.
+  const viewOnly = useViewOnly();
   const [tab, setTab] = useTabParam('assets', ['assets', 'assignments']);
   const [assets, setAssets] = useState([]);
   const [users, setUsers] = useState([]);
@@ -152,7 +155,7 @@ export default function AdminAssets() {
   return (
     <div>
       <PageHeader title="Assets" subtitle="Company assets and who they’re issued to">
-        {tab === 'assets'
+        {viewOnly ? null : tab === 'assets'
           ? <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Asset</button>
           : <button onClick={() => openAssign(null)} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Assign asset</button>}
       </PageHeader>
@@ -197,9 +200,13 @@ export default function AdminAssets() {
                   </td>
                   <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[a.status]}`}>{a.status}</span></td>
                   <td className="px-4 py-3 text-right space-x-2">
-                    <button onClick={() => openAssign(a)} className="text-emerald-700 hover:underline">{a.assignedTo ? 'Reassign' : 'Assign'}</button>
-                    <button onClick={() => openEdit(a)} className="text-blue-600 hover:underline">Edit</button>
-                    <button onClick={() => remove(a)} className="text-red-600 hover:underline">Delete</button>
+                    {!viewOnly && (
+                      <>
+                        <button onClick={() => openAssign(a)} className="text-emerald-700 hover:underline">{a.assignedTo ? 'Reassign' : 'Assign'}</button>
+                        <button onClick={() => openEdit(a)} className="text-blue-600 hover:underline">Edit</button>
+                        <button onClick={() => remove(a)} className="text-red-600 hover:underline">Delete</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -245,7 +252,7 @@ export default function AdminAssets() {
                     </td>
                     <td className="px-4 py-3 text-gray-600">{r.note || '-'}</td>
                     <td className="px-4 py-3 text-right">
-                      {!r.returnedAt && <button onClick={() => openReturn(r)} className="text-amber-700 hover:underline">Mark returned</button>}
+                      {!viewOnly && !r.returnedAt && <button onClick={() => openReturn(r)} className="text-amber-700 hover:underline">Mark returned</button>}
                     </td>
                   </tr>
                 ))}

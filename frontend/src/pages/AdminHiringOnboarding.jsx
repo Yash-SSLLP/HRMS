@@ -12,6 +12,7 @@ import LetterEditor from '../components/LetterEditor';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import MailComposeModal from '../components/MailComposeModal';
 import DesignationSelect from '../components/DesignationSelect';
 import ShiftHoursSelect from '../components/ShiftHoursSelect';
@@ -51,6 +52,12 @@ const amountFromPct = (pct, ctc) => {
 };
 
 export default function AdminHiringOnboarding() {
+  // A view-only account follows a joiner through and issues nothing. The two
+  // letter PDFs stay — downloading what was already issued is a read.
+  //
+  // The joining-date / notice / notes boxes are READ-ONLY rather than hidden:
+  // each holds a fact worth seeing, and hiding the input would hide the answer.
+  const viewOnly = useViewOnly();
   const [rows, setRows] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -221,7 +228,7 @@ export default function AdminHiringOnboarding() {
                   {c.offer?.hasLetter && (
                     <button onClick={() => downloadOffer(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Offer PDF</button>
                   )}
-                  {c.offer?.hasLetter && (
+                  {!viewOnly && c.offer?.hasLetter && (
                     <button
                       onClick={() => sendLetter(c, 'offer')}
                       disabled={!c.email}
@@ -234,7 +241,7 @@ export default function AdminHiringOnboarding() {
                   {c.appointment?.hasLetter && (
                     <button onClick={() => downloadAppointment(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Appointment PDF</button>
                   )}
-                  {c.appointment?.hasLetter && (
+                  {!viewOnly && c.appointment?.hasLetter && (
                     <button
                       onClick={() => sendLetter(c, 'appointment')}
                       disabled={!c.email}
@@ -244,30 +251,34 @@ export default function AdminHiringOnboarding() {
                       {c.appointment?.emailedAt ? 'Resend Appointment Letter' : 'Send Appointment Letter'}
                     </button>
                   )}
-                  <button onClick={() => openAppt(c)} className="text-xs px-2.5 py-1 rounded-lg bg-gray-900 text-white hover:bg-gray-700">
-                    {c.appointment?.generatedAt ? 'Re-issue Appointment Letter' : 'Release Appointment Letter'}
-                  </button>
+                  {!viewOnly && (
+                    <button onClick={() => openAppt(c)} className="text-xs px-2.5 py-1 rounded-lg bg-gray-900 text-white hover:bg-gray-700">
+                      {c.appointment?.generatedAt ? 'Re-issue Appointment Letter' : 'Release Appointment Letter'}
+                    </button>
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Joining date</label>
-                  <input type="date" value={drafts[c._id]?.joiningDate || ''} onChange={(e) => setDraft(c._id, { joiningDate: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <input type="date" value={drafts[c._id]?.joiningDate || ''} onChange={(e) => setDraft(c._id, { joiningDate: e.target.value })} disabled={viewOnly} className="block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Notice period</label>
-                  <input value={drafts[c._id]?.noticePeriod || ''} onChange={(e) => setDraft(c._id, { noticePeriod: e.target.value })} placeholder="e.g. 30 days / serving" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <input value={drafts[c._id]?.noticePeriod || ''} onChange={(e) => setDraft(c._id, { noticePeriod: e.target.value })} readOnly={viewOnly} placeholder={viewOnly ? '—' : 'e.g. 30 days / serving'} className="block w-full border rounded-lg px-3 py-2 text-sm read-only:bg-gray-50 read-only:text-gray-500" />
                 </div>
                 <div className="lg:col-span-2">
                   <label className="block text-xs text-gray-600 mb-1">Notes</label>
-                  <input value={drafts[c._id]?.notes || ''} onChange={(e) => setDraft(c._id, { notes: e.target.value })} placeholder="Internal notes" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <input value={drafts[c._id]?.notes || ''} onChange={(e) => setDraft(c._id, { notes: e.target.value })} readOnly={viewOnly} placeholder={viewOnly ? '—' : 'Internal notes'} className="block w-full border rounded-lg px-3 py-2 text-sm read-only:bg-gray-50 read-only:text-gray-500" />
                 </div>
+                {!viewOnly && (
                 <div className="sm:col-span-2 lg:col-span-4 flex justify-end">
                   <button onClick={() => saveOnboarding(c)} disabled={savingId === c._id} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
                     {savingId === c._id ? 'Saving…' : 'Save joining details'}
                   </button>
                 </div>
+                )}
               </div>
 
               {c.appointment?.generatedAt && (

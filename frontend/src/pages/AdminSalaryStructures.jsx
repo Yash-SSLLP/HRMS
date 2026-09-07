@@ -16,6 +16,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { useAuthStore } from '../store/authStore';
@@ -61,6 +62,14 @@ const blankForm = () => ({
 });
 
 export default function AdminSalaryStructures() {
+  // A view-only account reads the structures and writes none.
+  //
+  // PREVIEW STAYS. It POSTs, but only to compute what a structure would pay —
+  // it saves nothing, and the server allows it for this account (the `/preview`
+  // entry in VIEW_ONLY_POST_ALLOW). Working out what a structure means is
+  // exactly what an audit account is for, so the button, the employee picker
+  // and the CTC box all keep working. Template and Export are reads too.
+  const viewOnly = useViewOnly();
   const [structures, setStructures] = useState([]);
   const currentUser = useAuthStore((s) => s.user);
   const [employees, setEmployees] = useState([]);
@@ -413,18 +422,22 @@ export default function AdminSalaryStructures() {
         >
           Template
         </button>
+        {!viewOnly && (
         <button
           onClick={() => setShowImport(true)}
           className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
         >
           Import Excel
         </button>
+        )}
+        {!viewOnly && (
         <button
           onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm"
         >
           + New Structure
         </button>
+        )}
       </PageHeader>
 
       {error && (
@@ -479,12 +492,16 @@ export default function AdminSalaryStructures() {
                     >
                       Preview
                     </button>
-                    <button onClick={() => openEdit(s)} className="text-blue-600 hover:underline">
-                      Edit
-                    </button>
-                    <button onClick={() => remove(s)} className="text-red-600 hover:underline">
-                      Delete
-                    </button>
+                    {!viewOnly && (
+                      <>
+                        <button onClick={() => openEdit(s)} className="text-blue-600 hover:underline">
+                          Edit
+                        </button>
+                        <button onClick={() => remove(s)} className="text-red-600 hover:underline">
+                          Delete
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))

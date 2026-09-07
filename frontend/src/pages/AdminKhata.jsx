@@ -32,6 +32,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useTabParam } from '../hooks/useTabParam';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import SearchableSelect from '../components/SearchableSelect';
 // The portal-wide date-order control, so this table reverses the way every
 // other dated table in the portal does. `useDateSort` sorts a COPY, which
@@ -301,6 +302,11 @@ function BalanceChip({ display }) {
 }
 
 export default function AdminKhata() {
+  // A view-only account reads who is holding company cash and moves none of it.
+  // Export to Excel stays — it is a read, and it is gated separately by the
+  // khata-export grant, which is the decision about who may take the ledger out
+  // of the building (see canExportKhata on the server).
+  const viewOnly = useViewOnly();
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.role === 'SuperAdmin';
   // Sanctioning an advance is the executives' call, and the one write a
@@ -864,10 +870,12 @@ export default function AdminKhata() {
   return (
     <div>
       <PageHeader title="Employee Cashbook">
-        <button onClick={() => openEntry('')}
-          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-          + New entry
-        </button>
+        {!viewOnly && (
+          <button onClick={() => openEntry('')}
+            className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
+            + New entry
+          </button>
+        )}
       </PageHeader>
 
       <p className="text-sm text-gray-500 mb-4">
@@ -923,10 +931,12 @@ export default function AdminKhata() {
                   Export to Excel
                 </button>
               )}
-              <button onClick={remindEveryone} disabled={!ov?.totalReceivable}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
-                Remind everyone holding cash
-              </button>
+              {!viewOnly && (
+                <button onClick={remindEveryone} disabled={!ov?.totalReceivable}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
+                  Remind everyone holding cash
+                </button>
+              )}
             </div>
 
             <div>
@@ -985,10 +995,12 @@ export default function AdminKhata() {
             </select>
             {/* Also reachable from inside a person, but most people look for it
                 here first — so it is on the list as well. */}
-            <button onClick={() => setKhataModal({ employee: '', name: '', note: '' })}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">
-              + New book
-            </button>
+            {!viewOnly && (
+              <button onClick={() => setKhataModal({ employee: '', name: '', note: '' })}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">
+                + New book
+              </button>
+            )}
           </div>
 
           <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -1069,6 +1081,8 @@ export default function AdminKhata() {
             </p>
 
             <div className="flex flex-wrap gap-2 mt-4">
+              {!viewOnly && (
+                <>
               <button onClick={() => openEntry(detail.employee._id, 'to_employee')}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
                 Give advance
@@ -1096,6 +1110,8 @@ export default function AdminKhata() {
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
                 Wallet settings
               </button>
+                </>
+              )}
               {/* Whichever book is being looked at right now — showing "only
                   this" and then downloading everything would not match. */}
               <button onClick={() => setStatementModal({
@@ -1144,10 +1160,12 @@ export default function AdminKhata() {
                       className="text-xs text-gray-600 hover:text-gray-900 underline">
                       {active ? 'Show all entries' : 'Show only this'}
                     </button>
-                    <button onClick={() => openEntry(detail.employee._id, 'from_employee', k._id, 'expense')}
-                      className="text-xs text-gray-600 hover:text-gray-900 underline">
-                      Add expense
-                    </button>
+                    {!viewOnly && (
+                      <button onClick={() => openEntry(detail.employee._id, 'from_employee', k._id, 'expense')}
+                        className="text-xs text-gray-600 hover:text-gray-900 underline">
+                        Add expense
+                      </button>
+                    )}
                     <button onClick={() => setSettingsModal({
                       khataId: k._id,
                       name: k.name,
@@ -1179,9 +1197,9 @@ export default function AdminKhata() {
             entries={viewKhata
               ? (detail.entries || []).filter((e) => String(e.khata) === viewKhata)
               : (detail.entries || [])}
-            onReverse={reverse}
-            onEdit={openExpenseEdit}
-            onConfirm={confirmExpense}
+            onReverse={viewOnly ? undefined : reverse}
+            onEdit={viewOnly ? undefined : openExpenseEdit}
+            onConfirm={viewOnly ? undefined : confirmExpense}
             showEmployee={false} />
         </div>
       )}
@@ -1281,8 +1299,10 @@ export default function AdminKhata() {
               </p>
             )}
           </div>
-          <EntryTable entries={visibleEntries} onReverse={reverse} onEdit={openExpenseEdit}
-            onConfirm={confirmExpense} showEmployee
+          <EntryTable entries={visibleEntries}
+            onReverse={viewOnly ? undefined : reverse}
+            onEdit={viewOnly ? undefined : openExpenseEdit}
+            onConfirm={viewOnly ? undefined : confirmExpense} showEmployee
             dateDir={dateDir} onToggleDate={toggleDateDir} />
         </div>
       )}
@@ -1384,6 +1404,7 @@ export default function AdminKhata() {
                       {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
                       <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
                     </div>
+                    {!viewOnly && (
                     <div className="flex gap-2 shrink-0">
                       <button onClick={() => setApproveModal({ entry: e, cashAccount: e.cashAccount || '', note: '' })}
                         className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
@@ -1394,6 +1415,7 @@ export default function AdminKhata() {
                         Decline
                       </button>
                     </div>
+                    )}
                   </div>
                 </li>
               ))}
@@ -1455,6 +1477,7 @@ export default function AdminKhata() {
                         <FiledFrom location={e.filedLocation} />
                       </div>
                     </div>
+                    {!viewOnly && (
                     <div className="flex flex-wrap gap-2 shrink-0">
                       <button onClick={() => confirmExpense(e)}
                         className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
@@ -1469,6 +1492,7 @@ export default function AdminKhata() {
                         Reject
                       </button>
                     </div>
+                    )}
                   </li>
                 ))}
               </ul>

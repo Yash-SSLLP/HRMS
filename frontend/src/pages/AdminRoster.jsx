@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { downloadTableXlsx } from '../api/download';
@@ -27,6 +28,10 @@ const blankShift = { name: '', code: '', startTime: '', endTime: '', isActive: t
 const blankAssign = { employee: '', date: '', shift: '', note: '' };
 
 export default function AdminRoster() {
+  // A view-only account reads who is on which shift and assigns nobody. The
+  // Export button stays — it is a read, and downloading the roster is exactly
+  // the sort of thing an audit account is for.
+  const viewOnly = useViewOnly();
   const [shifts, setShifts] = useState([]);
   const [entries, setEntries] = useState([]);
   const [users, setUsers] = useState([]);
@@ -269,7 +274,9 @@ export default function AdminRoster() {
       <div className="bg-white shadow rounded-lg overflow-hidden mb-6">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <h2 className="card-title">Shifts</h2>
-          <button onClick={openCreateShift} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Shift</button>
+          {!viewOnly && (
+            <button onClick={openCreateShift} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Shift</button>
+          )}
         </div>
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50"><tr>
@@ -295,8 +302,12 @@ export default function AdminRoster() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
-                  <button onClick={() => openEditShift(s)} className="text-blue-600 hover:underline">Edit</button>
-                  <button onClick={() => removeShift(s)} className="text-red-600 hover:underline">Delete</button>
+                  {!viewOnly && (
+                    <>
+                      <button onClick={() => openEditShift(s)} className="text-blue-600 hover:underline">Edit</button>
+                      <button onClick={() => removeShift(s)} className="text-red-600 hover:underline">Delete</button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -344,9 +355,11 @@ export default function AdminRoster() {
                   <button onClick={() => toggleShiftEmployees(s._id)} className="text-blue-600 hover:underline text-sm">
                     {expandedShift === s._id ? 'Hide' : 'View'}
                   </button>
-                  <button onClick={() => openShiftAssign(s)} className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50">
-                    Assign employees
-                  </button>
+                  {!viewOnly && (
+                    <button onClick={() => openShiftAssign(s)} className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50">
+                      Assign employees
+                    </button>
+                  )}
                 </div>
               </div>
               {expandedShift === s._id && (
@@ -372,7 +385,9 @@ export default function AdminRoster() {
                             <td className="py-1.5 font-mono text-xs">{p.employeeCode || '-'}</td>
                             <td className="py-1.5 text-gray-600">{p.department || '-'}</td>
                             <td className="py-1.5 text-right">
-                              <button onClick={() => unassignFromShift(s, p)} className="text-red-600 hover:underline">Remove</button>
+                              {!viewOnly && (
+                                <button onClick={() => unassignFromShift(s, p)} className="text-red-600 hover:underline">Remove</button>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -397,7 +412,9 @@ export default function AdminRoster() {
               <input type="date" value={filter.to} onChange={(e) => setFilter({ ...filter, to: e.target.value })} className="border rounded-lg px-3 py-2 text-sm" />
               <button type="submit" className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Filter</button>
             </form>
-            <button onClick={openAssign} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Assign Shift</button>
+            {!viewOnly && (
+              <button onClick={openAssign} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Assign Shift</button>
+            )}
           </div>
         </div>
         <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -423,7 +440,9 @@ export default function AdminRoster() {
                   <div className="text-xs text-gray-500">{timeRange(en.shift)}</div>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <button onClick={() => removeEntry(en)} className="text-red-600 hover:underline">Delete</button>
+                  {!viewOnly && (
+                    <button onClick={() => removeEntry(en)} className="text-red-600 hover:underline">Delete</button>
+                  )}
                 </td>
               </tr>
             ))}

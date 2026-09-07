@@ -11,6 +11,7 @@ import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import CourseVideoPlayer from '../components/CourseVideoPlayer';
 import { confirmDialog } from '../components/dialogs';
 import { downloadTableXlsx } from '../api/download';
@@ -72,6 +73,8 @@ const fmtBytes = (n) => {
 };
 
 export default function AdminCourses() {
+  // A view-only account browses the catalogue and changes nothing in it.
+  const viewOnly = useViewOnly();
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -250,7 +253,9 @@ export default function AdminCourses() {
               <span className="ml-1 inline-flex items-center justify-center text-[11px] font-semibold bg-indigo-500 text-white rounded-full px-1.5 py-0.5">{commentsTotal}</span>
             )}
           </button>
-          <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Course</button>
+          {!viewOnly && (
+            <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Course</button>
+          )}
         </div>
       </PageHeader>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -297,13 +302,19 @@ export default function AdminCourses() {
               </div>
 
               <div className="mt-4 pt-3 border-t border-gray-100 flex flex-wrap gap-3 text-sm">
-                <button onClick={() => openEdit(c)} className="text-blue-600 hover:underline">Edit</button>
-                <button onClick={() => setAssignFor(c)} className="text-indigo-600 hover:underline">Assign</button>
+                {!viewOnly && (
+                  <>
+                    <button onClick={() => openEdit(c)} className="text-blue-600 hover:underline">Edit</button>
+                    <button onClick={() => setAssignFor(c)} className="text-indigo-600 hover:underline">Assign</button>
+                  </>
+                )}
                 <button onClick={() => setRosterFor(c)} className="text-gray-600 hover:underline">Roster</button>
                 {(c.courseType === 'external' || c.isPublic) && (
                   <button onClick={() => setShareFor(c)} className="text-emerald-600 hover:underline">Public link</button>
                 )}
-                <button onClick={() => remove(c)} className="text-red-600 hover:underline ml-auto">Delete</button>
+                {!viewOnly && (
+                  <button onClick={() => remove(c)} className="text-red-600 hover:underline ml-auto">Delete</button>
+                )}
               </div>
             </div>
           ))}
@@ -606,6 +617,8 @@ function RosterModal({ course, onClose }) {
 
 // ===== Pending self-enroll approvals =====
 function ApprovalsModal({ onClose, onChange }) {
+  // Each modal asks for itself rather than being handed the flag — one import,
+  const viewOnly = useViewOnly();
   const [rows, setRows] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
@@ -640,8 +653,12 @@ function ApprovalsModal({ onClose, onChange }) {
                 <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '-'}</div>
                 <div className="text-xs text-gray-400 truncate">wants “{e.course?.title || 'a course'}”</div>
               </div>
-              <button disabled={busyId === e._id} onClick={() => act(e._id, 'approve')} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Approve</button>
-              <button disabled={busyId === e._id} onClick={() => act(e._id, 'reject')} className="px-3 py-1.5 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reject</button>
+              {!viewOnly && (
+                <>
+                  <button disabled={busyId === e._id} onClick={() => act(e._id, 'approve')} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Approve</button>
+                  <button disabled={busyId === e._id} onClick={() => act(e._id, 'reject')} className="px-3 py-1.5 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reject</button>
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -653,6 +670,8 @@ function ApprovalsModal({ onClose, onChange }) {
 
 // ===== Course issue reports =====
 function ReportsModal({ onClose, onChange }) {
+  // and no prop to forget when a new modal is added to this file.
+  const viewOnly = useViewOnly();
   const [rows, setRows] = useState(null);
   const [status, setStatus] = useState('Open');
   const [busyId, setBusyId] = useState(null);
@@ -702,7 +721,7 @@ function ReportsModal({ onClose, onChange }) {
                     {r.employee ? `${r.employee.firstName || ''} ${r.employee.lastName || ''}`.trim() || r.employee.email : '-'} · {fmtDate(r.createdAt)}
                   </div>
                 </div>
-                {status === 'Open' ? (
+                {viewOnly ? null : status === 'Open' ? (
                   <button disabled={busyId === r._id} onClick={() => act(r._id, 'Resolved')}
                     className="shrink-0 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Resolve</button>
                 ) : (
@@ -823,6 +842,8 @@ function ShareModal({ course, onClose }) {
 
 // ===== Global comment moderation =====
 function CommentsModal({ onClose, onChange }) {
+  // (Same reasoning as ApprovalsModal above.)
+  const viewOnly = useViewOnly();
   const [rows, setRows] = useState(null);
   const [status, setStatus] = useState('Pending');
   const [busyId, setBusyId] = useState(null);
@@ -868,9 +889,9 @@ function CommentsModal({ onClose, onChange }) {
               <div className="text-sm text-gray-700 mt-0.5">“{c.text}”</div>
               <div className="text-xs text-gray-400 mt-0.5">{fmtDate(c.createdAt)}</div>
               <div className="flex gap-2 mt-2">
-                {status !== 'Approved' && <button disabled={busyId === c._id} onClick={() => act(c._id, 'Approved')} className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Approve</button>}
-                {status !== 'Rejected' && <button disabled={busyId === c._id} onClick={() => act(c._id, 'Rejected')} className="px-3 py-1 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reject</button>}
-                <button disabled={busyId === c._id} onClick={() => act(c._id, 'delete')} className="px-3 py-1 text-xs text-red-600 hover:underline disabled:opacity-60 ml-auto">Delete</button>
+                {!viewOnly && status !== 'Approved' && <button disabled={busyId === c._id} onClick={() => act(c._id, 'Approved')} className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60">Approve</button>}
+                {!viewOnly && status !== 'Rejected' && <button disabled={busyId === c._id} onClick={() => act(c._id, 'Rejected')} className="px-3 py-1 text-xs border rounded-lg hover:bg-gray-50 disabled:opacity-60">Reject</button>}
+                {!viewOnly && <button disabled={busyId === c._id} onClick={() => act(c._id, 'delete')} className="px-3 py-1 text-xs text-red-600 hover:underline disabled:opacity-60 ml-auto">Delete</button>}
               </div>
             </div>
           ))}

@@ -11,6 +11,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog } from '../components/dialogs';
 import SalarySetupAlert from '../components/SalarySetupAlert';
@@ -106,6 +107,9 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
 
 export default function AdminPayroll() {
+  // A view-only account reads the register and runs no payroll. Download Excel
+  // and the per-slip PDF/Preview stay — both are reads the server allows.
+  const viewOnly = useViewOnly();
   // A Paid payslip is closed to HR — the money has gone and the figures are what
   // the register and the employee's own copy say. The Backend alone may reopen
   // one to fix a real mistake, and the server audits it when they do
@@ -534,14 +538,18 @@ export default function AdminPayroll() {
           className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm mr-2">
           ⬇ Download Excel
         </button>
-        <button onClick={openRun}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm mr-2">
-          ▶ Run Payroll
-        </button>
-        <button onClick={openCreate}
-          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-          + New Payslip
-        </button>
+        {!viewOnly && (
+          <>
+            <button onClick={openRun}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm mr-2">
+              ▶ Run Payroll
+            </button>
+            <button onClick={openCreate}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
+              + New Payslip
+            </button>
+          </>
+        )}
       </PageHeader>
 
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-3 items-end flex-wrap">
@@ -653,7 +661,7 @@ export default function AdminPayroll() {
                       is about the money, and one home for the workflow beats two.
                       The state is still shown here because it is useful context
                       when reviewing figures. */}
-                  {p.status === 'Draft' && (
+                  {!viewOnly && p.status === 'Draft' && (
                     <>
                       <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
                       {/* Approve is withheld on a slip its own subject prepared
@@ -667,7 +675,7 @@ export default function AdminPayroll() {
                       <button onClick={() => doAction(p._id, 'delete', p)} className="text-red-600 hover:underline">Delete</button>
                     </>
                   )}
-                  {p.status === 'Approved' && (
+                  {!viewOnly && p.status === 'Approved' && (
                     <button onClick={() => doAction(p._id, 'pay')} className="text-green-700 hover:underline">Mark Paid</button>
                   )}
                   {/* Correcting a payslip after it has been paid. Hidden from
@@ -676,7 +684,7 @@ export default function AdminPayroll() {
                       Editing one that was already finalised pulls the release
                       back, so the employee cannot download a half-corrected
                       document while it is being fixed. */}
-                  {p.status === 'Paid' && isBackend && (
+                  {!viewOnly && p.status === 'Paid' && isBackend && (
                     <>
                       <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
                       <button onClick={() => doAction(p._id, 'delete', p)} className="text-red-600 hover:underline">Void</button>
@@ -684,7 +692,7 @@ export default function AdminPayroll() {
                   )}
                   {/* A voided slip is not gone — the Backend can correct it back
                       to Paid if it was cancelled by mistake. */}
-                  {p.status === 'Void' && isBackend && (
+                  {!viewOnly && p.status === 'Void' && isBackend && (
                     <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
                   )}
                   {(p.status === 'Approved' || p.status === 'Paid') && (
@@ -697,7 +705,9 @@ export default function AdminPayroll() {
                         className="text-blue-600 hover:underline">
                         {releaseOf(p) === 'Finalised' ? 'PDF' : 'Preview'}
                       </button>
-                      <button onClick={() => emailPayslip(p)} className="text-indigo-600 hover:underline">{p.emailedAt ? 'Resend' : 'Email'}</button>
+                      {!viewOnly && (
+                        <button onClick={() => emailPayslip(p)} className="text-indigo-600 hover:underline">{p.emailedAt ? 'Resend' : 'Email'}</button>
+                      )}
                     </>
                   )}
                 </td>

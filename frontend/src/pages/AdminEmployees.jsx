@@ -12,6 +12,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
@@ -199,6 +200,9 @@ function SortHeader({ label, sortKey, sort, onSort, align = 'left' }) {
 }
 
 export default function AdminEmployees() {
+  // A view-only account reads the directory and edits nobody. Template and the
+  // Excel export stay — both are reads.
+  const viewOnly = useViewOnly();
   const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
@@ -217,6 +221,15 @@ export default function AdminEmployees() {
   // and only changing a field that already names somebody needs the grant.
   // Mirrors canFillHierarchyField in the backend's employeeController, and like
   // it answers on the STORED value, not on what the form currently shows.
+  // The reporting manager / HR partner the record being edited ALREADY had.
+  // Blank for a new employee, which is what lets both be set on create.
+  //
+  // Declared HERE, above the two derived flags below, and not with the rest of
+  // the modal state further down: `canSetHrPartner` is evaluated on every
+  // render, so a `const` declared after it puts this in the temporal dead zone
+  // and the whole page throws "Cannot access 'storedHierarchy' before
+  // initialization" before it paints.
+  const [storedHierarchy, setStoredHierarchy] = useState({ hrPartner: '', reportingManager: '' });
   const canFillHierarchy = (field) => canSetHierarchy || !storedHierarchy[field];
   const canSetHrPartner = canFillHierarchy('hrPartner');
   const canSetReportingManager = canFillHierarchy('reportingManager');
@@ -264,9 +277,6 @@ export default function AdminEmployees() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  // The reporting manager / HR partner the record being edited ALREADY had.
-  // Blank for a new employee, which is what lets both be set on create.
-  const [storedHierarchy, setStoredHierarchy] = useState({ hrPartner: '', reportingManager: '' });
   const [form, setForm] = useState(blankProfile);
   const [saving, setSaving] = useState(false);
   // Per-employee document submission link (Edit modal)
@@ -996,7 +1006,7 @@ This cannot be undone.`,
       ) : (
         <span className="text-gray-400 cursor-not-allowed" title={noEditReason(p)}>Edit</span>
       )}
-      <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>
+      {!viewOnly && <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>}
     </>
   );
 
@@ -1026,18 +1036,22 @@ This cannot be undone.`,
         >
           Template
         </button>
+        {!viewOnly && (
         <button
           onClick={() => setShowImportModal(true)}
           className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
         >
           Import Excel
         </button>
+        )}
+        {!viewOnly && (
         <button
           onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm"
         >
           + Add Profile
         </button>
+        )}
       </PageHeader>
 
       {/* An import never refuses a row for naming something new — it creates
@@ -1055,6 +1069,7 @@ This cannot be undone.`,
               The Excel import created these or could not match them. The employees were imported either way.
             </div>
           </div>
+          {!viewOnly && (
           <button
             type="button"
             onClick={() => setShowFlags(true)}
@@ -1062,6 +1077,7 @@ This cannot be undone.`,
           >
             Review
           </button>
+          )}
         </div>
       )}
 

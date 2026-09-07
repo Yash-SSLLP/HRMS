@@ -15,6 +15,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import { formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
@@ -141,6 +142,9 @@ const blankEntry = {
 };
 
 export default function AdminAttendance() {
+  // A view-only account reads the day and edits no punch. The geofence editor
+  // and manual entry are writes; the date picker, filters and export are reads.
+  const viewOnly = useViewOnly();
   const now = new Date();
   const [filter, setFilter] = useState({
     year: now.getFullYear(),
@@ -395,14 +399,18 @@ export default function AdminAttendance() {
   return (
     <div>
       <PageHeader title="Attendance">
-        <button onClick={openSettings}
-          className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
-          ⚙ Office &amp; Geofence
-        </button>
+        {!viewOnly && (
+          <button onClick={openSettings}
+            className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
+            ⚙ Office &amp; Geofence
+          </button>
+        )}
+        {!viewOnly && (
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + Manual Entry
         </button>
+        )}
       </PageHeader>
 
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-3 items-end flex-wrap">
@@ -529,10 +537,14 @@ export default function AdminAttendance() {
                       <td className="px-4 py-2 text-right whitespace-nowrap">
                         {c.state === 'Pending' ? (
                           <span className="space-x-2">
+                            {!viewOnly && (
+                              <>
                             <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Approved')}
                               className="text-green-700 hover:underline disabled:opacity-50">Approve 2×</button>
                             <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Rejected')}
                               className="text-red-600 hover:underline disabled:opacity-50">Reject</button>
+                              </>
+                            )}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-2">
@@ -540,9 +552,11 @@ export default function AdminAttendance() {
                               c.state === 'Approved' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
                               {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
                             </span>
-                            <button disabled={dutyBusy === c._id}
-                              onClick={() => decideDuty(c, c.state === 'Approved' ? 'Rejected' : 'Approved')}
-                              className="text-blue-600 hover:underline disabled:opacity-50 text-xs">Change</button>
+                            {!viewOnly && (
+                              <button disabled={dutyBusy === c._id}
+                                onClick={() => decideDuty(c, c.state === 'Approved' ? 'Rejected' : 'Approved')}
+                                className="text-blue-600 hover:underline disabled:opacity-50 text-xs">Change</button>
+                            )}
                           </span>
                         )}
                       </td>
@@ -624,8 +638,12 @@ export default function AdminAttendance() {
                 </td>
                 <td className="px-4 py-3 text-right font-mono">{formatHours(r.hoursWorked)}</td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
-                  <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline">Edit</button>
-                  <button onClick={() => onDelete(r)} className="text-red-600 hover:underline">Delete</button>
+                  {!viewOnly && (
+                    <>
+                      <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline">Edit</button>
+                      <button onClick={() => onDelete(r)} className="text-red-600 hover:underline">Delete</button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
