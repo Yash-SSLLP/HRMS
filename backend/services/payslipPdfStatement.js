@@ -91,8 +91,17 @@ function renderStatementPayslip(payslip, ytd) {
     if (fs.existsSync(logoPath)) {
       try { doc.image(logoPath, x0, y - 2, { fit: [70, 28] }); textX = x0 + 82; } catch (_) { /* text-only */ }
     }
-    write(COMPANY.name, textX, y, { bold: true, size: 12, width: W * 0.6 });
-    if (COMPANY.tagline) keyText(COMPANY.tagline, textX, y + 14, W * 0.6);
+    const NAME_SIZE = 12;
+    write(COMPANY.name, textX, y, { bold: true, size: NAME_SIZE, width: W * 0.6 });
+    // The tagline goes BELOW the name's line box, not inside it. A 12pt line is
+    // about 13.8pt tall, so the old fixed `y + 14` left a fifth of a point of
+    // clearance and the tagline's capitals collided with the descender of the
+    // name above (the "q" in "Sequence"). Measured rather than guessed, so it
+    // stays correct if the name size or the font ever changes.
+    if (COMPANY.tagline) {
+      const nameHeight = doc.font(F.bold).fontSize(NAME_SIZE).currentLineHeight();
+      keyText(COMPANY.tagline, textX, y + nameHeight + 2.5, W * 0.6);
+    }
     keyText('Salary Slip', x1 - 150, y, 150, 'right');
     write(fields.period, x1 - 150, y + 8, { bold: true, size: 10.5, width: 150, align: 'right' });
     y += 30;
@@ -137,13 +146,14 @@ function renderStatementPayslip(payslip, ytd) {
       write(r[1], x0 + LBL_W, y, { bold: true, size: 8.2, width: VAL_W - 6 });
       write(r[2], x0 + LBL_W + VAL_W, y, { size: 7.4, color: MUTED, width: LBL_W - 4 });
       write(r[3], x0 + LBL_W * 2 + VAL_W, y, { bold: true, size: 8.2, width: W - (LBL_W * 2 + VAL_W) - 2 });
-      y += 14;
-      rule(y - 3.5, x0, x1, HAIRLINE, 0.6);
+      y += 13.5;
     };
     for (const r of classic.identity) detailRow(r);
-    y += 6;
+    // The day counts are a different KIND of fact from the identity rows above,
+    // so they are set apart by space rather than by another line.
+    y += 8;
     for (const r of classic.dayCounts) detailRow(r);
-    y += 4;
+    y += 6;
     rule(y);
 
     // ===================== EARNINGS | DEDUCTIONS =====================
@@ -182,10 +192,9 @@ function renderStatementPayslip(payslip, ytd) {
         write(num(line.amount), monthX(cx), cy, { size: 8.2, width: AMT, align: 'right' });
         if (showYtd) write(num(line.ytd), ytdX(cx), cy, { size: 8.2, color: MUTED, width: AMT, align: 'right' });
         cy += ROW;
-        rule(cy - 3.5, cx, cx + colWidth, HAIRLINE, 0.6);
       }
-      cy += 3;
-      rule(cy - 4, cx, cx + colWidth, INK, 1);
+      cy += 4;
+      rule(cy - 5, cx, cx + colWidth, INK, 0.9);
       write(totalLabel, cx, cy, { bold: true, size: 8.2, width: labelW - 4 });
       write(num(total), monthX(cx), cy, { bold: true, size: 8.2, width: AMT, align: 'right' });
       if (showYtd) write(num(ytdTotal), ytdX(cx), cy, { bold: true, size: 8.2, color: MUTED, width: AMT, align: 'right' });
@@ -227,17 +236,14 @@ function renderStatementPayslip(payslip, ytd) {
       write(`Payment reference: ${fields.reference}`, x0, y, { size: 6.8, color: MUTED, width: W });
     }
 
+    // No signature block. A payslip is a statement of what was paid, generated
+    // per employee per month; nobody signs one, so printing a signature rule on
+    // every slip only raised the question of whose signature was missing from
+    // it. (Letters — offer, appointment, salary revision, relieving — DO carry
+    // one; that is what services/payslipPdfClassic.js and the letter renderers
+    // are for.) The query line keeps its place on the left.
     y += 26;
-    const signPath = process.env.ORG_SIGNATURE_PATH
-      || path.join(__dirname, '..', 'assets', 'signature.png');
-    let signY = y;
-    if (fs.existsSync(signPath)) {
-      try { doc.image(signPath, x1 - 140, y, { fit: [110, 40] }); signY = y + 44; } catch (_) { /* ignore */ }
-    }
-    rule(signY + 10, x1 - 150, x1, INK, 0.7);
-    write('Authorized Signature', x1 - 150, signY + 14, { bold: true, size: 8.5, width: 150, align: 'center' });
-    write(`For ${COMPANY.name}`, x1 - 150, signY + 25, { size: 6.6, color: MUTED, width: 150, align: 'center' });
-    write('For any query on this slip, contact HR within 7 days of issue.', x0, signY + 14,
+    write('For any query on this slip, contact HR within 7 days of issue.', x0, y,
       { size: 6.6, color: MUTED, width: W * 0.55 });
 
     // Page-foot imprint, anchored rather than flowed.

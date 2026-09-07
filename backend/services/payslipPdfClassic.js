@@ -215,18 +215,14 @@ function renderClassicPayslip(payslip, ytd) {
     y += NOTE_H;
 
     // ===================== SIGNATURE =====================
+    // No signature block — see the same note in payslipPdfStatement.js. A
+    // payslip is a statement of what was paid; nobody counter-signs one, and an
+    // unsigned signature rule on every slip only asked whose signature was
+    // missing. Kept in step with the statement layout deliberately: the two
+    // render the same document and must not disagree about what is on it.
     y += 20;
-    const signPath = process.env.ORG_SIGNATURE_PATH
-      || path.join(__dirname, '..', 'assets', 'signature.png');
-    let signY = y;
-    if (fs.existsSync(signPath)) {
-      try { doc.image(signPath, x0 + W - 150, y, { fit: [120, 44] }); signY = y + 48; } catch (_) { /* ignore */ }
-    }
-    doc.moveTo(x0 + W - 160, signY + 12).lineTo(x0 + W, signY + 12).lineWidth(0.7).strokeColor(INK).stroke();
-    doc.font(F.bold).fontSize(9).fillColor(INK)
-      .text('Authorized Signature', x0 + W - 160, signY + 16, { width: 160, align: 'center', lineBreak: false });
-    doc.font(F.regular).fontSize(6.6)
-      .text('For any query on this slip, contact HR within 7 days of issue.', x0, signY + 16,
+    doc.font(F.regular).fontSize(6.6).fillColor(INK)
+      .text('For any query on this slip, contact HR within 7 days of issue.', x0, y,
         { width: W * 0.6, lineBreak: false });
 
     doc.end();
