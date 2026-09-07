@@ -454,6 +454,45 @@ const requireAdvanceApprover = (req, res, next) => {
   return next(new Error('Only a CEO, MD or Super Admin can decide advance requests.'));
 };
 
+/**
+ * May this account sanction a payslip its own subject prepared?
+ *
+ * SuperAdmin, CEO or MD — the same bench that sanctions a cash advance, and for
+ * the same reason: it is the only group with nobody above it inside the portal,
+ * so it is the only group that can answer a conflict of interest.
+ *
+ * Deliberately a ROLE check, NOT `payroll.manage`. That capability is exactly
+ * what the HR Manager whose payslip this is already holds — routing the sanction
+ * through it would let them sign off their own slip, which is the one outcome
+ * the gate exists to prevent. Same reasoning as canApproveAdvances above and
+ * canExportKhata further up.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+function canApproveSelfPayslip(user) {
+  return !!user && ['SuperAdmin', 'CEO', 'MD'].includes(user.role);
+}
+
+/**
+ * Route guard for the self-prepared-payslip sanction.
+ *
+ * Like requireAdvanceApprover, a read-only CEO/MD writes here. An executive is
+ * view-only everywhere else unless a SuperAdmin switches them into edit mode,
+ * but this decision is addressed TO them — gating it behind a second, unrelated
+ * grant would mean the person being asked could not answer.
+ *
+ * It also has to be mounted OUTSIDE the router's `payroll.manage` gate, which
+ * refuses a read-only exec on any non-GET before a handler is ever reached.
+ * See routes/payrollRoutes.js.
+ * @returns {import('express').RequestHandler}
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
+const requireSelfPayslipApprover = (req, res, next) => {
+  if (canApproveSelfPayslip(req.user)) return next();
+  res.status(403);
+  return next(new Error('Only a CEO, MD or Super Admin can decide a self-prepared payslip.'));
+};
+
 module.exports = {
   protect,
   protectMedia,
@@ -471,6 +510,8 @@ module.exports = {
   requireKhataExport,
   canApproveAdvances,
   requireAdvanceApprover,
+  canApproveSelfPayslip,
+  requireSelfPayslipApprover,
   MANAGER_PROFILE_ROLES,
   isManagerProfileRole,
   canEditManagerProfiles,

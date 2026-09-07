@@ -22,13 +22,15 @@ The system has two portals. **My Portal** is employee self-service, covered in t
 
 Each admin screen is gated by a **capability**, such as `payroll.manage`, `leave.manage` or `announcements.manage`. The Backend always passes; an HR Manager passes if they hold that capability.
 
-[!IMPORTANT] The approvals inbox is the one place a read-only executive can act. Because every action there is scoped to "you are the current approver", a CEO or MD — or any manager, or any ordinary employee who happens to sit in someone's chain — can decide their own rung despite being read-only everywhere else.
+[!IMPORTANT] The approvals inbox is the main place a read-only executive can act. Because every action there is scoped to "you are the current approver", a CEO or MD — or any manager, or any ordinary employee who happens to sit in someone's chain — can decide their own rung despite being read-only everywhere else. Two further decisions are addressed to the executives by name and can be taken read-only for the same reason: sanctioning a cash advance (section 8) and sanctioning a payslip an admin wrote for themselves (section 7). Gating either behind a second, unrelated permission would mean the people being asked could not answer.
 
 Some actions are reserved for the Backend alone: creating or editing admin-role accounts, setting HR permissions and organisation settings, deleting departments and employee profiles, and reassigning an employee's HR Partner or reporting manager.
 
 ### Nobody administers their own record
 
 Whatever your role, your own employee record is not yours to administer. Editing your own details from the admin side, confirming your own probation, setting your own salary structure or CTC, approving your own leave, signing off your own attendance correction, verifying your own documents and deciding your own resignation are all refused — and the buttons are hidden rather than left to fail. Your own details belong on your profile in My Portal, where a change goes to somebody else for approval.
+
+One exception has since been made, and only one: your **monthly payslip**. You may write and edit your own, but not finish it — it stays frozen until a CEO, MD or the Backend sanctions it. See *Your own payslip* in section 7. Your salary structure and your CTC are not covered by it and are still refused.
 
 This matters most for an HR Manager, who is an employee as well as an admin. If such an account were ever made its own HR Partner, every one of those controls would have pointed at itself. Two things now prevent that: nobody can be set as their own HR Partner or reporting manager in the first place, and even on an older record that already says so, the actions are refused.
 
@@ -128,7 +130,7 @@ The Attendance column holds two different grants, and picking the right one matt
 
 [!IMPORTANT] Both are permissions, not preferences. The server ignores a WFH flag sent by anyone who has not been granted it, so nobody can clear their own geofence violation by sending it anyway. "Punch anywhere" changes only the verdict: the GPS fix is still captured, still stored, and still drops a pin on the punch-location map, so you can always see where somebody actually was.
 
-[!IMPORTANT] Filing an expense — a khata expense or a reimbursement claim — also records where the employee was at that moment. **Only the Backend can see it**; it is not sent to HR, to the accounts team, to the employee's manager, or back to the employee. The Backend sees a "Filed from" link on the claim and on the khata expense that opens the spot on a map, with the device's accuracy in metres beside it. It is best-effort: a phone with no fix or a refused permission files the expense anyway, with no location.
+[!IMPORTANT] Filing an expense — a cashbook expense or a reimbursement claim — also records where the employee was at that moment. **Only the Backend can see it**; it is not sent to HR, to the accounts team, to the employee's manager, or back to the employee. The Backend sees a "Filed from" link on the claim and on the cashbook expense that opens the spot on a map, with the device's accuracy in metres beside it. It is best-effort: a phone with no fix or a refused permission files the expense anyway, with no location.
 
 ### Employees
 
@@ -184,7 +186,7 @@ Confirming or extending a **Manager**'s probation needs the *Manager profiles* p
 
 The presence board gives one row per active employee, split into present, on leave and absent for today, with selfie flags, lateness, WFH tags and hours. The attendance screen shows any employee's month with per-punch geofence distance, lets you add, edit and delete records by hand, and shows the punch selfies. Settings define the office location, the geofence threshold and when a check-in starts counting as late.
 
-Punches capture GPS but are never blocked; an out-of-range punch is flagged, not refused. Two things exempt one: the employee ticking WFH on that punch, and the standing **Punch anywhere** grant, which exempts every punch that person makes. An exempt punch still records its distance — it simply stops counting as something to explain, everywhere it is read: the month view, the punch map, the export and the manager's team screen. The map tooltip says "May punch anywhere" against those people, so a long distance with no flag never looks like a bug.
+Punches require a GPS fix — without one the punch is refused — but being out of range never blocks one; it is flagged, not refused. Two things exempt one: the employee ticking WFH on that punch, and the standing **Punch anywhere** grant, which exempts every punch that person makes. An exempt punch still records its distance — it simply stops counting as something to explain, everywhere it is read: the month view, the punch map, the export and the manager's team screen. The map tooltip says "May punch anywhere" against those people, so a long distance with no flag never looks like a bug.
 
 ### When a check-in counts as late
 
@@ -272,6 +274,22 @@ You can create and edit, approve, mark paid with a payment date and reference, d
 
 [!WARNING] If any active employee has no salary structure or no annual CTC, an amber banner names them on the dashboard and at the top of the payroll page. Payroll cannot compute anything for those people — they come out of a run with a zero payslip, and even the late-coming penalty is zero because its rate depends on monthly Basic. Clicking a name jumps straight to their salary setup. You are also notified the moment an employee is added without salary details.
 
+### Your own payslip
+
+An HR Manager is an employee too, and somebody has to be able to pay the person who runs payroll. So this is the one place the *nobody administers their own record* rule bends: you can pick yourself in the payslip editor, in a single-employee run and in a full payroll run, and your own record appears in those pickers even though you are not your own HR Partner.
+
+What you cannot do is finish it. The moment you create or edit your own slip it is **frozen**, and while it is frozen it cannot be approved, marked paid, released to you, shared or emailed. An already-approved slip drops back to Draft, and one already released to you is withdrawn. Only a **CEO, MD or the Backend** can lift it. They are notified as soon as it lands and decide it under **Payroll → Payslip Requests → Self-prepared**, on the web or on the phone, and it is counted in their approvals badge alongside everything else waiting on them.
+
+- **A refusal always carries a reason**, and that reason is the only thing you are shown. Correct the slip and it goes back for a fresh decision.
+- **A refused slip is as stuck as a pending one.** It cannot be approved or paid until it has been corrected and sanctioned.
+- **Editing a sanctioned slip freezes it again.** The sanction was given to a set of figures rather than to the row, so changing them has to ask again — the same rule that withdraws a released payslip when it is edited.
+- **Withdrawing it is still yours.** A frozen slip is a draft, so you can delete it and start over.
+- **A payroll run freezes it too.** If a full or single-employee run produces your own slip, it is frozen exactly as if you had typed it by hand.
+
+[!NOTE] Nobody sanctions their own. A CEO, MD or the Backend writing their own payslip has nobody above them to ask, so theirs is never frozen — the same reasoning the cashbook applies to their own cash advances.
+
+[!IMPORTANT] Setting your own salary structure or CTC is still refused. Writing down what you are owed this month and deciding what you are paid are two different questions, and only the first has been opened up.
+
 ### What payroll computes
 
 - **Base salary** — each component is its percentage of the annual CTC divided by twelve, at full value. Attendance never shrinks Basic or any other head.
@@ -288,6 +306,8 @@ Worked examples: no leave taken earns two extra days' pay; three days taken mean
 ### Salary structures, hikes and the rest
 
 **Salary structures** are CTC templates expressed as component percentages, which cannot sum to more than one hundred. A preview shows the monthly and annual figures for a given CTC.
+
+**Loading them in bulk.** *Template* downloads a sheet with one row per employee - Name, SSL Code, the monthly Basic, HRA, Special Allowance, Conveyance, Medical and LTA, and the annual CTC - and *Import Excel* reads it back. Each row becomes a salary structure and puts that employee on it with that CTC, so the amounts on the sheet are the amounts their payslip will show. Amounts are per month and CTC is per year; leave the Salary Structure column blank and the structure is named after the person, or fill it in to put several people on one shared template. A template somebody else is already on is never rewritten underneath them. A row that cannot be matched to an employee is reported with its row number and the rest of the sheet still loads, so the way to fix a file is to correct those rows and upload it again - re-importing rows that already went in changes nothing. *Export Excel* downloads the same sheet filled in with what is set up today.
 
 **Hikes** is where an employee's structure and annual CTC are set and where increments are recorded, by percentage, by amount, or by setting a new figure, effective from a chosen month. The revision list beneath is the history of who changed what, when and why. Generating and approving payslips happens on the payroll page, not here.
 
@@ -317,12 +337,15 @@ Approve travel requests and handle reimbursements separately, including the uplo
 
 Cash accounts with an in-and-out ledger and a running balance, employee vouchers routed for approval, transfers between accounts, and a day book, summary and export. Access can be granted to anyone regardless of role, and there is a dedicated Accounts Manager role for people who need the cashbook and nothing else.
 
-### Employee khata
+### Employee cashbook
 
-Each person has one **wallet** (the company cash they hold) and as many named **expense books** as they need. They ask for an advance, and — depending on the org setting — it either waits for a **CEO/MD to sanction** it or goes straight to whoever handles the cash; then the **Account Manager** (any employee the Backend has granted khata access, or the Accounts Manager role) pays it out. Expenses post the moment they are filed and the accounts team confirms them afterwards.
+Each person has one **wallet** (the company cash they hold) and as many named **books** — expense headings — as they need. They ask for an advance, and — depending on the org setting — it either waits for a **CEO/MD to sanction** it or goes straight to whoever handles the cash; then the **Account Manager** (any employee the Backend has granted cashbook access, or the Accounts Manager role) pays it out. Expenses post the moment they are filed and the accounts team confirms them afterwards.
 
-- **The CEO and MD have their own khata too.** They take advances and file expenses like anyone else — from **My Khata** in their portal. Because they are the sanctioning authority, their own advance **skips the sanction step and goes straight to the Account Manager** to be paid.
+- **The CEO and MD have their own cashbook too.** They take advances and file expenses like anyone else — from **My Cashbook** in their portal. Because they are the sanctioning authority, their own advance **skips the sanction step and goes straight to the Account Manager** to be paid.
 - **Editing:** an expense stays editable by the person who filed it (and by the accounts team) **until it is confirmed**. Once confirmed it is locked — normally you would reverse it to fix a mistake — **except the Backend, which can still correct a confirmed expense** in place.
+- **Money can come back into a book.** A supplier refund, a cancelled booking or unused material returned is filed as a **refund**: the mirror of an expense, with the same mandatory bill and the same confirm step, taking the cost back off the book and putting the cash back onto that person's wallet. It is not the same thing as returning unspent cash, which moves the wallet and belongs to no book.
+- **Employees share their own books, and nobody grants it.** The owner of a book can invite colleagues from their own company onto it — up to ten — either to *add entries* or to *only view*, and the invitation has to be accepted before anything opens. This is the one piece of access in the system that is not HR's to give or take away: it belongs to whoever opened the book. It hands nobody any money, because **what a guest spends comes out of their own advance, never the owner's** — the book simply totals what everyone put on it. Removing a member, or a member leaving, never removes their entries; those stay on the book with their name on them.
+- **Reports.** Any book — their own or one shared with them — prints as **All entries**, a **Day-wise summary** or a **Category-wise summary**, as a PDF or an Excel file, over whatever filters are on screen at the time; the filters used are printed on the document. Only approved entries are counted, while rejected and reversed ones are still listed and struck through. None of this needs the export grant: it is the person's own book, not the company ledger, which is what the **Export** switch in the Cashbook column of the Permissions page guards.
 
 ---
 
@@ -433,6 +456,7 @@ Role gating mirrors the web: HR can write, executives are read-only, and manager
 - **Approval hierarchies are separate from the org chart.** Leave and regularization each have their own configurable ladder per employee. If a request reaches someone unexpected, check that ladder before checking the reporting manager.
 - **Work-on-leave claims go to the top of the leave ladder**, which is not necessarily the manager who normally approves that person's leave.
 - **A payslip is not visible to the employee until it is released**, and editing it after release withdraws it again.
+- **You can write your own payslip, but not finish it.** It is frozen until a CEO, MD or the Backend sanctions it, and editing it afterwards puts it back in front of them.
 - **An exit does not deactivate anyone early.** The account stays live through the whole notice period.
 - **Removed modules.** The comp-off request workflow, the knowledge base, and the old peer recognition feature are gone. Comp-off survives only as a holiday type and as earned days in payroll.
 

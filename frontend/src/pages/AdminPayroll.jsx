@@ -53,6 +53,18 @@ const RELEASE = {
 };
 const releaseOf = (p) => (RELEASE[p.release?.status] ? p.release.status : 'NotRequested');
 
+// The third gate: a payslip its own subject prepared is frozen until a CEO, MD
+// or Super Admin sanctions it. `NotRequired` — the ordinary case — renders
+// nothing, so the chip only ever appears on the rows it is about.
+const SELF = {
+  Pending: { label: 'Awaiting CEO/MD sanction', tone: 'bg-purple-100 text-purple-800' },
+  Rejected: { label: 'Sanction refused', tone: 'bg-red-100 text-red-800' },
+  Approved: { label: 'Self-prepared · sanctioned', tone: 'bg-green-50 text-green-700' },
+};
+// A frozen slip cannot be approved, paid, released, shared or emailed — the
+// server refuses all five — so the buttons that would try are not offered.
+const isFrozen = (p) => ['Pending', 'Rejected'].includes(p?.selfApproval?.status);
+
 // Every payslip field the editor round-trips. The save is an Object.assign on
 // the server, so a field missing here is silently zeroed on a manual edit —
 // keep this in step with models/Payroll.js.
@@ -131,12 +143,23 @@ export default function AdminPayroll() {
       if (filter.year) params.set('year', filter.year);
       if (filter.month) params.set('month', filter.month);
       if (filter.status) params.set('status', filter.status);
-      const [slipsRes, empRes] = await Promise.all([
+      // An admin's own record is not in /employees for them — the directory is
+      // scoped to the people they look after, and nobody is their own assignee.
+      // Payroll is the one module where they may pick themselves (the slip is
+      // then frozen for a CEO/MD/Super Admin to sanction), so their own profile
+      // is fetched alongside and merged in. It 404s for an account with no
+      // employee record (a CEO/MD), which is not an error worth surfacing.
+      const [slipsRes, empRes, meRes] = await Promise.all([
         api.get(`/payroll?${params}`),
         api.get('/employees?excludeExecutives=true'),
+        api.get('/employees/me').catch(() => null),
       ]);
       setPayslips(slipsRes.data.payslips);
-      setEmployees(empRes.data.profiles);
+      const list = empRes.data.profiles;
+      const mine = meRes?.data?.profile;
+      setEmployees(
+        mine && !list.some((e) => String(e._id) === String(mine._id)) ? [...list, mine] : list
+      );
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -594,6 +617,19 @@ export default function AdminPayroll() {
                       Handle in Payslip Requests
                     </Link>
                   )}
+                  {SELF[p.selfApproval?.status] && (
+                    <div className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-lg ${SELF[p.selfApproval.status].tone}`}>
+                      {SELF[p.selfApproval.status].label}
+                    </div>
+                  )}
+                  {p.selfApproval?.decisionNote && (
+                    <div className="text-[11px] text-gray-500 mt-1 max-w-[240px]">“{p.selfApproval.decisionNote}”</div>
+                  )}
+                  {isFrozen(p) && (
+                    <Link to="/admin/payslip-requests?tab=self" className="block text-[11px] text-blue-600 hover:underline mt-1">
+                      Awaiting sanction
+                    </Link>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   {/* Release is handled on the Payslip Requests page — this page
@@ -603,7 +639,14 @@ export default function AdminPayroll() {
                   {p.status === 'Draft' && (
                     <>
                       <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
-                      <button onClick={() => doAction(p._id, 'approve')} className="text-green-700 hover:underline">Approve</button>
+                      {/* Approve is withheld on a slip its own subject prepared
+                          until an executive sanctions it — the server refuses
+                          it, so offering the button would only produce an error.
+                          Edit and Delete stay: correcting it (which re-freezes
+                          it) and withdrawing it are both still theirs to do. */}
+                      {!isFrozen(p) && (
+                        <button onClick={() => doAction(p._id, 'approve')} className="text-green-700 hover:underline">Approve</button>
+                      )}
                       <button onClick={() => doAction(p._id, 'delete', p)} className="text-red-600 hover:underline">Delete</button>
                     </>
                   )}

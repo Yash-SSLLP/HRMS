@@ -15,7 +15,10 @@ const asyncHandler = require('express-async-handler');
 const crypto = require('crypto');
 const Payroll = require('../models/Payroll');
 const EmployeeProfile = require('../models/EmployeeProfile');
-const { employeeProfileScope, scopeEmployeeFilter, cannotManageProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
+const {
+  employeeProfileScope, scopeEmployeeFilter, cannotManageProfile, isOwnProfile, assertCanEditProfileOf,
+} = require('../utils/employeeScope');
+const { canApproveSelfPayslip } = require('../middleware/authMiddleware');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
 const Holiday = require('../models/Holiday');
@@ -28,7 +31,7 @@ const { renderPayslip } = require('../services/payslipPdf');
 const { buildPayslipLines } = require('../services/payslipLines');
 const { buildPayslipFields, buildClassicRows, MONTHS: MONTHS_LONG } = require('../services/payslipFields');
 const { notify, notifyMany } = require('../services/notify');
-const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
+const { usersHoldingAny, usersInRoles, scopeRecipientsToCompany } = require('../services/audience');
 const { buildYtd, computeYtdFrom } = require('../services/payslipYtd');
 const { enqueueMail } = require('../services/email');
 const ExcelJS = require('exceljs');
@@ -109,6 +112,129 @@ async function notifyPayrollTeam(title, body, companyId) {
     });
   } catch (err) {
     console.error('payslip release notify failed:', err.message);
+  }
+}
+
+// ===== Self-prepared payslips =====
+// An HR Manager may write their own payslip. Refusing outright — which is what
+// cannotManageProfile did — meant the only ways to pay the person who runs
+// payroll were a second HR account or the Backend keying it in by hand, and
+// neither is how anybody actually worked.
+//
+// So the record is theirs to prepare and NOT theirs to finish. Touching their
+// own slip freezes it, and only a CEO, MD or Super Admin thaws it. Frozen means
+// the slip cannot be approved, paid, released to the employee, shared or
+// emailed — everything that would make it count. See the `selfApproval` sub-doc
+// in models/Payroll.js.
+
+// Is this slip waiting on the executive bench right now?
+const awaitsSelfSanction = (payslip) => payslip?.selfApproval?.status === 'Pending';
+
+// Does an action by this account on their OWN payslip need sanctioning? The
+// bench itself does not: there is nobody above a CEO/MD/Backend to ask, and a
+// gate they could clear themselves is not a gate.
+const needsSelfSanction = (user) => !canApproveSelfPayslip(user);
+
+// The trail every freeze and decision appends, so a self-prepared slip reads
+// back in order. Twin of logRelease above.
+function logSelfApproval(payslip, action, actor, note) {
+  if (!payslip.selfApproval) payslip.selfApproval = {};
+  if (!Array.isArray(payslip.selfApproval.history)) payslip.selfApproval.history = [];
+  payslip.selfApproval.history.push({
+    action,
+    at: new Date(),
+    by: actor?._id,
+    byName: actor?.fullName || `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim() || undefined,
+    note: note || undefined,
+  });
+}
+
+/**
+ * Freeze a payslip its own subject just wrote or changed.
+ *
+ * Call AFTER the figures are set and BEFORE save(), from every path that can
+ * create or alter a slip. Re-freezing an already-sanctioned slip is the point,
+ * not an edge case: the sanction was given to a set of figures, so changing them
+ * has to ask again — the same rule the release workflow applies when a released
+ * payslip is edited.
+ *
+ * @param {Object} payslip - the mutated payslip document
+ * @param {Object} req - for the acting user
+ * @param {string} action - what happened, for the trail ('Prepared' | 'Edited' | 'PayrollRun')
+ * @returns {boolean} true when the slip was frozen
+ */
+function flagSelfPrepared(payslip, req, action) {
+  const wasSanctioned = payslip.selfApproval?.status === 'Approved';
+  if (!payslip.selfApproval) payslip.selfApproval = {};
+  payslip.selfApproval.status = 'Pending';
+  payslip.selfApproval.preparedBy = req.user._id;
+  payslip.selfApproval.requestedAt = new Date();
+  // A fresh decision is owed; the old one must not read as though it covered
+  // these figures.
+  payslip.selfApproval.decidedAt = undefined;
+  payslip.selfApproval.decidedBy = undefined;
+  payslip.selfApproval.decisionNote = undefined;
+  logSelfApproval(payslip, wasSanctioned ? 'EditedAfterSanction' : action, req.user,
+    wasSanctioned ? 'Changed after sanction - needs sanctioning again' : undefined);
+
+  // An unsanctioned slip must not stand Approved: the sanction is the thing that
+  // lets it count, so an edit takes the approval with it.
+  if (payslip.status === 'Approved') payslip.status = 'Draft';
+  // ...and it must not stay in the employee's hands either.
+  if (isReleased(payslip)) {
+    payslip.release.status = 'Approved';
+    payslip.release.finalisedAt = undefined;
+    payslip.release.finalisedBy = undefined;
+    logRelease(payslip, 'EditedAfterRelease', req.user,
+      'Self-prepared payslip changed - needs sanctioning and finalising again');
+  }
+  return true;
+}
+
+/**
+ * Refuse anything that would let a frozen payslip count.
+ * @param {Object} payslip
+ * @param {import('express').Response} res
+ * @param {string} what - the verb for the message ('approved', 'marked paid', ...)
+ * @throws 400 while the slip awaits sanction
+ */
+function assertSanctioned(payslip, res, what) {
+  const state = payslip?.selfApproval?.status;
+  // A REFUSED slip is as unusable as a pending one. Without this, "reject" would
+  // leave the figures free to be approved and paid — the opposite of a refusal.
+  if (state !== 'Pending' && state !== 'Rejected') return;
+  res.status(400);
+  if (state === 'Rejected') {
+    const why = payslip.selfApproval.decisionNote;
+    throw new Error(
+      `This self-prepared payslip was refused${why ? `: ${why}` : ''}. `
+      + 'Correct it and it goes back to the CEO/MD/Super Admin for sanction.'
+    );
+  }
+  throw new Error(
+    'This payslip was prepared by the employee it belongs to. A CEO, MD or Super Admin '
+    + `has to sanction it before it can be ${what}.`
+  );
+}
+
+// Tell the sanctioning bench a slip is waiting on them. Role-keyed, not
+// capability-keyed: `payroll.manage` is held by the very HR Manager whose slip
+// this is (see authMiddleware's canApproveSelfPayslip).
+async function notifySelfPayslipApprovers(payslip, actor, companyId) {
+  try {
+    const who = actor?.fullName || `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim() || 'An admin';
+    await notifyMany(
+      await scopeRecipientsToCompany(await usersInRoles('SuperAdmin', 'CEO', 'MD'), companyId),
+      {
+        type: 'payroll',
+        audience: 'admin',
+        title: 'Self-prepared payslip needs sanction',
+        body: `${who} prepared their own ${periodLabel(payslip)} payslip (net ${inrOrDash(payslip.netPay)}). It is frozen until you sanction it.`,
+        link: '/admin/payslip-requests?tab=self',
+      }
+    );
+  } catch (err) {
+    console.error('self-payslip sanction notify failed:', err.message);
   }
 }
 
@@ -250,6 +376,7 @@ const approvePayslipRelease = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertSanctioned(payslip, res, 'released to the employee');
   if (payslip.release?.status !== 'Requested') {
     res.status(400);
     throw new Error('Only a requested payslip can be approved for release.');
@@ -288,6 +415,7 @@ const finalisePayslipRelease = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertSanctioned(payslip, res, 'released to the employee');
   const state = payslip.release?.status;
   if (!['Approved', 'ChangeRequested'].includes(state)) {
     res.status(400);
@@ -345,6 +473,93 @@ const myAttendanceSummary = asyncHandler(async (req, res) => {
   res.json({ year, month, needsSetup: computed.needsSetup, policy: computed.policy });
 });
 
+/**
+ * The self-prepared payslips waiting on the executive bench (or already decided).
+ * @route GET /api/payroll/self-approvals?scope=pending|history  (CEO/MD/SuperAdmin)
+ * @param {string} [req.query.scope] - 'pending' (default) or 'history'
+ * @returns {{scope, count, payslips: Object[]}}
+ */
+const listSelfApprovals = asyncHandler(async (req, res) => {
+  const scope = req.query.scope === 'history' ? 'history' : 'pending';
+  const filter = scope === 'history'
+    ? { 'selfApproval.status': { $in: ['Approved', 'Rejected'] } }
+    : { 'selfApproval.status': 'Pending' };
+  // The company wall still applies. A narrowed exec sanctions the payslips of
+  // the companies they cover, not every company's.
+  await scopeEmployeeFilter(req, filter);
+  const payslips = await Payroll.find(filter)
+    .populate({
+      path: 'employee',
+      select: 'employeeCode user designation',
+      populate: { path: 'user', select: 'firstName lastName email' },
+    })
+    .populate('selfApproval.preparedBy', 'firstName lastName role')
+    .populate('selfApproval.decidedBy', 'firstName lastName role')
+    .sort({ 'selfApproval.requestedAt': -1 });
+  res.json({ scope, count: payslips.length, payslips: payslips.map((p) => withLines(p)) });
+});
+
+/**
+ * Sanction or refuse a payslip its own subject prepared.
+ *
+ * One handler for both decisions: they differ only in the word used and in
+ * whether the note is compulsory. A refusal must carry one — being turned down
+ * with no reason given is what sends somebody off to ask in person, and the note
+ * is the only thing the preparer is ever shown.
+ *
+ * @param {boolean} approve
+ * @returns {import('express').RequestHandler}
+ */
+const decideSelfPayslip = (approve) => asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findById(req.params.id).populate('employee', 'user employeeCode');
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip not found');
+  }
+  // The company wall, same as every other per-record payroll route.
+  await guardPayslipScope(req, res, payslip);
+  if (!awaitsSelfSanction(payslip)) {
+    res.status(400);
+    const state = payslip.selfApproval?.status || 'NotRequired';
+    throw new Error(state === 'NotRequired'
+      ? 'This payslip was not prepared by the employee it belongs to, so there is nothing to sanction.'
+      : `This payslip has already been ${state === 'Approved' ? 'sanctioned' : 'refused'}.`);
+  }
+  const note = String(req.body.note || '').trim();
+  if (!approve && !note) {
+    res.status(400);
+    throw new Error('Say why it is being refused - the note is all the preparer is shown.');
+  }
+
+  payslip.selfApproval.status = approve ? 'Approved' : 'Rejected';
+  payslip.selfApproval.decidedAt = new Date();
+  payslip.selfApproval.decidedBy = req.user._id;
+  payslip.selfApproval.decisionNote = note || undefined;
+  logSelfApproval(payslip, approve ? 'Sanctioned' : 'Refused', req.user, note);
+  await payslip.save();
+
+  // Straight back to whoever wrote it. This is an admin-portal decision about an
+  // admin-portal action, so it belongs in the admin notification stream — see
+  // the audience rules in services/notify.js.
+  const recipient = payslip.selfApproval.preparedBy;
+  if (recipient) {
+    notify({
+      recipient,
+      type: 'payroll',
+      audience: 'admin',
+      title: approve ? 'Your payslip was sanctioned' : 'Your payslip was not sanctioned',
+      body: approve
+        ? `Your ${periodLabel(payslip)} payslip has been sanctioned${note ? `: ${note}` : ''}. You can approve and pay it now.`
+        : `Your ${periodLabel(payslip)} payslip was refused: ${note}`,
+      link: '/admin/payroll',
+    }).catch((err) => console.error('self-payslip decision notify failed:', err.message));
+  }
+  res.json({ payslip });
+});
+
+const approveSelfPayslip = decideSelfPayslip(true);
+const rejectSelfPayslip = decideSelfPayslip(false);
+
 // --- HR/Admin endpoints ---
 
 /**
@@ -354,17 +569,78 @@ const myAttendanceSummary = asyncHandler(async (req, res) => {
  * @returns {{count: number, payslips: Object[]}} with populated employee
  */
 // GET /api/payroll  (HR/Admin) — filters: employee, year, month, status
-// Per-record scope guard for payroll: 403 unless this admin may manage the
-// payslip's employee (Backend → all; HR Manager → their assigned employees; a
-// company-limited exec → their companies). Call once the payslip is loaded and
-// confirmed to exist.
-async function guardPayslipScope(req, res, payslip) {
-  const empId = payslip.employee && payslip.employee._id ? payslip.employee._id : payslip.employee;
-  const profile = await EmployeeProfile.findById(empId).select('hrPartner company');
+
+/**
+ * Payroll's per-record guard. Identical to cannotManageProfile everywhere
+ * except on the actor's OWN record, which this module allows and then freezes
+ * (see the self-prepared section above).
+ *
+ * The exception is deliberately keyed on isOwnProfile alone. cannotManageProfile
+ * refuses for three different reasons, and only one of them is being relaxed —
+ * an HR Manager still cannot touch a payslip belonging to somebody who is not
+ * theirs, or to another company's staff.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {Object} profile - an EmployeeProfile
+ * @returns {boolean} true when the record is the actor's own
+ * @throws 403 when the record is somebody else's and out of scope
+ */
+function guardPayrollProfile(req, res, profile) {
+  if (isOwnProfile(req, profile)) return true;
   if (cannotManageProfile(req, profile)) {
     res.status(403);
     throw new Error('You can only manage employees assigned to you');
   }
+  return false;
+}
+
+/**
+ * Widen a scoped payslip filter to include the viewer's OWN payslips.
+ *
+ * scopeEmployeeFilter narrows to the people this admin looks after, and nobody
+ * is their own HR Partner — so without this an HR Manager could prepare their
+ * own payslip (which payroll now allows) and then not see the row anywhere.
+ *
+ * Payroll-local, like guardPayrollProfile above, and for the same reason: this
+ * is the one module where an admin's own record is theirs to work on.
+ *
+ * Call AFTER scopeEmployeeFilter. A no-op for an unrestricted viewer (the
+ * Backend, an unrestricted exec) — they already see everything — and for an
+ * account with no employee record of its own (a CEO/MD).
+ *
+ * @param {import('express').Request} req
+ * @param {Object} filter - the filter scopeEmployeeFilter just narrowed
+ * @param {*} [requested] - the value of `?employee=`, read BEFORE scoping
+ * @returns {Object} the same filter, mutated
+ */
+function includeOwnPayslips(req, filter, requested) {
+  const mine = req.user?.scopeProfileId;
+  // No own record, or an unrestricted viewer whose filter was left untouched.
+  if (!mine || !filter.employee) return filter;
+  if (requested) {
+    // A specific employee was asked for. scopeEmployeeFilter forced it to match
+    // nothing because they are not this admin's assignee — which is right unless
+    // the employee asked for IS this admin.
+    if (String(requested) === String(mine)) filter.employee = mine;
+    return filter;
+  }
+  const ids = filter.employee.$in;
+  if (Array.isArray(ids) && !ids.some((id) => String(id) === String(mine))) {
+    filter.employee = { $in: [...ids, mine] };
+  }
+  return filter;
+}
+
+// Per-record scope guard for payroll: 403 unless this admin may manage the
+// payslip's employee (Backend → all; HR Manager → their assigned employees plus
+// THEMSELVES; a company-limited exec → their companies). Call once the payslip
+// is loaded and confirmed to exist. Returns true when the slip is the actor's
+// own, which is what the callers that can write use to freeze it.
+async function guardPayslipScope(req, res, payslip) {
+  const empId = payslip.employee && payslip.employee._id ? payslip.employee._id : payslip.employee;
+  const profile = await EmployeeProfile.findById(empId).select('hrPartner company');
+  return guardPayrollProfile(req, res, profile);
 }
 
 const listPayslips = asyncHandler(async (req, res) => {
@@ -386,8 +662,11 @@ const listPayslips = asyncHandler(async (req, res) => {
   }
 
   // Limit to the employees this admin may see (also intersects a specific
-  // ?employee= against their scope).
+  // ?employee= against their scope), then add back their own payslips — the one
+  // record payroll lets an admin work on themselves.
+  const requestedEmployee = filter.employee;
   await scopeEmployeeFilter(req, filter);
+  includeOwnPayslips(req, filter, requestedEmployee);
 
   const payslips = await Payroll.find(filter)
     .populate({
@@ -755,6 +1034,19 @@ const runPayroll = asyncHandler(async (req, res) => {
   const regenSet = new Set(
     Array.isArray(req.body.regenerate) ? req.body.regenerate.map(String) : []
   );
+  // A run can include the person running it: employeeProfileScope narrows to
+  // "my assigned employees", and an HR Manager set as their own HR Partner is
+  // one of those. The per-record guard used to be what stopped their own slip
+  // being written here, and payroll no longer refuses that — so the run freezes
+  // it exactly as if they had typed it by hand.
+  const frozenMine = [];
+  const freezeMine = needsSelfSanction(req.user);
+  const freezeIfMine = (payslip, profile) => {
+    if (!freezeMine || !isOwnProfile(req, profile)) return;
+    flagSelfPrepared(payslip, req, 'PayrollRun');
+    frozenMine.push(payslip);
+  };
+
   const created = [];
   const derivedCount = [];
   const copiedCount = [];
@@ -778,6 +1070,7 @@ const runPayroll = asyncHandler(async (req, res) => {
       const wasEmailed = !!r.existing.emailedAt;
       // Approved → Draft is picked up by the auditStatus plugin on save().
       Object.assign(r.existing, buildRunFields(r.profile, computed, r.existing, { rerun: true }));
+      freezeIfMine(r.existing, r.profile);
       await r.existing.save();
       regenerated.push({
         name: r.row.name, netPay: r.existing.netPay, id: r.existing._id, fromStatus, wasEmailed,
@@ -791,12 +1084,14 @@ const runPayroll = asyncHandler(async (req, res) => {
     if (r.hasSalarySetup) {
       const computed = await computeEmployeeRun(r.profile, year, month);
       if (!computed.needsSetup) {
-        const payslip = await Payroll.create({
+        const payslip = new Payroll({
           employee: r.profile._id,
           payPeriodYear: year,
           payPeriodMonth: month,
           ...buildRunFields(r.profile, computed),
         });
+        freezeIfMine(payslip, r.profile);
+        await payslip.save();
         created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
         derivedCount.push(r.row.name);
         continue;
@@ -806,7 +1101,7 @@ const runPayroll = asyncHandler(async (req, res) => {
     // Fallback (no salary structure/CTC set up): copy the employee's most recent
     // payslip, or leave a blank draft for a brand-new joiner to be filled in.
     const seed = r.last;
-    const payslip = await Payroll.create({
+    const payslip = new Payroll({
       employee: r.profile._id,
       payPeriodYear: year,
       payPeriodMonth: month,
@@ -821,9 +1116,15 @@ const runPayroll = asyncHandler(async (req, res) => {
         ? `Payroll run: copied from ${MONTH_NAMES[seed.payPeriodMonth]} ${seed.payPeriodYear} (no salary structure set)`
         : 'Payroll run: no salary structure or earlier payslip - set the salary components',
     });
+    freezeIfMine(payslip, r.profile);
+    await payslip.save();
     created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
     if (seed) copiedCount.push(r.row.name);
     else blank.push(r.row.name);
+  }
+
+  for (const p of frozenMine) {
+    await notifySelfPayslipApprovers(p, req.user, req.user.scopeCompanyId);
   }
 
   res.status(201).json({
@@ -839,6 +1140,9 @@ const runPayroll = asyncHandler(async (req, res) => {
     regeneratedEmailed: regenerated.filter((p) => p.wasEmailed).map((p) => p.name),
     regenerateBlocked: { paid: regenBlockedPaid, noSetup: regenBlockedNoSetup },
     needsSetup: blank,
+    // The run's own author's slip, frozen until an executive sanctions it — so
+    // the page can say so rather than showing a Draft that will not approve.
+    selfFrozen: frozenMine.length,
     payslips: created.concat(regenerated.map((p) => ({ name: p.name, netPay: p.netPay, id: p.id }))),
   });
 });
@@ -1351,10 +1655,7 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee not found');
   }
-  if (cannotManageProfile(req, profile)) {
-    res.status(403);
-    throw new Error('You can only manage employees assigned to you');
-  }
+  guardPayrollProfile(req, res, profile);
   const computed = await computeEmployeeRun(profile, year, month);
   const payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
   res.json({ year, month, employee: profile, computed, payslip });
@@ -1385,10 +1686,7 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee not found');
   }
-  if (cannotManageProfile(req, profile)) {
-    res.status(403);
-    throw new Error('You can only manage employees assigned to you');
-  }
+  const own = guardPayrollProfile(req, res, profile);
   const computed = await computeEmployeeRun(profile, year, month);
   if (computed.needsSetup) {
     res.status(400);
@@ -1405,10 +1703,12 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
   const fields = buildRunFields(profile, computed, payslip, { rerun: !!payslip });
   if (payslip) {
     Object.assign(payslip, fields);
-    await payslip.save();
   } else {
-    payslip = await Payroll.create({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month, ...fields });
+    payslip = new Payroll({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month, ...fields });
   }
+  const frozen = own && needsSelfSanction(req.user) && flagSelfPrepared(payslip, req, 'PayrollRun');
+  await payslip.save();
+  if (frozen) await notifySelfPayslipApprovers(payslip, req.user, req.user.scopeCompanyId);
   res.status(201).json({ payslip, computed });
 });
 
@@ -1453,13 +1753,16 @@ const createPayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee profile not found');
   }
-  if (cannotManageProfile(req, profile)) {
-    res.status(403);
-    throw new Error('You can only manage employees assigned to you');
-  }
+  const own = guardPayrollProfile(req, res, profile);
+  // Both workflow states are reached only by their own transitions: a POST must
+  // not be able to hand a payslip over, nor to arrive pre-sanctioned.
+  delete req.body.release;
+  delete req.body.selfApproval;
   const payslip = new Payroll(req.body);
   applyEmployerContributions(payslip);
+  const frozen = own && needsSelfSanction(req.user) && flagSelfPrepared(payslip, req, 'Prepared');
   await payslip.save();
+  if (frozen) await notifySelfPayslipApprovers(payslip, req.user, req.user.scopeCompanyId);
   res.status(201).json({ payslip });
 });
 
@@ -1546,7 +1849,7 @@ const updatePayslip = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Payslip not found');
   }
-  await guardPayslipScope(req, res, payslip);
+  const own = await guardPayslipScope(req, res, payslip);
   // A Paid payslip is closed to everyone but the Backend, who may correct a
   // mistake found after payment. The override is audited below, once the edit
   // has actually saved.
@@ -1568,9 +1871,11 @@ const updatePayslip = asyncHandler(async (req, res) => {
   delete req.body.payPeriodYear;
   delete req.body.payPeriodMonth;
 
-  // Identity fields aside, the release state is HR's to move through the proper
-  // transitions — a PUT must not be able to hand a payslip over.
+  // Identity fields aside, the release and sanction states are reached only by
+  // their own transitions — a PUT must not be able to hand a payslip over, nor
+  // to sanction one.
   delete req.body.release;
+  delete req.body.selfApproval;
 
   Object.assign(payslip, req.body);
   applyEmployerContributions(payslip);
@@ -1584,8 +1889,13 @@ const updatePayslip = asyncHandler(async (req, res) => {
     logRelease(payslip, 'EditedAfterRelease', req.user, 'Edited after release — needs finalising again');
   }
 
+  // Changing your own payslip re-opens the executive gate, whatever state the
+  // sanction was in — the sanction was given to a set of figures, not to the row.
+  const frozen = own && needsSelfSanction(req.user) && flagSelfPrepared(payslip, req, 'Edited');
+
   await payslip.save();
   if (locked) await auditLockOverride(payslip, req.user, before, 'edited');
+  if (frozen) await notifySelfPayslipApprovers(payslip, req.user, req.user.scopeCompanyId);
   res.json({ payslip });
 });
 
@@ -1603,6 +1913,7 @@ const approvePayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertSanctioned(payslip, res, 'approved');
   if (payslip.status !== 'Draft' && payslip.status !== 'OnHold') {
     res.status(400);
     throw new Error(`Cannot approve from status ${payslip.status}`);
@@ -1627,6 +1938,7 @@ const markPayslipPaid = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertSanctioned(payslip, res, 'marked paid');
   if (payslip.status !== 'Approved') {
     res.status(400);
     throw new Error('Payslip must be Approved before it can be marked Paid');
@@ -1730,6 +2042,7 @@ const sharePayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertSanctioned(payslip, res, 'shared');
   if (!['Approved', 'Paid'].includes(payslip.status)) {
     res.status(400);
     throw new Error('Only Approved or Paid payslips can be shared');
@@ -1756,6 +2069,7 @@ const markPayslipSent = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertSanctioned(payslip, res, 'sent');
   payslip.emailedAt = new Date();
   await payslip.save();
   res.json({ payslip });
@@ -1781,6 +2095,7 @@ const emailPayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertSanctioned(payslip, res, 'emailed');
   if (!['Approved', 'Paid'].includes(payslip.status)) {
     res.status(400);
     throw new Error('Only Approved or Paid payslips can be emailed');
@@ -1927,10 +2242,7 @@ const deriveSalaryForEditor = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Employee not found');
   }
-  if (cannotManageProfile(req, profile)) {
-    res.status(403);
-    throw new Error('You can only manage employees assigned to you');
-  }
+  guardPayrollProfile(req, res, profile);
   const now = new Date();
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
@@ -2102,6 +2414,9 @@ module.exports = {
   requestMyPayslipChange,
   approvePayslipRelease,
   finalisePayslipRelease,
+  listSelfApprovals,
+  approveSelfPayslip,
+  rejectSelfPayslip,
   getMyPayslip,
   myAttendanceSummary,
   deriveSalaryForEditor,

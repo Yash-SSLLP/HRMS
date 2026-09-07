@@ -105,6 +105,51 @@ const releaseSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Sanction for a payslip its own subject prepared.
+//
+// An HR Manager may write their own payslip — somebody has to, and refusing
+// meant either standing up a second HR account or asking the Backend to key it
+// in by hand. What they may not do is FINISH it: the moment they touch their own
+// slip it is frozen, and only a CEO, MD or Super Admin can lift the freeze.
+//
+//   NotRequired → Pending → Approved | Rejected
+//                    ↑__________|  (edited again by its subject)
+//
+// A third sub-doc rather than another `release` state on purpose. `status` is
+// the money, `release` is custody of the document, and this is the conflict of
+// interest — three questions that move independently. A slip can be sanctioned
+// but unpaid, or paid but never released.
+const SELF_APPROVAL_STATES = ['NotRequired', 'Pending', 'Approved', 'Rejected'];
+
+const selfApprovalSchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: SELF_APPROVAL_STATES, default: 'NotRequired', index: true },
+    // The employee who wrote their own slip. Kept after the decision too, so a
+    // slip still reads as self-prepared a year later — that is the fact an
+    // auditor is looking for, and it long outlives the pending state.
+    preparedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    requestedAt: Date,
+    decidedAt: Date,
+    decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // Why it was sanctioned or refused. Required on a refusal — being turned
+    // down without a reason is what sends the person back to ask in person.
+    decisionNote: { type: String, trim: true },
+    // Every freeze and every decision, so a self-prepared slip reads back in
+    // order. Mirrors release.history above.
+    history: [
+      {
+        _id: false,
+        action: String,
+        at: { type: Date, default: Date.now },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byName: String,
+        note: String,
+      },
+    ],
+  },
+  { _id: false }
+);
+
 const payrollSchema = new mongoose.Schema(
   {
     employee: {
@@ -164,6 +209,10 @@ const payrollSchema = new mongoose.Schema(
     // Release to the employee — separate from `status`, which is about the money
     // (Draft/Approved/Paid). This is about who may hold the document.
     release: { type: releaseSchema, default: () => ({}) },
+
+    // Executive sanction for a slip its own subject prepared — the conflict of
+    // interest, kept apart from both the money and the release above.
+    selfApproval: { type: selfApprovalSchema, default: () => ({}) },
   },
   { timestamps: true }
 );
@@ -209,5 +258,6 @@ payrollSchema.plugin(require("./plugins/auditStatus"));
 
 const Payroll = mongoose.model('Payroll', payrollSchema);
 Payroll.RELEASE_STATES = RELEASE_STATES;
+Payroll.SELF_APPROVAL_STATES = SELF_APPROVAL_STATES;
 
 module.exports = Payroll;

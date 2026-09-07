@@ -26,6 +26,23 @@ async function usersHoldingAny(...caps) {
 }
 
 /**
+ * Ids of every active user holding one of the given ROLES.
+ *
+ * The role-keyed twin of usersHoldingAny, for the handful of decisions that are
+ * a role's to make rather than a capability's — sanctioning a cash advance, or a
+ * payslip its own subject wrote. Those deliberately do not route through
+ * hasPermission (see authMiddleware's canApproveSelfPayslip), so neither can the
+ * notification that tells the bench something is waiting on them: asking for
+ * `payroll.manage` here would tell the HR Manager whose slip it is.
+ * @param {...string} roles - User.role values.
+ * @returns {Promise<import('mongoose').Types.ObjectId[]>} Matching user ids.
+ */
+async function usersInRoles(...roles) {
+  const users = await User.find({ isActive: true, role: { $in: roles } }).select('_id').lean();
+  return users.map((u) => u._id);
+}
+
+/**
  * Company wall for notification fan-outs: keep only the recipients whose own
  * scope covers the given company. Without this, "tell everyone who manages
  * leave" told company B's HR about company A's people.
@@ -61,4 +78,4 @@ async function scopeRecipientsToCompany(recipientIds, companyId) {
     .map((u) => u._id);
 }
 
-module.exports = { usersHoldingAny, scopeRecipientsToCompany };
+module.exports = { usersHoldingAny, usersInRoles, scopeRecipientsToCompany };

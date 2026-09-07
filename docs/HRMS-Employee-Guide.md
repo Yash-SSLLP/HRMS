@@ -59,9 +59,9 @@ The dashboard is your landing page and works as a set of shortcuts. Tapping any 
 Attendance is the record that you were at work, and it feeds directly into your pay. You get **one check-in and one check-out per day**.
 
 - Every punch requires a **selfie**. This is mandatory, not optional.
-- Every punch also captures your **GPS location**. The app shows only that it is working; your coordinates are never displayed, and you are never told whether you are inside or outside the office range. A punch is **never blocked** — the location is simply recorded for HR.
+- Every punch also captures your **GPS location**. The app shows only that it is working; your coordinates are never displayed, and you are never told whether you are inside or outside the office range. Being **outside** the office range never blocks a punch — that is simply flagged for HR. But your location does have to be available: if you refuse location access, or the phone cannot get a fix, the punch is not recorded at all.
 - **Work From Home** is a permission, not a checkbox everyone has. If it has been granted to you, a WFH tick appears at punch time and those punches are exempt from the office-range check. If you do not see it, it has not been granted.
-- **Filing an expense records your location.** Both the khata expense form and the reimbursement claim form say so before you submit. It is a single reading taken at that moment — not tracking, and nothing is recorded at any other time. Only the **Backend** can see it: not HR, not the accounts team, not your manager. If your device cannot get a fix or you have not allowed location access, the expense still files, without one.
+- **Filing an expense records your location.** Both the cashbook expense form and the reimbursement claim form say so before you submit. It is a single reading taken at that moment — not tracking, and nothing is recorded at any other time. Only the **Backend** can see it: not HR, not the accounts team, not your manager. If your device cannot get a fix or you have not allowed location access, the expense still files, without one.
 - **Checking in from outside the office** can be allowed for you as a standing permission — the answer for site, field and travelling roles. When it is, the punch screen tells you so, and none of your punches are flagged for being away from the office. You do not have to tick anything, and you do not have to claim you were at home. Your location is still recorded, exactly as it is for everybody else.
 - You may declare a **half day** at either punch.
 - After check-in, a live timer counts your working time and freezes when you check out.
@@ -213,7 +213,40 @@ Spending is now filed through **My Cashbook**, which covers the same ground agai
 
 [!NOTE] Claims you filed before this changed are still with HR and will be processed as normal, through Pending, Approved and Reimbursed. You simply no longer start new ones here.
 
-### 7.5 Travel
+### 7.5 My Cashbook
+
+If the company gives you cash to spend on its behalf, this is where it is accounted for. You hold **one advance** — your wallet — and you file what you spend under **books**, which are simply named headings: "Site A — materials", "Vehicle and fuel", whatever the work needs. The books say what the money went *on*; the wallet says how much of it is *left*.
+
+- **Cash Out** — record an expense against a book, or return unspent cash. An expense needs a **bill** every time, and it counts the moment you file it.
+- **Cash In** — ask for an advance, record money that came **back** into a book (a supplier refund, a cancelled booking, unused material returned), or claim what the company owes you once you have spent past your advance.
+- An entry you filed stays **yours to correct until the accounts team confirms it**. After that, ask them to reverse it and file it again — nothing posted is ever quietly rewritten.
+
+[!NOTE] Filing an expense or a refund records where you were at that moment, and the form says so before you submit. Only the Backend can see it — not HR, not the accounts team, not your manager.
+
+**Sharing a book with a colleague.** If two of you are buying things for the same job, one of you opens the book and invites the other onto it from the book's **Members** screen: pick the colleague, choose what they may do, and send it.
+
+- **Can add entries** — they file their own spending into the book and see everyone's.
+- **Can only view** — they read the book and download its reports, and add nothing.
+
+An invitation waits for the other person to **accept** it, and it appears at the top of their own My Cashbook. Nobody is put on a book without agreeing to it. Either of you can undo it later — the owner can remove a member, and a member can leave whenever they like.
+
+[!IMPORTANT] **What a colleague spends comes out of their own advance, never yours.** A book is a heading, not a pot of money. Their entries add to what the book has cost and come off their wallet, exactly as yours come off yours.
+
+[!NOTE] Removing somebody, or leaving a book yourself, never deletes anything already filed. Those entries stay on the book with the name of whoever filed them, because the money was genuinely spent — only the access goes away. The person who opened a book cannot be removed from it.
+
+**Reports.** Open a book, set the filters you want — dates, a search, status, entry type, category, payment mode — and use **View Reports**. Whatever is on the screen is what comes out in the file, and the filters you used are printed on the document itself, so two downloads can never look alike and disagree.
+
+There are three to choose from:
+
+- **All entries** — every entry line by line, oldest first, with a running balance. Tick **Include bills** to have the photographs printed alongside them.
+- **Day-wise summary** — one line per day: how many entries, cash in, cash out, and the closing balance.
+- **Category-wise summary** — what each category has cost.
+
+Each can be downloaded as a **PDF** to send or print, or as an **Excel** file to work with. On the phone it goes straight to the share sheet, so you can WhatsApp or email it from site without a laptop.
+
+[!NOTE] Only approved entries count towards the totals. Anything rejected or reversed is still listed, struck through, so a report never hides part of the history.
+
+### 7.6 Travel
 
 Raise a request with the purpose, origin and destination, dates, mode of travel, estimated cost, any advance needed, and notes. If you have already paid, complete the reimbursement block and attach the bill. The request status and the reimbursement status are tracked separately.
 

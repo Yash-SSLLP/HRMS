@@ -176,13 +176,39 @@ async function scopeEmployeeFilter(req, filter = {}) {
  * @param {Object} profile - an EmployeeProfile (needs hrPartner / company)
  * @returns {boolean}
  */
+/**
+ * Is this profile the acting user's OWN employee record?
+ *
+ * Split out of cannotManageProfile so a caller can tell the two refusals apart.
+ * "This one is mine" and "this person is not mine to look after" are both a no
+ * there, and for almost every module that is the right answer to both — you do
+ * not approve your own leave whatever the reason.
+ *
+ * PAYROLL IS THE ONE EXCEPTION, and it has to know which refusal it is hitting:
+ * an HR Manager may prepare their own payslip (see payrollController's
+ * guardPayrollProfile), but only because a CEO, MD or Super Admin sanctions it
+ * before it counts for anything. That exception must not widen into "not my
+ * assignee" or into another company's staff, so it keys on this answer alone
+ * rather than on cannotManageProfile having returned true for some reason.
+ *
+ * Same id-not-user comparison as the guard below, and for the same reason.
+ * @param {import('express').Request} req
+ * @param {Object} profile - an EmployeeProfile
+ * @returns {boolean}
+ */
+function isOwnProfile(req, profile) {
+  const u = req && req.user;
+  if (!u || !profile) return false;
+  const mine = u.scopeProfileId && String(profile._id || '') === String(u.scopeProfileId);
+  const mineByUser = profile.user && String(profile.user._id || profile.user) === String(u._id);
+  return !!(mine || mineByUser);
+}
+
 function cannotManageProfile(req, profile) {
   const u = req && req.user;
   if (!u || u.role === 'SuperAdmin') return false;
   if (!profile) return false;
-  const mine = u.scopeProfileId && String(profile._id || '') === String(u.scopeProfileId);
-  const mineByUser = profile.user && String(profile.user._id || profile.user) === String(u._id);
-  if (mine || mineByUser) return true;
+  if (isOwnProfile(req, profile)) return true;
   if (u.role === 'HRManager') {
     if (String(profile.hrPartner || '') !== String(u._id)) return true;
   }
@@ -412,6 +438,7 @@ module.exports = {
   allowedEmployeeIds,
   scopeEmployeeFilter,
   cannotManageProfile,
+  isOwnProfile,
   assertNotOwnRequest,
   assertCanEditManagerProfile,
   assertCanEditProfileOf,

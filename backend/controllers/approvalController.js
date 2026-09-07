@@ -26,9 +26,10 @@ const TravelRequest = require('../models/TravelRequest');
 const Loan = require('../models/Loan');
 const ChangeRequest = require('../models/ChangeRequest');
 const DocumentChangeRequest = require('../models/DocumentChangeRequest');
+const Payroll = require('../models/Payroll');
 const { CHANGE_INBOX_ROLES } = require('./changeRequestController');
 const { canReadOthersDocs } = require('./documentController');
-const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
+const { hasPermission, isExecViewer, canApproveSelfPayslip } = require('../middleware/authMiddleware');
 const { scopeEmployeeFilter, scopeUserField } = require('../utils/employeeScope');
 
 /**
@@ -542,8 +543,17 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     )
     : NONE;
 
-  const [leave, expense, travel, regularization, loan, change, docswap] = await Promise.all([
-    leaveQ, expenseQ, travelQ, regularizationQ, loanQ, changeQ, docswapQ,
+  // GET /payroll/self-approvals              (CEO/MD/SuperAdmin) employee = EmployeeProfile
+  // A payslip its own subject prepared, frozen until an executive sanctions it.
+  // Role-gated rather than capability-gated on purpose: `payroll.manage` is held
+  // by the very HR Manager being judged, so counting on it would put the item in
+  // their own inbox (see authMiddleware.canApproveSelfPayslip).
+  const selfPayslipQ = canApproveSelfPayslip(req.user)
+    ? Payroll.countDocuments(await scopeEmployeeFilter(req, { 'selfApproval.status': 'Pending' }))
+    : NONE;
+
+  const [leave, expense, travel, regularization, loan, change, docswap, selfPayslip] = await Promise.all([
+    leaveQ, expenseQ, travelQ, regularizationQ, loanQ, changeQ, docswapQ, selfPayslipQ,
   ]);
   res.json({
     leave,
@@ -553,7 +563,8 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     loan,
     change,
     docswap,
-    total: leave + expense + travel + regularization + loan + change + docswap,
+    selfPayslip,
+    total: leave + expense + travel + regularization + loan + change + docswap + selfPayslip,
   });
 });
 

@@ -1,6 +1,7 @@
 /**
  * Payroll router — mounted at /api/payroll.
- * Public tokenised payslip download, employee payslip self-service, and
+ * Public tokenised payslip download, employee payslip self-service, the
+ * CEO/MD/Super Admin sanction of payslips their own subject prepared, and
  * HR/Admin payslip CRUD, payroll runs, exports, and sharing/emailing.
  */
 const express = require('express');
@@ -10,6 +11,9 @@ const {
   requestMyPayslipChange,
   approvePayslipRelease,
   finalisePayslipRelease,
+  listSelfApprovals,
+  approveSelfPayslip,
+  rejectSelfPayslip,
   getMyPayslip,
   myAttendanceSummary,
   listPayslips,
@@ -34,7 +38,9 @@ const {
   giveHike,
   salarySetupStatus,
 } = require('../controllers/payrollController');
-const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
+const {
+  protect, restrictTo, requirePermission, requireSelfPayslipApprover,
+} = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -58,6 +64,22 @@ router.post('/me/:id/request', requestMyPayslip);
 router.post('/me/:id/change-request', requestMyPayslipChange);
 // GET /me/:year/:month — own payslip for a month; protected.
 router.get('/me/:year/:month', getMyPayslip);
+
+// ===== Self-prepared payslips: the executive sanction =====
+// An HR Manager may write their own payslip, and it is frozen until a CEO, MD or
+// Super Admin sanctions it (see models/Payroll.js -> selfApproval).
+//
+// Declared ABOVE the 'payroll.manage' gate deliberately, for two reasons:
+//   1. That gate refuses a read-only CEO/MD on any non-GET before a handler is
+//      ever reached, and these routes are addressed TO those accounts.
+//   2. It is the wrong key anyway — 'payroll.manage' is held by the very HR
+//      Manager whose payslip is being judged.
+// requireSelfPayslipApprover is the gate instead: SuperAdmin, CEO or MD.
+// GET /self-approvals — payslips awaiting (or already given) a sanction.
+router.get('/self-approvals', requireSelfPayslipApprover, listSelfApprovals);
+// PATCH /:id/self-approval/approve|reject — sanction or refuse one.
+router.patch('/:id/self-approval/approve', requireSelfPayslipApprover, approveSelfPayslip);
+router.patch('/:id/self-approval/reject', requireSelfPayslipApprover, rejectSelfPayslip);
 
 // HR/Admin only — everything below requires the 'payroll.manage' permission.
 router.use(requirePermission('payroll.manage'));

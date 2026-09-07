@@ -10,17 +10,25 @@
  * payment, the register); this one is about custody of the document, and is a
  * queue rather than a ledger.
  *
- * Reads GET /payroll?releaseStatus=..., acts via
- * PATCH /payroll/:id/release/approve and /release/finalise, and previews the
- * same PDF HR can already download.
+ * It also carries the OTHER payslip gate: a slip an HR Manager wrote for
+ * themselves is frozen until a CEO, MD or Super Admin sanctions it. That queue
+ * is a third tab, and it appears only for those three roles — `payroll.manage`
+ * belongs to the person being judged, so it cannot be the key here.
+ *
+ * Reads GET /payroll?releaseStatus=... and GET /payroll/self-approvals, acts via
+ * PATCH /payroll/:id/release/approve, /release/finalise and
+ * /self-approval/approve|reject, and previews the same PDF HR can already
+ * download.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useTabParam } from "../hooks/useTabParam";
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { useAuthStore } from '../store/authStore';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -44,11 +52,31 @@ const RELEASE = {
 };
 const releaseOf = (p) => (RELEASE[p.release?.status] ? p.release.status : 'NotRequested');
 
-// The two things HR does here, and everything already dealt with.
+// Who a self-prepared payslip is frozen for. Mirrors authMiddleware's
+// canApproveSelfPayslip — the server is the gate, this only hides a tab that
+// would answer 403.
+const SANCTION_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+
+// The sanction state of a slip its own subject wrote. `NotRequired` renders
+// nothing at all: it is the ordinary case and a chip saying so on every row
+// would bury the two that matter.
+const SELF = {
+  Pending: { label: 'Awaiting CEO/MD sanction', tone: 'bg-purple-100 text-purple-800' },
+  Rejected: { label: 'Sanction refused', tone: 'bg-red-100 text-red-800' },
+  Approved: { label: 'Self-prepared · sanctioned', tone: 'bg-green-50 text-green-700' },
+};
+
+// The two things HR does here, everything already dealt with, and — for the
+// executive bench only — the payslips their own preparers cannot finish.
 const TABS = [
   { key: 'pending', label: 'Needs action', states: 'Requested,Approved,ChangeRequested' },
   { key: 'released', label: 'Released', states: 'Finalised' },
 ];
+const SELF_TAB = { key: 'self', label: 'Self-prepared' };
+
+// A frozen slip is refused by every route that would let it count — including
+// both release steps — so the buttons that would try are not offered.
+const isFrozen = (p) => ['Pending', 'Rejected'].includes(p?.selfApproval?.status);
 
 // What HR should do next, in the order the workflow runs.
 const NEXT_STEP = {
@@ -58,28 +86,37 @@ const NEXT_STEP = {
 };
 
 export default function AdminPayslipRequests() {
-  const [tab, setTab] = useTabParam('pending', TABS.map((t) => t.key));
+  const role = useAuthStore((st) => st.user?.role);
+  const canSanction = SANCTION_ROLES.includes(role);
+  const tabs = useMemo(() => (canSanction ? [...TABS, SELF_TAB] : TABS), [canSanction]);
+  const [tab, setTab] = useTabParam('pending', tabs.map((t) => t.key));
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
-  const [counts, setCounts] = useState({ pending: 0, released: 0 });
+  const [counts, setCounts] = useState({ pending: 0, released: 0, self: 0 });
 
   // `quiet` keeps the table up while a release step refetches both tabs.
   const load = useCallback(async ({ quiet } = {}) => {
     if (!quiet) setLoading(true);
     try {
-      // Both tabs are fetched so the counts on them are real, not guesses.
-      const [pending, released] = await Promise.all(
-        TABS.map((t) => api.get('/payroll', { params: { releaseStatus: t.states } }))
-      );
-      setCounts({ pending: pending.data.count, released: released.data.count });
-      setRows((tab === 'pending' ? pending : released).data.payslips);
+      // Every tab is fetched so the counts on them are real, not guesses. The
+      // sanction queue is a different endpoint behind a different gate, so a
+      // viewer who has no such inbox never asks for it.
+      const [pending, released, self] = await Promise.all([
+        ...TABS.map((t) => api.get('/payroll', { params: { releaseStatus: t.states } })),
+        canSanction
+          ? api.get('/payroll/self-approvals', { params: { scope: 'pending' } })
+          : Promise.resolve({ data: { count: 0, payslips: [] } }),
+      ]);
+      setCounts({ pending: pending.data.count, released: released.data.count, self: self.data.count });
+      const shown = { pending, released, self }[tab] || pending;
+      setRows(shown.data.payslips);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not load payslip requests');
     } finally {
       setLoading(false);
     }
-  }, [tab]);
+  }, [tab, canSanction]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -91,6 +128,38 @@ export default function AdminPayslipRequests() {
       // Quiet: the counts on both tabs still have to be exact after each step,
       // but the table must not blank between them — the per-row spinner is the
       // only movement a three-step release should show.
+      await load({ quiet: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Action failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Sanction or refuse a payslip its own subject prepared. A refusal must carry
+  // a reason — it is the only thing the preparer is shown — so the note is
+  // compulsory here exactly as it is on the server.
+  const sanction = async (p, approve) => {
+    const who = `${p.employee?.user?.firstName || ''} ${p.employee?.user?.lastName || ''}`.trim() || 'this employee';
+    const period = `${MONTHS[p.payPeriodMonth - 1]} ${p.payPeriodYear}`;
+    let note = '';
+    if (approve) {
+      const ok = await confirmDialog({
+        title: 'Sanction this payslip?',
+        message: `${who} prepared their own ${period} payslip, net ${inr(p.netPay)}. Sanctioning it lets them approve and pay it.`,
+      });
+      if (!ok) return;
+    } else {
+      note = (await promptDialog({
+        title: 'Refuse this payslip',
+        message: `Why is ${who}'s ${period} payslip being refused? This note is all they are shown.`,
+      }) || '').trim();
+      if (!note) return;
+    }
+    setBusyId(p._id);
+    try {
+      await api.patch(`/payroll/${p._id}/self-approval/${approve ? 'approve' : 'reject'}`, { note });
+      toast.success(approve ? 'Payslip sanctioned' : 'Payslip refused');
       await load({ quiet: true });
     } catch (err) {
       toast.error(err.response?.data?.message || 'Action failed');
@@ -113,9 +182,15 @@ export default function AdminPayslipRequests() {
         <strong> Edit</strong> opens the full payroll editor and brings you back here once you save. Editing a payslip
         after it has been released pulls it back, so it has to be finalised again.
       </p>
+      {canSanction && (
+        <p className="text-sm text-gray-500 mb-4 max-w-3xl">
+          <strong>Self-prepared</strong> holds payslips an admin wrote for themselves. They are frozen — they cannot be
+          approved, paid, released or emailed — until you sanction them. Editing one after sanction freezes it again.
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-2 mb-4">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -150,11 +225,16 @@ export default function AdminPayslipRequests() {
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
-                  {tab === 'pending' ? 'Nothing waiting on you.' : 'No payslips released yet.'}
+                  {{
+                    pending: 'Nothing waiting on you.',
+                    released: 'No payslips released yet.',
+                    self: 'No self-prepared payslips are waiting for a sanction.',
+                  }[tab]}
                 </td>
               </tr>
             ) : rows.map((p) => {
               const state = releaseOf(p);
+              const self = SELF[p.selfApproval?.status];
               return (
                 <tr key={p._id}>
                   <td className="px-4 py-3">
@@ -176,11 +256,25 @@ export default function AdminPayslipRequests() {
                     {NEXT_STEP[state] && (
                       <div className="text-[11px] text-gray-400 mt-1 max-w-[260px]">{NEXT_STEP[state]}</div>
                     )}
+                    {/* Why this row will not finalise. Shown on every tab, not
+                        just the sanction queue: HR chasing a release needs to
+                        see that it is stuck on somebody else. */}
+                    {self && (
+                      <div className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-lg ${self.tone}`}>
+                        {self.label}
+                      </div>
+                    )}
+                    {p.selfApproval?.decisionNote && (
+                      <div className="text-[11px] text-gray-500 mt-1 max-w-[260px]">“{p.selfApproval.decisionNote}”</div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
                     {dateTime(p.release?.requestedAt)}
                     {p.release?.finalisedAt && (
                       <div className="text-[11px] text-green-700">Released {dateTime(p.release.finalisedAt)}</div>
+                    )}
+                    {p.selfApproval?.requestedAt && (
+                      <div className="text-[11px] text-purple-700">Prepared {dateTime(p.selfApproval.requestedAt)}</div>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
@@ -194,13 +288,21 @@ export default function AdminPayslipRequests() {
                       <Link to={`/admin/payroll?edit=${p._id}&from=requests`}
                         className="text-blue-600 hover:underline">Edit</Link>
                     )}
-                    {state === 'Requested' && (
+                    {state === 'Requested' && !isFrozen(p) && (
                       <button onClick={() => act(p, 'approve', 'Request approved')} disabled={busyId === p._id}
                         className="text-green-700 hover:underline disabled:opacity-50">Approve request</button>
                     )}
-                    {['Approved', 'ChangeRequested'].includes(state) && (
+                    {['Approved', 'ChangeRequested'].includes(state) && !isFrozen(p) && (
                       <button onClick={() => act(p, 'finalise', 'Payslip released to the employee')} disabled={busyId === p._id}
                         className="text-green-700 hover:underline disabled:opacity-50">Finalise &amp; release</button>
+                    )}
+                    {canSanction && p.selfApproval?.status === 'Pending' && (
+                      <>
+                        <button onClick={() => sanction(p, true)} disabled={busyId === p._id}
+                          className="text-green-700 hover:underline disabled:opacity-50">Sanction</button>
+                        <button onClick={() => sanction(p, false)} disabled={busyId === p._id}
+                          className="text-red-600 hover:underline disabled:opacity-50">Refuse</button>
+                      </>
                     )}
                   </td>
                 </tr>
