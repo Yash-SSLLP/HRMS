@@ -10,6 +10,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 
@@ -38,6 +39,12 @@ const TABS = [
 const clean = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== '' && v != null));
 
 export default function AdminCashbook() {
+  // A view-only account reads the books and moves no money. Every control that
+  // posts is therefore not rendered for one; the modals below are reachable only
+  // from these buttons, so hiding the entry points closes their Save/Approve
+  // actions too. Reads stay: the balances, the ledger, the day book, a receipt,
+  // and the Excel export.
+  const viewOnly = useViewOnly();
   const [tab, setTab] = useTabParam('overview', TABS.map(([k]) => k));
   const [accounts, setAccounts] = useState([]);
   // Which company an account belongs to (null = shared). The list the server
@@ -224,10 +231,12 @@ export default function AdminCashbook() {
             <Stat label="Today paid" value={money(ov?.todayOut)} tone="red" />
             <Stat label="Pending vouchers" value={ov?.pendingVouchers ?? 0} tone="amber" />
           </div>
+          {!viewOnly && (
           <div className="flex gap-2">
             <button onClick={() => openEntry('create')} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Entry</button>
             <button onClick={() => setTransferOpen(true)} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">Transfer between accounts</button>
           </div>
+          )}
           <div className="bg-white shadow rounded-lg overflow-hidden">
             <div className="px-4 py-3 border-b font-medium text-gray-700 text-sm">Account balances</div>
             <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -263,7 +272,9 @@ export default function AdminCashbook() {
             <div><label className="block text-xs text-gray-500">To</label><input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} className="border rounded-lg px-2 py-1.5 text-sm" /></div>
             <div><label className="block text-xs text-gray-500">Search</label><input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="party / ref / note" className="border rounded-lg px-2 py-1.5 text-sm" /></div>
             <button onClick={exportCsv} className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">Export Excel</button>
-            <button onClick={() => openEntry('create')} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Entry</button>
+            {!viewOnly && (
+              <button onClick={() => openEntry('create')} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Entry</button>
+            )}
           </div>
           <div className="bg-white shadow rounded-lg overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -289,8 +300,8 @@ export default function AdminCashbook() {
                     <td className="px-3 py-2"><span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[e.status]}`}>{e.status}</span></td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       {e.hasAttachment && <button onClick={() => viewReceipt(e._id)} className="text-blue-600 hover:underline text-xs mr-2">Receipt</button>}
-                      {!e.transferGroup && <button onClick={() => openEntry('edit', { ...e })} className="text-gray-600 hover:underline text-xs mr-2">Edit</button>}
-                      <button onClick={() => deleteEntry(e._id)} className="text-red-600 hover:underline text-xs">Delete</button>
+                      {!viewOnly && !e.transferGroup && <button onClick={() => openEntry('edit', { ...e })} className="text-gray-600 hover:underline text-xs mr-2">Edit</button>}
+                      {!viewOnly && <button onClick={() => deleteEntry(e._id)} className="text-red-600 hover:underline text-xs">Delete</button>}
                     </td>
                   </tr>
                 ))}
@@ -319,7 +330,9 @@ export default function AdminCashbook() {
                   <td className="px-3 py-2 font-medium">{money(v.amount)}</td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
                     {v.hasAttachment && <button onClick={() => viewReceipt(v._id)} className="text-blue-600 hover:underline text-xs mr-2">Receipt</button>}
-                    <button onClick={() => setReview({ ...v, account: activeAccounts[0]?._id || '', note: '' })} className="text-indigo-600 hover:underline text-xs">Review</button>
+                    {!viewOnly && (
+                      <button onClick={() => setReview({ ...v, account: activeAccounts[0]?._id || '', note: '' })} className="text-indigo-600 hover:underline text-xs">Review</button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -331,7 +344,9 @@ export default function AdminCashbook() {
       {/* ===== ACCOUNTS ===== */}
       {tab === 'accounts' && (
         <div className="space-y-3">
-          <button onClick={() => openAccount('create')} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Account</button>
+          {!viewOnly && (
+            <button onClick={() => openAccount('create')} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Account</button>
+          )}
           <div className="bg-white shadow rounded-lg overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50"><tr>
@@ -348,8 +363,12 @@ export default function AdminCashbook() {
                     <td className="px-3 py-2 text-right font-medium">{money(a.currentBalance)}</td>
                     <td className="px-3 py-2">{a.isActive ? <span className="text-green-700 text-xs">Active</span> : <span className="text-gray-400 text-xs">Inactive</span>}</td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <button onClick={() => openAccount('edit', { ...a })} className="text-gray-600 hover:underline text-xs mr-2">Edit</button>
-                      <button onClick={() => deleteAccount(a._id)} className="text-red-600 hover:underline text-xs">Delete</button>
+                      {!viewOnly && (
+                        <>
+                          <button onClick={() => openAccount('edit', { ...a })} className="text-gray-600 hover:underline text-xs mr-2">Edit</button>
+                          <button onClick={() => deleteAccount(a._id)} className="text-red-600 hover:underline text-xs">Delete</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -362,7 +381,9 @@ export default function AdminCashbook() {
       {/* ===== CATEGORIES ===== */}
       {tab === 'categories' && (
         <div className="space-y-3">
-          <button onClick={() => openCategory('create')} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Category</button>
+          {!viewOnly && (
+            <button onClick={() => openCategory('create')} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Category</button>
+          )}
           <div className="bg-white shadow rounded-lg overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50"><tr>
@@ -374,7 +395,7 @@ export default function AdminCashbook() {
                     <td className="px-3 py-2">{c.name}</td>
                     <td className="px-3 py-2 text-gray-500">{c.kind}</td>
                     <td className="px-3 py-2">{c.isActive ? <span className="text-green-700 text-xs">Active</span> : <span className="text-gray-400 text-xs">Inactive</span>}</td>
-                    <td className="px-3 py-2 text-right"><button onClick={() => openCategory('edit', { ...c })} className="text-gray-600 hover:underline text-xs">Edit</button></td>
+                    <td className="px-3 py-2 text-right">{!viewOnly && <button onClick={() => openCategory('edit', { ...c })} className="text-gray-600 hover:underline text-xs">Edit</button>}</td>
                   </tr>
                 ))}
               </tbody>

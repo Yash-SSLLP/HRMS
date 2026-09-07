@@ -11,10 +11,11 @@
  *   "SSL 120" / "ssl 120" / "ssl120"  -> the profile holding that employee code
  *   "admin"                           -> the SuperAdmin account
  *   "CEO" / "MD"                      -> the executive accounts
+ *   "God"                             -> the view-only audit account
  *   "someone@company.com"             -> kept working, but only while the
  *                                        address still points at one account
  *
- * The three role aliases exist because those accounts deliberately have no
+ * The role aliases exist because those accounts deliberately have no
  * EmployeeProfile (see utils/employeeScope) and therefore no employee code.
  *
  * Matching is case-insensitive throughout, and insensitive to the space inside
@@ -27,7 +28,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 
 // Alias -> role, for the accounts that have no employee code of their own.
 // Keys are compared in squashed form (uppercase, no whitespace).
-const ROLE_ALIASES = { ADMIN: 'SuperAdmin', CEO: 'CEO', MD: 'MD' };
+const ROLE_ALIASES = { ADMIN: 'SuperAdmin', CEO: 'CEO', MD: 'MD', GOD: 'God' };
 
 /** Uppercase and strip every space, so "ssl 120" and "SSL120" compare equal. */
 const squash = (value) => String(value ?? '').toUpperCase().replace(/\s+/g, '');

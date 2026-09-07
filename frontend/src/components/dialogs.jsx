@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { create } from 'zustand';
 import { FiAlertTriangle, FiHelpCircle, FiInfo } from 'react-icons/fi';
+import { toast } from 'react-toastify';
+import { useAuthStore } from '../store/authStore';
+import { isViewOnly } from '../config/permissions';
 
 // A premium, minimal in-app replacement for window.confirm / window.prompt /
 // window.alert. Promise-based and imperative so call sites stay tiny:
@@ -20,6 +23,29 @@ const useDialogStore = create((set) => ({
 }));
 
 function ask(req) {
+  // A view-only account never reaches the action a confirm dialog is asking
+  // about — the server refuses it, and so does the request interceptor in
+  // api/client.js. Asking "Delete this? / Cancel · Delete" and then failing is
+  // worse than not asking, so the question is answered for them.
+  //
+  // ONLY `confirm`. `alert` tells rather than asks. `prompt` is deliberately
+  // left alone too: four call sites use it as an OUTPUT — here is the link,
+  // copy it — when navigator.clipboard is unavailable, and blocking those would
+  // stop a viewer copying a link they are perfectly entitled to have. A prompt
+  // that does precede a write still opens, and the write is then refused by the
+  // interceptor with the reason, which is a worse-but-safe outcome; `confirm`
+  // is where nearly all of the destructive flows actually gate.
+  //
+  // `viewOnlyReads: true` opts an individual confirm out, for one that guards a
+  // read (there are none today).
+  if (req.type === 'confirm' && !req.viewOnlyReads
+      && isViewOnly(useAuthStore.getState().user)) {
+    // Say so, rather than silently answering "no": a button that does nothing at
+    // all when pressed reads as a broken page, which is the complaint this whole
+    // change exists to answer.
+    toast.info('This account is view-only — nothing was changed.');
+    return Promise.resolve(false);
+  }
   // Only one dialog at a time — resolve any in-flight one as cancelled first.
   if (resolver) {
     const prev = resolver;

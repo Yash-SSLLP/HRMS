@@ -123,8 +123,8 @@ function RootRedirect() {
   const user = useAuthStore((s) => s.user);
   if (!user) return <Navigate to="/login" replace />;
   // Employees and Managers live in the employee portal; everyone else (admins,
-  // the read-only CEO/MD executives, and the LMS-only HR L&D admin) goes to the
-  // admin portal.
+  // the read-only CEO/MD executives, the view-only God account, and the
+  // LMS-only HR L&D admin) goes to the admin portal.
   const employeePortal = ['Employee', 'Manager'].includes(user.role);
   return <Navigate to={employeePortal ? '/employee' : '/admin'} replace />;
 }
@@ -198,7 +198,7 @@ export default function App() {
         element={
           // Manager is listed, but `admin` makes the guard also require at least
           // one granted capability — the role alone opens nothing.
-          <ProtectedRoute admin roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager', 'Manager']}>
+          <ProtectedRoute admin roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager', 'God', 'Manager']}>
             <Layout navItems={role === 'LDManager' ? ldNav : role === 'AccountsManager' ? accountsNav : adminNav} sectionTitle="Admin" />
           </ProtectedRoute>
         }

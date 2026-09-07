@@ -10,6 +10,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import MailComposeModal from '../components/MailComposeModal';
@@ -130,6 +131,13 @@ const blankJob = { title: '', department: '', location: '', employmentType: 'Ful
 const blankCand = { name: '', email: '', phone: '', job: '', stage: 'Applied', rating: 0, notes: '' };
 
 export default function AdminRecruitment() {
+  // A view-only account (the God audit login, a read-only CEO/MD) reads the
+  // pipeline and moves nobody through it. Every control below that posts is
+  // therefore not rendered for one — the server and the request interceptor
+  // both refuse the call anyway, so leaving them on screen only offered work
+  // that could not be done. Reading stays whole: the lists, the résumé, the
+  // interview history, the offer PDF and the submitted documents.
+  const viewOnly = useViewOnly();
   const [jobs, setJobs] = useState([]);
   // Which company is hiring (blank = shared). Server-walled list.
   const [companies, setCompanies] = useState([]);
@@ -639,7 +647,9 @@ export default function AdminRecruitment() {
       {/* Jobs */}
       <div className="flex items-center justify-between mb-2">
         <h2 className="card-title">Job Openings</h2>
-        <button onClick={openJobCreate} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Job</button>
+        {!viewOnly && (
+          <button onClick={openJobCreate} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Job</button>
+        )}
       </div>
       <div className="bg-white shadow rounded-lg overflow-hidden mb-6">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -680,8 +690,12 @@ export default function AdminRecruitment() {
                   )}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
-                  <button onClick={() => openJobEdit(j)} className="text-blue-600 hover:underline">Edit</button>
-                  <button onClick={() => removeJob(j)} className="text-red-600 hover:underline">Delete</button>
+                  {!viewOnly && (
+                    <>
+                      <button onClick={() => openJobEdit(j)} className="text-blue-600 hover:underline">Edit</button>
+                      <button onClick={() => removeJob(j)} className="text-red-600 hover:underline">Delete</button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -694,7 +708,9 @@ export default function AdminRecruitment() {
         <h2 className="card-title">
           Candidates {selectedJob && <span className="text-sm text-gray-500">· filtered by job <button onClick={() => setSelectedJob('')} className="text-blue-600 hover:underline">(clear)</button></span>}
         </h2>
-        <button onClick={openCandCreate} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Candidate</button>
+        {!viewOnly && (
+          <button onClick={openCandCreate} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Candidate</button>
+        )}
       </div>
       {/* Shared hidden input for resume upload/replace from any candidate row. */}
       <input ref={resumeInputRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={onResumePicked} />
@@ -728,8 +744,12 @@ export default function AdminRecruitment() {
                     ) : c.hasResume ? (
                       <div className="flex items-center gap-2">
                         <button onClick={() => viewResume(c)} className="text-blue-600 hover:underline">View</button>
-                        <button onClick={() => pickResume(c)} className="text-gray-400 hover:text-gray-700 text-xs">Replace</button>
+                        {!viewOnly && (
+                          <button onClick={() => pickResume(c)} className="text-gray-400 hover:text-gray-700 text-xs">Replace</button>
+                        )}
                       </div>
+                    ) : viewOnly ? (
+                      <span className="text-gray-400 text-xs">None</span>
                     ) : (
                       <button onClick={() => pickResume(c)} className="text-blue-600 hover:underline">Upload</button>
                     )}
@@ -747,26 +767,30 @@ export default function AdminRecruitment() {
                         📄 Document Link{c.documents?.submittedAt && !c.documents?.confirmedAt ? ' 🔴' : c.documents?.confirmedAt ? ' ✓' : ''}
                       </button>
                     )}
-                    {allCleared(c) && c.documents?.confirmedAt && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && !c.offer?.generatedAt && (
+                    {!viewOnly && allCleared(c) && c.documents?.confirmedAt && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && !c.offer?.generatedAt && (
                       <button onClick={() => openOffer(c)} className="text-purple-600 font-medium hover:underline">Create Offer Letter</button>
                     )}
-                    {c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
+                    {!viewOnly && c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
                       <button onClick={() => openOffer(c)} className="text-purple-600 hover:underline">Edit Offer</button>
                     )}
-                    {c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
+                    {!viewOnly && c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
                       <button onClick={() => onboard(c)} className="text-teal-600 font-medium hover:underline">Onboard →</button>
                     )}
                     {c.offer?.hasLetter && (
                       <button onClick={() => downloadOffer(c)} className="text-gray-600 hover:underline">Offer PDF</button>
                     )}
-                    {c.stage === 'Applied' && (
+                    {!viewOnly && c.stage === 'Applied' && (
                       <button onClick={() => setStage(c, 'Shortlisted')} className="text-white bg-green-600 hover:bg-green-700 px-2.5 py-1 rounded-lg">Shortlist</button>
                     )}
-                    {c.stage !== 'Rejected' && c.stage !== 'Hired' && (
+                    {!viewOnly && c.stage !== 'Rejected' && c.stage !== 'Hired' && (
                       <button onClick={() => setStage(c, 'Rejected')} className="text-red-600 hover:underline">Reject</button>
                     )}
-                    <button onClick={() => openCandEdit(c)} className="text-blue-600 hover:underline">Edit</button>
-                    <button onClick={() => removeCand(c)} className="text-gray-400 hover:text-red-600">✕</button>
+                    {!viewOnly && (
+                      <>
+                        <button onClick={() => openCandEdit(c)} className="text-blue-600 hover:underline">Edit</button>
+                        <button onClick={() => removeCand(c)} className="text-gray-400 hover:text-red-600">✕</button>
+                      </>
+                    )}
                   </td>
                 </tr>
                 {expanded === c._id && (
@@ -787,7 +811,9 @@ export default function AdminRecruitment() {
                       {c.stage === 'Applied' ? (
                         <div className="flex items-center gap-3 bg-white border border-dashed border-gray-300 rounded-lg px-4 py-4 text-sm text-gray-600">
                           <span>Shortlist this candidate to begin interview rounds.</span>
-                          <button onClick={() => setStage(c, 'Shortlisted')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs">Shortlist</button>
+                          {!viewOnly && (
+                            <button onClick={() => setStage(c, 'Shortlisted')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs">Shortlist</button>
+                          )}
                         </div>
                       ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -800,25 +826,33 @@ export default function AdminRecruitment() {
                             <select
                               value={r.status}
                               onChange={(e) => setRound(c, idx, { status: e.target.value })}
-                              className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2"
+                              disabled={viewOnly}
+                              className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2 disabled:bg-gray-50 disabled:text-gray-500"
                             >
                               {ROUND_STATUS.map((s) => <option key={s}>{s}</option>)}
                             </select>
                             {/* Scoped to the job's department by default, with
                                 search and a one-click widen to everyone. */}
-                            <EmployeePicker
-                              value={r.interviewer || ''}
-                              onChange={(id) => setRound(c, idx, { interviewer: id })}
-                              people={users}
-                              department={c.job?.department || ''}
-                              valueLabel={r.interviewerName || ''}
-                              placeholder="Assign interviewer"
-                            />
+                            {viewOnly ? (
+                              <div className="block w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-gray-50 text-gray-600">
+                                {r.interviewerName || 'No interviewer assigned'}
+                              </div>
+                            ) : (
+                              <EmployeePicker
+                                value={r.interviewer || ''}
+                                onChange={(id) => setRound(c, idx, { interviewer: id })}
+                                people={users}
+                                department={c.job?.department || ''}
+                                valueLabel={r.interviewerName || ''}
+                                placeholder="Assign interviewer"
+                              />
+                            )}
                             <input
                               defaultValue={r.feedback || ''}
                               onBlur={(e) => { if (e.target.value !== (r.feedback || '')) setRound(c, idx, { feedback: e.target.value }); }}
-                              placeholder="Feedback…"
-                              className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
+                              placeholder={viewOnly ? 'No feedback' : 'Feedback…'}
+                              readOnly={viewOnly}
+                              className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs read-only:bg-gray-50 read-only:text-gray-500"
                             />
                             {/* Interview schedule + auto Google Meet for this round */}
                             <div className="mt-2 space-y-1">
@@ -832,7 +866,8 @@ export default function AdminRecruitment() {
                                   if (iso !== (r.scheduledAt ? new Date(r.scheduledAt).toISOString() : '')) setRound(c, idx, { scheduledAt: iso });
                                 }}
                                 title="Interview date & time (used for the calendar invite)"
-                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
+                                disabled={viewOnly}
+                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                               />
                               <select
                                 value={meetDurations[`${c._id}:${idx}`] ?? (r.meetDurationMinutes || 45)}
@@ -842,7 +877,8 @@ export default function AdminRecruitment() {
                                   setRound(c, idx, { meetDurationMinutes: v });
                                 }}
                                 title="Interview duration (used for the Google Meet / calendar invite)"
-                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
+                                disabled={viewOnly}
+                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                               >
                                 {[15, 30, 45, 60, 90, 120].map((min) => (
                                   <option key={min} value={min}>
@@ -854,9 +890,11 @@ export default function AdminRecruitment() {
                                 <input
                                   defaultValue={r.meetingLink || ''}
                                   onBlur={(e) => { if (e.target.value !== (r.meetingLink || '')) setRound(c, idx, { meetingLink: e.target.value }); }}
-                                  placeholder="Meeting link…"
-                                  className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs"
+                                  placeholder={viewOnly ? 'No meeting link' : 'Meeting link…'}
+                                  readOnly={viewOnly}
+                                  className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs read-only:bg-gray-50 read-only:text-gray-500"
                                 />
+                                {!viewOnly && (
                                 <button
                                   type="button"
                                   onClick={() => createMeet(c, idx)}
@@ -864,16 +902,19 @@ export default function AdminRecruitment() {
                                   title="Create a Google Meet for this round · you review and edit the invite email before it's sent"
                                   className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
                                 >{meetBusy === `${c._id}:${idx}` ? '…' : '＋ Meet'}</button>
+                                )}
                               </div>
                               {r.meetingLink && (
                                 <div className="mt-1 flex items-center gap-2">
                                   <a href={r.meetingLink} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-600 hover:underline">↗ Join meeting</a>
-                                  <button
-                                    type="button"
-                                    onClick={() => openInviteMail(c, idx)}
-                                    title="Preview, edit and (re)send the invite email to the candidate and interviewer"
-                                    className="text-[11px] text-indigo-600 hover:underline"
-                                  >✉ Email invite</button>
+                                  {!viewOnly && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openInviteMail(c, idx)}
+                                      title="Preview, edit and (re)send the invite email to the candidate and interviewer"
+                                      className="text-[11px] text-indigo-600 hover:underline"
+                                    >✉ Email invite</button>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -980,17 +1021,23 @@ export default function AdminRecruitment() {
                   <button onClick={() => copyDocLink(docsCand)} className="text-xs px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">{docLinkCopied ? 'Copied!' : 'Copy'}</button>
                 </div>
                 <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5">
-                  <button onClick={() => composeDocsMail(docsCand)} disabled={docsBusy || !docsCand.email}
-                    title={docsCand.email ? undefined : 'This candidate has no email on file'}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed">
-                    ✉ {docsCand.documents?.requestEmailedAt ? 'Email again' : 'Email to candidate'}
-                  </button>
-                  <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="text-[11px] text-gray-500 hover:underline">Regenerate link</button>
+                  {!viewOnly && (
+                    <>
+                      <button onClick={() => composeDocsMail(docsCand)} disabled={docsBusy || !docsCand.email}
+                        title={docsCand.email ? undefined : 'This candidate has no email on file'}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed">
+                        ✉ {docsCand.documents?.requestEmailedAt ? 'Email again' : 'Email to candidate'}
+                      </button>
+                      <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="text-[11px] text-gray-500 hover:underline">Regenerate link</button>
+                    </>
+                  )}
                   {docsCand.documents?.requestEmailedAt && (
                     <span className="text-[11px] text-gray-500">Sent {fmtDateTime(docsCand.documents.requestEmailedAt)}</span>
                   )}
                 </div>
               </div>
+            ) : viewOnly ? (
+              <p className="mb-4 text-sm text-gray-500">No submission link has been generated for this candidate yet.</p>
             ) : (
               <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="mb-4 px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
                 {docsBusy ? 'Generating…' : 'Generate submission link'}
@@ -1032,19 +1079,19 @@ export default function AdminRecruitment() {
                       <div className="text-[11px] text-red-700 mt-1">Sent back: {f.reviewNote}</div>
                     )}
                     <div className="flex items-center gap-2 mt-1.5">
-                      {status !== 'Verified' && (
+                      {!viewOnly && status !== 'Verified' && (
                         <button onClick={() => reviewDoc(docsCand, f, 'Verified')} disabled={docsBusy}
                           className="text-[11px] font-semibold px-2 py-1 rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-60">
                           ✓ Verify
                         </button>
                       )}
-                      {status !== 'Rejected' && (
+                      {!viewOnly && status !== 'Rejected' && (
                         <button onClick={() => reviewDoc(docsCand, f, 'Rejected')} disabled={docsBusy}
                           className="text-[11px] font-semibold px-2 py-1 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-60">
                           ✕ Reject
                         </button>
                       )}
-                      {status !== 'Pending' && (
+                      {!viewOnly && status !== 'Pending' && (
                         <button onClick={() => reviewDoc(docsCand, f, 'Pending')} disabled={docsBusy}
                           className="text-[11px] text-gray-500 hover:underline disabled:opacity-60">
                           Undo
@@ -1107,11 +1154,13 @@ export default function AdminRecruitment() {
 
                   <div className="flex justify-end gap-2">
                     <button onClick={() => setDocsCand(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+                    {!viewOnly && (
                     <button onClick={() => confirmDocs(docsCand)} disabled={docsBusy || !docsVerified || !!blocker}
                       title={blocker || (docsVerified ? undefined : 'Tick the verification box first')}
                       className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-green-600">
                       {docsBusy ? 'Confirming…' : 'Confirm submission'}
                     </button>
+                    )}
                   </div>
                 </>
               );
@@ -1262,7 +1311,7 @@ export default function AdminRecruitment() {
                           title="Open the candidate's resume in a new tab"
                           className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">Resume</button>
                       )}
-                      {c.stage === 'Applied' ? (
+                      {viewOnly ? null : c.stage === 'Applied' ? (
                         <>
                           <button onClick={() => decideJobCand(c, 'Shortlisted')}
                             className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700">Shortlist</button>

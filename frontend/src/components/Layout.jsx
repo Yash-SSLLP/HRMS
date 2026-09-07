@@ -16,7 +16,7 @@ import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock,
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
-import { hasPermission, hasAnyPermission, isReadOnlyExec, canUseAdminPortal } from '../config/permissions';
+import { hasPermission, hasAnyPermission, isViewOnly, isViewOnlyAccount, canUseAdminPortal } from '../config/permissions';
 import { formatDateTime12 } from '../utils/time';
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
@@ -24,7 +24,7 @@ const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: '
 // Roles that never get an EmployeeProfile (see services/ensureProfile.js), so
 // they can never appear in employee search results. GlobalSearch looks these up
 // in the user directory instead, for a SuperAdmin.
-const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin'];
+const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin', 'God'];
 
 const NOTIF_POLL_MS = 20000;
 
@@ -688,7 +688,10 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
   // SuperAdmin has no employee profile/portal, so send them to their account
   // page; everyone else goes to their profile (where they can raise change-
   // request tickets for their own details).
-  const profilePath = user?.role === 'SuperAdmin' ? '/admin/account' : '/employee/profile';
+  // Accounts with no employee record (the Backend, and the God audit account)
+  // have no employee profile page to link to — and no employee portal to reach
+  // it through — so they get the admin-side account page instead.
+  const profilePath = ['SuperAdmin', 'God'].includes(user?.role) ? '/admin/account' : '/employee/profile';
 
   useEffect(() => {
     const onClick = (e) => {
@@ -734,10 +737,11 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
               )}
               <div className="text-[11px] text-gray-400 truncate">{user?.email}</div>
               {/* The view-only badge lives HERE unconditionally: the top-bar
-                  copy is xl-only, and a CEO/MD below 1280px otherwise had no
-                  hint their account is read-only. Edit mode gets NO badge —
-                  writing is just the normal admin experience. */}
-              {isReadOnlyExec(user) && (
+                  copy is xl-only, and a CEO/MD (or the God account) below
+                  1280px otherwise had no hint their account is read-only. Edit
+                  mode gets NO badge — writing is just the normal admin
+                  experience. */}
+              {isViewOnly(user) && (
                 <div className="mt-1 text-[11px] font-semibold text-amber-600">👁 View-only access</div>
               )}
             </div>
@@ -820,11 +824,13 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const isAdmin = user && (user.role === 'SuperAdmin' || user.role === 'HRManager'
     || (user.role === 'Manager' && canUseAdminPortal(user)));
   // CEO/MD: executives who can browse the whole admin portal, read-only unless a
-  // SuperAdmin has switched this account into edit mode.
-  const viewOnlyExec = isReadOnlyExec(user);
+  // SuperAdmin has switched this account into edit mode — plus the God audit
+  // account, which is read-only with nothing to switch on.
+  const viewOnlyExec = isViewOnly(user);
   // SuperAdmin is not an employee, so they have no "My Portal". Only roles with
-  // employee-portal access (Employee, HRManager) get the portal switcher.
-  const canEmployeePortal = user && user.role !== 'SuperAdmin';
+  // employee-portal access (Employee, HRManager) get the portal switcher — God
+  // has no employee record either, so it stays in the admin shell.
+  const canEmployeePortal = user && !['SuperAdmin', 'God'].includes(user.role);
 
   // Which portal is being viewed drives the colour theme (Admin vs My Portal),
   // so the same admin user gets a visibly different look in each. Applied to
@@ -1073,7 +1079,20 @@ export default function Layout({ navItems = [], sectionTitle }) {
       )}
 
       {/* Not rendering the dock also stops its message/conversation polling. */}
-      {chatEnabled && <ChatDock />}
+      {/* Chat is a conversation, and a view-only account does not take part in
+          one: every send, every group edit and every photo upload in the dock is
+          a write the server refuses. Mounting it for the God audit login would
+          put twenty dead controls on screen and, worse, imply that somebody is
+          reachable there who never replies. Reading other people's messages is
+          not the point of the account either — the chat EXPORT (Super Admin
+          only) is where conversations are reviewed.
+
+          isViewOnlyAccount, NOT isViewOnly: the chat routes are gated on
+          `protect` alone with no admin gate above them, so a read-only CEO/MD
+          sends messages perfectly well today and must keep the dock. Only God —
+          whose every unsafe method `protect` itself refuses — has nothing to do
+          in here. */}
+      {chatEnabled && !isViewOnlyAccount(user) && <ChatDock />}
     </div>
   );
 }

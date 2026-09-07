@@ -90,6 +90,10 @@ const releaseSchema = new mongoose.Schema(
     finalisedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     // What the employee says is wrong, when they ask for a correction.
     changeNote: { type: String, trim: true },
+    // Why the employee needs this month's slip ("home loan", "visa"). Optional,
+    // and capped because it is interpolated straight into a notification body
+    // that HR reads in a list — an unbounded note would break that list.
+    requestNote: { type: String, trim: true, maxlength: 500 },
     // Every transition, so a disputed payslip has a readable trail.
     history: [
       {
@@ -213,6 +217,22 @@ const payrollSchema = new mongoose.Schema(
     // Executive sanction for a slip its own subject prepared — the conflict of
     // interest, kept apart from both the money and the release above.
     selfApproval: { type: selfApprovalSchema, default: () => ({}) },
+
+    // A row that exists ONLY to hold an employee's request for a month payroll
+    // has not been run for. No days, no components, no money.
+    //
+    // Why a row at all: the unique {employee, year, month} index below gives a
+    // month exactly ONE slot per employee. Whatever holds the request either
+    // owns that slot or races the payroll run for it — and owning it is what
+    // keeps the ask and the payslip that answers it on one document, so HR's
+    // existing release queue, history and audit trail all keep working.
+    //
+    // It is cleared the moment real figures are written (see the payroll run,
+    // which FILLS a shell in place rather than skipping it), and the pre-save
+    // hook below is the backstop for any writer that forgets. Every path that
+    // would let a payslip count as money refuses one — see assertNotShell in
+    // controllers/payrollController.js.
+    requestShell: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -250,6 +270,13 @@ payrollSchema.pre('save', function computeTotals(next) {
   this.grossSalary = sumOf(this.earnings, EARNING_KEYS);
   this.totalDeductions = sumOf(this.deductions, DEDUCTION_KEYS);
   this.netPay = this.grossSalary - this.totalDeductions;
+  // A row carrying money is not a request shell, whatever the flag says. The
+  // run and the editor both clear it explicitly; this is the structural
+  // backstop, so a future writer that forgets cannot leave a real payslip
+  // permanently unapprovable behind a stale flag.
+  if (this.requestShell && (this.grossSalary > 0 || this.totalDeductions > 0)) {
+    this.requestShell = false;
+  }
   next();
 });
 

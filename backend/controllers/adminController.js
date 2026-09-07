@@ -14,7 +14,7 @@ const Company = require('../models/Company');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { purgePerson } = require('../services/purgePerson');
 const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
-const { EXECUTIVE_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
+const { EXECUTIVE_ROLES, COMPANY_SCOPED_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { scopeUserFilter } = require('../utils/employeeScope');
 const { isEditingExec, canEditManagerProfiles, isManagerProfileRole } = require('../middleware/authMiddleware');
 const { enqueueMail } = require('../services/email');
@@ -72,11 +72,14 @@ const listUsers = asyncHandler(async (req, res) => {
     filter.$or = [{ firstName: re }, { lastName: re }, { email: re }];
   }
   // Roles to keep out of this result:
-  //  - SuperAdmin, hidden from every non-SuperAdmin viewer;
+  //  - SuperAdmin and God, hidden from every non-SuperAdmin viewer;
   //  - CEO/MD, when a picker opts in (?excludeExecutives=true) and a SuperAdmin
   //    has not turned on includeExecutivesInLists.
   const excludedRoles = [];
-  if (req.user.role !== 'SuperAdmin') excludedRoles.push('SuperAdmin');
+  // God rides along with SuperAdmin here: it is a system login only the Backend
+  // administers, and an audit account listed in the directory invites exactly
+  // the questions it exists to avoid. See utils/visibility HIDDEN_ROLES.
+  if (req.user.role !== 'SuperAdmin') excludedRoles.push('SuperAdmin', 'God');
   if (await shouldExcludeExecutives(req)) excludedRoles.push(...EXECUTIVE_ROLES);
   if (excludedRoles.length) {
     if (role) {
@@ -646,9 +649,14 @@ const setExecEditAccess = asyncHandler(async (req, res) => {
 });
 
 /**
- * Set which companies a CEO/MD may see and manage. An empty list clears the
- * restriction (the exec sees every company again); a non-empty list narrows
- * them to exactly those companies. See models/User.js `companies`.
+ * Set which companies an account-scoped viewer may see. An empty list clears
+ * the restriction (they see every company again); a non-empty list narrows them
+ * to exactly those companies. See models/User.js `companies`.
+ *
+ * Applies to CEO/MD (who may also MANAGE what they see, in edit mode) and to
+ * the God audit account, which only ever looks. Same field, same "empty means
+ * everything" rule; the difference is what the account can do once inside, and
+ * that is decided in authMiddleware, not here.
  * @route PATCH /api/admin/users/:id/companies  { companyIds: string[] }  (SuperAdmin)
  * @returns {{id: string, companies: string[]}}
  */
@@ -658,9 +666,9 @@ const setExecCompanies = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('User not found');
   }
-  if (!EXECUTIVE_ROLES.includes(user.role)) {
+  if (!COMPANY_SCOPED_ROLES.includes(user.role)) {
     res.status(400);
-    throw new Error('Company access applies to CEO and MD accounts only.');
+    throw new Error('Company access applies to CEO, MD and God accounts only.');
   }
   const ids = [...new Set((req.body.companyIds || []).map(String))].filter(Boolean);
   if (ids.length) {

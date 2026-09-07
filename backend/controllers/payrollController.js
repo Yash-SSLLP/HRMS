@@ -18,6 +18,10 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const {
   employeeProfileScope, scopeEmployeeFilter, cannotManageProfile, isOwnProfile, assertCanEditProfileOf,
 } = require('../utils/employeeScope');
+const {
+  MAX_OPEN_PAYSLIP_REQUESTS, monthOrdinal, monthLabel,
+  checkRequestableMonth, requestableMonths,
+} = require('../services/payslipRequestMonths');
 const { canApproveSelfPayslip } = require('../middleware/authMiddleware');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
@@ -99,6 +103,62 @@ function logRelease(payslip, action, actor, note) {
 
 const periodLabel = (p) => `${MONTHS_LONG[(p.payPeriodMonth || 1) - 1]} ${p.payPeriodYear}`;
 
+// ===== Payslip request shells =====
+// A "shell" is a Payroll row that exists only because an employee asked for a
+// month payroll has never been run for. It carries no figures — see
+// `requestShell` in models/Payroll.js for why the request owns the month's slot
+// rather than living in a collection of its own.
+//
+// A shell is not a payslip and must never be treated as one. It cannot be
+// approved, paid, released, shared, emailed, marked sent, or rendered as a PDF;
+// it is excluded from the money list, from statutory reports and from the
+// "what did this employee last earn" lookup the payroll run copies from. The
+// run FILLS it in place, which is the moment it stops being a shell.
+
+// What a shell carries in `remarks`, so HR reading the row in any list knows
+// why a figure-less payslip exists at all.
+const SHELL_REMARK = 'Requested by the employee — payroll had not been run for this month.';
+
+/** Is this row a request with no payroll behind it yet? */
+const isRequestShell = (payslip) => payslip?.requestShell === true;
+
+/**
+ * Refuse an action that only makes sense once real figures exist.
+ *
+ * Mounted on every admin path that would let a payslip count — including the
+ * two that had no status wall of their own at all (the admin PDF, which selects
+ * the employee's Aadhaar into a rendered document, and mark-sent).
+ * @param {Object} payslip
+ * @param {import('express').Response} res
+ * @param {string} verb - completes "…before it can be <verb>"
+ * @throws 400 when the row is still a request shell
+ */
+function assertNotShell(payslip, res, verb) {
+  if (!isRequestShell(payslip)) return;
+  res.status(400);
+  throw new Error(`Payroll has not been run for ${periodLabel(payslip)}. `
+    + `This is the employee’s request, not a payslip yet — generate it first, then it can be ${verb}.`);
+}
+
+/**
+ * Turn a shell into a real payslip. Call wherever figures are written onto a
+ * row that might be one.
+ *
+ * The employee's ask is deliberately LEFT in place: `release.status` stays
+ * 'Requested', with its timestamp and history, so generating the payslip
+ * answers the request instead of erasing it. The `remarks` placeholder is
+ * cleared only when it is still the one a shell is born with — HR may have
+ * written a real remark by then.
+ * @param {Object} payslip
+ * @returns {Object} the same payslip
+ */
+function materialiseShell(payslip) {
+  if (!isRequestShell(payslip)) return payslip;
+  payslip.requestShell = false;
+  if (payslip.remarks === SHELL_REMARK) payslip.remarks = undefined;
+  return payslip;
+}
+
 // Tell the people who run payroll that something is waiting on them — only the
 // ones covering the employee's company (the wall the read paths enforce).
 async function notifyPayrollTeam(title, body, companyId) {
@@ -108,7 +168,10 @@ async function notifyPayrollTeam(title, body, companyId) {
       audience: 'admin',
       title,
       body,
-      link: '/admin/payroll',
+      // The requests QUEUE, not the money page. /admin/payroll only renders a
+      // "handle this in Payslip Requests" link, so the notification used to
+      // land one click short of every button it was telling HR to press.
+      link: '/admin/payslip-requests',
     });
   } catch (err) {
     console.error('payslip release notify failed:', err.message);
@@ -259,11 +322,58 @@ const listMyPayslips = asyncHandler(async (req, res) => {
     employee: profile._id,
     status: { $in: ['Approved', 'Paid'] },
   }).populate(MY_PAYSLIP_POPULATE).sort({ payPeriodYear: -1, payPeriodMonth: -1 });
+
+  // Every month this employee has ANY row for — shells and unapproved drafts
+  // included — so the picker below can say "already asked for" instead of
+  // offering a month twice. Lean and projected: this is the employee portal's
+  // most-visited payroll screen.
+  const allRows = await Payroll.find({ employee: profile._id })
+    .select('payPeriodYear payPeriodMonth status release.status release.requestedAt requestShell')
+    .lean();
+  const stateByOrd = new Map(allRows.map((r) => [
+    monthOrdinal(r.payPeriodYear, r.payPeriodMonth),
+    {
+      // A shell is a month nobody has run — say so, rather than leaking that
+      // HR has a draft in progress.
+      state: r.requestShell ? (r.release?.status || 'Requested')
+        : r.status === 'Void' ? 'Void'
+          : (r.release?.status || 'NotRequested'),
+      payslipId: String(r._id),
+      requestedAt: r.release?.requestedAt || null,
+    },
+  ]));
+
+  // What the employee is currently waiting on HR for. Money-free on purpose:
+  // a request has no figures, and a shell would print ₹0 if it rode along in
+  // `payslips` (the clients' "latest net pay" reduce picks the newest period
+  // whatever its value).
+  const requests = allRows
+    .filter((r) => ['Requested', 'Approved'].includes(r.release?.status))
+    .sort((a, b) => monthOrdinal(b.payPeriodYear, b.payPeriodMonth)
+      - monthOrdinal(a.payPeriodYear, a.payPeriodMonth))
+    .map((r) => ({
+      id: String(r._id),
+      year: r.payPeriodYear,
+      month: r.payPeriodMonth,
+      label: monthLabel(r.payPeriodYear, r.payPeriodMonth),
+      state: r.release.status,
+      requestedAt: r.release.requestedAt || null,
+      // Only an untouched request can be taken back; once HR has approved it,
+      // it is theirs to finish.
+      canWithdraw: r.release.status === 'Requested',
+      payslipReady: !r.requestShell,
+    }));
+
   // Every slip this employee has is already in hand, so each one's year-to-date
   // is accumulated in memory rather than costing a query per row.
   res.json({
     count: payslips.length,
     payslips: payslips.map((p) => withLines(p, computeYtdFrom(payslips, p), { details: true })),
+    // New keys only — `count` and `payslips` are byte-identical to before, so
+    // app builds already in people's hands keep working untouched.
+    requests,
+    months: requestableMonths(profile, stateByOrd),
+    maxOpenRequests: MAX_OPEN_PAYSLIP_REQUESTS,
   });
 });
 
@@ -313,6 +423,25 @@ async function myPayslipOrFail(req, res) {
  */
 const requestMyPayslip = asyncHandler(async (req, res) => {
   const payslip = await myPayslipOrFail(req, res);
+  markPayslipRequested(payslip, req, res);
+  await payslip.save();
+  await announcePayslipRequest(payslip, req);
+  res.json({ release: payslip.release });
+});
+
+/**
+ * Move a payslip into 'Requested', or refuse with the reason.
+ *
+ * Shared by the id-addressed route above (which the app builds already in
+ * people's hands call) and the period-addressed route below, so the two can
+ * never drift on what counts as an acceptable state to ask from.
+ * @param {Object} payslip
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {string} [note] - why the employee needs it
+ * @throws 400 when the month has already been asked for or released
+ */
+function markPayslipRequested(payslip, req, res, note) {
   const state = payslip.release?.status || 'NotRequested';
   if (state !== 'NotRequested') {
     res.status(400);
@@ -323,13 +452,160 @@ const requestMyPayslip = asyncHandler(async (req, res) => {
   payslip.release.status = 'Requested';
   payslip.release.requestedAt = new Date();
   payslip.release.requestedBy = req.user._id;
-  logRelease(payslip, 'Requested', req.user);
-  await payslip.save();
+  if (note) payslip.release.requestNote = note;
+  logRelease(payslip, 'Requested', req.user, note);
+}
 
+/** Tell the payroll team an employee is waiting on them. */
+function announcePayslipRequest(payslip, req) {
   const who = req.user.fullName || `${req.user.firstName} ${req.user.lastName}`.trim();
-  await notifyPayrollTeam('Payslip requested',
-    `${who} asked for their ${periodLabel(payslip)} payslip.`, req.user.scopeCompanyId);
-  res.json({ release: payslip.release });
+  const why = payslip.release?.requestNote ? ` — ${payslip.release.requestNote}` : '';
+  const missing = isRequestShell(payslip) ? ' Payroll has not been run for that month yet.' : '';
+  return notifyPayrollTeam('Payslip requested',
+    `${who} asked for their ${periodLabel(payslip)} payslip${why}.${missing}`,
+    req.user.scopeCompanyId);
+}
+
+/**
+ * Ask HR for a payslip for a GIVEN MONTH — including a month payroll has never
+ * been run for.
+ *
+ * This is the route that makes "any month" true. The id-addressed route above
+ * can only reach a payslip that already exists AND is already Approved or Paid,
+ * so until now a month HR had not run (or had run but not signed off) could not
+ * be asked for at all: there was no id to address and nothing to move.
+ *
+ * Three cases, one answer to the employee:
+ *   - a real payslip exists -> its `release` moves to Requested, as before;
+ *   - a row exists but is still Draft/OnHold -> the same, so HR's unfinished
+ *     work is not exposed to the employee, it is simply now askable;
+ *   - nothing exists -> a figure-less shell is created to hold the ask (see
+ *     `requestShell` in models/Payroll.js for why the request owns the slot).
+ *
+ * @route POST /api/payroll/me/:year/:month/request  (employee)
+ * @param {string} req.params.year / req.params.month
+ * @param {string} [req.body.note] - why they need it (shown to HR)
+ * @returns {{request: Object}} 201
+ * @sideeffect notifies everyone holding payroll.manage in the employee's company
+ */
+const requestPayslipForMonth = asyncHandler(async (req, res) => {
+  const profile = await getMyProfileOrFail(req.user._id, res);
+  const year = Number(req.params.year);
+  const month = Number(req.params.month);
+
+  // Validated before any query, so a malformed URL reads as a sentence rather
+  // than as a Mongoose CastError.
+  const check = checkRequestableMonth(profile, year, month);
+  if (!check.ok) {
+    res.status(400);
+    throw new Error(check.reason);
+  }
+
+  const note = String(req.body?.note || '').trim().slice(0, 500) || undefined;
+
+  // Bound the queue: one person catching up on two years of slips must not bury
+  // everybody else's ask. They work through these and come back.
+  const open = await Payroll.countDocuments({
+    employee: profile._id,
+    'release.status': { $in: ['Requested', 'Approved'] },
+  });
+  if (open >= MAX_OPEN_PAYSLIP_REQUESTS) {
+    res.status(400);
+    throw new Error(`You have ${open} payslip requests with HR already. `
+      + 'They will come back to you on those before you can ask for more.');
+  }
+
+  const find = () => Payroll.findOne({
+    employee: profile._id, payPeriodYear: year, payPeriodMonth: month,
+  });
+  let payslip = await find();
+
+  if (payslip) {
+    if (payslip.status === 'Void') {
+      res.status(400);
+      throw new Error('That month’s payslip was cancelled — ask HR about it.');
+    }
+    markPayslipRequested(payslip, req, res, note);
+    await payslip.save();
+  } else {
+    payslip = new Payroll({
+      employee: profile._id,
+      payPeriodYear: year,
+      payPeriodMonth: month,
+      requestShell: true,
+      remarks: SHELL_REMARK,
+    });
+    markPayslipRequested(payslip, req, res, note);
+    try {
+      await payslip.save();
+    } catch (err) {
+      // The unique {employee, year, month} index is the referee. Two taps, or a
+      // payroll run landing in the same instant, and one of them loses — retry
+      // ONCE against whichever row won, rather than showing a duplicate-key
+      // error for something the employee did nothing wrong to cause.
+      if (err?.code !== 11000) throw err;
+      payslip = await find();
+      if (!payslip) throw err;
+      markPayslipRequested(payslip, req, res, note);
+      await payslip.save();
+    }
+  }
+
+  await announcePayslipRequest(payslip, req);
+  res.status(201).json({
+    request: {
+      id: String(payslip._id),
+      year,
+      month,
+      label: monthLabel(year, month),
+      state: payslip.release.status,
+      requestedAt: payslip.release.requestedAt,
+      canWithdraw: true,
+      payslipReady: !isRequestShell(payslip),
+    },
+  });
+});
+
+/**
+ * Take back a request HR has not started on.
+ *
+ * Only while it is still 'Requested' — once HR has approved it they are
+ * preparing the document, and pulling it out from under them would leave work
+ * half-done with nothing to show for it. A shell is DELETED (there is nothing
+ * to keep, and leaving it would hold the month's slot and make the next payroll
+ * run report the month as already generated); a real payslip simply goes back
+ * to 'NotRequested'.
+ * @route DELETE /api/payroll/me/:year/:month/request  (employee)
+ * @returns {{withdrawn: true, month: string}}
+ */
+const withdrawMyPayslipRequest = asyncHandler(async (req, res) => {
+  const profile = await getMyProfileOrFail(req.user._id, res);
+  const year = Number(req.params.year);
+  const month = Number(req.params.month);
+  const payslip = await Payroll.findOne({
+    employee: profile._id, payPeriodYear: year, payPeriodMonth: month,
+  });
+  if (!payslip) {
+    res.status(404);
+    throw new Error('There is no request for that month.');
+  }
+  if (payslip.release?.status !== 'Requested') {
+    res.status(400);
+    throw new Error(payslip.release?.status === 'Approved'
+      ? 'HR has already started preparing this payslip — ask them to cancel it.'
+      : 'There is no open request for that month.');
+  }
+  if (isRequestShell(payslip)) {
+    await payslip.deleteOne();
+  } else {
+    payslip.release.status = 'NotRequested';
+    payslip.release.requestedAt = undefined;
+    payslip.release.requestedBy = undefined;
+    payslip.release.requestNote = undefined;
+    logRelease(payslip, 'Withdrawn', req.user);
+    await payslip.save();
+  }
+  res.json({ withdrawn: true, month: monthLabel(year, month) });
 });
 
 /**
@@ -363,6 +639,88 @@ const requestMyPayslipChange = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Turn down a request for a month payroll has not been run for.
+ *
+ * Shell-only, and deliberately so. A request against a REAL payslip has no
+ * refusal in the release state machine (`RELEASE_STATES` has no Rejected), and
+ * adding one would break every client that maps the states — including app
+ * builds already installed, which fall back to "Not requested" for anything
+ * they do not recognise and would then show a live Request button on a slip HR
+ * had just refused.
+ *
+ * Declining DELETES the shell rather than parking it in a refused state. The row
+ * has no figures and nothing worth keeping, and leaving it behind would hold the
+ * month's slot forever: the next payroll run would report the month as already
+ * generated and skip it. The reason is required and is both audited and sent to
+ * the employee, so the refusal survives the row it removes.
+ * @route POST /api/payroll/:id/request/decline  (payroll.manage)
+ * @param {string} req.params.id - payslip id (must be a request shell)
+ * @param {string} req.body.reason - why (required)
+ * @returns {{declined: true, month: string}}
+ * @sideeffect audits the refusal and notifies the employee
+ */
+const declinePayslipRequest = asyncHandler(async (req, res) => {
+  const payslip = await Payroll.findById(req.params.id).populate('employee', 'user');
+  if (!payslip) {
+    res.status(404);
+    throw new Error('Payslip request not found');
+  }
+  await guardPayslipScope(req, res, payslip);
+  if (!isRequestShell(payslip)) {
+    res.status(400);
+    throw new Error('This month has a real payslip — release it to the employee, or delete the draft.');
+  }
+  const reason = String(req.body.reason || '').trim();
+  if (!reason) {
+    res.status(400);
+    throw new Error('Please say why the request is being turned down — the employee is told the reason.');
+  }
+
+  const label = periodLabel(payslip);
+  const recipient = payslip.employee?.user;
+  // Written BEFORE the delete: the row is about to stop existing, and a refusal
+  // that leaves no trace is indistinguishable from a request that was never made.
+  try {
+    const AuditLog = require('../models/AuditLog');
+    const prof = await EmployeeProfile.findById(payslip.employee)
+      .select('employeeCode user')
+      .populate('user', 'firstName lastName')
+      .lean();
+    const name = prof
+      ? `${prof.user?.firstName || ''} ${prof.user?.lastName || ''}`.trim() || prof.employeeCode
+      : '';
+    await AuditLog.create({
+      entity: 'Payroll',
+      entityId: payslip._id,
+      entityLabel: [name, label].filter(Boolean).join(' — '),
+      field: 'payslipRequest',
+      fromStatus: 'Requested',
+      // The reason rides in the status text because that is the column the
+      // audit viewer prints — a refusal nobody can read back is not a record.
+      toStatus: `Declined · ${reason}`,
+      by: req.user?._id,
+      byName: `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim(),
+      byRole: req.user?.role,
+    });
+  } catch (err) {
+    console.error('payslip request decline audit failed:', err.message);
+  }
+  await payslip.deleteOne();
+
+  if (recipient) {
+    notify({
+      recipient,
+      type: 'payroll',
+      audience: 'employee',
+      title: 'Payslip request declined',
+      body: `HR could not issue your ${label} payslip: ${reason}`,
+      link: '/employee/payslips',
+    }).catch((err) => console.error('payslip decline notify failed:', err.message));
+  }
+  res.json({ declined: true, month: label });
+});
+
+/**
  * Approve an employee's request, opening the payslip for HR to check and correct.
  * @route PATCH /api/payroll/:id/release/approve  (payroll.manage)
  * @param {string} req.params.id - payslip id
@@ -376,6 +734,7 @@ const approvePayslipRelease = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertNotShell(payslip, res, 'approved for release');
   assertSanctioned(payslip, res, 'released to the employee');
   if (payslip.release?.status !== 'Requested') {
     res.status(400);
@@ -415,6 +774,7 @@ const finalisePayslipRelease = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertNotShell(payslip, res, 'released to the employee');
   assertSanctioned(payslip, res, 'released to the employee');
   const state = payslip.release?.status;
   if (!['Approved', 'ChangeRequested'].includes(state)) {
@@ -640,6 +1000,14 @@ function includeOwnPayslips(req, filter, requested) {
 async function guardPayslipScope(req, res, payslip) {
   const empId = payslip.employee && payslip.employee._id ? payslip.employee._id : payslip.employee;
   const profile = await EmployeeProfile.findById(empId).select('hrPartner company');
+  // An orphaned payslip — one whose employee record has been removed — used to
+  // pass every check below it: cannotManageProfile answers `false` for a null
+  // profile, so there was no company wall and no HR-partner rule left to apply,
+  // and any payroll.manage holder in any company could read, approve and pay it.
+  if (!profile) {
+    res.status(404);
+    throw new Error('The employee this payslip belongs to no longer exists.');
+  }
   return guardPayrollProfile(req, res, profile);
 }
 
@@ -659,6 +1027,13 @@ const listPayslips = asyncHandler(async (req, res) => {
       { 'release.status': { $in: wanted } },
       ...(wanted.includes('NotRequested') ? [{ 'release.status': { $exists: false } }] : []),
     ];
+  } else {
+    // The MONEY list must never show a request shell. A shell is a Draft with
+    // zero in every column, so without this it would sit in the payroll list
+    // looking like a real ₹0 payslip, carrying live Approve / Pay / Delete /
+    // Email buttons. Only the requests queue asks by release status, and that
+    // is exactly the screen a shell belongs on.
+    filter.requestShell = { $ne: true };
   }
 
   // Limit to the employees this admin may see (also intersects a specific
@@ -668,14 +1043,28 @@ const listPayslips = asyncHandler(async (req, res) => {
   await scopeEmployeeFilter(req, filter);
   includeOwnPayslips(req, filter, requestedEmployee);
 
-  const payslips = await Payroll.find(filter)
+  // A badge only wants the number. Without this the count is the length of a
+  // fully populated list, every row of which has had its printable line items
+  // computed — paid for on every poll, and thrown away.
+  if (req.query.countOnly) {
+    res.json({ count: await Payroll.countDocuments(filter) });
+    return;
+  }
+
+  let query = Payroll.find(filter)
     .populate({
       path: 'employee',
       select: 'employeeCode user designation',
       populate: { path: 'user', select: 'firstName lastName email' },
     })
     .sort({ payPeriodYear: -1, payPeriodMonth: -1, createdAt: -1 });
-  res.json({ count: payslips.length, payslips: payslips.map(withLines) });
+  const limit = Number(req.query.limit);
+  if (Number.isInteger(limit) && limit > 0) query = query.limit(limit);
+  const payslips = await query;
+  // `payslips.map(withLines)` passed map's INDEX as withLines' second argument,
+  // which is the year-to-date figure — so every row from the second onward
+  // shipped `ytd: 1, 2, 3…`. Harmless only for as long as no client reads it.
+  res.json({ count: payslips.length, payslips: payslips.map((p) => withLines(p)) });
 });
 
 const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -878,7 +1267,9 @@ const exportPayrollSheet = asyncHandler(async (req, res) => {
   const active = profiles.filter((p) => p.user && p.user.isActive !== false);
 
   // ARREARS/BONUS is pulled from any saved payslip for the month (optional).
-  const slips = await Payroll.find({ payPeriodYear: year, payPeriodMonth: month }).select('employee earnings.bonus');
+  const slips = await Payroll.find({
+    payPeriodYear: year, payPeriodMonth: month, requestShell: { $ne: true },
+  }).select('employee earnings.bonus');
   const bonusByEmp = new Map(slips.map((s) => [String(s.employee), (s.earnings && s.earnings.bonus) || 0]));
 
   const runs = await Promise.all(active.map((p) => computeEmployeeRun(p, year, month)));
@@ -923,11 +1314,28 @@ async function buildRunRows(year, month, scope = {}) {
     .sort('employeeCode');
   const active = profiles.filter((p) => p.user && p.user.isActive !== false);
 
-  const existing = await Payroll.find({ payPeriodYear: year, payPeriodMonth: month });
-  const existingByEmp = new Map(existing.map((p) => [String(p.employee), p]));
+  // Shells are split OUT of `existing` on purpose. A shell means "an employee
+  // asked for this month", not "this month has been generated" — leave it in and
+  // the run skips exactly the people who asked (see the `r.existing` branch in
+  // runPayroll), while the preview reports the month as already done. It is
+  // carried separately so the run can FILL it in place, which it must: the
+  // unique {employee, year, month} index means a fresh `new Payroll(...)` would
+  // collide with the slot the shell holds.
+  const existingAll = await Payroll.find({ payPeriodYear: year, payPeriodMonth: month });
+  const existingByEmp = new Map();
+  const shellByEmp = new Map();
+  for (const row of existingAll) {
+    (row.requestShell ? shellByEmp : existingByEmp).set(String(row.employee), row);
+  }
 
   // Most recent payslip per employee from any earlier period (small-org scale).
+  // …and out of the copy-from-last lookup too, which is the easy one to miss.
+  // An employee with no salary structure has their month seeded from their most
+  // recent payslip; let a shell be that, and the seed is a row of zeros, the
+  // preview says "copied from <a month nobody ran>", and the resulting slip pays
+  // nothing. Silent, and wrong in the direction that costs somebody money.
   const priorSlips = await Payroll.find({
+    requestShell: { $ne: true },
     $or: [
       { payPeriodYear: { $lt: year } },
       { payPeriodYear: year, payPeriodMonth: { $lt: month } },
@@ -942,6 +1350,7 @@ async function buildRunRows(year, month, scope = {}) {
   return active.map((p) => {
     const k = String(p._id);
     const cur = existingByEmp.get(k);
+    const shell = shellByEmp.get(k) || null;
     const last = lastByEmp.get(k);
     // Whether payroll can be derived from a salary structure for THIS month
     // (has a structure assigned and a CTC in force after hike resolution).
@@ -955,10 +1364,18 @@ async function buildRunRows(year, month, scope = {}) {
     return {
       profile: p,
       existing: cur || null,
+      // The row to WRITE INTO. A shell already owns this month's slot, so the
+      // run assigns onto it instead of constructing a new document.
+      shell,
       last: last || null,
       hasSalarySetup,
       row: {
         employeeId: p._id,
+        // Somebody is waiting on this month — surfaced so the run preview can
+        // say so, and so HR can see the ask from the payroll screen.
+        requested: !!(shell || cur)
+          && ['Requested', 'Approved'].includes((shell || cur).release?.status),
+        requestedAt: (shell || cur)?.release?.requestedAt || null,
         employeeCode: p.employeeCode,
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim(),
         designation: p.designation || '',
@@ -1047,6 +1464,15 @@ const runPayroll = asyncHandler(async (req, res) => {
     frozenMine.push(payslip);
   };
 
+  // The document this employee's month must be written into: the shell their
+  // request already created, or a fresh row when nobody asked. Either way there
+  // is exactly one, because the unique index allows exactly one.
+  const shellTarget = (r) => r.shell || new Payroll({
+    employee: r.profile._id,
+    payPeriodYear: year,
+    payPeriodMonth: month,
+  });
+
   const created = [];
   const derivedCount = [];
   const copiedCount = [];
@@ -1084,12 +1510,16 @@ const runPayroll = asyncHandler(async (req, res) => {
     if (r.hasSalarySetup) {
       const computed = await computeEmployeeRun(r.profile, year, month);
       if (!computed.needsSetup) {
-        const payslip = new Payroll({
-          employee: r.profile._id,
-          payPeriodYear: year,
-          payPeriodMonth: month,
-          ...buildRunFields(r.profile, computed),
-        });
+        // `shellTarget` is the row an employee's request already created for
+        // this month, if there was one. Writing into it is not an optimisation:
+        // the unique {employee, year, month} index means a second document for
+        // the same month is refused outright, so the run either fills the shell
+        // or fails. Filling it also keeps the employee's ask attached to the
+        // payslip that answers it — release.status stays 'Requested', and HR
+        // finds it waiting in the queue with real figures behind it.
+        const payslip = shellTarget(r);
+        Object.assign(payslip, buildRunFields(r.profile, computed));
+        materialiseShell(payslip);
         freezeIfMine(payslip, r.profile);
         await payslip.save();
         created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
@@ -1101,10 +1531,8 @@ const runPayroll = asyncHandler(async (req, res) => {
     // Fallback (no salary structure/CTC set up): copy the employee's most recent
     // payslip, or leave a blank draft for a brand-new joiner to be filled in.
     const seed = r.last;
-    const payslip = new Payroll({
-      employee: r.profile._id,
-      payPeriodYear: year,
-      payPeriodMonth: month,
+    const payslip = shellTarget(r);
+    Object.assign(payslip, {
       workingDays: daysInMonth,
       paidDays: daysInMonth,
       lopDays: 0,
@@ -1116,6 +1544,7 @@ const runPayroll = asyncHandler(async (req, res) => {
         ? `Payroll run: copied from ${MONTH_NAMES[seed.payPeriodMonth]} ${seed.payPeriodYear} (no salary structure set)`
         : 'Payroll run: no salary structure or earlier payslip - set the salary components',
     });
+    materialiseShell(payslip);
     freezeIfMine(payslip, r.profile);
     await payslip.save();
     created.push({ name: r.row.name, netPay: payslip.netPay, id: payslip._id });
@@ -1133,6 +1562,10 @@ const runPayroll = asyncHandler(async (req, res) => {
     created: created.length,
     derived: derivedCount.length,
     copiedFromLast: copiedCount.length,
+    // How many of the payslips this run produced somebody had actually asked
+    // for. This is the bulk path for a backlog of requests: run the month, and
+    // every shell for it is filled in one action.
+    answeredRequests: rows.filter((r) => r.shell).length,
     skippedExisting,
     regenerated: regenerated.length,
     regeneratedFromApproved: regenerated.filter((p) => p.fromStatus === 'Approved').length,
@@ -1657,8 +2090,26 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
   }
   guardPayrollProfile(req, res, profile);
   const computed = await computeEmployeeRun(profile, year, month);
-  const payslip = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
-  res.json({ year, month, employee: profile, computed, payslip });
+  const found = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
+  // A request shell is reported as NO payslip, plus the ask that created it.
+  // Both clients render `payslip` directly as a status chip with a net figure,
+  // so returning the shell would show "Draft · ₹0" for a month nobody has run.
+  const shell = isRequestShell(found);
+  res.json({
+    year,
+    month,
+    employee: profile,
+    computed,
+    payslip: shell ? null : found,
+    pendingRequest: shell || ['Requested', 'Approved'].includes(found?.release?.status)
+      ? {
+        state: found.release?.status,
+        requestedAt: found.release?.requestedAt || null,
+        note: found.release?.requestNote || null,
+        payslipReady: !shell,
+      }
+      : null,
+  });
 });
 
 /**
@@ -1700,7 +2151,11 @@ const runEmployeePayroll = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error(`The ${MONTH_NAMES[month]} payslip is already ${payslip.status} - it can't be regenerated.`);
   }
-  const fields = buildRunFields(profile, computed, payslip, { rerun: !!payslip });
+  // A shell holds the month's slot but has no figures, so this is a first
+  // generation, not a re-run — and it must be filled in place (the unique
+  // {employee, year, month} index refuses a second document for the month).
+  const wasShell = isRequestShell(payslip);
+  const fields = buildRunFields(profile, computed, payslip, { rerun: !!payslip && !wasShell });
   if (payslip) {
     Object.assign(payslip, fields);
   } else {
@@ -1844,6 +2299,7 @@ async function auditLockOverride(payslip, user, before, action) {
  */
 // PUT /api/payroll/:id  (HR/Admin)
 const updatePayslip = asyncHandler(async (req, res) => {
+  // (A shell edited by hand becomes a real payslip — materialiseShell below.)
   const payslip = await Payroll.findById(req.params.id);
   if (!payslip) {
     res.status(404);
@@ -1879,6 +2335,10 @@ const updatePayslip = asyncHandler(async (req, res) => {
 
   Object.assign(payslip, req.body);
   applyEmployerContributions(payslip);
+  // HR typing figures into a requested month by hand is a legitimate way to
+  // answer the request — the row stops being a shell at that point, or it would
+  // stay permanently unapprovable behind a guard meant for empty rows.
+  materialiseShell(payslip);
 
   // Editing a released payslip pulls it back: the employee must not be able to
   // download a half-corrected document, so HR finalises again when they are done.
@@ -1913,6 +2373,7 @@ const approvePayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertNotShell(payslip, res, 'approved');
   assertSanctioned(payslip, res, 'approved');
   if (payslip.status !== 'Draft' && payslip.status !== 'OnHold') {
     res.status(400);
@@ -1938,6 +2399,7 @@ const markPayslipPaid = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertNotShell(payslip, res, 'marked paid');
   assertSanctioned(payslip, res, 'marked paid');
   if (payslip.status !== 'Approved') {
     res.status(400);
@@ -1976,6 +2438,10 @@ const downloadPayslipPdf = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  // This route had no status wall at all — scope was its only guard — so a
+  // figure-less row would render as a real salary slip, personal identifiers
+  // and all (PAYSLIP_PDF_POPULATE selects the Aadhaar).
+  assertNotShell(payslip, res, 'downloaded');
   await streamPayslipPdf(payslip, res);
 });
 
@@ -2069,6 +2535,7 @@ const markPayslipSent = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
+  assertNotShell(payslip, res, 'marked as sent');
   assertSanctioned(payslip, res, 'sent');
   payslip.emailedAt = new Date();
   await payslip.save();
@@ -2411,6 +2878,9 @@ const giveHike = asyncHandler(async (req, res) => {
 module.exports = {
   listMyPayslips,
   requestMyPayslip,
+  requestPayslipForMonth,
+  withdrawMyPayslipRequest,
+  declinePayslipRequest,
   requestMyPayslipChange,
   approvePayslipRelease,
   finalisePayslipRelease,

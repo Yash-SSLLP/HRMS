@@ -27,6 +27,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import { useViewOnly } from '../hooks/useViewOnly';
 
 const COMP_OFF = 'Comp Off';
 const TYPES = ['Public', 'Restricted', 'Company', COMP_OFF];
@@ -45,6 +46,12 @@ const fmtDay = (d) =>
   new Date(d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 
 export default function AdminHolidays() {
+  // A view-only account (the God audit login, a read-only CEO/MD) reads this
+  // calendar and changes nothing in it, so none of the write controls below are
+  // rendered for one. The server and the request interceptor both refuse the
+  // call as well — this is what stops the button being offered in the first
+  // place. Download and the year picker stay: they are reads.
+  const viewOnly = useViewOnly();
   const thisYear = new Date().getFullYear();
   const [tab, setTab] = useState('holidays'); // 'holidays' | 'festivals'
   const [year, setYear] = useState(thisYear);
@@ -254,7 +261,7 @@ export default function AdminHolidays() {
           className="border rounded-lg px-3 py-2 text-sm">
           {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
-        {onHolidays ? (
+        {viewOnly ? null : onHolidays ? (
           <>
             <button
               onClick={() => downloadFile('/holidays/template.xlsx', 'calendar-import-template.xlsx')}
@@ -347,8 +354,12 @@ export default function AdminHolidays() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right space-x-2">
-                    <button onClick={() => openEdit(h)} className="text-blue-600 hover:underline">Edit</button>
-                    <button onClick={() => remove(h)} className="text-red-600 hover:underline">Delete</button>
+                    {!viewOnly && (
+                      <>
+                        <button onClick={() => openEdit(h)} className="text-blue-600 hover:underline">Edit</button>
+                        <button onClick={() => remove(h)} className="text-red-600 hover:underline">Delete</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -391,8 +402,12 @@ export default function AdminHolidays() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right space-x-2">
-                    <button onClick={() => openFestivalEdit(f)} className="text-blue-600 hover:underline">Edit</button>
-                    <button onClick={() => removeFestival(f)} className="text-red-600 hover:underline">Delete</button>
+                    {!viewOnly && (
+                      <>
+                        <button onClick={() => openFestivalEdit(f)} className="text-blue-600 hover:underline">Edit</button>
+                        <button onClick={() => removeFestival(f)} className="text-red-600 hover:underline">Delete</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

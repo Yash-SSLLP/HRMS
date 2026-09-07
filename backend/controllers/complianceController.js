@@ -56,7 +56,11 @@ async function fetchPayslips(req, { month, year }) {
   // A cancelled payslip is not a payment. It stays in the collection so a paid
   // month cannot be regenerated (models/Payroll.js status enum), but it must not
   // reach PF/ESI/PT/TDS totals or the Form 16 basis.
-  const filter = { payPeriodYear: year, status: { $ne: 'Void' } };
+  // A request shell is not a payment either — it is an employee asking for a
+  // month payroll has not been run for, carrying zero in every column. Left in,
+  // every one of them becomes a phantom zero row in the PF, ESIC, PT and TDS
+  // reports and in the Form 16 basis. See `requestShell` in models/Payroll.js.
+  const filter = { payPeriodYear: year, status: { $ne: 'Void' }, requestShell: { $ne: true } };
   if (month) filter.payPeriodMonth = month;
   await scopeEmployeeFilter(req, filter);
 

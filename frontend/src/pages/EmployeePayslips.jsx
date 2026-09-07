@@ -6,6 +6,14 @@
  * The latest net pay summary sits at the top of this page (and nowhere else in
  * the portal) — it used to be a dashboard stat card, which risked exposing pay
  * to anyone glancing at the landing page.
+ *
+ * ASKING FOR A MONTH THAT ISN'T HERE. The table below can only list payslips
+ * that exist. A month HR has never run has no row at all, so "Request" on a row
+ * could never reach it — which is why the picker at the top works in MONTHS
+ * rather than in payslips. The server decides which months are offerable and
+ * says why each one is not (see backend/services/payslipRequestMonths.js); this
+ * page renders that answer and never computes a bound of its own, so it cannot
+ * drift from the mobile app's copy of the same screen.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -50,6 +58,99 @@ const linesFor = (slip, side) =>
 
 const shortDate = (d) =>
   new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+/**
+ * Pick a month to ask HR for.
+ *
+ * Every month the server returned is listed, INCLUDING the ones that cannot be
+ * asked for — each with the reason. A month that silently isn't there reads as a
+ * bug ("where is March?"); a month greyed out with "already asked for" answers
+ * the question before it is asked.
+ */
+function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
+  const [note, setNote] = useState('');
+  const [chosen, setChosen] = useState(null);
+  useEffect(() => {
+    if (!open) { setNote(''); setChosen(null); }
+  }, [open]);
+  if (!open) return null;
+
+  const available = months.filter((m) => m.canRequest);
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8"
+      onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="card-title">Request a payslip</h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Pick the month you need. HR is told, and prepares it — including for
+              months payroll has not been run for yet.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="topbar-icon-btn shrink-0">×</button>
+        </div>
+
+        <div className="px-6 py-4 max-h-72 overflow-y-auto">
+          {months.length === 0 ? (
+            <p className="text-sm text-gray-400">No months are available to request yet.</p>
+          ) : (
+            <div className="space-y-1">
+              {months.map((m) => {
+                const key = `${m.year}-${m.month}`;
+                const active = chosen === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={!m.canRequest}
+                    onClick={() => setChosen(key)}
+                    className={`w-full text-left px-3 py-2 rounded-lg border transition-colors
+                      ${active ? 'border-gray-900 bg-gray-50' : 'border-transparent hover:bg-gray-50'}
+                      disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-transparent`}
+                  >
+                    <span className="text-sm text-gray-800">{m.label}</span>
+                    {m.reason && <span className="block text-xs text-gray-500 mt-0.5">{m.reason}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {available.length > 0 && (
+          <div className="px-6 pb-2">
+            <label className="block text-sm text-gray-700">Why do you need it? <span className="text-gray-400">(optional)</span></label>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={500}
+              placeholder="Home loan, visa application…"
+              className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-1">Shown to HR, so they know how urgent it is.</p>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100">
+          <button type="button" onClick={onClose}
+            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button
+            type="button"
+            disabled={!chosen || busyKey === chosen}
+            onClick={() => {
+              const m = months.find((x) => `${x.year}-${x.month}` === chosen);
+              if (m) onPick(m, note.trim());
+            }}
+            className="px-4 py-2 text-sm accent-bg text-white rounded-lg disabled:opacity-45"
+          >
+            {busyKey === chosen ? 'Sending…' : 'Send request'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // One side of the breakdown. A component is dropped only when it is empty both
 // this month AND for the year — a head paid in an earlier month still belongs in
@@ -268,11 +369,20 @@ export default function EmployeePayslips() {
   const [selected, setSelected] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [changeFor, setChangeFor] = useState(null);
+  // The months this employee may ask for, and what they are already waiting on.
+  // Both come from the server already decided — see the note in the header.
+  const [months, setMonths] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [picking, setPicking] = useState(false);
 
   const load = async () => {
     try {
       const { data } = await api.get('/payroll/me');
       setPayslips(data.payslips);
+      // Absent on an older server — the page then behaves exactly as it did
+      // before, with the per-row Request button and no picker.
+      setMonths(data.months || []);
+      setRequests(data.requests || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -288,6 +398,33 @@ export default function EmployeePayslips() {
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not send the request');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** Ask for a month — including one that has no payslip at all yet. */
+  const requestMonth = async (m, note) => {
+    setBusyId(`${m.year}-${m.month}`); setError('');
+    try {
+      await api.post(`/payroll/me/${m.year}/${m.month}/request`, note ? { note } : {});
+      setPicking(false);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not send the request');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** Take back a request HR has not started on. */
+  const withdraw = async (r) => {
+    setBusyId(r.id); setError('');
+    try {
+      await api.delete(`/payroll/me/${r.year}/${r.month}/request`);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not withdraw the request');
     } finally {
       setBusyId(null);
     }
@@ -316,7 +453,16 @@ export default function EmployeePayslips() {
 
   return (
     <div>
-      <PageHeader title="My Payslips" />
+      <PageHeader title="My Payslips">
+        {/* Only offered when the server actually has months to offer — an
+            employee who has asked for everything available sees no dead button. */}
+        {months.some((m) => m.canRequest) && (
+          <button type="button" onClick={() => setPicking(true)}
+            className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700">
+            Request a payslip
+          </button>
+        )}
+      </PageHeader>
 
       {/* Latest net pay — moved here from the employee dashboard. */}
       <div className="bg-white shadow rounded-lg p-5 mb-4 flex items-center gap-4">
@@ -346,6 +492,42 @@ export default function EmployeePayslips() {
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+      )}
+
+      {/* What HR still owes them. Deliberately money-free: a request for a month
+          nobody has run has no figures, and printing a ₹0 next to it would read
+          as a payslip that says you earned nothing. */}
+      {requests.length > 0 && (
+        <div className="bg-white shadow rounded-lg overflow-hidden mb-4">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <h2 className="card-title">Waiting on HR</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              You will be told when each one is ready to download.
+            </p>
+          </div>
+          <ul className="divide-y divide-gray-100">
+            {requests.map((r) => (
+              <li key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-900">{r.label}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {r.state === 'Approved' ? 'HR is preparing it.' : 'Asked for'}
+                    {r.requestedAt ? ` · ${shortDate(r.requestedAt)}` : ''}
+                    {!r.payslipReady && r.state === 'Requested'
+                      ? ' · payroll has not been run for this month yet'
+                      : ''}
+                  </div>
+                </div>
+                {r.canWithdraw && (
+                  <button type="button" onClick={() => withdraw(r)} disabled={busyId === r.id}
+                    className="text-sm text-gray-500 hover:text-red-600 hover:underline disabled:opacity-50 shrink-0">
+                    {busyId === r.id ? 'Withdrawing…' : 'Withdraw'}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -404,6 +586,14 @@ export default function EmployeePayslips() {
           </tbody>
         </table>
       </div>
+
+      <MonthPickerModal
+        open={picking}
+        months={months}
+        busyKey={busyId}
+        onPick={requestMonth}
+        onClose={() => setPicking(false)}
+      />
 
       <PayslipDetail slip={selected} onClose={() => setSelected(null)} />
       <ChangeRequestModal slip={changeFor} busy={busyId === changeFor?._id}

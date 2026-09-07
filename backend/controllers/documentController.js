@@ -22,7 +22,7 @@ const User = require('../models/User');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { scopeEmployeeFilter, cannotManageProfile } = require('../utils/employeeScope');
-const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
+const { hasPermission, isPortalViewer } = require('../middleware/authMiddleware');
 
 /**
  * Company/ownership wall for a single document: may this ADMIN not touch it?
@@ -87,7 +87,7 @@ function canManageOthersDocs(user) {
 // Both can already see the rows, so both must be able to open the files.
 // adminCannotTouchDoc still applies the company / hrPartner wall per document.
 function canReadOthersDocs(user) {
-  return isAdmin(user) || isExecViewer(user) || hasPermission(user, 'documents.manage');
+  return isAdmin(user) || isPortalViewer(user) || hasPermission(user, 'documents.manage');
 }
 
 // ===== Employee =====
@@ -484,7 +484,7 @@ const assignedReplacementRequests = asyncHandler(async (req, res) => {
   // mobile Approvals screen) calls this on load. Their oversight view is every
   // request inside their company wall instead. A SuperAdmin still opts into the
   // org-wide view with ?all=true; scopeEmployeeFilter is a no-op for them.
-  const orgWide = isExecViewer(req.user)
+  const orgWide = isPortalViewer(req.user)
     || (req.user.role === 'SuperAdmin' && req.query.all === 'true');
   const filter = orgWide
     ? await scopeEmployeeFilter(req, {})

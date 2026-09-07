@@ -57,6 +57,7 @@ const ROLE_TONES = {
   Manager: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   LDManager: 'bg-sky-50 text-sky-700 border-sky-200',
   AccountsManager: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  God: 'bg-slate-100 text-slate-700 border-slate-300',
   Employee: 'bg-gray-100 text-gray-600 border-gray-200',
 };
 
@@ -79,6 +80,7 @@ const GRANT_HELP = {
   wfh: 'Lets them tick “working from home” on a punch. That punch is not measured against the office geofence, and the day records as WFH.',
   remotePunch: 'The office geofence stops applying to them entirely — for site, field and travelling staff. Their punches are never flagged as outside the office, and they do not have to declare anything. The GPS location is still recorded and still shown on the punch map.',
   managerProfiles: 'Lets this HR Manager open and edit the employee profiles of people whose role is Manager — their department, reporting line, grade and pay basis. Off for everyone by default, and never implied by “Create / manage employees”: a Manager approves their own team’s leave and attendance, so who may rearrange their record is named one account at a time. Their role, password and account status stay with Super Admins either way.',
+  viewOnly: 'The God account can read the admin portal and change nothing, anywhere. There is no edit mode to switch on — the server refuses every write it makes. Choose below which companies it may look at.',
   execEdit: 'A CEO/MD account is view-only by default. In edit mode it can change data anywhere an HR Manager can — but this page, the org settings and the audit log stay with Super Admins.',
 };
 
@@ -352,9 +354,10 @@ export default function AdminPermissions() {
     }
   };
 
-  // CEO/MD company access. A stored value is the exact list; an empty/absent one
-  // means EVERY company (see User.companies) — so we open the picker empty and
-  // treat "nothing ticked" as unrestricted.
+  // Company access for the account-scoped roles (CEO/MD, and the view-only God
+  // account). A stored value is the exact list; an empty/absent one means EVERY
+  // company (see User.companies) — so we open the picker empty and treat
+  // "nothing ticked" as unrestricted.
   const openCompanies = (u) => {
     setCompanySel(new Set((u.companies || []).map(String)));
     setCompanyUser(u);
@@ -617,6 +620,11 @@ export default function AdminPermissions() {
               const isBusy = (field) => busyId === `${id}:${field}`;
               const busy = String(busyId || '').startsWith(`${id}:`);
               const isExec = ['CEO', 'MD'].includes(u.role);
+              // The God audit account is view-only for good — there is no edit
+              // mode to lift — but WHICH companies it may look at is a Backend
+              // decision, made with the same picker the executives use.
+              const isViewOnlyAcct = u.role === 'God';
+              const hasCompanyAccess = isExec || isViewOnlyAcct;
               return (
                 <tr key={id}>
                   <td className="px-4 py-3">
@@ -682,24 +690,39 @@ export default function AdminPermissions() {
                   </td>
 
                   <td className="px-4 py-3">
-                    {isExec ? (
+                    {hasCompanyAccess ? (
                       <div className="flex flex-col gap-2">
                         <div className="flex items-center gap-2">
-                          <ToggleSwitch checked={!!u.execEditAccess} busy={isBusy('execEditAccess')} label="Executive edit mode"
-                            title={GRANT_HELP.execEdit} onChange={() => toggleExecEdit(u)} />
-                          <span className="text-[11px] leading-tight text-gray-500 whitespace-nowrap">
-                            {u.execEditAccess ? 'Edit mode' : 'View only'}
-                          </span>
+                          {isExec ? (
+                            <>
+                              <ToggleSwitch checked={!!u.execEditAccess} busy={isBusy('execEditAccess')} label="Executive edit mode"
+                                title={GRANT_HELP.execEdit} onChange={() => toggleExecEdit(u)} />
+                              <span className="text-[11px] leading-tight text-gray-500 whitespace-nowrap">
+                                {u.execEditAccess ? 'Edit mode' : 'View only'}
+                              </span>
+                            </>
+                          ) : (
+                            // No switch at all, rather than a disabled one: this
+                            // is not a grant somebody has withheld, it is what
+                            // the account IS. The server refuses every write it
+                            // makes, whatever this page shows.
+                            <span className="text-[11px] leading-tight font-semibold text-amber-600 whitespace-nowrap"
+                              title={GRANT_HELP.viewOnly}>
+                              👁 View only · permanent
+                            </span>
+                          )}
                         </div>
                         <button type="button" onClick={() => openCompanies(u)}
-                          title="Limit this executive to certain companies. With none chosen they see every company."
+                          title={isExec
+                            ? 'Limit this executive to certain companies. With none chosen they see every company.'
+                            : 'Choose which companies this view-only account may see. With none chosen it sees every company.'}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap self-start">
                           <FiHome size={12} />
                           {u.companies && u.companies.length ? `${u.companies.length} compan${u.companies.length === 1 ? 'y' : 'ies'}` : 'All companies'}
                         </button>
                       </div>
                     ) : (
-                      <NotApplicable hint="Only a CEO or MD account has a view-only mode to lift." />
+                      <NotApplicable hint="Only a CEO, MD or God account is scoped by company here." />
                     )}
                   </td>
 
@@ -834,7 +857,7 @@ export default function AdminPermissions() {
         </div>
       )}
 
-      {/* CEO/MD company access modal */}
+      {/* Company access modal — CEO/MD, and the view-only God account */}
       {companyUser && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8"
           onClick={() => setCompanyUser(null)}>
@@ -843,7 +866,12 @@ export default function AdminPermissions() {
               <div>
                 <h2 className="card-title">Company access</h2>
                 <p className="text-xs text-gray-500 mt-1">
-                  {companyUser.firstName} {companyUser.lastName} ({companyUser.role}) sees and manages the ticked companies. Tick none to give access to every company.
+                  {companyUser.firstName} {companyUser.lastName} ({roleLabel(companyUser.role)}){' '}
+                  {companyUser.role === 'God' ? 'sees the ticked companies, and nothing else' : 'sees and manages the ticked companies'}.
+                  Tick none to give access to every company.
+                  {companyUser.role === 'God' && companySel.size === 1
+                    ? ' With exactly one ticked, the portal drops its company filters — there is nothing to choose between.'
+                    : ''}
                 </p>
               </div>
               <button type="button" onClick={() => setCompanyUser(null)} aria-label="Close"

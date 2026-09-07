@@ -1,9 +1,12 @@
 // Client mirror of backend middleware `hasPermission` — used only to show/hide
 // nav items and action buttons. The server is the real enforcement boundary.
 //
-// SuperAdmin → all. CEO/MD → all (read-only viewers still see every page).
-// LDManager → only courses. HRManager → their `permissions` array, where a
-// missing/undefined array means ALL (existing HRs keep full access).
+// SuperAdmin → all. CEO/MD → all (read-only viewers still see every page), and
+// so does God — the permanently view-only audit account, which is meant to SEE
+// every page and is refused every write by the server (see `protect` in
+// backend/middleware/authMiddleware.js). LDManager → only courses.
+// HRManager → their `permissions` array, where a missing/undefined array means
+// ALL (existing HRs keep full access).
 // Manager → their `permissions` array ONLY; absent means none.
 
 /**
@@ -16,6 +19,10 @@ export function hasPermission(user, cap) {
   if (!user) return false;
   if (user.role === 'SuperAdmin') return true;
   if (user.role === 'CEO' || user.role === 'MD') return true;
+  // God holds every capability for the purpose of DRAWING the portal, and none
+  // for the purpose of using it — the server refuses the write whatever this
+  // says. Use isViewOnly() to decide whether to offer an action.
+  if (isViewOnlyAccount(user)) return true;
   // Cashbook and expense access are standalone grants an admin can give to any
   // user/employee, whatever their role.
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
@@ -132,6 +139,7 @@ export const isSelf = (me, target) => {
  * @returns {boolean}
  */
 export const canAdministerEmployee = (me, target) => {
+  if (isViewOnly(me)) return false;
   if (me?.role !== 'SuperAdmin' && isSelf(me, target)) return false;
   return canEditEmployeeProfile(me, target);
 };
@@ -149,7 +157,7 @@ export const canAdministerEmployee = (me, target) => {
  */
 export function canUseAdminPortal(user) {
   if (!user) return false;
-  if (['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager'].includes(user.role)) return true;
+  if (['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager', 'God'].includes(user.role)) return true;
   if (user.role === 'Manager') return Array.isArray(user.permissions) && user.permissions.length > 0;
   return false;
 }
@@ -166,3 +174,30 @@ export function hasAnyPermission(user, caps = []) {
 export const isExecViewer = (user) => user?.role === 'CEO' || user?.role === 'MD';
 export const isReadOnlyExec = (user) => isExecViewer(user) && user?.execEditAccess !== true;
 export const isEditingExec = (user) => isExecViewer(user) && user?.execEditAccess === true;
+
+/**
+ * The God account — permanently view-only. Mirrors isViewOnlyAccount in the
+ * backend's authMiddleware. Unlike a read-only exec there is nothing to switch
+ * on: the server refuses every unsafe method this account makes, in `protect`,
+ * before any route is reached.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const isViewOnlyAccount = (user) => user?.role === 'God';
+
+/**
+ * Can this account change ANYTHING? The question every "should I offer this
+ * button" check should ask — a read-only CEO/MD and the God account both answer
+ * yes here, and the server refuses both.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const isViewOnly = (user) => isReadOnlyExec(user) || isViewOnlyAccount(user);
+
+/**
+ * May this account BROWSE the admin portal without administering it (CEO/MD or
+ * God)? Mirrors isPortalViewer in the backend's authMiddleware.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const isPortalViewer = (user) => isExecViewer(user) || isViewOnlyAccount(user);

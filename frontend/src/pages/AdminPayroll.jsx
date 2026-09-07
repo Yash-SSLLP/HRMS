@@ -355,7 +355,7 @@ export default function AdminPayroll() {
   // `amounts: false` refreshes only the day counts — used when reopening a SAVED
   // payslip, whose earnings/deductions may have been corrected by hand and must
   // not be silently recomputed underneath HR.
-  const syncAttendanceDays = async (over = {}, { amounts = true } = {}) => {
+  const syncAttendanceDays = async (over = {}, { amounts = true, days: writeDays = true } = {}) => {
     const f = { ...form, ...over };
     if (!f.employee) return null;
     try {
@@ -390,14 +390,31 @@ export default function AdminPayroll() {
           doubleDayPay: num(c.doubleDayPay),
         }),
       };
+      // `writeDays: false` keeps whatever is in the day-count boxes. They are
+      // the operator's inputs — "Fill earnings & deductions from structure" is
+      // not supposed to touch them, and overwriting them made the slip disagree
+      // with itself: derive-salary computes the earnings and the LOP deduction
+      // FROM those boxes, so replacing the boxes afterwards left the money
+      // describing one set of days and the header showing another.
+      //
+      // The salary header (monthlySalary / annualCtc) is not a day count and is
+      // not typed here, so it keeps refreshing either way.
+      const { workingDays, paidDays, lopDays, halfDays, lateDays, additionalPaidDays, ...header } = days;
+      const dayPatch = writeDays ? days : header;
+      // Same reason: the LOP deduction has to follow the days on screen. When
+      // the operator's days are being kept, derive-salary has already worked it
+      // out from them — this attendance-derived one would contradict it.
+      const moneyDeductions = writeDays
+        ? money.deductions
+        : (({ lopDeduction, ...rest }) => rest)(money.deductions);
       setForm((prev) => (amounts
         ? {
           ...prev,
-          ...days,
-          deductions: { ...prev.deductions, ...money.deductions },
+          ...dayPatch,
+          deductions: { ...prev.deductions, ...moneyDeductions },
           earnings: { ...prev.earnings, ...money.earnings },
         }
-        : { ...prev, ...days }));
+        : { ...prev, ...dayPatch }));
       return { ...days, ...money };
     } catch {
       return null; // attendance unavailable — keep whatever is in the form
@@ -815,12 +832,27 @@ export default function AdminPayroll() {
                   </div>
                   {/* Structure first, then attendance: the structure supplies the
                       component earnings and the statutory cuts, and the sync adds
-                      the attendance-derived money (late coming, LOP, emergency
-                      leave, leave incentive, 2× duty) on top. This is also the
-                      one action that re-derives a SAVED slip, which openEdit
-                      deliberately leaves alone. */}
+                      the attendance-derived money (late coming, emergency leave,
+                      leave incentive, 2× duty) on top — those are attendance
+                      figures that derive-salary never returns, so nothing else
+                      would fill them in. This is also the one action that
+                      re-derives a SAVED slip, which openEdit deliberately leaves
+                      alone.
+
+                      `days: false` is the whole point of the second call being
+                      narrowed: the button says EARNINGS & DEDUCTIONS, and the day
+                      counts above it belong to whoever typed them. It used to
+                      overwrite them from attendance, which both discarded the
+                      operator's work and left the slip contradicting itself —
+                      derive-salary had just computed the earnings and the LOP
+                      deduction FROM those boxes. Changing the employee, year or
+                      month still re-derives the days, which is where that
+                      belongs. */}
                   <button type="button" disabled={!form.employee || !salaryInfo || salaryInfo.needsSetup}
-                    onClick={async () => { await fetchSalaryInfo({ apply: true }); await syncAttendanceDays(); }}
+                    onClick={async () => {
+                      await fetchSalaryInfo({ apply: true });
+                      await syncAttendanceDays({}, { days: false });
+                    }}
                     className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
                     Fill earnings &amp; deductions from structure
                   </button>

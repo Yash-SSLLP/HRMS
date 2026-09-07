@@ -6,6 +6,7 @@
 // alongside `signOut()` for a deliberate sign-out.
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
+import { isViewOnly } from '../config/permissions';
 
 // Strip any trailing slashes so we never build a double-slash URL like
 // "https://host//api" (which the backend treats as a different, unmatched path).
@@ -56,6 +57,57 @@ export const getBaseURL = () => baseURLPromise;
 
 const api = axios.create();
 
+// ===== The view-only backstop =====
+// A view-only account (the God audit login, and a read-only CEO/MD) is refused
+// every unsafe method by the SERVER, in `protect`, before any route runs. This
+// mirrors that refusal on the client so the request never leaves the browser.
+//
+// It is a backstop, not the feature: buttons a view-only account cannot use
+// should not be RENDERED in the first place, and each page is responsible for
+// that (see useViewOnly). What this guarantees is that a page which forgets —
+// or one written next year — still cannot fire a write, and that the person
+// gets a sentence rather than a spinner that ends in a 403.
+//
+// MIRRORS backend/middleware/authMiddleware.js VIEW_ONLY_POST_ALLOW EXACTLY.
+// These are the POSTs that are really reads: a request body is the only way to
+// send them what they need. Diverging from the server list in either direction
+// is a bug — narrower and the client blocks a read the server permits (every
+// letter/payslip/structure preview, and every .xlsx export, all of which an
+// audit account needs most), wider and the client lets through a write the
+// server will refuse anyway.
+const VIEW_ONLY_POST_ALLOW = [
+  /\/auth\/logout$/,
+  /\/client-logs\/?$/,
+  /\/reports\/xlsx$/,
+  /\/preview$/,
+];
+
+// Endpoints reached WITHOUT signing in — a public document upload, a job
+// application, an exit feedback form, a public course. The server does not run
+// `protect` on these at all, so they are nobody's writes to refuse; blocking
+// them would break a public form merely because a view-only session happens to
+// be open in the same browser.
+const PUBLIC_PATHS = /(^|\/)(public|apply|submit|doc-submit|exit-feedback)(\/|$)/;
+
+const SAFE_METHODS = ['get', 'head', 'options'];
+
+/**
+ * Would the server refuse this request for being view-only? Same question, same
+ * answer, asked one network round trip earlier.
+ * @param {object} config - the axios request config
+ * @param {object|null} user - the signed-in user
+ * @returns {boolean}
+ */
+function refusedAsViewOnly(config, user) {
+  if (!isViewOnly(user)) return false;
+  const method = (config.method || 'get').toLowerCase();
+  if (SAFE_METHODS.includes(method)) return false;
+  const url = String(config.url || '');
+  if (PUBLIC_PATHS.test(url)) return false;
+  if (method === 'post' && VIEW_ONLY_POST_ALLOW.some((re) => re.test(url))) return false;
+  return true;
+}
+
 api.interceptors.request.use(async (config) => {
   if (!config.baseURL) {
     config.baseURL = await baseURLPromise;
@@ -63,6 +115,21 @@ api.interceptors.request.use(async (config) => {
   const token = useAuthStore.getState().token;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (refusedAsViewOnly(config, useAuthStore.getState().user)) {
+    // Shaped like a real axios error on purpose. Nearly four hundred call sites
+    // read `err.response?.data?.message` to decide what to show; a bare Error
+    // has no `.response`, so every one of them would fall through to its
+    // generic "Save failed" — replacing the server's explanation with less
+    // information than before. The message is the server's own wording.
+    const err = new Error('This account is view-only and cannot make any changes.');
+    err.response = {
+      status: 403,
+      data: { message: 'This account is view-only and cannot make any changes.' },
+    };
+    err.config = config;
+    err.viewOnly = true;
+    return Promise.reject(err);
   }
   return config;
 });

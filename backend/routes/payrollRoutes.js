@@ -8,6 +8,9 @@ const express = require('express');
 const {
   listMyPayslips,
   requestMyPayslip,
+  requestPayslipForMonth,
+  withdrawMyPayslipRequest,
+  declinePayslipRequest,
   requestMyPayslipChange,
   approvePayslipRelease,
   finalisePayslipRelease,
@@ -60,6 +63,18 @@ router.get('/me/attendance-summary', myAttendanceSummary);
 router.get('/me/:id/pdf', downloadMyPayslipPdf);
 // POST /me/:id/request — ask HR to release this payslip; protected.
 router.post('/me/:id/request', requestMyPayslip);
+// POST /me/:year/:month/request — ask HR for a payslip for a GIVEN MONTH,
+// including a month payroll has never been run for. This is the route that
+// makes "any month" possible: the id-addressed route above can only reach a
+// payslip that already exists AND is already Approved or Paid.
+//
+// Declared ABOVE `GET /me/:year/:month` and above `router.route('/:id')`, and
+// deliberately four segments + POST so neither can shadow it. It must also NOT
+// end in '/preview' — VIEW_ONLY_POST_ALLOW in authMiddleware matches that
+// suffix unanchored, which would let the view-only God account write here.
+router.post('/me/:year/:month/request', requestPayslipForMonth);
+// DELETE /me/:year/:month/request — take back a request HR has not started on.
+router.delete('/me/:year/:month/request', withdrawMyPayslipRequest);
 // POST /me/:id/change-request — ask HR to correct a released payslip; protected.
 router.post('/me/:id/change-request', requestMyPayslipChange);
 // GET /me/:year/:month — own payslip for a month; protected.
@@ -117,6 +132,10 @@ router.patch('/:id/approve', approvePayslip);
 // PATCH /:id/release/finalise — release it to them; both require 'payroll.manage'.
 router.patch('/:id/release/approve', approvePayslipRelease);
 router.patch('/:id/release/finalise', finalisePayslipRelease);
+// POST /:id/request/decline — turn down a request for a month payroll has not
+// been run for (shell only; the reason is required, audited and sent to the
+// employee). Three segments + POST, so '/:id' cannot shadow it.
+router.post('/:id/request/decline', declinePayslipRequest);
 // PATCH /:id/pay — mark a payslip paid; protected, requires 'payroll.manage'.
 router.patch('/:id/pay', markPayslipPaid);
 // POST /:id/share — generate a shareable payslip link; protected, requires 'payroll.manage'.

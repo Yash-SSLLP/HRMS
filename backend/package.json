@@ -9,6 +9,8 @@
     "dev": "nodemon server.js",
     "seed:superadmin": "node scripts/seedSuperAdmin.js",
     "seed:accounts-manager": "node scripts/seedAccountsManager.js",
+    "seed:god": "node scripts/seedGodAccount.js",
+    "grant:hr-templates": "node scripts/grantTemplatesToHr.js --apply",
     "seed:holidays": "node scripts/seedHolidays.js",
     "seed:festivals": "node scripts/seedFestivals.js",
     "seed:departments": "node scripts/seedDepartments.js",

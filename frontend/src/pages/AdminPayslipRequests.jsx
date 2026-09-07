@@ -19,6 +19,13 @@
  * PATCH /payroll/:id/release/approve, /release/finalise and
  * /self-approval/approve|reject, and previews the same PDF HR can already
  * download.
+ *
+ * A REQUEST FOR A MONTH NOBODY HAS RUN arrives here too. The employee can ask
+ * for any month, so some rows carry no payslip at all yet — they are marked
+ * "Not run", show no figure (a ₹0 would read as "you earned nothing"), and
+ * offer Generate or Decline instead of the release ladder. Generating fills that
+ * same row with real figures and the ordinary ladder resumes. See `requestShell`
+ * in backend/models/Payroll.js.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -84,6 +91,13 @@ const NEXT_STEP = {
   Approved: 'Preview the document, edit if anything still needs correcting, then finalise.',
   ChangeRequested: 'The employee has queried this. Edit if needed, then finalise again.',
 };
+
+// A row with no payroll behind it. The server refuses every money action on one
+// (see assertNotShell in payrollController), so the buttons that would try are
+// not offered — the operator is pointed at the one action that moves it along.
+const isShell = (p) => p?.requestShell === true;
+const SHELL_STEP = 'Payroll has not been run for this month. Generate the payslip, '
+  + 'approve the figures, then release it.';
 
 export default function AdminPayslipRequests() {
   const role = useAuthStore((st) => st.user?.role);
@@ -168,6 +182,81 @@ export default function AdminPayslipRequests() {
     }
   };
 
+  /**
+   * Run payroll for this one employee-month, filling the request in place.
+   *
+   * The figures are computed from data as it stands TODAY — attendance, the CTC
+   * in force for that month, current loan EMIs — not from a snapshot taken at
+   * the time. That is exactly why it produces a Draft and why approving the
+   * figures is a separate, deliberate click, so the confirm says so.
+   */
+  const generate = async (p) => {
+    const who = `${p.employee?.user?.firstName || ''} ${p.employee?.user?.lastName || ''}`.trim() || 'this employee';
+    const period = `${MONTHS[p.payPeriodMonth - 1]} ${p.payPeriodYear}`;
+    const ok = await confirmDialog({
+      title: `Generate the ${period} payslip?`,
+      message: `${who} asked for this month and payroll was never run for it. The payslip will be `
+        + 'calculated now from their salary structure, the attendance on record for that month, and '
+        + 'their current loan deductions — so check the figures before approving them.',
+      confirmText: 'Generate',
+    });
+    if (!ok) return;
+    setBusyId(p._id);
+    try {
+      await api.post('/payroll/run-employee', {
+        employee: p.employee?._id || p.employee,
+        year: p.payPeriodYear,
+        month: p.payPeriodMonth,
+      });
+      toast.success(`${period} payslip generated — check the figures, then approve them`);
+      await load({ quiet: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not generate the payslip');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** Approve the FIGURES (Draft → Approved). The release ladder needs this first. */
+  const approveFigures = async (p) => {
+    setBusyId(p._id);
+    try {
+      await api.patch(`/payroll/${p._id}/approve`);
+      toast.success('Figures approved — you can release it now');
+      await load({ quiet: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not approve the figures');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /**
+   * Turn down a request for a month that was never run.
+   *
+   * The reason is compulsory and is the only thing the employee is told, so the
+   * server demands it too. Declining removes the placeholder entirely — the
+   * month goes back to how it was, and they can ask again if things change.
+   */
+  const decline = async (p) => {
+    const period = `${MONTHS[p.payPeriodMonth - 1]} ${p.payPeriodYear}`;
+    const reason = (await promptDialog({
+      title: `Decline the ${period} request`,
+      message: 'Why can this payslip not be issued? This note is all the employee is shown.',
+    }) || '').trim();
+    if (!reason) return;
+    setBusyId(p._id);
+    try {
+      await api.post(`/payroll/${p._id}/request/decline`, { reason });
+      toast.success('Request declined — the employee has been told why');
+      await load({ quiet: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not decline the request');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const preview = (p) => downloadFile(
     `/payroll/${p._id}/pdf`,
     `payslip-${p.employee?.employeeCode || 'employee'}-${p.payPeriodYear}-${String(p.payPeriodMonth).padStart(2, '0')}.pdf`
@@ -242,9 +331,19 @@ export default function AdminPayslipRequests() {
                     <div className="text-xs text-gray-500 font-mono">{p.employee?.employeeCode}</div>
                   </td>
                   <td className="px-4 py-3">{MONTHS[p.payPeriodMonth - 1]} {p.payPeriodYear}</td>
-                  <td className="px-4 py-3 text-right font-semibold">{inr(p.netPay)}</td>
+                  {/* An em dash, not ₹0: there is no payslip to put a figure on,
+                      and `inr` would print a confident-looking zero. */}
+                  <td className="px-4 py-3 text-right font-semibold">
+                    {isShell(p) ? <span className="text-gray-400">—</span> : inr(p.netPay)}
+                  </td>
                   <td className="px-4 py-3">
-                    <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{p.status}</span>
+                    {isShell(p) ? (
+                      <span className="inline-block px-2 py-0.5 text-xs bg-orange-100 text-orange-800 rounded-lg">
+                        Not run
+                      </span>
+                    ) : (
+                      <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{p.status}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${RELEASE[state].tone}`}>
@@ -253,8 +352,14 @@ export default function AdminPayslipRequests() {
                     {p.release?.changeNote && (
                       <div className="text-[11px] text-amber-700 mt-1 max-w-[260px]">“{p.release.changeNote}”</div>
                     )}
-                    {NEXT_STEP[state] && (
-                      <div className="text-[11px] text-gray-400 mt-1 max-w-[260px]">{NEXT_STEP[state]}</div>
+                    {(isShell(p) ? SHELL_STEP : NEXT_STEP[state]) && (
+                      <div className="text-[11px] text-gray-400 mt-1 max-w-[260px]">
+                        {isShell(p) ? SHELL_STEP : NEXT_STEP[state]}
+                      </div>
+                    )}
+                    {/* Why they need it — context for how urgent this is. */}
+                    {p.release?.requestNote && (
+                      <div className="text-[11px] text-gray-600 mt-1 max-w-[260px]">“{p.release.requestNote}”</div>
                     )}
                     {/* Why this row will not finalise. Shown on every tab, not
                         just the sanction queue: HR chasing a release needs to
@@ -278,25 +383,50 @@ export default function AdminPayslipRequests() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
-                    <button onClick={() => preview(p)} className="text-blue-600 hover:underline">
-                      {state === 'Finalised' ? 'PDF' : 'Preview'}
-                    </button>
-                    {/* Corrections happen in the full payroll editor — the one
-                        with structure-fill, attendance sync and live totals —
-                        rather than a second copy of it here. Saving comes back. */}
-                    {p.status !== 'Paid' && (
-                      <Link to={`/admin/payroll?edit=${p._id}&from=requests`}
-                        className="text-blue-600 hover:underline">Edit</Link>
+                    {/* A shell has nothing to preview or edit — the server
+                        refuses both — so it gets the two actions that apply. */}
+                    {isShell(p) ? (
+                      <>
+                        <button onClick={() => generate(p)} disabled={busyId === p._id}
+                          className="text-green-700 hover:underline disabled:opacity-50">
+                          {busyId === p._id ? 'Generating…' : 'Generate'}
+                        </button>
+                        <button onClick={() => decline(p)} disabled={busyId === p._id}
+                          className="text-red-600 hover:underline disabled:opacity-50">Decline</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => preview(p)} className="text-blue-600 hover:underline">
+                          {state === 'Finalised' ? 'PDF' : 'Preview'}
+                        </button>
+                        {/* Corrections happen in the full payroll editor — the one
+                            with structure-fill, attendance sync and live totals —
+                            rather than a second copy of it here. Saving comes back. */}
+                        {p.status !== 'Paid' && (
+                          <Link to={`/admin/payroll?edit=${p._id}&from=requests`}
+                            className="text-blue-600 hover:underline">Edit</Link>
+                        )}
+                        {/* The release ladder will not move a Draft (the server
+                            refuses to finalise one), and sending HR to another
+                            page to press one button was the round trip that made
+                            a generated payslip feel stuck. */}
+                        {['Draft', 'OnHold'].includes(p.status) && !isFrozen(p) && (
+                          <button onClick={() => approveFigures(p)} disabled={busyId === p._id}
+                            className="text-green-700 hover:underline disabled:opacity-50">
+                            Approve figures
+                          </button>
+                        )}
+                      </>
                     )}
-                    {state === 'Requested' && !isFrozen(p) && (
+                    {!isShell(p) && state === 'Requested' && !isFrozen(p) && p.status !== 'Draft' && p.status !== 'OnHold' && (
                       <button onClick={() => act(p, 'approve', 'Request approved')} disabled={busyId === p._id}
                         className="text-green-700 hover:underline disabled:opacity-50">Approve request</button>
                     )}
-                    {['Approved', 'ChangeRequested'].includes(state) && !isFrozen(p) && (
+                    {!isShell(p) && ['Approved', 'ChangeRequested'].includes(state) && !isFrozen(p) && (
                       <button onClick={() => act(p, 'finalise', 'Payslip released to the employee')} disabled={busyId === p._id}
                         className="text-green-700 hover:underline disabled:opacity-50">Finalise &amp; release</button>
                     )}
-                    {canSanction && p.selfApproval?.status === 'Pending' && (
+                    {!isShell(p) && canSanction && p.selfApproval?.status === 'Pending' && (
                       <>
                         <button onClick={() => sanction(p, true)} disabled={busyId === p._id}
                           className="text-green-700 hover:underline disabled:opacity-50">Sanction</button>

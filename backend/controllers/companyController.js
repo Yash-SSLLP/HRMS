@@ -14,7 +14,7 @@ const asyncHandler = require('express-async-handler');
 const Company = require('../models/Company');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
-const { EXECUTIVE_ROLES } = require('../utils/visibility');
+const { COMPANY_SCOPED_ROLES } = require('../utils/visibility');
 const { viewerCompanyScope, companyScopeFilter } = require('../utils/employeeScope');
 
 /**
@@ -32,7 +32,7 @@ const { viewerCompanyScope, companyScopeFilter } = require('../utils/employeeSco
  */
 function assertCompanyScope(req, company) {
   const u = req.user;
-  if (!u || !EXECUTIVE_ROLES.includes(u.role)) return; // Backend: unrestricted
+  if (!u || !COMPANY_SCOPED_ROLES.includes(u.role)) return; // Backend: unrestricted
   const ids = Array.isArray(u.companies) ? u.companies.filter(Boolean).map(String) : [];
   if (!ids.length) return; // not narrowed → every company
   // Creating while narrowed would produce a company they cannot then manage.
@@ -287,7 +287,7 @@ const updateCompanyEmployees = asyncHandler(async (req, res) => {
   // A narrowed executive must not reach into a company they do not manage to
   // take its people — the scope check above only cleared the TARGET company.
   const u = req.user;
-  const ids = EXECUTIVE_ROLES.includes(u.role) && Array.isArray(u.companies)
+  const ids = COMPANY_SCOPED_ROLES.includes(u.role) && Array.isArray(u.companies)
     ? u.companies.filter(Boolean).map(String)
     : [];
   if (ids.length && add.length) {

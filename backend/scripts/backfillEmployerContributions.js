@@ -57,7 +57,10 @@ const same = (a, b) => KEYS.every((k) => (Number(a?.[k]) || 0) === (Number(b?.[k
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is not set — run this from the backend folder.');
   await connectDB();
 
-  const filter = {};
+  // A request shell has no earnings to derive an employer contribution from —
+  // it is an employee's ask for a month payroll has not been run for. See
+  // `requestShell` in models/Payroll.js.
+  const filter = { requestShell: { $ne: true } };
   if (ONLY_YEAR) filter.payPeriodYear = ONLY_YEAR;
   if (ONLY_MONTH) filter.payPeriodMonth = ONLY_MONTH;
 

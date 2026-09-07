@@ -15,7 +15,9 @@ const SEEN_THROTTLE_MS = 2 * 60 * 1000;
 
 // Roles whose company wall comes from their own account (`User.companies`) or
 // who have none at all — everyone else's wall is their own profile's company.
-const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+// God is here for the same reason CEO/MD are: it has no employee profile, so
+// there is no profile company to look up (see utils/visibility).
+const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God'];
 
 /**
  * Resolve which company this (non-exec, non-Backend) account belongs to and
@@ -73,6 +75,59 @@ function invalidateScopeCompany(userIds) {
   for (const id of userIds) scopeCompanyCache.delete(String(id));
 }
 
+// ===== The permanently view-only tier ===================================
+// The God audit account (utils/visibility VIEW_ONLY_ROLES) reads the admin
+// portal and writes NOTHING, ever. Unlike a CEO/MD there is no edit mode a
+// SuperAdmin can switch on, so the answer never changes at runtime.
+//
+// The rule is enforced HERE, in `protect`, rather than route by route. Every
+// authenticated request in the app passes through this function, so a module
+// added next year is covered without anybody remembering to gate it — which is
+// the whole promise of the account. Gating each router instead would make the
+// guarantee only as good as the newest route file.
+const { VIEW_ONLY_ROLES, isViewOnlyRole } = require('../utils/visibility');
+
+/** Is this the permanently view-only audit account? */
+const isViewOnlyAccount = (user) => isViewOnlyRole(user?.role);
+
+// HTTP methods that only READ. Everything else is a write as far as the block
+// below is concerned.
+const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+// The handful of POSTs that are reads wearing a verb: a request body is the
+// only way to send them what they need. Matched against the path with the query
+// string stripped, and kept deliberately short — every entry is a hole in the
+// rule above, so add one only for an endpoint that changes no business data.
+//
+//   /api/auth/logout        ends this account's own session
+//   /api/client-logs        browser error reports (diagnostics)
+//   /api/reports/xlsx       renders a table the client is already showing
+//   .../preview             renders a letter/structure/template without saving
+const VIEW_ONLY_POST_ALLOW = [
+  /^\/api\/auth\/logout$/,
+  /^\/api\/client-logs\/?$/,
+  /^\/api\/reports\/xlsx$/,
+  /\/preview$/,
+];
+
+/**
+ * Refuse every write made by a view-only account.
+ *
+ * Called from `protect` once `req.user` is known. A 403 with a plain
+ * explanation rather than a silent no-op: the clients still render admin
+ * screens for this account (it is meant to see them), so a button that does
+ * nothing at all would read as a bug.
+ * @param {import('express').Request} req
+ * @returns {string|null} the refusal message, or null when the request may proceed
+ */
+function viewOnlyRefusal(req) {
+  if (!isViewOnlyAccount(req.user)) return null;
+  if (SAFE_METHODS.includes(req.method)) return null;
+  const path = String(req.originalUrl || req.url || '').split('?')[0];
+  if (req.method === 'POST' && VIEW_ONLY_POST_ALLOW.some((re) => re.test(path))) return null;
+  return 'This account is view-only and cannot make any changes.';
+}
+
 /**
  * Authenticate a request via `Authorization: Bearer <jwt>`. Verifies the token,
  * loads the User, and rejects deactivated accounts or tokens invalidated by a
@@ -118,6 +173,14 @@ const protect = asyncHandler(async (req, res, next) => {
   }
 
   await attachScopeCompany(user);
+  req.user = user;
+  // The view-only wall (see viewOnlyRefusal above). Placed before anything is
+  // stamped or dispatched, so a God request cannot reach a handler at all.
+  const refusal = viewOnlyRefusal(req);
+  if (refusal) {
+    res.status(403);
+    throw new Error(refusal);
+  }
   // Record that this account is active RIGHT NOW, at most once every
   // SEEN_THROTTLE_MS. updateOne rather than user.save(): this must not run the
   // document's validators or pre-save hooks (one of which re-hashes a password
@@ -129,7 +192,6 @@ const protect = asyncHandler(async (req, res, next) => {
     User.updateOne({ _id: user._id }, { lastSeenAt: user.lastSeenAt })
       .catch((err) => console.error('lastSeenAt stamp failed:', err.message));
   }
-  req.user = user;
   next();
 });
 
@@ -181,6 +243,13 @@ const protectMedia = asyncHandler(async (req, res, next) => {
 
   await attachScopeCompany(user);
   req.user = user;
+  // Same view-only wall as `protect` — these routes are reads today, and this
+  // keeps that true if one ever grows a write.
+  const refusal = viewOnlyRefusal(req);
+  if (refusal) {
+    res.status(403);
+    throw new Error(refusal);
+  }
   next();
 });
 
@@ -194,7 +263,7 @@ const protectMedia = asyncHandler(async (req, res, next) => {
 // settings, audit log, chat export) stay closed, so administering the system
 // remains with the role that administers the system.
 const EXEC_VIEWERS = ['CEO', 'MD'];
-const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+// (SAFE_METHODS is declared with the view-only tier further up.)
 
 /** Is this account a CEO/MD (in either mode)? */
 const isExecViewer = (user) => EXEC_VIEWERS.includes(user?.role);
@@ -202,6 +271,19 @@ const isExecViewer = (user) => EXEC_VIEWERS.includes(user?.role);
 const isEditingExec = (user) => isExecViewer(user) && user?.execEditAccess === true;
 /** A CEO/MD still in the default view-only mode. */
 const isReadOnlyExec = (user) => isExecViewer(user) && user?.execEditAccess !== true;
+
+// Every account that may BROWSE the admin portal without administering it: the
+// two executives plus the God audit account. This — not isExecViewer — is what
+// a read gate should ask, because the question there is "may this pair of eyes
+// see the org-wide view", and God is exactly that and nothing more.
+//
+// isExecViewer stays narrowly CEO/MD, for the places that mean the executive
+// specifically: edit mode, sanctioning an advance, deciding an HR
+// regularization. None of those apply to an account that cannot write.
+const PORTAL_VIEWERS = [...EXEC_VIEWERS, ...VIEW_ONLY_ROLES];
+
+/** May this account browse the admin portal read-only (CEO/MD or God)? */
+const isPortalViewer = (user) => PORTAL_VIEWERS.includes(user?.role);
 
 /**
  * Role gate factory. Allows the listed roles through; on admin-gated routes
@@ -219,12 +301,13 @@ const restrictTo = (...roles) => (req, res, next) => {
   }
   if (roles.includes(req.user.role)) return next();
 
-  // On any admin-gated route, CEO/MD get read-only access: safe (GET) methods
-  // pass through; writes are rejected with a clear message. An exec in edit mode
-  // writes too — but only where an HR Manager could, never on a SuperAdmin-only
-  // route (roles === ['SuperAdmin']).
+  // On any admin-gated route, the viewer tier gets read-only access: safe (GET)
+  // methods pass through; writes are rejected with a clear message. An exec in
+  // edit mode writes too — but only where an HR Manager could, never on a
+  // SuperAdmin-only route (roles === ['SuperAdmin']). God never writes here, and
+  // `protect` has already refused the request before it got this far.
   const adminGated = roles.includes('SuperAdmin') || roles.includes('HRManager');
-  if (adminGated && isExecViewer(req.user)) {
+  if (adminGated && isPortalViewer(req.user)) {
     if (SAFE_METHODS.includes(req.method)) return next();
     if (isEditingExec(req.user)) {
       if (roles.includes('HRManager')) return next();
@@ -232,7 +315,9 @@ const restrictTo = (...roles) => (req, res, next) => {
       return next(new Error('This action is restricted to Super Admins.'));
     }
     res.status(403);
-    return next(new Error('CEO/MD accounts have read-only access and cannot make changes.'));
+    return next(new Error(isViewOnlyAccount(req.user)
+      ? 'This account is view-only and cannot make any changes.'
+      : 'CEO/MD accounts have read-only access and cannot make changes.'));
   }
 
   res.status(403);
@@ -366,12 +451,14 @@ function makePermissionGuard(caps) {
       res.status(403);
       return next(new Error('You do not have permission to perform this action'));
     }
-    // CEO/MD keep read-only access to admin-gated areas; in edit mode they write
-    // here too (capability routes are never SuperAdmin-only).
-    if (isExecViewer(req.user)) {
+    // The viewer tier keeps read-only access to admin-gated areas; a CEO/MD in
+    // edit mode writes here too (capability routes are never SuperAdmin-only).
+    if (isPortalViewer(req.user)) {
       if (SAFE_METHODS.includes(req.method) || isEditingExec(req.user)) return next();
       res.status(403);
-      return next(new Error('CEO/MD accounts have read-only access and cannot make changes.'));
+      return next(new Error(isViewOnlyAccount(req.user)
+        ? 'This account is view-only and cannot make any changes.'
+        : 'CEO/MD accounts have read-only access and cannot make changes.'));
     }
     if (list.some((cap) => hasPermission(req.user, cap))) return next();
     res.status(403);
@@ -502,6 +589,9 @@ module.exports = {
   isExecViewer,
   isEditingExec,
   isReadOnlyExec,
+  PORTAL_VIEWERS,
+  isPortalViewer,
+  isViewOnlyAccount,
   hasPermission,
   hasExplicitPermission,
   requirePermission,

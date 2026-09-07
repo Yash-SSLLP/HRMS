@@ -6,10 +6,15 @@
  *
  * The rules:
  *   Backend (SuperAdmin)     → every employee, every company.
- *   CEO / MD                 → the companies assigned to them (User.companies);
- *                              with none set they are unrestricted.
- *   HR Manager               → employees whose hrPartner is them, AND inside
- *                              their own company (see below).
+ *   CEO / MD / God           → the companies assigned to them (User.companies);
+ *                              with none set they are unrestricted. (God is the
+ *                              view-only audit account — same wall, no writes.)
+ *   HR Manager               → employees whose hrPartner is them OR is not set
+ *                              at all, AND inside their own company (see below).
+ *                              An unpartnered employee is in nobody's care, so
+ *                              every HR in the company sees them and can claim
+ *                              them; once somebody is the partner, they are that
+ *                              HR's alone again.
  *   every other role         → their own company only.
  *
  * COMPANY WALL. Everyone except the Backend is confined to their own company:
@@ -26,7 +31,7 @@
  */
 const mongoose = require('mongoose');
 const EmployeeProfile = require('../models/EmployeeProfile');
-const { EXECUTIVE_ROLES } = require('./visibility');
+const { EXECUTIVE_ROLES, COMPANY_SCOPED_ROLES } = require('./visibility');
 
 /**
  * The companies this viewer may see people of.
@@ -38,9 +43,9 @@ const { EXECUTIVE_ROLES } = require('./visibility');
 function viewerCompanyScope(req) {
   const u = req && req.user;
   if (!u || u.role === 'SuperAdmin') return null;
-  if (EXECUTIVE_ROLES.includes(u.role)) {
+  if (COMPANY_SCOPED_ROLES.includes(u.role)) {
     const ids = Array.isArray(u.companies) ? u.companies.filter(Boolean).map(String) : [];
-    if (!ids.length) return null; // unrestricted exec
+    if (!ids.length) return null; // no list set → every company
     return { ids, includeUnassigned: false };
   }
   // Everyone else: their own profile's company (stashed by the auth middleware).
@@ -92,7 +97,14 @@ function companyOutOfScope(req, profile) {
 function employeeProfileScope(req) {
   const u = req && req.user;
   if (!u || u.role === 'SuperAdmin') return {};
-  if (u.role === 'HRManager') return { hrPartner: u._id, ...companyScopeFilter(req) };
+  // `hrPartner: null` matches BOTH null and a missing field, which is what
+  // brings an employee nobody has been assigned to into every HR's directory.
+  // Without it such a record was invisible to every HR Manager in the org and
+  // only the Backend account could ever fix it — so the gap that most needs
+  // closing was the one gap nobody could reach. Company-walled as before.
+  if (u.role === 'HRManager') {
+    return { $or: [{ hrPartner: u._id }, { hrPartner: null }], ...companyScopeFilter(req) };
+  }
   return { ...companyScopeFilter(req) };
 }
 
@@ -210,7 +222,11 @@ function cannotManageProfile(req, profile) {
   if (!profile) return false;
   if (isOwnProfile(req, profile)) return true;
   if (u.role === 'HRManager') {
-    if (String(profile.hrPartner || '') !== String(u._id)) return true;
+    // An UNPARTNERED employee is fair game for any HR inside the company wall
+    // (see employeeProfileScope) — somebody has to be able to pick them up.
+    // Once the record names a partner it is that HR's alone again.
+    const partner = String(profile.hrPartner || '');
+    if (partner && partner !== String(u._id)) return true;
   }
   return companyOutOfScope(req, profile);
 }
@@ -221,11 +237,13 @@ function cannotManageProfile(req, profile) {
  * listings keyed by User rather than EmployeeProfile (chat directory, the
  * accounts list, celebrations' populated users).
  *
- * Included beyond the profile match: CEO/MD accounts whose own company list
- * covers (or does not exclude) the viewer's companies — executives have no
- * profile but still belong on company A's people surfaces when they cover
- * company A — and SuperAdmin accounts (their visibility is decided separately
- * by utils/visibility.hideSuperAdminFilter, not by the company wall).
+ * Included beyond the profile match: account-scoped roles (CEO/MD, and the God
+ * audit account) whose own company list covers — or does not exclude — the
+ * viewer's companies, since they have no profile but still belong on company
+ * A's people surfaces when they cover company A; and SuperAdmin accounts (their
+ * visibility is decided separately by utils/visibility.hideSuperAdminFilter,
+ * not by the company wall). God is additionally hidden from every non-Backend
+ * viewer by that same filter, so this only ever admits it for the Backend.
  * @param {import('express').Request} req
  * @returns {Promise<string[]|null>} allowed User ids as strings, or null
  */
@@ -239,16 +257,16 @@ async function allowedUserIds(req) {
     const profFilter = companyScopeFilter(req);
     req._allowedUserIdsPromise = Promise.all([
       EmployeeProfile.find(profFilter).select('user').lean(),
-      User.find({ role: { $in: ['SuperAdmin', ...EXECUTIVE_ROLES] } }).select('role companies').lean(),
+      User.find({ role: { $in: ['SuperAdmin', ...COMPANY_SCOPED_ROLES] } }).select('role companies').lean(),
       // Accounts with NO profile at all (a seeded AccountsManager, a profile
       // whose auto-create failed) belong to no company, so a non-exec viewer
       // — who sees unassigned people — must see them too. Resolved by
       // subtracting every profile-holding user from the full account list.
       scope.includeUnassigned
         ? Promise.all([
-          // SuperAdmin/CEO/MD are decided by the account-scoped branch below,
-          // never by profile absence — a narrowed exec must stay hidden.
-          User.find({ role: { $nin: ['SuperAdmin', ...EXECUTIVE_ROLES] } }).select('_id').lean(),
+          // SuperAdmin/CEO/MD/God are decided by the account-scoped branch
+          // below, never by profile absence — a narrowed account stays hidden.
+          User.find({ role: { $nin: ['SuperAdmin', ...COMPANY_SCOPED_ROLES] } }).select('_id').lean(),
           EmployeeProfile.find({}).select('user').lean(),
         ]).then(([allUsers, allProfiles]) => {
           const withProfile = new Set(allProfiles.filter((p) => p.user).map((p) => String(p.user)));
@@ -337,7 +355,8 @@ async function cannotSeeUser(req, userId) {
 }
 
 /**
- * The companies a CEO/MD has been narrowed to, as strings.
+ * The companies an account-scoped viewer (CEO/MD, or God) has been narrowed to,
+ * as strings.
  *
  * Separated from employeeProfileScope because some screens need ONLY this half
  * of the rule. Empty array = unrestricted (every company), matching
@@ -346,7 +365,7 @@ async function cannotSeeUser(req, userId) {
  * @returns {string[]} company ids, or [] when this account is not narrowed
  */
 function execCompanyIds(user) {
-  if (!user || !EXECUTIVE_ROLES.includes(user.role)) return [];
+  if (!user || !COMPANY_SCOPED_ROLES.includes(user.role)) return [];
   return Array.isArray(user.companies) ? user.companies.filter(Boolean).map(String) : [];
 }
 

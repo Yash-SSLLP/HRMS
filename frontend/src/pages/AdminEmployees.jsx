@@ -211,6 +211,15 @@ export default function AdminEmployees() {
   // which the server agrees with here — they would be offered a picker whose
   // value the save silently drops.
   const canSetHierarchy = hasExplicitPermission(currentUser, 'hierarchy.manage');
+  // …but FILLING A BLANK is not reassigning. An employee with no HR partner is
+  // in nobody's care and one with no reporting manager has nobody to approve
+  // their leave, so any admin who can edit the record may close those gaps —
+  // and only changing a field that already names somebody needs the grant.
+  // Mirrors canFillHierarchyField in the backend's employeeController, and like
+  // it answers on the STORED value, not on what the form currently shows.
+  const canFillHierarchy = (field) => canSetHierarchy || !storedHierarchy[field];
+  const canSetHrPartner = canFillHierarchy('hrPartner');
+  const canSetReportingManager = canFillHierarchy('reportingManager');
   // Moving somebody between companies stays with the Backend and an executive
   // in edit mode. An HR Manager works inside one company - and the company is
   // what every scoping wall is built on - so the field is hidden from them
@@ -222,7 +231,11 @@ export default function AdminEmployees() {
   // be a text box that always ends in a 403. The flag still shows; it is the
   // record of what the sheet said, and it can still be marked as seen.
   const canFixFlagField = (field) => {
-    if (field === 'hrPartner' || field === 'reportingManager') return canSetHierarchy;
+    // The relationship flags are raised BECAUSE the import could not set the
+    // field, so what is being corrected is almost always an empty one — which
+    // any admin may now fill (see canFillHierarchy). The flag row does not carry
+    // the employee's current partner, so the decision is left to the server: it
+    // fills a blank and refuses a reassignment with a message the operator sees.
     if (field === 'company') return canSetCompany;
     return true;
   };
@@ -251,6 +264,9 @@ export default function AdminEmployees() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  // The reporting manager / HR partner the record being edited ALREADY had.
+  // Blank for a new employee, which is what lets both be set on create.
+  const [storedHierarchy, setStoredHierarchy] = useState({ hrPartner: '', reportingManager: '' });
   const [form, setForm] = useState(blankProfile);
   const [saving, setSaving] = useState(false);
   // Per-employee document submission link (Edit modal)
@@ -565,6 +581,8 @@ export default function AdminEmployees() {
 
   const openCreate = async () => {
     setEditingId(null);
+    // A new record holds nothing yet, so both relationship fields are fillable.
+    setStoredHierarchy({ hrPartner: '', reportingManager: '' });
     setForm(blankProfile);
     setEditEmail('');
     setEditPhone('');
@@ -588,6 +606,13 @@ export default function AdminEmployees() {
 
   const openEdit = (p) => {
     setEditingId(p._id);
+    // What the record ALREADY holds, kept apart from `form` so the "this field
+    // was blank" rule below cannot be defeated by clearing the picker first —
+    // the server answers on the stored value for exactly the same reason.
+    setStoredHierarchy({
+      hrPartner: p.hrPartner?._id || p.hrPartner || '',
+      reportingManager: p.reportingManager?._id || p.reportingManager || '',
+    });
     setEditEmail(p.user?.email || '');
     resetDocLink();
     setForm({
@@ -715,12 +740,13 @@ export default function AdminEmployees() {
       else delete payload.company;
       // The server ignores these without the grant, but strip them here too so a
       // blank never clobbers an existing assignment through some other path.
-      if (canSetHierarchy) payload.hrPartner = form.hrPartner || null;
-      else {
-        delete payload.hrPartner;
-        delete payload.reportingManager;
-        delete payload.regularizationApprovers;
-      }
+      // '' → null on the way out: an empty select must clear the ref rather than
+      // send a string Mongo cannot cast.
+      if (canSetHrPartner) payload.hrPartner = form.hrPartner || null;
+      else delete payload.hrPartner;
+      if (canSetReportingManager) payload.reportingManager = form.reportingManager || null;
+      else delete payload.reportingManager;
+      if (!canSetHierarchy) delete payload.regularizationApprovers;
       if (crossDept) payload.allowCrossDepartment = true;
       // Blank enums must be dropped, not sent as '' — the schema would reject it.
       if (!payload.gender) delete payload.gender;
@@ -1413,7 +1439,7 @@ This cannot be undone.`,
                 )}
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">Reporting Manager</label>
-                  {canSetHierarchy ? (
+                  {canSetReportingManager ? (
                     <SearchableSelect
                       value={form.reportingManager || ''}
                       onChange={(e) => setForm({ ...form, reportingManager: e.target.value })}
@@ -1470,18 +1496,22 @@ This cannot be undone.`,
                     </div>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
-                    {canSetHierarchy && !form.department
+                    {canSetReportingManager && !form.department
                       ? 'Pick a department first — managers are chosen from within it.'
-                      : 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'}
+                      : canSetReportingManager
+                        ? 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'
+                        : 'Already set. Changing who someone reports to needs a Super Admin’s permission.'}
                   </p>
                 </div>
                 {/* HR Partner: the HR Manager who owns this employee. With per-HR
-                    scoping on, an HR Manager sees and manages only the employees
-                    they partner. Needs the hierarchy grant, like the reporting
-                    manager - handing an employee over is not an ordinary edit. */}
+                    scoping on, an HR Manager sees the employees they partner PLUS
+                    anyone still unpartnered. Setting a blank one is open to any
+                    admin who can edit the record; CHANGING one that already names
+                    somebody needs the hierarchy grant - handing an employee over
+                    is not an ordinary edit. */}
                 <div className="sm:col-span-2">
                   <label className="block text-sm text-gray-700">HR Partner</label>
-                  {canSetHierarchy ? (
+                  {canSetHrPartner ? (
                     <SearchableSelect
                       value={form.hrPartner || ''}
                       onChange={(e) => setForm({ ...form, hrPartner: e.target.value })}
@@ -1504,7 +1534,7 @@ This cannot be undone.`,
                   )}
                   <p className="text-xs text-gray-500 mt-1">
                     The HR Manager who sees and manages this employee.
-                    {canSetHierarchy
+                    {canSetHrPartner
                       ? ' Any change requests they are still waiting on move to the new partner.'
                       : ' Changing it needs a Super Admin’s permission.'}
                   </p>
@@ -1858,9 +1888,7 @@ This cannot be undone.`,
 
                     {!canFixFlagField(f.field) && (
                       <p className="text-xs text-gray-500 mt-2">
-                        {f.field === 'company'
-                          ? 'Only the Backend account can move someone to another company.'
-                          : 'Setting who an employee reports to, or which HR looks after them, needs a Super Admin’s permission.'}
+                        Only the Backend account can move someone to another company.
                         {' '}Clearing this only marks it as seen.
                       </p>
                     )}

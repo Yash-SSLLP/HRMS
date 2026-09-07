@@ -14,7 +14,7 @@ const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
 const cloudinary = require('../services/cloudinary');
 const { notify, notifyMany } = require('../services/notify');
 const User = require('../models/User');
-const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
+const { hasPermission, isPortalViewer } = require('../middleware/authMiddleware');
 
 // Roles allowed to manage courses / assign / approve. LDManager ("HR L&D") is an
 // LMS-only admin — this is the single place that gates course administration.
@@ -25,7 +25,7 @@ const isCourseAdmin = (user) => user && COURSE_ADMIN_ROLES.includes(user.role);
 // stays a plain role list): a read-only CEO/MD holds no capability in the
 // catalog yet reaches the LMS admin pages through requirePermission's
 // safe-method exemption, and a Manager can be granted 'courses.manage'.
-const canPreviewCourse = (user) => isCourseAdmin(user) || isExecViewer(user)
+const canPreviewCourse = (user) => isCourseAdmin(user) || isPortalViewer(user)
   || hasPermission(user, 'courses.manage');
 
 // Add `daysToDue` / `overdue` to an enrollment-ish object for the client.

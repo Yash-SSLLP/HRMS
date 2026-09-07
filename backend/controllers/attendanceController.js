@@ -29,7 +29,7 @@ const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow')
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit, isSundayKey } = require('../utils/restDay');
 const { notify, notifyMany, notifyBackend } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
-const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
+const { hasPermission, isPortalViewer } = require('../middleware/authMiddleware');
 const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope, assertNotOwnRequest } = require('../utils/employeeScope');
 // Punching in on a day you are on approved leave. The leave-side rules (which
 // day a leave still claims, who sits at the top of the ladder, and how a day is
@@ -71,7 +71,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 // they must be able to open the photos in those rows too. Per-record company /
 // hrPartner scoping still applies on top (cannotManageProfile).
 function canViewOthersAttendance(user) {
-  return isExecViewer(user) || hasPermission(user, 'attendance.manage');
+  return isPortalViewer(user) || hasPermission(user, 'attendance.manage');
 }
 
 async function getMyProfileOrFail(userId, res) {

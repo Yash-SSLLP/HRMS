@@ -217,6 +217,11 @@ export default function AdminOrgChart() {
   const role = useAuthStore((s) => s.user?.role);
   const myId = useAuthStore((s) => String(s.user?._id || s.user?.id || ''));
   const isSuperAdmin = role === 'SuperAdmin';
+  // Anyone whose company wall spans MORE THAN ONE company needs a way to look at
+  // them one at a time — the Backend, and a God account a Super Admin ticked
+  // several companies for. Ticked exactly one and there is nothing to choose
+  // between, so the picker stays away (see canPickCompany below).
+  const isMultiCompanyViewer = isSuperAdmin || role === 'God';
   const [roots, setRoots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -305,13 +310,13 @@ export default function AdminOrgChart() {
   }, [loading, roots.length]);
   const companyName = companies.find((c) => String(c._id) === String(company))?.name || '';
   // When exactly one company is visible, its name IS the chart's title — for
-  // everyone, Backend included. "All companies" only earns its place on the
-  // Backend's genuinely multi-company view; anyone else with several visible
-  // (an unrestricted exec) gets the brand name rather than a claim about
-  // companies they never picked between.
+  // everyone, Backend included. "All companies" only earns its place on a
+  // genuinely multi-company view (the Backend, or a God account ticked for
+  // several); anyone else with several visible (an unrestricted exec) gets the
+  // brand name rather than a claim about companies they never picked between.
   const heading = companyName
     || (companies.length === 1 ? companies[0].name
-      : isSuperAdmin ? ALL_COMPANIES_TITLE
+      : isMultiCompanyViewer ? ALL_COMPANIES_TITLE
         : COMPANY_NAME);
 
   const everyone = flatten(roots);
@@ -377,10 +382,10 @@ export default function AdminOrgChart() {
         title="Org Chart"
         subtitle={isSuperAdmin ? 'Reporting hierarchy · click a person to set who they report to' : 'Reporting hierarchy'}
       >
-        {/* Backend only, and only worth a picker when there is more than one
-            company to pick. Everyone else sees just their own company's chart
-            (the server walls the data anyway), so a filter would be noise. */}
-        {isSuperAdmin && companies.length > 1 && (
+        {/* Only worth a picker when there is more than one company to pick:
+            an account scoped to a single company sees just that chart (the
+            server walls the data anyway), so a filter would be noise. */}
+        {isMultiCompanyViewer && companies.length > 1 && (
           <select
             value={company}
             onChange={(e) => onCompanyChange(e.target.value)}

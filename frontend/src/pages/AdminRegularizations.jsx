@@ -21,7 +21,7 @@ import { useAuthStore } from '../store/authStore';
 import { promptDialog } from '../components/dialogs';
 import { toast } from 'react-toastify';
 import { formatTime12 as fmt12 } from '../utils/time';
-import { isReadOnlyExec } from '../config/permissions';
+import { isViewOnly } from '../config/permissions';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected'];
 
@@ -40,7 +40,7 @@ function RequestsTab() {
   // regularization, which HR must not decide for themselves. So the actions
   // column is no longer hidden from them — it is decided per row below. An exec
   // a SuperAdmin has put in edit mode decides any row, like HR.
-  const isExec = isReadOnlyExec(me);
+  const isExec = isViewOnly(me);
   const readOnly = isExec;
 
   // Who may decide this request, mirroring regularizationController.js. Returns

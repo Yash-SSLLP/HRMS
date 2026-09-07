@@ -10,7 +10,7 @@ import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
-import { hasPermission, isReadOnlyExec, canAdministerEmployee } from '../config/permissions';
+import { hasPermission, isViewOnly, canAdministerEmployee } from '../config/permissions';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
@@ -64,7 +64,7 @@ export default function AdminEmployeeDetail() {
   // the server refuses their writes, so they must not be offered the button.
   // Unless a SuperAdmin has switched that exec account into edit mode.
   const canEditAnyone = me?.role === 'SuperAdmin'
-    || (!isReadOnlyExec(me) && hasPermission(me, 'employees.manage'));
+    || (!isViewOnly(me) && hasPermission(me, 'employees.manage'));
   // Setting someone else's password is SuperAdmin-only, matching the server:
   // PUT /admin/users/:id refuses a non-SuperAdmin touching a non-Employee, and
   // handing out passwords is not something an HR Manager should do silently.

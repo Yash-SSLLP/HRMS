@@ -12,7 +12,15 @@ const bcrypt = require('bcryptjs');
 // is the LMS/Courses module. AccountsManager (displayed as "Account Manager") =
 // a finance admin whose only admin power is the Cashbook module. Employee =
 // standard self-service user.
-const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'Employee'];
+//
+// God = a PERMANENTLY view-only audit account. It reads the admin portal for the
+// companies a SuperAdmin assigns it (`companies` below) and can never write:
+// unlike a CEO/MD there is no edit mode to switch on, and `protect` refuses
+// every unsafe HTTP method the account makes, so the answer does not depend on
+// any single route remembering to gate itself. It is not a member of staff (no
+// employee profile, no payroll, no attendance) and is hidden from every listing
+// a non-SuperAdmin can see.
+const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'God', 'Employee'];
 
 const userSchema = new mongoose.Schema(
   {
@@ -125,12 +133,13 @@ const userSchema = new mongoose.Schema(
     // the employee who actually looks after company hardware and they get the
     // Assets register in their own portal, without becoming an admin.
     assetsAccess: { type: Boolean, default: false },
-    // CEO/MD only. The set of companies this executive may see and manage, set
-    // by the Backend (SuperAdmin) on the Permissions page. Semantics mirror the
-    // HRManager `permissions` default: `undefined`/`[]` → EVERY company (so an
-    // exec is unrestricted until the Backend narrows them), a non-empty list →
-    // only those companies. Ignored for every other role — an HR Manager is
-    // scoped to their assigned employees, and the Backend account sees all.
+    // CEO/MD and God only. The set of companies this account may see (and, for
+    // an exec in edit mode, manage), set by the Backend (SuperAdmin) on the
+    // Permissions page. Semantics mirror the HRManager `permissions` default:
+    // `undefined`/`[]` → EVERY company (so the account is unrestricted until the
+    // Backend narrows it), a non-empty list → only those companies. Ignored for
+    // every other role — an HR Manager is scoped to their assigned employees,
+    // and the Backend account sees all. See utils/visibility COMPANY_SCOPED_ROLES.
     companies: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Company' }], default: undefined },
     // CEO/MD only. Off (the default) = the read-only executive described above.
     // On = a SuperAdmin has switched that account into edit mode, giving it write

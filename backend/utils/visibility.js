@@ -8,6 +8,25 @@ const User = require('../models/User');
  * viewer wherever people are listed; a SuperAdmin sees everyone.
  */
 
+// The permanently view-only audit account (see models/User.js ROLES). It is a
+// role rather than a flag because "may not write" has to be answerable before
+// any route runs — `protect` refuses every unsafe method it makes — and because
+// nothing about it is grantable: there is no edit mode to switch on later.
+const VIEW_ONLY_ROLES = ['God'];
+
+/**
+ * Is this the permanently view-only audit account?
+ * @param {string} role
+ * @returns {boolean}
+ */
+const isViewOnlyRole = (role) => VIEW_ONLY_ROLES.includes(role);
+
+// Accounts kept out of every people listing a non-SuperAdmin can see. The
+// Backend was always hidden; God joins it for the same reason — it is a system
+// login nobody but the Backend administers, and an audit account that shows up
+// in the directory invites questions it exists precisely to avoid.
+const HIDDEN_ROLES = ['SuperAdmin', ...VIEW_ONLY_ROLES];
+
 /**
  * Mongo filter fragment for User queries — merge into the query's filter object.
  * @param {object|null} viewer - The requesting user (checked for role).
@@ -15,7 +34,7 @@ const User = require('../models/User');
  */
 // Mongo filter fragment for User queries. Merge into the query's filter object.
 const hideSuperAdminFilter = (viewer) =>
-  viewer && viewer.role === 'SuperAdmin' ? {} : { role: { $ne: 'SuperAdmin' } };
+  (viewer && viewer.role === 'SuperAdmin' ? {} : { role: { $nin: HIDDEN_ROLES } });
 
 /**
  * SuperAdmin User _ids to exclude from profile/relationship-based listings
@@ -28,7 +47,7 @@ const hideSuperAdminFilter = (viewer) =>
 // populated by user). Returns [] when the viewer is a SuperAdmin.
 async function hiddenUserIds(viewer) {
   if (viewer && viewer.role === 'SuperAdmin') return [];
-  return User.find({ role: 'SuperAdmin' }).distinct('_id');
+  return User.find({ role: { $in: HIDDEN_ROLES } }).distinct('_id');
 }
 
 // Roles that are NOT people on the payroll: they deliberately have no employee
@@ -41,7 +60,7 @@ async function hiddenUserIds(viewer) {
 // profile either, for as long as it takes HR to attach one — that is the first
 // half of the Add Employee flow — so profile-lessness alone would hide people
 // who very much belong in a picker.
-const NON_STAFF_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+const NON_STAFF_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God'];
 
 /**
  * Is this account an admin/service login rather than a member of staff?
@@ -54,6 +73,18 @@ const isNonStaffRole = (role) => NON_STAFF_ROLES.includes(role);
 // still fully visible in user management, the org chart, and manager/approver
 // selectors — only the opt-in pickers hide them.
 const EXECUTIVE_ROLES = ['CEO', 'MD'];
+
+// Roles whose company wall is read off their OWN account (`User.companies`)
+// rather than off an employee profile they do not have. The executives, plus
+// the God audit account — a SuperAdmin ticks the companies it may look at, and
+// with none ticked it sees them all (same "empty means everything" rule as
+// User.companies everywhere else).
+//
+// Deliberately NOT the same list as EXECUTIVE_ROLES: that one also decides who
+// is offered as an approver, whose birthday the celebrations widget carries and
+// who a picker may exclude. God is none of those — it is a pair of eyes, not a
+// person — so it joins the company rule and nothing else.
+const COMPANY_SCOPED_ROLES = [...EXECUTIVE_ROLES, ...VIEW_ONLY_ROLES];
 
 /**
  * Whether a picker that opted into executive exclusion should hide CEO/MD.
@@ -84,9 +115,13 @@ async function executiveUserIds() {
 module.exports = {
   hideSuperAdminFilter,
   hiddenUserIds,
+  HIDDEN_ROLES,
   NON_STAFF_ROLES,
   isNonStaffRole,
+  VIEW_ONLY_ROLES,
+  isViewOnlyRole,
   EXECUTIVE_ROLES,
+  COMPANY_SCOPED_ROLES,
   shouldExcludeExecutives,
   executiveUserIds,
 };

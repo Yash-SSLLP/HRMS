@@ -29,7 +29,7 @@ const DocumentChangeRequest = require('../models/DocumentChangeRequest');
 const Payroll = require('../models/Payroll');
 const { CHANGE_INBOX_ROLES } = require('./changeRequestController');
 const { canReadOthersDocs } = require('./documentController');
-const { hasPermission, isExecViewer, canApproveSelfPayslip } = require('../middleware/authMiddleware');
+const { hasPermission, isPortalViewer, canApproveSelfPayslip } = require('../middleware/authMiddleware');
 const { scopeEmployeeFilter, scopeUserField } = require('../utils/employeeScope');
 
 /**
@@ -537,7 +537,7 @@ const countHrApprovals = asyncHandler(async (req, res) => {
   // for them — their view is every request inside their company wall instead.
   const docswapQ = canReadOthersDocs(req.user)
     ? DocumentChangeRequest.countDocuments(
-      isExecViewer(req.user)
+      isPortalViewer(req.user)
         ? await scopeEmployeeFilter(req, { status: 'pending' })
         : { assignedTo: me, status: 'pending' }
     )

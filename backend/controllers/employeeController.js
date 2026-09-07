@@ -269,6 +269,28 @@ const hrCannotManage = (req, profile) => cannotManageProfile(req, profile);
 const canSetHierarchy = (req) => hasExplicitPermission(req.user, 'hierarchy.manage');
 
 /**
+ * May this account set a relationship field that is currently EMPTY?
+ *
+ * FILLING A BLANK IS NOT REASSIGNING. The grant above exists because handing an
+ * employee to another HR — or taking one — is a decision somebody has to make
+ * deliberately. None of that applies to a record where the field was never set:
+ * an employee with no HR partner is in nobody's care, and one with no reporting
+ * manager has nobody to approve their leave. Those are gaps, and requiring the
+ * grant to close one meant the record stayed broken until the Backend account
+ * got to it — while the employee's leave sat in no inbox at all.
+ *
+ * So an empty field may be filled by anyone who can edit the record, and a field
+ * that already names somebody still needs `hierarchy.manage` to change.
+ * `regularizationApprovers` is deliberately NOT included: an approver ladder is
+ * a control, not a gap, and pointing one at yourself is the thing the grant is
+ * for. The Backend and an edit-mode exec pass through the grant anyway.
+ * @param {import('express').Request} req
+ * @param {*} currentValue - what the STORED profile holds for that field
+ * @returns {boolean}
+ */
+const canFillHierarchyField = (req, currentValue) => canSetHierarchy(req) || !currentValue;
+
+/**
  * May this account move an employee between COMPANIES? The Backend and an
  * executive in edit mode only — an HR Manager works inside one company, and the
  * company is what the whole scoping wall is built on, so moving somebody across
@@ -789,14 +811,15 @@ const createEmployee = asyncHandler(async (req, res) => {
   // as "already exists" rather than as a duplicate-key error from the index.
   req.body.employeeCode = await assertCodeAvailable(res, employeeCode);
 
-  // Same rule as updateEmployee: assigning the HR Partner / reporting manager
-  // needs the hierarchy grant. Without this an HR Manager could set them on
-  // create and simply never edit them again.
+  // On a NEW record every relationship is empty by definition, so the
+  // fill-a-blank rule (canFillHierarchyField) lets whoever may create the
+  // employee also say who they report to and which HR owns them. Reassigning
+  // either of those LATER still needs the hierarchy grant — see updateEmployee.
+  //
+  // The approver ladder is the exception, here as there: who signs off this
+  // employee's attendance corrections is a control nobody without the grant may
+  // point at themselves, and a new record is no reason to hand it over.
   if (!canSetHierarchy(req)) {
-    delete req.body.hrPartner;
-    delete req.body.reportingManager;
-    // Who signs off this employee's attendance corrections is a control nobody
-    // without the grant may point at themselves.
     delete req.body.regularizationApprovers;
   }
   if (req.user.role !== 'SuperAdmin') {
@@ -830,9 +853,9 @@ const createEmployee = asyncHandler(async (req, res) => {
   // Consent flag, not profile data: pull it off the body so it is never stored,
   // and honour it only for the role that is allowed to set a manager at all.
   // The flag is an ACKNOWLEDGEMENT of the warning the client showed, so it is
-  // honoured for anyone who may set the manager at all — otherwise a granted HR
-  // could pick a cross-department manager and have no way to confirm it.
-  const allowCrossDept = req.body.allowCrossDepartment === true && canSetHierarchy(req);
+  // honoured for anyone who may set the manager at all — otherwise an HR who
+  // just picked a cross-department manager would have no way to confirm it.
+  const allowCrossDept = req.body.allowCrossDepartment === true;
   delete req.body.allowCrossDepartment;
 
   await validateHierarchy(req.body, userId, null, allowCrossDept);
@@ -856,8 +879,9 @@ const createEmployee = asyncHandler(async (req, res) => {
 });
 
 /**
- * Update an employee profile (hierarchy-validated). Reassigning hrPartner/
- * reportingManager is SuperAdmin-only; the linked user cannot be changed.
+ * Update an employee profile (hierarchy-validated). REASSIGNING an hrPartner or
+ * reportingManager that is already set needs the `hierarchy.manage` grant;
+ * filling an empty one does not. The linked user cannot be changed.
  * @route PUT /api/employees/:id  (HR/Admin)
  * @param {string} req.params.id - EmployeeProfile id
  * @param {Object} req.body - fields to update
@@ -894,11 +918,30 @@ const updateEmployee = asyncHandler(async (req, res) => {
   // Reassigning the HR Partner hands an employee off (or grabs one), and the
   // regularization ladder decides who signs off their attendance — so both sit
   // behind the hierarchy grant, not behind plain employees.manage.
-  if (!canSetHierarchy(req)) {
-    delete req.body.hrPartner;
-    delete req.body.reportingManager;
-    delete req.body.regularizationApprovers;
+  //
+  // An EMPTY field is not a reassignment, though, so it may be filled by anyone
+  // who can edit this record (see canFillHierarchyField). Note the check is
+  // against the STORED profile, never against the incoming body: reading the
+  // request would let a payload that also blanks the field authorise its own
+  // rewrite of it.
+  for (const field of ['hrPartner', 'reportingManager']) {
+    if (canFillHierarchyField(req, profile[field])) continue;
+    // Sending the value it already has is not a change — drop it and carry on,
+    // so a client that round-trips the whole record (the mobile app does) is not
+    // refused for touching nothing. Only a genuine REASSIGNMENT is an error, and
+    // it says so rather than saving quietly without that one field: an edit that
+    // reports success and did not do what was asked is worse than a refusal.
+    if (req.body[field] === undefined
+        || String(req.body[field] || '') === String(profile[field] || '')) {
+      delete req.body[field];
+      continue;
+    }
+    res.status(403);
+    throw new Error(field === 'hrPartner'
+      ? 'This employee already has an HR Partner. Changing it needs a Super Admin’s permission.'
+      : 'This employee already has a reporting manager. Changing it needs a Super Admin’s permission.');
   }
+  if (!canSetHierarchy(req)) delete req.body.regularizationApprovers;
   if (req.user.role !== 'SuperAdmin') {
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;
@@ -914,9 +957,11 @@ const updateEmployee = asyncHandler(async (req, res) => {
 
   // See createEmployee: consent flag, stripped before the payload is persisted.
   // The flag is an ACKNOWLEDGEMENT of the warning the client showed, so it is
-  // honoured for anyone who may set the manager at all — otherwise a granted HR
-  // could pick a cross-department manager and have no way to confirm it.
-  const allowCrossDept = req.body.allowCrossDepartment === true && canSetHierarchy(req);
+  // honoured for anyone who may set the manager on THIS record — otherwise an HR
+  // filling in a blank reporting line could pick a cross-department manager and
+  // have no way to confirm it.
+  const allowCrossDept = req.body.allowCrossDepartment === true
+    && canFillHierarchyField(req, profile.reportingManager);
   delete req.body.allowCrossDepartment;
 
   await validateHierarchy(req.body, profile.user, profile, allowCrossDept);

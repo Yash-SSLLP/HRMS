@@ -11,6 +11,7 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { useViewOnly } from '../hooks/useViewOnly';
 import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
@@ -59,6 +60,12 @@ const blankNew = {
 };
 
 export default function AdminExit() {
+  // A view-only account follows an exit and decides none of it. The action
+  // buttons are not rendered; the clearance ticks and the assigned approver are
+  // DISABLED rather than hidden, because each one displays a fact worth reading
+  // — who owes what, and what has been signed off — and hiding the control would
+  // hide the answer with it.
+  const viewOnly = useViewOnly();
   const me = useAuthStore((s) => s.user);
   const [exits, setExits] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -354,10 +361,12 @@ export default function AdminExit() {
           <option value="">All statuses</option>
           {STATUSES.map((s) => <option key={s}>{s}</option>)}
         </select>
+        {!viewOnly && (
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + Initiate Exit
         </button>
+        )}
       </PageHeader>
 
       {error && (
@@ -612,9 +621,11 @@ export default function AdminExit() {
                       Overridden by {detail.clearanceOverride.byName || 'HR'}
                     </span>
                   ) : !isFinal && (
+                    !viewOnly && (
                     <button onClick={overrideClearance} className="text-xs text-amber-700 hover:underline">
                       HR override…
                     </button>
+                    )
                   )}
                 </div>
                 {detail.status === 'Pending' && (
@@ -632,7 +643,7 @@ export default function AdminExit() {
                               ? <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Cleared</span>
                               : <span className="text-xs text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">Pending</span>}
                           </div>
-                          <SearchableSelect disabled={isFinal} value={assignedId}
+                          <SearchableSelect disabled={isFinal || viewOnly} value={assignedId}
                             onChange={(e) => assignApprover(s.key, e.target.value)}
                             className="text-xs border rounded-lg px-2 py-1 max-w-[14rem] disabled:bg-gray-100">
                             <option value="">Assign manager…</option>
@@ -645,7 +656,7 @@ export default function AdminExit() {
                           {s.items.map((it, idx) => (
                             <label key={idx} className={`flex items-center gap-2 text-sm ${detail.status !== 'InClearance' ? 'text-gray-400' : ''}`}>
                               <input type="checkbox"
-                                disabled={isFinal || detail.status !== 'InClearance'}
+                                disabled={isFinal || viewOnly || detail.status !== 'InClearance'}
                                 checked={!!it.done}
                                 onChange={(e) => toggleClearanceItem(s, idx, e.target.checked)} />
                               {it.label}
@@ -664,7 +675,7 @@ export default function AdminExit() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {Object.entries(CLEARANCE_LABELS).map(([k, label]) => (
                     <label key={k} className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" disabled={isFinal}
+                      <input type="checkbox" disabled={isFinal || viewOnly}
                         checked={!!detail.clearance?.[k]}
                         onChange={(e) => updateClearance(k, e.target.checked)} />
                       {label}
@@ -691,13 +702,13 @@ export default function AdminExit() {
             {/* Footer actions */}
             <div className="flex items-center justify-between gap-2 pt-2 border-t">
               <div className="flex gap-2">
-                {!isFinal && (
+                {!isFinal && !viewOnly && (
                   <button onClick={cancelExit}
                     className="px-3 py-2 text-sm border rounded-lg text-red-600 hover:bg-red-50">
                     Cancel Exit
                   </button>
                 )}
-                {detail.status === 'Completed' && (
+                {detail.status === 'Completed' && !viewOnly && (
                   <button onClick={resendEmail}
                     title="Preview, edit and (re)send the feedback email"
                     className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
@@ -722,7 +733,7 @@ export default function AdminExit() {
                 </p>
               )}
               <div className="flex gap-2">
-                {!isFinal && (
+                {!isFinal && !viewOnly && (
                   <>
                     <button onClick={saveDetail} disabled={savingDetail}
                       className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
