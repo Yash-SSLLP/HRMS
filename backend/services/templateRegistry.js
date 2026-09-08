@@ -78,16 +78,33 @@ Warm regards,
     'Appointment letter',
     'Recruitment',
     'The body of the appointment letter PDF issued once a candidate joins.',
-    `We are pleased to appoint you as {{position}}{{departmentClause}} at {{companyName}} with effect from {{joiningDate}}.
+`We are pleased to appoint you as {{position}}{{departmentClause}} at {{companyName}} on the following terms and conditions, with effect from {{joiningDate}}.
 
-- Remuneration: Your total remuneration will be {{salaryAnnual}} per annum, payable monthly, subject to statutory deductions.
-- Probation: You will be on probation for {{probationMonths}} months from the date of joining.
-- Notice period: Either party may terminate this employment by giving {{noticePeriodDays}} days' written notice.
-- Confidentiality: You shall not disclose any confidential information of the company during or after your employment.
+- Posting: Your initial posting will be at {{location}}. Your employee code is {{employeeCode}}.
+- Remuneration: Your remuneration structure may be modified or revised by the Management at its sole discretion without adversely affecting your total emoluments. Any tax liability arising out of your gross emoluments will be borne by you. The detailed break-up is set out in the Salary Annexure attached to this letter.
+- Transfer: Your services are liable, at the sole discretion of the Management, to be transferred to any other office, department or location of the company, or to any subsidiary or associate company. In such an event your employment will be governed by the service conditions of the establishment to which your services are transferred.
+- Probation: You will be on probation for {{probationMonths}} months from your date of joining. Your probation continues until a letter of confirmation is issued to you following an evaluation by your reporting manager and HR.
+- Conduct and discipline: In matters of conduct, discipline and all other aspects of your employment you will be governed by the rules and regulations of the company in force from time to time.
+- Duties: You will discharge your duties efficiently and diligently to the best of your ability, devote your whole time and attention to the interests of the company, and comply with all lawful orders and directions given to you by your superiors or other authorised officers of the company.
+- Confidentiality: You will not use or disclose any classified or confidential information of the company to any person or institution, except under legal obligation, without the express written permission of the company.
+- Company property: You are responsible for the safe keeping and return, in good condition, of all company property entrusted to you. Where you fail to account for any such property, the company may recover its value from any amounts due to you, without prejudice to any other action it considers appropriate.
+- Business principles: You confirm having received a copy of the company's statement of business principles, and that you will at all times use your best endeavours to enable {{companyName}} to conduct its activities in accordance with the ethical principles set out in it.
+- Public statements: You will not make any public statement in any form, including on social media, regarding the business or interests of {{companyName}} without the prior written consent of the CEO or Managing Director.
+- Personal particulars: You will keep the company informed, without fail, of any change in your personal particulars, including address, contact details and civil status.
+- Representation: You are expected to maintain exemplary conduct and a character befitting the image of the company, both within and outside the organisation.
+- Gratification: You will not accept any commission or gratification, in cash or kind, from any person, firm, institution or organisation having dealings with the company, and will immediately report any such offer to the Management in writing.
+- Declaration: You declare that no police complaint or criminal case has been filed against you, and that no criminal prosecution has been initiated against you at any time prior to joining {{companyName}}. Should any such complaint or prosecution arise after you join, it is your responsibility to inform your reporting manager and HR{{hrEmailClause}}.
+- Breach: If in the opinion of the Management you are found guilty of a breach of any of the above, or of insubordination, gross negligence of duty, dishonesty, placing personal considerations above the interests of the company in any business dealing, or involvement in any unlawful act, the Management may relieve you of your services forthwith. For all matters not expressly covered by this letter, you will be governed by the rules and regulations of the company as they stand from time to time.
+- Intellectual property: (a) You acknowledge that all proprietary works and rights created by you in carrying out your duties are assigned to the company, both present and future. (b) You undertake to do anything reasonably required to give effect to that assignment and to assist the company in any action relating to a possible infringement. (c) Where any moral right arises in respect of such work, you waive it as against the company and its employees, and will exercise it against a third party only as the company directs.
+- Business secrets: All business secrets are the sole property of the company, both during your employment and after it ends, regardless of the reason for its ending. You will keep them confidential, will not reproduce, copy or disclose them, and will not furnish any information concerning them to any other party.
+- Notice of termination: Either party may end this employment by giving {{noticePeriodDays}} days' written notice from the date of acceptance of the resignation. It is the Management's decision whether to allow a shorter notice period; where one is allowed, the balance is to be compensated at basic salary. In the case of misconduct, fraud or any illegal act, your employment may be terminated with immediate effect without notice or compensation. Any dispute arising out of the above is subject to the jurisdiction of the courts at {{companyCity}}.
 
-**We welcome you to {{companyName}} and look forward to a long and rewarding association.**`,
+We enclose this letter in duplicate and request that you return one copy, signed and dated, in token of your acceptance of the terms and conditions set out above. Your detailed salary package is attached as the Salary Annexure and should also be signed in token of acceptance.
+
+**We welcome you to {{companyName}} and look forward to a mutually beneficial association.**`,
     ['candidateName', 'position', 'department', 'departmentClause', 'companyName', 'salaryMonthly',
-      'salaryAnnual', 'probationMonths', 'noticePeriodDays', 'joiningDate']
+      'salaryAnnual', 'probationMonths', 'noticePeriodDays', 'joiningDate',
+      'employeeCode', 'location', 'hrEmailClause', 'companyCity']
   ),
 
   mail(

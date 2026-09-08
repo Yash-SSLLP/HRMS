@@ -43,6 +43,11 @@ const PERMISSIONS = [
   // Time & attendance
   { key: 'attendance.manage', label: 'Attendance, shifts, regularization', group: 'Time & Attendance' },
   { key: 'leave.manage', label: 'Leave (override), comp-off, holidays', group: 'Time & Attendance' },
+  // Who signs off whose leave (Leave → Approval hierarchy). Its own key rather
+  // than part of leave.manage: overriding one request is a day's decision, and
+  // rewiring who approves an employee's leave from now on is a standing one.
+  // Granted per account — an HR Manager does NOT get it by being HR.
+  { key: 'leaveHierarchy.manage', label: 'Leave approval hierarchy (who approves whose leave)', group: 'Time & Attendance' },
 
   // Payroll & finance
   { key: 'payroll.manage', label: 'Payroll & salary structures', group: 'Payroll & Finance' },

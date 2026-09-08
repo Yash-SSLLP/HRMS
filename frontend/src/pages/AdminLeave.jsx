@@ -4,7 +4,7 @@
  *    approve/reject override (PATCH /leave/requests/:id/approve|reject).
  *  - Balances: per-employee yearly balances (GET /leave/balances,
  *    GET /employees) editable via PUT /leave/balances/:employeeId/:year.
- *  - Approval hierarchy (SuperAdmin only): per-employee 1–4 step approval
+ *  - Approval hierarchy (needs `leaveHierarchy.manage`): per-employee 1–4 step approval
  *    ladder + which HR is told once leave is fully approved, both written to
  *    EmployeeProfile via PUT /employees/:id.
  * An employee with no configured ladder keeps the original behaviour: the
@@ -18,6 +18,7 @@ import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { hasLeft } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
+import { hasExplicitPermission } from '../config/permissions';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 
@@ -405,8 +406,12 @@ function BalancesTab() {
 // ============ Approval hierarchy tab ============
 /*
  * Who signs off each employee's LEAVE, in order: 1 step minimum, 4 maximum.
- * SuperAdmin-only (the server strips `leaveApprovers` /
- * `leaveFinalHrRecipients` for every other role).
+ * Needs the `leaveHierarchy.manage` grant, which a Super Admin ticks per
+ * account (the server strips `leaveApprovers` / `leaveFinalHrRecipients` for
+ * anyone without it — see canSetLeaveChain). A granted HR Manager still only
+ * sees their own company's employees here, and never their own row: both walls
+ * are the ordinary per-record ones on PUT /employees/:id, not something this
+ * screen enforces.
  *
  * Leaving an employee unconfigured is legal and keeps the original behaviour:
  * the chain is derived by walking their reportingManager up to the first CEO/MD.
@@ -434,7 +439,8 @@ const HR_ROLES = ['HRManager', 'SuperAdmin'];
 
 function ApprovalHierarchyTab() {
   const me = useAuthStore((s) => s.user);
-  const isSuperAdmin = me?.role === 'SuperAdmin';
+  // Same grant as canSetup further down — see the note there.
+  const canEdit = hasExplicitPermission(me, 'leaveHierarchy.manage');
 
   const [profiles, setProfiles] = useState([]);
   const [users, setUsers] = useState([]);
@@ -626,9 +632,9 @@ function ApprovalHierarchyTab() {
           <input type="checkbox" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} />
           Only employees with no hierarchy ({unsetCount})
         </label>
-        {!isSuperAdmin && (
+        {!canEdit && (
           <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-            Read-only — only a Super Admin can change these.
+            Read-only — needs the “Leave approval hierarchy” permission.
           </span>
         )}
       </div>
@@ -668,7 +674,7 @@ function ApprovalHierarchyTab() {
                   <td className="px-4 py-3 align-top text-gray-600">{p.department || '-'}</td>
 
                   <td className="px-4 py-3 align-top min-w-[19rem]">
-                    {!isSuperAdmin ? (
+                    {!canEdit ? (
                       <span className="text-gray-700">
                         {chain.length
                           ? chain.map((id, i) => `${i + 1}. ${nameOf(userById.get(String(id))) || '—'}`).join('  ·  ')
@@ -725,7 +731,7 @@ function ApprovalHierarchyTab() {
                   </td>
 
                   <td className="px-4 py-3 align-top min-w-[15rem]">
-                    {!isSuperAdmin ? (
+                    {!canEdit ? (
                       <span className="text-gray-700">
                         {hr.length ? hr.map((id) => nameOf(userById.get(String(id))) || '—').join(', ') : 'All HR'}
                       </span>
@@ -763,7 +769,10 @@ export default function AdminLeave() {
   // Configuring who approves leave is a SuperAdmin control, so the tab is hidden
   // (not merely read-only) for everyone else — same treatment the regularization
   // "Approval setup" tab gets.
-  const canSetup = me?.role === 'SuperAdmin';
+  // Behind its own grant, ticked per account by a Super Admin — an HR Manager
+  // does NOT get it by being HR. Mirrors canSetLeaveChain in the backend's
+  // employeeController, which is what actually decides.
+  const canSetup = hasExplicitPermission(me, 'leaveHierarchy.manage');
 
   const tabs = [
     { id: 'requests', label: 'Requests' },

@@ -287,9 +287,9 @@ const canSetHierarchy = (req) => hasExplicitPermission(req.user, 'hierarchy.mana
  * departed account.
  *
  * NOT the same question as canSetHierarchy, which still guards the
- * `regularizationApprovers` ladder: an approver decides whether somebody's
- * attendance correction is accepted, which is a control, not an assignment.
- * The leave ladder stays Backend-only from its own screen, as before.
+ * `regularizationApprovers` ladder: an approver there decides whether somebody's
+ * attendance correction is accepted, which is a control, not an assignment. The
+ * LEAVE ladder has its own grant for the same reason — see canSetLeaveChain.
  *
  * Everything else that made this safe is untouched: the company wall (an HR
  * cannot move somebody into a company they cannot see), the rule that an HR
@@ -299,6 +299,24 @@ const canSetHierarchy = (req) => hasExplicitPermission(req.user, 'hierarchy.mana
  * @returns {boolean}
  */
 const canAssignPeople = (req) => canSetHierarchy(req) || req.user.role === 'HRManager';
+
+/**
+ * May this account set WHO APPROVES an employee's leave — the `leaveApprovers`
+ * ladder and the HR told once it is fully approved?
+ *
+ * Its own grant, `leaveHierarchy.manage`, ticked per account by a Super Admin.
+ * Deliberately NOT canAssignPeople: an HR Manager arranges reporting lines and HR
+ * partners as ordinary work, but rewiring an approval ladder decides whose yes
+ * counts on a request — and pointing one at a friendly colleague is the thing a
+ * per-account grant exists to make somebody's deliberate decision.
+ *
+ * hasExplicitPermission, so an HR Manager with no permissions array does not get
+ * it swept in by the "unconfigured HR can do everything" default; the Backend
+ * and an exec in edit mode still pass.
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+const canSetLeaveChain = (req) => hasExplicitPermission(req.user, 'leaveHierarchy.manage');
 
 /**
  * May this account set a relationship field that is currently EMPTY?
@@ -888,10 +906,10 @@ const createEmployee = asyncHandler(async (req, res) => {
   if (!canSetHierarchy(req)) {
     delete req.body.regularizationApprovers;
   }
-  if (req.user.role !== 'SuperAdmin') {
-    // The leave ladder and who is told once leave is fully approved stay with
-    // the Backend account whatever else has been granted — they are set from
-    // their own screen, not from this form.
+  if (!canSetLeaveChain(req)) {
+    // Who signs off an employee's leave, and which HR is told once it is fully
+    // approved. Behind its own grant — see canSetLeaveChain. Set from the
+    // Leave → Approval hierarchy screen, which writes through this route.
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;
   }
@@ -1010,7 +1028,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
       : 'Changing a reporting manager that is already set needs an HR Manager or a Super Admin.');
   }
   if (!canSetHierarchy(req)) delete req.body.regularizationApprovers;
-  if (req.user.role !== 'SuperAdmin') {
+  if (!canSetLeaveChain(req)) {
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;
   }

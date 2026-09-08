@@ -145,6 +145,176 @@ function ensureRoom(doc, needed) {
   return doc.y;
 }
 
+
+// Flat monthly professional tax. Mirrors PROFESSIONAL_TAX in the payroll
+// controller — Karnataka's Rs.200 a month — so the figure a candidate is shown
+// in their appointment letter is the one payroll will actually deduct.
+const PT_MONTHLY = 200;
+
+/**
+ * The Salary Annexure that follows the appointment letter.
+ *
+ * Replaces an earnings-only table that listed components against a single
+ * "per annum" column. It could not answer the two questions somebody actually
+ * opens it for — what comes OFF the salary, and what lands in the bank each
+ * month — so both are now columns of their own and the deductions have their
+ * own section.
+ *
+ * The shape is A / B / C, which is what makes it add up:
+ *   A  Gross Total Earnings      the salary components
+ *   B  Total Deductions          what comes off it
+ *   A-B  Net Salary              what is actually paid
+ *   C  Total Benefits            paid FOR the employee, not TO them
+ *   A+C  Total Cost to Company   which is the CTC
+ *
+ * Note C is added, not subtracted: gratuity and accident cover are a cost the
+ * company carries on top of the salary, so they belong in the CTC and never in
+ * the net. Putting them in the deductions column would understate take-home pay
+ * by the one number a new joiner checks hardest.
+ *
+ * PROVIDENT FUND AND ESI ARE PRINTED AT ZERO rather than left out. The company
+ * runs neither today (see EPF_ENABLED / ESIC_ENABLED in payrollController), and
+ * a missing row reads as an oversight where an explicit nil reads as a decision
+ * — with a footnote saying so, and saying it would change if the schemes start.
+ *
+ * @param {PDFDocument} doc
+ * @param {Object} F - fonts from setupFonts
+ * @param {Object} brand - logo + signatures from services/branding
+ * @param {Object} data - the appointment letter's data block
+ */
+function drawSalaryAnnexure(doc, F, brand, data) {
+  // The rupee mark is font-dependent — F.rupee is the glyph the loaded face can
+  // actually draw, and a module-level constant would render as a box in the
+  // faces that lack it. Same source every other renderer in this file uses.
+  const R = F.rupee;
+  doc.addPage({ size: 'A4', margin: 0 });
+  let y = drawLetterhead(doc, F, brand);
+
+  para(doc, F, 'SALARY ANNEXURE', { bold: true, align: 'center', y, gap: 1.4 });
+  y = doc.y + 6;
+
+  // ----- who it is for -----
+  const info = [
+    ['Employee Name', `${data.candidateName || '-'}${data.employeeCode ? ` - ${data.employeeCode}` : ''}`],
+    ['Designation', data.designation || '-'],
+    ['Location', data.location || '-'],
+  ];
+  const infoLabelW = 165;
+  const infoH = 21;
+  info.forEach(([k, v]) => {
+    doc.rect(X0, y, infoLabelW, infoH).strokeColor('#b9c2cc').lineWidth(0.7).stroke();
+    doc.rect(X0 + infoLabelW, y, CW - infoLabelW, infoH).strokeColor('#b9c2cc').lineWidth(0.7).stroke();
+    doc.font(F.regular).fontSize(9.5).fillColor(INK)
+      .text(k, X0 + 8, y + 6, { width: infoLabelW - 16, lineBreak: false });
+    doc.font(F.bold).fontSize(9.5)
+      .text(v, X0 + infoLabelW + 8, y + 6, { width: CW - infoLabelW - 16, lineBreak: false });
+    y += infoH;
+  });
+  y += 18;
+
+  // ----- the figures -----
+  const num = (v) => Math.round(Number(v || 0));
+  const perMonth = (annualV) => Math.round(Number(annualV || 0) / 12);
+
+  // Only components that were actually filled in are listed: an appointment with
+  // everything in Basic should print one earnings line, not five with four
+  // zeroes under it.
+  const earnings = [
+    ['Basic Salary', data.basic],
+    ['House Rent Allowance (HRA)', data.hra],
+    ['Special Allowance', data.specialAllowance],
+    ['Conveyance Allowance', data.conveyance],
+    ['Other Allowances', data.otherAllowances],
+    ['Employer PF Contribution', data.employerPf],
+  ].filter(([, v]) => num(v) > 0);
+  const grossA = earnings.reduce((s, [, v]) => s + num(v), 0);
+
+  // Professional tax is the one deduction the company DOES run, and it is a flat
+  // monthly figure rather than a share of anything — so it is derived here
+  // instead of being asked for on the form, where it could only be typed wrong.
+  const professionalTax = PT_MONTHLY * 12;
+  const deductions = [
+    ['Provident Fund (EPF)', 0],
+    ['ESI', 0],
+    ['Professional Tax', professionalTax],
+    ['Group Medical Coverage', num(data.medical)],
+  ];
+  const dedB = deductions.reduce((s, [, v]) => s + num(v), 0);
+
+  const benefits = [
+    ['Gratuity', num(data.gratuity)],
+    ['Fixed Group Accident Insurance', num(data.accidentInsurance)],
+  ];
+  const benC = benefits.reduce((s, [, v]) => s + num(v), 0);
+
+  const colM = 122;
+  const colA = 122;
+  const labelW = CW - colM - colA;
+  const rowH = 20;
+  const tableTop = y;
+
+  const rule = (yy) => doc.moveTo(X0, yy).lineTo(X0 + CW, yy).strokeColor('#c9d0d8').lineWidth(0.5).stroke();
+  const row = (label, annualV, { bold = false } = {}) => {
+    if (bold) doc.rect(X0, y, CW, rowH).fill('#f1f4f8');
+    doc.font(bold ? F.bold : F.regular).fontSize(9.5).fillColor(INK);
+    doc.text(label, X0 + 9, y + 5.5, { width: labelW - 14, lineBreak: false });
+    doc.text(formatINR(perMonth(annualV)), X0 + labelW, y + 5.5, { width: colM - 9, align: 'right', lineBreak: false });
+    doc.text(formatINR(num(annualV)), X0 + labelW + colM, y + 5.5, { width: colA - 9, align: 'right', lineBreak: false });
+    y += rowH;
+    rule(y);
+  };
+
+  doc.rect(X0, y, CW, rowH + 2).fill('#dfe7f0');
+  doc.font(F.bold).fontSize(9.5).fillColor(ACCENT);
+  doc.text('Components', X0 + 9, y + 6.5, { width: labelW - 14, lineBreak: false });
+  doc.text(`Monthly (${R})`, X0 + labelW, y + 6.5, { width: colM - 9, align: 'right', lineBreak: false });
+  doc.text(`Annually (${R})`, X0 + labelW + colM, y + 6.5, { width: colA - 9, align: 'right', lineBreak: false });
+  y += rowH + 2;
+  rule(y);
+
+  earnings.forEach(([l, v]) => row(l, v));
+  row('Gross Total Earnings (A)', grossA, { bold: true });
+  deductions.forEach(([l, v]) => row(l, v));
+  row('Total Deductions (B)', dedB, { bold: true });
+  row('Net Salary (A-B)', grossA - dedB, { bold: true });
+  benefits.forEach(([l, v]) => row(l, v));
+  row('Total Benefits (C)', benC, { bold: true });
+  row('Total Cost to Company (A+C)', grossA + benC, { bold: true });
+
+  // One border round the whole table, drawn last so no fill sits on top of it.
+  doc.rect(X0, tableTop, CW, y - tableTop).strokeColor('#9aa5b1').lineWidth(0.9).stroke();
+  // The two column separators, for the same reason.
+  doc.moveTo(X0 + labelW, tableTop).lineTo(X0 + labelW, y).strokeColor('#c9d0d8').lineWidth(0.5).stroke();
+  doc.moveTo(X0 + labelW + colM, tableTop).lineTo(X0 + labelW + colM, y).strokeColor('#c9d0d8').lineWidth(0.5).stroke();
+
+  y += 14;
+  doc.font(F.regular).fontSize(8).fillColor(MUTED).text(
+    'Provident Fund and ESI are shown as nil because the company does not currently operate those schemes; '
+    + 'they will apply, and this annexure be revised, if that changes. Professional tax is deducted at '
+    + `${R}${PT_MONTHLY} per month as per prevailing law. Benefits (C) are a cost the company carries on your `
+    + 'behalf and are part of your CTC, not a deduction from your salary. '
+    + 'This annexure forms part of your letter of appointment.',
+    X0, y, { width: CW, lineGap: 1.5 }
+  );
+  y = doc.y + 26;
+
+  // ----- signing -----
+  doc.font(F.bold).fontSize(9.5).fillColor(INK).text(COMPANY.name.toUpperCase(), X0, y, { lineBreak: false });
+  const sig = brand.signatures && (brand.signatures.hr || brand.signatures.ceo);
+  if (sig && sig.image) {
+    try { doc.image(sig.image, X0, y + 12, { fit: [118, 50] }); } catch { /* a missing signature must not lose the page */ }
+  }
+  doc.font(F.bold).fontSize(9.5).fillColor(INK).text('Authorised Signatory', X0, y + 70, { lineBreak: false });
+
+  const rx = X0 + CW - 210;
+  doc.font(F.bold).fontSize(9.5).text('Accepted by,', rx, y + 12, { width: 210, lineBreak: false });
+  doc.font(F.regular).fontSize(9.5).text(
+    `${data.employeeCode ? `${data.employeeCode} - ` : ''}${data.candidateName || ''}`,
+    rx, y + 32, { width: 210, lineBreak: false }
+  );
+  doc.font(F.bold).fontSize(9).text('(Signature & Date)', rx, y + 70, { width: 210, lineBreak: false });
+}
+
 function para(doc, F, text, opts = {}) {
   const s = S(F);
   doc.font(opts.bold ? F.bold : F.regular).fontSize((opts.size || 10.5) * s).fillColor(opts.color || INK);
@@ -166,7 +336,7 @@ function para(doc, F, text, opts = {}) {
  * and a fixed-height image would have made the block un-shrinkable and pushed
  * the letter to two pages no matter how far the loop dialled down.
  */
-function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, brand = {}) {
+function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, brand = {}, acceptance = {}) {
   const s = S(F);
   const sigs = brand.signatures || {};
 
@@ -181,7 +351,15 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
   // acceptance stub alone on the next reads as a printing error. Reserve the
   // whole thing up front (greeting + columns +, when present, the stub) and
   // break the page once, here, if it will not fit.
-  const needed = (columns.length ? 156 : 110) * s + (withAcceptance ? 78 * s : 0);
+  // The declaration is a paragraph plus two signing lines plus the name/code
+  // stub, so it needs noticeably more room than the one-liner it replaced —
+  // under-reserving would split the thing signatureBlock exists to keep whole.
+  // The full declaration is a paragraph plus two signing lines plus the
+  // name/code stub, so it needs far more room than the one-liner — reserving the
+  // smaller figure for it would split the thing this function exists to keep
+  // whole. The offer's short form still reserves what it always did.
+  const acceptanceH = withAcceptance ? (acceptance.full ? 190 : 78) * s : 0;
+  const needed = (columns.length ? 156 : 110) * s + acceptanceH;
   ensureRoom(doc, needed);
 
   doc.moveDown(1 * s);
@@ -228,11 +406,63 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
   }
 
   if (withAcceptance) {
-    doc.moveDown(1.2 * s);
+    drawAcceptance(doc, F, acceptance);
+  }
+}
+
+/**
+ * The signed declaration that closes an appointment letter.
+ *
+ * A one-line "I confirm that I have accepted the above" is enough for an offer,
+ * where the candidate is agreeing to a proposal. An appointment letter is the
+ * employment contract, and the countersigned copy is what the company keeps —
+ * so it carries the declaration the employee is actually signing: that they
+ * accept the terms, that they understand the CTC and take-home in the annexure,
+ * and that the particulars they supplied are true and may be verified.
+ *
+ * The name and employee code are repeated beneath the signature because this
+ * sheet is detached and filed on its own; without them a signed page identifies
+ * nobody.
+ *
+ * @param {PDFDocument} doc
+ * @param {Object} F - fonts
+ * @param {{employeeName?: string, employeeCode?: string}} [who]
+ */
+function drawAcceptance(doc, F, who = {}) {
+  const s = S(F);
+  doc.moveDown(1.2 * s);
+
+  // An OFFER is a proposal — "yes, I accept" is the whole of what is being
+  // agreed, and the long declaration below would be claiming things the
+  // candidate has not been asked yet. Only the appointment letter, which is the
+  // employment contract, carries it.
+  if (!who.full) {
     para(doc, F, 'I confirm that I have accepted the above.', { gap: 1.0 });
     doc.font(F.regular).fontSize(10.5 * s).fillColor(INK);
     doc.text('Signature: ____________________', X0, doc.y);
     doc.text('Date: ____________________', X0, doc.y + 6 * s);
+    return;
+  }
+
+  para(doc, F, 'I have read the letter of appointment and agree to the terms set out in it.', { bold: true, gap: 0.5 });
+  para(doc, F,
+    'I accept the terms mentioned in this appointment letter and I understand my CTC and my '
+    + 'take-home pay as set out in the Salary Annexure. I declare that the information given by me '
+    + 'in my application, resume and accompanying certificates is correct and complete to the best '
+    + 'of my knowledge and belief. I authorise the company and its representatives to verify that '
+    + 'information and to make such enquiries as the company considers fit. Should the company find '
+    + 'any of it to be false or misleading after I join, I accept the company\'s decision to withdraw '
+    + 'the employment offered to me, and the company will not be liable to pay me any remuneration.',
+    { size: 9.5, gap: 1.0 });
+
+  doc.font(F.regular).fontSize(10.5 * s).fillColor(INK);
+  doc.text('Acceptance Signature: ______________________________', X0, doc.y);
+  doc.text('Date: ____________________', X0, doc.y + 6 * s);
+  if (who.employeeCode || who.employeeName) {
+    doc.moveDown(0.8 * s);
+    doc.font(F.regular).fontSize(9.5 * s).fillColor(MUTED);
+    if (who.employeeCode) doc.text(`Employee Code: ${who.employeeCode}`, X0, doc.y);
+    if (who.employeeName) doc.text(`Employee Name: ${who.employeeName}`, X0, doc.y + 3 * s);
   }
 }
 
@@ -513,6 +743,19 @@ async function resolveLetterBody(kind, data = {}) {
       // previewed from either side.
       employeeName: data.employeeName || data.candidateName,
       employeeCode: data.employeeCode,
+      // The appointment letter names where somebody is posted; the relieving
+      // letter has no such notion, so it is simply absent there.
+      location: data.location,
+      // Quoted by the appointment letter's reporting and jurisdiction clauses,
+      // from config/company.js so a change of address or mailbox does not need
+      // every template edited by hand.
+      //
+      // The mailbox is a CLAUSE, not a bare address: ORG_EMAIL is optional and
+      // often unset, and an empty variable would print the literal
+      // "{{companyEmail}}" into a signed letter. Supplied as '' it disappears
+      // instead, leaving a sentence that still reads correctly.
+      hrEmailClause: COMPANY.email ? ` at ${COMPANY.email}` : '',
+      companyCity: COMPANY.city,
       employeeCodeClause: data.employeeCode ? ` (Employee Code: ${data.employeeCode})` : '',
       designation: data.designation || data.position,
       lastWorkingDay: longDate(data.lastWorkingDay),
@@ -552,66 +795,18 @@ function renderAppointmentOnce(data, scale) {
 
     drawBlocks(doc, F, bodyOrDefault(data, appointmentBody(data, R)));
 
-    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true, brand);
+    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true, brand, {
+      full: true,
+      employeeName: data.candidateName,
+      employeeCode: data.employeeCode,
+    });
 
     // Everything above is the letter proper; the annexure below is always a
     // separate sheet, so freeze the count here for the fit loop.
     letterPages = pages;
 
-    // ---------- Annexure A: CTC breakup (new page) ----------
-    doc.addPage({ size: 'A4', margin: 0 });
-    let ay = drawLetterhead(doc, F, brand);
-    para(doc, F, 'Annexure A - Compensation Structure (CTC Breakup)', { bold: true, align: 'center', y: ay, gap: 1 });
-    para(doc, F, `Employee: ${data.candidateName || '-'}    |    Designation: ${data.designation || '-'}`, { color: MUTED, size: 9.5, gap: 1 });
-
-    const rows = [
-      ['Basic Pay', data.basic],
-      ['House Rent Allowance (HRA)', data.hra],
-      ['Special Allowance', data.specialAllowance],
-      ['Conveyance Allowance', data.conveyance],
-      ['Other Allowances', data.otherAllowances],
-      ['Employer PF Contribution', data.employerPf],
-      ['Gratuity', data.gratuity],
-    ].filter(([, v]) => v != null && v !== '' && Number(v) > 0);
-
-    const computedTotal = rows.reduce((s, [, v]) => s + Number(v || 0), 0);
-    const annualCtc = Number(data.ctcAnnual) || computedTotal;
-
-    // Table.
-    const tX = X0;
-    const tW = CW;
-    const valW = 150;
-    const labelW = tW - valW;
-    const rowH = 24;
-    let ty = doc.y + 4;
-
-    // Header
-    doc.rect(tX, ty, tW, rowH).fill(ACCENT);
-    doc.font(F.bold).fontSize(10).fillColor('#ffffff');
-    doc.text('Component', tX + 10, ty + 7, { width: labelW - 20, lineBreak: false });
-    doc.text('Amount (per annum)', tX + labelW, ty + 7, { width: valW - 10, align: 'right', lineBreak: false });
-    ty += rowH;
-
-    doc.font(F.regular).fontSize(10).fillColor(INK);
-    rows.forEach(([label, v], i) => {
-      if (i % 2 === 1) { doc.rect(tX, ty, tW, rowH).fill('#f3f5f8'); }
-      doc.fillColor(INK).font(F.regular).fontSize(10);
-      doc.text(label, tX + 10, ty + 7, { width: labelW - 20, lineBreak: false });
-      doc.text(`${R}${formatINR(v)}`, tX + labelW, ty + 7, { width: valW - 10, align: 'right', lineBreak: false });
-      doc.moveTo(tX, ty + rowH).lineTo(tX + tW, ty + rowH).strokeColor('#e3e6ea').lineWidth(0.5).stroke();
-      ty += rowH;
-    });
-
-    // Total CTC band
-    doc.rect(tX, ty, tW, rowH + 2).fill('#dfe7f0');
-    doc.font(F.bold).fontSize(10.5).fillColor(ACCENT);
-    doc.text('Total Cost to Company (CTC)', tX + 10, ty + 8, { width: labelW - 20, lineBreak: false });
-    doc.text(`${R}${formatINR(annualCtc)}`, tX + labelW, ty + 8, { width: valW - 10, align: 'right', lineBreak: false });
-    ty += rowH + 2;
-
-    doc.font(F.regular).fontSize(8.5).fillColor(MUTED)
-      .text('All figures are annual and in INR. Statutory deductions apply as per prevailing law. ' +
-        'This annexure forms part of your letter of appointment.', X0, ty + 14, { width: CW, lineGap: 1.5 });
+    // ---------- Salary Annexure (new page) ----------
+    drawSalaryAnnexure(doc, F, brand, data);
 
     doc.end();
   });
@@ -626,15 +821,18 @@ function renderAppointmentOnce(data, scale) {
  * annexure is excluded from the count because it is meant to be a separate sheet.
  */
 async function renderAppointmentLetter(data = {}) {
-  let lastBuffer = null;
-  for (const scale of OFFER_FIT_STEPS) {
-    const { buffer, letterPages } = await renderAppointmentOnce(data, scale);
-    if (letterPages === 1) return buffer;
-    lastBuffer = buffer;
-  }
-  // A genuinely long body (HR pasted several extra clauses) legitimately runs to
-  // a second sheet — ship it rather than shrinking past readability.
-  return lastBuffer;
+  // NO FIT LOOP. The offer letter shrinks itself to land on a single sheet
+  // because it is a one-page document by nature. The appointment letter is the
+  // employment contract — eighteen numbered clauses, a closing and a signed
+  // declaration — and it is MEANT to run to several pages, exactly as the
+  // sample it was drawn from does.
+  //
+  // Squeezing that onto one sheet is not a smaller letter, it is an unreadable
+  // one: the loop would try every scale, fail at each, and ship the SMALLEST —
+  // the worst outcome of the seven. Rendered once, at full size, and allowed to
+  // flow.
+  const { buffer } = await renderAppointmentOnce(data, 1);
+  return buffer;
 }
 
 // One pass at a given compression — same shape as renderOfferOnce.

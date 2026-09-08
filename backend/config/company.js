@@ -14,6 +14,10 @@ const COMPANY = {
       'Bangalore, Karnataka - 560079',
     ],
   phone: process.env.ORG_PHONE || '+91 96069 98652',
+  // Named by the appointment letter's jurisdiction clause. Its own field rather
+  // than parsed out of addressLines, which is free-form and formatted for a
+  // letterhead, not for reading a city out of.
+  city: process.env.ORG_CITY || 'Bangalore',
   email: process.env.ORG_EMAIL || '',
   gstin: process.env.ORG_GSTIN || '29AELFS7558A1ZM',
   // Defaults for the letter signatory block (overridable per-letter from the form).

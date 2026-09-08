@@ -55,6 +55,33 @@ const { startOfDayIST: startOfDay, monthRangeIST: monthRange, ymdIST: ymdLocal }
 // and calendar screens, which show it as a plan rather than as attendance.
 // Returns the exclusive upper bound to query with: the earlier of the requested
 // range end and the end of today (IST).
+/**
+ * Narrow a month's range to ONE day of it, when `day` names a real day.
+ *
+ * Built from the month's own start rather than parsed from a date string, so it
+ * inherits the +05:30 anchoring monthRangeIST already does — a day boundary got
+ * from `new Date('2026-09-08')` is UTC midnight, which is 5:30 AM IST and would
+ * put the early-morning punches of the 8th into the 7th.
+ *
+ * A day outside the month (31 in September, or a stray 0) is IGNORED rather than
+ * clamped: silently showing the 30th to somebody who asked for the 31st is a
+ * worse answer than showing the whole month they also asked for.
+ *
+ * @param {{start: Date, end: Date}} month - from monthRangeIST
+ * @param {*} day - 1-31, or anything else for "the whole month"
+ * @returns {{start: Date, end: Date}}
+ */
+function dayRangeWithin(month, day) {
+  const d = Number(day);
+  if (!Number.isInteger(d) || d < 1) return month;
+  const start = new Date(month.start);
+  start.setDate(d);
+  if (start >= month.end) return month; // e.g. the 31st of a 30-day month
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
 function capToToday(end) {
   const tomorrow = startOfDay(new Date());
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1294,9 +1321,12 @@ const listMine = asyncHandler(async (req, res) => {
 // ===== HR/Admin =====
 
 /**
- * List attendance records for a month (optionally one employee) with punch distances.
- * @route GET /api/attendance?year=&month=&employee=  (HR/Admin)
+ * List attendance records for a month — or one day of it — optionally for one
+ * employee, with punch distances.
+ * @route GET /api/attendance?year=&month=&day=&employee=  (HR/Admin)
  * @param {number} [req.query.year] / [req.query.month]
+ * @param {number} [req.query.day] - 1-31; narrows to that day of the month.
+ *   Ignored when it is not a day of the month asked for.
  * @param {string} [req.query.employee] - EmployeeProfile id
  * @returns {{year, month, count, records, settings}}
  */
@@ -1305,7 +1335,9 @@ const listAll = asyncHandler(async (req, res) => {
   const now = new Date();
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
-  const { start, end } = monthRange(year, month);
+  // ?day= narrows the month to one date. Absent (or not a day of this month) it
+  // is the whole month, which is what every existing caller gets.
+  const { start, end } = dayRangeWithin(monthRange(year, month), req.query.day);
 
   const filter = { date: { $gte: start, $lt: capToToday(end) } };
   if (req.query.employee) filter.employee = req.query.employee;

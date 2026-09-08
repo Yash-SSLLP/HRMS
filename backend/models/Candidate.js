@@ -184,6 +184,12 @@ const candidateSchema = new mongoose.Schema(
       token: { type: String, index: true },
       emailedAt: { type: Date },
       data: {
+        // The code the letter is issued against. Typed here rather than read
+        // from an EmployeeProfile because the profile does not exist yet — the
+        // appointment letter is what precedes joining, and HR allots the code as
+        // part of issuing it. It is stamped on the letter, on the acceptance
+        // stub and on the salary annexure, so all three quote the same thing.
+        employeeCode: String,
         designation: String,
         department: String,
         reportingManager: String,
@@ -200,6 +206,12 @@ const candidateSchema = new mongoose.Schema(
         employerPf: Number,
         gratuity: Number,
         otherAllowances: Number,
+        // Annexure A figures that are neither an earning nor a percentage of the
+        // CTC: a fixed rupee amount each. Medical is DEDUCTED from the salary,
+        // accident cover is a benefit ON TOP of it — which is why they sit in
+        // different sections of the annexure despite being entered alike.
+        medical: Number,
+        accidentInsurance: Number,
         // See the note on offer.data.body.
         body: { type: [letterBlockSchema], default: undefined },
       },

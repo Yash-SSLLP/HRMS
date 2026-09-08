@@ -150,6 +150,8 @@ export default function AdminAttendance() {
   const [filter, setFilter] = useState({
     year: now.getFullYear(),
     month: now.getMonth() + 1,
+    // '' = the whole month, which is what this screen has always shown.
+    day: '',
     employee: '',
   });
   const [records, setRecords] = useState([]);
@@ -223,6 +225,7 @@ export default function AdminAttendance() {
       const params = new URLSearchParams();
       params.set('year', filter.year);
       params.set('month', filter.month);
+      if (filter.day) params.set('day', filter.day);
       if (filter.employee) params.set('employee', filter.employee);
       const [recRes, empRes] = await Promise.all([
         api.get(`/attendance?${params}`),
@@ -345,6 +348,18 @@ export default function AdminAttendance() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
 
+  // How many days the chosen month actually has — day 0 of the next month.
+  const daysInSelectedMonth = new Date(filter.year, filter.month, 0).getDate();
+
+  // Moving to a shorter month with a high day picked would leave the filter
+  // showing "31" while the server (rightly) ignored it and answered with the
+  // whole month — a filter that says one thing and does another. Drop it.
+  useEffect(() => {
+    if (filter.day && Number(filter.day) > daysInSelectedMonth) {
+      setFilter((f) => ({ ...f, day: '' }));
+    }
+  }, [filter.day, daysInSelectedMonth]);
+
   const openCreate = () => {
     setEditingId(null);
     setForm(blankEntry);
@@ -440,6 +455,21 @@ export default function AdminAttendance() {
           <select value={filter.month} onChange={(e) => setFilter({ ...filter, month: Number(e.target.value) })}
             className="border rounded-lg px-2 py-1">
             {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600">Day</label>
+          {/* Narrows the month already chosen rather than being a date of its
+              own: a free date box here would be a second, disagreeing answer to
+              the Year/Month above it — and there is already one on the export
+              row below, which deliberately exports a day you are not viewing. */}
+          <select value={filter.day}
+            onChange={(e) => setFilter({ ...filter, day: e.target.value })}
+            className="border rounded-lg px-2 py-1">
+            <option value="">All days</option>
+            {Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1).map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
           </select>
         </div>
         <div>

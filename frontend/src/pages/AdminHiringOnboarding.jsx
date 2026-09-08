@@ -15,8 +15,19 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import MailComposeModal from '../components/MailComposeModal';
 import DesignationSelect from '../components/DesignationSelect';
+import SearchableSelect from '../components/SearchableSelect';
+import { hasLeft } from '../utils/peopleOptions';
 import ShiftHoursSelect from '../components/ShiftHoursSelect';
 
+// Offered FIRST in the reporting-manager picker. Everyone else is still
+// reachable, but by typing a name — the useful default for an appointment letter
+// is the handful of people who actually manage somebody, not the whole company
+// in alphabetical order.
+//
+// Module scope, not inside the component: seniorPeople/otherPeople are computed
+// on every render near the top of the body, and a const declared below them
+// would put this in the temporal dead zone and throw before the page painted.
+const SENIOR_ROLES = ['CEO', 'MD', 'Manager', 'HRManager'];
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'medium' }) : '-');
 
@@ -24,6 +35,16 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString([], { dateStyle: 'med
 // as a rupee amount — the two are kept in step (see pctOf/amountFromPct below).
 // Annual CTC itself is deliberately NOT here: it is the base the percentages are
 // taken from, so it has no percentage of its own.
+// Annexure figures entered as a rupee amount, not as a share of the CTC — a
+// medical premium and an accident cover are quoted per head, and expressing them
+// as a percentage of somebody's salary would be inventing a relationship that
+// does not exist. `side` decides which section of the annexure they land in:
+// medical comes OFF the salary, accident cover is carried on top of it.
+const APPT_FIXED_FIELDS = [
+  ['medical', 'Group Medical Coverage', 'deduction'],
+  ['accidentInsurance', 'Fixed Group Accident Insurance', 'benefit'],
+];
+
 const APPT_COMPONENT_FIELDS = [
   ['basic', 'Basic Pay'],
   ['hra', 'HRA'],
@@ -73,12 +94,56 @@ export default function AdminHiringOnboarding() {
   // Edited letter wording, or null while it follows the standard template.
   const [apptBody, setApptBody] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [people, setPeople] = useState([]);
+  // Who leads the picker vs who is only reachable by typing a name.
+  const seniorPeople = people.filter((p) => SENIOR_ROLES.includes(p.role));
+  const otherPeople = people.filter((p) => !SENIOR_ROLES.includes(p.role));
 
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const { data } = await api.get('/recruitment/candidates?stage=Onboarding');
+      // Both people endpoints are gated by ROLE, not by the capability that
+      // opens this page — an account granted recruitment.candidates but not one
+      // of those roles gets a 403 from each. Caught rather than fatal, and the
+      // field falls back to a plain text box (see the picker below) so nobody is
+      // left unable to name a manager at all.
+      const [{ data }, empRes, userRes] = await Promise.all([
+        api.get('/recruitment/candidates?stage=Onboarding'),
+        api.get('/employees').catch(() => ({ data: {} })),
+        api.get('/admin/users').catch(() => ({ data: {} })),
+      ]);
       setRows(data.candidates);
+
+      // One list of nameable people, from the two sources it takes: staff come
+      // from /employees (which carries their designation and department), and
+      // CEO/MD come from /admin/users because executives deliberately have no
+      // employee profile — without them the one person a department head
+      // actually reports to would be missing.
+      const seen = new Set();
+      const staff = (empRes.data.profiles || []).filter((p) => p.user).map((p) => {
+        seen.add(String(p.user._id));
+        return {
+          id: String(p.user._id),
+          name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim(),
+          role: p.user.role,
+          sub: [p.designation, p.department].filter(Boolean).join(' · '),
+          isActive: p.user.isActive,
+          dateOfExit: p.dateOfExit,
+        };
+      });
+      const execs = (userRes.data.users || [])
+        .filter((u) => ['CEO', 'MD'].includes(u.role) && !seen.has(String(u._id)))
+        .map((u) => ({
+          id: String(u._id),
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+          role: u.role,
+          sub: u.role === 'MD' ? 'Managing Director' : 'Chief Executive Officer',
+          isActive: u.isActive,
+          departed: u.departed,
+        }));
+      setPeople([...staff, ...execs]
+        .filter((p) => p.name && !hasLeft(p))
+        .sort((a, b) => a.name.localeCompare(b.name)));
       const d = {};
       data.candidates.forEach((c) => {
         d[c._id] = {
@@ -155,7 +220,10 @@ export default function AdminHiringOnboarding() {
     setApptForm({
       designation: a.designation || o.position || c.job?.title || '',
       department: a.department || o.department || c.job?.department || '',
+      employeeCode: a.employeeCode || '',
       reportingManager: a.reportingManager || '',
+      medical: a.medical ?? '',
+      accidentInsurance: a.accidentInsurance ?? '',
       location: a.location || '',
       workingHours: a.workingHours || '',
       joiningDate: toDateInput(a.joiningDate || c.onboarding?.joiningDate || o.joiningDate),
@@ -307,8 +375,69 @@ export default function AdminHiringOnboarding() {
                 <input value={apptForm.department} onChange={(e) => setApptForm({ ...apptForm, department: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
               <div>
+                <label className="block text-xs text-gray-600 mb-1">Employee code</label>
+                <input
+                  value={apptForm.employeeCode}
+                  onChange={(e) => setApptForm({ ...apptForm, employeeCode: e.target.value.toUpperCase() })}
+                  placeholder="SSL 163"
+                  className="block w-full border rounded-lg px-3 py-2"
+                />
+                {/* Allotted here because the letter quotes it in three places and
+                    the employee profile it would otherwise come from does not
+                    exist until the candidate is converted after joining. */}
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Printed on the letter, the acceptance stub and the salary annexure.
+                </p>
+              </div>
+              <div>
                 <label className="block text-xs text-gray-600 mb-1">Reporting manager</label>
-                <input value={apptForm.reportingManager} onChange={(e) => setApptForm({ ...apptForm, reportingManager: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                {people.length === 0 ? (
+                  // The directory did not load (see the catch in load()). A text
+                  // box that works beats a dropdown with nothing in it.
+                  <input value={apptForm.reportingManager}
+                    onChange={(e) => setApptForm({ ...apptForm, reportingManager: e.target.value })}
+                    className="block w-full border rounded-lg px-3 py-2" />
+                ) : (
+                  <SearchableSelect
+                    value={apptForm.reportingManager}
+                    onChange={(e) => setApptForm({ ...apptForm, reportingManager: e.target.value })}
+                    className="block w-full border rounded-lg px-3 py-2"
+                    searchPlaceholder="Type a name…"
+                  >
+                    <option value="">None</option>
+                    {/* The letter stores a NAME, not an id, so a value typed
+                        before this was a picker — or a manager who is not in the
+                        system — would otherwise vanish from the field and be
+                        cleared by the next save. Kept, and only when it is not
+                        already one of the names below. */}
+                    {apptForm.reportingManager
+                      && !people.some((p) => p.name === apptForm.reportingManager) ? (
+                        <option value={apptForm.reportingManager}>
+                          {apptForm.reportingManager} (already on this letter)
+                        </option>
+                      ) : null}
+                    {seniorPeople.length > 0 && (
+                      <optgroup label="Managers & executives">
+                        {seniorPeople.map((p) => (
+                          <option key={p.id} value={p.name}>
+                            {p.name}{p.sub ? ` · ${p.sub}` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {/* searchOnly: everyone else is reachable by typing a name,
+                        without padding out the list with people who manage nobody. */}
+                    {otherPeople.length > 0 && (
+                      <optgroup label="Everyone else · search by name" searchOnly>
+                        {otherPeople.map((p) => (
+                          <option key={p.id} value={p.name}>
+                            {p.name}{p.sub ? ` · ${p.sub}` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </SearchableSelect>
+                )}
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Place of posting</label>
@@ -384,20 +513,49 @@ export default function AdminHiringOnboarding() {
                 </div>
               ))}
 
-              {/* The components are all percentages of the same base, so their
-                  total is meaningful — and over 100% means the breakup promises
-                  more than the CTC. Warn, but don't block: Employer PF and
-                  Gratuity are sometimes quoted on top of the headline CTC. */}
+              {/* Quoted per head, so entered in rupees rather than as a share of
+                  the CTC. Annual figures, like everything else here. */}
+              {APPT_FIXED_FIELDS.map(([key, label, side]) => (
+                <div key={key}>
+                  <label className="block text-xs text-gray-600 mb-1">{label}</label>
+                  <input
+                    type="number" min="0" value={apptForm[key]}
+                    onChange={(e) => setApptForm({ ...apptForm, [key]: e.target.value })}
+                    placeholder="0"
+                    className="block w-full border rounded-lg px-3 py-2"
+                  />
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Annual ₹ · {side === 'deduction'
+                      ? 'deducted from the salary'
+                      : 'a benefit on top of it (counts towards CTC)'}
+                  </p>
+                </div>
+              ))}
+
+              {/* The annexure's own arithmetic, shown while it can still be
+                  fixed. It is A + C that has to equal the CTC — the benefits are
+                  carried on top of the salary, so earnings alone always fall
+                  short of it by exactly that much. Warned, never blocked: an
+                  offer is sometimes agreed with the benefits quoted outside the
+                  headline number, and that is HR's call to make, not this box's. */}
               {(() => {
                 const ctc = Number(apptForm.ctcAnnual);
                 if (!ctc) return null;
-                const sum = APPT_COMPONENT_FIELDS.reduce((t, [key]) => t + (Number(apptForm[key]) || 0), 0);
-                const pct = round2((sum / ctc) * 100);
-                const over = sum > ctc;
+                const n = (k) => Number(apptForm[k]) || 0;
+                const grossA = APPT_COMPONENT_FIELDS.reduce((t, [key]) => t + n(key), 0);
+                const benefitsC = APPT_FIXED_FIELDS
+                  .filter(([, , side]) => side === 'benefit')
+                  .reduce((t, [key]) => t + n(key), 0);
+                const total = grossA + benefitsC;
+                const diff = total - ctc;
+                const money = (v) => `₹${Math.round(v).toLocaleString('en-IN')}`;
                 return (
-                  <div className={`sm:col-span-2 -mt-1 text-xs ${over ? 'text-amber-700' : 'text-gray-500'}`}>
-                    Components total ₹{sum.toLocaleString('en-IN')} · {pct}% of CTC
-                    {over && ' — more than the annual CTC'}
+                  <div className={`sm:col-span-2 -mt-1 text-xs ${diff === 0 ? 'text-gray-500' : 'text-amber-700'}`}>
+                    Annexure: earnings (A) {money(grossA)} + benefits (C) {money(benefitsC)}
+                    {' = '}{money(total)}
+                    {diff === 0
+                      ? ' — matches the annual CTC.'
+                      : ` — ${diff > 0 ? 'over' : 'under'} the annual CTC by ${money(Math.abs(diff))}.`}
                   </div>
                 );
               })()}
