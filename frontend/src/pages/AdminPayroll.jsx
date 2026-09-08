@@ -16,6 +16,7 @@ import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog } from '../components/dialogs';
 import SalarySetupAlert from '../components/SalarySetupAlert';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
 
 const MONTHS = [
@@ -753,11 +754,7 @@ export default function AdminPayroll() {
                     className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100"
                   >
                     <option value="">Select…</option>
-                    {employees.map((e) => (
-                      <option key={e._id} value={e._id}>
-                        {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
-                      </option>
-                    ))}
+                    {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [form.employee] })}
                   </SearchableSelect>
                 </div>
                 <div>

@@ -15,6 +15,7 @@ import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
 import { canAdministerEmployee } from '../config/permissions';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -161,7 +162,7 @@ export default function AdminPayrollRun() {
       {/* Filters + OK */}
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
         <SearchableSelect value={employee} onChange={(e) => { setEmployee(e.target.value); load(e.target.value); }} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[210px]">
-          {employees.map((p) => <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '-'})</option>)}
+          {peopleOptions(employees, (p) => `${fullName(p.user)} (${p.employeeCode || '-'})`, { keep: [employee] })}
         </SearchableSelect>
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
           {Array.from({ length: 4 }, (_, i) => now.getFullYear() + 1 - i).map((y) => <option key={y}>{y}</option>)}

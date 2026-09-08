@@ -10,6 +10,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const CYCLE_STATUS = ['Draft', 'Active', 'Closed'];
 const STATUS_STYLES = {
@@ -282,11 +283,11 @@ export default function AdminReviewCycles() {
               <div className="grid gap-3 sm:grid-cols-3">
                 <SearchableSelect value={assignForm.employee} onChange={(e) => setAssignForm({ ...assignForm, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   <option value="">Employee being reviewed…</option>
-                  {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
+                  {peopleOptions(users, (u) => `${u.firstName} ${u.lastName}`, { keep: [assignForm.employee] })}
                 </SearchableSelect>
                 <SearchableSelect value={assignForm.reviewer} onChange={(e) => setAssignForm({ ...assignForm, reviewer: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   <option value="">Reviewer…</option>
-                  {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
+                  {peopleOptions(users, (u) => `${u.firstName} ${u.lastName}`, { keep: [assignForm.reviewer] })}
                 </SearchableSelect>
                 <select value={effectiveRelationship} disabled={isSelfPair}
                   title={isSelfPair ? 'Reviewing yourself is always a self-review' : undefined}

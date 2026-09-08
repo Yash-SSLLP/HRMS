@@ -56,6 +56,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import CameraCapture from '../components/CameraCapture';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 import { DateSortButton } from '../components/DateSort';
 import { confirmDialog } from '../components/dialogs';
 import { useAuthStore } from '../store/authStore';
@@ -1428,13 +1429,11 @@ export default function EmployeeKhata() {
                   placeholder="Choose a colleague…"
                 >
                   <option value="">Choose a colleague…</option>
-                  {colleagues
-                    .filter((p) => !members.rows.some((m) => String(m._id) === String(p._id)))
-                    .map((p) => (
-                      <option key={p._id} value={p._id}>
-                        {p.name}{p.designation ? ` — ${p.designation}` : ''}
-                      </option>
-                    ))}
+                  {peopleOptions(
+                    colleagues.filter((p) => !members.rows.some((m) => String(m._id) === String(p._id))),
+                    (p) => `${p.name}${p.designation ? ` — ${p.designation}` : ''}`,
+                    { keep: [invite.person] },
+                  )}
                 </SearchableSelect>
 
                 <select value={invite.role} onChange={(ev) => setInvite({ ...invite, role: ev.target.value })}

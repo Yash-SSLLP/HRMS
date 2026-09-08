@@ -10,6 +10,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const CATEGORIES = ['Documentation', 'IT Setup', 'HR', 'Finance', 'Training', 'Introduction', 'Other'];
 const STATUS = ['Pending', 'InProgress', 'Done'];
@@ -85,7 +86,7 @@ export default function AdminOnboarding() {
       <PageHeader title="Onboarding">
         <SearchableSelect value={filterEmployee} onChange={(e) => setFilterEmployee(e.target.value)} className="px-3 py-2 text-sm border rounded-lg">
           <option value="">All employees</option>
-          {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
+          {peopleOptions(users, (u) => `${u.firstName} ${u.lastName}`, { keep: [filterEmployee] })}
         </SearchableSelect>
         <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Task</button>
       </PageHeader>
@@ -133,7 +134,7 @@ export default function AdminOnboarding() {
             <form onSubmit={save} className="space-y-3">
               <SearchableSelect required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 <option value="">Select employee *</option>
-                {users.map((u) => <option key={u._id} value={u._id}>{userLabel(u)}</option>)}
+                {peopleOptions(users, userLabel, { keep: [form.employee] })}
               </SearchableSelect>
               <input required placeholder="Title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

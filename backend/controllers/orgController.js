@@ -65,7 +65,7 @@ const orgChart = asyncHandler(async (req, res) => {
 
   const profiles = await EmployeeProfile.find(filter)
     .select('user reportingManager designation department company')
-    .populate('user', 'firstName lastName email photo role')
+    .populate('user', 'firstName lastName email photo role isActive')
     .populate('company', 'name')
     .lean();
 
@@ -85,6 +85,10 @@ const orgChart = asyncHandler(async (req, res) => {
       companyName: p.company?.name || '',
       hasPhoto: Boolean(p.user.photo),
       role: p.user.role,
+      // Whether they have left. The chart still draws them — removing a node
+      // would orphan everyone who reported to them — but the "reports to"
+      // pickers use this to keep a departed colleague out of the default list.
+      inactive: p.user.isActive === false,
       managerId: p.reportingManager ? p.reportingManager.toString() : null,
       reports: [],
     });

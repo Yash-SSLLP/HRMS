@@ -8,12 +8,12 @@ const path = require('path');
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
 const storage = require('../services/storage');
-const { resolveLoginUser } = require('../utils/loginIdentity');
+const { resolveLoginUser, activeAccountWithEmail } = require('../utils/loginIdentity');
 
 /**
  * Public signup — always creates an Employee-role account and returns a JWT.
  * @route POST /api/auth/signup  (PUBLIC)
- * @param {string} req.body.email - required, unique
+ * @param {string} req.body.email - required; must be free of any ACTIVE account
  * @param {string} req.body.password - required
  * @param {string} req.body.firstName - required
  * @param {string} req.body.lastName - required
@@ -30,10 +30,14 @@ const signup = asyncHandler(async (req, res) => {
     throw new Error('email, password, firstName, lastName are required');
   }
 
-  const exists = await User.findOne({ email: email.toLowerCase() });
+  // Only a LIVE account blocks the address. When somebody resigns their account
+  // is deactivated and their work address is reissued to whoever fills the seat,
+  // so two accounts legitimately share one — which is why email is not a unique
+  // key and not the login identifier either (see utils/loginIdentity).
+  const exists = await activeAccountWithEmail(email);
   if (exists) {
     res.status(409);
-    throw new Error('Email already registered');
+    throw new Error('That email is already in use by an active account.');
   }
 
   const user = await User.create({
@@ -184,10 +188,12 @@ const updateMyCredentials = asyncHandler(async (req, res) => {
   }
 
   if (email && email.toLowerCase() !== user.email) {
-    const exists = await User.findOne({ email: email.toLowerCase(), _id: { $ne: user._id } });
+    // Active accounts only — a deactivated predecessor holding the same address
+    // is expected, not a clash. Same rule as admin user create/update.
+    const exists = await activeAccountWithEmail(email, user._id);
     if (exists) {
       res.status(409);
-      throw new Error('That email is already in use');
+      throw new Error('That email is already in use by another active account');
     }
     user.email = email.toLowerCase();
   }

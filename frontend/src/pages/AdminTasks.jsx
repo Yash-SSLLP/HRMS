@@ -9,6 +9,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const STATUS = ['Todo', 'InProgress', 'Review', 'Done'];
 const PRIORITY = ['Low', 'Medium', 'High', 'Urgent'];
@@ -162,7 +163,7 @@ export default function AdminTasks() {
                   <SearchableSelect value={form.assignedTo} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">-</option>
-                    {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
+                    {peopleOptions(users, (u) => `${u.firstName} ${u.lastName}`, { keep: [form.assignedTo] })}
                   </SearchableSelect>
                 </div>
                 <div>

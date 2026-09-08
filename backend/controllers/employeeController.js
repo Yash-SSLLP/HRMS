@@ -419,6 +419,28 @@ async function assertWorkLocationCompany(workLocationRefId, companyId, existing 
 // the rule reads identically wherever somebody meets it.
 const SELF_REF_MESSAGE = 'A user cannot be their own manager or HR partner';
 
+/**
+ * The user ids this profile ALREADY stores under `field`, as strings.
+ *
+ * The rules below ("an approver must be an active user", "an HR partner must be
+ * an HR Manager") are enforced only on references this write INTRODUCES — the
+ * same "newly introduced" rule assertWorkLocationCompany applies to the
+ * company/site pairing. The reason is the reissued seat: when somebody leaves,
+ * finalizeExit deactivates their login but leaves their id sitting in every
+ * ladder that named them, so re-validating the whole list would make each of
+ * those employees unsavable — an address, a bank account, anything — until an
+ * admin found and cleared a field the form in front of them does not even show.
+ * Nothing is lost by keeping a stale rung: the ladder builders skip inactive
+ * users at approval time (leaveController buildLeaveChain / hrRecipientsFor),
+ * and a NEWLY named dead reference is still refused.
+ *
+ * @param {Object|null} existing - the stored EmployeeProfile (null on create)
+ * @param {string} field - the array field being written
+ * @returns {Set<string>} stored ids, already stringified
+ */
+const storedRefIds = (existing, field) =>
+  new Set(((existing && existing[field]) || []).map((v) => String(v?._id || v)));
+
 async function validateHierarchy(body, linkedUserId, existing = null, allowCrossDepartment = false) {
   const linkedId = String(linkedUserId);
 
@@ -449,7 +471,9 @@ async function validateHierarchy(body, linkedUserId, existing = null, allowCross
       err.status = 400;
       throw err;
     }
+    const knownRegularization = storedRefIds(existing, 'regularizationApprovers');
     for (const id of list) {
+      if (knownRegularization.has(id)) continue; // already stored — see storedRefIds
       const u = await User.findById(id).select('isActive');
       if (!u || u.isActive === false) {
         const err = new Error('A regularization approver must be an active user');
@@ -480,7 +504,9 @@ async function validateHierarchy(body, linkedUserId, existing = null, allowCross
       err.status = 400;
       throw err;
     }
+    const knownLeave = storedRefIds(existing, 'leaveApprovers');
     for (const id of list) {
+      if (knownLeave.has(id)) continue; // already stored — see storedRefIds
       const u = await User.findById(id).select('isActive');
       if (!u || u.isActive === false) {
         const err = new Error('A leave approver must be an active user');
@@ -496,7 +522,9 @@ async function validateHierarchy(body, linkedUserId, existing = null, allowCross
   // request. Order is irrelevant here — it is an audience, not a ladder.
   if (body.leaveFinalHrRecipients !== undefined) {
     const list = [...new Set((body.leaveFinalHrRecipients || []).map(String).filter(Boolean))];
+    const knownHrRecipients = storedRefIds(existing, 'leaveFinalHrRecipients');
     for (const id of list) {
+      if (knownHrRecipients.has(id)) continue; // already stored — see storedRefIds
       const u = await User.findById(id).select('role isActive');
       if (!u || u.isActive === false) {
         const err = new Error('A leave HR recipient must be an active user');
@@ -521,7 +549,13 @@ async function validateHierarchy(body, linkedUserId, existing = null, allowCross
 
   const linkedUser = await User.findById(linkedUserId).select('role');
 
-  if (body.hrPartner) {
+  // Unchanged from what is stored → left alone, for the reason storedRefIds
+  // gives: an HR partner who has since left (or been moved off the HR role)
+  // must not make every later edit of their employees impossible to save.
+  const hrPartnerUnchanged = !!existing
+    && String(body.hrPartner || '') === String(existing.hrPartner?._id || existing.hrPartner || '');
+
+  if (body.hrPartner && !hrPartnerUnchanged) {
     const partner = await User.findById(body.hrPartner).select('role');
     if (!partner || !['HRManager', 'SuperAdmin'].includes(partner.role)) {
       const err = new Error('HR Partner must be an HR Manager or SuperAdmin');
@@ -1299,8 +1333,10 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
         flag('hrPartner', p.hrPartnerEmail, 'unmatched',
           `${SELF_REF_MESSAGE}. This row names its own address, so no HR partner was set.`);
       } else if (p.hrPartnerEmail) {
-        const partner = await User.findOne({
-          email: p.hrPartnerEmail,
+        // findAccountByEmail, not findOne: an address can be held by both a
+        // resigned account and the person who inherited the seat, and the
+        // spreadsheet means whoever is serving today.
+        const partner = await findAccountByEmail(p.hrPartnerEmail, {
           role: { $in: ['HRManager', 'SuperAdmin'] },
         });
         if (partner) hrPartnerId = partner._id;

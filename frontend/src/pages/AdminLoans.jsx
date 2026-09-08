@@ -10,6 +10,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const TYPES = ['Salary Advance', 'Personal Loan', 'Emergency', 'Other'];
 const STATUS = ['Pending', 'Approved', 'Active', 'Closed', 'Rejected'];
@@ -159,7 +160,7 @@ export default function AdminLoans() {
             <form onSubmit={save} className="space-y-3">
               <SearchableSelect required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 <option value="">Select employee *</option>
-                {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.email})</option>)}
+                {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.email})`, { keep: [form.employee] })}
               </SearchableSelect>
               <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 {TYPES.map((t) => <option key={t}>{t}</option>)}

@@ -10,6 +10,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AttendanceDayChart from '../components/AttendanceDayChart';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -127,9 +128,7 @@ export default function AdminAttendanceReport() {
           <SearchableSelect value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
             className="border rounded-lg px-2 py-1 min-w-[14rem]">
             <option value="">Select employee…</option>
-            {employees.map((e) => (
-              <option key={e._id} value={e._id}>{e.employeeCode} · {e.user?.firstName} {e.user?.lastName}</option>
-            ))}
+            {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [filter.employee] })}
           </SearchableSelect>
         </div>
         <div>

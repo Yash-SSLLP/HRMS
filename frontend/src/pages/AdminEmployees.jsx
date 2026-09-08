@@ -17,6 +17,7 @@ import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions, hasLeft } from '../utils/peopleOptions';
 import { ROLES, roleLabel } from '../config/roles';
 import { canAdministerEmployee, hasExplicitPermission, isEditingExec } from '../config/permissions';
 import { formatDateTime12, toYMD } from '../utils/time';
@@ -544,7 +545,24 @@ export default function AdminEmployees() {
         && String(u._id) !== currentId
     );
 
-    return { sameDept, executives, current, others };
+    // Anyone who has left drops out of the two visible groups and joins the
+    // searchable tail, so a departed colleague is never offered by accident but
+    // is still reachable by name. The manager already SAVED on this record is
+    // the exception — demoting them would make the field read as unset.
+    const stays = (u) => !hasLeft(u) || String(u._id) === currentId;
+    const sameDeptHere = sameDept.filter(stays);
+    const executivesHere = executives.filter(stays);
+    const tail = [
+      ...others,
+      ...[...sameDept, ...executives].filter((u) => !stays(u)),
+    ];
+
+    return {
+      sameDept: sameDeptHere,
+      executives: executivesHere,
+      current,
+      others: tail,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profiles, allUsers, form.department, form.user, form.reportingManager]);
 
@@ -743,6 +761,12 @@ export default function AdminEmployees() {
     try {
       // Empty work-location select must clear the ref (null), not send '' (bad ObjectId).
       const payload = { ...form, workLocationRef: form.workLocationRef || null };
+      // `form` is seeded by spreading the whole stored profile, so it carries the
+      // leave ladder as well — which this modal does not show and cannot edit
+      // (it lives on Leave → Approval hierarchy). Sending it back unchanged only
+      // ever asks the server to re-validate a field nobody touched, so drop it.
+      delete payload.leaveApprovers;
+      delete payload.leaveFinalHrRecipients;
       // Company: '' → null so an empty select clears it rather than sending a bad ObjectId.
       // Without the grant the field is not shown at all, so sending it could only
       // ever clear a company nobody meant to touch.
@@ -1318,15 +1342,11 @@ This cannot be undone.`,
                     className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100"
                   >
                     <option value="">Select a user…</option>
-                    {(editingId
-                      ? allUsers
-                      : usersWithoutProfile
-                    ).map((u) => (
-                      <option key={u._id} value={u._id}>
-                        {u.firstName} {u.lastName} · {u.email}
-                        {u.role !== 'Employee' ? ` · ${u.role}` : ''}
-                      </option>
-                    ))}
+                    {peopleOptions(
+                      editingId ? allUsers : usersWithoutProfile,
+                      (u) => `${u.firstName} ${u.lastName} · ${u.email}${u.role !== 'Employee' ? ` · ${u.role}` : ''}`,
+                      { keep: [form.user?._id || form.user] },
+                    )}
                   </SearchableSelect>
                 </div>
                 <div>
@@ -1484,7 +1504,7 @@ This cannot be undone.`,
                       {/* Hidden until the operator types — see SearchableSelect's
                           searchOnly. Picking one is allowed but asks first. */}
                       {managerOptions.others.length > 0 && (
-                        <optgroup label="Other departments · search by name" searchOnly>
+                        <optgroup label="Other departments &amp; inactive · search by name" searchOnly>
                           {managerOptions.others.map((u) => (
                             <option key={u._id} value={u._id}>
                               {u.firstName} {u.lastName} ({u.role}) · {u.email}
@@ -1534,11 +1554,11 @@ This cannot be undone.`,
                       className="mt-1 block w-full border rounded-lg px-3 py-2"
                     >
                       <option value="">None</option>
-                      {hrUsers.map((u) => (
-                        <option key={u._id} value={u._id}>
-                          {u.firstName} {u.lastName} ({u.role}) · {u.email}
-                        </option>
-                      ))}
+                      {peopleOptions(
+                        hrUsers,
+                        (u) => `${u.firstName} ${u.lastName} (${u.role}) · ${u.email}`,
+                        { keep: [form.hrPartner?._id || form.hrPartner] },
+                      )}
                     </SearchableSelect>
                   ) : (
                     <div className="mt-1 block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700 text-sm">

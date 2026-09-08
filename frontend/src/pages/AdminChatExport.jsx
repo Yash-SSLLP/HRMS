@@ -9,6 +9,7 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 import { formatDateTime12 } from '../utils/time';
 
 const fmt = (d) => formatDateTime12(d);
@@ -88,14 +89,14 @@ export default function AdminChatExport() {
           <label className="block text-xs text-gray-600 mb-1">Person A</label>
           <SearchableSelect value={a} onChange={(e) => setA(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">Select…</option>
-            {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
+            {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: [a] })}
           </SearchableSelect>
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Person B</label>
           <SearchableSelect value={b} onChange={(e) => setB(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">Select…</option>
-            {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
+            {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: [b] })}
           </SearchableSelect>
         </div>
         <button onClick={load} disabled={loading} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">

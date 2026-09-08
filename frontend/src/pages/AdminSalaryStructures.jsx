@@ -19,6 +19,7 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
 import { canAdministerEmployee } from '../config/permissions';
 
@@ -591,11 +592,11 @@ export default function AdminSalaryStructures() {
                       className="block w-full border rounded-lg px-3 py-2 bg-white"
                     >
                       <option value="">— none —</option>
-                      {assignable.map((p) => (
-                        <option key={p._id} value={p._id}>
-                          {p.employeeCode} · {p.user?.firstName} {p.user?.lastName}
-                        </option>
-                      ))}
+                      {peopleOptions(
+                        assignable,
+                        (p) => `${p.employeeCode} · ${p.user?.firstName || ''} ${p.user?.lastName || ''}`,
+                        { keep: [assign.employee] },
+                      )}
                     </SearchableSelect>
                   </label>
                   <label className="text-sm text-gray-700">

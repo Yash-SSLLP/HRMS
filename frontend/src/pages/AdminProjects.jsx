@@ -10,6 +10,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const STATUS = ['Planning', 'Active', 'OnHold', 'Completed', 'Cancelled'];
 const STATUS_STYLES = {
@@ -148,7 +149,7 @@ export default function AdminProjects() {
                   <SearchableSelect value={form.manager} onChange={(e) => setForm({ ...form, manager: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">-</option>
-                    {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName}</option>)}
+                    {peopleOptions(users, (u) => `${u.firstName} ${u.lastName}`, { keep: [form.manager] })}
                   </SearchableSelect>
                 </div>
                 <div>
@@ -168,7 +169,7 @@ export default function AdminProjects() {
                   onChange={(e) => setForm({ ...form, members: Array.from(e.target.selectedOptions, (o) => o.value) })}
                   placeholder="Select members…"
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
-                  {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
+                  {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: form.members })}
                 </SearchableSelect>
                 <p className="text-xs text-gray-400 mt-1">Search and tick everyone who should be on this project.</p>
               </div>

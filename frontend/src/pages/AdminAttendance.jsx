@@ -19,6 +19,7 @@ import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import { formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
 
 const MONTHS = [
@@ -439,11 +440,7 @@ export default function AdminAttendance() {
           <SearchableSelect value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
             className="border rounded-lg px-2 py-1">
             <option value="">All</option>
-            {employees.map((e) => (
-              <option key={e._id} value={e._id}>
-                {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
-              </option>
-            ))}
+            {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [filter.employee] })}
           </SearchableSelect>
         </div>
       </div>
@@ -815,11 +812,7 @@ export default function AdminAttendance() {
                   onChange={(e) => setForm({ ...form, employee: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100">
                   <option value="">Select…</option>
-                  {employees.map((e) => (
-                    <option key={e._id} value={e._id}>
-                      {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
-                    </option>
-                  ))}
+                  {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [form.employee] })}
                 </SearchableSelect>
               </div>
               <div>

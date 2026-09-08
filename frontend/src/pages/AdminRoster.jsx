@@ -11,6 +11,7 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 import { downloadTableXlsx } from '../api/download';
 
 const fmtDate = (d) =>
@@ -488,7 +489,7 @@ export default function AdminRoster() {
             <form onSubmit={saveAssign} className="space-y-3">
               <SearchableSelect required value={assignForm.employee} onChange={(e) => setAssignForm({ ...assignForm, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                 <option value="">Select employee</option>
-                {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
+                {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: [assignForm.employee] })}
               </SearchableSelect>
               <input required type="date" value={assignForm.date} onChange={(e) => setAssignForm({ ...assignForm, date: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <SearchableSelect required value={assignForm.shift} onChange={(e) => setAssignForm({ ...assignForm, shift: e.target.value })} className="block w-full border rounded-lg px-3 py-2">

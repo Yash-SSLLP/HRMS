@@ -13,6 +13,7 @@ import PageHeader from '../components/PageHeader';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -165,11 +166,7 @@ export default function AdminDocuments() {
             onChange={(e) => setSelectedEmployee(e.target.value)}
             className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">All employees</option>
-            {employees.map((e) => (
-              <option key={e._id} value={e._id}>
-                {e.employeeCode} · {e.user?.firstName} {e.user?.lastName}
-              </option>
-            ))}
+            {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [selectedEmployee] })}
           </SearchableSelect>
         </div>
         <div className="min-w-[160px]">

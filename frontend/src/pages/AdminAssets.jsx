@@ -14,6 +14,7 @@ import { useViewOnly } from '../hooks/useViewOnly';
 import PromptDialog from '../components/PromptDialog';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Phone', 'SIM', 'Furniture', 'Vehicle', 'Other'];
 const STATUS = ['Available', 'Assigned', 'InRepair', 'Retired'];
@@ -329,7 +330,7 @@ export default function AdminAssets() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Employee</label>
                 <SearchableSelect required value={assignUser} onChange={(e) => setAssignUser(e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm">
                   <option value="">Select an employee…</option>
-                  {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
+                  {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: [assignUser] })}
                 </SearchableSelect>
               </div>
               <div>

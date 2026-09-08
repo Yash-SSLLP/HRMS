@@ -436,9 +436,13 @@ export default function AdminOrgChart() {
                 confirmation first (and the server demands the same). */}
             {(() => {
               const others = everyone.filter((p) => p.id !== selected.id);
-              const execs = others.filter((p) => ['CEO', 'MD', 'SuperAdmin'].includes(p.role));
+              // Anyone who has left is held back with the other departments —
+              // nobody reports to a deactivated account by accident, but they
+              // stay reachable by name for a chart that has yet to be tidied.
+              const here = others.filter((p) => !p.inactive || p.id === selected.managerId);
+              const execs = here.filter((p) => ['CEO', 'MD', 'SuperAdmin'].includes(p.role));
               const execIds = new Set(execs.map((p) => p.id));
-              const sameDept = others.filter(
+              const sameDept = here.filter(
                 (p) => !execIds.has(p.id) && selected.department && p.department === selected.department
               );
               const sameIds = new Set(sameDept.map((p) => p.id));
@@ -465,7 +469,9 @@ export default function AdminOrgChart() {
                       normal choice is nearly always same-department. */}
                   {Object.keys(byDept).sort().map((dept) => (
                     <optgroup key={dept} label={`Other department · ${dept}`} searchOnly>
-                      {byDept[dept].map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      {byDept[dept].map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}{p.inactive ? ' · inactive' : ''}</option>
+                      ))}
                     </optgroup>
                   ))}
                 </>

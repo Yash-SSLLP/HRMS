@@ -117,10 +117,20 @@ const listPasswordResetRequests = asyncHandler(async (req, res) => {
   if (allowed) {
     const emails = [...new Set(requests.map((r) => r.email).filter(Boolean))];
     const matched = await User.find({ email: { $in: emails } }).select('email _id').lean();
-    const ownerByEmail = new Map(matched.map((u) => [u.email, String(u._id)]));
+    // EVERY account holding the address, not one of them: a reissued work
+    // address belongs to both the person who left and the person who took the
+    // seat, and a Map keyed on it would keep whichever Mongo returned last —
+    // hiding the request from the admin who can actually action it. The wall
+    // opens when ANY of the matched accounts is in this admin's scope.
+    const ownersByEmail = new Map();
+    matched.forEach((u) => {
+      const key = String(u.email || '').toLowerCase();
+      if (!ownersByEmail.has(key)) ownersByEmail.set(key, []);
+      ownersByEmail.get(key).push(String(u._id));
+    });
     requests = requests.filter((r) => {
-      const owner = ownerByEmail.get(r.email);
-      return !owner || allowed.includes(owner);
+      const owners = ownersByEmail.get(String(r.email || '').toLowerCase());
+      return !owners || !owners.length || owners.some((id) => allowed.includes(id));
     });
   }
   res.json({ count: requests.length, requests });

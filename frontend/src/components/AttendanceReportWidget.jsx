@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import AttendanceDayChart from './AttendanceDayChart';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -73,9 +74,7 @@ export default function AttendanceReportWidget({ compact = false, height }) {
           className="border rounded-lg px-2 py-1 text-sm min-w-[10rem] max-w-full"
         >
           <option value="">Select employee…</option>
-          {employees.map((e) => (
-            <option key={e._id} value={e._id}>{e.employeeCode} · {e.user?.firstName} {e.user?.lastName}</option>
-          ))}
+          {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [filter.employee] })}
         </SearchableSelect>
         <select
           value={filter.month}

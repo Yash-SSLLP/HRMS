@@ -16,6 +16,7 @@ import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 import { formatDateTime12 } from '../utils/time';
 
 // ---- Notice period ↔ last working day sync (calendar days) ----
@@ -435,12 +436,11 @@ export default function AdminExit() {
                   onChange={(e) => onPickEmployee(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   <option value="">Select…</option>
-                  {employees.map((p) => (
-                    <option key={p._id} value={p._id}>
-                      {p.employeeCode} · {p.user?.firstName} {p.user?.lastName}
-                      {p.hrPartner ? ` · HR: ${p.hrPartner.firstName} ${p.hrPartner.lastName}` : ''}
-                    </option>
-                  ))}
+                  {peopleOptions(
+                    employees,
+                    (p) => `${p.employeeCode} · ${p.user?.firstName || ''} ${p.user?.lastName || ''}${p.hrPartner ? ` · HR: ${p.hrPartner.firstName} ${p.hrPartner.lastName}` : ''}`,
+                    { keep: [newForm.employee] },
+                  )}
                 </SearchableSelect>
                 {newForm.employee && (() => {
                   const sel = employees.find((p) => p._id === newForm.employee);
@@ -486,11 +486,11 @@ export default function AdminExit() {
                     onChange={(e) => setNewForm({ ...newForm, handledBy: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Select…</option>
-                    {hrUsers.map((u) => (
-                      <option key={u._id} value={u._id}>
-                        {u.firstName} {u.lastName} ({u.role})
-                      </option>
-                    ))}
+                    {peopleOptions(
+                      hrUsers,
+                      (u) => `${u.firstName} ${u.lastName} (${u.role})`,
+                      { keep: [newForm.handledBy] },
+                    )}
                   </SearchableSelect>
                 </div>
               </div>
@@ -584,11 +584,11 @@ export default function AdminExit() {
                   onChange={(e) => setDetail({ ...detail, handledBy: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100">
                   <option value="">Select…</option>
-                  {hrUsers.map((u) => (
-                    <option key={u._id} value={u._id}>
-                      {u.firstName} {u.lastName} ({u.role}) · {u.email}
-                    </option>
-                  ))}
+                  {peopleOptions(
+                    hrUsers,
+                    (u) => `${u.firstName} ${u.lastName} (${u.role}) · ${u.email}`,
+                    { keep: [detail.handledBy?._id || detail.handledBy] },
+                  )}
                 </SearchableSelect>
                 <p className="text-xs text-gray-500 mt-1">This person's name signs the exit email; replies route to their address.</p>
               </div>

@@ -13,6 +13,7 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -173,9 +174,7 @@ export default function AdminAttendanceMonth() {
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4">
         <SearchableSelect value={employee} onChange={(e) => setEmployee(e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[220px]">
-          {employees.map((p) => (
-            <option key={p._id} value={p._id}>{fullName(p.user)} ({p.employeeCode || '-'})</option>
-          ))}
+          {peopleOptions(employees, (p) => `${fullName(p.user)} (${p.employeeCode || '-'})`, { keep: [employee] })}
         </SearchableSelect>
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
           {Array.from({ length: 4 }, (_, i) => now.getFullYear() - i).map((y) => <option key={y}>{y}</option>)}

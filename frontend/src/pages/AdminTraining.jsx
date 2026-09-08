@@ -10,6 +10,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { peopleOptions } from '../utils/peopleOptions';
 
 const STATUS = ['Planned', 'Ongoing', 'Completed', 'Cancelled'];
 const STATUS_STYLES = {
@@ -127,7 +128,7 @@ export default function AdminTraining() {
                   onChange={(e) => setForm({ ...form, participants: Array.from(e.target.selectedOptions, (o) => o.value) })}
                   placeholder="Select participants…"
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
-                  {users.map((u) => <option key={u._id} value={u._id}>{u.firstName} {u.lastName} ({u.role})</option>)}
+                  {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: form.participants })}
                 </SearchableSelect>
                 <p className="text-xs text-gray-400 mt-1">Search and tick everyone attending.</p>
               </div>
