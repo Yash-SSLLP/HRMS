@@ -18,7 +18,7 @@ const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
 const EmailOutbox = require('../models/EmailOutbox');
-const { copyCandidateDocuments } = require('../services/candidateDocuments');
+const { copyCandidateDocuments, copyCandidateLetters } = require('../services/candidateDocuments');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
@@ -1033,24 +1033,43 @@ const date = (v) => (v ? new Date(v) : undefined);
 const safeName = (s) => String(s || 'candidate').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 // Queue a letter email to the candidate with the generated PDF attached.
-function emailLetter(candidate, kind, letterPath, letterName, hr) {
-  if (!candidate.email) return;
+//
+// Every client emails through the editable composer (sendLetterEmail) now, so
+// this only fires when something posts `email: true` straight to the generate
+// endpoint — an older installed APK, or a script. It still renders the same
+// template and carries the same public link: "the fallback path sends a
+// different, link-less email" is exactly the divergence nobody notices until a
+// candidate reports the link missing.
+async function emailLetter(candidate, kind, letterPath, letterName, hr) {
+  if (!candidate.email) return undefined;
   const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
-  const text =
-    `Dear ${candidate.name},\n\nPlease find attached your ${label} from ${COMPANY.name}.\n\n` +
-    `Kindly review the document and revert with your acceptance.\n\n` +
-    `Warm regards,\n${hr?.fullName || 'HR Team'}\n${COMPANY.name}`;
-  const html =
-    `<p>Dear ${candidate.name},</p>` +
-    `<p>Please find attached your <strong>${label}</strong> from ${COMPANY.name}.</p>` +
-    `<p>Kindly review the document and revert with your acceptance.</p>` +
-    `<p>Warm regards,<br>${hr?.fullName || 'HR Team'}<br>${COMPANY.name}</p>`;
+  const token = candidate[kind]?.token;
+  const link = token ? `${APP_BASE_URL()}/letter/${token}` : '';
+  const linkClause = link
+    ? ` You can also view and download it anytime from the link below:\n\n${link}\n`
+    : '';
+  const hrName = hr?.fullName || 'HR Team';
+  const letterData = candidate[kind]?.data || {};
+  const fallbackBody =
+    `Dear ${candidate.name},\n\n` +
+    `Please find attached your ${label} from ${COMPANY.name}.${linkClause || '\n'}` +
+    `\nKindly review the document and revert with your acceptance.\n\n` +
+    `Warm regards,\n${hrName}\n${COMPANY.name}`;
+  const rendered = await renderMail(`${kind}.mail`, {
+    candidateName: candidate.name,
+    position: letterData.position || letterData.designation,
+    companyName: COMPANY.name,
+    acceptanceDeadline: longDate(letterData.acceptanceDeadline),
+    joiningDate: longDate(letterData.joiningDate),
+    link,
+    linkClause,
+    hrName,
+  }, { subject: `${label} - ${COMPANY.name}`, body: fallbackBody });
   return enqueueMail(
     {
       to: candidate.email,
-      subject: `${label} - ${COMPANY.name}`,
-      text,
-      html,
+      subject: rendered.subject,
+      text: rendered.text,
       // Send from the acting HR's mailbox so the candidate replies to them.
       from: hr?.email ? `${hr.fullName} <${hr.email}>` : undefined,
       replyTo: hr?.email,
@@ -1172,12 +1191,16 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
     hrName,
   }, { subject: `${label} - ${COMPANY.name}`, body: fallbackBody });
   const defaults = { subject: rendered.subject, body: rendered.text };
+  // One name for both branches, so the preview never advertises an attachment
+  // under a name different from the one that actually goes out.
+  const attachmentName = letter.letterName
+    || `${kind === 'offer' ? 'Offer-Letter' : 'Appointment-Letter'}-${safeName(candidate.name)}.pdf`;
   if (req.body.preview) {
     return res.json({
       to: candidate.email,
       subject: defaults.subject,
       body: defaults.body,
-      attachments: [letter.letterName].filter(Boolean),
+      attachments: [attachmentName],
       link,
     });
   }
@@ -1192,6 +1215,25 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
   // file was lost), then send SYNCHRONOUSLY through the shared company mailbox so
   // HR sees the real outcome instead of a silently-failing background queue.
   const storagePath = await ensureLetterFile(candidate, kind);
+  // Read the PDF HERE instead of handing the transport a path to fetch later.
+  // An attachment the transport cannot read is dropped with nothing but a
+  // console line (services/email.js buildAttachments), which would send the
+  // covering note on its own while telling HR the letter went — the one failure
+  // this endpoint must never report as success. Reading first turns that into a
+  // refusal HR can act on.
+  let pdf = null;
+  try {
+    pdf = await storage.readBuffer(storagePath);
+  } catch (err) {
+    console.error(`Letter attachment unreadable (${storagePath}):`, err.message);
+  }
+  if (!pdf || !pdf.length) {
+    res.status(502);
+    throw new Error(
+      `The ${label.toLowerCase()} PDF could not be read, so nothing was sent. `
+      + 'Generate the letter again and retry.'
+    );
+  }
   let info;
   try {
     info = await sendMail({
@@ -1203,7 +1245,7 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
       // by the transport) and route replies back to them.
       from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,
       replyTo: req.user?.email,
-      attachments: [{ filename: letter.letterName || `${label}.pdf`, storagePath, contentType: 'application/pdf' }],
+      attachments: [{ filename: attachmentName, content: pdf.toString('base64'), contentType: 'application/pdf' }],
     });
   } catch (err) {
     res.status(502);
@@ -1640,6 +1682,16 @@ const convertToEmployee = asyncHandler(async (req, res) => {
     documentsCopied = outcome.copied;
   } catch (err) {
     console.error('[recruitment] Could not carry documents over to the employee:', err.message);
+  }
+  // The offer and appointment letters the portal itself produced go over too,
+  // as Submitted, so HR verifies the filed copy on the employee's record the
+  // same way they verify everything else there. Separately try/caught: a lost
+  // letter PDF must not cost the uploads that already copied.
+  try {
+    const letters = await copyCandidateLetters(candidate, profile._id, req.user._id);
+    documentsCopied += letters.copied;
+  } catch (err) {
+    console.error('[recruitment] Could not carry letters over to the employee:', err.message);
   }
 
   candidate.employee = {

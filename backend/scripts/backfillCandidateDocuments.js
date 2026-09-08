@@ -1,14 +1,17 @@
 /**
- * One-off backfill: carry hiring documents into the records of employees who
- * were converted BEFORE the conversion started doing it automatically.
+ * One-off backfill: carry hiring documents AND the portal's own offer and
+ * appointment letters into the records of employees who were converted BEFORE
+ * the conversion started doing it automatically.
  *
  * Those employees' records opened empty, so HR asked them for the same PAN and
- * Aadhaar a second time. This walks every candidate who has already become an
- * employee and copies what they sent during hiring onto their employee record,
- * using the same service the live conversion uses (services/candidateDocuments)
- * — so the rules are identical: rejected documents are left behind, documents
- * verified during hiring arrive Verified, and the bytes are re-saved under the
- * employee rather than shared with the candidate record.
+ * Aadhaar a second time — and the letters the company had issued them were
+ * nowhere on their record at all. This walks every candidate who has already
+ * become an employee and copies both sets onto their employee record, using the
+ * same services the live conversion uses (services/candidateDocuments) — so the
+ * rules are identical: rejected documents are left behind, documents verified
+ * during hiring arrive Verified, generated letters arrive Submitted for HR to
+ * verify, and the bytes are re-saved under the employee rather than shared with
+ * the candidate record.
  *
  * Run (from backend/):
  *   node scripts/backfillCandidateDocuments.js                 # dry run, writes nothing
@@ -25,7 +28,7 @@ const mongoose = require('mongoose');
 const connectDB = require('../config/db');
 const Candidate = require('../models/Candidate');
 const EmployeeProfile = require('../models/EmployeeProfile');
-const { copyCandidateDocuments } = require('../services/candidateDocuments');
+const { copyCandidateDocuments, copyCandidateLetters } = require('../services/candidateDocuments');
 
 const APPLY = process.argv.includes('--apply');
 const codeArg = process.argv.indexOf('--code');
@@ -35,15 +38,21 @@ const ONLY_CODE = codeArg > -1 ? process.argv[codeArg + 1] : null;
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is not set — run this from the backend folder.');
   await connectDB();
 
+  // Anyone converted who has EITHER hiring uploads or a generated letter —
+  // a candidate can easily have one and not the other.
   const filter = {
     'employee.profile': { $exists: true, $ne: null },
-    'documents.files.0': { $exists: true },
+    $or: [
+      { 'documents.files.0': { $exists: true } },
+      { 'offer.letterPath': { $nin: [null, ''] } },
+      { 'appointment.letterPath': { $nin: [null, ''] } },
+    ],
   };
   if (ONLY_CODE) filter['employee.employeeCode'] = ONLY_CODE;
 
   const candidates = await Candidate.find(filter);
   console.log(`\n${APPLY ? 'BACKFILL' : 'DRY RUN (nothing will be written — pass --apply to copy)'}`);
-  console.log(`${candidates.length} converted candidate${candidates.length === 1 ? '' : 's'} with hiring documents`
+  console.log(`${candidates.length} converted candidate${candidates.length === 1 ? '' : 's'} with documents or letters`
     + `${ONLY_CODE ? ` (filtered to ${ONLY_CODE})` : ''}\n`);
 
   const totals = { people: 0, copied: 0, skipped: 0, failed: 0, orphaned: 0 };
@@ -62,7 +71,17 @@ const ONLY_CODE = codeArg > -1 ? process.argv[codeArg + 1] : null;
     }
 
     const actorId = candidate.employee.convertedBy || undefined;
-    const res = await copyCandidateDocuments(candidate, profileId, actorId, { dryRun: !APPLY });
+    // Both passes read what is already on the employee before they write, so
+    // running them back to back cannot double-copy a letter the first pass
+    // just added.
+    const uploads = await copyCandidateDocuments(candidate, profileId, actorId, { dryRun: !APPLY });
+    const letters = await copyCandidateLetters(candidate, profileId, actorId, { dryRun: !APPLY });
+    const res = {
+      copied: uploads.copied + letters.copied,
+      skipped: uploads.skipped + letters.skipped,
+      failed: uploads.failed + letters.failed,
+      details: [...uploads.details, ...letters.details],
+    };
 
     totals.people += 1;
     totals.copied += res.copied;

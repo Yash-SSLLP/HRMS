@@ -5,6 +5,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { reservedAppointmentCodes } = require('../utils/reservedCodes');
 // Company wall: confirmations list/act directly on EmployeeProfile.
 const { employeeProfileScope, cannotManageProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 
@@ -137,6 +138,12 @@ const updateConfirmation = asyncHandler(async (req, res) => {
 // fallback 'EMP'). Reusable from other modules (e.g. candidate → employee).
 async function computeNextEmployeeCode() {
   const profiles = await EmployeeProfile.find({}, 'employeeCode').lean();
+  // Codes allotted on an appointment letter but not yet an employee. Without
+  // these, two letters issued in the same week both suggest the same code: the
+  // first candidate has no EmployeeProfile until they actually join, so nothing
+  // here would know their code was spoken for. Shaped like a profile row so the
+  // scanner below needs no special case.
+  const reserved = (await reservedAppointmentCodes()).map((employeeCode) => ({ employeeCode }));
 
   // prefix + optional separator (space / dash) + digits, e.g. "SSL 1", "EMP-001", "EMP007".
   const CODE_RE = /^([A-Za-z]+)([\s-]*)(\d+)$/;
@@ -144,7 +151,7 @@ async function computeNextEmployeeCode() {
   // so the next suggestion keeps the exact style already in use (e.g. "SSL 8" -> "SSL 9").
   const stats = {};
 
-  for (const p of profiles) {
+  for (const p of [...profiles, ...reserved]) {
     if (!p.employeeCode) continue;
     const m = CODE_RE.exec(p.employeeCode.trim());
     if (!m) continue;

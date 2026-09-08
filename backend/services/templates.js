@@ -82,7 +82,55 @@ function fill(text, vars = {}) {
 }
 
 /**
+ * Closing lines, so a repaired link lands above the signature rather than
+ * orphaned underneath it. Deliberately a small, literal list: this only decides
+ * WHERE a rescued link goes, and a clever regex that mis-fires on body text
+ * would move the link somewhere worse than the end.
+ */
+const SIGN_OFF = /^[ \t]*(warm regards|best regards|kind regards|regards|sincerely|yours sincerely|yours faithfully|thanks|thank you|cheers)\b/i;
+
+/**
+ * Put `link` into `body` when the rendered wording doesn't already carry it.
+ *
+ * Every template is editable in Admin -> Templates, and someone rewriting a
+ * covering note has no reason to preserve a `{{link}}` / `{{linkClause}}`
+ * placeholder they don't recognise. That is not hypothetical: the appointment
+ * letter email was rewritten exactly that way and the letter link disappeared
+ * from every appointment mail sent afterwards.
+ *
+ * The attachment is not a substitute — mail clients strip, block or silently
+ * drop PDFs, and the link is the recipient's only other route to the document
+ * — so the link is guaranteed by the SEND, not by the wording. Wording that
+ * kept the placeholder already contains the URL and is left untouched, so this
+ * is a repair, never a duplicate.
+ *
+ * @param {string} body - Rendered body text.
+ * @param {string} link - Absolute URL, or '' when there is nothing to link to.
+ * @returns {string}
+ */
+function ensureLink(body, link) {
+  const url = String(link || '').trim();
+  const text = String(body || '');
+  if (!url || text.includes(url)) return text;
+
+  const clause = `You can also open it here:\n${url}`;
+  const lines = text.trimEnd().split('\n');
+  // Scan upwards for the sign-off, so a "Regards" inside the message body
+  // cannot capture it — only the closing one can.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!SIGN_OFF.test(lines[i])) continue;
+    if (i === 0) break;                       // nothing above it to attach to
+    const before = lines.slice(0, i).join('\n').trimEnd();
+    return `${before}\n\n${clause}\n\n${lines.slice(i).join('\n')}`;
+  }
+  return `${lines.join('\n')}\n\n${clause}`;
+}
+
+/**
  * Render a mail template to { subject, text }.
+ *
+ * Passing a `link` variable makes the link a GUARANTEE rather than a wording
+ * choice — see ensureLink.
  * @param {string} key - Registry key.
  * @param {Object} vars - Variable values.
  * @param {{subject?: string, body?: string}} [fallback] - Used if the template can't be resolved.
@@ -96,7 +144,7 @@ async function renderMail(key, vars = {}, fallback = {}) {
     console.error(`Template resolve failed for ${key}:`, err.message);
   }
   const subject = fill(t ? t.subject : fallback.subject, vars);
-  const text = fill(t ? t.body : fallback.body, vars);
+  const text = ensureLink(fill(t ? t.body : fallback.body, vars), vars.link);
   return { subject, text, body: text };
 }
 
@@ -174,4 +222,4 @@ async function listAll() {
   });
 }
 
-module.exports = { resolve, renderMail, renderLetterBlocks, parseLetterBody, fill, listAll, invalidate };
+module.exports = { resolve, renderMail, renderLetterBlocks, parseLetterBody, fill, ensureLink, listAll, invalidate };

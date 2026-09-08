@@ -24,6 +24,7 @@ const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds, EXECUTIVE_ROLE
 const { employeeProfileScope, cannotManageProfile, viewerCompanyScope, scopeEmployeeFilter, companyOutOfScope, assertCanEditManagerProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 const { hasPermission, hasExplicitPermission, isEditingExec } = require('../middleware/authMiddleware');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
+const { appointmentCodeHolder } = require('../utils/reservedCodes');
 const { sendMail } = require('../services/email');
 const { renderMail } = require('../services/templates');
 // Never hardcode the web origin — a localhost link in somebody's inbox is dead
@@ -116,8 +117,10 @@ async function assertCodeAvailable(res, code, excludeProfileId = null) {
 /**
  * Live availability check for the employee-code field, so the form can say
  * "already exists" while the operator types instead of only on save.
- * @route GET /api/employees/code-available?code=SSL%209&exclude=<profileId>
- * @returns {{code: string, available: boolean, takenBy?: string}}
+ * @route GET /api/employees/code-available?code=SSL%209&exclude=<profileId>&excludeCandidate=<candidateId>
+ * @returns {{code: string, available: boolean, takenBy?: string, reserved?: boolean}}
+ *   `reserved` marks a code promised on an appointment letter rather than held
+ *   by an employee — taken either way, but worth wording differently.
  */
 const checkEmployeeCode = asyncHandler(async (req, res) => {
   const code = normalizeCode(req.query.code);
@@ -126,16 +129,26 @@ const checkEmployeeCode = asyncHandler(async (req, res) => {
     return;
   }
   const clash = await findProfileByCode(code, req.query.exclude || null);
+  // A code promised to somebody on an appointment letter is not free either,
+  // even though no employee holds it yet. `excludeCandidate` is the candidate
+  // whose own letter is being edited — their own code must not read as a clash
+  // with themselves.
+  const reserved = clash
+    ? null
+    : await appointmentCodeHolder(code, req.query.excludeCandidate || null);
   res.json({
     code,
-    available: !clash,
+    available: !clash && !reserved,
     // Name the holder only when the caller may see them — a taken code from
     // another company stays just "taken", not a directory probe. The COMPANY
     // wall, not the hrPartner rule: any same-company admin may be told which
     // colleague holds the code, or the message is useless.
     takenBy: clash && !companyOutOfScope(req, clash)
       ? `${clash.user?.firstName || ''} ${clash.user?.lastName || ''}`.trim() || undefined
-      : undefined,
+      : (reserved || undefined),
+    // So the form can word it as "promised to" rather than "already exists" —
+    // a reserved code is a different situation from a colleague holding one.
+    reserved: !clash && !!reserved,
   });
 });
 

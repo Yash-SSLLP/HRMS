@@ -95,9 +95,39 @@ export default function AdminHiringOnboarding() {
   const [apptBody, setApptBody] = useState(null);
   const [saving, setSaving] = useState(false);
   const [people, setPeople] = useState([]);
+  // 'idle' | 'checking' | 'free' | 'taken'
+  const [codeState, setCodeState] = useState('idle');
+  const [codeTakenBy, setCodeTakenBy] = useState('');
+  const [codeReserved, setCodeReserved] = useState(false);
   // Who leads the picker vs who is only reachable by typing a name.
   const seniorPeople = people.filter((p) => SENIOR_ROLES.includes(p.role));
   const otherPeople = people.filter((p) => !SENIOR_ROLES.includes(p.role));
+
+  // Debounced duplicate check, the same one the Add Employee form uses — with
+  // the candidate excluded so their own saved code does not read as a clash with
+  // themselves. A code can be taken by an EMPLOYEE or reserved on another
+  // candidate's letter; both are unavailable, and the wording says which.
+  const typedCode = (apptForm?.employeeCode || '').trim().toUpperCase();
+  useEffect(() => {
+    if (!apptForm || !typedCode) { setCodeState('idle'); setCodeTakenBy(''); setCodeReserved(false); return undefined; }
+    setCodeState('checking');
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/employees/code-available', {
+          params: { code: typedCode, ...(apptCand ? { excludeCandidate: apptCand._id } : {}) },
+        });
+        setCodeState(data.available ? 'free' : 'taken');
+        setCodeTakenBy(data.takenBy || '');
+        setCodeReserved(!!data.reserved);
+      } catch {
+        // A failed check must not block the letter — the server still refuses a
+        // duplicate when the candidate is converted to an employee.
+        setCodeState('idle'); setCodeTakenBy(''); setCodeReserved(false);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typedCode, apptCand?._id, !!apptForm]);
 
   const load = async () => {
     setLoading(true); setError('');
@@ -210,7 +240,7 @@ export default function AdminHiringOnboarding() {
   };
 
   // ----- Appointment letter -----
-  const openAppt = (c) => {
+  const openAppt = async (c) => {
     setApptCand(c);
     setApptEmail(!!c.email);
     // Carry a previously edited wording back into the editor.
@@ -220,6 +250,9 @@ export default function AdminHiringOnboarding() {
     setApptForm({
       designation: a.designation || o.position || c.job?.title || '',
       department: a.department || o.department || c.job?.department || '',
+      // Filled in below from /lifecycle/next-code when the letter does not
+      // already carry one. Left alone once allotted: a letter that has been
+      // issued, or even just saved, has promised that code to somebody.
       employeeCode: a.employeeCode || '',
       reportingManager: a.reportingManager || '',
       medical: a.medical ?? '',
@@ -243,9 +276,34 @@ export default function AdminHiringOnboarding() {
       signatoryName: a.signatoryName || '',
       signatoryTitle: a.signatoryTitle || '',
     });
+
+    // Suggest the next code, but only for a letter that has not been allotted
+    // one. Re-suggesting over a saved code would quietly renumber somebody whose
+    // letter may already be signed — and the server's suggestion now skips codes
+    // other pending letters have reserved, so two candidates cannot be handed
+    // the same one. Failure is silent: the field is editable and the duplicate
+    // check still runs, so a missing suggestion costs a little typing, nothing more.
+    if (!a.employeeCode) {
+      try {
+        const { data } = await api.get('/lifecycle/next-code');
+        if (data?.suggestion) {
+          setApptForm((f) => (f && !f.employeeCode ? { ...f, employeeCode: data.suggestion } : f));
+        }
+      } catch { /* leave it blank for HR to type */ }
+    }
   };
   const saveAppt = async (e) => {
-    e.preventDefault(); setSaving(true); setError('');
+    e.preventDefault();
+    // The letter prints this code and the conversion later creates an employee
+    // with it, so a clash caught here is one that would otherwise surface as a
+    // 409 weeks later — when the letter is signed and the code is on paper.
+    if (codeState === 'taken') {
+      setError(codeReserved
+        ? `Employee code "${typedCode}" is already promised to ${codeTakenBy || 'another candidate'}. Choose another.`
+        : `Employee code "${typedCode}" is already held by ${codeTakenBy || 'an employee'}. Choose another.`);
+      return;
+    }
+    setSaving(true); setError('');
     try {
       const { data } = await api.post(`/recruitment/candidates/${apptCand._id}/appointment`, { ...apptForm, body: apptBody || undefined });
       const wantEmail = apptEmail;
@@ -380,14 +438,26 @@ export default function AdminHiringOnboarding() {
                   value={apptForm.employeeCode}
                   onChange={(e) => setApptForm({ ...apptForm, employeeCode: e.target.value.toUpperCase() })}
                   placeholder="SSL 163"
-                  className="block w-full border rounded-lg px-3 py-2"
+                  aria-invalid={codeState === 'taken'}
+                  className={`block w-full border rounded-lg px-3 py-2 uppercase ${codeState === 'taken' ? 'border-red-400' : ''}`}
                 />
                 {/* Allotted here because the letter quotes it in three places and
                     the employee profile it would otherwise come from does not
                     exist until the candidate is converted after joining. */}
-                <p className="text-[11px] text-gray-400 mt-1">
-                  Printed on the letter, the acceptance stub and the salary annexure.
-                </p>
+                {codeState === 'taken' ? (
+                  <p className="text-[11px] text-red-600 mt-1">
+                    {codeReserved
+                      ? `Already promised to ${codeTakenBy || 'another candidate'} on their appointment letter.`
+                      : `Already held by ${codeTakenBy || 'an employee'}.`}
+                    {' '}Choose another.
+                  </p>
+                ) : codeState === 'free' ? (
+                  <p className="text-[11px] text-green-700 mt-1">Available.</p>
+                ) : (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Printed on the letter, the acceptance stub and the salary annexure.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Reporting manager</label>
@@ -587,7 +657,7 @@ export default function AdminHiringOnboarding() {
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
               <div className="sm:col-span-2 flex justify-end gap-2 pt-1">
                 <button type="button" onClick={() => { setApptCand(null); setApptForm(null); setError(''); }} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Generating…' : 'Generate & Save'}</button>
+                <button type="submit" disabled={saving || codeState === 'taken'} title={codeState === 'taken' ? 'That employee code is already taken' : undefined} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Generating…' : 'Generate & Save'}</button>
               </div>
             </form>
           </div>
