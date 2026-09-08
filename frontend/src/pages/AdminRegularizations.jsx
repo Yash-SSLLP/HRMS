@@ -17,6 +17,7 @@ import api from '../api/client';
 import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+import { hasLeft } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
 import { promptDialog } from '../components/dialogs';
 import { toast } from 'react-toastify';
@@ -241,7 +242,8 @@ function ApprovalSetupTab() {
         api.get('/admin/users'),
       ]);
       setProfiles(pRes.data.profiles || []);
-      setUsers((uRes.data.users || []).filter((u) => u.isActive !== false));
+      // The shared rule, not `isActive !== false` — see utils/peopleOptions.
+      setUsers((uRes.data.users || []).filter((u) => !hasLeft(u)));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load employees');
     } finally {

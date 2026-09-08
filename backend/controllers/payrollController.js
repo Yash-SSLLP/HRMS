@@ -29,7 +29,8 @@ const Holiday = require('../models/Holiday');
 const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const { monthRangeIST, ymdIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
-const { lateMinutes, getLatePolicy } = require('../utils/workday');
+const { lateMinutes, getLatePolicy, getLateAllowance } = require('../utils/workday');
+const { refreshLatePolicy } = require('../services/latePolicy');
 const { compOffKeysFor, isRestDayRecord, approvedDoublePayDays, doublePayState } = require('../utils/restDay');
 const { renderPayslip } = require('../services/payslipPdf');
 const { buildPayslipLines } = require('../services/payslipLines');
@@ -38,6 +39,10 @@ const { notify, notifyMany } = require('../services/notify');
 const { usersHoldingAny, usersInRoles, scopeRecipientsToCompany } = require('../services/audience');
 const { buildYtd, computeYtdFrom } = require('../services/payslipYtd');
 const { enqueueMail } = require('../services/email');
+// The covering email is editable in Settings -> Templates ('payslip.mail'); it
+// used to be hardcoded here, so anything HR typed there was ignored.
+const { renderMail } = require('../services/templates');
+const COMPANY = require('../config/company');
 const ExcelJS = require('exceljs');
 // exportPayrollSheet builds the company payroll register (.xlsx) via ExcelJS — see below.
 
@@ -1272,6 +1277,12 @@ const exportPayrollSheet = asyncHandler(async (req, res) => {
   }).select('employee earnings.bonus');
   const bonusByEmp = new Map(slips.map((s) => [String(s.employee), (s.earnings && s.earnings.bonus) || 0]));
 
+  // Pull the attendance policy in ONCE before the run. computeEmployeeRun reads
+  // the allowance synchronously from the cache (so all N employees agree), and
+  // that cache is otherwise only refreshed on a five-minute poll — which would
+  // let a run started just after a Super Admin changed the number charge people
+  // by the old one. One await per run, not per employee.
+  await refreshLatePolicy();
   const runs = await Promise.all(active.map((p) => computeEmployeeRun(p, year, month)));
   const rows = active.map((p, i) => buildPayrollSheetRow(
     i + 1,
@@ -1589,11 +1600,15 @@ const runPayroll = asyncHandler(async (req, res) => {
 // Attendance policy constants. The lateness arithmetic — including the
 // SuperAdmin-set cut-off time and grace window it judges against — comes from
 // utils/workday.js, shared with the attendance + manager controllers.
-// Both monthly allowances below are a full month's entitlement and are prorated
-// by the days an employee was actually on the payroll that month (see
-// prorateAllowance in computeEmployeeRun) — a mid-month joiner gets a part quota.
+// The paid-leave quota below is a full month's entitlement and IS prorated by the
+// days an employee was actually on the payroll that month (prorateAllowance in
+// computeEmployeeRun) — a mid-month joiner earns a part quota. The free-late
+// allowance is deliberately NOT prorated; see computeEmployeeRun for why.
 const PAID_LEAVE_QUOTA = 2;      // paid leave days granted each month
-const LATE_ALLOWANCE = 5;        // free late arrivals each month
+// Free late arrivals each month is a SETTING now, not a constant — Attendance →
+// settings, SuperAdmin only. Read through getLateAllowance() so a whole org run
+// gives every employee the same answer (utils/workday holds the cached value;
+// runOrgPayroll refreshes it once before the run).
 const LATE_THRESHOLD_BASIC = 25000; // monthly Basic cut-off for the penalty rate
 const LATE_RATE_LOW = 200;       // ₹/day when monthly Basic < threshold
 const LATE_RATE_HIGH = 400;      // ₹/day when monthly Basic >= threshold
@@ -1772,14 +1787,22 @@ async function computeEmployeeRun(profile, year, month) {
     noPunchDays += 1;                             // record exists but no punch/credit
   }
 
-  // ----- Prorated monthly allowances -----
-  // The paid-leave quota and the free-late allowance are a FULL month's
-  // entitlement, so an employee who was only on the payroll for part of the month
-  // (joined or exited mid-month) earns them in proportion to those days. The leave
-  // module prorates the same quota the same way (shared prorateAllowance), so the
-  // paid/LOP split an employee is shown when applying matches their payslip.
+  // ----- Monthly allowances -----
+  // The paid-leave quota IS prorated: it is an entitlement that accrues, so an
+  // employee on the payroll for half a month has earned half of it. The leave
+  // module prorates it the same way (shared prorateAllowance), so the paid/LOP
+  // split an employee is shown when applying matches their payslip.
   const paidLeaveQuota = prorateAllowance(PAID_LEAVE_QUOTA, eligibleDays, daysInMonth);
-  const lateAllowance = prorateAllowance(LATE_ALLOWANCE, eligibleDays, daysInMonth);
+
+  // The free-late allowance is NOT. It is not an entitlement that accrues, it is
+  // how much lateness the company tolerates before charging for it — and that
+  // tolerance does not depend on which day of the month somebody started. A
+  // joiner used to get the harsher deal precisely when they were newest: joining
+  // on the 16th gave 3 free days instead of 5, so the same three late mornings
+  // cost a new hire money and cost everybody else nothing. Everyone gets the
+  // whole allowance, every month, from their first day.
+  const fullLateAllowance = getLateAllowance();
+  const lateAllowance = fullLateAllowance;
 
   // ----- Monthly paid-leave quota (2 days, prorated) -----
   // Leave days beyond the quota become LOP; unused quota converts to extra pay
@@ -1937,7 +1960,8 @@ async function computeEmployeeRun(profile, year, month) {
     },
     hours: { daysPresent, totalHours, avgHours, compOff },
     // Attendance-policy roll-up: monthly paid-leave quota + late allowance. Both
-    // allowances are the effective (prorated) entitlement for this employee-month;
+    // allowances are the effective entitlement for this employee-month (the leave
+    // quota prorated for a part month, the late allowance never);
     // the full-month figures are alongside so the UI can explain a short quota.
     policy: {
       paidLeaveQuota,       // prorated for a mid-month joiner / leaver
@@ -1952,8 +1976,8 @@ async function computeEmployeeRun(profile, year, month) {
       doublePayDays,
       pendingDoublePayDays,
       doubleDayPay,
-      lateAllowance,        // prorated for a mid-month joiner / leaver
-      fullLateAllowance: LATE_ALLOWANCE,
+      lateAllowance,        // never prorated — the full allowance, every month
+      fullLateAllowance,
       // The cut-off these late days were judged against, so the employee's own
       // summary can state the rule instead of assuming 10:00 AM.
       latePolicy: getLatePolicy(),
@@ -2585,14 +2609,23 @@ const emailPayslip = asyncHandler(async (req, res) => {
   const empCode = payslip.employee?.employeeCode || 'employee';
   const fileName = `payslip-${empCode}-${monthLabel}.pdf`;
 
-  const defaults = {
+  const hrName = req.user?.fullName || 'HR Team';
+  const rendered = await renderMail('payslip.mail', {
+    employeeName: name || 'Employee',
+    employeeCode: payslip.employee?.employeeCode,
+    period,
+    companyName: COMPANY.name,
+    link,
+    hrName,
+  }, {
     subject: `Payslip · ${period}`,
     body:
       `Dear ${name || 'Employee'},\n\n` +
       `Please find attached your payslip for ${period}. You can also view and download it anytime from the link below:\n\n` +
       `${link}\n\n` +
-      `Regards,\n${req.user?.fullName || 'HR Team'}`,
-  };
+      `Regards,\n${hrName}`,
+  });
+  const defaults = { subject: rendered.subject, body: rendered.text };
   if (req.body.preview) {
     return res.json({ to: email, subject: defaults.subject, body: defaults.body, attachments: [fileName], link });
   }

@@ -16,6 +16,7 @@ import api from '../api/client';
 import { useTabParam } from "../hooks/useTabParam";
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+import { hasLeft } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import { confirmDialog, promptDialog } from '../components/dialogs';
@@ -449,7 +450,10 @@ function ApprovalHierarchyTab() {
     try {
       const [pRes, uRes] = await Promise.all([api.get('/employees'), api.get('/admin/users')]);
       setProfiles(pRes.data.profiles || []);
-      setUsers((uRes.data.users || []).filter((u) => u.isActive !== false));
+      // Not `isActive !== false`: a resignation leaves the login working through
+      // the notice period, so that test still offers somebody who walked out last
+      // week as an approver. See utils/peopleOptions.
+      setUsers((uRes.data.users || []).filter((u) => !hasLeft(u)));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load employees');
     } finally {

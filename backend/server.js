@@ -243,6 +243,20 @@ connectDB()
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`HRMS API listening on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'production'}`);
+      // Printed on every boot because it is otherwise UNKNOWABLE from outside:
+      // every link we email is built from it (config/appUrl.js), a wrong value
+      // fails silently — the mail sends and the link is dead — and the resolver
+      // has four branches, so "what did it actually pick on this host" cannot be
+      // answered by reading the env alone. One line in the boot log answers it
+      // wherever the server runs.
+      const { appBaseUrl } = require('./config/appUrl');
+      const resolved = appBaseUrl();
+      console.log(`Emailed links point at: ${resolved}`
+        + (process.env.APP_BASE_URL ? '' : '  (APP_BASE_URL not set — resolved by fallback)'));
+      if (/localhost|127\.0\.0\.1/i.test(resolved)) {
+        console.warn('WARNING: emailed links are localhost. Anyone outside this machine '
+          + 'who receives one cannot open it. Set APP_BASE_URL to the public web app URL.');
+      }
     });
   })
   .catch((err) => {

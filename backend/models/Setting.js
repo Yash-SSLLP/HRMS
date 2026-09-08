@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 const OFFICE = require('../config/office');
-const { DEFAULT_LATE_POLICY, MAX_GRACE_MINUTES, DEFAULT_MIN_PRESENT_HOURS, HALF_DAY_MIN_HOURS } = require('../utils/workday');
+const {
+  DEFAULT_LATE_POLICY, MAX_GRACE_MINUTES, DEFAULT_MIN_PRESENT_HOURS, HALF_DAY_MIN_HOURS,
+  DEFAULT_LATE_ALLOWANCE, MAX_LATE_ALLOWANCE,
+} = require('../utils/workday');
 
 // The signature slots a letter can carry. Fixed rather than free-form so a
 // renderer can ask for a specific one ("the CEO signs appointment letters")
@@ -95,6 +98,18 @@ const settingSchema = new mongoose.Schema(
       default: DEFAULT_MIN_PRESENT_HOURS,
       min: 0,
       max: HALF_DAY_MIN_HOURS,
+    },
+
+    // How many late arrivals a month are free before payroll charges for them.
+    // SuperAdmin-only for the same reason as the two above: one number, everyone,
+    // and it comes straight off somebody's salary. Was a hardcoded 5 in three
+    // separate files until it moved here. utils/workday.js holds the copy payroll
+    // reads; services/latePolicy.js keeps the two in step.
+    lateAllowance: {
+      type: Number,
+      default: DEFAULT_LATE_ALLOWANCE,
+      min: 0,
+      max: MAX_LATE_ALLOWANCE,
     },
 
     // The contact strip printed along the bottom of the documents an employee

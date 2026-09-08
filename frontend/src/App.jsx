@@ -86,6 +86,7 @@ const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements.jsx'));
 const EmployeeAnnouncements = lazy(() => import('./pages/EmployeeAnnouncements.jsx'));
 const AdminRnr = lazy(() => import('./pages/AdminRnr.jsx'));
 const HowToUse = lazy(() => import('./pages/HowToUse.jsx'));
+const MobileApp = lazy(() => import('./pages/MobileApp.jsx'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy.jsx'));
 const AdminOrgMasters = lazy(() => import('./pages/AdminOrgMasters.jsx'));
 const AdminOrgChart = lazy(() => import('./pages/AdminOrgChart.jsx'));
@@ -188,6 +189,11 @@ export default function App() {
       {/* Public — candidate offer/appointment letter download (tokenised link) */}
       <Route path="/letter/:token" element={<LetterDownload />} />
 
+      {/* Public — the Android APK. Both endpoints behind this page are public
+          (appReleaseRoutes), so a new joiner can install the app before their
+          first sign-in and the link can go in a welcome email. */}
+      <Route path="/get-app" element={<MobileApp standalone />} />
+
       {/* Public — no-login course viewer (shareable link) */}
       <Route path="/learn/:token" element={<PublicCoursePage />} />
 
@@ -255,6 +261,7 @@ export default function App() {
         <Route path="analytics" element={<AdminAnalytics />} />
         <Route path="rnr" element={<AdminRnr />} />
         <Route path="how-to-use" element={<HowToUse />} />
+        <Route path="mobile-app" element={<MobileApp />} />
         <Route path="announcements" element={<AdminAnnouncements />} />
         <Route path="surveys" element={<AdminSurveys />} />
         <Route path="complaints" element={<AdminComplaints />} />
@@ -320,6 +327,7 @@ export default function App() {
         <Route path="learning" element={<EmployeeLearning />} />
         <Route path="learning/:courseId" element={<CoursePlayerPage />} />
         <Route path="how-to-use" element={<HowToUse />} />
+        <Route path="mobile-app" element={<MobileApp />} />
         <Route path="announcements" element={<EmployeeAnnouncements />} />
         <Route path="surveys" element={<EmployeeSurveys />} />
         <Route path="calendar" element={<Calendar />} />

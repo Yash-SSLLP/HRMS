@@ -35,6 +35,88 @@ async function accountForRequest(doc) {
 const { notify, notifyMany } = require('../services/notify');
 const { allowedUserIds, cannotSeeUser } = require('../utils/employeeScope');
 const { scopeRecipientsToCompany } = require('../services/audience');
+const { enqueueMail } = require('../services/email');
+const { renderMail } = require('../services/templates');
+// The public web app, for the link in that mail. Never hardcoded — a localhost
+// link in somebody's inbox is dead on arrival; see config/appUrl.
+const { appBaseUrl } = require('../config/appUrl');
+const COMPANY = require('../config/company');
+
+/**
+ * Email the SAME people the in-app notification goes to.
+ *
+ * A notification is only seen by somebody already looking at the portal, and the
+ * person who raised this cannot get into the portal at all — so the request has
+ * to reach HR where they actually are. It carries a link straight to the queue.
+ *
+ * Wording comes from the editable registry ('passwordReset.request'), and the
+ * HTML is built out of that same rendered text, so editing the template in
+ * Settings → Templates moves both halves rather than only the plain-text one.
+ *
+ * NEVER allowed to break the request: this endpoint is PUBLIC and its caller is
+ * locked out, so a mail problem must not become a 500 in front of somebody who
+ * cannot sign in. The caller logs and carries on — the notification and the row
+ * in the list are already there.
+ *
+ * @param {Array<*>} recipientIds - User ids, already company-scoped
+ * @param {Object} doc - the PasswordResetRequest just created
+ */
+async function mailAdmins(recipientIds, doc) {
+  // Addresses are fetched here rather than carried down: scopeRecipientsToCompany
+  // answers in ids, and threading a second field through it would only give this
+  // one caller a reason to change a shared helper.
+  const rows = await User.find({ _id: { $in: recipientIds } }).select('email').lean();
+  const to = [...new Set(rows.map((u) => u.email).filter(Boolean))];
+  if (!to.length) return;
+
+  const link = `${appBaseUrl()}/admin/password-resets`;
+  const vars = {
+    name: doc.name,
+    employeeCode: doc.employeeCode,
+    email: doc.email,
+    phone: doc.phone,
+    designation: doc.designation,
+    department: doc.department,
+    // An unsupplied variable is deliberately left as its {{placeholder}} by the
+    // renderer — right for a missing salary figure, wrong for an optional
+    // free-text box — so an absent reason is spelled out instead.
+    reason: doc.reason || 'Not given',
+    link,
+    companyName: COMPANY.name,
+  };
+
+  const { subject, text } = await renderMail('passwordReset.request', vars, {
+    subject: `Password reset requested - ${doc.name} (${doc.employeeCode})`,
+    body: `${doc.name} (${doc.employeeCode}) has asked for their password to be reset.\n\n${link}`,
+  });
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+  ));
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => `<p style="margin:0 0 14px;white-space:pre-wrap;">${esc(p)}</p>`)
+    .join('\n  ');
+  // The button is the point of the mail, so the URL is ALSO printed in full
+  // underneath it — plenty of corporate clients strip or rewrite anchors.
+  const html = `<!doctype html>
+<html><body style="font-family:Helvetica,Arial,sans-serif;color:#1f2937;line-height:1.55;max-width:560px;margin:0 auto;padding:24px;">
+  ${paragraphs}
+  <p style="margin:24px 0;">
+    <a href="${esc(link)}"
+       style="display:inline-block;padding:12px 24px;background:#111111;color:#ffffff;
+              text-decoration:none;border-radius:6px;font-weight:600;">
+      Open password reset requests
+    </a>
+  </p>
+  <p style="font-size:13px;color:#6b7280;">
+    Or paste this link into your browser:<br>
+    <code style="background:#f4f4f5;padding:2px 6px;border-radius:3px;">${esc(link)}</code>
+  </p>
+</body></html>`;
+
+  await enqueueMail({ to, subject, text, html }, { type: 'passwordResetRequest', id: doc._id });
+}
 
 // All of these identity fields must be supplied on the public form
 const REQUIRED = ['name', 'email', 'employeeCode', 'phone', 'designation', 'department'];
@@ -44,7 +126,7 @@ const REQUIRED = ['name', 'email', 'employeeCode', 'phone', 'designation', 'depa
  * @route POST /api/password-reset-requests  (PUBLIC, no auth)
  * @param {Object} req.body - name, email, employeeCode, phone, designation, department (all required); optional reason
  * @returns {{ok: boolean}} (201)
- * @sideeffect notifies every active HR Manager and SuperAdmin
+ * @sideeffect notifies AND emails every active HR Manager and SuperAdmin in scope
  */
 // POST /api/password-reset-requests  (PUBLIC — submitted from the login page)
 const createPasswordResetRequest = asyncHandler(async (req, res) => {
@@ -81,6 +163,15 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
   }
 
   if (admins.length) {
+    // The mail goes to exactly the same people as the notification below, so
+    // the two can never disagree about who was told. Failure is logged, not
+    // thrown — see mailAdmins.
+    try {
+      await mailAdmins(admins.map((a) => a._id), doc);
+    } catch (err) {
+      console.error('Password-reset request email failed:', err.message);
+    }
+
     // notifyMany, not Notification.insertMany: this used to write the rows
     // directly, which skipped the push entirely — the request sat in the bell
     // until somebody happened to open the admin portal, while the person who

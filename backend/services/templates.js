@@ -57,14 +57,26 @@ async function resolve(key) {
  * than blanked: a candidate receiving "{{salaryMonthly}}" is an obvious bug that
  * gets reported, whereas an empty gap or the word "undefined" reads as intended
  * text and can go unnoticed for months.
+ *
+ * AN EXPLICIT EMPTY STRING IS NOT "MISSING", THOUGH, and used to be treated as
+ * if it were. Several templates carry an optional CLAUSE — `{{linkClause}}`,
+ * `{{departmentClause}}`, `{{employeeCodeClause}}` — whose whole job is to
+ * disappear when there is nothing to say: a letter with no public token has no
+ * link, a candidate with no department has no department sentence. Passing ''
+ * for those printed the literal "{{linkClause}}" into a leaver's inbox and
+ * "{{departmentClause}}" into an offer letter. So the test is now whether the
+ * caller SUPPLIED the name at all, not whether the value is falsy — a caller
+ * that deliberately says "nothing here" is honoured, and a genuinely absent
+ * variable still shows up as the obvious bug it is.
  * @param {string} text
  * @param {Object} vars
  * @returns {string}
  */
 function fill(text, vars = {}) {
   return String(text || '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, name) => {
+    if (!Object.prototype.hasOwnProperty.call(vars, name)) return match;
     const v = vars[name];
-    if (v === undefined || v === null || v === '') return match;
+    if (v === undefined || v === null) return match;
     return String(v);
   });
 }

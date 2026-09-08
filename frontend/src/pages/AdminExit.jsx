@@ -101,7 +101,8 @@ export default function AdminExit() {
       setHrUsers(usersRes.data.users.filter(
         (u) => u.role === 'HRManager' || u.role === 'SuperAdmin'
       ));
-      setAllUsers(usersRes.data.users.filter((u) => u.isActive !== false));
+      // The shared rule, not `isActive !== false` — see utils/peopleOptions.
+      setAllUsers(usersRes.data.users.filter((u) => !hasLeft(u)));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -263,6 +264,34 @@ export default function AdminExit() {
 
   // Open the relieving letter in a new tab. Fetched as a blob so the axios
   // interceptor can attach the Bearer token — a bare <a href> would 401.
+  /**
+   * Email the leaver their relieving letter with the PDF attached. The server
+   * drafts it from the 'relieving.mail' template, HR edits it here, and the
+   * server sends it from the company mailbox.
+   */
+  const emailRelievingLetter = async () => {
+    try {
+      const { data } = await api.post(`/exits/${detail._id}/relieving-letter/email`, { preview: true });
+      setMail({
+        to: data.to,
+        title: 'Email relieving letter',
+        link: data.link,
+        sendLabel: 'Send letter',
+        note: "Review and edit the message below · it's emailed from the company mailbox with the letter attached.",
+        defaultSubject: data.subject,
+        defaultBody: data.body,
+        attachedNames: data.attachments || [],
+        onSend: async ({ subject, body }) => {
+          await api.post(`/exits/${detail._id}/relieving-letter/email`, { subject, body });
+          toast.success('Relieving letter emailed');
+          await load();
+        },
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not prepare the relieving letter email');
+    }
+  };
+
   const openRelievingLetter = async () => {
     try {
       const res = await api.get(`/exits/${detail._id}/relieving-letter.pdf`, { responseType: 'blob' });
@@ -722,6 +751,17 @@ export default function AdminExit() {
                     title="Open the relieving letter PDF"
                     className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
                     Relieving Letter
+                  </button>
+                )}
+                {/* Separate from "Resend Email": that one re-sends the whole
+                    thank-you-and-feedback message, which is the wrong thing to
+                    do when a leaver simply needs their letter again months
+                    later for a new employer. */}
+                {detail.status === 'Completed' && !viewOnly && (
+                  <button onClick={emailRelievingLetter}
+                    title="Email the relieving letter to the leaver, PDF attached"
+                    className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                    {detail.relievingEmailedAt ? 'Re-email Letter' : 'Email Letter'}
                   </button>
                 )}
               </div>

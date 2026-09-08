@@ -20,6 +20,7 @@ const {
   updateClearanceSectionAdmin,
   overrideClearance,
   relievingLetterPdf,
+  emailRelievingLetter,
   myRelievingLetterPdf,
   publicRelievingLetterPdf,
 } = require('../controllers/exitController');
@@ -79,6 +80,9 @@ router.patch('/:id/clearance/override', overrideClearance);
 // requires 'exit.manage'. Refused until no-dues clearance is satisfied and the
 // last working day has passed — the letter certifies both.
 router.get('/:id/relieving-letter.pdf', relievingLetterPdf);
+// POST /:id/relieving-letter/email — email the letter (PDF attached); protected,
+// requires 'exit.manage'. Preview with { preview: true }.
+router.post('/:id/relieving-letter/email', emailRelievingLetter);
 // PATCH /:id/clearance/:key — HR ticks a no-dues section.
 router.patch('/:id/clearance/:key', updateClearanceSectionAdmin);
 

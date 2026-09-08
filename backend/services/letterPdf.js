@@ -696,6 +696,10 @@ async function renderRelievingLetter(data = {}) {
 module.exports = {
   renderOfferLetter, renderAppointmentLetter, renderRelievingLetter,
   letterBodyDefaults, resolveLetterBody,
+  // The letter's own date format ('21st July, 2025'). Exported so a covering
+  // EMAIL can print the same dates as the PDF attached to it, rather than each
+  // send site inventing its own.
+  longDate,
   // Exported so the one-page behaviour can be measured at a chosen compression.
   renderOfferOnce, renderAppointmentOnce, renderRelievingOnce, OFFER_FIT_STEPS,
 };

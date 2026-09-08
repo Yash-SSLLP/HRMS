@@ -47,6 +47,7 @@ const { PAYMENT_MODES } = require('../models/KhataEntry');
 const CashAccount = require('../models/CashAccount');
 const Setting = require('../models/Setting');
 const User = require('../models/User');
+const { departedUserIdSet } = require('../utils/departed');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
 const ledger = require('../services/khataLedger');
@@ -150,34 +151,10 @@ function parseFiledLocation(body) {
   };
 }
 
-/**
- * Which of these user ids belong to people who have LEFT the organisation —
- * their login is deactivated, or their profile carries a date of exit that has
- * already passed.
- *
- * Copied out of chatController rather than imported: it is not exported there,
- * and pulling in the whole messaging controller for one helper would put the
- * chat module in this module's load graph for no other reason. If a third caller
- * ever needs it, it belongs in utils/ — two copies is the point at which that
- * becomes worth doing, not one.
- *
- * Used by the colleague picker: you cannot share a book with somebody who has
- * gone, any more than you can start a chat with them.
- * @param {Array<string|import('mongoose').Types.ObjectId>} userIds
- * @returns {Promise<Set<string>>} The ids, as strings, of those who have left.
- */
-async function departedUserIdSet(userIds) {
-  const ids = [...new Set((userIds || []).map(String))].filter(Boolean);
-  if (!ids.length) return new Set();
-  const departed = new Set();
-  const [inactive, profiles] = await Promise.all([
-    User.find({ _id: { $in: ids }, isActive: false }).select('_id').lean(),
-    EmployeeProfile.find({ user: { $in: ids }, dateOfExit: { $ne: null, $lte: new Date() } }).select('user').lean(),
-  ]);
-  inactive.forEach((u) => departed.add(String(u._id)));
-  profiles.forEach((p) => departed.add(String(p.user)));
-  return departed;
-}
+// departedUserIdSet moved to utils/departed — the third caller arrived (the org
+// chart and the people pickers), which is exactly the threshold the note that
+// used to sit here named. You still cannot share a book with somebody who has
+// gone; that rule is unchanged, only its definition is now shared.
 
 /**
  * Allowlist mapper for a ledger entry. A field not named here never reaches a

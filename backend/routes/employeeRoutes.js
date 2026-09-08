@@ -24,6 +24,7 @@ const {
   listImportFlags,
   resolveImportFlag,
   createDocLink,
+  emailDocLink,
   getPublicDocRequest,
   submitPublicDocs,
 } = require('../controllers/employeeController');
@@ -103,6 +104,9 @@ router.post('/', createEmployee);
 
 // POST /:id/doc-link — create a public document-submission link; protected, requires 'employees.manage'.
 router.post('/:id/doc-link', createDocLink);
+// POST /:id/documents/email — email that link to the employee; protected,
+// requires 'employees.manage'. Preview with { preview: true }.
+router.post('/:id/documents/email', emailDocLink);
 // GET /:id/export.zip — export one employee's files as a zip; protected, requires 'employees.manage'.
 router.get('/:id/export.zip', exportEmployeeZip);
 

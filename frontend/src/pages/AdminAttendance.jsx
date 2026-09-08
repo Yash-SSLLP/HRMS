@@ -173,6 +173,7 @@ export default function AdminAttendance() {
     geofenceThresholdM: 200,
     latePolicy: { hour: 10, minute: 0, graceMinutes: 0 },
     minPresentHours: 1,
+    lateAllowance: 5,
   });
   const [settingsForm, setSettingsForm] = useState(null); // non-null while the editor is open
   const [savingSettings, setSavingSettings] = useState(false);
@@ -284,6 +285,7 @@ export default function AdminAttendance() {
       geofenceThresholdM: live.geofenceThresholdM,
       latePolicy: { hour: 10, minute: 0, graceMinutes: 0, ...(live.latePolicy || {}) },
       minPresentHours: live.minPresentHours ?? 1,
+      lateAllowance: live.lateAllowance ?? 5,
     });
   };
 
@@ -319,6 +321,11 @@ export default function AdminAttendance() {
         // and sending it anyway would make a disabled field look editable.
         ...(isSuperAdmin ? {
           minPresentHours: Number(settingsForm.minPresentHours) || 0,
+          // || 0 would turn a deliberate 0 into 0 anyway, but it would also turn
+          // an empty box into 0 — which here means "charge from the first late
+          // day", the most expensive reading of a blank field. Fall back to the
+          // stored value instead and let the server clamp.
+          lateAllowance: settingsForm.lateAllowance === '' ? undefined : Number(settingsForm.lateAllowance),
           latePolicy: {
             hour: Number(settingsForm.latePolicy.hour),
             minute: Number(settingsForm.latePolicy.minute),
@@ -745,7 +752,9 @@ export default function AdminAttendance() {
                 </div>
                 <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
                   A check-in after <b>{graceEnds12(settingsForm.latePolicy)}</b> is marked late.
-                  {' '}Payroll allows five late days a month; each one beyond that costs ₹200 or ₹400.
+                  {' '}Payroll allows {settingsForm.lateAllowance} late day
+                  {Number(settingsForm.lateAllowance) === 1 ? '' : 's'} a month (set below); each one
+                  beyond that costs ₹200 or ₹400.
                 </p>
               </div>
 
@@ -781,6 +790,48 @@ export default function AdminAttendance() {
                     </>
                   ) : (
                     <>The rule is off: short days stay half days, however brief.</>
+                  )}
+                </p>
+              </div>
+
+              {/* ---- Free late arrivals (SuperAdmin only) ---- */}
+              <div className="pt-3 border-t">
+                <div className="flex items-baseline justify-between">
+                  <h3 className="text-sm font-semibold text-gray-800">Free late arrivals a month</h3>
+                  {!isSuperAdmin && <span className="text-[11px] text-amber-700">Super Admin only</span>}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  How many times somebody may arrive after the cut-off above before payroll starts
+                  charging for it. Applies to everyone, and it comes off a salary — so, like the two
+                  rules above, it is a Super Admin decision.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                  <div>
+                    <label className="block text-sm text-gray-700">Free late days</label>
+                    <input type="number" min="0" max="31" step="1" disabled={!isSuperAdmin}
+                      value={settingsForm.lateAllowance}
+                      onChange={(e) => setSettingsForm((f) => ({ ...f, lateAllowance: e.target.value }))}
+                      className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:opacity-60 disabled:bg-gray-50" />
+                    <div className="text-[11px] text-gray-400 mt-1">0 = charge from the first late day · max 31</div>
+                  </div>
+                </div>
+                {/* Spelled out because lowering this takes money off people who were
+                    inside the old allowance, and nothing else on screen would say so. */}
+                <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
+                  {Number(settingsForm.lateAllowance) > 0 ? (
+                    <>
+                      The first <b>{settingsForm.lateAllowance}</b> late arrival
+                      {Number(settingsForm.lateAllowance) === 1 ? ' is' : 's are'} free each month; every
+                      late day beyond that costs ₹200, or ₹400 once monthly Basic reaches ₹25,000.
+                      Everyone gets the whole allowance every month, including the month they join —
+                      it is not prorated. Payslips already generated keep the figures they were
+                      computed with; this applies from the next payroll run.
+                    </>
+                  ) : (
+                    <>
+                      Every late arrival is charged, from the first one. Lowering this takes money off
+                      people who were inside the old allowance, so check it before you save.
+                    </>
                   )}
                 </p>
               </div>

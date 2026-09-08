@@ -196,6 +196,10 @@ export const adminNav = [
   // as one "Help" link rather than a dropdown.
   { group: 'Help', icon: FiHelpCircle, items: [
     { to: '/admin/how-to-use', label: 'Help', icon: FiHelpCircle },
+    // Its own admin-portal route rather than a link into My Portal: following a
+    // nav item should not silently switch which portal you are in.
+    { to: '/admin/mobile-app', label: 'Mobile App', icon: FiSmartphone,
+      keywords: ['apk', 'android', 'download app', 'install'] },
   ] },
 ];
 
@@ -296,5 +300,10 @@ export const employeeNav = [
   // Last entry in the sidebar — see the note on the admin Help group above.
   { group: 'Help', icon: FiHelpCircle, items: [
     { to: '/employee/how-to-use', label: 'Help', icon: FiHelpCircle },
+    // The app is sideloaded, so there is no store page to send anyone to and
+    // nothing on a phone that finds a new build by itself — this is where staff
+    // install it and where they come back to update.
+    { to: '/employee/mobile-app', label: 'Mobile App', icon: FiSmartphone,
+      keywords: ['apk', 'android', 'download app', 'install'] },
   ] },
 ];

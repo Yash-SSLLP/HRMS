@@ -238,6 +238,11 @@ const employeeProfileSchema = new mongoose.Schema(
     // Public, no-login document submission link. HR generates a token; the
     // employee opens /employee-docs/<token> to upload their documents.
     docToken: { type: String, index: true },
+    // When that link was last EMAILED to the employee. The token alone cannot
+    // say whether anybody was actually told about it — HR used to copy the URL
+    // by hand — so without this the directory has no way to show "asked, still
+    // waiting" apart from "never asked". Mirrors Candidate.documents.requestEmailedAt.
+    docLinkEmailedAt: { type: Date },
 
     bankDetails: bankDetailsSchema,
     address: {

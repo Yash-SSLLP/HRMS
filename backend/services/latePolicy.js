@@ -18,7 +18,10 @@
  */
 
 const Setting = require('../models/Setting');
-const { setLatePolicy, getLatePolicy, setMinPresentHours, getMinPresentHours } = require('../utils/workday');
+const {
+  setLatePolicy, getLatePolicy, setMinPresentHours, getMinPresentHours,
+  setLateAllowance, getLateAllowance,
+} = require('../utils/workday');
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -35,6 +38,10 @@ async function refreshLatePolicy() {
     // synchronous status code, from the same Setting singleton, and a second
     // timer for one number would just be a second thing to forget.
     setMinPresentHours(s.minPresentHours);
+    // And the free-late allowance, for the same reason: same singleton, read by
+    // the same synchronous code, and a second timer for one more number would
+    // just be a second thing to forget.
+    setLateAllowance(s.lateAllowance);
     return setLatePolicy(s.latePolicy);
   } catch (err) {
     console.error('late policy refresh failed, keeping the cached one:', err.message);
@@ -58,6 +65,10 @@ function startWorker() {
     console.log(min
       ? `Day minimum loaded: under ${min}h counts as absent`
       : 'Day minimum loaded: rule is off (0h)');
+    const allow = getLateAllowance();
+    console.log(allow
+      ? `Late allowance loaded: ${allow} free late arrival${allow === 1 ? '' : 's'} per month`
+      : 'Late allowance loaded: none — every late arrival is charged');
   });
   intervalHandle = setInterval(refreshLatePolicy, REFRESH_INTERVAL_MS);
   if (intervalHandle.unref) intervalHandle.unref();

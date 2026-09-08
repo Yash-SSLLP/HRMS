@@ -22,7 +22,11 @@ const { copyCandidateDocuments } = require('../services/candidateDocuments');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const COMPANY = require('../config/company');
-const { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody } = require('../services/letterPdf');
+const { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveLetterBody, longDate } = require('../services/letterPdf');
+// The letter BODIES already come from the editable registry (letterPdf's
+// resolveLetterBody); these are the covering emails, which used to be hardcoded
+// here and so ignored anything HR typed into Settings -> Templates.
+const { renderMail } = require('../services/templates');
 const { getBranding } = require('../services/branding');
 const { enqueueMail, sendMail } = require('../services/email');
 const { notify } = require('../services/notify');
@@ -1145,15 +1149,29 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
 
   const label = kind === 'offer' ? 'Offer Letter' : 'Letter of Appointment';
   const link = letter.token ? `${APP_BASE_URL()}/letter/${letter.token}` : '';
-  const defaults = {
-    subject: `${label} - ${COMPANY.name}`,
-    body:
-      `Dear ${candidate.name},\n\n` +
-      `Please find attached your ${label} from ${COMPANY.name}.` +
-      (link ? ` You can also view and download it anytime from the link below:\n\n${link}\n` : '\n') +
-      `\nKindly review the document and revert with your acceptance.\n\n` +
-      `Warm regards,\n${req.user?.fullName || 'HR Team'}\n${COMPANY.name}`,
-  };
+  // A letter with no public token has no link, and a template cannot express
+  // "drop this sentence" on its own — so the whole clause is a variable.
+  const linkClause = link
+    ? ` You can also view and download it anytime from the link below:\n\n${link}\n`
+    : '';
+  const hrName = req.user?.fullName || 'HR Team';
+  const letterData = letter?.data ? (letter.data.toObject?.() || letter.data) : {};
+  const fallbackBody =
+    `Dear ${candidate.name},\n\n` +
+    `Please find attached your ${label} from ${COMPANY.name}.${linkClause || '\n'}` +
+    `\nKindly review the document and revert with your acceptance.\n\n` +
+    `Warm regards,\n${hrName}\n${COMPANY.name}`;
+  const rendered = await renderMail(`${kind}.mail`, {
+    candidateName: candidate.name,
+    position: letterData.position || letterData.designation,
+    companyName: COMPANY.name,
+    acceptanceDeadline: longDate(letterData.acceptanceDeadline),
+    joiningDate: longDate(letterData.joiningDate),
+    link,
+    linkClause,
+    hrName,
+  }, { subject: `${label} - ${COMPANY.name}`, body: fallbackBody });
+  const defaults = { subject: rendered.subject, body: rendered.text };
   if (req.body.preview) {
     return res.json({
       to: candidate.email,
@@ -1926,20 +1944,29 @@ const emailDocumentRequest = asyncHandler(async (req, res) => {
 
   const link = `${APP_BASE_URL()}/submit-documents/${candidate.documents.token}`;
   const wanted = DOC_TYPES.filter((t) => t !== 'Other');
-  const defaults = {
-    subject: `Documents required for your onboarding - ${COMPANY.name}`,
-    body:
-      `Dear ${candidate.name},\n\n` +
-      `Congratulations on clearing your interviews with ${COMPANY.name}.\n\n` +
-      `To take your joining formalities forward, please upload the documents listed ` +
-      `below using the secure link at the end of this email. No login is needed, and ` +
-      `you can preview each file before you send it.\n\n` +
-      wanted.map((t) => `  - ${t}`).join('\n') +
-      `\n\nUpload here:\n${link}\n\n` +
-      `Please keep each file under 10 MB, in PDF, Word, JPG or PNG format. ` +
-      `Write back to this email if any document is not available with you right now.\n\n` +
-      `Warm regards,\n${req.user?.fullName || 'HR Team'}\n${COMPANY.name}`,
-  };
+  // The LIST is generated from DOC_TYPES and handed to the template as one
+  // block, so editing the wording around it can never drop a document from it.
+  const documentList = wanted.map((t) => `  - ${t}`).join('\n');
+  const hrName = req.user?.fullName || 'HR Team';
+  const fallbackBody =
+    `Dear ${candidate.name},\n\n` +
+    `Congratulations on clearing your interviews with ${COMPANY.name}.\n\n` +
+    `To take your joining formalities forward, please upload the documents listed ` +
+    `below using the secure link at the end of this email. No login is needed, and ` +
+    `you can preview each file before you send it.\n\n` +
+    documentList +
+    `\n\nUpload here:\n${link}\n\n` +
+    `Please keep each file under 10 MB, in PDF, Word, JPG or PNG format. ` +
+    `Write back to this email if any document is not available with you right now.\n\n` +
+    `Warm regards,\n${hrName}\n${COMPANY.name}`;
+  const rendered = await renderMail('candidate.documents', {
+    candidateName: candidate.name,
+    companyName: COMPANY.name,
+    link,
+    documentList,
+    hrName,
+  }, { subject: `Documents required for your onboarding - ${COMPANY.name}`, body: fallbackBody });
+  const defaults = { subject: rendered.subject, body: rendered.text };
   if (req.body.preview) {
     return res.json({ to: candidate.email, subject: defaults.subject, body: defaults.body, link });
   }

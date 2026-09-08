@@ -24,10 +24,14 @@ const MONTHS = [
   'July','August','September','October','November','December',
 ];
 
-// Free late arrivals per month before the penalty starts. Mirrors LATE_ALLOWANCE
-// in backend/controllers/payrollController.js — display only (the amount itself
-// is always computed server-side), but keep the two in step.
-const LATE_ALLOWANCE = 5;
+// How many late arrivals were free that month is a SETTING now (Attendance →
+// settings), and every payroll row carries the value ITS OWN run used — so a
+// payslip from before the setting changed still explains itself correctly. The
+// fallback is only for a row computed before the field existed.
+const DEFAULT_LATE_ALLOWANCE = 5;
+const freeLateOf = (row) => (
+  Number.isFinite(Number(row?.fullLateAllowance)) ? Number(row.fullLateAllowance) : DEFAULT_LATE_ALLOWANCE
+);
 
 /** Strip undefined keys so a spread can't blank a value the engine didn't produce. */
 const dropUndefined = (obj) =>
@@ -620,7 +624,7 @@ export default function AdminPayroll() {
                     <>
                       <div className="text-red-600 font-medium">− {inr(p.deductions.latePenalty)}</div>
                       <div className="text-[11px] text-gray-400">
-                        {p.lateDays || 0} late · {Math.max(0, (p.lateDays || 0) - LATE_ALLOWANCE)} over
+                        {p.lateDays || 0} late · {Math.max(0, (p.lateDays || 0) - freeLateOf(p))} over
                       </div>
                     </>
                   ) : (

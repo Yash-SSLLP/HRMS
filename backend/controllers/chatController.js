@@ -16,6 +16,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
 const { hideSuperAdminFilter } = require('../utils/visibility');
 const { scopeUserFilter } = require('../utils/employeeScope');
+const { departedUserIdSet } = require('../utils/departed');
 const { notify, notifyMany } = require('../services/notify');
 
 // Trim a chat body to a notification-friendly preview.
@@ -47,21 +48,10 @@ function otherParty(conn, meId) {
   return conn.requester.equals(meId) ? conn.recipient : conn.requester;
 }
 
-// Given a list of user ids, return the set (as strings) of those who have LEFT
-// the organization — either their login is deactivated OR their employee profile
-// has a date of exit that has already passed. Used to block chatting with them.
-async function departedUserIdSet(userIds) {
-  const ids = [...new Set((userIds || []).map(String))].filter(Boolean);
-  if (!ids.length) return new Set();
-  const departed = new Set();
-  const [inactive, profiles] = await Promise.all([
-    User.find({ _id: { $in: ids }, isActive: false }).select('_id').lean(),
-    EmployeeProfile.find({ user: { $in: ids }, dateOfExit: { $ne: null, $lte: new Date() } }).select('user').lean(),
-  ]);
-  inactive.forEach((u) => departed.add(String(u._id)));
-  profiles.forEach((p) => departed.add(String(p.user)));
-  return departed;
-}
+// departedUserIdSet — "who has left" — now lives in utils/departed, because the
+// org chart and every people picker have to give the SAME answer this module
+// gives. Blocking a chat with somebody who has gone is one use of it, not the
+// definition of it.
 
 // WhatsApp-style delivery status for a message (from the sender's viewpoint).
 //  sent      → stored on the server, not yet pulled by the recipient

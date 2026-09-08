@@ -24,6 +24,12 @@ const { hiddenUserIds, shouldExcludeExecutives, executiveUserIds, EXECUTIVE_ROLE
 const { employeeProfileScope, cannotManageProfile, viewerCompanyScope, scopeEmployeeFilter, companyOutOfScope, assertCanEditManagerProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
 const { hasPermission, hasExplicitPermission, isEditingExec } = require('../middleware/authMiddleware');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
+const { sendMail } = require('../services/email');
+const { renderMail } = require('../services/templates');
+// Never hardcode the web origin — a localhost link in somebody's inbox is dead
+// on arrival. See config/appUrl.
+const { appBaseUrl: DOC_APP_BASE_URL } = require('../config/appUrl');
+const COMPANY_INFO = require('../config/company');
 
 /**
  * Find an account by email, preferring the ACTIVE one.
@@ -269,6 +275,32 @@ const hrCannotManage = (req, profile) => cannotManageProfile(req, profile);
 const canSetHierarchy = (req) => hasExplicitPermission(req.user, 'hierarchy.manage');
 
 /**
+ * May this account set WHO LOOKS AFTER an employee — their HR partner and their
+ * reporting manager?
+ *
+ * An HR Manager may, without any grant. Handing an employee to another HR, or
+ * taking one on, is the ordinary work of running an HR desk: people join, move
+ * team and change hands, and the person doing that work is the HR Manager, not
+ * the Backend account. Requiring `hierarchy.manage` for it meant a joiner's
+ * reporting line sat wrong until a Super Admin was free — and, worse, that when
+ * an HR left, nobody but the Backend could move their 49 employees off the
+ * departed account.
+ *
+ * NOT the same question as canSetHierarchy, which still guards the
+ * `regularizationApprovers` ladder: an approver decides whether somebody's
+ * attendance correction is accepted, which is a control, not an assignment.
+ * The leave ladder stays Backend-only from its own screen, as before.
+ *
+ * Everything else that made this safe is untouched: the company wall (an HR
+ * cannot move somebody into a company they cannot see), the rule that an HR
+ * Manager's own partner must be a Super Admin, and — since nobody administers
+ * their own record — the fact that pointing a field at yourself buys nothing.
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+const canAssignPeople = (req) => canSetHierarchy(req) || req.user.role === 'HRManager';
+
+/**
  * May this account set a relationship field that is currently EMPTY?
  *
  * FILLING A BLANK IS NOT REASSIGNING. The grant above exists because handing an
@@ -288,7 +320,7 @@ const canSetHierarchy = (req) => hasExplicitPermission(req.user, 'hierarchy.mana
  * @param {*} currentValue - what the STORED profile holds for that field
  * @returns {boolean}
  */
-const canFillHierarchyField = (req, currentValue) => canSetHierarchy(req) || !currentValue;
+const canFillHierarchyField = (req, currentValue) => canAssignPeople(req) || !currentValue;
 
 /**
  * May this account move an employee between COMPANIES? The Backend and an
@@ -971,9 +1003,11 @@ const updateEmployee = asyncHandler(async (req, res) => {
       continue;
     }
     res.status(403);
+    // Only a non-HR admin can reach this now — an HR Manager passes
+    // canAssignPeople outright.
     throw new Error(field === 'hrPartner'
-      ? 'This employee already has an HR Partner. Changing it needs a Super Admin’s permission.'
-      : 'This employee already has a reporting manager. Changing it needs a Super Admin’s permission.');
+      ? 'Changing an HR Partner that is already set needs an HR Manager or a Super Admin.'
+      : 'Changing a reporting manager that is already set needs an HR Manager or a Super Admin.');
   }
   if (!canSetHierarchy(req)) delete req.body.regularizationApprovers;
   if (req.user.role !== 'SuperAdmin') {
@@ -1185,8 +1219,15 @@ const exportAllEmployeesZip = asyncHandler(async (req, res) => {
  */
 // GET /api/employees/export.xlsx  (HR/Admin)
 const exportEmployeesXlsx = asyncHandler(async (req, res) => {
-  // Scoped like the directory: an HR Manager exports only their assigned
-  // employees, a company-limited exec only their companies, the Backend all.
+  // Scoped like the directory: an HR Manager exports every employee of their
+  // own company, a company-limited exec only their companies, the Backend all.
+  //
+  // PEOPLE WHO HAVE LEFT ARE INCLUDED, deliberately, and this is the ONE place
+  // in the portal that keeps them. Every picker drops them (see
+  // frontend/src/utils/peopleOptions and mobile/src/utils/people) because there
+  // is nothing you can do with a leaver — but this sheet is a RECORD, not a
+  // list of people to pick from, and a master with the leavers cut out of it is
+  // no longer a master. The 'Active' column says who is still here.
   const profiles = await EmployeeProfile.find(scopeForHR(req))
     .populate('user', 'firstName lastName email phone role isActive')
     .populate('hrPartner', 'firstName lastName email')
@@ -1310,19 +1351,20 @@ const importEmployeesXlsx = asyncHandler(async (req, res) => {
       let hrPartnerId;
       const ownEmail = String(u.email || '').trim().toLowerCase();
       const namesSelf = (email) => !!email && String(email).trim().toLowerCase() === ownEmail;
-      // The relationship columns sit behind the same grant as the form
-      // (canSetHierarchy) — a spreadsheet must not be a second door to a field
-      // the form refuses. The column is IGNORED and flagged rather than failing
-      // the row: an import never rejects a person over a value it cannot honour.
-      if (!canSetHierarchy(req)) {
+      // The relationship columns sit behind the same rule as the form
+      // (canAssignPeople) — a spreadsheet must not be a second door to a field
+      // the form refuses, and it must not be a narrower one either. The column
+      // is IGNORED and flagged rather than failing the row: an import never
+      // rejects a person over a value it cannot honour.
+      if (!canAssignPeople(req)) {
         if (p.hrPartnerEmail) {
           flag('hrPartner', p.hrPartnerEmail, 'defaulted',
-            'Choosing who the HR partner is needs a Super Admin’s permission, so this column was ignored.');
+            'Choosing who the HR partner is needs an HR Manager or a Super Admin, so this column was ignored.');
         }
         if (p.reportingManagerEmail) {
           flag('reportingManager', p.reportingManagerEmail, 'defaulted',
-            'Choosing a reporting manager needs a Super Admin’s permission, so this column was ignored. '
-            + 'Ask the Backend account to set it, or to grant you the permission.');
+            'Choosing a reporting manager needs an HR Manager or a Super Admin, so this column was ignored. '
+            + 'Ask an HR Manager or the Backend account to set it.');
         }
         p.hrPartnerEmail = '';
         p.reportingManagerEmail = '';
@@ -1757,7 +1799,7 @@ const resolveImportFlag = asyncHandler(async (req, res) => {
     // review is a second door: the import itself now REFUSES those columns for
     // an ungranted reviewer and writes a flag saying so — and that very flag
     // would then be the place they could type the value in by hand.
-    if (HIERARCHY_FLAG_FIELDS.includes(flagDoc.field) && !canSetHierarchy(req)) {
+    if (HIERARCHY_FLAG_FIELDS.includes(flagDoc.field) && !canAssignPeople(req)) {
       res.status(403);
       throw new Error('Setting who an employee reports to, or which HR looks after them, needs a Super Admin’s permission');
     }
@@ -1875,6 +1917,123 @@ const createDocLink = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Email an employee their own document-submission link.
+ *
+ * The link has existed for a while (createDocLink above) but nothing ever sent
+ * it — HR copied the URL out of the form and pasted it into their own mail
+ * client, which is why the registry's 'employee.documents' template had no send
+ * site. This is that send.
+ *
+ * Sent SYNCHRONOUSLY rather than queued, like its candidate-side twin
+ * (emailDocumentRequest in recruitmentController): HR is looking at the record
+ * waiting to know whether it went, and a background queue that fails quietly is
+ * the wrong answer to that question.
+ *
+ * @route POST /api/employees/:id/documents/email  (HR/Admin, 'employees.manage')
+ * @param {string} req.params.id - EmployeeProfile id
+ * @param {boolean} [req.body.preview] - return the draft instead of sending
+ * @param {string} [req.body.subject] / [req.body.body] - edited by HR
+ * @returns {{to, subject, body, link}} on preview, else {{mailed, messageId}}
+ * @sideeffect on send, stamps docLinkEmailedAt (and mints docToken if missing)
+ */
+// POST /api/employees/:id/documents/email  (HR/Admin)
+const emailDocLink = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findById(req.params.id).populate('user', 'firstName lastName email');
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee profile not found');
+  }
+  // Same wall as createDocLink — emailing another company's employee a live
+  // upload link is exactly the side door the scope exists to close.
+  if (hrCannotManage(req, profile)) {
+    res.status(403);
+    throw new Error('You can only manage employees assigned to you');
+  }
+  const to = profile.user?.email;
+  if (!to) {
+    res.status(400);
+    throw new Error('This employee has no email on file.');
+  }
+  // Mint the token on demand: the point of this endpoint is that HR should not
+  // have to visit the link screen first.
+  if (!profile.docToken) {
+    profile.docToken = crypto.randomBytes(24).toString('hex');
+    await profile.save();
+  }
+
+  const link = `${DOC_APP_BASE_URL()}/employee-docs/${profile.docToken}`;
+  const employeeName = `${profile.user?.firstName || ''} ${profile.user?.lastName || ''}`.trim() || 'there';
+
+  // What is still OUTSTANDING, not a fixed checklist: an employee who has
+  // already sent five of seven documents should be asked for two, not seven.
+  // Rejected counts as outstanding — that is the whole point of a re-request.
+  const have = await Document.find({ employee: profile._id }).select('category status').lean();
+  const settled = new Set(have.filter((d) => d.status !== 'Rejected').map((d) => d.category));
+  // 'Other' is a catch-all bucket, not something to ask anybody for — the
+  // upload page leaves it out of its checklist too.
+  const askable = SELF_UPLOAD_CATEGORIES.filter((c) => c !== 'Other');
+  const outstanding = askable.filter((c) => !settled.has(c));
+  // Nothing outstanding → this is a first/general request, so name everything
+  // they may upload rather than sending a mail with an empty list in it.
+  const wanted = outstanding.length ? outstanding : askable;
+  // The same wording the upload page shows ('ExperienceLetter' → 'Experience
+  // Letter'), so the list in the mail matches the page they land on.
+  const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
+  const documentList = wanted.map((c) => `  - ${humanize(c)}`).join('\n');
+  const hrName = req.user?.fullName || 'HR Team';
+
+  const fallbackBody =
+    `Dear ${employeeName},\n\n` +
+    `Please upload the documents listed below using the secure link at the end of ` +
+    `this email. No login is needed, and you can preview each file before you send it.\n\n` +
+    documentList +
+    `\n\nUpload here:\n${link}\n\n` +
+    `Please keep each file under 10 MB, in PDF, Word, JPG or PNG format. ` +
+    `Write back to this email if any document is not available with you right now.\n\n` +
+    `Warm regards,\n${hrName}\n${COMPANY_INFO.name}`;
+
+  const rendered = await renderMail('employee.documents', {
+    employeeName,
+    employeeCode: profile.employeeCode,
+    companyName: COMPANY_INFO.name,
+    link,
+    documentList,
+    hrName,
+  }, { subject: `Documents required - ${COMPANY_INFO.name}`, body: fallbackBody });
+
+  if (req.body.preview) {
+    return res.json({ to, subject: rendered.subject, body: rendered.text, link });
+  }
+
+  const subject = String(req.body.subject || '').trim() || rendered.subject;
+  const body = String(req.body.body || '').trim() ? String(req.body.body) : rendered.text;
+
+  let info;
+  try {
+    info = await sendMail({
+      to,
+      subject,
+      text: body,
+      from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,
+      replyTo: req.user?.email,
+    });
+  } catch (err) {
+    res.status(502);
+    throw new Error(`The document request could not be emailed: ${err.message}`);
+  }
+  // No transport configured → sendMail only logs. Say so rather than letting HR
+  // believe the employee was told.
+  if (info?.mocked) {
+    res.status(500);
+    throw new Error('Email is not configured on the server (no Gmail/SMTP credentials), so nothing was sent.');
+  }
+
+  profile.docLinkEmailedAt = new Date();
+  await profile.save();
+  res.json({ mailed: [to], messageId: info?.messageId || null, link });
+});
+
+/**
  * Public: fetch the document-submission context for an employee via token.
  * @route GET /api/employees/public-docs/:token  (PUBLIC, no auth)
  * @param {string} req.params.token - docToken
@@ -1988,4 +2147,5 @@ module.exports = {
   assertSameDepartment,
   assertWorkLocationCompany,
   validateHierarchy,
+  emailDocLink,
 };

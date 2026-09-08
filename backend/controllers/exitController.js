@@ -12,7 +12,10 @@ const asyncHandler = require('express-async-handler');
 const ExitRequest = require('../models/ExitRequest');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
-const { enqueueMail } = require('../services/email');
+const { enqueueMail, sendMail } = require('../services/email');
+// The covering wording is editable in Settings -> Templates ('relieving.mail').
+const { renderMail } = require('../services/templates');
+const COMPANY = require('../config/company');
 const { buildExitEmail } = require('../services/exitEmails');
 const { notify, notifyBackend } = require('../services/notify');
 const { buildApprovalChain } = require('./leaveController');
@@ -20,7 +23,7 @@ const { startOfDayIST } = require('../utils/dateHelpers');
 const { buildDefaultSections } = require('../config/exitClearance');
 const { scopeEmployeeFilter, cannotManageProfile, assertNotOwnRequest } = require('../utils/employeeScope');
 const { getBranding } = require('../services/branding');
-const { renderRelievingLetter, resolveLetterBody } = require('../services/letterPdf');
+const { renderRelievingLetter, resolveLetterBody, longDate } = require('../services/letterPdf');
 
 // Shared resolver — see config/appUrl.js. The exit-feedback link goes to a
 // leaver who no longer has a company login, so a localhost default is dead mail.
@@ -559,8 +562,17 @@ function relievingLetterBlocker(exit) {
   return null;
 }
 
-// Render one exit's relieving letter and write it to the response.
-async function sendRelievingLetter(exit, res) {
+/**
+ * Build one exit's relieving letter.
+ *
+ * Split out of sendRelievingLetter so the same PDF can be STREAMED to a browser
+ * and ATTACHED to an email without the two drifting apart — a letter that
+ * differs depending on how it was fetched is worse than no letter.
+ *
+ * @param {Object} exit - an ExitRequest with `employee` (and its `user`) populated
+ * @returns {Promise<{pdf: Buffer, fileName: string, employeeName: string}>}
+ */
+async function buildRelievingLetter(exit) {
   const profile = exit.employee;
   const data = {
     employeeName: `${profile?.user?.firstName || ''} ${profile?.user?.lastName || ''}`.trim(),
@@ -576,8 +588,14 @@ async function sendRelievingLetter(exit, res) {
 
   const pdf = await renderRelievingLetter(data);
   const safeName = (data.employeeName || 'employee').replace(/[^\w.-]+/g, '-').toLowerCase();
+  return { pdf, fileName: `relieving-letter-${safeName}.pdf`, employeeName: data.employeeName };
+}
+
+// Render one exit's relieving letter and write it to the response.
+async function sendRelievingLetter(exit, res) {
+  const { pdf, fileName } = await buildRelievingLetter(exit);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="relieving-letter-${safeName}.pdf"`);
+  res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
   res.send(pdf);
 }
 
@@ -655,6 +673,119 @@ const publicRelievingLetterPdf = asyncHandler(async (req, res) => {
     throw new Error(blocked);
   }
   await sendRelievingLetter(exit, res);
+});
+
+/**
+ * Email a leaver their relieving letter, with the PDF attached.
+ *
+ * The exit email already LINKS to this letter on the tokenised feedback page,
+ * but nothing ever put the PDF in the leaver's inbox — which is why the
+ * registry's 'relieving.mail' template had no send site. This is that send, and
+ * it is deliberately a separate action: HR reissues a relieving letter long
+ * after the exit mail went out (a new employer asks for it, the leaver lost
+ * it), and resending the whole thank-you-and-feedback mail is the wrong answer
+ * to that.
+ *
+ * Sent SYNCHRONOUSLY, like the offer and appointment letters it mirrors: HR is
+ * waiting to know whether it actually went.
+ *
+ * @route POST /api/exits/:id/relieving-letter/email  (HR/Admin, 'exit.manage')
+ * @param {string} req.params.id - exit request id
+ * @param {boolean} [req.body.preview] - return the draft instead of sending
+ * @param {string} [req.body.subject] / [req.body.body]
+ * @returns {{to, subject, body, link, attachments}} on preview, else {{mailed, messageId}}
+ * @sideeffect on send, stamps relievingEmailedAt
+ */
+// POST /api/exits/:id/relieving-letter/email  (HR/Admin)
+const emailRelievingLetter = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findById(req.params.id)
+    .populate({ path: 'employee', populate: { path: 'user', select: 'firstName lastName email' } })
+    .populate('handledBy', 'firstName lastName email');
+  if (!exit) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  await assertExitInScope(req, res, exit);
+  // Same gate as the download: a withdrawn resignation has no letter to issue,
+  // and emailing one would be worse than merely showing one.
+  const blocked = relievingLetterBlocker(exit);
+  if (blocked) {
+    res.status(400);
+    throw new Error(blocked);
+  }
+  const to = exit.employee?.user?.email;
+  if (!to) {
+    res.status(400);
+    throw new Error('This employee has no email on file.');
+  }
+
+  const { pdf, fileName, employeeName } = await buildRelievingLetter(exit);
+  // The same tokenised page the exit mail uses — it serves this letter with no
+  // login, which is what a leaver whose account is already closed needs. Absent
+  // only if no token was ever minted.
+  const link = exit.feedbackToken ? `${APP_BASE_URL()}/exit-feedback/${exit.feedbackToken}` : '';
+  const firstName = exit.employee?.user?.firstName || employeeName || 'there';
+  const hrName = req.user?.fullName
+    || `${exit.handledBy?.firstName || ''} ${exit.handledBy?.lastName || ''}`.trim()
+    || 'HR Team';
+  const lwd = longDate(exit.lastWorkingDay);
+  // The whole "you can also download it" sentence, or nothing — an exit with no
+  // feedback token has no public page, and the renderer leaves an empty variable
+  // as its literal placeholder, which would ship "{{link}}" to a leaver.
+  const linkClause = link ? ` You can also download it here, without signing in:\n\n${link}\n` : '';
+
+  const fallbackBody =
+    `Dear ${firstName},\n\n`
+    + `Please find attached your relieving letter from ${COMPANY.name}, confirming that you `
+    + `have been relieved of your duties with effect from ${lwd}.${linkClause || '\n'}`
+    + `\nWe thank you for your contribution and wish you every success ahead.\n\n`
+    + `Warm regards,\n${hrName}\n${COMPANY.name}`;
+
+  const rendered = await renderMail('relieving.mail', {
+    employeeName: firstName,
+    employeeCode: exit.employee?.employeeCode,
+    companyName: COMPANY.name,
+    lastWorkingDay: lwd,
+    link,
+    linkClause,
+    hrName,
+  }, { subject: `Your relieving letter - ${COMPANY.name}`, body: fallbackBody });
+
+  if (req.body?.preview) {
+    return res.json({
+      to, subject: rendered.subject, body: rendered.text, link, attachments: [fileName],
+    });
+  }
+
+  const subject = String(req.body?.subject || '').trim() || rendered.subject;
+  const body = String(req.body?.body || '').trim() ? String(req.body.body) : rendered.text;
+
+  let info;
+  try {
+    info = await sendMail({
+      to,
+      subject,
+      text: body,
+      from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,
+      replyTo: req.user?.email,
+      // Bytes, not a storage path: the letter is rendered fresh above and never
+      // written to disk, so there is nothing for the mailer to read back.
+      attachments: [{ filename: fileName, content: pdf.toString('base64'), contentType: 'application/pdf' }],
+    });
+  } catch (err) {
+    res.status(502);
+    throw new Error(`The relieving letter could not be emailed: ${err.message}`);
+  }
+  // No transport configured → sendMail only logs. Say so rather than letting HR
+  // believe the leaver received it.
+  if (info?.mocked) {
+    res.status(500);
+    throw new Error('Email is not configured on the server (no Gmail/SMTP credentials), so nothing was sent.');
+  }
+
+  exit.relievingEmailedAt = new Date();
+  await exit.save();
+  res.json({ mailed: [to], messageId: info?.messageId || null });
 });
 
 /**
@@ -795,7 +926,7 @@ const completeExit = asyncHandler(async (req, res) => {
     });
   }
 
-  const msg = buildExitEmail({
+  const msg = await buildExitEmail({
     employee: profile,
     hr: exit.handledBy,
     lastWorkingDay: exit.lastWorkingDay,
@@ -849,7 +980,7 @@ const resendExitEmail = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Employee has no email on file');
   }
-  const msg = buildExitEmail({
+  const msg = await buildExitEmail({
     employee: exit.employee,
     hr: exit.handledBy,
     lastWorkingDay: exit.lastWorkingDay,
@@ -1166,6 +1297,7 @@ module.exports = {
   updateClearanceSectionAdmin,
   overrideClearance,
   relievingLetterPdf,
+  emailRelievingLetter,
   myRelievingLetterPdf,
   publicRelievingLetterPdf,
   // Shared with the approvals controller and the exit worker

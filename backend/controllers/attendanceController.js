@@ -22,6 +22,7 @@ const {
   HALF_DAY_CUTOFF_HOUR, getLatePolicy, setLatePolicy, normalizeLatePolicy,
   lateMinutes, statusFromHours, settleStatus, effectiveHours, halfDayCutoffPassed,
   getMinPresentHours, setMinPresentHours, normalizeMinPresentHours,
+  getLateAllowance, setLateAllowance, normalizeLateAllowance,
 } = require('../utils/workday');
 const { resolveShiftDay, openShiftRecord } = require('../services/shiftResolver');
 const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow');
@@ -2267,6 +2268,7 @@ const getSettings = asyncHandler(async (req, res) => {
     attendanceReminders: s.attendanceReminders,
     latePolicy: s.latePolicy,
     minPresentHours: s.minPresentHours,
+    lateAllowance: s.lateAllowance,
   });
 });
 
@@ -2278,7 +2280,8 @@ const getSettings = asyncHandler(async (req, res) => {
  * @param {number} [req.body.geofenceThresholdM] - clamped >= 0
  * @param {Object} [req.body.latePolicy] - {hour, minute, graceMinutes}; SuperAdmin only
  * @param {number} [req.body.minPresentHours] - day-minimum hours, 0-6; SuperAdmin only
- * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy, minPresentHours}}
+ * @param {number} [req.body.lateAllowance] - free late arrivals a month, 0-31; SuperAdmin only
+ * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy, minPresentHours, lateAllowance}}
  */
 // PUT /api/attendance/settings  (HR/Admin)
 // Update the office coordinates/label and/or the geofence threshold (metres).
@@ -2329,18 +2332,27 @@ const updateSettings = asyncHandler(async (req, res) => {
     s.minPresentHours = normalizeMinPresentHours(req.body.minPresentHours);
   }
 
+  // Same gate again: how many late arrivals are free before payroll charges for
+  // them. Lowering it takes money off people who were inside the old allowance,
+  // so it is not an HR-level edit.
+  if (req.body.lateAllowance !== undefined && req.user.role === 'SuperAdmin') {
+    s.lateAllowance = normalizeLateAllowance(req.body.lateAllowance);
+  }
+
   await s.save();
   // Push the change into this process's cache immediately — services/latePolicy
   // would otherwise take up to five minutes to notice, and the admin who just
   // saved would see the old rule in the records they are looking at.
   setLatePolicy(s.latePolicy);
   setMinPresentHours(s.minPresentHours);
+  setLateAllowance(s.lateAllowance);
   res.json({
     office: s.office,
     geofenceThresholdM: s.geofenceThresholdM,
     attendanceReminders: s.attendanceReminders,
     latePolicy: getLatePolicy(),
     minPresentHours: getMinPresentHours(),
+    lateAllowance: getLateAllowance(),
   });
 });
 

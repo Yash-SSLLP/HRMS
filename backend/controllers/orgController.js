@@ -11,6 +11,7 @@ const User = require('../models/User');
 const Company = require('../models/Company');
 const { hiddenUserIds } = require('../utils/visibility');
 const { viewerCompanyScope } = require('../utils/employeeScope');
+const { hasDeparted } = require('../utils/departed');
 
 /**
  * Return the reporting hierarchy as a forest of nodes for the org-chart view.
@@ -64,15 +65,29 @@ const orgChart = asyncHandler(async (req, res) => {
   }
 
   const profiles = await EmployeeProfile.find(filter)
-    .select('user reportingManager designation department company')
+    .select('user reportingManager designation department company dateOfExit')
     .populate('user', 'firstName lastName email photo role isActive')
     .populate('company', 'name')
     .lean();
+
+  // Who each employee reports to, read off EVERY profile — including the ones
+  // that do not become nodes below. This is what lets somebody who has left be
+  // dropped without stranding their team: the people under them climb to that
+  // person's OWN manager instead of falling to the top of the chart.
+  const managerOfUser = new Map();
+  for (const p of profiles) {
+    if (!p.user) continue;
+    managerOfUser.set(String(p.user._id), p.reportingManager ? String(p.reportingManager) : null);
+  }
 
   // Build one node per employee, keyed by the user id.
   const nodes = new Map();
   for (const p of profiles) {
     if (!p.user) continue; // skip orphaned profiles with no linked user
+    // People who have left are not on the chart at all. `isActive` alone would
+    // not be enough — a resignation leaves the login working through the notice
+    // period — so the shared rule decides it (utils/departed).
+    if (hasDeparted(p.user, p)) continue;
     const id = p.user._id.toString();
     const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim();
     nodes.set(id, {
@@ -85,10 +100,6 @@ const orgChart = asyncHandler(async (req, res) => {
       companyName: p.company?.name || '',
       hasPhoto: Boolean(p.user.photo),
       role: p.user.role,
-      // Whether they have left. The chart still draws them — removing a node
-      // would orphan everyone who reported to them — but the "reports to"
-      // pickers use this to keep a departed colleague out of the default list.
-      inactive: p.user.isActive === false,
       managerId: p.reportingManager ? p.reportingManager.toString() : null,
       reports: [],
     });
@@ -133,6 +144,30 @@ const orgChart = asyncHandler(async (req, res) => {
       managerId: null,
       reports: [],
     });
+  }
+
+  // Climb past anyone who has left, so their team reports to whoever the leaver
+  // reported to rather than appearing at the top of the chart as if they had no
+  // manager at all. Depth- and cycle-guarded because a manager chain CAN be
+  // circular — the guard further down exists for exactly that, and this walk
+  // runs before it. A chain that ends nowhere (or leaves this viewer's company
+  // wall) yields null, which is the same "root" answer as before.
+  const liveManagerOf = (startUserId) => {
+    const seen = new Set([startUserId]);
+    let id = managerOfUser.get(startUserId) ?? null;
+    let depth = 0;
+    while (id && depth < 50) {
+      if (seen.has(id)) return null; // cycle → treat as top level
+      seen.add(id);
+      if (nodes.has(id)) return id; // the first manager still on the chart
+      id = managerOfUser.get(id) ?? null; // they left too → keep climbing
+      depth += 1;
+    }
+    return null;
+  };
+  for (const node of nodes.values()) {
+    if (!node.profileId) continue; // execs have no reporting line of their own
+    node.managerId = liveManagerOf(node.id);
   }
 
   // Link each node to its manager; collect roots.

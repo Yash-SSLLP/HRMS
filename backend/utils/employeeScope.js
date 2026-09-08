@@ -9,13 +9,26 @@
  *   CEO / MD / God           → the companies assigned to them (User.companies);
  *                              with none set they are unrestricted. (God is the
  *                              view-only audit account — same wall, no writes.)
- *   HR Manager               → employees whose hrPartner is them OR is not set
- *                              at all, AND inside their own company (see below).
- *                              An unpartnered employee is in nobody's care, so
- *                              every HR in the company sees them and can claim
- *                              them; once somebody is the partner, they are that
- *                              HR's alone again.
+ *   HR Manager               → EVERY employee inside their own company.
+ *                              `hrPartner` used to narrow this too — an HR saw
+ *                              only the people assigned to them — and that made
+ *                              the portal unusable the moment an HR left: their
+ *                              49 employees stayed pointed at the departed
+ *                              account and the replacement HR opened the
+ *                              directory to one person and "You can only view
+ *                              employees assigned to you". hrPartner is now what
+ *                              it reads as — who LOOKS AFTER this employee, for
+ *                              routing change requests and the exit chain — and
+ *                              not a wall around who may be seen. Any HR in the
+ *                              company can therefore assign and reassign it.
  *   every other role         → their own company only.
+ *
+ * WHAT DID NOT CHANGE. The company wall below still applies to HR: a company's
+ * staff stay invisible to another company's HR. Nobody administers their OWN
+ * record whatever their role (see isOwnProfile). And the Backend and God
+ * accounts are hidden from every HR by utils/visibility.HIDDEN_ROLES, which is a
+ * separate filter applied where people are listed — widening the scope here does
+ * not reach them.
  *
  * COMPANY WALL. Everyone except the Backend is confined to their own company:
  * an exec's companies come from `User.companies`; everyone else's single
@@ -97,14 +110,9 @@ function companyOutOfScope(req, profile) {
 function employeeProfileScope(req) {
   const u = req && req.user;
   if (!u || u.role === 'SuperAdmin') return {};
-  // `hrPartner: null` matches BOTH null and a missing field, which is what
-  // brings an employee nobody has been assigned to into every HR's directory.
-  // Without it such a record was invisible to every HR Manager in the org and
-  // only the Backend account could ever fix it — so the gap that most needs
-  // closing was the one gap nobody could reach. Company-walled as before.
-  if (u.role === 'HRManager') {
-    return { $or: [{ hrPartner: u._id }, { hrPartner: null }], ...companyScopeFilter(req) };
-  }
+  // An HR Manager is walled by COMPANY and nothing else — see the note at the
+  // top of this file for why the hrPartner narrowing was removed. Their filter
+  // is now identical to everyone else's, so it falls through.
   return { ...companyScopeFilter(req) };
 }
 
@@ -221,13 +229,9 @@ function cannotManageProfile(req, profile) {
   if (!u || u.role === 'SuperAdmin') return false;
   if (!profile) return false;
   if (isOwnProfile(req, profile)) return true;
-  if (u.role === 'HRManager') {
-    // An UNPARTNERED employee is fair game for any HR inside the company wall
-    // (see employeeProfileScope) — somebody has to be able to pick them up.
-    // Once the record names a partner it is that HR's alone again.
-    const partner = String(profile.hrPartner || '');
-    if (partner && partner !== String(u._id)) return true;
-  }
+  // No hrPartner check: an HR Manager may manage every employee inside their
+  // company wall, whoever is named as the partner. Being somebody's HR partner
+  // is a routing fact, not a lock on the record — see the note at the top.
   return companyOutOfScope(req, profile);
 }
 

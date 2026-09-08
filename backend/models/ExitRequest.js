@@ -136,6 +136,12 @@ const exitRequestSchema = new mongoose.Schema(
     feedbackTokenExpiresAt: Date,
     feedback: { type: feedbackSchema, default: () => ({}) },
 
+    // When the relieving letter was last emailed to the leaver as an attachment.
+    // Separate from the exit-email stamps below: that mail links to the letter on
+    // the tokenised page, this one puts the PDF in their inbox, and HR needs to
+    // know which of the two has happened.
+    relievingEmailedAt: Date,
+
     // Email send tracking (driven by the outbox worker)
     exitEmailQueuedAt: Date,         // when the controller enqueued the message
     exitEmailSentAt: Date,           // when the worker successfully delivered it

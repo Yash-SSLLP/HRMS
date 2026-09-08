@@ -16,6 +16,7 @@ import { useViewOnly } from '../hooks/useViewOnly';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import MailComposeModal from '../components/MailComposeModal';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions, hasLeft } from '../utils/peopleOptions';
 import { ROLES, roleLabel } from '../config/roles';
@@ -216,6 +217,12 @@ export default function AdminEmployees() {
   // which the server agrees with here — they would be offered a picker whose
   // value the save silently drops.
   const canSetHierarchy = hasExplicitPermission(currentUser, 'hierarchy.manage');
+  // Assigning WHO LOOKS AFTER an employee — their HR partner and reporting
+  // manager — is different from configuring an approver ladder, and an HR
+  // Manager may do it without any grant. Mirrors canAssignPeople in the
+  // backend's employeeController; `canSetHierarchy` above still governs the
+  // regularization ladder alone.
+  const canAssignPeople = canSetHierarchy || currentUser?.role === 'HRManager';
   // …but FILLING A BLANK is not reassigning. An employee with no HR partner is
   // in nobody's care and one with no reporting manager has nobody to approve
   // their leave, so any admin who can edit the record may close those gaps —
@@ -231,7 +238,7 @@ export default function AdminEmployees() {
   // and the whole page throws "Cannot access 'storedHierarchy' before
   // initialization" before it paints.
   const [storedHierarchy, setStoredHierarchy] = useState({ hrPartner: '', reportingManager: '' });
-  const canFillHierarchy = (field) => canSetHierarchy || !storedHierarchy[field];
+  const canFillHierarchy = (field) => canAssignPeople || !storedHierarchy[field];
   const canSetHrPartner = canFillHierarchy('hrPartner');
   const canSetReportingManager = canFillHierarchy('reportingManager');
   // Moving somebody between companies stays with the Backend and an executive
@@ -282,6 +289,8 @@ export default function AdminEmployees() {
   const [saving, setSaving] = useState(false);
   // Per-employee document submission link (Edit modal)
   const [docToken, setDocToken] = useState('');
+  // The editable draft for "Email link". Null = closed.
+  const [mail, setMail] = useState(null);
   const [docBusy, setDocBusy] = useState(false);
   const [docCopied, setDocCopied] = useState(false);
   const [editEmail, setEditEmail] = useState('');
@@ -545,23 +554,17 @@ export default function AdminEmployees() {
         && String(u._id) !== currentId
     );
 
-    // Anyone who has left drops out of the two visible groups and joins the
-    // searchable tail, so a departed colleague is never offered by accident but
-    // is still reachable by name. The manager already SAVED on this record is
-    // the exception — demoting them would make the field read as unset.
+    // Anyone who has left is not offered as a manager at all — not in the
+    // visible groups and not in the searchable tail (see utils/peopleOptions).
+    // The manager already SAVED on this record is the one exception: dropping
+    // them would make the field read as unset and the next save would clear it.
     const stays = (u) => !hasLeft(u) || String(u._id) === currentId;
-    const sameDeptHere = sameDept.filter(stays);
-    const executivesHere = executives.filter(stays);
-    const tail = [
-      ...others,
-      ...[...sameDept, ...executives].filter((u) => !stays(u)),
-    ];
 
     return {
-      sameDept: sameDeptHere,
-      executives: executivesHere,
+      sameDept: sameDept.filter(stays),
+      executives: executives.filter(stays),
       current,
-      others: tail,
+      others: others.filter(stays),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profiles, allUsers, form.department, form.user, form.reportingManager]);
@@ -671,6 +674,43 @@ export default function AdminEmployees() {
     setEditRole(p.user?.role || 'Employee');
     roleAtOpen.current = p.user?.role || 'Employee';
     setShowModal(true);
+  };
+
+  /**
+   * Email the submission link to the employee, from the company mailbox.
+   *
+   * Replaces a `mailto:` anchor, which produced a fixed one-line message from
+   * whatever mail client the browser happened to open, was never recorded, and
+   * ignored the wording HR had set in Settings -> Templates. The server drafts
+   * it (listing the documents still outstanding), HR edits it here, and the
+   * server sends and stamps it.
+   */
+  const emailDocLink = async () => {
+    if (!editingId) return;
+    setDocBusy(true);
+    try {
+      const { data } = await api.post(`/employees/${editingId}/documents/email`, { preview: true });
+      // The token is minted by the preview when it did not exist, so the link
+      // box below fills in without a second round trip.
+      if (data.link) setDocToken(data.link.split('/').pop());
+      setMail({
+        to: data.to,
+        title: 'Email document submission link',
+        link: data.link,
+        sendLabel: 'Send link',
+        note: "Review and edit the message below · it's emailed from the company mailbox.",
+        defaultSubject: data.subject,
+        defaultBody: data.body,
+        onSend: async ({ subject, body }) => {
+          await api.post(`/employees/${editingId}/documents/email`, { subject, body });
+          toast.success('Document link emailed');
+        },
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not prepare the document email');
+    } finally {
+      setDocBusy(false);
+    }
   };
 
   // Per-employee public document-submission link (created lazily on demand).
@@ -1504,7 +1544,7 @@ This cannot be undone.`,
                       {/* Hidden until the operator types — see SearchableSelect's
                           searchOnly. Picking one is allowed but asks first. */}
                       {managerOptions.others.length > 0 && (
-                        <optgroup label="Other departments &amp; inactive · search by name" searchOnly>
+                        <optgroup label="Other departments · search by name" searchOnly>
                           {managerOptions.others.map((u) => (
                             <option key={u._id} value={u._id}>
                               {u.firstName} {u.lastName} ({u.role}) · {u.email}
@@ -1536,7 +1576,7 @@ This cannot be undone.`,
                       ? 'Pick a department first — managers are chosen from within it.'
                       : canSetReportingManager
                         ? 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'
-                        : 'Already set. Changing who someone reports to needs a Super Admin’s permission.'}
+                        : 'Already set. Changing who someone reports to needs an HR Manager or a Super Admin.'}
                   </p>
                 </div>
                 {/* HR Partner: the HR Manager who owns this employee. With per-HR
@@ -1572,7 +1612,7 @@ This cannot be undone.`,
                     The HR Manager who sees and manages this employee.
                     {canSetHrPartner
                       ? ' Any change requests they are still waiting on move to the new partner.'
-                      : ' Changing it needs a Super Admin’s permission.'}
+                      : ' Changing it needs an HR Manager or a Super Admin.'}
                   </p>
                 </div>
                 {/* Attendance-regularization approval ladder: 1 or 2 named people,
@@ -1603,7 +1643,7 @@ This cannot be undone.`,
                             >
                               <option value="">{idx === 0 ? 'None — any HR reviewer decides' : 'None — one step only'}</option>
                               {allUsers
-                                .filter((u) => u.isActive !== false)
+                                .filter((u) => !hasLeft(u))
                                 .filter((u) => u._id !== (form.user?._id || form.user))
                                 .filter((u) => u._id === chain[idx] || !chain.includes(u._id))
                                 .map((u) => (
@@ -1654,13 +1694,12 @@ This cannot be undone.`,
                           className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60">
                           {docBusy ? 'Working…' : docCopied ? 'Copied!' : docToken ? 'Copy link' : 'Create & copy link'}
                         </button>
-                        {docToken && editEmail && (
-                          <a
-                            href={`mailto:${editEmail}?subject=${encodeURIComponent('Please submit your documents')}&body=${encodeURIComponent(`Hi,\n\nPlease upload your documents using this secure link:\n${docLink}\n\nThank you.`)}`}
-                            className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
-                          >
+                        {editEmail && (
+                          <button type="button" onClick={emailDocLink} disabled={docBusy}
+                            title="Send the link from the company mailbox, with the outstanding documents listed"
+                            className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60">
                             Email link
-                          </a>
+                          </button>
                         )}
                       </div>
                     </div>
@@ -2129,6 +2168,8 @@ This cannot be undone.`,
           </div>
         </div>
       )}
+
+      <MailComposeModal open={!!mail} onClose={() => setMail(null)} {...(mail || {})} />
     </div>
   );
 }

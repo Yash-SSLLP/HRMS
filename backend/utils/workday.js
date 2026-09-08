@@ -72,6 +72,67 @@ const DEFAULT_MIN_PRESENT_HOURS = 1;
 
 let minPresentHours = DEFAULT_MIN_PRESENT_HOURS;
 
+/* ---------------------------------------------------------------------------
+ * FREE LATE ARRIVALS PER MONTH — how many times somebody may be late before
+ * payroll starts charging for it.
+ *
+ * It lives HERE, beside latePolicy and minPresentHours, because it is the third
+ * rule of the same kind: set once by a Super Admin, applied to everybody, and it
+ * costs money. It was a hardcoded 5 in three files — payroll's copy decided the
+ * penalty while the web and the app each printed their own — so changing it
+ * meant editing three constants and shipping an APK, and forgetting one of them
+ * made the money and the explanation disagree without erroring.
+ *
+ * Read synchronously by payroll (see payrollController's computeEmployeeRun,
+ * which runs once per employee and must give every one of them the same answer),
+ * so it is a cached number kept in step with the Setting by
+ * services/latePolicy.js — the same arrangement as the two above.
+ *
+ * A full month's entitlement: payroll prorates it for anyone who joined or left
+ * mid-month (prorateAllowance).
+ * ------------------------------------------------------------------------- */
+const DEFAULT_LATE_ALLOWANCE = 5;
+
+// A month has at most 31 days, so an allowance beyond that cannot mean anything
+// more than "never charge for lateness" — which 31 already says.
+const MAX_LATE_ALLOWANCE = 31;
+
+let lateAllowance = DEFAULT_LATE_ALLOWANCE;
+
+/**
+ * Coerce a stored/posted allowance into a usable whole number of days.
+ *
+ * Clamped to [0, MAX_LATE_ALLOWANCE]; anything unparseable falls back to the
+ * default rather than to NaN. NaN would be the dangerous outcome: every
+ * comparison against it is false, so `lateDays > NaN` would silently forgive
+ * every late arrival in the company and nothing would look wrong.
+ *
+ * 0 is a legitimate value and means "charge from the first late day".
+ * @param {number|string} v
+ * @returns {number} whole days
+ */
+function normalizeLateAllowance(v) {
+  const n = Math.trunc(Number(v));
+  if (!Number.isFinite(n)) return DEFAULT_LATE_ALLOWANCE;
+  return Math.min(MAX_LATE_ALLOWANCE, Math.max(0, n));
+}
+
+/**
+ * Replace the cached allowance. Mirrors setMinPresentHours — see
+ * services/latePolicy.js for how the cache is kept in step with the Setting.
+ * @param {number|string} v
+ * @returns {number} the value now in force
+ */
+function setLateAllowance(v) {
+  lateAllowance = normalizeLateAllowance(v);
+  return lateAllowance;
+}
+
+/** @returns {number} free late arrivals allowed per month before the penalty. */
+function getLateAllowance() {
+  return lateAllowance;
+}
+
 // Coerce whatever came out of the database / an HTTP body into a usable policy.
 // Anything missing or out of range falls back to the default field rather than
 // to NaN, so a bad value can never make every arrival late (or none of them).
@@ -471,4 +532,9 @@ module.exports = {
   normalizeMinPresentHours,
   setMinPresentHours,
   getMinPresentHours,
+  DEFAULT_LATE_ALLOWANCE,
+  MAX_LATE_ALLOWANCE,
+  normalizeLateAllowance,
+  setLateAllowance,
+  getLateAllowance,
 };

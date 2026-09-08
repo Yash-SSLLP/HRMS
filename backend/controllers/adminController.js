@@ -8,6 +8,9 @@
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
+const { hasDeparted } = require('../utils/departed');
+// Editable in Settings -> Templates ('account.emailChanged').
+const { renderMail } = require('../services/templates');
 const { ROLES } = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Company = require('../models/Company');
@@ -37,21 +40,29 @@ const { appBaseUrl: APP_BASE_URL } = require('../config/appUrl');
  * @param {object} user - the User, already saved with the new address
  * @param {object} actor - the admin who made the change
  */
-function notifyEmailChanged(user, actor) {
+async function notifyEmailChanged(user, actor) {
   const name = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'there';
-  return enqueueMail({
-    to: user.email,
+  const hrName = actor?.fullName || 'HR Team';
+  const link = APP_BASE_URL();
+  const { subject, text } = await renderMail('account.emailChanged', {
+    employeeName: name,
+    companyName: COMPANY.name,
+    newEmail: user.email,
+    link,
+    hrName,
+  }, {
     subject: `Your sign-in email has been updated - ${COMPANY.name}`,
-    text:
+    body:
       `Dear ${name},\n\n` +
       `Your ${COMPANY.name} HRMS sign-in email has been updated by HR. From now on, ` +
       `please sign in with this address:\n\n  ${user.email}\n\n` +
       `Your password has not changed.\n\n` +
-      `Sign in here:\n${APP_BASE_URL()}\n\n` +
+      `Sign in here:\n${link}\n\n` +
       `If you were not expecting this, please contact HR straight away.\n\n` +
-      `Regards,\n${actor?.fullName || 'HR Team'}\n${COMPANY.name}`,
-    replyTo: actor?.email,
-  }, { type: 'user-email-change', id: user._id });
+      `Regards,\n${hrName}\n${COMPANY.name}`,
+  });
+  return enqueueMail({ to: user.email, subject, text, replyTo: actor?.email },
+    { type: 'user-email-change', id: user._id });
 }
 
 /**
@@ -100,14 +111,26 @@ const listUsers = asyncHandler(async (req, res) => {
   // row; users without a profile (CEO/MD) simply come back false.
   const grantsByUser = new Map(
     (await EmployeeProfile.find({ user: { $in: users.map((u) => u._id) } })
-      .select('user wfhAllowed remotePunchAllowed').lean())
-      .map((p) => [String(p.user), { wfh: !!p.wfhAllowed, remotePunch: !!p.remotePunchAllowed }])
+      // dateOfExit rides along for `departed` below — no extra query.
+      .select('user wfhAllowed remotePunchAllowed dateOfExit').lean())
+      .map((p) => [String(p.user), {
+        wfh: !!p.wfhAllowed,
+        remotePunch: !!p.remotePunchAllowed,
+        exited: hasDeparted(null, p),
+      }])
   );
   const out = users.map((u) => ({
     ...u.toJSON(),
     wfhAllowed: grantsByUser.get(String(u._id))?.wfh || false,
     remotePunchAllowed: grantsByUser.get(String(u._id))?.remotePunch || false,
     hasProfile: grantsByUser.has(String(u._id)),
+    // Whether this person has GONE. `isActive` alone is not that answer — a
+    // resignation leaves the login working through the notice period, so
+    // somebody can be active and still have walked out last week. Stamped here
+    // because a User row carries no exit date of its own, and every people
+    // picker in both clients drops them on this flag without a second request.
+    // See utils/departed for the rule.
+    departed: u.isActive === false || grantsByUser.get(String(u._id))?.exited === true,
   }));
 
   res.json({ count: out.length, users: out });

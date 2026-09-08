@@ -56,16 +56,21 @@ In case you don't join us by the stipulated date, the offer stands Cancelled / W
     'Offer letter email',
     'Recruitment',
     'The covering email the offer letter PDF is attached to.',
-    'Your offer of employment — {{companyName}}',
+    'Offer Letter - {{companyName}}',
     `Dear {{candidateName}},
 
-Please find attached your offer letter for the position of {{position}} at {{companyName}}.
+Please find attached your Offer Letter from {{companyName}}.{{linkClause}}
 
-Kindly confirm your acceptance by {{acceptanceDeadline}}.
+Kindly review the document and revert with your acceptance.
 
 Warm regards,
-{{companyName}} · HR`,
-    ['candidateName', 'position', 'companyName', 'acceptanceDeadline', 'joiningDate', 'link']
+{{hrName}}
+{{companyName}}`,
+    // linkClause is the whole "you can also view it online" sentence plus the
+    // URL, or nothing at all: a letter with no public token has no link, and a
+    // template cannot express "omit this line" on its own.
+    ['candidateName', 'position', 'companyName', 'acceptanceDeadline', 'joiningDate',
+      'link', 'linkClause', 'hrName']
   ),
 
   letter(
@@ -90,14 +95,17 @@ Warm regards,
     'Appointment letter email',
     'Recruitment',
     'The covering email the appointment letter PDF is attached to.',
-    'Your appointment letter — {{companyName}}',
+    'Letter of Appointment - {{companyName}}',
     `Dear {{candidateName}},
 
-Welcome aboard. Please find attached your appointment letter for the position of {{position}}.
+Please find attached your Letter of Appointment from {{companyName}}.{{linkClause}}
+
+Kindly review the document and revert with your acceptance.
 
 Warm regards,
-{{companyName}} · HR`,
-    ['candidateName', 'position', 'companyName', 'joiningDate', 'link']
+{{hrName}}
+{{companyName}}`,
+    ['candidateName', 'position', 'companyName', 'joiningDate', 'link', 'linkClause', 'hrName']
   ),
 
   mail(
@@ -108,30 +116,46 @@ Warm regards,
     'Documents required for your onboarding - {{companyName}}',
     `Dear {{candidateName}},
 
-To complete your onboarding, please upload the required documents using the secure link below. You will not need to sign in.
+Congratulations on clearing your interviews with {{companyName}}.
 
+To take your joining formalities forward, please upload the documents listed below using the secure link at the end of this email. No login is needed, and you can preview each file before you send it.
+
+{{documentList}}
+
+Upload here:
 {{link}}
 
+Please keep each file under 10 MB, in PDF, Word, JPG or PNG format. Write back to this email if any document is not available with you right now.
+
 Warm regards,
-{{companyName}} · HR`,
-    ['candidateName', 'companyName', 'link']
+{{hrName}}
+{{companyName}}`,
+    // documentList is rendered by the server from DOC_TYPES — editing this
+    // template changes the wording around the list, never the list itself.
+    ['candidateName', 'companyName', 'link', 'documentList', 'hrName']
   ),
 
   mail(
     'employee.documents',
     'Employee document request',
     'People',
-    'Sent to an employee when HR needs missing or corrected documents.',
-    'Action needed on your documents - {{companyName}}',
+    'Sent from an employee’s record (“Email link”) with their secure upload link. {{documentList}} is the set of documents still outstanding for that person, filled in by the server.',
+    'Documents required - {{companyName}}',
     `Dear {{employeeName}},
 
-Some of your documents still need attention. Please upload them using the secure link below.
+Please upload the documents listed below using the secure link at the end of this email. No login is needed, and you can preview each file before you send it.
 
+{{documentList}}
+
+Upload here:
 {{link}}
 
+Please keep each file under 10 MB, in PDF, Word, JPG or PNG format. Write back to this email if any document is not available with you right now.
+
 Warm regards,
-{{companyName}} · HR`,
-    ['employeeName', 'employeeCode', 'companyName', 'link']
+{{hrName}}
+{{companyName}}`,
+    ['employeeName', 'employeeCode', 'companyName', 'link', 'documentList', 'hrName']
   ),
 
   mail(
@@ -142,13 +166,13 @@ Warm regards,
     'Payslip · {{period}}',
     `Dear {{employeeName}},
 
-Please find your payslip for {{period}} attached. You can also view it any time from the employee portal.
+Please find attached your payslip for {{period}}. You can also view and download it anytime from the link below:
 
 {{link}}
 
-Warm regards,
-{{companyName}} · HR`,
-    ['employeeName', 'employeeCode', 'period', 'companyName', 'link']
+Regards,
+{{hrName}}`,
+    ['employeeName', 'employeeCode', 'period', 'companyName', 'link', 'hrName']
   ),
 
   letter(
@@ -173,19 +197,21 @@ During the tenure with us, {{employeeName}} was found to be sincere and diligent
     'relieving.mail',
     'Relieving letter email',
     'People',
-    'The covering email the relieving letter PDF is attached to.',
-    'Your relieving letter — {{companyName}}',
+    'Sent from the Exit console (“Email Letter”) with the relieving letter PDF attached. Separate from the exit email below, which links to the same letter — use this one to reissue it later.',
+    'Your relieving letter - {{companyName}}',
     `Dear {{employeeName}},
 
-Please find attached your relieving letter from {{companyName}}, confirming that you have been relieved of your duties with effect from {{lastWorkingDay}}.
-
-You can also view it here: {{link}}
+Please find attached your relieving letter from {{companyName}}, confirming that you have been relieved of your duties with effect from {{lastWorkingDay}}.{{linkClause}}
 
 We thank you for your contribution and wish you every success ahead.
 
 Warm regards,
-{{companyName}} · HR`,
-    ['employeeName', 'employeeCode', 'companyName', 'lastWorkingDay', 'link']
+{{hrName}}
+{{companyName}}`,
+    // linkClause, not a bare {{link}}: an exit with no feedback token has no
+    // public page, and an unset variable is left as the literal placeholder —
+    // which would ship "{{link}}" to a leaver.
+    ['employeeName', 'employeeCode', 'companyName', 'lastWorkingDay', 'link', 'linkClause', 'hrName']
   ),
 
   mail(
@@ -196,15 +222,22 @@ Warm regards,
     'Thank you for your time with {{companyName}}',
     `Dear {{employeeName}},
 
-Thank you for your contribution to {{companyName}}. We would value your feedback about your time with us — it takes only a few minutes.
+Your last working day with {{companyName}} was {{lastWorkingDay}}. On behalf of the entire team, thank you for your time and contributions - we wish you the very best in your future endeavours.
 
+Your relieving letter is ready. You can download it here, without signing in - please keep a copy for your records:
 {{link}}
 
-We wish you every success ahead.
+As part of our offboarding process, we'd be grateful if you could spare a few minutes to share your feedback. Your honest input helps us become a better workplace for everyone who comes after you. The feedback form is on the same page.
+
+If you have any questions or need help, feel free to reply directly to this email - it will reach me.
 
 Warm regards,
-{{companyName}} · HR`,
-    ['employeeName', 'employeeCode', 'companyName', 'link', 'lastWorkingDay']
+{{hrName}}
+HR - {{companyName}}`,
+    // One mail covers both halves of an exit: the relieving letter and the
+    // feedback form live on the SAME tokenised page, so {{link}} serves both.
+    // (That is also why 'relieving.mail' has no send site of its own.)
+    ['employeeName', 'employeeCode', 'companyName', 'link', 'lastWorkingDay', 'hrName']
   ),
 
   mail(
@@ -215,13 +248,49 @@ Warm regards,
     'Your sign-in email has been updated - {{companyName}}',
     `Dear {{employeeName}},
 
-The email address you use to sign in to {{companyName}} HRMS has been changed to {{newEmail}}.
+Your {{companyName}} HRMS sign-in email has been updated by HR. From now on, please sign in with this address:
 
-If you did not expect this, please contact HR immediately.
+  {{newEmail}}
 
-Warm regards,
-{{companyName}} · HR`,
-    ['employeeName', 'companyName', 'newEmail', 'oldEmail']
+Your password has not changed.
+
+Sign in here:
+{{link}}
+
+If you were not expecting this, please contact HR straight away.
+
+Regards,
+{{hrName}}
+{{companyName}}`,
+    // `oldEmail` is deliberately NOT offered. This mail goes to the NEW address,
+    // and if HR mistyped it that is a stranger's inbox — which must not be handed
+    // the employee's previous address. See notifyEmailChanged in adminController.
+    ['employeeName', 'companyName', 'newEmail', 'link', 'hrName']
+  ),
+
+  mail(
+    'passwordReset.request',
+    'Password reset request (to HR)',
+    'People',
+    'Sent to the HR Managers and Super Admins the moment somebody files a password-reset request from the login page. Goes to exactly the people who get the in-app notification.',
+    'Password reset requested - {{name}} ({{employeeCode}})',
+    `{{name}} ({{employeeCode}}) cannot sign in and has asked for their password to be reset.
+
+What they entered on the login page:
+  Email        {{email}}
+  Phone        {{phone}}
+  Designation  {{designation}}
+  Department   {{department}}
+  Reason       {{reason}}
+
+Open the request to set a new password or mark it resolved:
+{{link}}
+
+This is an automated message - the person who raised it is locked out and waiting.
+
+{{companyName}} HRMS`,
+    ['name', 'employeeCode', 'email', 'phone', 'designation', 'department', 'reason',
+      'link', 'companyName']
   ),
 ];
 
