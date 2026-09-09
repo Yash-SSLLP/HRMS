@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.11",
-  "versionCode": 92,
-  "notes": "When a colleague wishes you a happy birthday or congratulates you on an anniversary, you can now answer them. Open your dashboard, find the wish on the \"Wishes for you\" card and tap Say thanks — that on its own is a complete reply, or add a short note first. They get it straight away as a notification on their phone. The card remembers, so a wish you have already answered shows \"Thanks sent\" instead of asking again. Wishes sent before this build did not record who they came from, so those older ones have nothing to reply to and simply carry no button. Also in this build, from 2.8.10: a complaint can be raised as General when the issue is with a policy, a facility or the workplace itself rather than with a person; and HR, the CEO, the MD and the Backend can delete a complaint once it has been resolved or dismissed, with an audit entry recording who removed it."
+  "versionName": "2.8.12",
+  "versionCode": 93,
+  "notes": "Fixes the crash in 2.8.11. That build could show an error screen or close itself as soon as you signed in — this one opens normally, so please update. Saying thanks for a wish works properly now too: the \"Wishes for you\" card used to disappear the moment you marked your alerts as read, taking the Say thanks button with it. The card now stays until you close it yourself, so a wish still waiting for a reply is there when you come back to it."
 }
