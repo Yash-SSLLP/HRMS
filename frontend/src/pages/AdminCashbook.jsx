@@ -5,7 +5,7 @@
  * petty-cash approvals), Accounts, Categories, and Reports (day-book/summary).
  * Supports transfers between accounts and receipt attachments on entries.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useTabParam } from "../hooks/useTabParam";
@@ -54,7 +54,20 @@ export default function AdminCashbook() {
   const [ov, setOv] = useState(null);
   const [entries, setEntries] = useState([]);
   const [vouchers, setVouchers] = useState([]);
+  // The ledger filters actually IN FORCE — the loader below depends on this
+  // object, so anything written here is a round trip to /cashbook/entries.
   const [filters, setFilters] = useState({ account: '', type: '', status: '', category: '', from: '', to: '', q: '' });
+  // …and what is being TYPED into the Search box, which runs 350ms ahead of it.
+  // The box used to write straight into `filters`, so "electricity" was eleven
+  // sequential fetches, ten of them thrown away, with the table flickering
+  // through the answers to half-typed words on the way (AdminKhata fixed the
+  // same bug on its People search). The dropdowns and dates are left immediate:
+  // they only ever emit a complete value, and delaying those feels laggy.
+  const [search, setSearch] = useState('');
+  // Sequence guard for loadEntries: without it a slow response for a query the
+  // user has already typed past can land last and win, showing rows for a
+  // filter that is no longer on screen.
+  const reqRef = useRef(0);
 
   const [entryModal, setEntryModal] = useState(null);     // { mode, data, file }
   const [accountModal, setAccountModal] = useState(null);  // { mode, data }
@@ -73,7 +86,12 @@ export default function AdminCashbook() {
   const loadAccounts = () => api.get('/cashbook/accounts').then((r) => setAccounts(r.data.accounts)).catch(() => {});
   const loadCategories = () => api.get('/cashbook/categories').then((r) => setCategories(r.data.categories)).catch(() => {});
   const loadOverview = () => api.get('/cashbook/overview').then((r) => setOv(r.data)).catch(() => {});
-  const loadEntries = () => api.get('/cashbook/entries', { params: clean(filters) }).then((r) => setEntries(r.data.entries)).catch(() => {});
+  // Returns the promise: saveEntry and deleteEntry await it inside Promise.all.
+  const loadEntries = () => {
+    const seq = ++reqRef.current;
+    return api.get('/cashbook/entries', { params: clean(filters) })
+      .then((r) => { if (seq === reqRef.current) setEntries(r.data.entries); }).catch(() => {});
+  };
   const loadVouchers = () => api.get('/cashbook/entries', { params: { status: 'Pending' } })
     .then((r) => setVouchers((r.data.entries || []).filter((e) => e.submittedByEmployee))).catch(() => {});
 
@@ -83,6 +101,14 @@ export default function AdminCashbook() {
   }, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'ledger') loadEntries(); }, [tab, filters]);
+  // Apply the typed search once the typing stops. The `f.q === search`
+  // short-circuit is not cosmetic: without it the debounce still mints a fresh
+  // filters object on every pause, and the effect above refires a fetch for a
+  // query that has not changed.
+  useEffect(() => {
+    const t = setTimeout(() => setFilters((f) => (f.q === search ? f : { ...f, q: search })), 350);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const activeAccounts = accounts.filter((a) => a.isActive);
 
@@ -197,7 +223,12 @@ export default function AdminCashbook() {
   };
   const exportCsv = async () => {
     try {
-      const res = await api.get('/cashbook/reports/export', { params: clean(filters), responseType: 'blob' });
+      // `search` rather than `filters.q`: the search box is debounced by 350ms,
+      // so typing a query and hitting Export inside that window used to send the
+      // PREVIOUS query — a spreadsheet quietly filtered by the wrong thing, with
+      // nothing on screen to say so. The box on screen is the source of truth
+      // for what the export should contain.
+      const res = await api.get('/cashbook/reports/export', { params: clean({ ...filters, q: search }), responseType: 'blob' });
       // Server sets the .xlsx filename via Content-Disposition; honour it, else fall back.
       const cd = res.headers['content-disposition'] || '';
       const m = /filename="?([^";]+)"?/i.exec(cd);
@@ -216,7 +247,7 @@ export default function AdminCashbook() {
       <div className="flex gap-1 border-b border-gray-200 mb-4 overflow-x-auto">
         {TABS.map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${tab === k ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${tab === k ? 'accent-border accent-text' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {label}{k === 'vouchers' && vouchers.length ? ` (${vouchers.length})` : ''}
           </button>
         ))}
@@ -265,12 +296,20 @@ export default function AdminCashbook() {
       {tab === 'ledger' && (
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2 items-end">
-            <Sel label="Account" value={filters.account} onChange={(v) => setFilters({ ...filters, account: v })} options={[['', 'All']].concat(accounts.map((a) => [a._id, a.name]))} />
-            <Sel label="Type" value={filters.type} onChange={(v) => setFilters({ ...filters, type: v })} options={[['', 'All'], ['in', 'In'], ['out', 'Out']]} />
-            <Sel label="Status" value={filters.status} onChange={(v) => setFilters({ ...filters, status: v })} options={[['', 'All'], ['Approved', 'Approved'], ['Pending', 'Pending'], ['Rejected', 'Rejected']]} />
-            <div><label className="block text-xs text-gray-500">From</label><input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} className="border rounded-lg px-2 py-1.5 text-sm" /></div>
-            <div><label className="block text-xs text-gray-500">To</label><input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} className="border rounded-lg px-2 py-1.5 text-sm" /></div>
-            <div><label className="block text-xs text-gray-500">Search</label><input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="party / ref / note" className="border rounded-lg px-2 py-1.5 text-sm" /></div>
+            {/* Functional updates throughout: these handlers used to close over
+                the `filters` of the render they were created in, so picking two
+                dropdowns quickly enough dropped the first choice. */}
+            <Sel label="Account" value={filters.account} onChange={(v) => setFilters((f) => ({ ...f, account: v }))} options={[['', 'All']].concat(accounts.map((a) => [a._id, a.name]))} />
+            <Sel label="Type" value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v }))} options={[['', 'All'], ['in', 'In'], ['out', 'Out']]} />
+            <Sel label="Status" value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v }))} options={[['', 'All'], ['Approved', 'Approved'], ['Pending', 'Pending'], ['Rejected', 'Rejected']]} />
+            <div><label className="block text-xs text-gray-500">From</label><input type="date" value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} className="border rounded-lg px-2 py-1.5 text-sm" /></div>
+            <div><label className="block text-xs text-gray-500">To</label><input type="date" value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} className="border rounded-lg px-2 py-1.5 text-sm" /></div>
+            {/* A real form, so Enter applies the search at once rather than
+                making somebody wait out a debounce they cannot see. */}
+            <form onSubmit={(e) => { e.preventDefault(); setFilters((f) => (f.q === search ? f : { ...f, q: search })); }}>
+              <label className="block text-xs text-gray-500">Search</label>
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="party / ref / note" className="border rounded-lg px-2 py-1.5 text-sm" />
+            </form>
             <button onClick={exportCsv} className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">Export Excel</button>
             {!viewOnly && (
               <button onClick={() => openEntry('create')} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">+ Add Entry</button>

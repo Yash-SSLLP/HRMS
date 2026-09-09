@@ -269,7 +269,7 @@ export default function AdminReviewCycles() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
             <div className="flex items-start justify-between gap-3 mb-1">
               <h2 className="card-title">Manage: {manageCycle.name}</h2>
-              <button onClick={() => setManageCycle(null)} className="text-gray-400 hover:text-gray-700 text-sm">✕</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setManageCycle(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <p className="text-xs text-gray-500 mb-4">Assign reviewers and track submitted reviews for this cycle.</p>
 

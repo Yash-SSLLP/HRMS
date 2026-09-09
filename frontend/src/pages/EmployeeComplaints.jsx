@@ -9,6 +9,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
+import { GENERAL_TARGET, GENERAL_LABEL, complaintTarget, isGeneralComplaint } from '../utils/complaints';
 
 const STATUS_LABELS = {
   open: 'Open',
@@ -110,8 +111,10 @@ export default function EmployeeComplaints() {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  {c.against ? `${c.against.firstName} ${c.against.lastName}` : '-'}
-                  <div className="text-xs text-gray-500">{c.against?.role}</div>
+                  {complaintTarget(c)}
+                  <div className="text-xs text-gray-500">
+                    {isGeneralComplaint(c) ? 'No individual named' : c.against?.role}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   {c.assignedTo ? `${c.assignedTo.firstName} ${c.assignedTo.lastName}` : '-'}
@@ -140,6 +143,14 @@ export default function EmployeeComplaints() {
                   onChange={(e) => setForm({ ...form, againstUserId: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   <option value="">Select a person…</option>
+                  {/* Not every grievance is about a colleague — a policy, a
+                      facility or the workplace itself has no one to name. It
+                      sits ABOVE the people so it is the first thing offered to
+                      somebody who came here without a specific person in mind,
+                      and it must not use value="" (SearchableSelect treats an
+                      empty value as the placeholder, and `required` would then
+                      refuse the form). */}
+                  <option value={GENERAL_TARGET}>{GENERAL_LABEL}</option>
                   {peopleOptions(people, (p) => `${p.fullName} (${p.role})`, { keep: [form.againstUserId] })}
                 </SearchableSelect>
               </div>

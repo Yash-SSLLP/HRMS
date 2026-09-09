@@ -4,7 +4,7 @@
  * them on a Leaflet/OpenStreetMap map with geofence circles; out-of-area punches
  * are highlighted. A side list groups punches by employee and zooms to them.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import api from '../api/client';
@@ -27,6 +27,18 @@ function pointColor(p) {
 
 // Days in a given month (handles leap years).
 const daysInMonth = (y, m) => new Date(y, m, 0).getDate();
+
+// The in/out + name filter. Pulled out of the component because the side list
+// and the map filter on two different search values (the map's lags a beat —
+// see mapPoints below) and they must not drift apart.
+function filterPoints(points, kind, search) {
+  const q = search.trim().toLowerCase();
+  return (points || []).filter((p) => {
+    if (kind !== 'all' && p.kind !== kind) return false;
+    if (q && !(`${p.name} ${p.employeeCode}`.toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
 
 // Tooltip shown on hover — carries the exact punch timing, as requested.
 function tooltipHtml(p) {
@@ -71,6 +83,9 @@ export default function AdminPunchMap() {
   const markersRef = useRef(null);
   const geoRef = useRef(null);
   const pointMarkers = useRef(new Map()); // point.id -> L.circleMarker
+  // Set when the map is allowed to re-frame itself (a fresh load, or a change of
+  // punch kind). Typing in the search box must never move the viewport.
+  const refitRef = useRef(true);
 
   // ----- data load -----
   const load = async () => {
@@ -79,6 +94,7 @@ export default function AdminPunchMap() {
       const params = new URLSearchParams({ year, month });
       if (day) params.set('day', day);
       const { data } = await api.get(`/attendance/punch-map?${params}`);
+      refitRef.current = true; // a new day/month deserves a new framing
       setData(data);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load punch locations');
@@ -87,16 +103,26 @@ export default function AdminPunchMap() {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [year, month, day]);
 
-  // Points after the in/out + name filters.
-  const filtered = useMemo(() => {
-    if (!data?.points) return [];
-    const q = search.trim().toLowerCase();
-    return data.points.filter((p) => {
-      if (kind !== 'all' && p.kind !== kind) return false;
-      if (q && !(`${p.name} ${p.employeeCode}`.toLowerCase().includes(q))) return false;
-      return true;
-    });
-  }, [data, kind, search]);
+  // Points after the in/out + name filters — drives the side list and the counts,
+  // so it tracks every keystroke.
+  const filtered = useMemo(() => filterPoints(data?.points, kind, search), [data, kind, search]);
+
+  // The same set for the map, one beat behind. Redrawing the markers is the
+  // expensive half of a keystroke — the effect below tears down and rebuilds two
+  // Leaflet layers per punch, and a whole month across the org is thousands of
+  // them — so the map redraw waits for a pause in typing while the list and the
+  // counters stay instant.
+  const mapSearch = useDeferredValue(search);
+  const mapPoints = useMemo(() => filterPoints(data?.points, kind, mapSearch), [data, kind, mapSearch]);
+
+  // A settled search is a new question, so it earns a new framing — searching a
+  // name and being zoomed to that person's punches is what this page's header
+  // promises. Keyed on the DEFERRED search, so it asks for one refit when the
+  // typing stops, not one per keystroke: that per-keystroke refit is what the
+  // gate in the marker effect was added to stop, and gating it away entirely
+  // took the feature with it.
+
+  useEffect(() => { refitRef.current = true; }, [mapSearch]);
 
   // People list (grouped) for the side panel.
   const people = useMemo(() => {
@@ -153,8 +179,16 @@ export default function AdminPunchMap() {
     layer.clearLayers();
     pointMarkers.current.clear();
 
+    // The pulsing ring says "look here" only while the flagged dots are
+    // countable. A whole-month view can surface several hundred of them, and a
+    // wall of blinking dots is noise as well as several hundred animations
+    // running for as long as the page is open. Past this many the red fill, the
+    // bigger halo and the "· N outside" counter carry the signal on their own.
+    const outsideOnMap = mapPoints.reduce((n, p) => n + (p.outside ? 1 : 0), 0);
+    const pulseOutside = outsideOnMap > 0 && outsideOnMap <= 50;
+
     const latlngs = [];
-    for (const p of filtered) {
+    for (const p of mapPoints) {
       if (p.lat == null || p.lng == null) continue;
       const color = pointColor(p);
       // Soft coloured glow behind the dot so it stands out from the map — bigger
@@ -170,7 +204,7 @@ export default function AdminPunchMap() {
       // flat dot. Casing (dark outer + white inner ring) makes it pop on any tile.
       const glyph = p.kind === 'in' ? '▾' : '▴';
       const icon = L.divIcon({
-        className: p.outside ? 'punch-dot out' : 'punch-dot',
+        className: p.outside && pulseOutside ? 'punch-dot out' : 'punch-dot',
         html:
           `<div style="width:26px;height:26px;border-radius:50%;background:${color};` +
           `border:3px solid #fff;box-shadow:0 0 0 1.5px ${color},0 2px 5px rgba(0,0,0,.45);` +
@@ -180,7 +214,10 @@ export default function AdminPunchMap() {
         iconAnchor: [13, 13],
       });
       const m = L.marker([p.lat, p.lng], { icon, riseOnHover: true, zIndexOffset: p.outside ? 1000 : 0 });
-      m.bindTooltip(tooltipHtml(p), { direction: 'top', offset: [0, -14], sticky: false });
+      // Function content: Leaflet only calls it when the tooltip actually opens,
+      // so the six escapeHtml passes per punch happen on hover instead of once
+      // per punch on every redraw.
+      m.bindTooltip(() => tooltipHtml(p), { direction: 'top', offset: [0, -14], sticky: false });
       halo.addTo(layer);
       m.addTo(layer);
       pointMarkers.current.set(p.id, m);
@@ -190,10 +227,14 @@ export default function AdminPunchMap() {
     // Include geofence centers in the initial framing.
     for (const g of data?.geofences || []) if (g.lat != null) latlngs.push([g.lat, g.lng]);
 
-    if (latlngs.length && !selected) {
+    // Only on an explicit refit signal (a load, or a change of punch kind).
+    // Re-framing on every redraw meant a search yanked the viewport away from
+    // wherever the person had panned to, once per settled keystroke.
+    if (latlngs.length && refitRef.current && !selected) {
       map.fitBounds(L.latLngBounds(latlngs).pad(0.15), { maxZoom: 17 });
+      refitRef.current = false;
     }
-  }, [filtered, data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mapPoints, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus a person's punches: fit to their dots and open the first tooltip.
   const focusPerson = (person) => {
@@ -216,10 +257,27 @@ export default function AdminPunchMap() {
       {/* Marker styling: kill Leaflet's default div-icon white box; pulse out-of-area dots. */}
       <style>{`
         .punch-dot { background: transparent; border: 0; }
-        .punch-dot.out > div { animation: punchPulse 1.6s ease-in-out infinite; }
+        /* The pulse rides on a pseudo-element ring animated with transform +
+           opacity, which the compositor can run off the main thread. It used to
+           animate box-shadow on the dot itself — a property that repaints the
+           layer on every frame, once per flagged punch, forever — which is what
+           made panning and zooming stutter. position:relative is set here (not
+           in the inline style the marker html carries) so the ring stays
+           anchored to the dot instead of escaping to the map pane. */
+        .punch-dot.out > div { position: relative; }
+        .punch-dot.out > div::after {
+          content: ''; position: absolute; inset: -2px; border-radius: 50%;
+          border: 2px solid #dc2626; pointer-events: none;
+          animation: punchPulse 1.6s ease-in-out infinite;
+        }
         @keyframes punchPulse {
-          0%, 100% { box-shadow: 0 0 0 1.5px #dc2626, 0 2px 5px rgba(0,0,0,.45); }
-          50% { box-shadow: 0 0 0 6px rgba(220,38,38,.35), 0 2px 5px rgba(0,0,0,.45); }
+          0% { transform: scale(1); opacity: .7; }
+          100% { transform: scale(1.6); opacity: 0; }
+        }
+        /* Left visible rather than removed: the ring is what marks the punch as
+           outside the work area, so it becomes a static badge instead. */
+        @media (prefers-reduced-motion: reduce) {
+          .punch-dot.out > div::after { animation: none; opacity: .55; }
         }
       `}</style>
       <PageHeader title="Punch Location Map" subtitle="Where every check-in / check-out happened · pick a day, search a name, hover a dot for its exact time" />
@@ -247,7 +305,7 @@ export default function AdminPunchMap() {
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-0.5">Punch</label>
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white">
+          <select value={kind} onChange={(e) => { setKind(e.target.value); refitRef.current = true; }} className="border rounded-lg px-3 py-2 text-sm bg-white">
             <option value="all">In &amp; Out</option>
             <option value="in">Check-in only</option>
             <option value="out">Check-out only</option>
@@ -276,13 +334,20 @@ export default function AdminPunchMap() {
       {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-3">
-        {/* Map */}
-        <div className="bg-white rounded-xl shadow overflow-hidden" style={{ minHeight: 480 }}>
-          <div ref={mapEl} style={{ height: '70vh', minHeight: 480, width: '100%' }} />
+        {/* Map. No pixel floor: a 480px minimum is taller than a landscape phone
+            (360-414px), which pushed the filters and the people list a whole
+            screen down. dvh rather than vh because vh is measured against the
+            viewport with the mobile URL bar retracted, so 70vh already overflowed
+            the visible area on a phone — but dvh is declared behind an @supports
+            in index.css with a vh floor in front of it, because as the container's
+            ONLY height it would leave Leaflet in a 0px box (a blank map, not a
+            short one) on any engine that cannot parse the unit. */}
+        <div className="bg-white rounded-xl shadow overflow-hidden">
+          <div ref={mapEl} className="punch-map-pane" style={{ width: '100%' }} />
         </div>
 
-        {/* People list */}
-        <div className="bg-white rounded-xl shadow p-3 flex flex-col" style={{ maxHeight: '70vh' }}>
+        {/* People list — same height as the map so the two columns line up at lg+. */}
+        <div className="bg-white rounded-xl shadow p-3 flex flex-col punch-map-aside">
           <div className="text-sm font-semibold text-gray-800 mb-2">
             {people.length} {people.length === 1 ? 'person' : 'people'}
           </div>

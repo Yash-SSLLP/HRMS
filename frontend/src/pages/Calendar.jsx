@@ -407,6 +407,21 @@ export default function Calendar() {
           </>
         )}
 
+        {/* Phone-only: the whole cell opens the day sheet. Below 560px the event
+            tiles render as coloured dots (index.css) because a 40px-wide column
+            cannot carry a label — so the dot says THAT something is on, and this
+            says WHAT. It is a real <button> rather than a click handler on the
+            cell so it is reachable by keyboard and announced; CSS hides it
+            entirely above 560px, where the tiles carry their own labels. */}
+        {cell.inMonth && (
+          <button
+            type="button"
+            className="cal-cell-tap"
+            aria-label={`Open ${cell.day} ${MONTH_NAMES[month - 1]}`}
+            onClick={() => setDayList(cell.day)}
+          />
+        )}
+
         {/* Drop a reminder straight onto a day of this month. */}
         {cell.inMonth && (
           <button
@@ -520,7 +535,11 @@ export default function Calendar() {
       {dayList && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]"
           onMouseDown={() => setDayList(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden"
+          {/* flex-col + an inner scroller on the body is what opts this panel out of the
+              phone rule in index.css that wraps a bare modal panel in 1.1rem: header and
+              body already own px-5/p-2, so that outer padding detached the header's
+              border-b from the rounded edge and stole ~35px from the day rows. */}
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col"
             onMouseDown={(ev) => ev.stopPropagation()}>
             <div className="px-5 pt-5 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
               <h2 className="text-lg font-semibold text-gray-900">
@@ -531,7 +550,7 @@ export default function Calendar() {
                 <FiX size={18} />
               </button>
             </div>
-            <div className="p-2">
+            <div className="flex-1 min-h-0 overflow-y-auto p-2">
               {dayEntries.map((e, i) => {
                 const m = metaFor(e.type);
                 return (
@@ -573,7 +592,10 @@ export default function Calendar() {
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]"
             onMouseDown={() => setSelected(null)}>
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden"
+            {/* Same flex-col + inner-scroller shape as the day list above: it is what
+                keeps index.css from adding 1.1rem around a panel whose header, detail
+                block and action row each already carry their own px-5. */}
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col"
               onMouseDown={(ev) => ev.stopPropagation()}>
               <div className="px-5 pt-5 pb-4 border-b border-gray-100">
                 <div className="flex items-start justify-between gap-3">
@@ -594,7 +616,7 @@ export default function Calendar() {
                 </div>
               </div>
 
-              <div className="px-5 py-4 space-y-2">
+              <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-2">
                 {detailRows(e).map(([k, v]) => (
                   <div key={k} className="flex gap-3 text-sm">
                     <span className="w-24 shrink-0 text-gray-400">{k}</span>
@@ -648,7 +670,13 @@ export default function Calendar() {
       {form && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]"
           onMouseDown={() => !saving && setForm(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden"
+          {/* flex-col with the form body as the scroller: it stops index.css double-padding
+              a panel whose header/body/footer already own px-5, and keeps the Cancel/Save
+              row pinned while a long form scrolls. The body must carry overflow-y-auto
+              unconditionally — the people picker below is the only other scroller here and
+              it only exists while scope is 'users', so leaning on it would make the panel
+              gain and lose 1.1rem of padding as the audience select changes. */}
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col"
             onMouseDown={(ev) => ev.stopPropagation()}>
             <div className="px-5 pt-5 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
               <div>
@@ -665,7 +693,7 @@ export default function Calendar() {
               </button>
             </div>
 
-            <div className="px-5 py-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3">
               {formError && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{formError}</div>
               )}
@@ -682,7 +710,11 @@ export default function Calendar() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Stacked below sm: half of this panel on a 360px phone leaves the date
+                  field ~112px of content box, and Chrome/iOS need ~154px to lay out
+                  dd/mm/yyyy plus the picker affordance — the value and the calendar icon
+                  were being clipped by the panel's overflow-hidden. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
                   <input

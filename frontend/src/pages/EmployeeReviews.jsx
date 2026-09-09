@@ -59,8 +59,13 @@ function StarRating({ value = 0, onChange, size = 'md', label }) {
 
   const shown = hover || chosen;
   const px = size === 'lg' ? 24 : 20;
+  // The row wraps below sm only. Five stars plus the 144px caption need ~294px
+  // (314px at size="lg"), and a rating card on a 360px phone is ~211px wide —
+  // neither child can shrink, and the modal panel clips overflow-x, so the
+  // caption was cut off entirely. Above sm the row stays nowrap so the
+  // hover-pinning noted below still holds exactly where a pointer exists.
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="flex items-center gap-2.5 gap-y-1 flex-wrap sm:flex-nowrap">
       <div
         // No gap: the buttons' hit areas touch, so sweeping across the row never
         // crosses a dead zone. The visual spacing comes from padding inside each
@@ -95,8 +100,11 @@ function StarRating({ value = 0, onChange, size = 'md', label }) {
       {/* Fixed width on purpose. This label changes as you hover, and it sits in
           the same flex row as the stars — letting it resize would shift the
           stars out from under the cursor, flipping the hover to another star and
-          then back, forever. Reserving the widest label's space pins the row. */}
-      <span className={`text-xs whitespace-nowrap w-36 shrink-0 ${chosen ? 'text-gray-600 font-medium' : 'text-gray-400'}`}>
+          then back, forever. Reserving the widest label's space pins the row.
+          Below sm it takes the whole second line instead (basis-full): there is
+          no room for a 144px reserved box beside the stars on a phone, and no
+          pointer there to shift out from under anyway. */}
+      <span className={`text-xs whitespace-nowrap basis-full sm:basis-auto w-full sm:w-36 shrink-0 ${chosen ? 'text-gray-600 font-medium' : 'text-gray-400'}`}>
         {shown ? SCORE_LABELS[shown] : 'Not rated'}
       </span>
     </div>
@@ -306,7 +314,16 @@ export default function EmployeeReviews() {
       {/* Fill-in modal */}
       {active && form && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
+          {/* The flex chain from here down to the rating list is load-bearing.
+              index.css only drops its own 92vh scroller and its 1.1rem phone
+              padding on a modal panel that is a flex column owning an inner
+              scroller. Without that, the phone padding wrapped this panel in
+              1.1rem of white, so the tinted `.review-head` band and its divider
+              floated inside a frame instead of bleeding to the rounded edge.
+              Every link matters: panel → form → body. Make the panel a column
+              but leave the form an unflexed block and nothing scrolls, while the
+              panel is still capped — which hard-clips the footer. */}
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col">
             {/* Header — who, which cycle, and how far along the reviewer is. */}
             <div className="review-head px-6 pt-5 pb-4">
               <div className="flex items-start gap-3">
@@ -333,8 +350,8 @@ export default function EmployeeReviews() {
               </div>
             </div>
 
-            <form onSubmit={submit}>
-              <div className="px-6 py-5 space-y-3">
+            <form onSubmit={submit} className="flex flex-col flex-1 min-h-0">
+              <div className="px-6 py-5 space-y-3 flex-1 min-h-0 overflow-y-auto">
                 {form.ratings.map((rt, idx) => (
                   <div key={rt.competency || idx} className={`rating-card p-4 ${Number(rt.score) ? 'is-rated' : ''}`}>
                     <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -404,8 +421,11 @@ export default function EmployeeReviews() {
                 )}
               </div>
 
-              {/* Footer stays in view while the body scrolls. */}
-              <div className="sticky bottom-0 flex items-center justify-between gap-3 px-6 py-4 bg-gray-50 border-t border-gray-200">
+              {/* Footer stays in view while the body scrolls — by construction
+                  now, as the last flex item of a non-scrolling form. `sticky`
+                  was dropped with the scrollport: sticky in a parent that does
+                  not scroll is dead weight. */}
+              <div className="flex items-center justify-between gap-3 px-6 py-4 bg-gray-50 border-t border-gray-200">
                 <span className="text-xs text-gray-500 hidden sm:block">
                   {ratedCount === form.ratings.length && form.overallRating
                     ? 'All set — this feedback is final once submitted.'

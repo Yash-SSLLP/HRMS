@@ -115,64 +115,67 @@ export function DialogHost() {
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 bg-black/40 backdrop-blur-sm"
       onMouseDown={cancel}>
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden"
+      {/* The padding lives on the panel itself, not on an inner wrapper. The
+          phone rule for `.fixed.inset-0 > div` sets its own padding on this
+          element; with a padded child inside a bare panel the two stacked and
+          a 360px screen was left with ~260px of usable width. One padded box
+          means the phone rule replaces the 20px instead of adding to it. */}
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden p-5"
         role="dialog" aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}>
-        <div className="p-5">
-          <div className="flex items-start gap-3">
-            <span className={`shrink-0 grid place-items-center w-10 h-10 rounded-full ${
-              isDanger ? 'bg-red-50 text-red-600'
-                : isWarning ? 'bg-amber-50 text-amber-600'
-                  : 'bg-gray-100 text-gray-600'}`}>
-              <Icon size={20} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-base font-semibold text-gray-900">{title || defaultTitle}</h2>
-              {message && <p className="mt-1 text-sm text-gray-600 whitespace-pre-line break-words">{message}</p>}
-              {Array.isArray(details) && details.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                  {details.map((d, i) => (
-                    <li key={i} className="text-sm text-gray-600 flex gap-2">
-                      <span className="text-gray-300">•</span><span className="break-words">{d}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {isPrompt && (
-                <div className="mt-3">
-                  {inputLabel && <label className="block text-xs font-medium text-gray-500 mb-1">{inputLabel}</label>}
-                  <input
-                    ref={inputRef}
-                    // 'password' masks the field and keeps it out of the
-                    // browser's saved form values — needed now that an admin can
-                    // set someone's password from here.
-                    type={inputType || 'text'}
-                    autoComplete={inputType === 'password' ? 'new-password' : undefined}
-                    value={value}
-                    placeholder={placeholder || ''}
-                    onChange={(e) => setValue(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ok(); } }}
-                    className="block w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="mt-5 flex justify-end gap-2">
-            {!isAlert && (
-              <button type="button" onClick={cancel}
-                className="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">
-                {cancelText}
-              </button>
+        <div className="flex items-start gap-3">
+          <span className={`shrink-0 grid place-items-center w-10 h-10 rounded-full ${
+            isDanger ? 'bg-red-50 text-red-600'
+              : isWarning ? 'bg-amber-50 text-amber-600'
+                : 'bg-gray-100 text-gray-600'}`}>
+            <Icon size={20} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold text-gray-900">{title || defaultTitle}</h2>
+            {message && <p className="mt-1 text-sm text-gray-600 whitespace-pre-line break-words">{message}</p>}
+            {Array.isArray(details) && details.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {details.map((d, i) => (
+                  <li key={i} className="text-sm text-gray-600 flex gap-2">
+                    <span className="text-gray-300">•</span><span className="break-words">{d}</span>
+                  </li>
+                ))}
+              </ul>
             )}
-            <button ref={okRef} type="button" onClick={ok}
-              className={`px-4 py-2 text-sm rounded-lg font-medium text-white shadow-sm ${
-                isDanger ? 'bg-red-600 hover:bg-red-700'
-                  : isWarning ? 'bg-amber-600 hover:bg-amber-700'
-                    : 'bg-gray-900 hover:bg-gray-800'}`}>
-              {confirmLabel}
-            </button>
+            {isPrompt && (
+              <div className="mt-3">
+                {inputLabel && <label className="block text-xs font-medium text-gray-500 mb-1">{inputLabel}</label>}
+                <input
+                  ref={inputRef}
+                  // 'password' masks the field and keeps it out of the
+                  // browser's saved form values — needed now that an admin can
+                  // set someone's password from here.
+                  type={inputType || 'text'}
+                  autoComplete={inputType === 'password' ? 'new-password' : undefined}
+                  value={value}
+                  placeholder={placeholder || ''}
+                  onChange={(e) => setValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ok(); } }}
+                  className="block w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
+                />
+              </div>
+            )}
           </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          {!isAlert && (
+            <button type="button" onClick={cancel}
+              className="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">
+              {cancelText}
+            </button>
+          )}
+          <button ref={okRef} type="button" onClick={ok}
+            className={`px-4 py-2 text-sm rounded-lg font-medium text-white shadow-sm ${
+              isDanger ? 'bg-red-600 hover:bg-red-700'
+                : isWarning ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-gray-900 hover:bg-gray-800'}`}>
+            {confirmLabel}
+          </button>
         </div>
       </div>
     </div>,

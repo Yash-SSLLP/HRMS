@@ -18,7 +18,7 @@ import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import MailComposeModal from '../components/MailComposeModal';
 import SearchableSelect from '../components/SearchableSelect';
-import { peopleOptions, hasLeft } from '../utils/peopleOptions';
+import { peopleOptions, hasLeft, peopleOptionList } from '../utils/peopleOptions';
 import { ROLES, roleLabel } from '../config/roles';
 import { canAdministerEmployee, hasExplicitPermission, isEditingExec } from '../config/permissions';
 import { formatDateTime12, toYMD } from '../utils/time';
@@ -271,7 +271,6 @@ export default function AdminEmployees() {
   );
   const myId = String(currentUser?._id || currentUser?.id || '');
   const [profiles, setProfiles] = useState([]);
-  const [users, setUsers] = useState([]);
   const [hrUsers, setHrUsers] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [designations, setDesignations] = useState([]);
@@ -371,21 +370,24 @@ export default function AdminEmployees() {
    * Merge fields into ONE row of the directory.
    *
    * The alternative, calling load(), fires seven requests and blanks a table of
-   * hundreds to change one flag the click already told us.
+   * hundreds to change one flag the click already told us. (Seven is the real
+   * count — keep it honest if a request is ever added or removed below.)
    */
   const patchProfile = (id, patch) => setProfiles(
     (rows) => rows.map((r) => (String(r._id) === String(id) ? { ...r, ...patch } : r))
   );
 
-  // Load everything the page needs together: profiles, user lists (for the
+  // Load everything the page needs together: profiles, the user list (for the
   // account + manager pickers), doc-completeness, designations and work locations.
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const [profilesRes, usersRes, allUsersRes, docRes, desigRes, wlRes, companiesRes, shiftsRes] = await Promise.all([
+      const [profilesRes, allUsersRes, docRes, desigRes, wlRes, companiesRes, shiftsRes] = await Promise.all([
         api.get('/employees'),
-        api.get('/admin/users?role=Employee'),
+        // One directory call, not two: the Employee-only slice used to be fetched
+        // alongside this one and never read, so every mount and every reload
+        // downloaded the whole Employee list for nothing.
         api.get('/admin/users'),
         api.get('/employees/documents-status'),
         api.get('/org-masters?kind=Designation'),
@@ -394,7 +396,6 @@ export default function AdminEmployees() {
         api.get('/shifts').catch(() => ({ data: { shifts: [] } })),
       ]);
       setProfiles(profilesRes.data.profiles);
-      setUsers(usersRes.data.users);
       setAllUsers(allUsersRes.data.users);
       setHrUsers(allUsersRes.data.users.filter(
         (u) => u.role === 'HRManager' || u.role === 'SuperAdmin'
@@ -945,9 +946,49 @@ This cannot be undone.`,
   // Manager, HR Manager or Accounts Manager is an employee too and needs a
   // profile, and filtering to role=Employee made those accounts impossible to
   // convert once every plain Employee already had one.
-  const usersWithoutProfile = allUsers.filter(
+  //
+  // Memoised because it is a full-directory scan with a per-user profile lookup
+  // inside it, and every keystroke in the editor modal calls
+  // `setForm({ ...form })`, which re-renders this whole page.
+  const usersWithoutProfile = useMemo(() => allUsers.filter(
     (u) => !PROFILE_INELIGIBLE_ROLES.includes(u.role) && !userHasProfile(u, profiles)
-  );
+  ), [allUsers, profiles]);
+
+  // The <option> lists the editor modal's people pickers hand to
+  // SearchableSelect. They are built here, not inline in the JSX, for the same
+  // reason: typing one character into any field of the modal used to rebuild
+  // ~500 option elements per picker, which SearchableSelect then re-flattened
+  // into search text. Keyed on what the list actually depends on — note
+  // `form.regularizationApprovers` and not the `chain` fallback used below,
+  // because `form.regularizationApprovers || []` is a fresh array every render
+  // and a memo keyed on it would never hit.
+  // DATA, not <option> elements, and the placeholder is folded in as the first
+  // entry. Both halves matter: SearchableSelect derives its list from whatever
+  // it is given, and a children array — rebuilt every render because of the
+  // placeholder sibling — defeated the memo inside it, so ~500 elements were
+  // re-walked on every keystroke anywhere in this thirty-field modal.
+  const accountOptions = useMemo(() => peopleOptionList(
+    editingId ? allUsers : usersWithoutProfile,
+    (u) => `${u.firstName} ${u.lastName} · ${u.email}${u.role !== 'Employee' ? ` · ${u.role}` : ''}`,
+    { keep: [form.user?._id || form.user], lead: [{ value: '', label: 'Select a user…' }] },
+  ), [allUsers, usersWithoutProfile, editingId, form.user]);
+
+  // One list per ladder step. Also collapses what were three sequential
+  // .filter() passes over the whole directory into a single predicate.
+  const regApproverOptions = useMemo(() => {
+    const chain = form.regularizationApprovers || [];
+    const selfId = String(form.user?._id || form.user || '');
+    const eligible = allUsers.filter((u) => !hasLeft(u) && String(u._id) !== selfId);
+    return [0, 1].map((idx) => [
+      { value: '', label: idx === 0 ? 'None — any HR reviewer decides' : 'None — one step only' },
+      ...eligible
+        .filter((u) => u._id === chain[idx] || !chain.includes(u._id))
+        .map((u) => ({
+          value: String(u._id),
+          label: `${u.firstName} ${u.lastName} (${u.role}) · ${u.email}`,
+        })),
+    ]);
+  }, [allUsers, form.user, form.regularizationApprovers]);
 
   // Shared cell renderers so the desktop table and the mobile card list stay
   // in sync.
@@ -1330,13 +1371,16 @@ This cannot be undone.`,
       {/* Phone + tablet: card list (a wide 7-column table only scrolls sideways here) */}
       <div className="lg:hidden space-y-3">
         {loading ? (
-          <div className="bg-white shadow rounded-xl p-4 space-y-2"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
+          <div className="bg-white shadow rounded-lg p-4 space-y-2"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
         ) : visibleProfiles.length === 0 ? (
-          <div className="bg-white shadow rounded-xl p-6 text-center text-gray-500">
+          <div className="bg-white shadow rounded-lg p-6 text-center text-gray-500">
             {profiles.length === 0 ? 'No profiles yet' : 'Nobody matches these filters'}
           </div>
         ) : visibleProfiles.map((p) => (
-          <div key={p._id} className="bg-white shadow rounded-xl p-4">
+          // rounded-lg, not -xl: these cards stack directly under the filter bar
+          // in one scroll column, and a 4px corner difference between two white
+          // `shadow` surfaces of the same width reads as a rendering glitch.
+          <div key={p._id} className="bg-white shadow rounded-lg p-4">
             <div className="flex items-start justify-between gap-2">
               {/* Same target as the desktop row: tapping the name opens the
                   record; the action buttons below keep their own handlers. */}
@@ -1380,14 +1424,8 @@ This cannot be undone.`,
                     value={form.user}
                     onChange={(e) => setForm({ ...form, user: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100"
-                  >
-                    <option value="">Select a user…</option>
-                    {peopleOptions(
-                      editingId ? allUsers : usersWithoutProfile,
-                      (u) => `${u.firstName} ${u.lastName} · ${u.email}${u.role !== 'Employee' ? ` · ${u.role}` : ''}`,
-                      { keep: [form.user?._id || form.user] },
-                    )}
-                  </SearchableSelect>
+                    options={accountOptions}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Employee Code *</label>
@@ -1640,18 +1678,8 @@ This cannot be undone.`,
                                 setForm({ ...form, regularizationApprovers: next.filter(Boolean) });
                               }}
                               className="block w-full border rounded-lg px-3 py-2"
-                            >
-                              <option value="">{idx === 0 ? 'None — any HR reviewer decides' : 'None — one step only'}</option>
-                              {allUsers
-                                .filter((u) => !hasLeft(u))
-                                .filter((u) => u._id !== (form.user?._id || form.user))
-                                .filter((u) => u._id === chain[idx] || !chain.includes(u._id))
-                                .map((u) => (
-                                  <option key={u._id} value={u._id}>
-                                    {u.firstName} {u.lastName} ({u.role}) · {u.email}
-                                  </option>
-                                ))}
-                            </SearchableSelect>
+                              options={regApproverOptions[idx]}
+                            />
                           </div>
                         );
                       })}
@@ -1902,7 +1930,11 @@ This cannot be undone.`,
       {/* ---------------- Import review ---------------- */}
       {showFlags && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl">
+          {/* flex-col + an inner scroller is the shape index.css looks for: without
+              it the panel itself became a second scroller around this body's own
+              one, and on a phone the outer 1.1rem padding was added on top of each
+              section's px-6, pulling the header rule away from the panel edges. */}
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl max-h-[85vh] flex flex-col">
             <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-100">
               <div>
                 <h2 className="card-title">Imported values to check</h2>
@@ -1917,7 +1949,7 @@ This cannot be undone.`,
                 className="topbar-icon-btn shrink-0">×</button>
             </div>
 
-            <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-3">
+            <div className="px-6 py-4 flex-1 min-h-0 overflow-y-auto space-y-3">
               {flags.length === 0 ? (
                 <div className="text-center py-10">
                   <p className="text-sm font-medium text-gray-700">Nothing to check</p>
@@ -2059,7 +2091,10 @@ This cannot be undone.`,
                   </div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-3 gap-3">
+                    {/* One column on a phone: three tiles inside this modal leave
+                        ~64px of text width at 360px, which breaks "Skipped
+                        (duplicates)" mid-word. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                         <div className="text-2xl font-semibold text-green-800">{importResult.createdCount}</div>
                         <div className="text-xs text-green-700">Created</div>

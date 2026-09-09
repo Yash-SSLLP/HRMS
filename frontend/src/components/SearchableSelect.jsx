@@ -18,6 +18,12 @@
  * and a `selectedOptions` list — so a handler written for a native multi-select
  * (`Array.from(e.target.selectedOptions, (o) => o.value)`) needs no change.
  *
+ * For a heavy picker (hundreds of people, in a modal that re-renders on every
+ * keystroke) pass `options` instead of children: an array of already-flattened
+ * `{ value, label, group, disabled, searchOnly }` records, memoised by the
+ * caller. `value` must be a string, as it is once read off an <option>. It wins
+ * over `children` and skips both building and walking the option elements.
+ *
  * Notes on the two fiddly bits:
  *  - The menu renders in a portal at fixed coordinates, so it is never clipped
  *    by a modal's `overflow-y-auto` or trapped under its z-index, and it flips
@@ -97,6 +103,7 @@ export default function SearchableSelect({
   value,
   onChange,
   children,
+  options: optionsProp,
   className = '',
   disabled = false,
   required = false,
@@ -107,7 +114,34 @@ export default function SearchableSelect({
   searchPlaceholder = 'Type to search…',
   ...rest
 }) {
-  const options = useMemo(() => readOptions(children), [children]);
+  // `children` is JSX the parent rebuilds on every render, so its identity always
+  // changes and this memo never actually hit: readOptions re-walked the whole
+  // tree and re-flattened every label on each keystroke anywhere in the parent
+  // form. On the employee modal — four full-directory pickers, ~2,000 <option>s
+  // between them — that was tens of ms of blocking work per character typed.
+  // `options` is the way out: a caller that already has an array hands over the
+  // flattened `{ value, label, group, disabled, searchOnly }` records from a memo
+  // of its own, which skips the walk AND the 2,000 elements it was walking. The
+  // children path stays for the many light call sites that rely on this
+  // component being drop-in <select>-compatible.
+  const options = useMemo(() => (
+    optionsProp
+      // Normalised, not trusted as-is. A caller passing `options` naturally
+      // writes `{ value, label }` and nothing else, but the search haystack
+      // below is built as `` `${o.group} ${o.label}` `` — an absent group
+      // interpolates the literal string "undefined", so typing "und" would have
+      // matched every row in the list. Filling the optional fields here means
+      // every caller gets the children path's exact record shape without having
+      // to know what that shape is.
+      ? optionsProp.map((o) => ({
+        value: String(o.value ?? ''),
+        label: o.label ?? '',
+        disabled: !!o.disabled,
+        group: o.group || '',
+        searchOnly: !!o.searchOnly,
+      }))
+      : readOptions(children)
+  ), [optionsProp, children]);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -271,8 +305,11 @@ export default function SearchableSelect({
   const sized = /\bblock\b|\bw-(full|\d|\[|px|auto)/.test(className);
   const layout = sized ? 'flex' : 'inline-flex min-w-[9rem]';
 
+  // min-w-0 on the wrapper so it can shrink when a call site drops the picker
+  // straight into a flex row — without it the trigger's own max-w-full measures
+  // against a box that has already grown to fit the label.
   return (
-    <div ref={wrapRef} className="relative" onKeyDown={onKeyDown}>
+    <div ref={wrapRef} className="relative min-w-0" onKeyDown={onKeyDown}>
       <button
         type="button"
         ref={triggerRef}
@@ -281,10 +318,18 @@ export default function SearchableSelect({
         onClick={() => !disabled && setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`${className} text-left ${layout} items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed`}
+        className={`${className} text-left ${layout} max-w-full items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed`}
         {...rest}
       >
-        <span className={`flex-1 truncate ${isPlaceholder ? 'text-gray-500' : ''}`}>{triggerLabel}</span>
+        {/* min-w-0 is what makes `truncate` truncate. A flex item defaults to
+            min-width:auto — it refuses to shrink below its content — so the
+            label pushed the trigger WIDER instead of ellipsing, and the trigger
+            took the page with it: measured 602px inside a 345px column on the
+            attendance report at 360px, and 541px on the monthly view. The
+            `min-w-[14rem]`/`min-w-[220px]` the call sites set is a floor, and a
+            floor never stopped anything from growing. `max-w-full` above is the
+            other half: the button may not exceed the box it sits in either. */}
+        <span className={`min-w-0 flex-1 truncate ${isPlaceholder ? 'text-gray-500' : ''}`}>{triggerLabel}</span>
         <FiChevronDown size={16} className={`shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
 

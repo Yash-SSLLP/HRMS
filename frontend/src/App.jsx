@@ -1,24 +1,33 @@
-// Root router + app shell. Declares every route: public/entry pages (login,
-// privacy, and tokenised outsider links) rendered eagerly, and two guarded
+// Root router + app shell. Declares every route: the login screen eagerly, the
+// tokenised outsider links lazily, and two guarded
 // portal trees — /admin and /employee — each wrapped in <ProtectedRoute> (role
 // gate) + <Layout> (sidebar shell), with all in-app pages lazy-loaded for
 // code-splitting. Also applies the dark-mode class and per-role accent to <html>.
-import { lazy, useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useThemeStore } from './store/themeStore';
 import { adminNav, employeeNav, ldNav, accountsNav } from './config/nav';
-// Public auth/entry pages stay eager (they render outside the app shell).
+// Login stays eager: it is the first paint for every signed-out visitor, and
+// the one screen where a chunk round-trip would be felt.
 import Login from './pages/Login.jsx';
-import ExitFeedback from './pages/ExitFeedback.jsx';
-import ApplyForm from './pages/ApplyForm.jsx';
-import DocumentSubmitForm from './pages/DocumentSubmitForm.jsx';
-import EmployeeDocSubmit from './pages/EmployeeDocSubmit.jsx';
-import LetterDownload from './pages/LetterDownload.jsx';
-import PublicCoursePage from './pages/PublicCoursePage.jsx';
+import PageSkeleton from './components/PageSkeleton.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Layout from './components/Layout.jsx';
 import GlobalModalEscape from './components/GlobalModalEscape.jsx';
 import { useAuthStore } from './store/authStore';
+
+// The tokenised outsider pages (an ex-employee's exit form, a candidate's
+// application, a document upload link, a letter download, a public course) are
+// lazy too. Each is reached by pasting one emailed URL, at most once, by
+// somebody who has no session — while EVERY signed-in employee was paying to
+// download all five on every first load because they sat in the eager chunk.
+// One extra request on a page nobody navigates to twice is the right trade.
+const ExitFeedback = lazy(() => import('./pages/ExitFeedback.jsx'));
+const ApplyForm = lazy(() => import('./pages/ApplyForm.jsx'));
+const DocumentSubmitForm = lazy(() => import('./pages/DocumentSubmitForm.jsx'));
+const EmployeeDocSubmit = lazy(() => import('./pages/EmployeeDocSubmit.jsx'));
+const LetterDownload = lazy(() => import('./pages/LetterDownload.jsx'));
+const PublicCoursePage = lazy(() => import('./pages/PublicCoursePage.jsx'));
 
 // In-app pages are lazy-loaded — the Layout shows a skeleton (Suspense) while
 // each page's chunk loads, and this code-splits the bundle.
@@ -162,6 +171,10 @@ export default function App() {
     <>
       {/* App-wide: Esc closes the top-most open modal */}
       <GlobalModalEscape />
+      {/* The portal pages have Layout's own <Suspense> around the <Outlet>;
+          the public routes are rendered outside that shell, so now that they
+          are lazy they need a boundary of their own out here. */}
+      <Suspense fallback={<PageSkeleton />}>
       <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route path="/login" element={<Login />} />
@@ -339,6 +352,7 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </>
   );
 }

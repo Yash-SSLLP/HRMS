@@ -68,13 +68,22 @@ export default function RnrBanner() {
 
   return (
     <div className="rnr-banner mb-4">
+      {/* .rnr-close carries the banner's gold ink and nothing else — no display,
+          no box — so the dismiss target used to be exactly the 18px glyph on a
+          full-width banner. The box is stated here instead: 2.4rem square is the
+          same geometry as .topbar-icon-btn, which is what every other banner-level
+          close in the app uses. It stays .rnr-close rather than becoming
+          .topbar-icon-btn because that class would repaint the glyph slate/accent
+          over the gold panel. The anchor drops from top/right-2.5 to -1 because
+          growing an 18px glyph into a 38px box around a fixed offset would push
+          the X visibly inward off the corner. */}
       <button
         type="button"
         onClick={dismiss}
         disabled={busy}
         aria-label="Dismiss"
         title="Dismiss"
-        className="rnr-close absolute top-2.5 right-2.5 disabled:opacity-50 z-10"
+        className="rnr-close absolute top-1 right-1 inline-flex items-center justify-center h-10 w-10 rounded-full disabled:opacity-50 z-10"
       >
         <FiX size={18} />
       </button>

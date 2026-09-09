@@ -65,4 +65,30 @@ export function peopleOptions(rows, label, { value = (r) => String(r._id), keep 
   );
 }
 
+/**
+ * The same list as `peopleOptions`, as DATA rather than as <option> elements.
+ *
+ * SearchableSelect reads its children to build its option list, which means a
+ * picker holding ~500 people re-walks 500 React elements on every render of the
+ * form around it — once per keystroke in a modal that has thirty other fields.
+ * Passing `options={...}` hands it the list it was going to derive anyway, and a
+ * memoised array is referentially stable in a way a rebuilt children array can
+ * never be (the placeholder <option> sibling alone makes `props.children` a new
+ * array every render, which is what defeated the memo inside the component).
+ *
+ * Same filtering and the same `keep` contract as `peopleOptions` — deliberately
+ * one implementation, so the two cannot drift on who counts as departed.
+ *
+ * @returns {{value: string, label: string}[]}
+ */
+export function peopleOptionList(rows, label, { value = (r) => String(r._id), keep = null, lead = null } = {}) {
+  const kept = keep ? new Set([...keep].filter(Boolean).map(String)) : null;
+  const out = lead ? [...lead] : [];
+  for (const r of rows || []) {
+    if (hasLeft(r) && !(kept && kept.has(value(r)))) continue;
+    out.push({ value: value(r), label: label(r) });
+  }
+  return out;
+}
+
 export default peopleOptions;

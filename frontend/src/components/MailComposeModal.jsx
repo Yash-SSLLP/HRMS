@@ -133,7 +133,11 @@ export default function MailComposeModal({
             <div className="flex items-center gap-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
               <span className="text-gray-500 shrink-0">Public link:</span>
               <span className="truncate text-gray-700 flex-1">{link}</span>
-              <button onClick={copyLink} className="shrink-0 px-2 py-0.5 rounded border border-gray-300 hover:bg-white">
+              {/* px-2.5 py-1 / rounded-lg is what a bordered action inside a
+                  text-xs strip wears everywhere else. The old px-2 py-0.5 drew
+                  a visibly 20px-tall box next to the px-3 py-2 fields it sits
+                  between, and its 4px corner fought the strip's own 8px one. */}
+              <button onClick={copyLink} className="shrink-0 px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-white">
                 {copied ? 'Copied' : 'Copy'}
               </button>
             </div>
@@ -153,7 +157,7 @@ export default function MailComposeModal({
                   is named here, but naming it is not the same as seeing it. */}
               {link && (
                 <a href={link} target="_blank" rel="noreferrer"
-                  className="shrink-0 px-2 py-0.5 rounded border border-gray-300 hover:bg-white font-semibold text-gray-700">
+                  className="shrink-0 px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-white font-semibold text-gray-700">
                   Preview
                 </a>
               )}

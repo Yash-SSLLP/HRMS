@@ -78,46 +78,55 @@ export default function MarkOnLeaveModal({ person, date, endpoint, onClose, onDo
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => !saving && onClose()}>
-      <form className="bg-white rounded-xl p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div>
-            <h3 className="text-base font-semibold text-gray-900">Mark on leave</h3>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {person.name}{person.employeeCode ? ` (${person.employeeCode})` : ''} · {fmtDay(date)}
-            </p>
+      {/* The panel has to be a <div>: every modal rule in index.css selects
+          `.fixed.inset-0 > div`, so while this was a bare <form> it got none of
+          them — no height cap and no scrolling, which put 'Record leave' off the
+          bottom of a landscape phone with no way to reach it. The click-stopper
+          belongs on the panel, not the form inside it: a click landing on the
+          panel's own padding would otherwise reach the overlay and throw away a
+          half-written reason. */}
+      <div className="bg-white rounded-xl p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <form onSubmit={submit}>
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <h3 className="text-base font-semibold text-gray-900">Mark on leave</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {person.name}{person.employeeCode ? ` (${person.employeeCode})` : ''} · {fmtDay(date)}
+              </p>
+            </div>
+            <button type="button" aria-label="Close" title="Close" onClick={onClose}
+              className="topbar-icon-btn shrink-0">×</button>
           </div>
-          <button type="button" aria-label="Close" title="Close" onClick={onClose}
-            className="topbar-icon-btn shrink-0">×</button>
-        </div>
 
-        <label className="block text-xs text-gray-600 mb-1">Leave type</label>
-        <select value={leaveType} onChange={(e) => setLeaveType(e.target.value)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white mb-3">
-          {MARK_LEAVE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
+          <label className="block text-xs text-gray-600 mb-1">Leave type</label>
+          <select value={leaveType} onChange={(e) => setLeaveType(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white mb-3">
+            {MARK_LEAVE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
 
-        <label className="block text-xs text-gray-600 mb-1">Reason</label>
-        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3}
-          placeholder="What they told you — a call, a message, a family emergency."
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2" />
+          <label className="block text-xs text-gray-600 mb-1">Reason</label>
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3}
+            placeholder="What they told you — a call, a message, a family emergency."
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2" />
 
-        <p className="text-xs text-gray-500 mb-4">
-          Paid Leave draws their paid quota of 2 days a month; anything past it becomes loss of pay.
-          Unpaid Leave is loss of pay outright. Emergency Leave is granted without anyone&apos;s approval.
-          They are told either way.
-        </p>
+          <p className="text-xs text-gray-500 mb-4">
+            Paid Leave draws their paid quota of 2 days a month; anything past it becomes loss of pay.
+            Unpaid Leave is loss of pay outright. Emergency Leave is granted without anyone&apos;s approval.
+            They are told either way.
+          </p>
 
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={saving}
-            className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-60">
-            Cancel
-          </button>
-          <button type="submit" disabled={saving}
-            className="px-3 py-1.5 text-sm font-medium border border-indigo-600 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
-            {saving ? 'Recording…' : 'Record leave'}
-          </button>
-        </div>
-      </form>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} disabled={saving}
+              className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-60">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="px-3 py-1.5 text-sm font-medium border border-indigo-600 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
+              {saving ? 'Recording…' : 'Record leave'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

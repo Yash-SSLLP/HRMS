@@ -208,12 +208,23 @@ export default function AdminRecruitment() {
     api.get('/companies').then((r) => setCompanies(r.data.companies || [])).catch(() => {});
   }, []);
 
-  // Load the interviewer pool once. Two calls because the round stores a User id
+  // Load the interviewer pool once, and only when somebody actually opens a
+  // candidate's interview rounds. Two calls because the round stores a User id
   // but `department` lives on the employee profile — /admin/users has no
   // department concept at all, and /employees misses anyone without a profile
   // (CEO/MD). Merging both gives every possible interviewer, department-tagged
   // where one exists.
-  useEffect(() => {
+  // This ran on mount before, so every visit to Recruitment downloaded the whole
+  // user directory AND the whole employee directory — full profiles, addresses,
+  // bank and emergency contacts included — to keep the five scalar fields below,
+  // for a picker most visits never open. A view-only account never renders the
+  // picker at all (it reads r.interviewerName instead), so it never pays for it.
+  // The ref, not `users.length`, is the guard: a genuinely empty directory would
+  // otherwise re-fetch on every expand.
+  const interviewersLoaded = useRef(false);
+  const loadInterviewers = () => {
+    if (viewOnly || interviewersLoaded.current) return;
+    interviewersLoaded.current = true;
     Promise.all([
       api.get('/admin/users?active=true').catch(() => ({ data: { users: [] } })),
       api.get('/employees').catch(() => ({ data: { profiles: [] } })),
@@ -232,8 +243,11 @@ export default function AdminRecruitment() {
           department: p?.department || '',
         };
       }));
+    }).catch(() => {
+      // Let the next expand try again rather than stranding the picker empty.
+      interviewersLoaded.current = false;
     });
-  }, []);
+  };
 
   // ----- Jobs -----
   const openJobCreate = () => { setJobEditId(null); setJobForm(blankJob); setJobModal(true); };
@@ -767,7 +781,9 @@ export default function AdminRecruitment() {
                   </td>
                   <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STAGE_STYLES[c.stage] || ''}`}>{c.stage}</span></td>
                   <td className="px-4 py-3">
-                    <button onClick={() => setExpanded(expanded === c._id ? null : c._id)} className="text-blue-600 hover:underline">
+                    {/* Opening the rounds is what needs the interviewer pool, so
+                        this is where it is fetched (once, see loadInterviewers). */}
+                    <button onClick={() => { loadInterviewers(); setExpanded(expanded === c._id ? null : c._id); }} className="text-blue-600 hover:underline">
                       {roundSummary(c)} {expanded === c._id ? '▾' : '▸'}
                     </button>
                   </td>
@@ -799,7 +815,22 @@ export default function AdminRecruitment() {
                     {!viewOnly && (
                       <>
                         <button onClick={() => openCandEdit(c)} className="text-blue-600 hover:underline">Edit</button>
-                        <button onClick={() => removeCand(c)} className="text-gray-400 hover:text-red-600">✕</button>
+                        {/* The bare ✕ was the smallest target in a row of padded
+                            pills — a ~16x9px glyph for the one action that
+                            permanently deletes the candidate. It gets an explicit
+                            32px box instead of `hover:underline`: that pill draws
+                            its border from currentColor, so a gray delete would
+                            render as the palest control on the row. inline-flex +
+                            align-middle keeps it on the baseline of the pills the
+                            stylesheet builds beside it, and the label lives in
+                            aria-label because the glyph names nothing. No solid
+                            bg- class on purpose — that would pull it into the
+                            filled-button treatment and make delete the loudest
+                            thing in the row. */}
+                        <button onClick={() => removeCand(c)}
+                          title="Delete candidate"
+                          aria-label={`Delete candidate ${c.name}`}
+                          className="inline-flex items-center justify-center w-10 h-10 rounded-lg align-middle text-gray-400 hover:text-red-600 hover:bg-red-50">✕</button>
                       </>
                     )}
                   </td>
@@ -1278,7 +1309,13 @@ export default function AdminRecruitment() {
       {jobCandJob && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8"
           onMouseDown={() => setJobCandJob(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden"
+          {/* `flex flex-col` is load-bearing, not cosmetic: it is what the modal
+              rules in index.css look for to leave a panel that already scrolls
+              inside itself alone. Without it the panel got a second, outer
+              scrollbar around the applicant list's own one, and below 640px an
+              extra 1.1rem of padding that pushed the header's border-b in from
+              the rounded edge and stole another ~35px from the rows. */}
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col"
             onMouseDown={(e) => e.stopPropagation()}>
             <div className="px-5 pt-5 pb-4 border-b border-gray-100 flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1289,7 +1326,11 @@ export default function AdminRecruitment() {
                 className="shrink-0 text-gray-400 hover:text-gray-700 rounded-lg p-1 -mr-1 hover:bg-gray-100 text-xl leading-none">×</button>
             </div>
 
-            <div className="max-h-[60vh] overflow-y-auto px-5 py-4 space-y-2">
+            {/* min-h-0: as a flex item this body's min-height resolves to its
+                content height and outranks max-h-[60vh], so on a short viewport
+                it refused to shrink and the panel's hidden overflow clipped the
+                footer clean off. */}
+            <div className="max-h-[60vh] min-h-0 overflow-y-auto px-5 py-4 space-y-2">
               {jobCandsLoading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <div key={i} className="border border-gray-100 rounded-lg p-3 space-y-2">

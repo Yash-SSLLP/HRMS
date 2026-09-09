@@ -790,10 +790,10 @@ function ShareModal({ course, onClose }) {
           <a href={publicUrl} target="_blank" rel="noreferrer" className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Open</a>
         </div>
 
-        <div className="flex gap-2 border-b mb-3">
+        <div className="flex gap-2 border-b mb-3 overflow-x-auto">
           {[['leads', 'Leads'], ['feedback', 'Feedback']].map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
-              className={`px-3 py-2 text-sm -mb-px border-b-2 ${tab === k ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{label}</button>
+              className={`px-3 py-2 text-sm -mb-px border-b-2 whitespace-nowrap ${tab === k ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{label}</button>
           ))}
         </div>
 

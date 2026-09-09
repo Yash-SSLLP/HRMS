@@ -1061,7 +1061,14 @@ export default function AdminKhata() {
       {/* ---------------- One employee: their wallet and books ---------------- */}
       {tab === 'people' && detail && (
         <div>
-          <button onClick={() => setDetail(null)} className="text-sm text-gray-500 hover:text-gray-800 mb-3">
+          {/* The only way back out of one employee's khata, so it needs a real
+              target rather than a 20px run of text. Padded the way the other back
+              controls in the portal are (AdminEmployeeDetail), with the negative
+              left margin keeping the glyph optically flush with the card below.
+              Deliberately NOT hover:underline: that token would pill it like a
+              row action, which reads as Edit/Reject rather than navigation. */}
+          <button onClick={() => setDetail(null)}
+            className="inline-flex items-center gap-1 px-4 py-2 text-sm border rounded-lg hover:bg-gray-50 mb-3">
             ← Back to everyone
           </button>
 
@@ -1161,12 +1168,12 @@ export default function AdminKhata() {
                   </p>
                   <div className="flex flex-wrap gap-2 mt-3">
                     <button onClick={() => setViewKhata(active ? '' : k._id)}
-                      className="text-xs text-gray-600 hover:text-gray-900 underline">
+                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
                       {active ? 'Show all entries' : 'Show only this'}
                     </button>
                     {!viewOnly && (
                       <button onClick={() => openEntry(detail.employee._id, 'from_employee', k._id, 'expense')}
-                        className="text-xs text-gray-600 hover:text-gray-900 underline">
+                        className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
                         Add expense
                       </button>
                     )}
@@ -1178,7 +1185,7 @@ export default function AdminKhata() {
                       spent: k.spent,
                       note: k.note || '',
                     })}
-                      className="text-xs text-gray-600 hover:text-gray-900 underline">
+                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
                       Settings
                     </button>
                     <button onClick={() => setStatementModal({
@@ -1188,7 +1195,7 @@ export default function AdminKhata() {
                       khataName: k.name,
                       from: '', to: '', report: 'entries', bills: true,
                     })}
-                      className="text-xs text-gray-600 hover:text-gray-900 underline">
+                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
                       Statement PDF
                     </button>
                   </div>
@@ -1471,7 +1478,7 @@ export default function AdminKhata() {
                       <div className="flex flex-wrap items-center gap-3">
                         {e.hasAttachment ? (
                           <button onClick={() => viewReceipt(e._id)}
-                            className="text-xs text-indigo-600 hover:text-indigo-800 underline">
+                            className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline">
                             View bill
                           </button>
                         ) : (
@@ -1531,7 +1538,16 @@ export default function AdminKhata() {
         </div>
       )}
 
-      {/* ================= modals ================= */}
+      {/* ================= modals =================
+          Nearly every panel below is a <form>, and index.css's modal safety net
+          (max-height + overflow-y on the panel) is written as
+          `.fixed.inset-0 > div` — an element-typed selector that skips a form
+          entirely. Without it a tall panel simply overflows a centred overlay
+          off both ends and the footer buttons cannot be reached on a short or
+          landscape window. So each overlay here carries `overflow-y-auto` and
+          each form carries `my-8`: the margin is not decoration, it is what
+          keeps the top edge of an over-tall flex-centred child reachable once
+          the overlay scrolls. Keep both tokens on any modal added here. */}
 
       {entryModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
@@ -1560,7 +1576,11 @@ export default function AdminKhata() {
             </div>
 
             <label className="block text-sm text-gray-700 mb-1">Which way did the money go?</label>
-            <div className="grid grid-cols-2 gap-2 mb-3">
+            {/* Stacked below sm: at phone widths a half of this modal is ~140px,
+                and both labels are wider than that, so a two-column grid wrapped
+                each pill onto two lines and the selected/unselected pair became
+                hard to tell apart at a glance. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
               {[['to_employee', 'Company → employee'], ['from_employee', 'Employee → company']].map(([v, label]) => (
                 <button key={v} type="button"
                   onClick={() => setEntryModal({
@@ -1628,7 +1648,7 @@ export default function AdminKhata() {
                   {entryForm.employee && (
                     <button type="button"
                       onClick={() => setKhataModal({ employee: entryForm.employee, name: '', note: '', fromEntry: true })}
-                      className="text-xs text-gray-600 hover:text-gray-900 underline">
+                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
                       + New book
                     </button>
                   )}
@@ -1734,8 +1754,8 @@ export default function AdminKhata() {
       )}
 
       {approveModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={submitApproval} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={submitApproval} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">Approve this entry</h3>
             <p className="text-sm text-gray-600 mt-1 mb-4">
               {money(approveModal.entry.amount)} — {approveModal.entry.employee?.name}. The cash moves as soon as you approve.
@@ -1778,8 +1798,8 @@ export default function AdminKhata() {
       )}
 
       {khataModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={submitKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={submitKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">Add a new book</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
               A separate heading for spending — a site, a vehicle, a particular job. It holds no money of its
@@ -1842,7 +1862,7 @@ export default function AdminKhata() {
             {statementModal.khataName && (
               <button type="button"
                 onClick={() => setStatementModal({ ...statementModal, khata: '', khataName: '' })}
-                className="text-xs text-gray-600 hover:text-gray-900 underline mb-3">
+                className="text-xs text-gray-600 hover:text-gray-900 hover:underline mb-3">
                 Cover every book instead
               </button>
             )}
@@ -2016,8 +2036,8 @@ export default function AdminKhata() {
       )}
 
       {settingsModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={saveSettings} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={saveSettings} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900 mb-1">Book settings</h3>
             <p className="text-xs text-gray-500 mb-4">
               {money(settingsModal.spent)} spent under this heading so far. The advance limit is set on the
@@ -2091,8 +2111,8 @@ export default function AdminKhata() {
       )}
 
       {walletModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={saveWallet} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={saveWallet} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900 mb-1">Wallet — {walletModal.name}</h3>
             <p className="text-xs text-gray-500 mb-4">
               The one pot advances are paid into. They are currently holding {money(Math.abs(walletModal.balance))}.
@@ -2139,8 +2159,8 @@ export default function AdminKhata() {
       )}
 
       {sanctionModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={submitSanction} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={submitSanction} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">
               {sanctionModal.approve ? 'Approve this advance?' : 'Decline this advance?'}
             </h3>
@@ -2256,12 +2276,20 @@ export default function AdminKhata() {
                               onChange={(e) => patch({ canApprove: e.target.checked })} />
                           </td>
                           <td className="px-3 py-2 text-right">
+                            {/* Same shape as the Reject action further up this page:
+                                an unpadded text-xs run gave a 16px tap target for
+                                taking a person's disbursing rights away. Spelt out
+                                rather than left to the hover:underline pill so the
+                                two destructive controls stay the same red, and the
+                                hover:bg-red-50 is load-bearing — a bordered button
+                                carrying no bg- token gets its border repainted in
+                                the portal accent on hover. */}
                             <button type="button"
                               onClick={() => setOperatorsFor({
                                 ...operatorsFor,
                                 operators: operatorsFor.operators.filter((_, j) => j !== i),
                               })}
-                              className="text-red-600 hover:text-red-800 text-xs">Remove</button>
+                              className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50">Remove</button>
                           </td>
                         </tr>
                       );
@@ -2358,22 +2386,33 @@ function EntryTable({ entries, onReverse, onEdit, onConfirm, showEmployee, dateD
                 <td className="px-4 py-3 text-right">
                   {/* An expense that has posted but nobody has confirmed is
                       still correctable — see the review queue. Once it is
-                      confirmed, reversing is the only way back. */}
-                  {e.editable && onEdit && (
-                    <button onClick={() => onEdit(e)} className="text-xs text-gray-500 hover:text-gray-900 mr-3">
-                      Edit
-                    </button>
-                  )}
-                  {e.editable && onConfirm && (
-                    <button onClick={() => onConfirm(e)} className="text-xs text-gray-500 hover:text-gray-900 mr-3">
-                      Confirm
-                    </button>
-                  )}
-                  {e.status === 'Approved' && (
-                    <button onClick={() => onReverse(e)} className="text-xs text-gray-500 hover:text-red-700">
-                      Reverse
-                    </button>
-                  )}
+                      confirmed, reversing is the only way back.
+
+                      `hover:underline` is the token index.css keys the app-wide
+                      row-action pill off — without it these were bare 16px runs
+                      of text, which is no affordance at all for Reverse. The pill
+                      is inline-flex and brings its own padding, so the spacing
+                      lives on this flex row now instead of the old mr-3, and
+                      Reverse is red at REST (the pill draws its border from
+                      currentColor, so a hover-only red would show a grey pill
+                      right up until the pointer lands on it). */}
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {e.editable && onEdit && (
+                      <button onClick={() => onEdit(e)} className="text-xs text-gray-500 hover:underline">
+                        Edit
+                      </button>
+                    )}
+                    {e.editable && onConfirm && (
+                      <button onClick={() => onConfirm(e)} className="text-xs text-gray-500 hover:underline">
+                        Confirm
+                      </button>
+                    )}
+                    {e.status === 'Approved' && (
+                      <button onClick={() => onReverse(e)} className="text-xs text-red-600 hover:underline">
+                        Reverse
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

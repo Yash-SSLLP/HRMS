@@ -179,8 +179,17 @@ export default function FileDropField({
             ))}
           </div>
 
+          {/* .docfield-replace is colour plus a hover underline only, and
+              `text-[11px]` states a size with no line-height to go with it, so
+              this button measured ~13px tall — the smallest control in the card,
+              and the one used to attach a second document. `leading-4` + `py-1.5`
+              give it a real box (~28px). The padding is 1.5 rather than the file
+              rows' 2 and is cancelled on the left by `-ml-1.5`: those siblings sit
+              inside the padded .docfield-filerow chip, this one sits straight on
+              the card, so matching their padding would push the label optically
+              in from the filenames above it. */}
           <button type="button" onClick={() => inputRef.current?.click()}
-            className="docfield-replace mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold">
+            className="docfield-replace mt-1 -ml-1.5 inline-flex items-center gap-1 px-1.5 py-1.5 rounded-md text-[11px] leading-4 font-semibold">
             <FiPlus size={12} /> {multiple ? 'Add another file' : 'Replace this file'}
           </button>
         </>

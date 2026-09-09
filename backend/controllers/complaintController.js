@@ -24,6 +24,13 @@ const USER_FIELDS = 'firstName lastName email role';
 // inbox and dropped them from the new-complaint alert.
 const COMPLAINT_VIEWER_ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD'];
 
+// The two CLOSED states — the only ones a complaint may be deleted from.
+// 'resolved' was closed with action, 'dismissed' closed without: both are a
+// verdict that has already been delivered, which is what makes the record safe
+// to clear. 'open' and 'under_review' are somebody's live grievance and are
+// never deletable — see deleteComplaint.
+const COMPLAINT_CLOSED_STATUSES = ['resolved', 'dismissed'];
+
 async function findSuperAdmin() {
   return User.findOne({ role: 'SuperAdmin', isActive: true }).sort({ createdAt: 1 });
 }
@@ -38,11 +45,20 @@ async function findSuperAdmin() {
  * @sideeffect notifies leadership (CEO/MD/HR/SuperAdmin) except the accused and complainant, with no sensitive detail
  */
 // POST /api/complaints  { againstUserId, subject, description }
+//
+// `againstUserId` is either a User id or the literal string 'general'
+// (Complaint.GENERAL_TARGET) meaning "about the workplace, not about a person".
+// One field on the wire rather than two keeps both clients — the web picker and
+// the mobile picker — sending exactly what they sent before, with one extra
+// option in the list.
+//
 // Routing:
 //  - Complaint about an HRManager/SuperAdmin  -> escalate to a SuperAdmin.
 //  - Complaint about the complainant's own HR partner -> escalate to a SuperAdmin.
-//  - Complaint about a fellow Employee -> the complainant's assigned HR partner
-//    (falling back to a SuperAdmin if they have none).
+//  - Complaint about a fellow Employee, or a GENERAL complaint -> the
+//    complainant's assigned HR partner (falling back to a SuperAdmin if they
+//    have none). A general grievance names nobody, so there is nobody to
+//    escalate away from; it takes the ordinary path.
 const createComplaint = asyncHandler(async (req, res) => {
   const meId = req.user._id;
   const { againstUserId, subject, description } = req.body;
@@ -51,23 +67,31 @@ const createComplaint = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('againstUserId, subject and description are required');
   }
-  if (String(againstUserId) === String(meId)) {
+
+  const isGeneral = String(againstUserId) === Complaint.GENERAL_TARGET;
+
+  if (!isGeneral && String(againstUserId) === String(meId)) {
     res.status(400);
     throw new Error('You cannot raise a complaint against yourself');
   }
 
-  const against = await User.findById(againstUserId).select(USER_FIELDS);
-  if (!against) {
-    res.status(404);
-    throw new Error('The person you are complaining about was not found');
+  // A general complaint has no target to look up, so the 404 below — and the
+  // role read that follows it — are both skipped rather than guarded one by one.
+  let against = null;
+  if (!isGeneral) {
+    against = await User.findById(againstUserId).select(USER_FIELDS);
+    if (!against) {
+      res.status(404);
+      throw new Error('The person you are complaining about was not found');
+    }
   }
 
   const myProfile = await EmployeeProfile.findOne({ user: meId }).select('hrPartner');
   const myHrPartnerId = myProfile?.hrPartner ? String(myProfile.hrPartner) : null;
 
   // Escalate to a SuperAdmin when the complaint targets an admin or the caller's own HR
-  const aboutAdmin = ['HRManager', 'SuperAdmin'].includes(against.role);
-  const aboutMyHr = myHrPartnerId && myHrPartnerId === String(againstUserId);
+  const aboutAdmin = !isGeneral && ['HRManager', 'SuperAdmin'].includes(against.role);
+  const aboutMyHr = !isGeneral && myHrPartnerId && myHrPartnerId === String(againstUserId);
 
   let assignedTo;
   if (aboutAdmin || aboutMyHr) {
@@ -82,7 +106,8 @@ const createComplaint = asyncHandler(async (req, res) => {
 
   const complaint = await Complaint.create({
     complainant: meId,
-    against: againstUserId,
+    againstType: isGeneral ? 'General' : 'Person',
+    against: isGeneral ? undefined : againstUserId,
     subject,
     description,
     assignedTo,
@@ -91,10 +116,14 @@ const createComplaint = asyncHandler(async (req, res) => {
   // Alert the leadership group — CEO/MD, HR and SuperAdmin — but NEVER the person
   // the complaint is about (nor the complainant). Kept deliberately vague (no
   // names/subject) so nothing sensitive leaks into a push/lock-screen preview.
+  // A general complaint names nobody, so only the complainant is held back —
+  // comparing against the literal 'general' would exclude no one anyway, but
+  // saying so explicitly stops the next reader wondering.
   const viewers = await User.find({ role: { $in: COMPLAINT_VIEWER_ROLES }, isActive: true }).select('_id').lean();
+  const accusedId = isGeneral ? null : String(againstUserId);
   const recipients = viewers
     .map((u) => String(u._id))
-    .filter((id) => id !== String(againstUserId) && id !== String(meId));
+    .filter((id) => id !== accusedId && id !== String(meId));
   notifyMany(recipients, {
     type: 'complaint',
     audience: 'admin',
@@ -133,6 +162,9 @@ const assignedComplaints = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('Only the CEO/MD, HR and SuperAdmins can view complaints');
   }
+  // `$ne` also matches documents where the field is ABSENT, so a General
+  // complaint (which has no `against` at all) is visible to the whole
+  // leadership group — correct, since it accuses none of them.
   const filter = { against: { $ne: req.user._id } };
   // Company wall: a walled leader only sees complaints raised by their own
   // company's people. The never-see-your-own-accusations rule above still holds.
@@ -165,8 +197,13 @@ const updateComplaint = asyncHandler(async (req, res) => {
   // HR and SuperAdmin can action any complaint (except one against themselves);
   // the CEO has read-only visibility, so they can view but not update — unless a
   // SuperAdmin has switched that exec account into edit mode.
+  // `against?.` — a General complaint has no target, and an unguarded
+  // `.equals()` on it would 500 every attempt to action one. No target also
+  // means nobody in the leadership group is the accused, so the rule this
+  // clause enforces ("never action a complaint about yourself") simply does not
+  // bite: undefined -> !undefined -> allowed, which is the right answer.
   const canManage = (['SuperAdmin', 'HRManager'].includes(req.user.role) || isEditingExec(req.user))
-    && !complaint.against.equals(req.user._id);
+    && !complaint.against?.equals(req.user._id);
   const isAssignee = complaint.assignedTo && complaint.assignedTo.equals(req.user._id);
   if (!canManage && !isAssignee) {
     res.status(403);
@@ -187,4 +224,76 @@ const updateComplaint = asyncHandler(async (req, res) => {
   res.json({ complaint });
 });
 
-module.exports = { createComplaint, myComplaints, assignedComplaints, updateComplaint };
+/**
+ * Permanently delete a CLOSED complaint (resolved or dismissed).
+ * @route DELETE /api/complaints/:id  (SuperAdmin / HR Manager / CEO / MD)
+ * @param {string} req.params.id - complaint id
+ * @returns {{ok: true, id: string}}
+ */
+// DELETE /api/complaints/:id
+//
+// The leadership inbox is a permanent record of every grievance ever filed, and
+// it never emptied — the seven test complaints raised while the module was being
+// built sit at the top of it forever, above the real ones. This is the way to
+// clear a closed case.
+//
+// THREE GATES, and each is doing its own job:
+//
+//  1. ROLE — the same COMPLAINT_VIEWER_ROLES that can read the inbox. Nobody
+//     outside leadership can delete something they cannot even see.
+//  2. STATUS — CLOSED only (resolved or dismissed). An open or under-review
+//     complaint is somebody's live grievance, and deleting one would let an
+//     inconvenient accusation disappear before it was answered. Closing it
+//     first — either way — is a deliberate, audited step that has to happen in
+//     the open, and the audit line records WHICH closed state it went from.
+//  3. NOT THE ACCUSED — `against?.equals`, the same rule updateComplaint uses.
+//     An HR Manager or an exec may not delete the complaint filed about THEM.
+//     Without this the gate above is worthless: the accused could resolve their
+//     own case and then erase it. (`?.` because a General complaint has no
+//     target — see createComplaint.)
+//
+// A view-only account never reaches here at all: `protect` refuses every unsafe
+// method for one, and DELETE is unsafe.
+//
+// The row is gone, so the audit line is the only thing left that says it existed
+// — it is written BEFORE the delete and awaited, unlike the best-effort audit
+// writes elsewhere in the app, because there is no recovering the record if it
+// fails.
+const deleteComplaint = asyncHandler(async (req, res) => {
+  if (!COMPLAINT_VIEWER_ROLES.includes(req.user.role)) {
+    res.status(403);
+    throw new Error('Only the CEO/MD, HR and SuperAdmins can delete complaints');
+  }
+
+  const complaint = await Complaint.findById(req.params.id);
+  if (!complaint) {
+    res.status(404);
+    throw new Error('Complaint not found');
+  }
+  if (!COMPLAINT_CLOSED_STATUSES.includes(complaint.status)) {
+    res.status(400);
+    throw new Error('Only a closed complaint can be deleted. Resolve or dismiss it first.');
+  }
+  if (complaint.against?.equals(req.user._id)) {
+    res.status(403);
+    throw new Error('You cannot delete a complaint raised against you');
+  }
+
+  const AuditLog = require('../models/AuditLog');
+  await AuditLog.create({
+    entity: 'Complaint',
+    entityId: complaint._id,
+    entityLabel: complaint.subject,
+    field: 'status',
+    fromStatus: complaint.status,
+    toStatus: 'deleted',
+    by: req.user._id,
+    byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    byRole: req.user.role,
+  });
+
+  await complaint.deleteOne();
+  res.json({ ok: true, id: req.params.id });
+});
+
+module.exports = { createComplaint, myComplaints, assignedComplaints, updateComplaint, deleteComplaint };

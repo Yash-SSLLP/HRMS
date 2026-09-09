@@ -399,7 +399,7 @@ The monthly recognition programme, curated by HR.
 
 ## 12. Requests and cases
 
-**Complaints** are visible to the Backend, HR Managers and the CEO, each seeing everything except complaints against themselves. A complaint about an admin, or about the complainant's own HR partner, escalates to the Backend; otherwise it goes to their HR partner. The CEO can view but not action them. Notifications are deliberately vague and are never sent to the person the complaint concerns.
+**Complaints** are visible to the Backend, HR Managers and the CEO, each seeing everything except complaints against themselves. A complaint can name a person or be marked **General** — a grievance about the workplace with nobody named, which every leader can see because it accuses none of them. A complaint about an admin, or about the complainant's own HR partner, escalates to the Backend; otherwise it goes to their HR partner (a General one takes that same ordinary route). The CEO can view but not action them. Notifications are deliberately vague and are never sent to the person the complaint concerns.
 
 **Change requests** carry every edit to an employee's details through approval. The rules are the same for a name, a bank account, an address or a statutory ID:
 

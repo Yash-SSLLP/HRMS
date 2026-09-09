@@ -118,7 +118,14 @@ export default function CoursePlayerPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px]">
+      {/* The split fires at lg — the same 1024px where Layout turns the sidebar into a
+          fixed 256px rail, so the grid only ever gets viewport-256. A flat 360px
+          curriculum column there left the video stage 408px (47% of the page to the
+          playlist), so the rail is 280px until xl and only widens once there is room.
+          minmax(0,1fr), not 1fr: a bare 1fr is minmax(auto,1fr) and would refuse to
+          shrink below the player's min-content width. Keep the split on lg so the
+          lg:border-l and lg:max-h on the aside below stay in step with it. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Content stage */}
         <div className="bg-gray-50 min-h-[60vh]">
           {/* End-of-course feedback */}

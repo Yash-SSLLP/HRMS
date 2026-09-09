@@ -31,7 +31,10 @@ const MSG_POLL_MS = 2500;      // active-thread poll (cheap now — incremental)
 const CACHE_PREFIX = 'hrms:chat:';
 const cacheKey = (me, name) => `${CACHE_PREFIX}${me?._id || me?.id || 'anon'}:${name}`;
 function readCache(key) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } }
-function writeCache(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* quota — ignore */ } }
+// The writer takes an ALREADY-serialized string: every caller stringifies first
+// to decide whether the value changed at all (see cacheTail / cacheList below),
+// so serializing a second time in here would be pure waste.
+function writeCacheJson(key, json) { try { localStorage.setItem(key, json); } catch { /* quota — ignore */ } }
 
 // A shared, no-login video room both parties can join by tapping the link.
 function makeCallLink(kind, id) {
@@ -178,8 +181,39 @@ export default function ChatDock() {
   const photoInputRef = useRef(null);
   const cursorRef = useRef(null);       // last message createdAt for incremental polls
   const messagesRef = useRef([]);       // mirror of `messages` for append/dedupe
+  const lastMsgWriteRef = useRef({});   // { key, json } last written thread tail
+  const lastListWriteRef = useRef({});  // { connections, groups } last written JSON
 
   const msgsCacheKey = (conv) => cacheKey(me, `msg:${conv.kind}:${conv.id}`);
+
+  // ---- cache writes are guarded on the BYTES, not on how they got here ----
+  // Both caches used to be rewritten on every single poll: the thread tail every
+  // MSG_POLL_MS and the two lists every POLL_MS, whether or not anything had
+  // changed. localStorage.setItem is a blocking, same-thread call that can reach
+  // disk, so an idle dock left open for a working day spent thousands of those
+  // writing back bytes that were already on disk. The stringify still happens —
+  // it is what tells us whether the write is needed — but the setItem does not.
+  //
+  // The guard compares the SERIALIZED value rather than the array identity,
+  // which matters for one path in particular: deleteMessage filters `messages`
+  // in place, and an identity guard (`next !== prev`) would see no change on the
+  // following poll and leave the deleted message sitting in localStorage — where
+  // reopening the conversation would paint it straight back.
+  const cacheTail = (conv, msgs) => {
+    if (!conv) return;
+    const key = msgsCacheKey(conv);
+    const json = JSON.stringify(msgs.slice(-50));
+    if (lastMsgWriteRef.current.key === key && lastMsgWriteRef.current.json === json) return;
+    lastMsgWriteRef.current = { key, json };
+    writeCacheJson(key, json);
+  };
+
+  const cacheList = (name, val) => {
+    const json = JSON.stringify(val);
+    if (lastListWriteRef.current[name] === json) return;
+    lastListWriteRef.current[name] = json;
+    writeCacheJson(cacheKey(me, name), json);
+  };
 
   const unreadTotal =
     connections.reduce((s, c) => s + (c.unread || 0), 0) +
@@ -206,8 +240,8 @@ export default function ChatDock() {
       setRequests(reqRes.data);
       setGroups(grpRes.data.groups);
       setGroupInvites(grpRes.data.invites);
-      writeCache(cacheKey(me, 'connections'), connRes.data.connections);
-      writeCache(cacheKey(me, 'groups'), grpRes.data.groups);
+      cacheList('connections', connRes.data.connections);
+      cacheList('groups', grpRes.data.groups);
     } catch { /* stay quiet */ }
   };
 
@@ -244,7 +278,7 @@ export default function ChatDock() {
       next = applyReceipts(next, data.seenUpTo, data.deliveredUpTo);
       const last = next[next.length - 1];
       if (last) cursorRef.current = last.createdAt;
-      writeCache(msgsCacheKey(conv), next.slice(-50));
+      cacheTail(conv, next);
       if (next !== prev) setMessages(next);
     } catch (err) { setError(err.response?.data?.message || 'Failed to load messages'); }
   };
@@ -281,6 +315,7 @@ export default function ChatDock() {
   useEffect(() => {
     activeRef.current = active;
     cursorRef.current = null;
+    lastMsgWriteRef.current = {};
     if (!active) { setMessages([]); return undefined; }
     // Paint cached tail instantly, then do a full load to fill in older history.
     const cached = readCache(msgsCacheKey(active));
@@ -349,7 +384,7 @@ export default function ChatDock() {
     const next = [...messagesRef.current, msg];
     cursorRef.current = msg.createdAt;
     setMessages(next);
-    if (active) writeCache(msgsCacheKey(active), next.slice(-50));
+    cacheTail(active, next);
   };
 
   const send = async (e) => {
@@ -385,7 +420,12 @@ export default function ChatDock() {
 
   const deleteMessage = async (id) => {
     setMenuFor(null);
-    setMessages((prev) => prev.filter((m) => m._id !== id));
+    // Persist the removal here rather than letting the next poll's cache write
+    // carry it: that write is now skipped when nothing changed, so a deletion
+    // nobody wrote would be repainted from cache on the next open.
+    const next = messagesRef.current.filter((m) => m._id !== id);
+    setMessages(next);
+    cacheTail(active, next);
     try { await api.delete(`/chat/messages/${id}`); loadLists(); }
     catch (err) { setError(err.response?.data?.message || 'Could not delete'); loadMessages(active); }
   };
@@ -505,7 +545,12 @@ export default function ChatDock() {
   if (!open && !showFind && !showGroup) return null;
 
   const windowClass = isMobile ? 'absolute inset-0 flex flex-col' : 'w-80 max-w-[92vw] rounded-t-xl shadow-2xl flex flex-col overflow-hidden';
-  const windowStyle = isMobile ? { background: wa.chatBg } : { height: '28rem', background: wa.chatBg, border: `1px solid ${wa.border}` };
+  // The docked heights are clamped to the viewport, not fixed. `isMobile` is a
+  // WIDTH test (<=639), so a landscape phone (844x390) takes the desktop branch
+  // and a flat 28rem window anchored to bottom:0 pushed its own header — back
+  // button and all — off the top of the screen, with no scroll of its own to
+  // get it back. min() keeps the roomy size wherever there is room for it.
+  const windowStyle = isMobile ? { background: wa.chatBg } : { height: 'min(28rem, calc(100vh - 4rem))', background: wa.chatBg, border: `1px solid ${wa.border}` };
   const panelClass = isMobile ? 'absolute inset-0 flex flex-col' : 'w-80 max-w-[92vw] rounded-t-xl shadow-2xl overflow-hidden';
 
   // `chat-fullscreen` opts the mobile view out of the global modal-panel rules
@@ -520,7 +565,13 @@ export default function ChatDock() {
         <div className={windowClass} style={windowStyle}>
           {/* Header */}
           <div className="flex items-center gap-2 px-3 py-2" style={{ background: wa.header }}>
-            <button onClick={() => setActive(null)} className="text-2xl leading-none px-1" style={{ color: wa.headerText }} aria-label="Back">
+            {/* The same 32px circle as the three action icons on the right of
+                this header. It was left as a bare glyph — a ~14px target, and
+                the odd one out in a row that is otherwise uniform — while its
+                siblings were sized. */}
+            <button onClick={() => setActive(null)}
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-2xl leading-none"
+              style={{ color: wa.headerText }} aria-label="Back">
               {isMobile ? '‹' : '×'}
             </button>
             <button
@@ -541,16 +592,24 @@ export default function ChatDock() {
                 </div>
               </div>
             </button>
+            {/* These three carried horizontal padding only, so the button was as
+                tall as its 18-19px glyph and no more — the smallest targets in
+                the component were "clear chat" and "leave group", the two you
+                least want to hit by accident. They take the same 32px round box
+                as the panel-header icons below. `shrink-0` is not decoration:
+                the title block above is `flex-1 min-w-0`, and without it a long
+                group name plus the Resigned chip squeezes these below 32px on a
+                phone. */}
             {!active.resigned && (
-              <button onClick={startCall} title="Start video call" className="px-1.5" style={{ color: wa.headerText }} aria-label="Start video call">
+              <button onClick={startCall} title="Start video call" className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ color: wa.headerText }} aria-label="Start video call">
                 <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" /></svg>
               </button>
             )}
-            <button onClick={clearChat} title="Clear chat" className="px-1.5" style={{ color: wa.headerText }} aria-label="Clear chat">
+            <button onClick={clearChat} title="Clear chat" className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ color: wa.headerText }} aria-label="Clear chat">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 7h12v2H6V7zm1 3h10l-1 11H8L7 10zm3-6h4l1 1h3v2H3V5h3l1-1z" /></svg>
             </button>
             {active.kind === 'group' && (
-              <button onClick={() => leaveGroup(active.id)} title="Delete group for me" className="px-1.5" style={{ color: wa.headerText }} aria-label="Delete group">
+              <button onClick={() => leaveGroup(active.id)} title="Delete group for me" className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ color: wa.headerText }} aria-label="Delete group">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 17v-2H3V9h7V7l5 5-5 5zm9 4H12v-2h7V5h-7V3h7a2 2 0 012 2v14a2 2 0 01-2 2z" /></svg>
               </button>
             )}
@@ -637,13 +696,21 @@ export default function ChatDock() {
               className="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90" style={{ background: 'rgba(255,255,255,.18)', color: wa.headerText }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
             </button>
-            <button onClick={() => setOpen(false)} className="px-1.5 text-lg leading-none" style={{ color: wa.headerText }} aria-label="Close chats" title="Close">
+            {/* Same 32px circle on the same translucent wash as the two buttons
+                above it. It used to be `px-1.5 text-lg`, so it was an 18px-tall
+                glyph with no hover surface sitting between two 32px discs — the
+                odd one out in a row of three. */}
+            <button onClick={() => setOpen(false)} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-lg leading-none hover:opacity-90" style={{ background: 'rgba(255,255,255,.18)', color: wa.headerText }} aria-label="Close chats" title="Close">
               ×
             </button>
           </div>
 
+          {/* The list body below is clamped like the conversation window above.
+              The 7rem allowance is the panel's own ~44px header plus the bottom
+              breathing room — subtracting only the header would still leave the
+              list hanging below the fold on a short (landscape-phone) viewport. */}
           {open && (
-            <div className="flex flex-col" style={isMobile ? { flex: 1, minHeight: 0, background: wa.panel } : { height: '24rem', background: wa.panel }}>
+            <div className="flex flex-col" style={isMobile ? { flex: 1, minHeight: 0, background: wa.panel } : { height: 'min(24rem, calc(100vh - 7rem))', background: wa.panel }}>
               {error && <div className="mx-3 mt-2 text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded">{error}</div>}
 
               <div className="flex-1 overflow-y-auto">
@@ -759,7 +826,7 @@ export default function ChatDock() {
           <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
             <div className="flex items-start justify-between mb-4">
               <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Find people</h2>
-              <button type="button" aria-label="Close" title="Close" onClick={() => setShowFind(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setShowFind(false)} className="topbar-icon-btn shrink-0" style={{ color: wa.sub }}>×</button>
             </div>
             <input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search by name or email…"
               className="w-full rounded-full px-4 py-2 text-sm mb-3 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
@@ -789,7 +856,7 @@ export default function ChatDock() {
           <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
             <div className="flex items-start justify-between mb-4">
               <h2 className="text-lg font-semibold" style={{ color: wa.text }}>New group</h2>
-              <button type="button" aria-label="Close" title="Close" onClick={() => setShowGroup(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setShowGroup(false)} className="topbar-icon-btn shrink-0" style={{ color: wa.sub }}>×</button>
             </div>
             <input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name"
               className="w-full rounded-lg px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
@@ -829,7 +896,7 @@ export default function ChatDock() {
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: `1px solid ${wa.border}` }}>
                 <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Group info</h2>
-                <button type="button" aria-label="Close" title="Close" onClick={() => { setShowInfo(false); setShowAddMembers(false); }} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+                <button type="button" aria-label="Close" title="Close" onClick={() => { setShowInfo(false); setShowAddMembers(false); }} className="topbar-icon-btn shrink-0" style={{ color: wa.sub }}>×</button>
               </div>
 
               <div className="overflow-y-auto p-5">
@@ -931,7 +998,7 @@ export default function ChatDock() {
             <div className="rounded-xl shadow-lg w-full max-w-lg p-6" style={{ background: wa.panel }}>
               <div className="flex items-start justify-between mb-4">
                 <h2 className="text-lg font-semibold" style={{ color: wa.text }}>Add members</h2>
-                <button type="button" aria-label="Close" title="Close" onClick={() => setShowAddMembers(false)} className="text-xl leading-none" style={{ color: wa.sub }}>×</button>
+                <button type="button" aria-label="Close" title="Close" onClick={() => setShowAddMembers(false)} className="topbar-icon-btn shrink-0" style={{ color: wa.sub }}>×</button>
               </div>
               <input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search people to add…"
                 className="w-full rounded-full px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />

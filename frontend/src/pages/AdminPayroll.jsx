@@ -144,31 +144,68 @@ export default function AdminPayroll() {
   const [bonusCalc, setBonusCalc] = useState({ type: 'fixed', value: '' });
   const [runModal, setRunModal] = useState(null); // org-wide "run payroll" modal state
 
-  const load = async () => {
+  // The directory is fetched ONCE, on mount. It used to ride along with the
+  // payslip list on an effect that depended on the whole `filter` object, so
+  // every keystroke in the free-typing Year box downloaded the entire employee
+  // directory (with its nested user documents) again — clearing and retyping
+  // "2025" cost five of them. Nothing a filter or a payslip mutation does can
+  // change who is in the directory.
+  //
+  // An admin's own record is not in /employees for them — the directory is
+  // scoped to the people they look after, and nobody is their own assignee.
+  // Payroll is the one module where they may pick themselves (the slip is then
+  // frozen for a CEO/MD/Super Admin to sanction), so their own profile is
+  // fetched alongside and merged in. It 404s for an account with no employee
+  // record (a CEO/MD), which is not an error worth surfacing.
+  useEffect(() => {
+    (async () => {
+      try {
+        const [empRes, meRes] = await Promise.all([
+          api.get('/employees?excludeExecutives=true'),
+          api.get('/employees/me').catch(() => null),
+        ]);
+        const list = empRes.data.profiles;
+        const mine = meRes?.data?.profile;
+        setEmployees(
+          mine && !list.some((e) => String(e._id) === String(mine._id)) ? [...list, mine] : list
+        );
+      } catch (err) {
+        setError(err.response?.data?.message || 'Failed to load');
+      }
+    })();
+  }, []);
+
+  // Takes the period it should fetch rather than reading `filter` from the
+  // enclosing render. The run handler below changes the filter and refetches in
+  // the same tick, and a closure would have sent the PREVIOUS period — the run
+  // modal defaults to the current month regardless of what the list is filtered
+  // to, so "run July, list shows August" fired an August request and then raced
+  // the debounced July one 350ms later. Whoever answered last won.
+  // A half-typed year ("202" on the way to 2025) is not a year. The list learnt
+  // to ignore it, but Export and Run payroll were still reading the raw box —
+  // so mid-keystroke the table showed every year while Export downloaded
+  // payroll-202-09.xlsx and Run opened on year 202. One helper, three callers.
+  const effectiveYear = (y) => (Number(y) >= 2000 ? Number(y) : new Date().getFullYear());
+
+  const loadPayslips = async (period = filter) => {
     setLoading(true);
-    setError('');
+    // No `setError('')` on the way IN. The employee-directory read above shares
+    // this one state and resolves on mount, while this runs 350ms later behind
+    // the debounce — clearing it here wiped a "Failed to load" that had already
+    // arrived, leaving an empty employee picker with nothing to explain it.
+    // The message is cleared on SUCCESS below instead, which is the only point
+    // at which this loader knows the page is in a good state.
     try {
       const params = new URLSearchParams();
-      if (filter.year) params.set('year', filter.year);
-      if (filter.month) params.set('month', filter.month);
-      if (filter.status) params.set('status', filter.status);
-      // An admin's own record is not in /employees for them — the directory is
-      // scoped to the people they look after, and nobody is their own assignee.
-      // Payroll is the one module where they may pick themselves (the slip is
-      // then frozen for a CEO/MD/Super Admin to sanction), so their own profile
-      // is fetched alongside and merged in. It 404s for an account with no
-      // employee record (a CEO/MD), which is not an error worth surfacing.
-      const [slipsRes, empRes, meRes] = await Promise.all([
-        api.get(`/payroll?${params}`),
-        api.get('/employees?excludeExecutives=true'),
-        api.get('/employees/me').catch(() => null),
-      ]);
-      setPayslips(slipsRes.data.payslips);
-      const list = empRes.data.profiles;
-      const mine = meRes?.data?.profile;
-      setEmployees(
-        mine && !list.some((e) => String(e._id) === String(mine._id)) ? [...list, mine] : list
-      );
+      // "202" on the way to 2025 is not a year. Sending it asks the server for
+      // a century nobody meant and empties the table mid-keystroke, so an
+      // incomplete year filters by nothing at all instead.
+      if (Number(period.year) >= 2000) params.set('year', period.year);
+      if (period.month) params.set('month', period.month);
+      if (period.status) params.set('status', period.status);
+      const { data } = await api.get(`/payroll?${params}`);
+      setPayslips(data.payslips);
+      setError('');
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -176,7 +213,14 @@ export default function AdminPayroll() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
+  // Keyed on the filter's primitives rather than the object, so a re-render
+  // that rebuilds an identical filter does not refetch; debounced because the
+  // Year box is typed into a digit at a time.
+  useEffect(() => {
+    const t = setTimeout(loadPayslips, 350);
+    return () => clearTimeout(t);
+    /* eslint-disable-next-line */
+  }, [filter.year, filter.month, filter.status]);
 
   // Live gross/deductions/net totals for the payslip form footer.
   const gross = useMemo(() =>
@@ -210,7 +254,7 @@ export default function AdminPayroll() {
 
   const openRun = () => {
     const month = Number(filter.month) || new Date().getMonth() + 1;
-    const year = filter.year || new Date().getFullYear();
+    const year = effectiveYear(filter.year);
     setRunModal({ year, month, preview: null, loadingPreview: true, running: false, result: null, regen: [] });
     loadRunPreview(year, month);
   };
@@ -246,8 +290,13 @@ export default function AdminPayroll() {
         + (data.regenerated ? ` · re-generated ${data.regenerated}` : '')
       );
       setRunModal((rm) => ({ ...rm, running: false, result: data }));
-      // Surface the new drafts in the list underneath.
-      setFilter((f) => ({ ...f, year: runModal.year, month: runModal.month, status: '' }));
+      // Surface the new drafts in the list underneath. The refetch is explicit:
+      // the list effect is keyed on the filter's primitives now, so running the
+      // period that is ALREADY selected changes none of them and would leave
+      // the drafts that were just created invisible.
+      const ran = { year: runModal.year, month: runModal.month, status: '' };
+      setFilter((f) => ({ ...f, ...ran }));
+      await loadPayslips(ran);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Run failed');
       setRunModal((rm) => ({ ...rm, running: false }));
@@ -460,7 +509,7 @@ export default function AdminPayroll() {
         navigate('/admin/payslip-requests');
         return;
       }
-      await load();
+      await loadPayslips();
     } catch (err) {
       setError(err.response?.data?.message || 'Save failed');
     } finally {
@@ -488,7 +537,7 @@ export default function AdminPayroll() {
       } else {
         await api.patch(`/payroll/${id}/${action}`);
       }
-      await load();
+      await loadPayslips();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Action failed');
     }
@@ -512,7 +561,7 @@ export default function AdminPayroll() {
         attachedNames: data.attachments || [],
         onSend: async ({ subject, body }) => {
           await api.post(`/payroll/${p._id}/email`, { subject, body });
-          await load();
+          await loadPayslips();
         },
       });
     } catch (err) {
@@ -534,9 +583,10 @@ export default function AdminPayroll() {
         <button
           onClick={() => {
             const m = Number(filter.month) || new Date().getMonth() + 1;
-            const q = `year=${filter.year}&month=${m}`;
+            const y = effectiveYear(filter.year);
+            const q = `year=${y}&month=${m}`;
             // Server names the file payroll_<Month>-<Year>_<date>_<time>.xlsx (Content-Disposition).
-            downloadFile(`/payroll/export-sheet?${q}`, `payroll-${filter.year}-${String(m).padStart(2, '0')}.xlsx`)
+            downloadFile(`/payroll/export-sheet?${q}`, `payroll-${y}-${String(m).padStart(2, '0')}.xlsx`)
               .catch((err) => toast.error(err.response?.data?.message || 'Export failed'));
           }}
           title={filter.month ? 'Download this month\'s payroll register (.xlsx)' : 'No month selected · exports the current month'}
@@ -743,8 +793,12 @@ export default function AdminPayroll() {
               </div>
             )}
             <form onSubmit={onSave} className="space-y-3">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-1">
+              {/* One column on a phone. Three fixed columns put the employee
+                  picker in ~90px of a 360px screen, and a SearchableSelect
+                  trigger that narrow shows an ellipsis instead of the name —
+                  the one field where picking the wrong person is expensive. */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-1">
                   <label className="block text-sm text-gray-700">Employee *</label>
                   <SearchableSelect
                     required disabled={!!editingId}
@@ -793,7 +847,10 @@ export default function AdminPayroll() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              {/* Two-up on a phone rather than one: this grid renders six day
+                  boxes, and a single column turns them into a six-row tower
+                  that pushes the money below it off the screen. */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm text-gray-700">Working Days</label>
                   <input type="number" value={form.workingDays}
@@ -878,7 +935,12 @@ export default function AdminPayroll() {
               </div>
 
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Earnings (₹)</h3>
-              <div className="grid grid-cols-3 gap-3">
+              {/* Three columns inside the modal is ~90px a cell on a 360px
+                  phone: the amount box ends up too narrow to show a five-figure
+                  rupee figure, and index.css wraps "House Rent Allowance"
+                  mid-word above it. Two-up gives ~140px and still keeps the
+                  component list scannable. */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {Object.keys(form.earnings).map((k) => (
                   <div key={k}>
                     <label className="block text-xs text-gray-600">{labelOf(k)}</label>
@@ -889,11 +951,17 @@ export default function AdminPayroll() {
                 ))}
               </div>
 
-              {/* Bonus calculator */}
-              <div className="bg-gray-50 rounded-lg p-2 flex flex-wrap items-end gap-2 text-xs">
-                <span className="font-semibold text-gray-600 self-center">Bonus calculator:</span>
+              {/* Bonus calculator. The text-xs belongs on the two captions, NOT
+                  on the wrapper: form controls inherit their font size from it
+                  (Tailwind preflight sets font-size:100% on them), so a text-xs
+                  row rendered the select, the amount box and the Apply button at
+                  12px in ~27px of height — below anything else in this modal,
+                  and small enough to trigger the iOS focus zoom. The three
+                  controls carry the page's own px-3 py-2 text-sm instead. */}
+              <div className="bg-gray-50 rounded-lg p-2 flex flex-wrap items-end gap-2">
+                <span className="font-semibold text-gray-600 self-center text-xs">Bonus calculator:</span>
                 <select value={bonusCalc.type} onChange={(e) => setBonusCalc({ ...bonusCalc, value: bonusCalc.value, type: e.target.value })}
-                  className="border rounded px-2 py-1">
+                  className="border rounded-lg px-3 py-2 text-sm">
                   <option value="fixed">Fixed ₹</option>
                   <option value="pctBasic">% of Basic</option>
                   <option value="pctGross">% of Monthly Gross</option>
@@ -901,14 +969,16 @@ export default function AdminPayroll() {
                 <input type="number" min="0" value={bonusCalc.value}
                   onChange={(e) => setBonusCalc({ ...bonusCalc, value: e.target.value })}
                   placeholder={bonusCalc.type === 'fixed' ? 'Amount ₹' : 'Percent %'}
-                  className="border rounded px-2 py-1 w-28" />
+                  className="border rounded-lg px-3 py-2 text-sm w-28" />
                 <button type="button" onClick={applyBonus}
-                  className="px-2.5 py-1 rounded bg-gray-900 text-white hover:bg-gray-700">Apply to Bonus</button>
-                <span className="text-gray-400 self-center">→ current bonus {inr(form.earnings.bonus)}</span>
+                  className="px-3 py-2 rounded-lg text-sm bg-gray-900 text-white hover:bg-gray-700">Apply to Bonus</button>
+                <span className="text-gray-400 self-center text-xs">→ current bonus {inr(form.earnings.bonus)}</span>
               </div>
 
               <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Deductions (₹)</h3>
-              <div className="grid grid-cols-3 gap-3">
+              {/* Same two-up-on-a-phone reasoning as the earnings grid above —
+                  and these labels are the longest in the form. */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {Object.keys(form.deductions).map((k) => (
                   <div key={k}>
                     <label className="block text-xs text-gray-600">{labelOf(k)}</label>
@@ -919,7 +989,10 @@ export default function AdminPayroll() {
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-3 pt-3 border-t text-sm">
+              {/* Stacked on a phone: these three tiles are the last thing read
+                  before saving, and at ~90px each the word "Deductions:" alone
+                  is wrapped mid-word before the amount even starts. */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t text-sm">
                 <div className="bg-gray-50 rounded-lg p-2">Gross: <strong>{inr(gross)}</strong></div>
                 <div className="bg-gray-50 rounded-lg p-2">Deductions: <strong>{inr(totalDed)}</strong></div>
                 <div className="bg-gray-50 rounded-lg p-2">Net: <strong>{inr(net)}</strong></div>
@@ -1022,7 +1095,10 @@ export default function AdminPayroll() {
                       )}
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-2 text-sm">
+                  {/* Stacked on a phone — "Needs setup (blank):" in a ~76px
+                      tile is four wrapped fragments, and this is the summary of
+                      what the run just did. */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
                     <div className="bg-emerald-50 rounded-lg p-2 text-emerald-800">From structure: <strong>{runModal.result.derived}</strong></div>
                     <div className="bg-blue-50 rounded-lg p-2 text-blue-800">Copied from last: <strong>{runModal.result.copiedFromLast}</strong></div>
                     <div className="bg-amber-50 rounded-lg p-2 text-amber-800">Needs setup (blank): <strong>{runModal.result.needsSetup?.length || 0}</strong></div>

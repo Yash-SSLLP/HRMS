@@ -8,6 +8,9 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { complaintTarget, isGeneralComplaint, isClosedComplaint } from '../utils/complaints';
+import { confirmDialog } from '../components/dialogs';
+import useViewOnly from '../hooks/useViewOnly';
 
 const STATUSES = ['open', 'under_review', 'resolved', 'dismissed'];
 const STATUS_LABELS = {
@@ -26,6 +29,7 @@ const STATUS_STYLES = {
 export default function AdminComplaints() {
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
+  const viewOnly = useViewOnly();
   const [complaints, setComplaints] = useState([]);
   // Only the FIRST load blanks the table. Every later fetch — toggling "Show all
   // complaints", or reloading after handling one — keeps the rows on screen and
@@ -57,9 +61,38 @@ export default function AdminComplaints() {
 
   useEffect(() => { load(); }, [showAll]);
 
+  // The server refuses a delete of a complaint about you; mirror that here so
+  // the button is never offered in the first place.
+  const isAgainstMe = (c) => String(c.against?._id || c.against || '') === String(currentUser?._id || '');
+
   const openHandle = (c) => {
     setEditing(c);
     setDraft({ status: c.status, resolutionNote: c.resolutionNote || '' });
+  };
+
+  // Delete is offered for a CLOSED complaint only — resolved or dismissed — and
+  // never for one raised against the person looking at it. The server enforces
+  // both, and the button simply does not appear otherwise (see the Actions
+  // cell). It is irreversible and there is no undo, so it asks first and says
+  // what is about to go.
+  const remove = async (c) => {
+    const ok = await confirmDialog({
+      title: 'Delete this complaint?',
+      message: `"${c.subject}" will be permanently removed from the inbox for everyone. `
+        + 'The resolution note goes with it. This cannot be undone — an audit line is all that will remain.',
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setError('');
+    try {
+      await api.delete(`/complaints/${c._id}`);
+      // Close the panel if the row being deleted is the one open in it.
+      setEditing((cur) => (cur && cur._id === c._id ? null : cur));
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Delete failed');
+    }
   };
 
   const save = async (e) => {
@@ -119,8 +152,10 @@ export default function AdminComplaints() {
                   {c.complainant ? `${c.complainant.firstName} ${c.complainant.lastName}` : '-'}
                 </td>
                 <td className="px-4 py-3">
-                  {c.against ? `${c.against.firstName} ${c.against.lastName}` : '-'}
-                  <div className="text-xs text-gray-500">{c.against?.role}</div>
+                  {complaintTarget(c)}
+                  <div className="text-xs text-gray-500">
+                    {isGeneralComplaint(c) ? 'No individual named' : c.against?.role}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs px-2 py-1 rounded-lg ${STATUS_STYLES[c.status]}`}>
@@ -128,7 +163,14 @@ export default function AdminComplaints() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <button onClick={() => openHandle(c)} className="text-blue-600 hover:underline">Handle</button>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button onClick={() => openHandle(c)} className="text-blue-600 hover:underline">Handle</button>
+                    {/* Only once it is closed — resolved or dismissed — and
+                        never on your own accusation. */}
+                    {!viewOnly && isClosedComplaint(c) && !isAgainstMe(c) && (
+                      <button onClick={() => remove(c)} className="text-red-600 hover:underline">Delete</button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -140,9 +182,14 @@ export default function AdminComplaints() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
             <h2 className="card-title mb-1">{editing.subject}</h2>
+            {/* A general complaint names nobody, so the "against X (Role)"
+                clause is dropped entirely rather than rendered with its blanks
+                showing — it used to read "against  ()". */}
             <p className="text-xs text-gray-500 mb-4">
-              From {editing.complainant?.firstName} {editing.complainant?.lastName} · against{' '}
-              {editing.against?.firstName} {editing.against?.lastName} ({editing.against?.role})
+              From {editing.complainant?.firstName} {editing.complainant?.lastName} ·{' '}
+              {isGeneralComplaint(editing)
+                ? 'a general complaint — no individual named'
+                : `against ${complaintTarget(editing)} (${editing.against?.role})`}
             </p>
             <div className="text-sm text-gray-700 bg-gray-50 border rounded-lg p-3 mb-4 whitespace-pre-wrap">
               {editing.description}

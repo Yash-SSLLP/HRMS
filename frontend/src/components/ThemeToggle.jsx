@@ -140,9 +140,16 @@ export default function ThemeToggle({ className = '' }) {
         title={label}
         aria-label={label}
         aria-pressed={mode === 'dark'}
-        className="relative shrink-0 rounded-full transition-colors duration-200"
+        /* The size is a CLASS, not only an inline style, and that is deliberate:
+           the app-wide touch rule in index.css lifts controls to a 40px floor on
+           a coarse pointer and skips anything carrying an explicit height
+           utility. An inline `height` does not stop a `min-height` — the track
+           stretched to 40px while the knob stayed pinned at top:3 with its own
+           24px, so the knob floated inside an oversized capsule. Declaring the
+           height the way the rest of the app declares one both fixes that and
+           tells the next reader this control measures itself. */
+        className="relative shrink-0 rounded-full transition-colors duration-200 h-[30px] w-[64px]"
         style={{
-          width: 64, height: 30,
           background: mode === 'dark' ? '#3b4457' : '#e5e7eb',
           boxShadow: 'inset 0 1px 2px rgba(0,0,0,.12)',
         }}

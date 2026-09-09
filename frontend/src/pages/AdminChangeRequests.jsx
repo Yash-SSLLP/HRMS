@@ -174,14 +174,22 @@ export default function AdminChangeRequests() {
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
-      <div className="flex gap-2 mb-3 text-sm">
+      {/* The design system's segmented control, not four hand-rolled pills. The
+          old row was `px-3 py-1 rounded-full border`: ~26px tall, so rounded-full
+          gave each labelled button a full stadium — the roundest thing on a
+          phone — and it had no dark-mode side at all. The Tailwind colour classes
+          have to GO rather than come along: `.accent-bg` is `!important`
+          (index.css:221) and would beat .seg-btn.is-active's white pill, rendering
+          the control inside-out. */}
+      <nav className="seg-track mb-3" aria-label="Filter by status">
         {['pending', 'approved', 'declined', 'all'].map((s) => (
-          <button key={s} onClick={() => setFilter(s)}
-            className={`px-3 py-1 rounded-full border capitalize ${filter === s ? 'accent-bg text-white border-transparent' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+          <button key={s} type="button" onClick={() => setFilter(s)}
+            aria-pressed={filter === s}
+            className={`seg-btn capitalize${filter === s ? ' is-active' : ''}`}>
             {s}
           </button>
         ))}
-      </div>
+      </nav>
 
       <div className="bg-white shadow rounded-lg p-5">
         {visible.length === 0 ? (

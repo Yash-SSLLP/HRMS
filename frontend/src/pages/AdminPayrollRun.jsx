@@ -314,7 +314,11 @@ export default function AdminPayrollRun() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Stacked on a phone: two columns in this modal leave the select
+                  ~78px of text room once its chevron padding is taken, and
+                  "Set new CTC to ₹" — the mode that replaces the CTC outright
+                  rather than nudging it — truncates to something unreadable. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Revision type</label>
                   <select value={hike.mode} onChange={(e) => setHike({ ...hike, mode: e.target.value })}

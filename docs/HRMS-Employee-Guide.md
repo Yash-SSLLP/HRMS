@@ -354,7 +354,7 @@ The same lock applies to **documents**: you upload a required document that is m
 
 ### 12.3 Complaints
 
-Raise a confidential complaint by choosing the person it concerns and describing the issue. It is visible only to leadership and HR, and **never** to the person it is about. Notifications about it are deliberately vague for the same reason. Track it through open, under review, resolved, or dismissed.
+Raise a confidential complaint by choosing the person it concerns — or **General**, when the issue is about the workplace rather than an individual — and describing the issue. It is visible only to leadership and HR, and **never** to the person it is about. Notifications about it are deliberately vague for the same reason. Track it through open, under review, resolved, or dismissed.
 
 ---
 

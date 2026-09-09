@@ -399,7 +399,12 @@ export default function AdminOrgChart() {
 
         {/* Zoom. A wide hierarchy does not fit a laptop at full size, and the
             board already scrolls — shrinking it is how you see the shape. */}
-        <div className="inline-flex items-center rounded-lg border border-gray-300 overflow-hidden">
+        {/* items-stretch, not items-center: the readout in the middle is text-xs
+            against the +/− buttons' text-sm, so centred it stood 32px inside a
+            36px group and its own border-x dividers stopped 2px short at each
+            end — visible gaps in the segmented control's separators. Stretching
+            lets every segment run the full height whatever type each carries. */}
+        <div className="inline-flex items-stretch rounded-lg border border-gray-300 overflow-hidden">
           <button type="button" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}
             aria-label="Zoom out" title="Zoom out"
             className="px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">−</button>
@@ -488,7 +493,11 @@ export default function AdminOrgChart() {
           >
             {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </select>
-          <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-gray-800 px-2">Done</button>
+          {/* hover:underline is the portal's row-action convention, not a
+              decoration: index.css turns it into the standard compact outlined
+              pill, which is how this ends up the same height as the two selects
+              beside it instead of a bare px-2 word with no affordance. */}
+          <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-gray-800 hover:underline">Done</button>
         </div>
       )}
 

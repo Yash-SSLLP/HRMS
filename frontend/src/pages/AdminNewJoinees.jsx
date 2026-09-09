@@ -166,15 +166,26 @@ export default function AdminNewJoinees() {
                   because "Resend Appointment Letter" is wider than "Resend Offer
                   Letter" and every row then found its own right edge. Empty
                   cells are rendered as spacers so a row with no timestamp or no
-                  PDF still lines up with the one below it. */}
-              <div className="grid grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-2 sm:justify-end">
+                  PDF still lines up with the one below it.
+                  Those three nowrap columns add up to ~424px, which does not fit
+                  a phone: at 360px the card's content box is ~296px, the grid's
+                  min-content pinned it wider than that, and html/body's
+                  overflow-x:hidden quietly sliced the right edge off the Send
+                  buttons — the whole point of the row was unreachable. So the
+                  grid is one full-width column below sm and only becomes the
+                  measured 3-column layout from sm up. The spacers and the
+                  col-span are breakpointed with it: a `col-span-3` item forces
+                  grid auto-placement to create two implicit columns even in a
+                  1-column grid, so leaving it unqualified would have made
+                  grid-cols-1 inert. */}
+              <div className="grid grid-cols-1 w-full sm:w-auto sm:grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-2 sm:justify-end">
                 {/* Offer letter */}
                 {c.offer?.emailedAt
-                  ? <span className="text-[10px] text-gray-400 text-right whitespace-nowrap">already sent {fmtDate(c.offer.emailedAt)}</span>
-                  : <span />}
+                  ? <span className="text-[10px] text-gray-400 sm:text-right whitespace-nowrap">already sent {fmtDate(c.offer.emailedAt)}</span>
+                  : <span className="hidden sm:block" />}
                 {c.offer?.hasLetter
                   ? <button onClick={() => downloadOffer(c)} className="w-full text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">Offer PDF</button>
-                  : <span />}
+                  : <span className="hidden sm:block" />}
                 <button
                   onClick={() => sendLetter(c, 'offer')}
                   disabled={!c.offer?.hasLetter || !c.email}
@@ -186,11 +197,11 @@ export default function AdminNewJoinees() {
 
                 {/* Appointment letter */}
                 {c.appointment?.emailedAt
-                  ? <span className="text-[10px] text-gray-400 text-right whitespace-nowrap">already sent {fmtDate(c.appointment.emailedAt)}</span>
-                  : <span />}
+                  ? <span className="text-[10px] text-gray-400 sm:text-right whitespace-nowrap">already sent {fmtDate(c.appointment.emailedAt)}</span>
+                  : <span className="hidden sm:block" />}
                 {c.appointment?.hasLetter
                   ? <button onClick={() => downloadAppointment(c)} className="w-full text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 whitespace-nowrap">Appointment PDF</button>
-                  : <span />}
+                  : <span className="hidden sm:block" />}
                 <button
                   onClick={() => sendLetter(c, 'appointment')}
                   disabled={!c.appointment?.hasLetter || !c.email}
@@ -203,7 +214,7 @@ export default function AdminNewJoinees() {
                 {/* The final step, so it spans the full width under the two rows
                     rather than floating off on its own right edge. */}
                 <button onClick={() => openConvert(c)}
-                  className="col-span-3 w-full text-xs px-2.5 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 whitespace-nowrap">
+                  className="sm:col-span-3 w-full text-xs px-2.5 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 whitespace-nowrap">
                   Make Employee &amp; User
                 </button>
               </div>

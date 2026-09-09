@@ -4,7 +4,7 @@
  * guide and (with announcements.manage permission) can edit either. Loads/saves
  * the Markdown via GET/PUT/DELETE /guides/:key, falling back to bundled defaults.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -93,16 +93,23 @@ function MarkdownView({ md }) {
     const lines = (md || '').split('\n');
     const out = [];
     let list = null;
-    let k = 0;
+    // Every block is keyed by the SOURCE LINE it came from, never by a running
+    // counter. With a counter, pressing Enter near the top of a 1,400-line guide
+    // shifted the key of every block below the caret, so React remounted the whole
+    // document instead of the one paragraph that changed — the single biggest cost
+    // in the editor's live preview. A line index is stable under edits further down,
+    // and each line yields at most one block (a list is keyed by its first line), so
+    // the keys stay unique.
     const flush = () => {
       if (!list) return;
       const items = list.items.map((t, i) => <li key={i} className="mb-1.5 pl-1">{renderInline(t)}</li>);
       out.push(list.type === 'ol'
-        ? <ol key={`b${k++}`} className="list-decimal pl-6 mb-4 text-gray-700 leading-relaxed marker:text-gray-400">{items}</ol>
-        : <ul key={`b${k++}`} className="list-disc pl-6 mb-4 text-gray-700 leading-relaxed marker:text-gray-300">{items}</ul>);
+        ? <ol key={`b${list.at}`} className="list-decimal pl-6 mb-4 text-gray-700 leading-relaxed marker:text-gray-400">{items}</ol>
+        : <ul key={`b${list.at}`} className="list-disc pl-6 mb-4 text-gray-700 leading-relaxed marker:text-gray-300">{items}</ul>);
       list = null;
     };
-    for (const raw of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
       const line = raw.replace(/\s+$/, '');
       if (!line.trim()) { flush(); continue; }
 
@@ -112,18 +119,18 @@ function MarkdownView({ md }) {
         const text = line.replace(/^#{1,4}\s+/, '');
         const id = level === 2 || level === 3 ? slug(text) : undefined;
         const Tag = `h${level}`;
-        out.push(<Tag key={`b${k++}`} id={id} className={HEADING_CLS[level]}>{renderInline(text)}</Tag>);
+        out.push(<Tag key={`b${i}`} id={id} className={HEADING_CLS[level]}>{renderInline(text)}</Tag>);
         continue;
       }
 
-      if (/^(-{3,}|\*{3,})$/.test(line.trim())) { flush(); out.push(<hr key={`b${k++}`} className="my-7 border-gray-100" />); continue; }
+      if (/^(-{3,}|\*{3,})$/.test(line.trim())) { flush(); out.push(<hr key={`b${i}`} className="my-7 border-gray-100" />); continue; }
 
       const callout = calloutOf(line.trim());
       if (callout) {
         flush();
         const { Icon } = callout;
         out.push(
-          <div key={`b${k++}`} className={`flex gap-3 my-5 rounded-lg border-l-4 px-4 py-3.5 ${callout.cls}`}>
+          <div key={`b${i}`} className={`flex gap-3 my-5 rounded-lg border-l-4 px-4 py-3.5 ${callout.cls}`}>
             <Icon className="shrink-0 mt-0.5 opacity-80" size={17} aria-hidden="true" />
             <div className="min-w-0">
               <div className="text-[11px] font-semibold uppercase tracking-wider opacity-70 mb-1">
@@ -138,18 +145,18 @@ function MarkdownView({ md }) {
 
       const bullet = line.match(/^\s*[-*]\s+(.*)$/);
       if (bullet) {
-        if (!list || list.type !== 'ul') { flush(); list = { type: 'ul', items: [] }; }
+        if (!list || list.type !== 'ul') { flush(); list = { type: 'ul', items: [], at: i }; }
         list.items.push(bullet[1]);
         continue;
       }
       const numbered = line.match(/^\s*\d+\.\s+(.*)$/);
       if (numbered) {
-        if (!list || list.type !== 'ol') { flush(); list = { type: 'ol', items: [] }; }
+        if (!list || list.type !== 'ol') { flush(); list = { type: 'ol', items: [], at: i }; }
         list.items.push(numbered[1]);
         continue;
       }
       flush();
-      out.push(<p key={`b${k++}`} className="mb-3.5 text-gray-700 leading-relaxed">{renderInline(line)}</p>);
+      out.push(<p key={`b${i}`} className="mb-3.5 text-gray-700 leading-relaxed">{renderInline(line)}</p>);
     }
     flush();
     return out;
@@ -205,6 +212,15 @@ export default function HowToUse() {
   const [remote, setRemote] = useState({}); // { employee: {content, updatedAt, updatedByName}, hr: {...} }
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  // The live preview re-parses the WHOLE guide — the HR one is ~40KB / ~1,400 lines,
+  // several thousand elements — and MarkdownView's useMemo is keyed on the string, so
+  // typing was re-parsing and reconciling all of it on every keystroke. Deferring the
+  // preview copy keeps the textarea at full speed and lets the next keystroke interrupt
+  // the re-parse; the useMemo then short-circuits on the intervening ones, and because
+  // `blocks` keeps its array reference React bails out of the preview subtree entirely.
+  // A debounce timer would do the same job but would need clearing on unmount and on
+  // cancel()/save(), and would flash a stale preview for its whole delay.
+  const previewMd = useDeferredValue(draft);
   const [saving, setSaving] = useState(false);
   const [activeId, setActiveId] = useState('');
 
@@ -298,12 +314,24 @@ export default function HowToUse() {
       {/* Controls: guide switch (admin) + edit actions */}
       <div className="flex flex-wrap items-center gap-2 mb-5">
         {isAdminPortal && (
-          // font-medium stays on the BASE of both pills, never in the active branch: they are
-          // content-sized, so re-weighting the label on click resized them and slid the row.
-          <div className="inline-flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
-            <button onClick={() => setTab('hr')} className={`text-sm font-medium px-4 py-1.5 rounded-full transition-colors ${tab === 'hr' ? 'accent-bg text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>HR / Admin guide</button>
-            <button onClick={() => setTab('employee')} className={`text-sm font-medium px-4 py-1.5 rounded-full transition-colors ${tab === 'employee' ? 'accent-bg text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>Employee guide</button>
-          </div>
+          // The house segmented control (.seg-track / .seg-btn in index.css). The
+          // hand-rolled version this replaces was a rounded-full pill inside a
+          // rounded-full pill — 16px of curve inside 20px, with 2px of track showing —
+          // and, being raw utilities, it took the generic bg-gray-100 dark remap instead
+          // of seg-track's own dark inversion. seg-btn also carries font-weight on the
+          // base, which is what keeps a content-sized strip from re-measuring on click.
+          <nav className="seg-track" aria-label="Choose guide">
+            <button type="button" onClick={() => setTab('hr')}
+              aria-current={tab === 'hr' ? 'page' : undefined}
+              className={`seg-btn${tab === 'hr' ? ' is-active' : ''}`}>
+              HR / Admin guide
+            </button>
+            <button type="button" onClick={() => setTab('employee')}
+              aria-current={tab === 'employee' ? 'page' : undefined}
+              className={`seg-btn${tab === 'employee' ? ' is-active' : ''}`}>
+              Employee guide
+            </button>
+          </nav>
         )}
         {!editing && <span className="text-xs text-gray-400">{toc.length} sections</span>}
 
@@ -336,7 +364,7 @@ export default function HowToUse() {
           </div>
           <div className="bg-white shadow rounded-xl p-5 sm:p-6 overflow-y-auto max-h-[75vh]">
             <div className="text-xs font-semibold text-gray-500 mb-3">LIVE PREVIEW</div>
-            <MarkdownView md={draft} />
+            <MarkdownView md={previewMd} />
           </div>
         </div>
       ) : (

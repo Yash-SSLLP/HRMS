@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { FiAlertTriangle } from 'react-icons/fi';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import { complaintTarget, isGeneralComplaint } from '../utils/complaints';
 
 // Complaints are confidential to the CEO, HR and SuperAdmins (never the accused).
 const VIEWER_ROLES = ['SuperAdmin', 'HRManager', 'CEO'];
@@ -42,7 +43,11 @@ export default function ComplaintsBanner() {
             className="block bg-white/70 hover:bg-white rounded-lg px-3 py-2 border border-red-100">
             <div className="text-sm font-medium text-gray-900 truncate">{c.subject}</div>
             <div className="text-xs text-gray-500">
-              By {nameOf(c.complainant)} · against {nameOf(c.against)} · {when(c.createdAt)}
+              By {nameOf(c.complainant)} ·{' '}
+              {/* `nameOf` falls back to "Someone", which on a general complaint
+                  read as "against Someone" — an accusation of a person who does
+                  not exist. There is nobody to name here, so say so. */}
+              {isGeneralComplaint(c) ? 'general' : `against ${complaintTarget(c)}`} · {when(c.createdAt)}
               {c.status === 'under_review' ? ' · Under review' : ''}
             </div>
           </Link>

@@ -278,8 +278,15 @@ export default function AdminSurveys() {
                             <input placeholder={`Option ${oi + 1}`} value={opt}
                               onChange={(e) => setOption(qi, oi, e.target.value)}
                               className="block w-full border rounded-lg px-3 py-1.5 text-sm" />
+                            {/* A 34px square so this destructive control matches the height
+                                of the option input it deletes (px-1 alone gave a ~17x20px
+                                target, unaligned and untappable on a phone). Hover feedback
+                                is a text colour, not a hover:bg-* utility: any bg- token in
+                                the class list makes index.css treat this bare glyph as a
+                                filled button and give it a drop shadow. */}
                             {q.options.length > 1 && (
-                              <button type="button" onClick={() => removeOption(qi, oi)} className="text-red-600 text-sm px-1">✕</button>
+                              <button type="button" onClick={() => removeOption(qi, oi)} aria-label={`Remove option ${oi + 1}`} title="Remove option"
+                                className="text-red-600 text-sm inline-flex items-center justify-center shrink-0 w-10 h-10 rounded-lg hover:text-red-700">✕</button>
                             )}
                           </div>
                         ))}
@@ -310,7 +317,7 @@ export default function AdminSurveys() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
             <div className="flex items-start justify-between gap-3 mb-1">
               <h2 className="card-title">{resultsFor.title} · Results</h2>
-              <button type="button" onClick={() => setResultsFor(null)} className="text-gray-500 hover:text-gray-800 text-sm">✕</button>
+              <button type="button" aria-label="Close" title="Close" onClick={() => setResultsFor(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             {resultsLoading ? (
               <div className="text-sm text-gray-500 py-4">Loading…</div>

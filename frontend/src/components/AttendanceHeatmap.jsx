@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
+import useScrollToLatest from '../hooks/useScrollToLatest';
 import { ATTENDANCE_COLORS, CHART_SEQUENTIAL, CHART_EMPTY } from '../theme/chartColors';
 import { formatTime12, formatHours } from '../utils/time';
 
@@ -121,6 +122,12 @@ export default function AttendanceHeatmap({ days = 365, org = false, scope = 'or
     return list;
   }, [byDate]);
 
+  // The strip runs oldest → newest, so on a phone it must open on the newest
+  // month like every other time chart in the app (BarChart, LineChart,
+  // AttendanceDayChart all park the same way). A no-op on a desktop where all
+  // 12 months fit.
+  const scrollRef = useScrollToLatest(months);
+
   const cellColor = (cell) => {
     if (!cell || cell.future) return 'transparent';
     const isHoliday = holidays.has(cell.key);
@@ -184,8 +191,16 @@ export default function AttendanceHeatmap({ days = 365, org = false, scope = 'or
         </span>
       </div>
 
-      <div className="overflow-x-auto">
-        <div className="flex gap-3 w-max mx-auto">
+      <div ref={scrollRef} className="overflow-x-auto">
+        {/* Centring here is `min-w-full` + `safe center`, NOT `mx-auto` — the
+            same fix BarChart carries. `mx-auto` on a child wider than its
+            scroller resolves to a NEGATIVE margin on both sides, so half the
+            overflow lands to the LEFT of the content origin, and scrollLeft
+            cannot go below 0: on a phone the earliest months were unreachable.
+            `min-w-full` gives the box free space to centre in when the year
+            fits; when it does not, `w-max` wins and `safe` degrades to start
+            alignment, keeping the left end reachable. */}
+        <div className="flex gap-3 w-max min-w-full [justify-content:safe_center]">
           {months.map((mo) => (
             <div key={`${mo.label}-${mo.year}`} className="flex flex-col">
               <div className="text-[10px] text-gray-400 mb-1 text-center">{mo.label}</div>

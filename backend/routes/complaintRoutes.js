@@ -9,6 +9,7 @@ const {
   myComplaints,
   assignedComplaints,
   updateComplaint,
+  deleteComplaint,
 } = require('../controllers/complaintController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -26,5 +27,9 @@ router.get('/mine', myComplaints);
 router.get('/assigned', assignedComplaints);
 // PATCH /:id — update/resolve a complaint; protected (assigned handler/HR).
 router.patch('/:id', updateComplaint);
+// DELETE /:id - remove a RESOLVED complaint; protected (CEO/MD, HR, SuperAdmin,
+// and never the person it was raised against). The status gate lives in the
+// controller, not here, so the refusal can explain itself.
+router.delete('/:id', deleteComplaint);
 
 module.exports = router;

@@ -737,8 +737,22 @@ export default function AdminExit() {
               </div>
             )}
 
-            {/* Footer actions */}
-            <div className="flex items-center justify-between gap-2 pt-2 border-t">
+            {/* This note lives ABOVE the footer row, not inside it: as a w-full
+                flex item it became a third column that shrank to a one-word
+                ribbon between the two button groups, and moving it inside the
+                wrapping row instead would have pushed Save/Complete/Close onto
+                a third line at every width. */}
+            {!isFinal && detail.lastWorkingDay
+              && new Date().toLocaleDateString('en-CA') < String(detail.lastWorkingDay).slice(0, 10) && (
+              <p className="text-[11px] text-gray-500 mb-2">
+                ℹ️ Access stays active until the last working day ({fmtDate(detail.lastWorkingDay)}) and is
+                released automatically after it. “Complete Exit” before then will ask you to confirm early release.
+              </p>
+            )}
+
+            {/* Footer actions — flex-wrap so the two button groups stack instead
+                of force-shrinking to min-content inside the ~300px phone panel. */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
               <div className="flex gap-2">
                 {!isFinal && !viewOnly && (
                   <button onClick={cancelExit}
@@ -774,13 +788,6 @@ export default function AdminExit() {
                   </button>
                 )}
               </div>
-              {!isFinal && detail.lastWorkingDay
-                && new Date().toLocaleDateString('en-CA') < String(detail.lastWorkingDay).slice(0, 10) && (
-                <p className="text-[11px] text-gray-500 mb-2 w-full">
-                  ℹ️ Access stays active until the last working day ({fmtDate(detail.lastWorkingDay)}) and is
-                  released automatically after it. “Complete Exit” before then will ask you to confirm early release.
-                </p>
-              )}
               <div className="flex gap-2">
                 {!isFinal && !viewOnly && (
                   <>

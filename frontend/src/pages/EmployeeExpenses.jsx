@@ -259,8 +259,17 @@ export default function EmployeeExpenses() {
                     )}
                     <span className="min-w-0 flex-1 truncate">{receiptFile.name}</span>
                     <span className="text-xs text-gray-500 shrink-0">{prettySize(receiptFile.size)}</span>
+                    {/* Padded to a 28px target: the control that throws away the
+                        one mandatory attachment was a bare 16px glyph, smaller
+                        than a fingertip on the phone this receipt is usually
+                        photographed with. The -mr-1 gives the padding back to
+                        the chip so its right gutter still reads as px-3, and the
+                        w-10 thumbnail already sets the row height so nothing
+                        shifts. No hover:bg-* here on purpose — a `bg-` utility
+                        would make index.css's filled-action-button rules match
+                        (shadow, hover lift, press-down) on a ghost icon. */}
                     <button type="button" onClick={clearReceipt} aria-label="Remove receipt"
-                      className="text-gray-400 hover:text-red-600 shrink-0"><FiX size={16} /></button>
+                      className="text-gray-400 hover:text-red-600 shrink-0 p-1.5 -mr-1 rounded-md"><FiX size={16} /></button>
                   </div>
                 ) : (
                   <p className="mt-1 text-xs text-gray-500">A receipt is required to verify your claim. Max 5 MB.</p>

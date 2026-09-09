@@ -1236,7 +1236,7 @@ export default function EmployeeKhata() {
                     {entries.length === 1 ? 'You have 1 entry' : `You have ${entries.length} entries`} in total.
                   </p>
                   <button type="button" onClick={clearFilters}
-                    className="text-xs text-gray-600 hover:text-gray-900 underline mt-2">
+                    className="text-xs text-gray-600 hover:text-gray-900 hover:underline mt-2">
                     Clear filters
                   </button>
                 </td></tr>
@@ -1262,7 +1262,7 @@ export default function EmployeeKhata() {
                         offer the correction where it is still open. */}
                     {canEditMine(e, khatas) && (
                       <button onClick={() => openEdit(e)}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 underline mt-0.5">
+                        className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5">
                         Edit — not yet confirmed by the company
                       </button>
                     )}
@@ -1298,9 +1298,15 @@ export default function EmployeeKhata() {
         </div>
       </div>
 
+      {/* index.css's modal safety net (max-height + overflow-y on the panel) is
+          written as `.fixed.inset-0 > div`, so a <form> panel like the ones below
+          is skipped by it and a tall form overflows the centred overlay off both
+          ends with its footer out of reach. The overlay's `overflow-y-auto` plus
+          the form's `my-8` stand in for it — the margin is what keeps the top of
+          an over-tall flex-centred child reachable once the overlay scrolls. */}
       {newKhata && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={createKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={createKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">Add a new book</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
               A separate heading for a separate purpose — a site, a vehicle, a particular job. It holds
@@ -1333,8 +1339,8 @@ export default function EmployeeKhata() {
       {/* Renaming is the owner's alone, and it is only the heading that changes:
           closing a book is the company's act and is not offered here. */}
       {renaming && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={saveRename} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={saveRename} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">Rename this book</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
               Only the heading changes. Everything already filed under it stays exactly where it is.
@@ -1407,10 +1413,15 @@ export default function EmployeeKhata() {
                         {m.isOwner ? 'Owner' : (ROLE_WORDS[m.role]?.label || m.role)}
                       </span>
                     )}
+                    {/* Square target rather than the old px-1: this takes a person's
+                        access to a shared book away, and it was the smallest thing
+                        on the row — a ~17×20px glyph next to a padded role pill. The
+                        row's gap-2/py-2 has room for 36px, and the aria-label stays
+                        because the glyph is the button's only accessible name. */}
                     {membersFor.myRole === 'owner' && !m.isOwner && (
                       <button type="button" onClick={() => removeMember(m)} disabled={members.busy}
                         aria-label={`Remove ${m.name || 'this person'}`}
-                        className="text-gray-400 hover:text-red-600 shrink-0 px-1 disabled:opacity-50">
+                        className="inline-flex items-center justify-center w-10 h-10 rounded-lg shrink-0 text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50">
                         ✕
                       </button>
                     )}

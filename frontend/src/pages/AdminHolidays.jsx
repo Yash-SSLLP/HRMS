@@ -305,7 +305,7 @@ export default function AdminHolidays() {
         )}
       </PageHeader>
 
-      <div className="mb-4 flex gap-1 border-b border-gray-200">
+      <div className="mb-4 flex gap-1 border-b border-gray-200 overflow-x-auto">
         {tabBtn('holidays', 'Holidays', holidays.length)}
         {tabBtn('festivals', 'Festivals', festivals.length)}
       </div>

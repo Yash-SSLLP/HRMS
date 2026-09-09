@@ -39,7 +39,15 @@ function PdfPreview({ url, title, onClose }) {
             <FiX size={18} />
           </button>
         </div>
-        <iframe src={url} title={title} className="flex-1 min-h-[70vh] w-full border-0 bg-white" />
+        {/* The iframe cannot be the flex child itself. index.css clips this
+            panel (overflow-y:hidden, because it holds an iframe) and caps its
+            height, but a min-h on a flex item refuses to shrink — so on a short
+            window the bottom of the letter was cut off with no scrollbar
+            anywhere. The definite height moves onto the iframe and the shrink
+            happens on a scroller around it, the same shape DocPreviewModal uses. */}
+        <div className="flex-1 min-h-0 overflow-auto">
+          <iframe src={url} title={title} className="w-full h-[75vh] border-0 bg-white" />
+        </div>
       </div>
     </div>
   );

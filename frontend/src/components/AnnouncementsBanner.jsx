@@ -52,16 +52,24 @@ export default function AnnouncementsBanner() {
         return (
           <div
             key={a._id}
-            className="relative bg-white shadow rounded-lg p-4 pr-10 border-l-4"
+            className="relative bg-white shadow rounded-lg p-4 pr-12 border-l-4"
             style={{ borderLeftColor: s.bar }}
           >
+            {/* The bare 18px glyph used to be the whole hit box, so dismissing an
+                announcement was a target less than half the size of the modal
+                close a few lines below. The padding is what makes it a button
+                (18 + 2*10 = 38px); the wrapper's gutter went to pr-12 so the
+                grown box still clears the title. Deliberately NOT
+                .topbar-icon-btn: that class sets position:relative and, authored
+                after @tailwind utilities at equal specificity, it beats
+                `absolute` and would drop the X out of the corner into the flow. */}
             <button
               type="button"
               onClick={() => dismiss(a._id)}
               disabled={busyId === a._id}
               aria-label="Dismiss announcement"
               title="Dismiss"
-              className="absolute top-2.5 right-2.5 text-gray-400 hover:text-gray-700 disabled:opacity-50"
+              className="absolute top-1 right-1 p-2.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-50"
             >
               <FiX size={18} />
             </button>

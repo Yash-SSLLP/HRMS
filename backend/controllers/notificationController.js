@@ -47,6 +47,32 @@ const listNotifications = asyncHandler(async (req, res) => {
 });
 
 /**
+ * The unread count on its own — what the top-bar bell badge actually shows.
+ * @route GET /api/notifications/count?audience=admin|employee
+ * @param {string} [req.query.audience] - portal scope: 'admin' or 'employee'
+ * @returns {{unreadCount: number}}
+ */
+// GET /api/notifications/count?audience=  — the badge number, nothing else.
+//
+// The bell polls every 20 seconds to keep one integer up to date, and until
+// this existed it did that by calling `listNotifications` — pulling up to 50
+// whole notification documents, each with a full-length `body` paragraph, for a
+// dropdown that is closed nearly all of the time. That is ~180 oversized
+// responses per user per hour.
+//
+// It reuses `audienceScope` and `joinCutoff` VERBATIM, and that is the point of
+// putting it beside the list rather than anywhere else: if the two filters ever
+// drift, the badge and the list disagree — a new joiner would be badged for
+// alerts that predate their joining date and then open a dropdown that
+// (correctly) does not contain them, with no way to clear the badge.
+const countNotifications = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+  const filter = { recipient: meId, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)) };
+  const unreadCount = await Notification.countDocuments({ ...filter, readAt: null });
+  res.json({ unreadCount });
+});
+
+/**
  * Mark all the caller's unread notifications read, scoped to the current portal.
  * @route PATCH /api/notifications/read-all?audience=
  * @param {string} [req.query.audience] - portal scope: 'admin' or 'employee'
@@ -83,4 +109,4 @@ const markRead = asyncHandler(async (req, res) => {
   res.json({ notification });
 });
 
-module.exports = { listNotifications, markAllRead, markRead };
+module.exports = { listNotifications, countNotifications, markAllRead, markRead };

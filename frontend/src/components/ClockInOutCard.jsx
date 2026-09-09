@@ -130,7 +130,9 @@ function Status({ minutes }) {
 function DetailCell({ icon, label, value }) {
   return (
     <div className="min-w-0">
-      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-gray-400">
+      {/* The letter-spacing is dropped below sm: at 360px it is what takes
+          "PRODUCTION" past the cell width and into the truncate. */}
+      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-normal sm:tracking-wider text-gray-400">
         <span className="shrink-0" aria-hidden="true">{icon}</span>
         <span className="truncate">{label}</span>
       </div>
@@ -190,11 +192,19 @@ function Row({ r, now, fresh, expanded, onToggle }) {
           where --surface-2 is lighter than --surface. `.menu-pop` is the
           existing .16s pop-in — reused as a class rather than an inline
           animation so its prefers-reduced-motion opt-out still applies; only
-          its transform-origin needs correcting for a panel that grows down. */}
+          its transform-origin needs correcting for a panel that grows down.
+
+          The indent is `sm:` only. On a 360px phone the card's own padding plus
+          `pl-14` left 66px per column, which is narrower than "Clock out" or
+          "Production" — so all three labels truncated to "Clock o…". Dropping
+          the indent (and the gap) below sm buys back ~20px a cell and the
+          labels read in full. Stacking to one column was the other option and
+          was rejected: it triples this panel's height on the exact viewport
+          with the least room, against the card's height budget above. */}
       {expanded && (
         <div
           id={detailId}
-          className="menu-pop grid grid-cols-3 gap-3 pl-14 pr-2 pb-3"
+          className="menu-pop grid grid-cols-3 gap-2 sm:gap-3 pl-2 sm:pl-14 pr-2 pb-3"
           style={{ transformOrigin: 'top' }}
         >
           <DetailCell icon={<FiLogIn size={11} />} label="Clock in" value={fmtTime(r.checkIn)} />

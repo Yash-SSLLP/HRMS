@@ -41,6 +41,13 @@ const WORK_ON_LEAVE_LABELS = {
 // GPS accuracy tuning for the punch location watch.
 const GPS_GOOD_ENOUGH_M = 25;   // stop refining once a fix is at least this accurate
 const GPS_MAX_WAIT_MS = 20000;  // how long to keep refining before accepting the best fix
+// Longest edge of the stored punch selfie. It is only ever seen as a 36px
+// thumbnail in the admin attendance table or in a phone-width modal, but it used
+// to be stored at whatever the webcam handed us — a 1280x720 frame at q0.85 is
+// ~200KB and 1080p ~400KB, and the admin table pulls the ORIGINAL for every row
+// on the page. Capping at capture keeps the phone from encoding the big frame at
+// all, so there is no extra decode/re-encode pass on the device either.
+const PUNCH_PHOTO_MAX_EDGE = 640;
 // Mirrors HALF_DAY_CUTOFF_HOUR in backend/utils/workday.js. A half day started
 // after this is the AFTERNOON half — always allowed, and never a late arrival.
 // Kept in IST (not the browser's zone) so a laptop set to another timezone still
@@ -149,7 +156,12 @@ export default function EmployeeAttendance() {
   const startCamera = async () => {
     setCamError('');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      // `ideal` rather than `exact`: a camera that cannot do this size still
+      // opens (and takeSnapshot scales whatever it gives us), it just costs more.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: PUNCH_PHOTO_MAX_EDGE }, height: { ideal: 480 } },
+        audio: false,
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -277,8 +289,14 @@ export default function EmployeeAttendance() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
-    const w = video.videoWidth || 480;
-    const h = video.videoHeight || 360;
+    const vw = video.videoWidth || 480;
+    const vh = video.videoHeight || 360;
+    // The camera may hand back more than we asked for (the constraint is only
+    // `ideal`), so the cap is enforced here as well — this is the size that
+    // actually gets encoded and uploaded.
+    const scale = Math.min(1, PUNCH_PHOTO_MAX_EDGE / Math.max(vw, vh));
+    const w = Math.round(vw * scale);
+    const h = Math.round(vh * scale);
     canvas.width = w;
     canvas.height = h;
     canvas.getContext('2d').drawImage(video, 0, 0, w, h);
@@ -449,8 +467,15 @@ export default function EmployeeAttendance() {
         {leaveNotice && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start justify-between gap-3">
             <span>{leaveNotice}</span>
+            {/* Same close control as the camera modal below: an 18px glyph with
+                no padding was a ~10px-wide tap target. The negative margins pull
+                the 38px box back INTO the alert's px-4 py-3 padding — they claw
+                back 6px a side, they do not cancel the box, so the alert still
+                grows a few pixels taller than a bare line of text. That is the
+                trade for a real target, and it is worth naming so nobody later
+                "fixes" the row height by shrinking the button again. */}
             <button type="button" aria-label="Close" title="Close" onClick={() => setLeaveNotice('')}
-              className="shrink-0 text-amber-700 hover:text-amber-900 text-lg leading-none">×</button>
+              className="topbar-icon-btn shrink-0 -my-1.5 -mr-2">×</button>
           </div>
         )}
 
@@ -497,7 +522,10 @@ export default function EmployeeAttendance() {
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        {/* One tile per row on a phone: three across leaves ~64px of content per
+            tile, and an 18px font-mono "09:15 AM" needs 86px — every value broke
+            at its space onto a second line. */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <div className="bg-gray-50 rounded p-3">
             <div className="text-xs text-gray-500">Check-in</div>
             <div className="text-lg font-mono">{fmtTime(today?.checkIn)}</div>

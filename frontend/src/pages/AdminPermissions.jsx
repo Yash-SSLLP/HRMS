@@ -861,7 +861,12 @@ export default function AdminPermissions() {
       {companyUser && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8"
           onClick={() => setCompanyUser(null)}>
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+          {/* flex-col, like the permissions panel above: it is the shape index.css
+              reads as "this panel owns its own scroller", and without it the panel
+              became a second scroller around the company list AND, on a phone,
+              picked up 1.1rem of outer padding on top of each section's px-6 —
+              which pulled the header and footer rules in off the panel edges. */}
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100">
               <div>
                 <h2 className="card-title">Company access</h2>
@@ -877,7 +882,7 @@ export default function AdminPermissions() {
               <button type="button" onClick={() => setCompanyUser(null)} aria-label="Close"
                 className="topbar-icon-btn shrink-0">×</button>
             </div>
-            <div className="px-6 py-4 max-h-80 overflow-y-auto">
+            <div className="px-6 py-4 max-h-80 min-h-0 overflow-y-auto">
               {companies.length === 0 ? (
                 <p className="text-sm text-gray-400">No companies yet. Add one under Companies first.</p>
               ) : (

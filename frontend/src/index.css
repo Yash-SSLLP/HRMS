@@ -220,6 +220,11 @@ a, button, input, select, textarea,
 /* Accent strip / chips can use this */
 .accent-bg { background-color: var(--accent) !important; }
 .accent-text { color: var(--accent) !important; }
+/* The selected-tab underline. Two tab strips (AdminCashbook, AdminCompliance)
+   had `border-indigo-600` hardcoded, and both pages are also mounted inside My
+   Portal — where the accent is teal in light and gold in dark — so the one mark
+   saying WHICH tab you are on was the one mark ignoring the portal's palette. */
+.accent-border { border-color: var(--accent) !important; }
 /* Label sitting ON an accent fill (e.g. the portal switch's active side, which
    overlays the sliding accent knob). White by default; a portal whose accent is
    too light for white ink re-points it — see My Portal's gold in dark mode. */
@@ -648,10 +653,23 @@ html.dark .card-title { color: var(--dk-ink-1); }
   gap: 0.25rem;
   padding: 0.25rem;
   border-radius: 0.75rem;
+  /* A four-tab track (pending / approved / declined / all) measures ~340px with
+     its padding and border, against ~332px of content width inside main's phone
+     gutter at 360px. The track must not wrap — the pill and its recessed rail
+     are one continuous surface, and a second line would cut that surface in
+     half — so it scrolls sideways instead, the same way the top bar's shortcut
+     strip does. `max-width: 100%` is what gives the scroller something to
+     scroll inside; an inline-flex box would otherwise just size to its content
+     and push the page. */
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
   background-color: rgba(243, 244, 246, .8);          /* gray-100/80 */
   border: 1px solid rgba(229, 231, 235, .8);          /* gray-200/80 */
   box-shadow: inset 0 2px 4px 0 rgba(15, 23, 42, .05);
 }
+.seg-track::-webkit-scrollbar { display: none; }
 .seg-btn {
   position: relative;
   padding: 0.375rem 1rem;
@@ -714,15 +732,26 @@ select:focus-visible {
 }
 
 /* Filled action buttons (any solid colour, excluding light/ghost variants):
-   soft elevation, a gentle lift on hover and a press-down on click. */
-button[class*="bg-"]:not([class*="bg-white"]):not([class*="bg-gray-50"]):not([class*="bg-gray-100"]):not([class*="bg-gray-200"]):not([class*="bg-transparent"]):not([class~="hover:underline"]) {
+   soft elevation, a gentle lift on hover and a press-down on click.
+
+   `:is([class^="bg-"], [class*=" bg-"])` — a bg- token at the START of the class
+   list or preceded by a space — rather than the plain `[class*="bg-"]` this used
+   to carry. A substring match also caught the VARIANTS: `hover:bg-red-50` on a
+   flat icon button, `disabled:bg-gray-100` on a locked field, `focus:bg-white`
+   on an outline control. Each of those is a tint applied in one state, not a
+   filled button, and each was silently given a resting drop shadow and a 1px
+   hover lift — a floating shadowed square in an otherwise flat row. Requiring a
+   token boundary is what separates "this button IS filled" from "this button
+   tints on hover"; the `:not()` exclusions below stay substring matches on
+   purpose, since over-excluding a ghost variant is harmless. */
+button:is([class^="bg-"], [class*=" bg-"]):not([class*="bg-white"]):not([class*="bg-gray-50"]):not([class*="bg-gray-100"]):not([class*="bg-gray-200"]):not([class*="bg-transparent"]):not([class~="hover:underline"]) {
   box-shadow: 0 1px 2px rgba(15, 23, 42, .10), 0 1px 3px rgba(15, 23, 42, .06);
 }
-button[class*="bg-"]:not([class*="bg-white"]):not([class*="bg-gray-50"]):not([class*="bg-gray-100"]):not([class*="bg-gray-200"]):not([class*="bg-transparent"]):not([class~="hover:underline"]):not(:disabled):hover {
+button:is([class^="bg-"], [class*=" bg-"]):not([class*="bg-white"]):not([class*="bg-gray-50"]):not([class*="bg-gray-100"]):not([class*="bg-gray-200"]):not([class*="bg-transparent"]):not([class~="hover:underline"]):not(:disabled):hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 16px rgba(15, 23, 42, .16);
 }
-button[class*="bg-"]:not([class*="bg-transparent"]):not([class~="hover:underline"]):not(:disabled):active {
+button:is([class^="bg-"], [class*=" bg-"]):not([class*="bg-transparent"]):not([class~="hover:underline"]):not(:disabled):active {
   transform: translateY(0);
   box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
 }
@@ -780,11 +809,20 @@ input:focus, textarea:focus, select:focus {
   animation: modal-in .22s cubic-bezier(.16, 1, .3, 1) both;
 }
 
-/* Premium unread badges (notification bell + chat), with a soft pulsing halo. */
+/* Premium unread badges (notification bell + chat), with a soft pulsing halo.
+
+   `bell-pulse` was written but never applied — the bell badge in Layout.jsx
+   carried only Tailwind utilities plus an inline box-shadow, so the rule and its
+   keyframes shipped in every page load and animated nothing. The class is on the
+   badge now, which means the punch-out ring it used to draw inline has to move
+   IN HERE: an animation's declarations outrank an inline `style` for the
+   property they animate, so `animation: bell-pulse` would have replaced the ring
+   with the halo and left the badge bleeding into the top bar. Every stop
+   therefore carries the ring first and the halo second. */
 @keyframes bell-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .55); }
-  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  0%   { box-shadow: 0 0 0 2px var(--surface), 0 0 0 0 rgba(239, 68, 68, .55); }
+  70%  { box-shadow: 0 0 0 2px var(--surface), 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 @keyframes chat-pulse {
   0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, .55); }
@@ -1816,6 +1854,25 @@ main { max-width: 100%; }
   main :is(.whitespace-nowrap, .font-mono, .tabular-nums, svg, svg *) { overflow-wrap: normal; }
 }
 
+/* The one thing `overflow-wrap` above cannot rescue: a `truncate` subtree.
+   `truncate` is `white-space:nowrap` + `overflow:hidden` + ellipsis, so its
+   min-content width is the WHOLE string — and a flex item defaults to
+   `min-width:auto`, which means "never shrink below min-content". The item
+   therefore grows to fit the string instead of letting it ellipse, and drags
+   the row off the screen with it.
+
+   Measured on the attendance report at 360px: a filter bar 347px wide holding
+   a 602px item, the employee picker inside it 602px, its `truncate` label 560px
+   — a 285px overhang. The monthly view had the same shape at 541px. The
+   ellipsis those labels were written with had never once been able to render.
+
+   Scoped to items that actually contain a truncating descendant: those are
+   exactly the boxes whose author already said "clip me if there isn't room",
+   so letting them shrink is what they asked for. An item WITHOUT a `truncate`
+   inside keeps `min-width:auto` and so keeps wrapping rather than being
+   squashed and clipped. */
+main :is(.flex, .inline-flex) > *:has(.truncate) { min-width: 0; }
+
 /* Data tables sit in `…rounded-lg overflow-hidden` cards that clip overflow.
    On any screen, let the card scroll horizontally so wide tables stay reachable
    instead of being cut off (the !important overrides the card's overflow-hidden;
@@ -1868,6 +1925,62 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
   table.min-w-full :is(th, td) { max-width: 20rem; }
 }
 
+/* 20rem is 320px — on a 345px card that is the entire screen, so one wordy
+   column (a reason, an address, a document name) could fill the viewport and
+   the swipe would start on an empty second column. Half that keeps at least a
+   glimpse of the next column on screen, which is what tells the reader there
+   IS a next column. It matters most for the frozen first column above: a
+   sticky cell 320px wide would have pinned the whole width. */
+@media (max-width: 640px) {
+  :has(> table) > table :is(th, td),
+  table.min-w-full :is(th, td) { max-width: 11rem; }
+}
+
+/* The identity column stays put while the rest of the table is swiped.
+
+   A nine-column table on a 345px card shows column one and a sliver of column
+   two; every swipe past that point loses the only thing that says WHOSE row you
+   are reading, so a phone user has to scroll back and forth to pair a value
+   with a person. Pinning the first cell fixes that, and — because the rest of
+   the row visibly slides under a column that does not — it is also the scroll
+   affordance the card otherwise has none of.
+
+   Only below lg. From lg up the fixed sidebar is present and the tables that
+   still overflow are the very wide ones, where a desktop user has a scrollbar,
+   a trackpad and enough columns on screen to keep their place.
+
+   THE BACKGROUND IS THE WHOLE TRICK. A sticky cell is transparent by default,
+   so the scrolled row would show straight through it. It takes the card surface
+   by default; a row that carries its own tint (`<tr class="bg-amber-50">` for a
+   pending Sunday duty, `bg-red-50/40` for a rejected document) hands that tint
+   down with `inherit`, so a stated row colour still reads across the frozen
+   column. The app-wide `tr:hover > td` wash is declared later in this file and
+   keeps winning over both, so hover still lights the whole row. */
+@media (max-width: 1023px) {
+  :has(> table) > table > :is(thead, tbody) > tr > :is(th, td):first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background-color: var(--surface);
+  }
+  :has(> table) > table > thead > tr > th:first-child { background-color: var(--surface-2); }
+  /* A row (or a head) that states its own colour keeps it. */
+  :has(> table) > table > :is(thead, tbody) > tr[class*="bg-"] > :is(th, td):first-child {
+    background-color: inherit;
+  }
+  /* A hairline so the frozen column reads as an edge, not as a paint seam. */
+  :has(> table) > table > :is(thead, tbody) > tr > :is(th, td):first-child::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: -1px;
+    width: 1px;
+    background-color: var(--border);
+    pointer-events: none;
+  }
+}
+
 /* Modal dialogs (full-screen overlay → inner panel): keep the panel inside the
    viewport and let it scroll, so tall forms like the employee editor are fully
    reachable and the action buttons aren't pushed off-screen on phones. */
@@ -1895,9 +2008,16 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
 .fixed.inset-0 > div.flex-col:has(.overflow-y-auto, .overflow-auto, iframe) { overflow-y: hidden; }
 
 /* Tighter gutters on phones so cards get more usable width, and nothing with a
-   hard-coded width may exceed the screen. */
+   hard-coded width may exceed the screen.
+
+   The gutter itself is NOT set here any more. `main { padding-left }` is a
+   type selector (0,0,1) and Layout's `<main class="p-4 sm:p-6">` is a class
+   (0,1,0), so this rule never once applied — measured at 16px, not the 13.6px
+   it asks for, on every page at 360px. The page gutter now lives where it can
+   actually win, as a responsive utility on the element itself (Layout.jsx);
+   leaving a dead declaration here would just re-teach the same wrong lesson to
+   whoever reads it next. */
 @media (max-width: 640px) {
-  main { padding-left: 0.85rem; padding-right: 0.85rem; }
   .fixed.inset-0 > div { padding: 1.1rem; max-width: calc(100vw - 1.5rem); }
   /* A panel that lays itself out as a flex column with its own scroller already
      owns its padding (header, body, footer each have their own); adding 1.1rem
@@ -1925,9 +2045,193 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
 }
 
 /* ---------------------------------------------------------------------------
+   TOUCH ERGONOMICS — the control-height floor (2026-09-09)
+
+   Measured, not guessed: a scripted sweep rendered all 92 in-app pages inside
+   the real <Layout> at 360 / 768 / 1280 and sized every rendered control.
+   At 360px, 558 of 726 interactive controls (77%) were UNDER 36px tall, and
+   the distribution had a hard spike at 29px:
+
+       <20px  18   |  24-28px  52   |  28-32px  268   |  32-36px  37
+
+   The 268-strong spike is one component: the link->button restyle further up
+   this file (`padding: .28rem .78rem`, line-height 1.3 = 29.1px). It is what
+   paints every row action in the app — "Edit" alone appears 98 times across 22
+   pages, "Delete" 57 times across 14. On a desktop mouse a 29px row action is
+   correct and dense; under a fingertip it is a miss.
+
+   So the floor is conditioned on the INPUT DEVICE, not only on the viewport:
+   `(pointer: coarse)` catches phones, tablets and touch laptops at any width,
+   and the 640px arm catches a narrow desktop window. Nothing changes for a
+   mouse on a wide screen — the dense table UI the office uses all day is
+   untouched.
+
+   40px, not 44: 44 is Apple's figure for a *primary* target with nothing near
+   it. These are row actions sitting in a table cell next to a label, where 44px
+   would push every row 15px taller and cost a whole row of context per screen.
+   40px clears the practical Android/Material floor (48dp includes the invisible
+   margin around the control, which the row's own padding supplies here).
+
+   THE EXCLUSIONS ARE THE LOAD-BEARING PART:
+   - [role="switch"]      ToggleSwitch draws a 22px track; a min-height would
+                          stretch the track and leave the knob mid-air.
+   - .star-btn            the review sheet's rating stars are sized by the glyph.
+   - .cal-add             the calendar's in-cell "+" affordance — a 40px button
+                          inside a day cell would blow the month grid apart.
+   - an explicit height   `[class^="h-"]` / `[class*=" h-"]` matches a Tailwind
+                          height utility as a whole token (`h-8`, `h-[22px]`),
+                          and deliberately NOT `min-h-`/`max-h-`, which do not
+                          pin a box. Anything that measured itself already keeps
+                          its own geometry. It also, usefully, exempts every
+                          icon-only circle — those always set `w-N h-N`.
+--------------------------------------------------------------------------- */
+@media (max-width: 640px), (pointer: coarse) {
+  :is(
+    button,
+    [role="button"],
+    select,
+    textarea,
+    a[class~="hover:underline"],
+    a.nav-pill,
+    input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="range"])
+  ):not([role="switch"]):not(.star-btn):not(.cal-add):not(.cal-tile):not(.cal-cell-tap):not([class^="h-"]):not([class*=" h-"]) {
+    min-height: 40px;
+  }
+
+  /* A <button> centres its content box vertically on its own, but a link
+     styled as a button does not — it needs to be a centring flex box or the
+     label sits on the top edge of the taller target. */
+  a[class~="hover:underline"] { display: inline-flex; align-items: center; }
+
+  /* The row actions get real padding to go with the height, so the target is
+     grown by PADDING (which reads as a better-proportioned button) rather than
+     by empty space above and below the label. */
+  button[class~="hover:underline"],
+  a[class~="hover:underline"] { padding: 0.5rem 0.9rem; }
+
+  /* iOS Safari zooms the whole page in whenever a control with a computed
+     font-size under 16px takes focus — and it never zooms back out on blur, so
+     the person is left on a page they have to pinch to escape. 232 controls in
+     this app are under 16px: 218 carry `text-sm` (14px), 14 carry `text-xs`,
+     and the rest inherit 16px from Tailwind's preflight and are already fine.
+     The floor above has already made these boxes 40px tall, so the larger text
+     costs no layout.
+
+     `!important` is load-bearing, not decoration: a bare `input` selector is
+     (0,0,1) and loses to Tailwind's `.text-sm` (0,1,0) — the same specificity
+     trap that left the phone page-gutter rule dead for months. `.ss-search-input`
+     is named because it sets its own `font-size: .875rem` as a class. */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea,
+  .ss-search-input { font-size: 16px !important; }
+
+  /* Icon-only buttons stay square rather than becoming tall slots. */
+  .topbar-icon-btn { min-width: 40px; min-height: 40px; }
+
+  /* The top-bar shortcut pills lose their label below 2xl (see NavPill in
+     Layout.jsx), so on a phone they are icon-only and were measured at 36x28 —
+     the smallest targets in the app, sitting in the busiest strip. Giving them
+     only the height floor would have made them 36x40 slabs, so they take the
+     matching width and stay square. */
+  .nav-pill { min-width: 40px; }
+}
+
+/* Ticks and radios are the one control the height floor above deliberately
+   skips — a 40px-tall checkbox is a stretched box, not a bigger tick — so they
+   are grown the only way that makes sense for them: both axes, together. They
+   measured 13-16px, which is a genuinely hard target under a thumb (they are
+   the "Half day" tick on the leave form, the notification-audience picker, the
+   declaration rows).
+
+   `input[type=…]` is 0,1,1 and beats the `h-4 w-4` utilities some of them
+   carry, which is the point: those classes are Tailwind's desktop default for
+   a tick, and the whole rule exists to override that default on touch. */
+@media (pointer: coarse) {
+  input[type="checkbox"],
+  input[type="radio"] { width: 1.15rem; height: 1.15rem; }
+}
+
+/* A cluster of row actions ("View · Verify · Reject") is written as a plain
+   flex row almost everywhere, and several carry `shrink-0` so they refuse to
+   give ground — which is how AdminEmployeeDetail's document rows ran 58px off
+   the side of a 360px screen. Once the buttons above are 40px tall they need
+   somewhere to go, so any flex box holding two or more of them wraps, with a
+   row gap so the second line does not touch the first. */
+@media (max-width: 640px), (pointer: coarse) {
+  main :is(div, td, th, li, p):has(
+    > :is(button, a)[class~="hover:underline"] ~ :is(button, a)[class~="hover:underline"]
+  ) {
+    flex-wrap: wrap;
+    row-gap: 0.4rem;
+    /* `flex-wrap` alone was not enough on AdminEmployeeDetail's document rows:
+       the cluster carries `shrink-0`, so it never gave up any width and so
+       never reached a point where wrapping could happen — it just kept running
+       off the side (measured 130px over at 360px). Letting the cluster shrink
+       is what turns the wrap on. It stays `shrink-0` on every wider screen,
+       where refusing to shrink is exactly right: the buttons must not squash
+       into the filename beside them. */
+    flex-shrink: 1;
+    min-width: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   MOBILE BUTTON SHAPE — pills stop being pills on a phone
+
+   A fully round (9999px) control reads as a floating bubble at phone scale: the
+   top-bar shortcuts measured 36x28 with a 9999px radius, so they rendered as
+   two green dots rather than as buttons. Rounding is a scale-relative effect —
+   the same radius that looks tailored on a 140px desktop pill looks like a
+   sweet on a 36px one — so below 640px interactive pills take the same 0.55rem
+   the rest of the button vocabulary uses.
+
+   ONLY interactive elements, and only pill-shaped ones:
+   - <span> badges, chips and counts keep 9999px. A count badge is SUPPOSED to
+     be a circle, and squaring those would be the actual regression.
+   - anything with an explicit height utility is a circle by construction
+     (avatars, icon-only buttons, dots) and is excluded by the same
+     `[class*=" h-"]` guard the height floor uses.
+   - [role="switch"] is a switch; its track is round by definition.
+   - .keep-round is the explicit opt-out, for the two controls whose ROUNDNESS
+     is the design: the theme toggle (a round knob sliding in a track — square
+     the track and the knob reads as a loose bead) and the profile trigger
+     (a ring drawn around a circular avatar).
+--------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  :is(button, a, [role="button"]).rounded-full:not([role="switch"]):not(.topbar-icon-btn):not(.keep-round):not([class^="h-"]):not([class*=" h-"]) {
+    border-radius: 0.55rem;
+  }
+
+  /* Large panel radii are also scale-relative: 1rem on a card that spans the
+     whole 360px screen eats the corners of the content inside it. One step
+     tighter keeps the card crisp without going square. */
+  .rounded-3xl { border-radius: 1rem; }
+  .rounded-2xl { border-radius: 0.85rem; }
+}
+
+/* ---------------------------------------------------------------------------
    Org chart — top-down "decision tree" of circular nodes joined by connector
    lines (root → branches → leaves). Pure CSS; the page colours the dots.
 --------------------------------------------------------------------------- */
+/* Punch map (pages/AdminPunchMap.jsx) — the Leaflet pane and the people list
+   beside it, sized together so the two columns line up at lg+.
+
+   Two declarations, deliberately. `dvh` measures the viewport as it actually is
+   with the mobile URL bar showing, which is what this pane wants; but it is the
+   ONLY height the map container has, and an engine that cannot parse the unit
+   drops the whole declaration rather than falling back — leaving Leaflet to
+   render into a 0px box, i.e. a blank map rather than a short one. The `vh`
+   line goes first as the floor every browser understands, and @supports raises
+   it where dvh is real. (No pixel minimum: a 480px floor is taller than a
+   landscape phone and pushed the filters a whole screen down.) */
+.punch-map-pane { height: clamp(240px, 62vh, 720px); }
+.punch-map-aside { max-height: clamp(240px, 62vh, 720px); }
+@supports (height: 1dvh) {
+  .punch-map-pane { height: clamp(240px, 62dvh, 720px); }
+  .punch-map-aside { max-height: clamp(240px, 62dvh, 720px); }
+}
+
 .org-tree-wrap { overflow-x: auto; text-align: center; padding: 0.5rem 0 1rem; }
 .org-tree, .org-tree ul { list-style: none; margin: 0; padding: 0; }
 .org-tree { display: inline-block; min-width: 100%; }
@@ -2331,6 +2635,20 @@ html.dark {
 .cal-more:hover { color: var(--accent); }
 
 /* "+" affordance to drop a reminder on a day (appears on hover / keyboard focus). */
+/* Phone-only full-cell tap target; see the 560px block below. Hidden — and so
+   completely inert — at every other width, where the tiles carry their own
+   labels and are targets in their own right. */
+.cal-cell-tap {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
 .cal-add {
   position: absolute;
   top: .2rem; right: .2rem;
@@ -2368,12 +2686,55 @@ html.dark {
   .cal-cell { min-height: 4.5rem; }
   .cal-footer { grid-template-columns: 1fr; }
 }
+/* Below 560px a seven-column month gives each day roughly 45px of width, and
+   the old answer was to shrink the event text to fit: .5rem (8px) on a tile,
+   .5625rem (9px) on a solo day. Since the tile is also `nowrap` + ellipsis, 8px
+   in a ~26px text box rendered as one or two characters and a "…" — the label
+   was not small, it was absent, and it cost a line of height to say nothing.
+
+   So on a phone the tiles stop pretending to be labels and become DOTS: the
+   colour still says what kind of day it is (the legend is right below the
+   grid), the count still says how much is on, and every dot is still the same
+   button it always was — tapping one opens that event, and `+N more` still
+   opens the day sheet. Nothing became unreachable; what was unreadable stopped
+   taking up room.
+
+   The dot is drawn in the CONTENT box of a deliberately larger button: a
+   transparent border plus `background-clip: content-box` leaves a ~10px dot
+   inside a 20px target, so the thing you aim at is twice the thing you see. */
 @media (max-width: 560px) {
   .cal-cell { min-height: 3.9rem; padding: .2rem .22rem; }
-  .cal-tile { font-size: .5rem; padding: .1rem .22rem; }
-  .cal-tile-solo .cal-tile-label { font-size: .5625rem; -webkit-line-clamp: 2; }
   .cal-year { font-size: 1.2rem; }
   .cal-caption { display: none; }
+
+  .cal-tile:not(.cal-tile-solo) {
+    display: inline-block;
+    width: 1.25rem;
+    height: 1.25rem;
+    padding: 0;
+    margin: .15rem .1rem 0 0;
+    border: .3125rem solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+    /* The label is still in the DOM for the accessible name and the tooltip —
+       it is just not painted. */
+    font-size: 0;
+    line-height: 0;
+    vertical-align: middle;
+  }
+  /* A solo day already fills its whole cell with the event's colour and carries
+     the day number on top, which is the same signal at a glance. Its 9px label
+     is the part that never read, so only that goes. */
+  .cal-tile-solo .cal-tile-label { display: none; }
+
+  /* The cell itself is the tap target the dots cannot be. It opens the day
+     sheet — the same panel `+N more` opens — which lists every entry for that
+     day at full size with its colour and label. So on a phone the grid answers
+     "which days have something on" and one tap answers "what". */
+  .cal-cell-tap { display: block; }
+  /* Everything meaningful sits above the overlay, so tapping a dot still opens
+     that one event and only the empty space falls through to the day sheet. */
+  .cal-cell > :not(.cal-cell-tap) { position: relative; z-index: 1; }
 }
 
 /* ---------------------------------------------------------------------------

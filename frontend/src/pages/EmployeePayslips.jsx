@@ -79,7 +79,13 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8"
       onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+      {/* `flex flex-col` is load-bearing, not layout taste. index.css only exempts
+          a modal panel from its own 92vh scroller and its 1.1rem phone padding
+          when the panel is a flex column that owns an inner scroller. Without it
+          the month list below scrolled inside a second scrollbar, and on a phone
+          the extra 1.1rem stopped the header's border-b reaching the panel edge
+          and cost the month rows ~35px of width. */}
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-md flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100">
           <div>
             <h2 className="card-title">Request a payslip</h2>
@@ -91,7 +97,10 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
           <button type="button" onClick={onClose} aria-label="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
 
-        <div className="px-6 py-4 max-h-72 overflow-y-auto">
+        {/* min-h-0: now that the panel no longer scrolls, this is the only
+            scroller, and a flex child refuses to shrink below its content
+            without it — which pushed the footer past the panel's max-height. */}
+        <div className="px-6 py-4 max-h-72 min-h-0 overflow-y-auto">
           {months.length === 0 ? (
             <p className="text-sm text-gray-400">No months are available to request yet.</p>
           ) : (
@@ -152,6 +161,13 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
   );
 }
 
+// THE LABEL INK. Every 11px uppercase micro-label on this slip is gray-500, not
+// gray-400. They are not decoration: each one names the money figure beside it,
+// and gray-400 at 11px measures ~2.8:1 on white — under AA, and unreadable on a
+// phone in daylight. gray-500 is 4.83:1 at the same size, and index.css already
+// maps it onto the dark-mode ink ramp. The purely decorative gray-400 uses in
+// this file (the "(optional)" hint, the inline unit hint) stay as they are.
+//
 // One side of the breakdown. A component is dropped only when it is empty both
 // this month AND for the year — a head paid in an earlier month still belongs in
 // the cumulative column. Totals come from the payslip itself.
@@ -159,8 +175,8 @@ function Breakdown({ title, lines, total, totalLabel, ytd, ytdTotal }) {
   return (
     <div>
       <div className="flex items-baseline justify-between mb-2">
-        <h3 className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{title}</h3>
-        {ytd && <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{ytd.label}</span>}
+        <h3 className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">{title}</h3>
+        {ytd && <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">{ytd.label}</span>}
       </div>
       <table className="w-full text-sm">
         <tbody>
@@ -205,7 +221,7 @@ function PayslipDetail({ slip, onClose }) {
       <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
         <div className="flex justify-between items-start gap-4 pb-3 border-b-2 border-amber-600">
           <div>
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Salary Slip</p>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">Salary Slip</p>
             <h2 className="card-title">{MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear}</h2>
           </div>
           <div className="flex items-center gap-2">
@@ -221,13 +237,13 @@ function PayslipDetail({ slip, onClose }) {
                 {RELEASE[releaseOf(slip)].label}
               </span>
             )}
-            <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700">✕</button>
+            <button type="button" onClick={onClose} aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
           </div>
         </div>
 
         <div className="flex justify-between items-end gap-6 py-5 border-b border-gray-200">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Net pay</p>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">Net pay</p>
             <div className="text-3xl font-semibold tabular-nums">{inr(slip.netPay)}</div>
             {slip.paymentDate && (
               <p className="text-xs text-gray-500 mt-1">
@@ -243,9 +259,9 @@ function PayslipDetail({ slip, onClose }) {
             )}
           </div>
           <div className="text-right shrink-0">
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Gross</p>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">Gross</p>
             <div className="font-semibold tabular-nums">{inr(slip.grossSalary)}</div>
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400 mt-2">Deductions</p>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-500 mt-2">Deductions</p>
             <div className="font-semibold tabular-nums">−{inr(slip.totalDeductions)}</div>
           </div>
         </div>
@@ -278,7 +294,7 @@ function Details({ slip, counts }) {
       <div className="flex flex-wrap gap-x-8 gap-y-3 py-5 border-b border-gray-200">
         {counts.map(([label, value]) => (
           <div key={label}>
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{label}</p>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">{label}</p>
             <div className="font-semibold tabular-nums">{value}</div>
           </div>
         ))}
@@ -323,9 +339,9 @@ function ChangeRequestModal({ slip, busy, onSubmit, onClose }) {
           className="w-full border rounded-lg px-3 py-2 text-sm"
         />
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
           <button onClick={() => onSubmit(note.trim())} disabled={busy || !note.trim()}
-            className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50">
+            className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50">
             {busy ? 'Sending…' : 'Send to HR'}
           </button>
         </div>
@@ -344,16 +360,21 @@ function EmployerContributions({ slip }) {
   const cells = lines.concat([{ key: '__total', label: 'Total', amount: total, ytd: slip.ytd?.employerTotal }]);
   return (
     <div className="pt-4 mt-4 border-t border-gray-200">
-      <h3 className="text-[11px] font-semibold tracking-widest uppercase text-amber-700 mb-3">
+      {/* Sentence case at body size, unlike the 11px micro-labels elsewhere on
+          this slip: this is the line that explains the whole block is NOT a
+          deduction. Uppercased and letter-spaced at 11px it wrapped to three or
+          four lines on a phone and read as a badge rather than as the
+          explanation the employee needs. */}
+      <h3 className="text-sm font-semibold leading-snug text-amber-700 mb-3">
         Paid by the company on top of your salary — not deducted from you
       </h3>
       <div className="flex flex-wrap gap-x-8 gap-y-3">
         {cells.map((l) => (
           <div key={l.key}>
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{l.label}</p>
+            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">{l.label}</p>
             <div className={`tabular-nums ${l.key === '__total' ? 'font-semibold' : ''}`}>{inr(l.amount)}</div>
             {l.ytd != null && (
-              <p className="text-[11px] text-gray-400 tabular-nums">{slip.ytd?.label} {inr(l.ytd)}</p>
+              <p className="text-[11px] text-gray-500 tabular-nums">{slip.ytd?.label} {inr(l.ytd)}</p>
             )}
           </div>
         ))}

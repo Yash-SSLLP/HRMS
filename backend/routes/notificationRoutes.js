@@ -6,6 +6,7 @@
 const express = require('express');
 const {
   listNotifications,
+  countNotifications,
   markAllRead,
   markRead,
 } = require('../controllers/notificationController');
@@ -18,6 +19,8 @@ router.use(protect);
 
 // GET / — list current user's notifications; protected.
 router.get('/', listNotifications);
+// GET /count — just the unread number, for the top-bar bell's 20s poll; protected.
+router.get('/count', countNotifications);
 // PATCH /read-all — mark all of the user's notifications read; protected.
 router.patch('/read-all', markAllRead);
 // PATCH /:id/read — mark a single notification read; protected.

@@ -3,12 +3,17 @@
 // (global search, quick shortcuts, portal switcher, theme toggle, notification
 // bell, profile menu) and a <Suspense><Outlet/></Suspense> content area plus the
 // docked chat. `navItems`/`sectionTitle` select the admin vs employee portal.
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import api, { signOut } from '../api/client';
-import ChatDock from './ChatDock';
+// Lazy, not static. ChatDock is 962 lines (plus the image-compression helper it
+// pulls in) and it was landing in the EAGER index chunk on the strength of this
+// one import — downloaded and parsed by every visitor on every first paint,
+// including the login screen, the public letter/apply pages and every account
+// with chat switched off. It is rendered from one guarded expression at the
+// bottom of this file, so the code can arrive when that guard first passes.
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
@@ -18,6 +23,8 @@ import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
 import { hasPermission, hasAnyPermission, isViewOnly, isViewOnlyAccount, canUseAdminPortal } from '../config/permissions';
 import { formatDateTime12 } from '../utils/time';
+
+const ChatDock = lazy(() => import('./ChatDock'));
 
 const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
 
@@ -177,6 +184,12 @@ function NotificationBell({ isAdmin, portal }) {
   const [unread, setUnread] = useState(0);
   const navigate = useNavigate();
   const wrapRef = useRef(null);
+  // The polling effect below is keyed on `portal` alone, so its closure captures
+  // `open` once, at mount, and would forever read it as false. A ref is read at
+  // tick time instead — which is the whole point: the tick has to know whether
+  // the panel is on screen right now to decide between the list and the count.
+  const openRef = useRef(false);
+  useEffect(() => { openRef.current = open; }, [open]);
 
   // Only show notifications for the portal being viewed, so a dual-role user
   // (e.g. an HRManager who is also an employee) doesn't see their admin
@@ -191,12 +204,32 @@ function NotificationBell({ isAdmin, portal }) {
     }
   };
 
+  // The POLL fetches the badge number only. The bell is closed nearly all of
+  // the time, so the 20-second tick used to re-download up to 50 whole
+  // notification documents — each with a full-length `body` paragraph the
+  // dropdown renders at line-clamp-3 — to update a single integer. That is ~180
+  // oversized responses per user per hour, per portal.
+  //
+  // The full `load()` still runs on mount and on every open, because `items`
+  // has to be populated before the dropdown is first shown (and both openNotif
+  // and markAll mutate it) — so nothing about the list's freshness changes; a
+  // notification that arrives while the panel is open still appears the moment
+  // it is reopened, and the badge that tells you to reopen it is live.
+  const loadCount = async () => {
+    try {
+      const { data } = await api.get('/notifications/count', { params: { audience: portal } });
+      setUnread(data.unreadCount);
+    } catch {
+      // Silent — same reason as above.
+    }
+  };
+
   useEffect(() => {
     load();
     // Skip ticks on a hidden tab and catch up when it returns: a portal left
     // open in a background tab all day should not keep polling.
-    const t = setInterval(() => { if (!document.hidden) load(); }, NOTIF_POLL_MS);
-    const onVisibility = () => { if (!document.hidden) load(); };
+    const t = setInterval(() => { if (!document.hidden) (openRef.current ? load : loadCount)(); }, NOTIF_POLL_MS);
+    const onVisibility = () => { if (!document.hidden) (openRef.current ? load : loadCount)(); };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       clearInterval(t);
@@ -264,15 +297,24 @@ function NotificationBell({ isAdmin, portal }) {
   return (
     <div className="relative" ref={wrapRef}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen((o) => {
+          // The 20s poll only keeps the badge live now, so the list is
+          // refreshed on the way in rather than continuously.
+          if (!o) load();
+          return !o;
+        })}
         className="topbar-icon-btn"
         aria-label="Notifications"
       >
         <FiBell size={19} strokeWidth={2} />
         {unread > 0 && (
           <span
-            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none"
-            style={{ boxShadow: '0 0 0 2px var(--surface)' }}
+            /* `bell-badge` carries both the punch-out ring against the top bar
+               AND the pulse (index.css). The ring used to live in an inline
+               style here, but an animation beats an inline declaration for the
+               property it animates, so the two had to be folded together in the
+               keyframes rather than fighting. */
+            className="bell-badge absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none"
           >
             {unread > 9 ? '9+' : unread}
           </span>
@@ -337,7 +379,7 @@ function NavPill({ to, icon, label }) {
       to={to}
       title={label}
       aria-label={label}
-      className="inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold transition-all duration-150 hover:brightness-110 active:scale-95"
+      className="nav-pill inline-flex items-center justify-center gap-1.5 shrink-0 rounded-full px-3 sm:px-3.5 py-1.5 text-sm font-semibold transition-all duration-150 hover:brightness-110 active:scale-95"
       style={{
         background: 'var(--pill-bg)',
         color: 'var(--pill-ink)',
@@ -390,7 +432,7 @@ function ApprovalsPill({ to }) {
       to={to}
       title={label}
       aria-label={label}
-      className="relative inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold transition-all duration-150 hover:brightness-110 active:scale-95"
+      className="nav-pill relative inline-flex items-center justify-center gap-1.5 shrink-0 rounded-full px-3 sm:px-3.5 py-1.5 text-sm font-semibold transition-all duration-150 hover:brightness-110 active:scale-95"
       style={{
         background: 'var(--pill-bg)',
         color: 'var(--pill-ink)',
@@ -423,7 +465,7 @@ function ChatLauncher() {
       onClick={toggle}
       title="Chats"
       aria-label="Chats"
-      className="group relative inline-flex items-center gap-1.5 shrink-0 rounded-full px-2.5 sm:px-3.5 py-1.5 text-sm font-semibold text-white transition-all duration-150 hover:brightness-105 active:scale-95"
+      className="nav-pill group relative inline-flex items-center justify-center gap-1.5 shrink-0 rounded-full px-3 sm:px-3.5 py-1.5 text-sm font-semibold text-white transition-all duration-150 hover:brightness-105 active:scale-95"
       style={{
         // WhatsApp brand gradient; a deeper teal-green when the dock is open.
         background: open
@@ -707,15 +749,21 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
     <div className="relative" ref={wrapRef}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2.5 pl-1 pr-2.5 py-1 rounded-full hover:bg-gray-100 transition-colors"
+        className="keep-round flex items-center gap-2.5 pl-1 pr-2.5 py-1 rounded-full hover:bg-gray-100 transition-colors"
       >
         <span className="avatar-ring inline-flex rounded-full"><UserAvatar user={user} /></span>
         {/* The name only earns its ~120px from lg up — below that the top bar
             needs the room for the shortcuts, search and portal switch, and the
             same details are one tap away inside this menu. */}
+        {/* `items-start` means the two labels are sized by their CONTENT, not
+            stretched to the column — so `truncate` had nothing to truncate
+            against and a long name simply grew past the 11rem cap and off the
+            right edge of the bar (measured 301px in an 176px box). `w-full`
+            hands each label the column's width back, which is the width the
+            ellipsis needs. */}
         <span className="hidden lg:flex flex-col items-start leading-tight max-w-[11rem]">
-          <span className="text-sm font-semibold text-gray-800 truncate">{user?.firstName} {user?.lastName}</span>
-          <span className="text-[11px] text-gray-500 truncate">
+          <span className="w-full text-sm font-semibold text-gray-800 truncate">{user?.firstName} {user?.lastName}</span>
+          <span className="w-full text-[11px] text-gray-500 truncate">
             {employeeCode ? `${employeeCode} · ${roleLabel}` : roleLabel}
           </span>
         </span>
@@ -1042,7 +1090,13 @@ export default function Layout({ navItems = [], sectionTitle }) {
 
         {/* The chat dock is now launched from the top bar and hidden until opened
             (no always-on bottom bar), so no extra bottom padding is needed here. */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6">
+        {/* The page gutter is a utility, not an index.css rule: `main{padding}`
+            is a type selector and loses to this class every time — the
+            phone-gutter rule in index.css had been dead since it was written.
+            Three stops rather than two: a phone wants its width back (14px), a
+            tablet reads better with more air than a phone but less than a
+            desktop (20px), and the desktop keeps the 24px it always had. */}
+        <main className="flex-1 min-w-0 p-3.5 sm:p-5 lg:p-6">
           <Suspense fallback={<PageSkeleton />}>
             <div key={pathname} className="page-transition">
               <Outlet />
@@ -1092,7 +1146,11 @@ export default function Layout({ navItems = [], sectionTitle }) {
           sends messages perfectly well today and must keep the dock. Only God —
           whose every unsafe method `protect` itself refuses — has nothing to do
           in here. */}
-      {chatEnabled && !isViewOnlyAccount(user) && <ChatDock />}
+      {chatEnabled && !isViewOnlyAccount(user) && (
+        // No fallback: the dock is a floating launcher, so a spinner in the
+        // corner while its chunk arrives would be noise, not progress.
+        <Suspense fallback={null}><ChatDock /></Suspense>
+      )}
     </div>
   );
 }
