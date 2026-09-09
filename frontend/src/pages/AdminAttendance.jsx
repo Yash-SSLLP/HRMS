@@ -17,7 +17,7 @@ import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
-import { formatHours, formatTime12, toYMD } from '../utils/time';
+import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
@@ -157,7 +157,14 @@ export default function AdminAttendance() {
   const [records, setRecords] = useState([]);
   const [sortedRecords, dateSort, toggleDateSort] = useDateSort(records);
   const [employees, setEmployees] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — changing the
+  // year/month/day/employee filter, or reloading after a manual entry, a delete
+  // or a settings save — keeps the rows on screen and just marks them stale:
+  // setting `loading` again swapped a month of rows for a single skeleton row,
+  // collapsing the table and snapping it back a moment later, so touching a
+  // filter threw the whole page around. Same split AdminAnalytics uses.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
   const [showModal, setShowModal] = useState(false);
@@ -219,7 +226,7 @@ export default function AdminAttendance() {
   };
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const params = new URLSearchParams();
@@ -239,6 +246,7 @@ export default function AdminAttendance() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -422,6 +430,7 @@ export default function AdminAttendance() {
   return (
     <div>
       <PageHeader title="Attendance">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         {!viewOnly && (
           <button onClick={openSettings}
             className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
@@ -640,7 +649,18 @@ export default function AdminAttendance() {
                 <td className="px-4 py-3">
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
                 </td>
-                <td className="px-4 py-3 font-mono">{fmtTime(r.checkIn)}</td>
+                {/* Lateness rides under the punch-in rather than taking a tenth
+                    column: the arrival time is the thing it qualifies, and the
+                    row is already carrying photos, two distance chips and the
+                    actions. Same red "+1h 20m" the monthly view uses. */}
+                <td className="px-4 py-3 font-mono">
+                  <div className={r.lateMinutes > 0 ? 'text-red-600 font-medium' : ''}>{fmtTime(r.checkIn)}</div>
+                  {r.lateMinutes > 0 && (
+                    <div className="text-[10px] text-red-600" title={`Late by ${formatDuration(r.lateMinutes)}`}>
+                      +{formatDuration(r.lateMinutes)}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-3 font-mono">{fmtTime(r.checkOut)}</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-center gap-1">

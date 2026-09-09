@@ -1,17 +1,24 @@
 /**
  * EmployeeTeam — "My Team" manager view (employee portal), for anyone who is a
- * reporting manager in the org chart. Loads direct reports and today's presence
+ * reporting manager in the org chart. Loads direct reports and a day's presence
  * from GET /manager/team and GET /manager/presence, shows a presence board +
  * attendance heatmap, and exports team attendance as an Excel workbook via
  * GET /manager/attendance/export (the endpoint streams .xlsx, not CSV).
+ *
+ * The manager can also account for an absence on the spot: POST
+ * /manager/team/:profileId/leave files and grants a real leave request for one
+ * of their reports, so a day nobody explains does not settle as loss of pay by
+ * default.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import AuthImage from '../components/AuthImage';
 import PresenceBoardView from '../components/PresenceBoardView';
+import AbsentAlert from '../components/AbsentAlert';
+import MarkOnLeaveModal from '../components/MarkOnLeaveModal';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import SearchableSelect from '../components/SearchableSelect';
 import { formatTime12, formatHours, toYMD } from '../utils/time';
@@ -21,6 +28,12 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
 
 const fmtTime = (d) => formatTime12(d) || '-';
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
+const fmtDay = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
+
+// Dismissing the absent banner is remembered under this namespace, per day. HR's
+// org-wide board keeps its own (see AdminPresence) so silencing one team does not
+// silence the whole company.
+const ALERT_NS = 'hrms.team.absentAlert';
 
 // Small line under a punch time: WFH tag, or distance from the geofence
 // (red when beyond the allowed radius).
@@ -65,8 +78,22 @@ export default function EmployeeTeam() {
   const now = new Date();
   const [team, setTeam] = useState([]);
   const [board, setBoard] = useState(null);
+  // Only the FIRST load blanks the page. Changing the day, or reloading after
+  // marking someone on leave, keeps the board on screen and just marks it stale —
+  // setting `loading` again would collapse the page and snap it back.
   const [loading, setLoading] = useState(true);
+  const [boardLoaded, setBoardLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+
+  // The day the presence board is showing. Everything the board drives — the
+  // heading, the absent banner, the day a marked leave lands on — reads this.
+  const [boardDate, setBoardDate] = useState(toYMD(new Date()));
+  const boardRef = useRef(null);
+  const [focusTab, setFocusTab] = useState(null);
+
+  // Who the mark-on-leave dialog is open for; the dialog owns the rest.
+  const [markTarget, setMarkTarget] = useState(null);
 
   // Team attendance export (scoped to my direct reports by the backend).
   const [exYear, setExYear] = useState(now.getFullYear());
@@ -127,14 +154,10 @@ export default function EmployeeTeam() {
   };
 
   const load = async () => {
-    setLoading(true); setError('');
+    setError('');
     try {
-      const [t, b] = await Promise.all([
-        api.get('/manager/team'),
-        api.get('/manager/presence'),
-      ]);
-      setTeam(t.data.team || []);
-      setBoard(b.data);
+      const { data } = await api.get('/manager/team');
+      setTeam(data.team || []);
       await loadDuty();
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load your team');
@@ -143,22 +166,70 @@ export default function EmployeeTeam() {
     }
   };
 
+  // Kept apart from `load` because the day picker re-fetches only this, and a
+  // marked leave has to be read back from the server rather than patched in.
+  const loadBoard = async (date = boardDate) => {
+    setRefreshing(true);
+    try {
+      const { data } = await api.get(`/manager/presence?date=${date}`);
+      setBoard(data);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load that day');
+    } finally {
+      setRefreshing(false);
+      setBoardLoaded(true); // a failed day still ends the first-load spinner
+    }
+  };
+
   useEffect(() => { load(); }, []);
+  useEffect(() => { loadBoard(boardDate); /* eslint-disable-next-line */ }, [boardDate]);
+
+  const jumpToAbsent = () => {
+    setFocusTab({ key: 'absent' }); // a new object each time, so repeat clicks land
+    boardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const isToday = board ? board.isToday !== false : true;
+  const dayLabel = isToday ? 'today' : fmtDay(board?.date || boardDate);
 
   return (
     <div>
-      <PageHeader title="My Team" subtitle="Your direct reports · who's in, on leave or absent today. Approve their leave under Approvals." />
+      <PageHeader
+        title="My Team"
+        subtitle={`Your direct reports · who's in, on leave or absent ${isToday ? 'today' : `on ${dayLabel}`}. Approve their leave under Approvals.`}
+      >
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      </PageHeader>
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
-      {loading ? (
+      {/* Nobody is chased before the cut-off; after it, an unexplained absence is
+          worth a manager's attention the moment they open the page. A team is
+          short enough to name a few of and still be read. */}
+      <AbsentAlert board={board} date={boardDate} storageKey={ALERT_NS} maxNames={4} onSeeWho={jumpToAbsent} />
+
+      {loading || !boardLoaded ? (
         <div className="text-gray-500 mt-4">Loading team…</div>
       ) : (
         <div className="mt-4">
-          {/* Read-only presence board (present / on leave / absent, with selfies) */}
+          {/* Presence board (present / on leave / absent, with selfies) for the
+              chosen day. The department select is the client-side one, since
+              /manager/presence answers with the whole team and no filter. */}
           {board && (team.length > 0) && (
-            <div className="mb-5">
-              <PresenceBoardView board={board} />
+            <div ref={boardRef} className="mb-5 scroll-mt-4">
+              <h2 className="card-title mb-3">{isToday ? 'Team today' : `Team on ${dayLabel}`}</h2>
+              <PresenceBoardView
+                board={board}
+                date={boardDate}
+                // Clearing the picker falls back to today rather than asking the
+                // server for "no day" and quietly getting today anyway.
+                onDateChange={(d) => setBoardDate(d || toYMD(new Date()))}
+                searchable
+                deptFilter
+                lateFirst
+                onMarkLeave={setMarkTarget}
+                focusTab={focusTab}
+              />
             </div>
           )}
 
@@ -261,7 +332,10 @@ export default function EmployeeTeam() {
 
           {/* Team — today's attendance */}
           <div className="bg-white shadow rounded-lg p-5 mb-4">
-            <h2 className="card-title mb-3">Team today ({team.length})</h2>
+            <h2 className="card-title mb-1">Everyone reporting to you ({team.length})</h2>
+            {/* Always today, whatever day the board above is set to — say so, now
+                that the two can disagree. */}
+            <p className="text-xs text-gray-500 mb-3">Today&apos;s punches for the whole team.</p>
             {team.length === 0 ? (
               <p className="text-sm text-gray-400 italic">No one reports to you yet. Ask your admin to set reporting managers on the Org Chart.</p>
             ) : (
@@ -326,6 +400,18 @@ export default function EmployeeTeam() {
           )}
         </div>
       )}
+
+      {/* Account for one absent day on a report's behalf. Keyed on the target so
+          a fresh dialog opens per person, rather than one carrying the last
+          person's half-typed reason. */}
+      <MarkOnLeaveModal
+        key={markTarget?.profileId}
+        person={markTarget}
+        date={boardDate}
+        endpoint={(profileId) => `/manager/team/${profileId}/leave`}
+        onClose={() => setMarkTarget(null)}
+        onDone={() => loadBoard()}
+      />
     </div>
   );
 }

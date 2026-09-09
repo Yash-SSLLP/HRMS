@@ -38,11 +38,18 @@ export default function AdminConfirmations() {
   const currentUser = useAuthStore((s) => s.user);
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState('All');
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // filter, or reloading after a confirm/extend — keeps the rows on screen and
+  // just marks them stale: setting `loading` again swapped four rows for a single
+  // skeleton row, collapsing the table by ~143px and snapping it back a moment
+  // later, so acting on one row visibly threw the whole page around. Same split
+  // AdminAnalytics uses for its department filter.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const qs = status && status !== 'All' ? `?status=${encodeURIComponent(status)}` : '';
@@ -52,6 +59,7 @@ export default function AdminConfirmations() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
   useEffect(() => { load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -75,6 +83,7 @@ export default function AdminConfirmations() {
   return (
     <div>
       <PageHeader title="Confirmations" subtitle="Probation & confirmation tracking">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value)}

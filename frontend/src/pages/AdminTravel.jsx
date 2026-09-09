@@ -34,13 +34,20 @@ const inr = new Intl.NumberFormat('en-IN', {
 
 export default function AdminTravel() {
   const [items, setItems] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // filter, or reloading after an approve/reject/complete or a reimbursement
+  // decision — keeps the rows on screen and just marks them stale: setting
+  // `loading` again swapped the whole body for one skeleton row, collapsing the
+  // table and snapping it back a moment later, so acting on one row threw the
+  // page around. Same split AdminConfirmations/AdminAnalytics use.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [busyId, setBusyId] = useState('');
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const { data } = await api.get(`/travel${statusFilter ? `?status=${statusFilter}` : ''}`);
@@ -49,6 +56,7 @@ export default function AdminTravel() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -98,6 +106,7 @@ export default function AdminTravel() {
   return (
     <div>
       <PageHeader title="Travel Requests" subtitle="Review and approve employee travel.">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm">
           <option value="">All statuses</option>

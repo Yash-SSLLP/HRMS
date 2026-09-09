@@ -1046,6 +1046,148 @@ const listMyRequests = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Record a single day of leave for SOMEBODY ELSE, already approved.
+ *
+ * Two screens reach this: a reporting manager looking at their own absent report
+ * (POST /api/manager/team/:profileId/leave) and HR looking at the org-wide
+ * presence board (POST /api/leave/employees/:profileId/mark). They differ ONLY in
+ * who may target whom — the caller does that check and hands the profile in.
+ * Everything that touches money lives here, once, because two copies of it would
+ * drift and the drift would show up in somebody's salary.
+ *
+ * It does NOT write an approved row directly. It builds a real request and grants
+ * it through the same path a self-filed one takes, so `consumeBalanceOrThrow`
+ * deducts the balance, `stampLeaveAttendance` marks the day, and the employee is
+ * told — none of which happens if the row is simply inserted as Approved. The
+ * actor is seated as the one approving rung, so the record says who decided it;
+ * advanceApproval refuses to finalise a request no rung attests to.
+ *
+ * @param {Object} args
+ * @param {Object} args.profile - target EmployeeProfile, already authorised by the caller
+ * @param {Object} args.actor - req.user doing the marking
+ * @param {string} args.leaveType - one of LEAVE_TYPES
+ * @param {Date} args.day - IST midnight of the day being marked
+ * @param {string} [args.reason]
+ * @returns {Promise<{request: Object, split: Object}>}
+ * @throws Error with .status 400 (bad type) or 409 (day already covered)
+ */
+async function grantOneDayLeaveFor({ profile, actor, leaveType, day, reason }) {
+  if (!LEAVE_TYPES.includes(leaveType)) {
+    const err = new Error(`Choose a leave type. Allowed: ${LEAVE_TYPES.join(', ')}`);
+    err.status = 400;
+    throw err;
+  }
+  const dayEnd = new Date(day);
+  dayEnd.setDate(day.getDate() + 1);
+
+  // Already covered? Marking twice deducts the balance twice and leaves two
+  // approved rows over one day, which every later screen reads as two days off.
+  const existing = await LeaveRequest.findOne({
+    employee: profile._id,
+    status: { $in: ['Pending', 'Approved'] },
+    startDate: { $lt: dayEnd },
+    endDate: { $gte: day },
+  }).lean();
+  if (existing) {
+    const err = new Error(existing.status === 'Approved'
+      ? 'That day is already covered by an approved leave.'
+      : 'They already have a leave request awaiting a decision for that day.');
+    err.status = 409;
+    throw err;
+  }
+
+  const note = (reason || '').trim() || 'Recorded on their behalf';
+  const split = await computeLeaveSplit(
+    profile._id, { leaveType, startDate: day, endDate: day, isHalfDay: false }, null
+  );
+
+  // Emergency leave is granted on filing and asks nobody, so it never enters a
+  // chain — the same branch applyForLeave takes.
+  if (isEmergencyType(leaveType)) {
+    const granted = await grantEmergencyLeave(profile, {
+      leaveType, startDate: day, endDate: day, isHalfDay: false, halfDaySession: undefined,
+      totalDays: 1, reason: note, split,
+    });
+    await notifyMarkedOnLeave(profile, granted.request, actor, note);
+    return { request: granted.request, split };
+  }
+
+  const request = await LeaveRequest.create({
+    employee: profile._id,
+    leaveType,
+    startDate: day,
+    endDate: day,
+    isHalfDay: false,
+    totalDays: 1,
+    paidDays: split.paidDays,
+    lopDays: split.lopDays,
+    reason: note,
+    approvalChain: [{ order: 1, approver: actor._id, status: 'Pending' }],
+    currentApprover: actor._id,
+  });
+  const approved = await advanceApproval(request, actor._id, 'approve', note, actor);
+  await notifyMarkedOnLeave(profile, approved, actor, note);
+  return { request: approved, split };
+}
+
+/** Tell the employee somebody else put them on leave — they did not ask for it. */
+async function notifyMarkedOnLeave(profile, request, actor, note) {
+  const who = `${actor.firstName || ''} ${actor.lastName || ''}`.trim() || 'Your manager';
+  const when = new Date(request.startDate).toLocaleDateString('en-IN', { dateStyle: 'medium', timeZone: 'Asia/Kolkata' });
+  await notify({
+    recipient: profile.user?._id || profile.user,
+    type: 'leave',
+    audience: 'employee',
+    title: 'You were marked on leave',
+    body: `${who} recorded ${when} as ${leaveLabel(request.leaveType)} for you. ${note}`,
+    link: 'leave',
+  }).catch(() => {});
+}
+
+/**
+ * HR / Admin records a day of leave for any employee inside their company wall.
+ *
+ * The manager route next door is scoped to direct reports, which is no use to an
+ * HR Manager — they usually have none, and the people they cover are the whole
+ * company. Same grant, different wall: `cannotManageProfile` is the portal-wide
+ * one (SuperAdmin passes, your own record never does, another company never does).
+ * @route POST /api/leave/employees/:profileId/mark  (needs leave.manage)
+ * @param {string} req.params.profileId - EmployeeProfile id
+ * @param {string} req.body.leaveType - one of LEAVE_TYPES
+ * @param {string} [req.body.date] - YYYY-MM-DD, defaults to today (IST)
+ * @param {string} [req.body.reason]
+ * @returns {{request: Object, split: {paidDays, lopDays}}} (201)
+ */
+const markLeaveForEmployee = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findById(req.params.profileId).populate('user', 'firstName lastName');
+  if (!profile) {
+    res.status(404);
+    throw new Error('That employee could not be found.');
+  }
+  if (cannotManageProfile(req, profile)) {
+    res.status(403);
+    // Two different refusals wear the same guard, so say which one it is.
+    throw new Error(String(profile.user?._id || profile.user) === String(req.user._id)
+      ? 'You cannot record leave for yourself here — file it from your own Leave page.'
+      : 'That employee is outside the companies you manage.');
+  }
+
+  const { leaveType, date, reason } = req.body;
+  const day = date ? new Date(`${date}T00:00:00+05:30`) : startOfDayIST(new Date());
+  if (Number.isNaN(day.getTime())) {
+    res.status(400);
+    throw new Error('That date could not be read.');
+  }
+  try {
+    const out = await grantOneDayLeaveFor({ profile, actor: req.user, leaveType, day, reason });
+    res.status(201).json(out);
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
+});
+
+/**
  * Apply for leave; builds the approval ladder and notifies the first approver
  * (or HR when there is no reporting manager).
  * @route POST /api/leave/me/requests
@@ -1981,4 +2123,14 @@ module.exports = {
   topLeaveApproverFor,
   releaseLeaveDay,
   leaveLabel,
+  // A manager marking an absent report on leave has to price and grant it the
+  // SAME way a self-filed request is, or balances and payroll drift from what
+  // the leave screens say. managerController reuses these rather than keeping a
+  // second copy of the quota rules.
+  computeLeaveSplit,
+  grantEmergencyLeave,
+  // One day of leave recorded for somebody else, already approved. The manager
+  // route and the HR route share this so the money side cannot drift.
+  grantOneDayLeaveFor,
+  markLeaveForEmployee,
 };

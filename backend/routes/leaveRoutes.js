@@ -17,6 +17,7 @@ const {
   rejectRequest,
   listBalances,
   upsertBalance,
+  markLeaveForEmployee,
 } = require('../controllers/leaveController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -50,6 +51,11 @@ router.get('/requests', listAllRequests);
 router.patch('/requests/:id/approve', approveRequest);
 // PATCH /requests/:id/reject — reject a leave request; protected, requires 'leave.manage'.
 router.patch('/requests/:id/reject', rejectRequest);
+// POST /employees/:profileId/mark — record one day of leave for an employee who
+// is absent, already approved. HR's equivalent of the manager route
+// (POST /manager/team/:profileId/leave): same grant, but walled by company
+// instead of by direct reports, since an HR Manager usually has no reports.
+router.post('/employees/:profileId/mark', markLeaveForEmployee);
 // GET /balances — list employee leave balances; protected, requires 'leave.manage'.
 router.get('/balances', listBalances);
 // PUT /balances/:employeeId/:year — set an employee's leave balance for a year; protected, requires 'leave.manage'.

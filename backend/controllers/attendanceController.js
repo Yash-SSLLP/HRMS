@@ -1362,6 +1362,10 @@ const listAll = asyncHandler(async (req, res) => {
   const office = settings.office;
   const out = records.map((r) => {
     const o = r.toJSON();
+    // How late this arrival was, measured from the employee's own shift start —
+    // the admin table shows it, and it is the same number payroll charges by, so
+    // it is computed here rather than re-derived per client.
+    o.lateMinutes = lateMinutes(r);
     const geo = resolveGeofence(r.employee, settings);
     o.checkInDistanceM = haversineMeters(geo.center, o.checkInLocation);
     o.checkOutDistanceM = haversineMeters(geo.center, o.checkOutLocation);
@@ -1966,9 +1970,10 @@ const todayBoard = asyncHandler(async (req, res) => {
 
 /**
  * Today's presence snapshot: who's present / on leave / absent (one row per active employee).
- * @route GET /api/attendance/presence-board?department=  (HR/Admin)
+ * @route GET /api/attendance/presence-board?department=&date=YYYY-MM-DD  (HR/Admin)
  * @param {string} [req.query.department] - filter, or 'all'
- * @returns {{date, counts, present, onLeave, absent, departments}}
+ * @param {string} [req.query.date] - the day to show; defaults to today (IST)
+ * @returns {{date, isToday, lateCutoff, counts, present, onLeave, absent, departments}}
  */
 // GET /api/attendance/presence-board?department=
 // A single "who's in / who's on leave / who's absent" snapshot for today, for
@@ -1976,9 +1981,14 @@ const todayBoard = asyncHandler(async (req, res) => {
 // same way from web or mobile) with approved leave that covers today, then lists
 // everyone else (active, non-exited) as absent. One row per active employee.
 const presenceBoard = asyncHandler(async (req, res) => {
-  const today = startOfDay(new Date());
+  // ?date= so HR can look back at an earlier day, the same way the manager board
+  // does. An unreadable value would become Invalid Date and match no punches at
+  // all, reporting the entire company absent — fall back to today instead.
+  const asked = req.query.date ? new Date(`${req.query.date}T00:00:00+05:30`) : null;
+  const today = startOfDay(asked && !Number.isNaN(asked.getTime()) ? asked : new Date());
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
+  const isToday = today.getTime() === startOfDay(new Date()).getTime();
 
   const { LeaveRequest } = require('../models/Leave');
 
@@ -2091,8 +2101,19 @@ const presenceBoard = asyncHandler(async (req, res) => {
 
   const departments = [...new Set(activeProfiles.map((p) => p.department).filter(Boolean))].sort();
 
+  // When lateness starts today, so a client knows whether "absent" yet means
+  // anything: before the cut-off people have simply not arrived. Same policy and
+  // arithmetic as the manager board, so the two can never disagree about when an
+  // absence is worth raising.
+  const policy = getLatePolicy();
+  const cutoffAt = new Date(today.getTime()
+    + ((policy.hour * 60) + policy.minute + (policy.graceMinutes || 0)) * 60000);
+
   res.json({
     date: today,
+    isToday,
+    // A past day is settled, so its absences are final rather than pending.
+    lateCutoff: { at: cutoffAt, passed: isToday ? Date.now() >= cutoffAt.getTime() : true },
     counts: {
       total: dept && dept !== 'all'
         ? present2.length + leave2.length + absent2.length

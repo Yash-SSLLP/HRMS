@@ -15,7 +15,14 @@ export default function AdminEvents() {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const [events, setEvents] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — switching the year,
+  // or reloading after a save/delete — keeps the rows on screen and just marks
+  // them stale: setting `loading` again swapped the whole list for a single
+  // skeleton row, collapsing the table and snapping it back a moment later, so
+  // editing one event visibly threw the page around. Same split AdminAnalytics
+  // and AdminConfirmations use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -24,7 +31,7 @@ export default function AdminEvents() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const { data } = await api.get(`/events?year=${year}`);
@@ -33,6 +40,7 @@ export default function AdminEvents() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -91,6 +99,7 @@ export default function AdminEvents() {
   return (
     <div>
       <PageHeader title="Events" subtitle="Creating an event notifies every employee and adds it to the shared calendar.">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={year} onChange={(e) => setYear(Number(e.target.value))}
           className="border rounded-lg px-3 py-2 text-sm">
           {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}

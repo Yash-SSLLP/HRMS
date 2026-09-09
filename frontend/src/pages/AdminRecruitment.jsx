@@ -143,7 +143,16 @@ export default function AdminRecruitment() {
   const [companies, setCompanies] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [selectedJob, setSelectedJob] = useState('');
+  // Only the FIRST load blanks the Job Openings table. Every later fetch — and
+  // almost every action on this page ends in one: shortlist, reject, onboard,
+  // save a job or candidate, create a Meet, generate/confirm/review documents,
+  // upload a résumé — keeps the job rows on screen and just marks them stale.
+  // Setting `loading` again swapped the whole table for a single skeleton row,
+  // collapsing it and snapping it back, so acting on one candidate threw the
+  // candidate list below it around. Same split AdminConfirmations/AdminAnalytics
+  // use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
   const [jobModal, setJobModal] = useState(false);
@@ -181,7 +190,7 @@ export default function AdminRecruitment() {
   const [users, setUsers] = useState([]);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const [jRes, cRes] = await Promise.all([
@@ -192,7 +201,7 @@ export default function AdminRecruitment() {
       setCandidates(cRes.data.candidates);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setRefreshing(false); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [selectedJob]);
   useEffect(() => {
@@ -641,7 +650,9 @@ export default function AdminRecruitment() {
 
   return (
     <div>
-      <PageHeader title="Recruitment" subtitle="Post jobs, share the application form, screen candidates & run interviews" />
+      <PageHeader title="Recruitment" subtitle="Post jobs, share the application form, screen candidates & run interviews">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      </PageHeader>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {/* Jobs */}

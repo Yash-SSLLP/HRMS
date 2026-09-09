@@ -85,9 +85,12 @@ export default function ExitClearanceInbox({ onCount }) {
                   <div key={s.key} className="mt-2 bg-gray-50 border rounded-lg p-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-sm font-medium text-gray-800">{s.title}</div>
+                      {/* Both chips carry the border — Pending's is transparent — so ticking
+                          the last item only repaints it. Give Pending no border and the row
+                          grows 2px, twitching the checklist under the cursor mid-tick. */}
                       {s.completed
                         ? <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Cleared</span>
-                        : <span className="text-xs text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">Pending</span>}
+                        : <span className="text-xs text-gray-500 bg-gray-100 border border-transparent rounded px-1.5 py-0.5">Pending</span>}
                     </div>
                     <p className="text-xs text-gray-500 mb-2">Tick each item once it has been handed back to the company.</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">

@@ -25,7 +25,14 @@ const blank = { name: '', code: '', description: '', isActive: true };
 export default function AdminOrgMasters() {
   const [kind, setKind] = useState('Designation');
   const [masters, setMasters] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — switching between
+  // Designations and Grades, or reloading after a save/delete — keeps the rows on
+  // screen and just marks them stale: setting `loading` again swapped the whole
+  // list for a three-line skeleton, collapsing the table and snapping it back a
+  // moment later, so every tab switch and every delete threw the page around.
+  // Same split AdminAnalytics/AdminConfirmations use.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -33,7 +40,7 @@ export default function AdminOrgMasters() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const { data } = await api.get('/org-masters', { params: { kind } });
@@ -42,6 +49,7 @@ export default function AdminOrgMasters() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -98,18 +106,22 @@ export default function AdminOrgMasters() {
   return (
     <div>
       <PageHeader title="Org Masters" subtitle="Designations & grades">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + Add
         </button>
       </PageHeader>
 
+      {/* The border lives on the base and only its colour changes: when the
+          border belonged to the inactive branch alone, each toggle grew one
+          button 2px and shoved the other sideways. */}
       <div className="flex flex-wrap gap-2 mb-4">
         {KINDS.map((k) => (
           <button key={k.value} onClick={() => setKind(k.value)}
-            className={`px-4 py-2 text-sm rounded-lg ${kind === k.value
-              ? 'bg-gray-900 text-white hover:bg-gray-700'
-              : 'border hover:bg-gray-50'}`}>
+            className={`px-4 py-2 text-sm rounded-lg border ${kind === k.value
+              ? 'border-transparent bg-gray-900 text-white hover:bg-gray-700'
+              : 'border-gray-200 hover:bg-gray-50'}`}>
             {k.label}
           </button>
         ))}

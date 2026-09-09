@@ -48,7 +48,14 @@ function employeeName(d) {
 
 export default function AdminInvestmentDeclarations() {
   const [declarations, setDeclarations] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // or FY filter, or reloading after a verify/reject — keeps the rows on screen
+  // and just marks them stale: setting `loading` again swapped the whole tbody for
+  // a single skeleton row, collapsing the table and snapping it back a moment
+  // later, so acting on one row visibly threw the page around. Same split
+  // AdminConfirmations / AdminAnalytics use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [fyFilter, setFyFilter] = useState('');
@@ -56,7 +63,7 @@ export default function AdminInvestmentDeclarations() {
   const [actingId, setActingId] = useState('');
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const params = new URLSearchParams();
@@ -69,6 +76,7 @@ export default function AdminInvestmentDeclarations() {
       setError(err.response?.data?.message || 'Failed to load declarations');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -102,6 +110,7 @@ export default function AdminInvestmentDeclarations() {
   return (
     <div>
       <PageHeader title="Investment Declarations" subtitle="Form 12BB submissions">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}

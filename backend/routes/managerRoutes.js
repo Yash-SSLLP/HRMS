@@ -6,7 +6,7 @@
  */
 const express = require('express');
 const {
-  listTeam, teamPresence, listTeamLeave, approveTeamLeave, rejectTeamLeave,
+  listTeam, teamPresence, markReportOnLeave, listTeamLeave, approveTeamLeave, rejectTeamLeave,
   teamHeatmap, teamDayDetails, exportTeamAttendance,
   listTeamRestDayWork, decideTeamRestDayWork,
 } = require('../controllers/managerController');
@@ -21,8 +21,12 @@ router.use(protect);
 
 // GET /team — list the caller's direct reports; protected (team-scoped).
 router.get('/team', listTeam);
-// GET /presence — team presence snapshot; protected (team-scoped).
+// GET /presence — team presence snapshot (?date=YYYY-MM-DD); protected (team-scoped).
 router.get('/presence', teamPresence);
+// POST /team/:profileId/leave — put an absent direct report on leave for a day;
+// protected (team-scoped). Grants through the shared leave path, so the balance,
+// the attendance stamp and the employee's notification all happen as usual.
+router.post('/team/:profileId/leave', markReportOnLeave);
 // GET /attendance/heatmap — team attendance heatmap; protected (team-scoped).
 router.get('/attendance/heatmap', teamHeatmap);
 // GET /attendance/day — team attendance details for a day; protected (team-scoped).

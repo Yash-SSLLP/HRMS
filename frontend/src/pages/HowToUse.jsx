@@ -173,9 +173,12 @@ function TableOfContents({ toc, activeId, onJump }) {
                 href={`#${h.id}`}
                 onClick={(e) => { e.preventDefault(); onJump(h.id); }}
                 className={[
-                  'block -ml-px border-l-2 py-1.5 leading-snug transition-colors',
+                  // font-medium and border-l-2 stay on the BASE so the active item never
+                  // re-measures: a heavier label could re-wrap in the 240px sidebar and
+                  // shove every entry below it down a line. Active is colour only.
+                  'block -ml-px border-l-2 py-1.5 leading-snug font-medium transition-colors',
                   h.level === 3 ? 'pl-6 text-[13px]' : 'pl-4',
-                  active ? 'border-current accent-text font-medium' : 'border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300',
+                  active ? 'border-current accent-text' : 'border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300',
                 ].join(' ')}
               >
                 {h.title}
@@ -295,9 +298,11 @@ export default function HowToUse() {
       {/* Controls: guide switch (admin) + edit actions */}
       <div className="flex flex-wrap items-center gap-2 mb-5">
         {isAdminPortal && (
+          // font-medium stays on the BASE of both pills, never in the active branch: they are
+          // content-sized, so re-weighting the label on click resized them and slid the row.
           <div className="inline-flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
-            <button onClick={() => setTab('hr')} className={`text-sm px-4 py-1.5 rounded-full transition-colors ${tab === 'hr' ? 'accent-bg text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>HR / Admin guide</button>
-            <button onClick={() => setTab('employee')} className={`text-sm px-4 py-1.5 rounded-full transition-colors ${tab === 'employee' ? 'accent-bg text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>Employee guide</button>
+            <button onClick={() => setTab('hr')} className={`text-sm font-medium px-4 py-1.5 rounded-full transition-colors ${tab === 'hr' ? 'accent-bg text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>HR / Admin guide</button>
+            <button onClick={() => setTab('employee')} className={`text-sm font-medium px-4 py-1.5 rounded-full transition-colors ${tab === 'employee' ? 'accent-bg text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>Employee guide</button>
           </div>
         )}
         {!editing && <span className="text-xs text-gray-400">{toc.length} sections</span>}

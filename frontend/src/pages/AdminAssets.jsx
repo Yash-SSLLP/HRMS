@@ -161,10 +161,14 @@ export default function AdminAssets() {
           : <button onClick={() => openAssign(null)} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Assign asset</button>}
       </PageHeader>
 
+      {/* font-medium sits on the base, not the active branch: a weight that changes
+          with selection re-measures the label and slides the tab beside it on every
+          click. The active tab is told apart by colour and the border-b-2 alone, and
+          border-transparent already reserves that border's width on the inactive one. */}
       <div className="flex gap-1 mb-4 border-b border-gray-200">
         {[['assets', 'Assets'], ['assignments', 'Assignments']].map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 -mb-px border-b-2 text-sm ${tab === k ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium ${tab === k ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {label}
           </button>
         ))}

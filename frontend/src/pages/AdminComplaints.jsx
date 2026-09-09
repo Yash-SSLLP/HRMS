@@ -27,7 +27,14 @@ export default function AdminComplaints() {
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
   const [complaints, setComplaints] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — toggling "Show all
+  // complaints", or reloading after handling one — keeps the rows on screen and
+  // just marks them stale: setting `loading` again swapped the whole list for a
+  // single skeleton row, collapsing the table and snapping it back a moment
+  // later, so saving a status visibly threw the page around. Same split
+  // AdminConfirmations/AdminAnalytics use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [editing, setEditing] = useState(null); // complaint being handled
@@ -35,7 +42,7 @@ export default function AdminComplaints() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const { data } = await api.get(`/complaints/assigned${isSuperAdmin && showAll ? '?all=true' : ''}`);
@@ -44,6 +51,7 @@ export default function AdminComplaints() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -72,6 +80,7 @@ export default function AdminComplaints() {
   return (
     <div>
       <PageHeader title="Complaints Inbox">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         {isSuperAdmin && (
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />

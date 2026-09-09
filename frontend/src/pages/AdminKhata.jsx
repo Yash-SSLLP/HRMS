@@ -884,13 +884,17 @@ export default function AdminKhata() {
         cashbook, so the company&apos;s cash and each person&apos;s wallet can never disagree.
       </p>
 
+      {/* font-medium and border-b-2 live on the base, never on the active
+          branch: bolding only the selected tab would re-measure its label and
+          slide every tab to its right across on each click. Selection is
+          colour alone. */}
       <div className="flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
         {TABS
           .filter(([k]) => (k !== 'accounts' || isSuperAdmin) && (k !== 'sanctions' || isApprover))
           .map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
-              className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px ${
-                tab === key ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ${
+                tab === key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               {label}
               {key === 'approvals' && pending.length > 0 && (
                 <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs">{pending.length}</span>

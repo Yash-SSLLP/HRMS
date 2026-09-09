@@ -34,14 +34,21 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-di
 // ============ Requests tab ============
 
 // All leave requests with a status filter and HR force-decide override actions.
-function RequestsTab() {
+// `onRefreshing` reports a quiet re-fetch to the page shell, which owns the header.
+function RequestsTab({ onRefreshing }) {
   const [requests, setRequests] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // filter, or reloading after a force approve/reject or a double-cut — keeps the
+  // rows on screen: setting `loading` again swapped the whole table for a single
+  // skeleton row, collapsing it and snapping it back a moment later, so touching
+  // one row threw everything below it around. The header says "Updating…"
+  // instead. Same split AdminConfirmations / AdminAnalytics use.
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('Pending');
 
   const load = async () => {
-    setLoading(true);
+    onRefreshing?.(true);
     setError('');
     try {
       const params = new URLSearchParams();
@@ -52,6 +59,7 @@ function RequestsTab() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      onRefreshing?.(false);
     }
   };
 
@@ -201,20 +209,24 @@ const blankGrant = () => ({
   ML: { granted: 182 },
 });
 
-function BalancesTab() {
+function BalancesTab({ onRefreshing }) {
   const [year, setYear] = useState(new Date().getFullYear());
   const [employees, setEmployees] = useState([]);
   const [balances, setBalances] = useState([]);
+  // First load only — see the note in RequestsTab. Typing a different year, or
+  // reloading after saving a grant, must not collapse a table of every employee
+  // into one skeleton row and bounce the page back.
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blankGrant());
+  // `saving` gates the modal's submit button only; it is not the table's flag.
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    onRefreshing?.(true);
     setError('');
     try {
       const [empRes, balRes] = await Promise.all([
@@ -227,6 +239,7 @@ function BalancesTab() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      onRefreshing?.(false);
     }
   };
 
@@ -782,9 +795,16 @@ export default function AdminLeave() {
 
   const [tab, setTab] = useTabParam('requests', tabs.map((t) => t.id));
 
+  // The tabs own their own data, but the header is up here, so they report a
+  // quiet re-fetch (filter/year change, or a reload after an action) to it
+  // rather than blanking their own table. See the note in RequestsTab.
+  const [refreshing, setRefreshing] = useState(false);
+
   return (
     <div>
-      <PageHeader title="Leave" />
+      <PageHeader title="Leave">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      </PageHeader>
 
       {/* Segmented control (.seg-track / .seg-btn in index.css) — the same raised
           pill the Regularization page uses, so the two setup screens match. */}
@@ -801,8 +821,8 @@ export default function AdminLeave() {
       </div>
 
       {tab === 'hierarchy' && canSetup ? <ApprovalHierarchyTab />
-        : tab === 'balances' ? <BalancesTab />
-        : <RequestsTab />}
+        : tab === 'balances' ? <BalancesTab onRefreshing={setRefreshing} />
+        : <RequestsTab onRefreshing={setRefreshing} />}
     </div>
   );
 }

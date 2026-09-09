@@ -105,7 +105,14 @@ export default function EmployeeAttendance() {
   // the day only counts once the top of the leave hierarchy approves it.
   const [todayLeave, setTodayLeave] = useState(null);
   const [leaveNotice, setLeaveNotice] = useState(''); // what the server said after such a punch
+  // Only the FIRST load blanks the table. Every later fetch — switching month or
+  // year, and the reload after a check-in/check-out — keeps the rows on screen
+  // and just marks them stale: setting `loading` again swapped a full month of
+  // rows for one skeleton row, collapsing the table and snapping it back a
+  // moment later, so punching in threw the whole page around. Same split
+  // AdminAnalytics and AdminConfirmations use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [, setTick] = useState(0); // forces a re-render each second for the live clock
@@ -332,7 +339,7 @@ export default function EmployeeAttendance() {
   // Load the month's attendance records + today's punch, plus the pay-policy
   // summary (optional — swallowed if the endpoint isn't available).
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const [attRes, polRes] = await Promise.all([
@@ -348,6 +355,7 @@ export default function EmployeeAttendance() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -375,7 +383,9 @@ export default function EmployeeAttendance() {
 
   return (
     <div>
-      <PageHeader title="Attendance" />
+      <PageHeader title="Attendance">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      </PageHeader>
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

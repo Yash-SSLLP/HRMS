@@ -72,7 +72,14 @@ export default function AdminExit() {
   const [employees, setEmployees] = useState([]);
   const [hrUsers, setHrUsers] = useState([]);
   const [allUsers, setAllUsers] = useState([]); // active users for no-dues assignee pickers
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // filter, or reloading after initiate/save/complete/cancel — keeps the rows on
+  // screen and just marks them stale: setting `loading` again swapped the whole
+  // tbody for a single skeleton row, collapsing the table and snapping it back a
+  // moment later, so acting on one exit visibly threw the page around. Same split
+  // AdminAnalytics/AdminConfirmations use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
@@ -86,7 +93,7 @@ export default function AdminExit() {
   const [mail, setMail] = useState(null); // editable compose modal payload
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const params = new URLSearchParams();
@@ -107,6 +114,7 @@ export default function AdminExit() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -386,6 +394,7 @@ export default function AdminExit() {
   return (
     <div>
       <PageHeader title="Exit Requests">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
           className="border rounded-lg px-2 py-1 text-sm">
           <option value="">All statuses</option>

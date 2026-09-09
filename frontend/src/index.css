@@ -659,6 +659,14 @@ html.dark .card-title { color: var(--dk-ink-1); }
   line-height: 1.25rem;
   border-radius: 0.5rem;
   color: #6b7280;
+  /* Every tab carries the ACTIVE weight, in every state. The weight used to be
+     added by .is-active alone, and because the track is an inline-flex of
+     content-sized buttons, bolding one label re-measured the whole strip:
+     measured 1.56px narrower on the tab losing focus, 2.74px wider on the one
+     gaining it, and every tab to its right nudged 1.17px sideways on each click.
+     Selection is carried entirely by the pill (background + shadow) and colour,
+     which are paint-only, so the strip is now dimensionally frozen. */
+  font-weight: 600;
   transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 .seg-btn:hover { color: #1f2937; background-color: rgba(255, 255, 255, .6); }
@@ -666,7 +674,6 @@ html.dark .card-title { color: var(--dk-ink-1); }
 .seg-btn.is-active:hover {
   background-color: #ffffff;
   color: #111827;
-  font-weight: 600;
   box-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 0 0 1px rgba(0, 0, 0, .05);
 }
 

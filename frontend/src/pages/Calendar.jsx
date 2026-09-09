@@ -82,7 +82,16 @@ export default function Calendar() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1); // 1-12
   const [events, setEvents] = useState([]);
+  // Only a month CHANGE blanks the board. A refresh of the month already on
+  // screen — after a reminder is saved or deleted — keeps the tiles and the
+  // roll-up where they are and just marks them stale: setting `loading` again
+  // wiped every tile and collapsed the footer's 12-entry list to a single
+  // "Loading…" line, so deleting one reminder threw the whole page around and
+  // snapped it back. Same split AdminAnalytics/AdminConfirmations use for their
+  // filters. Changing month is the one case that must still clear — entries are
+  // keyed by day-of-month, so the old month's would paint on the wrong days.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);  // entry open in the detail modal
   const [dayList, setDayList] = useState(null);    // day number open in the "all entries" modal
@@ -98,11 +107,17 @@ export default function Calendar() {
   const [optionsLoaded, setOptionsLoaded] = useState(false);
 
   // Reload the month's entries whenever the visible year/month changes.
-  const load = async () => {
-    setLoading(true);
+  // `inPlace` is passed by the refreshes that stay on the month already shown
+  // (after a reminder is saved or deleted): those leave the grid untouched while
+  // the request runs — see the note on `refreshing` above.
+  const load = async ({ inPlace = false } = {}) => {
+    if (!inPlace) {
+      setLoading(true);
+      // Drop the previous month's entries so they can never paint on the wrong days.
+      setEvents([]);
+    }
+    setRefreshing(true);
     setError('');
-    // Drop the previous month's entries so they can never paint on the wrong days.
-    setEvents([]);
     try {
       const { data } = await api.get(`/celebrations/calendar?month=${iso(year, month, 1).slice(0, 7)}`);
       // An org-wide comp-off day arrives as a holiday carrying its type. It gets
@@ -118,6 +133,7 @@ export default function Calendar() {
       setError(err.response?.data?.message || 'Failed to load calendar');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -291,7 +307,7 @@ export default function Calendar() {
       // The reminder may have moved to another month — jump there so it's visible.
       const [fy, fm] = form.date.split('-').map(Number);
       if (fy !== year || fm !== month) { setYear(fy); setMonth(fm); }
-      else await load();
+      else await load({ inPlace: true });
     } catch (err) {
       setFormError(err.response?.data?.message || 'Could not save the reminder.');
     } finally {
@@ -315,7 +331,7 @@ export default function Calendar() {
     try {
       await api.delete(`/reminders/${id}`);
       setSelected(null);
-      await load();
+      await load({ inPlace: true });
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not delete the reminder.');
     }
@@ -412,6 +428,7 @@ export default function Calendar() {
   return (
     <div>
       <PageHeader title="Calendar">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <button onClick={goToday} className="px-3 py-1.5 border rounded-lg hover:bg-gray-50 text-sm">Today</button>
         <button onClick={prev} className="px-3 py-1.5 border rounded-lg hover:bg-gray-50 text-sm">‹ Prev</button>
         <span className="text-sm font-medium text-gray-800 w-40 text-center">

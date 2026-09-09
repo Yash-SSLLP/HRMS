@@ -30,7 +30,13 @@ export default function AdminTasks() {
   const [projects, setProjects] = useState([]);
   const [users, setUsers] = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // filter, or reloading after a save/delete — keeps the rows on screen and just
+  // marks them stale: setting `loading` again swapped the whole tbody for a single
+  // skeleton row, collapsing the table and snapping it back a moment later, so
+  // touching one row threw the page around. Same split AdminConfirmations uses.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -38,7 +44,7 @@ export default function AdminTasks() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const [tRes, pRes, uRes] = await Promise.all([
@@ -51,7 +57,7 @@ export default function AdminTasks() {
       setUsers(uRes.data.users);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setRefreshing(false); }
   };
   useEffect(() => { load(); }, [statusFilter]);
 
@@ -90,6 +96,7 @@ export default function AdminTasks() {
   return (
     <div>
       <PageHeader title="Tasks">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
           <option value="">All statuses</option>
           {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}

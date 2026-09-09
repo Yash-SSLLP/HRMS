@@ -26,7 +26,14 @@ const blank = { employee: '', title: '', category: 'Other', dueDate: '', descrip
 export default function AdminOnboarding() {
   const [tasks, setTasks] = useState([]);
   const [users, setUsers] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — changing the employee
+  // filter, or reloading after a save/delete — keeps the rows on screen and just
+  // marks them stale: setting `loading` again swapped the whole task list for a
+  // single skeleton row, collapsing the table and snapping it back a moment later,
+  // so editing one task visibly threw the page around. Same split AdminAnalytics
+  // and AdminConfirmations use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [filterEmployee, setFilterEmployee] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -35,7 +42,7 @@ export default function AdminOnboarding() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const params = filterEmployee ? `?employee=${filterEmployee}` : '';
@@ -47,7 +54,7 @@ export default function AdminOnboarding() {
       setUsers(uRes.data.users);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setRefreshing(false); }
   };
   useEffect(() => { load(); }, [filterEmployee]);
 
@@ -84,6 +91,7 @@ export default function AdminOnboarding() {
   return (
     <div>
       <PageHeader title="Onboarding">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <SearchableSelect value={filterEmployee} onChange={(e) => setFilterEmployee(e.target.value)} className="px-3 py-2 text-sm border rounded-lg">
           <option value="">All employees</option>
           {peopleOptions(users, (u) => `${u.firstName} ${u.lastName}`, { keep: [filterEmployee] })}

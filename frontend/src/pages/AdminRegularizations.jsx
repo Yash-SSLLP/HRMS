@@ -62,14 +62,19 @@ function RequestsTab() {
     return null;
   };
   const [items, setItems] = useState([]);
+  // Only the FIRST load blanks the queue. Every later fetch — changing the status
+  // filter, or reloading after a decision — keeps the rows on screen and just
+  // marks them stale: setting `loading` again swapped the rows for a single
+  // skeleton row, collapsing the table and snapping it back a moment later, so
+  // filtering the queue visibly threw the page around and the reviewer lost
+  // their place in it. Same split AdminConfirmations / AdminAnalytics use.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  // `quiet` refetches without taking the table away: after deciding one row the
-  // queue has to stay on screen, or the reviewer loses their place in it.
-  const load = async ({ quiet } = {}) => {
-    if (!quiet) setLoading(true);
+  const load = async () => {
+    setRefreshing(true);
     setError('');
     try {
       const { data } = await api.get(`/regularizations${statusFilter ? `?status=${statusFilter}` : ''}`);
@@ -78,6 +83,7 @@ function RequestsTab() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -91,7 +97,7 @@ function RequestsTab() {
     }
     try {
       await api.patch(`/regularizations/${r._id}/status`, { status, reviewNote });
-      await load({ quiet: true });
+      await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Update failed');
     }
@@ -106,11 +112,17 @@ function RequestsTab() {
             You approve HR’s own requests.
           </p>
         ) : <span />}
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-          className="border rounded-lg px-3 py-2 text-sm">
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        {/* The rows no longer disappear while a refetch is in flight, so this is
+            the only sign anything is happening — it sits beside the filter that
+            triggered it. The PageHeader belongs to the shell, not this tab. */}
+        <div className="flex items-center gap-2">
+          {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="border rounded-lg px-3 py-2 text-sm">
+            <option value="">All statuses</option>
+            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
       </div>
 
       {error && (

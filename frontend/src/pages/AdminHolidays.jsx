@@ -56,7 +56,14 @@ export default function AdminHolidays() {
   const [tab, setTab] = useState('holidays'); // 'holidays' | 'festivals'
   const [year, setYear] = useState(thisYear);
   const [holidays, setHolidays] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — switching the year,
+  // or reloading after an add/edit/delete/import/seed — keeps the rows on screen
+  // and just marks them stale: setting `loading` again swapped a full year of
+  // holidays for a single skeleton row, collapsing the table and snapping it back
+  // a moment later, so adding one festival visibly threw the whole page around.
+  // Same split AdminAnalytics and AdminConfirmations use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -75,7 +82,7 @@ export default function AdminHolidays() {
   const [seeding, setSeeding] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       // Festivals are the newer of the two calendars; a backend that predates
@@ -91,6 +98,7 @@ export default function AdminHolidays() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -257,6 +265,7 @@ export default function AdminHolidays() {
   return (
     <div>
       <PageHeader title="Holidays & Festivals">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={year} onChange={(e) => setYear(Number(e.target.value))}
           className="border rounded-lg px-3 py-2 text-sm">
           {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}

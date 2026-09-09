@@ -10,10 +10,10 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const Setting = require('../models/Setting');
 const { LeaveRequest } = require('../models/Leave');
-const { advanceApproval } = require('./leaveController');
+const { advanceApproval, grantOneDayLeaveFor } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { haversineMeters } = require('../utils/geo');
-const { lateMinutes } = require('../utils/workday');
+const { lateMinutes, getLatePolicy } = require('../utils/workday');
 const {
   computeHeatmapWindow, computeDayDetails, runAttendanceExport,
   buildRestDayClaims, applyRestDayDecision,
@@ -116,9 +116,20 @@ const listTeam = asyncHandler(async (req, res) => {
 });
 
 /**
- * Team presence board for today: who's present / on leave / absent among reports.
- * @route GET /api/manager/presence
- * @returns {{date, counts, present, onLeave, absent}}
+ * Team presence board: who's present / on leave / absent among reports.
+ *
+ * Defaults to today, but takes ?date=YYYY-MM-DD so a manager can look back at an
+ * earlier day — the board is the natural place to ask "who was missing on the
+ * 3rd", and it already holds every person and their punches.
+ *
+ * The reply also carries `lateCutoff`, which is what stops the absent alert from
+ * crying wolf: before the late-marking time (Setting.latePolicy + its grace
+ * window) nobody is late yet, so a team that simply has not arrived must not be
+ * reported as missing. Computed here rather than in each client so the web and
+ * the app can never disagree about when the alert is due, and only ever `passed`
+ * for TODAY — a past day is settled, and a future one has not happened.
+ * @route GET /api/manager/presence?date=YYYY-MM-DD
+ * @returns {{date, isToday, lateCutoff, counts, present, onLeave, absent}}
  */
 // GET /api/manager/presence — read-only "who's in / on leave / absent" today,
 // scoped to the caller's direct reports. Same shape as the admin presence board
@@ -129,9 +140,13 @@ const teamPresence = asyncHandler(async (req, res) => {
   const byId = new Map(reports.map((p) => [String(p._id), p]));
   const ids = reports.map((p) => p._id);
 
-  const today = startOfDayIST(new Date());
+  // An unparseable ?date= would silently become Invalid Date and match nothing,
+  // reporting the whole team absent. Fall back to today instead.
+  const asked = req.query.date ? new Date(`${req.query.date}T00:00:00+05:30`) : null;
+  const today = startOfDayIST(asked && !Number.isNaN(asked.getTime()) ? asked : new Date());
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
+  const isToday = today.getTime() === startOfDayIST(new Date()).getTime();
 
   const [records, leaves] = await Promise.all([
     Attendance.find({ employee: { $in: ids }, date: { $gte: today, $lt: tomorrow }, checkIn: { $ne: null } })
@@ -201,13 +216,81 @@ const teamPresence = asyncHandler(async (req, res) => {
     .map((p) => personCore(p))
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  // When "late" starts, in IST, plus the forgiveness window on top of it — the
+  // same numbers attendance marks lateness by, so the alert fires exactly when
+  // the first person actually counts as late.
+  const policy = getLatePolicy();
+  // `today` is midnight IST as an absolute instant, and the policy is an IST
+  // wall-clock time, so the cut-off is just that many minutes later — added to
+  // the timestamp directly, which is server-timezone agnostic.
+  const cutoffMinutes = (policy.hour * 60) + policy.minute + (policy.graceMinutes || 0);
+  const cutoffAt = new Date(today.getTime() + cutoffMinutes * 60000);
+  // Only TODAY can be "not yet due": a past day is settled and a future one has
+  // not happened, so neither should suppress the list.
+  const cutoffPassed = isToday ? Date.now() >= cutoffAt.getTime() : true;
+
   res.json({
     date: today,
+    isToday,
+    lateCutoff: { at: cutoffAt, passed: cutoffPassed },
     counts: { total: reports.length, present: present.length, onLeave: onLeave.length, absent: absent.length },
     present,
     onLeave,
     absent,
   });
+});
+
+/**
+ * Put an absent direct report on leave for a day, on their behalf.
+ *
+ * The manager is looking at a name in the Absent column and knows why — a phone
+ * call, a message, a family emergency. Without this the day stays an unexplained
+ * absence until somebody files a request retroactively, which mostly never
+ * happens, and payroll settles it as loss of pay by default.
+ *
+ * It creates a REAL leave request and grants it through the SAME code a
+ * self-filed one goes through, rather than writing an approved row directly:
+ * `computeLeaveSplit` prices the paid/LOP split against the monthly quota, and
+ * `advanceApproval` finalises it — which is what deducts the balance
+ * (consumeBalanceOrThrow), stamps the day onto attendance (stampLeaveAttendance)
+ * and tells the employee. Duplicating any of that here would drift from what the
+ * leave screens and payroll believe. Emergency Leave has its own grant path
+ * (it needs nobody's approval), so it is routed there instead.
+ *
+ * The manager is seated as the single approving rung, so the record says who
+ * decided it — an approved leave nobody attests to is exactly what
+ * advanceApproval refuses to create.
+ * @route POST /api/manager/team/:profileId/leave
+ * @param {string} req.params.profileId - EmployeeProfile id; must be a direct report
+ * @param {string} req.body.leaveType - one of LEAVE_TYPES
+ * @param {string} [req.body.date] - YYYY-MM-DD, defaults to today (IST)
+ * @param {string} [req.body.reason]
+ * @returns {{request: Object, split: {paidDays, lopDays}}} (201)
+ */
+const markReportOnLeave = asyncHandler(async (req, res) => {
+  // Only your own reports — the wall every route on this router uses. HR has the
+  // company-wide equivalent (POST /leave/employees/:profileId/mark); both hand
+  // the profile to the same grant so neither can price a day differently.
+  const reports = await myReportProfiles(req.user._id);
+  const profile = reports.find((p) => String(p._id) === String(req.params.profileId));
+  if (!profile) {
+    res.status(403);
+    throw new Error('That employee is not one of your direct reports.');
+  }
+
+  const { leaveType, date, reason } = req.body;
+  const day = date ? new Date(`${date}T00:00:00+05:30`) : startOfDayIST(new Date());
+  if (Number.isNaN(day.getTime())) {
+    res.status(400);
+    throw new Error('That date could not be read.');
+  }
+  try {
+    const out = await grantOneDayLeaveFor({ profile, actor: req.user, leaveType, day, reason });
+    res.status(201).json(out);
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
 });
 
 /**
@@ -383,6 +466,7 @@ const decideTeamRestDayWork = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  markReportOnLeave,
   listTeam,
   teamPresence,
   listTeamLeave,

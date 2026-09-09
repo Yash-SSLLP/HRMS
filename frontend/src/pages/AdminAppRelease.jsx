@@ -38,7 +38,15 @@ export default function AdminAppRelease() {
 
   const [release, setRelease] = useState(null);
   const [store, setStore] = useState(null);
+  // Only the FIRST load blanks the page. The reload after a successful publish
+  // used to set `loading` again, and everything below the header is gated on it:
+  // the fact grid became a one-line "Loading…" and the whole publish form (or the
+  // repo/reference panel) UNMOUNTED, so the page collapsed to a couple of inches
+  // and sprang back the moment the request returned — right as the operator was
+  // reading the "Published…" banner. `refreshing` marks the data stale instead
+  // and changes nothing structural. Same split AdminConfirmations/AdminAnalytics use.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
   const [file, setFile] = useState(null);
@@ -49,7 +57,7 @@ export default function AdminAppRelease() {
   const [done, setDone] = useState('');
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     try {
       const { data } = await api.get('/app/release');
       setRelease(data.release);
@@ -58,6 +66,7 @@ export default function AdminAppRelease() {
       setError(err.response?.data?.message || 'Could not load the current build.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -124,7 +133,9 @@ export default function AdminAppRelease() {
 
   return (
     <div>
-      <PageHeader title="App Release" subtitle="The Android build every phone is offered" />
+      <PageHeader title="App Release" subtitle="The Android build every phone is offered">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      </PageHeader>
 
       {error && <div className="mb-4 rounded-lg bg-red-50 text-red-700 px-4 py-3 text-sm">{error}</div>}
       {done && <div className="mb-4 rounded-lg bg-green-50 text-green-700 px-4 py-3 text-sm">{done}</div>}

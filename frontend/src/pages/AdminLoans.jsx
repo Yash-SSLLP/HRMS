@@ -28,7 +28,14 @@ const blank = { employee: '', type: 'Salary Advance', principal: '', emi: '', te
 export default function AdminLoans() {
   const [loans, setLoans] = useState([]);
   const [users, setUsers] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // filter, or reloading after a create/approve/reject/repayment — keeps the rows
+  // on screen and just marks them stale: setting `loading` again swapped the whole
+  // list for a single skeleton row, collapsing the table and snapping it back a
+  // moment later, so acting on one row threw the rest of the page around. Same
+  // split AdminConfirmations and AdminAnalytics use for their filters.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -36,7 +43,7 @@ export default function AdminLoans() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     // Load the two lists independently so a failing employee lookup doesn't
     // blank the whole page (and vice versa).
@@ -50,6 +57,7 @@ export default function AdminLoans() {
     if (uRes.status === 'fulfilled') setUsers(uRes.value.data.users);
     else if (lRes.status === 'fulfilled') setError(uRes.reason?.response?.data?.message || 'Could not load the employee list for the form · reload and try again.');
     setLoading(false);
+    setRefreshing(false);
   };
   useEffect(() => { load(); }, [statusFilter]);
 
@@ -92,6 +100,7 @@ export default function AdminLoans() {
   return (
     <div>
       <PageHeader title="Loans & Advances">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
           <option value="">All statuses</option>
           {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}

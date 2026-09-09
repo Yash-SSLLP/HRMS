@@ -105,13 +105,21 @@ export default function AdminPayslipRequests() {
   const tabs = useMemo(() => (canSanction ? [...TABS, SELF_TAB] : TABS), [canSanction]);
   const [tab, setTab] = useTabParam('pending', tabs.map((t) => t.key));
   const [rows, setRows] = useState([]);
+  // Only the FIRST load blanks the table. `load` is keyed on `tab`, so every tab
+  // switch refetches through the same function — setting `loading` again swapped
+  // the rows for a single skeleton row, collapsing the table and snapping it back
+  // a moment later, so clicking a tab threw the whole page around. `refreshing`
+  // marks the rows stale instead and changes nothing structural. Same split
+  // AdminConfirmations and AdminAnalytics use.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [counts, setCounts] = useState({ pending: 0, released: 0, self: 0 });
 
-  // `quiet` keeps the table up while a release step refetches both tabs.
+  // `quiet` is for the refetch after a row action: the rows stay up either way
+  // now, but the header should not flash "Updating…" over a per-row spinner.
   const load = useCallback(async ({ quiet } = {}) => {
-    if (!quiet) setLoading(true);
+    if (!quiet) setRefreshing(true);
     try {
       // Every tab is fetched so the counts on them are real, not guesses. The
       // sanction queue is a different endpoint behind a different gate, so a
@@ -129,6 +137,7 @@ export default function AdminPayslipRequests() {
       toast.error(err.response?.data?.message || 'Could not load payslip requests');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [tab, canSanction]);
 
@@ -140,7 +149,7 @@ export default function AdminPayslipRequests() {
       await api.patch(`/payroll/${p._id}/release/${action}`);
       toast.success(confirmText);
       // Quiet: the counts on both tabs still have to be exact after each step,
-      // but the table must not blank between them — the per-row spinner is the
+      // but nothing else should move between them — the per-row spinner is the
       // only movement a three-step release should show.
       await load({ quiet: true });
     } catch (err) {
@@ -264,7 +273,9 @@ export default function AdminPayslipRequests() {
 
   return (
     <div>
-      <PageHeader title="Payslip Requests" />
+      <PageHeader title="Payslip Requests">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      </PageHeader>
       <p className="text-sm text-gray-500 mb-4 max-w-3xl">
         Employees ask for their payslip here rather than downloading it themselves. Check the figures and correct them
         if needed, approve the request, preview the document, then finalise — only then can the employee download it.

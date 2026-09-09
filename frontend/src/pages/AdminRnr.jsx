@@ -31,7 +31,14 @@ export default function AdminRnr() {
 
   const [eom, setEom] = useState('');            // userId
   const [keyByDept, setKeyByDept] = useState({}); // { [department]: userId }
-  const [loading, setLoading] = useState(false);
+  // Only the FIRST load blanks the page. Every later fetch — changing the year or
+  // month select, or reloading after an announce — keeps the two award cards on
+  // screen and just marks them stale: setting `loading` again swapped the whole
+  // form for a one-line "Loading…", collapsing the page and snapping it back a
+  // moment later, so picking a month visibly threw everything around. Same split
+  // AdminAnalytics and AdminConfirmations use for their filters.
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const announced = award?.status === 'Announced';
@@ -43,7 +50,7 @@ export default function AdminRnr() {
   }, []);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     try {
       const { data } = await api.get(`/rnr?year=${year}&month=${month}`);
       const a = data.award || null;
@@ -59,6 +66,7 @@ export default function AdminRnr() {
       toast.error('Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [year, month]);
@@ -120,7 +128,9 @@ export default function AdminRnr() {
 
   return (
     <div>
-      <PageHeader title="Rewards & Recognition" subtitle="Pick the monthly Employee of the Month and one Key Achiever per department - kept secret until you announce." />
+      <PageHeader title="Rewards & Recognition" subtitle="Pick the monthly Employee of the Month and one Key Achiever per department - kept secret until you announce.">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      </PageHeader>
 
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">

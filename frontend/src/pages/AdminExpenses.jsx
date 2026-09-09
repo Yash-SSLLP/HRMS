@@ -28,7 +28,13 @@ const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR',
 
 export default function AdminExpenses() {
   const [expenses, setExpenses] = useState([]);
+  // Only the FIRST load blanks the table. Every later fetch — changing the status
+  // filter, or reloading after an approve/reject/reimburse — keeps the rows on
+  // screen and just marks them stale: setting `loading` again swapped the whole
+  // claim list for a single skeleton row, collapsing the table and snapping it
+  // back a moment later. Same split AdminConfirmations/AdminAnalytics use.
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
   const [payFor, setPayFor] = useState(null); // expense being reimbursed
@@ -38,7 +44,7 @@ export default function AdminExpenses() {
   const [paying, setPaying] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError('');
     try {
       const res = await api.get('/expenses', { params: filter ? { status: filter } : {} });
@@ -47,6 +53,7 @@ export default function AdminExpenses() {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -98,6 +105,7 @@ export default function AdminExpenses() {
   return (
     <div>
       <PageHeader title="Expense Claims">
+        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={filter} onChange={(e) => setFilter(e.target.value)}
           className="px-3 py-2 text-sm border rounded-lg">
           <option value="">All statuses</option>
