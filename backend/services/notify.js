@@ -13,13 +13,16 @@ const { pushToUsers } = require('./push');
 
 /**
  * Notify a single recipient.
- * @param {{recipient:string, type?:string, title:string, body?:string, link?:string, data?:object}} input
+ * @param {{recipient:string, sender?:string, type?:string, title:string, body?:string, link?:string, data?:object}} input
  * @returns {Promise<Notification>}
  */
-async function notify({ recipient, type = 'general', audience = 'all', title, body, link, data }) {
+async function notify({ recipient, sender, type = 'general', audience = 'all', title, body, link, data }) {
   if (!recipient || !title) throw new Error('notify requires recipient and title');
 
-  const doc = await Notification.create({ recipient, type, audience, title, body, link });
+  // `sender` is optional and only set for person-to-person notifications, so a
+  // reply can be addressed. Omitted, the field is simply absent, as it is on
+  // every notification the system itself raises.
+  const doc = await Notification.create({ recipient, sender, type, audience, title, body, link });
 
   // Fire push without blocking the caller.
   pushToUsers(recipient, {

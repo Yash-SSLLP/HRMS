@@ -24,7 +24,7 @@ import InterviewsBanner from '../components/InterviewsBanner';
 import ManagerTeamStatus from '../components/ManagerTeamStatus';
 // Same icon set as the sidebar (config/nav.jsx): FiTool is Regularization,
 // FiUmbrella is Leave — the banner buttons point at exactly those pages.
-import { FiTool, FiUmbrella, FiClock, FiGift, FiInfo, FiX } from 'react-icons/fi';
+import { FiTool, FiUmbrella, FiClock, FiGift, FiInfo, FiX, FiCheck } from 'react-icons/fi';
 import { TbId } from 'react-icons/tb';
 import { formatDateTime12 } from '../utils/time';
 
@@ -74,6 +74,39 @@ export default function EmployeeDashboard() {
     try {
       await api.patch(`/celebrations/wishes/${id}/dismiss`);
     } catch (_) { /* the row is already gone locally; the next fetch reconciles */ }
+  };
+
+  // Saying thanks back. `thanksFor` is the id of the wish whose composer is
+  // open — one at a time, like BirthdayWisher's expander — and `thanksNote` its
+  // optional message.
+  const [thanksFor, setThanksFor] = useState(null);
+  const [thanksNote, setThanksNote] = useState('');
+  const [thanksSending, setThanksSending] = useState(false);
+  const [thanksError, setThanksError] = useState('');
+
+  // NOT optimistic, unlike dismiss above. Dismissing only hides a local row, so
+  // guessing right is free; this one pings another person, and telling somebody
+  // their thanks was sent when it was not is the wrong way to be wrong. The
+  // row's `thankedAt` is set from the confirmed response instead.
+  const sendThanks = async (wish) => {
+    setThanksSending(true);
+    setThanksError('');
+    try {
+      await api.post(`/celebrations/wishes/${wish._id}/thanks`, {
+        message: thanksNote.trim() || undefined,
+      });
+      setWishes((prev) => {
+        const next = prev.map((w) => (w._id === wish._id ? { ...w, thankedAt: new Date().toISOString() } : w));
+        writeCache('emp:wishes', next);
+        return next;
+      });
+      setThanksFor(null);
+      setThanksNote('');
+    } catch (err) {
+      setThanksError(err.response?.data?.message || 'Could not send your thanks');
+    } finally {
+      setThanksSending(false);
+    }
   };
   const [errors, setErrors] = useState({});
 
@@ -160,23 +193,80 @@ export default function EmployeeDashboard() {
           </h2>
           <ul className="space-y-2">
             {wishes.map((w) => (
-              <li key={w._id} className="text-sm flex items-start justify-between gap-2 group">
-                <span className="min-w-0">
-                  <span className="font-medium text-gray-800">{w.title}</span>
-                  {w.body && <span className="text-gray-600"> · {w.body}</span>}
-                  <span className="block text-[11px] text-gray-400">
-                    {formatDateTime12(w.createdAt, { year: false })}
+              <li key={w._id} className="text-sm group">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="font-medium text-gray-800">{w.title}</span>
+                    {w.body && <span className="text-gray-600"> · {w.body}</span>}
+                    <span className="block text-[11px] text-gray-400">
+                      {formatDateTime12(w.createdAt, { year: false })}
+                    </span>
                   </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => dismissWish(w._id)}
-                  aria-label="Dismiss this wish"
-                  title="Dismiss"
-                  className="shrink-0 p-1 rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-                >
-                  <FiX size={15} />
-                </button>
+                  <span className="shrink-0 flex items-center gap-1">
+                    {/* Three states, and only one of them is a button. Already
+                        thanked reads back as a fact; a wish with no `sender` was
+                        sent before wishes recorded who they came from, so there
+                        is nobody to address and it offers nothing rather than a
+                        control that would 400. */}
+                    {w.thankedAt ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 whitespace-nowrap">
+                        <FiCheck size={12} aria-hidden="true" /> Thanks sent
+                      </span>
+                    ) : w.sender ? (
+                      <button
+                        type="button"
+                        onClick={() => { setThanksFor(thanksFor === w._id ? null : w._id); setThanksNote(''); setThanksError(''); }}
+                        className="text-purple-700 hover:underline"
+                      >
+                        Say thanks
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => dismissWish(w._id)}
+                      aria-label="Dismiss this wish"
+                      title="Dismiss"
+                      className="shrink-0 p-1 rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    >
+                      <FiX size={15} />
+                    </button>
+                  </span>
+                </div>
+
+                {/* An inline expander rather than a modal — the same shape
+                    BirthdayWisher uses to compose a wish, so answering one looks
+                    like sending one. The note is optional: the button on its own
+                    is a complete reply. */}
+                {thanksFor === w._id && !w.thankedAt && (
+                  <div className="mt-2">
+                    <textarea
+                      rows={2}
+                      value={thanksNote}
+                      onChange={(ev) => setThanksNote(ev.target.value)}
+                      maxLength={280}
+                      placeholder={`Say thanks to ${w.sender?.firstName || 'them'}… (optional)`}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    />
+                    {thanksError && <div className="text-xs text-red-600 mt-1">{thanksError}</div>}
+                    <div className="flex justify-end gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setThanksFor(null)}
+                        className="px-3 py-1.5 text-xs border rounded-lg hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => sendThanks(w)}
+                        disabled={thanksSending}
+                        className="px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60"
+                      >
+                        {thanksSending ? 'Sending…' : 'Send thanks'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

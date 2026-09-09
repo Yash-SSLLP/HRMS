@@ -15,6 +15,7 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Company = require('../models/Company');
 const { enqueueMail } = require('../services/email');
+const { notify } = require('../services/notify');
 const { hiddenUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
 const { companyScopeFilter, viewerCompanyScope } = require('../utils/employeeScope');
 const { festivalsInRange } = require('../utils/festivalFeed');
@@ -42,6 +43,11 @@ const wishGoesByEmail = (user) => !!user && WISH_EMAIL_ROLES.includes(user.role)
 
 // How long a wish stays on the recipient's dashboard card after the occasion.
 const WISH_VISIBLE_DAYS_AFTER = 2;
+
+// Longest note that travels with a wish or a thanks. Both ends cap at the same
+// number because they are the same kind of message, and the two clients set
+// maxLength from it.
+const WISH_MESSAGE_MAX = 280;
 
 /**
  * The occasion date a wish is FOR, as a UTC instant, from a recurring
@@ -741,7 +747,7 @@ const sendWish = asyncHandler(async (req, res) => {
 
   const fromName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'A colleague';
   const toFirst = recipient.user.firstName || 'there';
-  const clean = (message || '').toString().trim().slice(0, 280);
+  const clean = (message || '').toString().trim().slice(0, WISH_MESSAGE_MAX);
 
   const OCCASIONS = {
     birthday: { label: 'Birthday', emoji: '🎂', line: `Happy birthday, ${toFirst}! Wishing you a wonderful day. 🎂` },
@@ -761,6 +767,11 @@ const sendWish = asyncHandler(async (req, res) => {
 
   await Notification.create({
     recipient: recipient.user._id,
+    // The sender as an ID, not just as words inside the title. The title has
+    // always named them, which is readable and unusable: the recipient could see
+    // who wished them and had no way to answer. This is what `thankWish` below
+    // addresses the reply to.
+    sender: req.user._id,
     type: 'celebration',
     title: `${emoji} ${fromName} sent you a ${occasion.toLowerCase()} wish`,
     body: wishLine,
@@ -801,6 +812,76 @@ const sendWish = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Recover the wisher for wishes written before `sender` existed.
+ *
+ * Those rows carry the sender only inside the title, in the exact shape
+ * `sendWish` writes it: `${emoji} ${fromName} sent you a ${occasion} wish`.
+ * That is a sentence, not a reference — so the "Say thanks" button had nothing
+ * to address and every wish already in the database was permanently unanswerable.
+ *
+ * Rather than a one-off migration nobody would remember to run, the name is
+ * resolved back to a User the first time the card is read, and the id is
+ * WRITTEN BACK. So it is a lazy migration: it touches only rows somebody is
+ * actually looking at, it happens once per row, and after it the ordinary
+ * `sender` path serves them — `thankWish` needs no legacy branch at all.
+ *
+ * THE MATCH IS DELIBERATELY STRICT. A wish is a message to a named person, and
+ * sending one to the wrong colleague is worse than not offering the button:
+ *   - the whole name must match `firstName + ' ' + lastName` exactly (an
+ *     aggregation expression, since the stored fields are separate);
+ *   - EXACTLY ONE user may match — two people called the same thing means the
+ *     title cannot say which, so neither is chosen;
+ *   - the user must still be active, so nobody thanks somebody who has left;
+ *   - `fromName` falls back to 'A colleague' when the sender had no name on
+ *     file, and that matches nobody, which is the right answer.
+ * Anything unresolved keeps `sender: null` and simply shows no button.
+ *
+ * @param {Object[]} rows lean Notification docs, mutated in place
+ */
+// The leading group is an OPTIONAL run of non-letters — the occasion emoji.
+// It must not be `\S*`: on a title that somehow carries no emoji, `\S*` eats
+// the first NAME WORD instead, and "Rahul Vishwakarma" resolves as
+// "Vishwakarma" — a near-miss that silently addresses the wrong colleague or
+// nobody at all. Matching only non-letters can never consume part of a name.
+const LEGACY_WISH_TITLE = /^(?:[^\p{L}\p{N}]+\s*)?(.+?)\s+sent you a .+ wish$/u;
+
+async function backfillWishSenders(rows) {
+  const legacy = rows.filter((w) => !w.sender && typeof w.title === 'string');
+  if (!legacy.length) return;
+
+  const byName = new Map(); // "Rahul Vishwakarma" -> [row, row]
+  for (const row of legacy) {
+    const m = LEGACY_WISH_TITLE.exec(row.title.trim());
+    const name = m && m[1] && m[1].trim();
+    if (!name) continue;
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(row);
+  }
+  if (!byName.size) return;
+
+  const names = [...byName.keys()];
+  // One query for every distinct name on the card, not one per row.
+  const matches = await User.aggregate([
+    { $match: { isActive: true } },
+    { $project: { fullName: { $trim: { input: { $concat: [{ $ifNull: ['$firstName', ''] }, ' ', { $ifNull: ['$lastName', ''] }] } } }, firstName: 1, lastName: 1 } },
+    { $match: { fullName: { $in: names } } },
+  ]);
+
+  const counts = new Map();
+  for (const u of matches) counts.set(u.fullName, (counts.get(u.fullName) || 0) + 1);
+
+  const writes = [];
+  for (const u of matches) {
+    if (counts.get(u.fullName) !== 1) continue;   // ambiguous name — pick nobody
+    for (const row of byName.get(u.fullName) || []) {
+      row.sender = { _id: u._id, firstName: u.firstName, lastName: u.lastName };
+      writes.push({ updateOne: { filter: { _id: row._id }, update: { $set: { sender: u._id } } } });
+    }
+  }
+  if (writes.length) await Notification.bulkWrite(writes, { ordered: false });
+}
+
+/**
  * List celebration wishes the caller has received (drives the dashboard card).
  * @route GET /api/celebrations/wishes/received?limit=
  * @param {number} [req.query.limit] - max rows, capped at 50 (default 10)
@@ -822,8 +903,18 @@ const receivedWishes = asyncHandler(async (req, res) => {
   })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .select('title body createdAt readAt expiresAt')
+    // `sender` and `thankedAt` drive the card's "Say thanks" action: who to
+    // address it to, and whether it has already been said. A wish sent before
+    // the sender field existed comes back with `sender: null`, and the clients
+    // hide the button for those rather than offering an action that cannot work.
+    .select('title body createdAt readAt expiresAt thankedAt sender')
+    .populate('sender', 'firstName lastName')
     .lean();
+
+  // Rows written before wishes recorded a sender get theirs recovered from the
+  // title here, once, so the card can offer "Say thanks" on them too.
+  await backfillWishSenders(wishes);
+
   res.json({ count: wishes.length, wishes });
 });
 
@@ -856,6 +947,79 @@ const dismissWish = asyncHandler(async (req, res) => {
   res.json({ id: wish._id, dismissed: true });
 });
 
+/**
+ * Thank the person who sent you a wish.
+ * @route POST /api/celebrations/wishes/:id/thanks  { message? }
+ * @param {string} req.params.id - the celebration notification's id
+ * @param {string} [req.body.message] - optional note, capped at 280 chars
+ * @returns {{id: string, thanked: true}}
+ * @sideeffect stamps thankedAt on the wish and notifies (and pushes to) the wisher
+ */
+// POST /api/celebrations/wishes/:id/thanks
+//
+// A wish was a one-way message: somebody typed a greeting on your birthday and
+// you had no way to answer it without hunting them down in chat. This closes
+// that loop with the smallest possible thing — one tap, optionally a note.
+//
+// It is `type: 'thanks'`, NOT 'celebration', and that choice is load-bearing.
+// `receivedWishes` selects on `type: 'celebration'`, so a thanks lands in the
+// wisher's notification bell (with a push, because this goes through `notify()`
+// where the wish itself does not) but NOT in their "Wishes for you" card. That
+// is both truthful — a thank-you is not a wish, and the card says "Wishes for
+// you" — and it is what makes a reply-to-a-reply impossible by construction
+// rather than by a guard somebody has to remember.
+const thankWish = asyncHandler(async (req, res) => {
+  // Same scoping as dismissWish: the caller's own row, and a wish rather than
+  // any other notification they happen to know the id of.
+  const wish = await Notification.findOne({
+    _id: req.params.id,
+    recipient: req.user._id,
+    type: 'celebration',
+  });
+  if (!wish) {
+    res.status(404);
+    throw new Error('Wish not found');
+  }
+  // Sent before wishes recorded who they were from. There is nobody to address,
+  // so this is a 400 that says why rather than a silent no-op.
+  if (!wish.sender) {
+    res.status(400);
+    throw new Error('This wish is too old to reply to — it did not record who sent it.');
+  }
+  if (wish.thankedAt) {
+    res.status(400);
+    throw new Error('You have already thanked them for this wish');
+  }
+  // Defensive: sendWish already refuses a self-wish, so this can only be reached
+  // by data that predates that rule or was written by hand.
+  if (String(wish.sender) === String(req.user._id)) {
+    res.status(400);
+    throw new Error('You cannot thank yourself');
+  }
+
+  const fromName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'A colleague';
+  const note = (req.body?.message || '').toString().trim().slice(0, WISH_MESSAGE_MAX);
+
+  // Stamped BEFORE the notify, and awaited: if the write fails the caller gets
+  // an error and can retry, whereas stamping afterwards would let a failed save
+  // leave the button live after the wisher had already been pinged.
+  wish.thankedAt = new Date();
+  await wish.save();
+
+  await notify({
+    recipient: wish.sender,
+    sender: req.user._id,
+    type: 'thanks',
+    // Personal, not admin work — it belongs in whichever portal the wisher is
+    // looking at. See the audience note on the Notification model.
+    audience: 'all',
+    title: `🙏 ${fromName} thanked you for your wish`,
+    body: note || `${fromName} says thank you!`,
+  });
+
+  res.json({ id: wish._id, thanked: true });
+});
+
 module.exports = {
-  todayCelebrations, upcomingCelebrations, monthCalendar, sendWish, receivedWishes, dismissWish,
+  todayCelebrations, upcomingCelebrations, monthCalendar, sendWish, receivedWishes, dismissWish, thankWish,
 };

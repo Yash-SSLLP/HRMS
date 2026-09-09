@@ -42,7 +42,7 @@ The dashboard is your landing page and works as a set of shortcuts. Tapping any 
 - **Announcements**, which you can dismiss individually. A dismissed notice stays dismissed for you.
 - The **Rewards and Recognition** banner during the days after HR announces the month's winners.
 - **Surveys** awaiting your response, and **interviews** you are scheduled to conduct.
-- **Wishes** colleagues have sent you for a birthday or work anniversary.
+- **Wishes** colleagues have sent you for a birthday or work anniversary. **Say thanks** on any of them to reply — a tap is enough, or add a short note — and they get it as a notification. Older wishes work too: the sender is recovered from the wish itself. The button is only missing where that is genuinely unclear — two colleagues share the name, or the sender has since left.
 - **Birthdays and celebrations** for the next 30 days — birthdays, work and wedding anniversaries, and your company's own anniversary. The card lists the first few; **See all** opens the rest. Tap **Wish** to send someone a greeting.
 - Your **attendance heatmap** — a calendar-style grid of the year so far.
 - **Snapshot cards**: leave remaining, pending requests, and your employee code, designation and department.
