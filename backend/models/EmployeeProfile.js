@@ -136,6 +136,19 @@ const employeeProfileSchema = new mongoose.Schema(
         message: 'A regularization can have at most 2 approval steps',
       },
     },
+    // How many regularizations THIS employee may raise for any one month, when
+    // the org-wide number (Setting.regularizationLimit) does not suit them — a
+    // field engineer who genuinely misses punches, or somebody being held to a
+    // tighter line. null (the default) means "follow the org number", which is
+    // NOT the same as 0: zero is a real cap that blocks every request.
+    // Set from Regularization -> Approval setup, behind the same grant as the
+    // approver ladder above.
+    regularizationMonthlyLimit: {
+      type: Number,
+      default: null,
+      min: [0, 'A regularization limit cannot be negative'],
+      max: [31, 'A regularization limit cannot exceed 31 a month'],
+    },
     // Who signs off THIS employee's LEAVE, in order: entry 0 decides first, and
     // the last entry gives final approval. 1 to 4 rungs. SuperAdmin-only to set.
     //

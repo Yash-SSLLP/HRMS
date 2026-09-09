@@ -332,6 +332,25 @@ const canAssignPeople = (req) => canSetHierarchy(req) || req.user.role === 'HRMa
 const canSetLeaveChain = (req) => hasExplicitPermission(req.user, 'leaveHierarchy.manage');
 
 /**
+ * May this account configure ATTENDANCE REGULARIZATION — who signs off an
+ * employee's corrections (`regularizationApprovers`) and how many they may raise
+ * a month (`regularizationMonthlyLimit`)?
+ *
+ * Its own grant, `regularizationHierarchy.manage`, ticked per account by a Super
+ * Admin — the same shape as canSetLeaveChain, and for the same reason: pointing
+ * an approval at a friendly colleague is a standing decision, not a day's work.
+ *
+ * `hierarchy.manage` still passes. That key has guarded this ladder since it
+ * existed, so anyone already holding it keeps what they had; the new key exists
+ * so a Super Admin can hand over the regularization tab WITHOUT also handing
+ * over reassigning HR partners and reporting lines.
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+const canSetRegularizationSetup = (req) => hasExplicitPermission(req.user, 'regularizationHierarchy.manage')
+  || canSetHierarchy(req);
+
+/**
  * May this account set a relationship field that is currently EMPTY?
  *
  * FILLING A BLANK IS NOT REASSIGNING. The grant above exists because handing an
@@ -915,10 +934,14 @@ const createEmployee = asyncHandler(async (req, res) => {
   //
   // The approver ladder is the exception, here as there: who signs off this
   // employee's attendance corrections is a control nobody without the grant may
-  // point at themselves, and a new record is no reason to hand it over.
-  if (!canSetHierarchy(req)) {
+  // point at themselves, and a new record is no reason to hand it over. The
+  // monthly cap rides with it — both are set from the same screen.
+  if (!canSetRegularizationSetup(req)) {
     delete req.body.regularizationApprovers;
+    delete req.body.regularizationMonthlyLimit;
   }
+  // See updateEmployee: a blank cap is "follow the org number" (null), not ''.
+  if (req.body.regularizationMonthlyLimit === '') req.body.regularizationMonthlyLimit = null;
   if (!canSetLeaveChain(req)) {
     // Who signs off an employee's leave, and which HR is told once it is fully
     // approved. Behind its own grant — see canSetLeaveChain. Set from the
@@ -1040,7 +1063,13 @@ const updateEmployee = asyncHandler(async (req, res) => {
       ? 'Changing an HR Partner that is already set needs an HR Manager or a Super Admin.'
       : 'Changing a reporting manager that is already set needs an HR Manager or a Super Admin.');
   }
-  if (!canSetHierarchy(req)) delete req.body.regularizationApprovers;
+  if (!canSetRegularizationSetup(req)) {
+    delete req.body.regularizationApprovers;
+    delete req.body.regularizationMonthlyLimit;
+  }
+  // A cleared cap means "follow the org number", which the schema stores as
+  // null — the empty string an emptied number input sends is a cast error.
+  if (req.body.regularizationMonthlyLimit === '') req.body.regularizationMonthlyLimit = null;
   if (!canSetLeaveChain(req)) {
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;

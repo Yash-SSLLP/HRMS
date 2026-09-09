@@ -3,6 +3,12 @@
  * Lists the user's requests from GET /regularizations/me and submits new ones
  * via POST /regularizations. Approval is done by HR/manager on the admin side.
  *
+ * That GET also returns this month's allowance (quota), shown beside the button
+ * so somebody sees they are near the cap before they fill the form in. It is not
+ * a client-side block: the allowance is per corrected month, so an employee out
+ * of this month's may still legitimately file for last month's — only the
+ * server, which knows the date being corrected, can say no.
+ *
  * The date field is an AttendanceDatePicker: its calendar colours each day by
  * the state of that day's punches, and picking one hands back the record — so
  * the employee sees what attendance actually says (and which punch is missing)
@@ -134,6 +140,7 @@ function DaySummary({ day }) {
 
 export default function EmployeeRegularizations() {
   const [items, setItems] = useState([]);
+  const [quota, setQuota] = useState(null); // { month, limit, used, remaining } — limit 0 = unlimited
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -152,6 +159,7 @@ export default function EmployeeRegularizations() {
     try {
       const { data } = await api.get('/regularizations/me');
       setItems(data.items);
+      setQuota(data.quota || null);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -226,6 +234,20 @@ export default function EmployeeRegularizations() {
         title="Attendance Regularization"
         subtitle="Request a correction for a missing or wrong attendance punch."
       >
+        {/* Nothing at all where no cap is set, which is what an untouched org
+            carries. A limit of 0 is not "none left" — that account was never
+            given any, so it gets its own wording rather than a countdown. */}
+        {quota && !quota.unlimited && (
+          <span className={`text-xs rounded-lg border px-2 py-1 ${quota.remaining === 0
+            ? 'text-amber-700 bg-amber-50 border-amber-200'
+            : 'text-gray-600 bg-gray-50 border-gray-200'}`}>
+            {quota.limit === 0
+              ? 'Requests are turned off for your account'
+              : quota.remaining === 0
+                ? `No requests left this month (${quota.used} of ${quota.limit} used)`
+                : `${quota.remaining} of ${quota.limit} left this month`}
+          </span>
+        )}
         <button onClick={openModal}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + New Request

@@ -12,7 +12,8 @@ const User = require('../models/User');
 const { notify, notifyBackend } = require('../services/notify');
 const { isReadOnlyExec } = require('../middleware/authMiddleware');
 const { scopeUserField } = require('../utils/employeeScope');
-const { startOfDayIST } = require('../utils/dateHelpers');
+const Setting = require('../models/Setting');
+const { startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 const { settleStatus } = require('../utils/workday');
 const { resolveShiftForDay } = require('../services/shiftResolver');
 const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow');
@@ -30,6 +31,79 @@ const fmtTime = (d) => (d
   ? new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
     .replace(/\b([ap])\.?m\.?\b/i, (_, p) => `${p.toUpperCase()}M`)
   : null);
+
+// ============ Monthly limit ============
+// How many corrections one employee may raise for any single month.
+// Setting.regularizationLimit is the company number (0 = no cap at all, the
+// default); EmployeeProfile.regularizationMonthlyLimit overrides it for one
+// person (null = follow the company, 0 = blocked outright).
+
+/** Month key ("2026-09") of a date, in IST — the month a request is charged to. */
+const monthKeyIST = (d) => ymdIST(new Date(d)).slice(0, 7);
+
+/**
+ * The cap that applies to one employee, and where it came from.
+ *
+ * Zero means two different things depending on where it is set, so the answer
+ * carries `unlimited` rather than leaving every caller to infer it from the
+ * number: org-wide 0 is "no cap at all" (what an untouched deployment carries),
+ * while 0 on a profile is somebody deliberately stopped from filing. Anyone who
+ * should be exempt from a company cap is given 31 — one a day, every day.
+ * @param {import('mongoose').Types.ObjectId|string} userId
+ * @returns {Promise<{limit: number, unlimited: boolean, source: 'employee'|'org'}>}
+ */
+const limitFor = async (userId) => {
+  const [settings, profile] = await Promise.all([
+    Setting.getSettings(),
+    EmployeeProfile.findOne({ user: userId }).select('regularizationMonthlyLimit').lean(),
+  ]);
+  const own = profile?.regularizationMonthlyLimit;
+  // != null, not a truthiness test: 0 here is a real cap, and reading it as
+  // "unset" would hand the blocked employee the org allowance instead.
+  if (own != null && Number.isFinite(Number(own))) {
+    return { limit: Number(own), unlimited: false, source: 'employee' };
+  }
+  const org = Number(settings.regularizationLimit) || 0;
+  return { limit: org, unlimited: org === 0, source: 'org' };
+};
+
+/**
+ * How many of that month's allowance this employee has already spent.
+ *
+ * Counted on the DATE BEING CORRECTED rather than when the request was typed, so
+ * filing late for last month spends last month's allowance. Rejected requests do
+ * not count — HR already said no, and charging the allowance as well would be a
+ * second penalty for the same request.
+ * @param {import('mongoose').Types.ObjectId|string} userId
+ * @param {string} monthKey - "YYYY-MM"
+ * @returns {Promise<number>}
+ */
+const usedInMonth = async (userId, monthKey) => {
+  const [y, m] = monthKey.split('-').map(Number);
+  const { start, end } = monthRangeIST(y, m);
+  return Regularization.countDocuments({
+    employee: userId,
+    date: { $gte: start, $lt: end },
+    status: { $in: ['Pending', 'Approved'] },
+  });
+};
+
+/**
+ * The employee's allowance for one month, shaped for a client to render.
+ * @returns {Promise<{month: string, limit: number, unlimited: boolean, used: number, remaining: number|null, source: string}>}
+ */
+const quotaFor = async (userId, monthKey) => {
+  const { limit, unlimited, source } = await limitFor(userId);
+  const used = await usedInMonth(userId, monthKey);
+  return {
+    month: monthKey,
+    limit,
+    unlimited,
+    used,
+    remaining: unlimited ? null : Math.max(0, limit - used),
+    source,
+  };
+};
 
 /**
  * The body of the decision notification.
@@ -238,14 +312,19 @@ async function applyToAttendance(item, reviewer) {
 }
 
 /**
- * List the caller's own regularization requests, newest first.
+ * List the caller's own regularization requests, newest first, with this
+ * month's allowance so the screen can say what is left before they type a
+ * request the POST below would refuse.
  * @route GET /api/regularizations/me
- * @returns {{count: number, items: Object[]}}
+ * @returns {{count: number, items: Object[], quota: {month, limit, unlimited, used, remaining, source}}}
  */
 // GET /api/regularizations/me  — the caller's own requests
 const listMine = asyncHandler(async (req, res) => {
-  const items = await Regularization.find({ employee: req.user._id }).sort({ createdAt: -1 });
-  res.json({ count: items.length, items });
+  const [items, quota] = await Promise.all([
+    Regularization.find({ employee: req.user._id }).sort({ createdAt: -1 }),
+    quotaFor(req.user._id, monthKeyIST(new Date())),
+  ]);
+  res.json({ count: items.length, items, quota });
 });
 
 /**
@@ -265,6 +344,34 @@ const createRequest = asyncHandler(async (req, res) => {
   if (!date || !reason) {
     res.status(400);
     throw new Error('date and reason are required');
+  }
+  // Read before the month below is taken out of it: an unparseable date makes
+  // ymdIST throw a bare RangeError, which reaches the employee as a 500 with
+  // nothing to act on. Mongoose would have refused it a few lines later anyway.
+  if (Number.isNaN(new Date(date).getTime())) {
+    res.status(400);
+    throw new Error('That date could not be read. Pick the day you want corrected.');
+  }
+
+  // The monthly cap, charged to the month of the day being corrected — see
+  // limitFor. Checked before the chain is built so a refused request costs
+  // nothing, and skipped entirely where no cap applies, which is what an
+  // untouched deployment carries.
+  const { limit, unlimited } = await limitFor(req.user._id);
+  if (!unlimited) {
+    const monthKey = monthKeyIST(date);
+    const used = await usedInMonth(req.user._id, monthKey);
+    if (used >= limit) {
+      res.status(400);
+      const monthName = new Date(`${monthKey}-01T00:00:00+05:30`)
+        .toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
+      // A limit of 0 is not "you have used them all" — that employee never had
+      // any, and telling them to wait for next month would be a lie.
+      throw new Error(limit === 0
+        ? 'Regularization requests are turned off for your account. Ask HR to raise the correction for you.'
+        : `You have used all ${limit} regularization${limit === 1 ? '' : 's'} allowed for ${monthName}. `
+          + 'Ask HR to raise the correction for you, or to change your monthly limit.');
+    }
   }
 
   // A configured ladder routes the request to named approvers; with none
@@ -578,6 +685,12 @@ const reviewRequest = asyncHandler(async (req, res) => {
 // { employee (User id), date, type, requestedCheckIn, requestedCheckOut, reason }
 // HR regularizes any employee's attendance directly: the request is recorded
 // as already Approved (for the audit trail) and applied to the day's record.
+//
+// Deliberately NOT capped by the monthly limit the employee route enforces: the
+// cap exists to stop an employee filing endlessly, and HR is the one enforcing
+// it — leaving them no way to fix a genuine eleventh correction would make the
+// limit a trap rather than a policy. It still counts towards the month, so the
+// employee's own allowance reflects it.
 const adminCreate = asyncHandler(async (req, res) => {
   const { employee, date, type, requestedCheckIn, requestedCheckOut, reason } = req.body;
   if (!employee || !date || !reason) {

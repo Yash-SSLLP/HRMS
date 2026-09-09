@@ -48,6 +48,14 @@ const PERMISSIONS = [
   // rewiring who approves an employee's leave from now on is a standing one.
   // Granted per account — an HR Manager does NOT get it by being HR.
   { key: 'leaveHierarchy.manage', label: 'Leave approval hierarchy (who approves whose leave)', group: 'Time & Attendance' },
+  // The Regularization -> Approval setup tab: who signs off whose attendance
+  // corrections, and how many corrections a month each employee may raise. Its
+  // own key for the same reason leaveHierarchy.manage is: deciding one request
+  // is a day's work, deciding whose yes counts from now on is a standing one.
+  // Narrower than hierarchy.manage on purpose — handing over this tab should not
+  // also hand over reassigning HR partners and reporting lines. Granted per
+  // account; an HR Manager does NOT get it by being HR.
+  { key: 'regularizationHierarchy.manage', label: 'Regularization approval setup & monthly limit', group: 'Time & Attendance' },
 
   // Payroll & finance
   { key: 'payroll.manage', label: 'Payroll & salary structures', group: 'Payroll & Finance' },

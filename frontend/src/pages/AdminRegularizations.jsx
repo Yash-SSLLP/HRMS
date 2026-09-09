@@ -9,8 +9,15 @@
  *     OVERRIDE — it voids the remaining steps.
  *
  *  2. Approval setup — who signs off each employee's regularizations, 1 or 2
- *     steps, in order. SuperAdmin-only (the server strips the field for anyone
- *     else). Unconfigured employees stay on the flat HR review in tab 1.
+ *     steps, in order, plus how many corrections a month each may raise.
+ *     Unconfigured employees stay on the flat HR review in tab 1.
+ *
+ *     Behind the `regularizationHierarchy.manage` grant, which a Super Admin
+ *     ticks per account — so HR can be given this tab without also being given
+ *     the reporting-line and HR-partner reassignment that `hierarchy.manage`
+ *     carries. That older key still passes, since it has always governed the
+ *     ladder. The server strips both fields for anyone without either, so the
+ *     tab renders read-only rather than offering controls the save would ignore.
  */
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
@@ -22,7 +29,7 @@ import { useAuthStore } from '../store/authStore';
 import { promptDialog } from '../components/dialogs';
 import { toast } from 'react-toastify';
 import { formatTime12 as fmt12 } from '../utils/time';
-import { isViewOnly } from '../config/permissions';
+import { hasExplicitPermission, isViewOnly } from '../config/permissions';
 
 const STATUSES = ['Pending', 'Approved', 'Rejected'];
 
@@ -217,13 +224,19 @@ function RequestsTab() {
 // approved by a shift/ops lead rather than the reporting manager, which is why
 // this is configured per employee rather than derived from reportingManager.
 //
-// SuperAdmin-only: employeeController strips regularizationApprovers for every
-// other role on both create and update, so this renders read-only for them
-// rather than offering controls the server would silently ignore.
+// Also carries the monthly limit: one org-wide number for everybody, and a
+// per-employee override for the people it does not suit. Both live here because
+// both answer the same question — how an employee's corrections are handled.
+//
+// Behind `regularizationHierarchy.manage` (or the older `hierarchy.manage`):
+// employeeController strips both fields for anyone else on create and update, so
+// this renders read-only for them rather than offering controls the server would
+// silently ignore.
 
 function ApprovalSetupTab() {
   const me = useAuthStore((s) => s.user);
-  const isSuperAdmin = me?.role === 'SuperAdmin';
+  const canEdit = hasExplicitPermission(me, 'regularizationHierarchy.manage')
+    || hasExplicitPermission(me, 'hierarchy.manage');
 
   const [profiles, setProfiles] = useState([]);
   const [users, setUsers] = useState([]);
@@ -232,16 +245,32 @@ function ApprovalSetupTab() {
   const [savingId, setSavingId] = useState('');
   const [q, setQ] = useState('');
   const [onlyUnset, setOnlyUnset] = useState(false);
+  // The org-wide monthly cap, and what the operator has typed into the box but
+  // not saved yet. Kept apart so the placeholder under every blank row keeps
+  // showing the number that is actually in force until Save lands.
+  const [orgLimit, setOrgLimit] = useState(0);
+  const [orgDraft, setOrgDraft] = useState('');
+  const [savingOrg, setSavingOrg] = useState(false);
+  // Per-row caps being typed, keyed by profile id. A row falls back to its
+  // stored value once its save succeeds, so a failed save keeps the typed number
+  // on screen to be corrected rather than silently reverting it.
+  const [limitDrafts, setLimitDrafts] = useState({});
 
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const [pRes, uRes] = await Promise.all([
+      const [pRes, uRes, sRes] = await Promise.all([
         api.get('/employees'),
         api.get('/admin/users'),
+        // Same settings singleton the Attendance page edits; the limit is the
+        // only field this tab touches.
+        api.get('/attendance/settings').catch(() => ({ data: {} })),
       ]);
       setProfiles(pRes.data.profiles || []);
+      const limit = Number(sRes.data?.regularizationLimit) || 0;
+      setOrgLimit(limit);
+      setOrgDraft(String(limit));
       // The shared rule, not `isActive !== false` — see utils/peopleOptions.
       setUsers((uRes.data.users || []).filter((u) => !hasLeft(u)));
     } catch (err) {
@@ -343,6 +372,59 @@ function ApprovalSetupTab() {
     }
   };
 
+  // Persist the org-wide cap. 0 means unlimited, which is what an org that has
+  // never touched this carries.
+  const saveOrgLimit = async () => {
+    const n = Math.min(31, Math.max(0, Math.trunc(Number(orgDraft))));
+    if (!Number.isFinite(n)) { toast.error('Enter a number between 0 and 31'); return; }
+    setSavingOrg(true);
+    try {
+      const { data } = await api.put('/attendance/settings', { regularizationLimit: n });
+      const saved = Number(data?.regularizationLimit) || 0;
+      setOrgLimit(saved);
+      setOrgDraft(String(saved));
+      toast.success(saved ? `Limit set to ${saved} a month` : 'Limit removed — regularizations are unlimited');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save the limit');
+    } finally {
+      setSavingOrg(false);
+    }
+  };
+
+  const clearDraft = (id) => setLimitDrafts((d) => {
+    const next = { ...d };
+    delete next[id];
+    return next;
+  });
+
+  // Persist one employee's override. An empty box is not zero — it means "follow
+  // the org number", which the server stores as null; zero is a real cap that
+  // blocks every request that employee raises.
+  const saveRowLimit = async (profile) => {
+    const raw = (limitDrafts[profile._id] ?? '').trim();
+    const stored = profile.regularizationMonthlyLimit;
+    const next = raw === '' ? null : Math.min(31, Math.max(0, Math.trunc(Number(raw))));
+    if (next !== null && !Number.isFinite(next)) { toast.error('Enter a number between 0 and 31'); return; }
+    // Nothing typed, or the same value typed back — don't spend a request on it.
+    if (raw === '' && stored == null) { clearDraft(profile._id); return; }
+    if (next !== null && stored != null && Number(stored) === next) { clearDraft(profile._id); return; }
+
+    setSavingId(profile._id);
+    try {
+      const { data } = await api.put(`/employees/${profile._id}`, { regularizationMonthlyLimit: next });
+      const saved = data.profile?.regularizationMonthlyLimit ?? next;
+      setProfiles((prev) => prev.map((x) => (x._id === profile._id ? { ...x, regularizationMonthlyLimit: saved } : x)));
+      clearDraft(profile._id);
+      toast.success(saved == null
+        ? `${nameOf(profile.user)} — follows the company limit`
+        : `${nameOf(profile.user)} — ${saved} a month`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save');
+    } finally {
+      setSavingId('');
+    }
+  };
+
   const unsetCount = profiles.filter((p) => p.user && chainOf(p).length === 0).length;
 
   return (
@@ -353,6 +435,40 @@ function ApprovalSetupTab() {
         Step 1 empty to keep the default, where any HR reviewer decides it from the Requests tab. Approvers
         need no special permission — the request lands in their Approvals inbox.
       </p>
+
+      {/* Org-wide cap. Sits above the table because it is the number every blank
+          row below follows — the column there only exists to depart from it. */}
+      <div className="bg-white shadow rounded-lg p-4 mb-4">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
+          <span className="font-medium">Monthly limit</span>
+          <input
+            type="number"
+            min="0"
+            max="31"
+            value={orgDraft}
+            onChange={(e) => setOrgDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveOrgLimit(); }}
+            disabled={!canEdit || savingOrg}
+            className="border rounded-lg px-2 py-1.5 w-20 text-sm"
+          />
+          <span>regularizations per employee per month</span>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={saveOrgLimit}
+              disabled={savingOrg || String(orgLimit) === orgDraft.trim()}
+              className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm disabled:opacity-40"
+            >
+              {savingOrg ? 'Saving…' : 'Save'}
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 mt-1.5">
+          <strong>0 here means unlimited</strong> — no cap for anybody. Counted against the month being
+          corrected, so filing late for last month does not spend this month&apos;s allowance, and a rejected
+          request costs nothing. HR can still raise a correction for someone who has run out.
+        </p>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <input
@@ -366,9 +482,9 @@ function ApprovalSetupTab() {
           <input type="checkbox" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} />
           Only employees with no approvers ({unsetCount})
         </label>
-        {!isSuperAdmin && (
+        {!canEdit && (
           <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-            Read-only — only a Super Admin can change these.
+            Read-only — ask a Super Admin for the regularization approval permission.
           </span>
         )}
       </div>
@@ -376,6 +492,11 @@ function ApprovalSetupTab() {
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
+
+      <p className="text-xs text-gray-500 mb-2">
+        <strong>Limit / month</strong>: leave blank to follow the company number above. A number here applies
+        to that employee alone — <strong>0 stops them raising any request</strong>, and 31 is one a day.
+      </p>
 
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -385,13 +506,19 @@ function ApprovalSetupTab() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Department</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Step 1 — decides first</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Step 2 — confirms (optional)</th>
+              <th
+                className="px-4 py-3 text-left font-medium text-gray-700 whitespace-nowrap"
+                title="Blank follows the company limit. 0 stops this employee raising any request. 31 is one a day — effectively unlimited."
+              >
+                Limit / month
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No employees match.</td></tr>
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No employees match.</td></tr>
             ) : rows.map((p) => {
               const chain = chainOf(p);
               const busy = savingId === p._id;
@@ -408,7 +535,7 @@ function ApprovalSetupTab() {
                           never be saved with a gap in it. */}
                       {idx === 1 && !chain[0] ? (
                         <span className="text-xs text-gray-400">Set Step 1 first</span>
-                      ) : isSuperAdmin ? (
+                      ) : canEdit ? (
                         <SearchableSelect
                           value={chain[idx] || ''}
                           onChange={(e) => setStep(p, idx, e.target.value)}
@@ -457,6 +584,37 @@ function ApprovalSetupTab() {
                       )}
                     </td>
                   ))}
+                  {/* Blank = follow the company number, which is what the
+                      placeholder shows; a typed 0 is a real block. Saved on blur
+                      or Enter rather than per keystroke — a half-typed "1" from
+                      "12" is a cap somebody would otherwise be held to. */}
+                  <td className="px-4 py-3 align-top">
+                    {canEdit ? (
+                      <input
+                        type="number"
+                        min="0"
+                        max="31"
+                        value={limitDrafts[p._id] ?? (p.regularizationMonthlyLimit ?? '')}
+                        placeholder={orgLimit ? String(orgLimit) : '∞'}
+                        title={p.regularizationMonthlyLimit == null
+                          ? `Follows the company limit (${orgLimit || 'unlimited'})`
+                          : p.regularizationMonthlyLimit === 0
+                            ? 'Blocked — this employee cannot raise any request'
+                            : 'This employee only'}
+                        onChange={(e) => setLimitDrafts((d) => ({ ...d, [p._id]: e.target.value }))}
+                        onBlur={() => { if (limitDrafts[p._id] !== undefined) saveRowLimit(p); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                        disabled={busy}
+                        className="border rounded-lg px-2 py-1.5 w-20 text-sm"
+                      />
+                    ) : (
+                      <span className="text-gray-700">
+                        {p.regularizationMonthlyLimit === 0
+                          ? 'Blocked'
+                          : (p.regularizationMonthlyLimit ?? (orgLimit || '∞'))}
+                      </span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -471,10 +629,11 @@ function ApprovalSetupTab() {
 
 export default function AdminRegularizations() {
   const me = useAuthStore((s) => s.user);
-  // Configuring who approves attendance corrections is a control a SuperAdmin
-  // owns — the server already strips the field for everyone else, so the tab is
+  // Configuring who approves attendance corrections is a control behind its own
+  // grant — the server already strips the fields for everyone else, so the tab is
   // hidden rather than shown read-only. Nobody sees a control they cannot use.
-  const canSetup = me?.role === 'SuperAdmin';
+  const canSetup = hasExplicitPermission(me, 'regularizationHierarchy.manage')
+    || hasExplicitPermission(me, 'hierarchy.manage');
 
   const tabs = canSetup
     ? [{ id: 'requests', label: 'Requests' }, { id: 'setup', label: 'Approval setup' }]

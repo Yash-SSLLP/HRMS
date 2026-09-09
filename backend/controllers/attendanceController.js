@@ -30,7 +30,7 @@ const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow')
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit, isSundayKey } = require('../utils/restDay');
 const { notify, notifyMany, notifyBackend } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
-const { hasPermission, isPortalViewer } = require('../middleware/authMiddleware');
+const { hasPermission, hasExplicitPermission, isPortalViewer } = require('../middleware/authMiddleware');
 const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope, assertNotOwnRequest } = require('../utils/employeeScope');
 // Punching in on a day you are on approved leave. The leave-side rules (which
 // day a leave still claims, who sits at the top of the ladder, and how a day is
@@ -2301,8 +2301,21 @@ const getSettings = asyncHandler(async (req, res) => {
     latePolicy: s.latePolicy,
     minPresentHours: s.minPresentHours,
     lateAllowance: s.lateAllowance,
+    regularizationLimit: s.regularizationLimit,
   });
 });
+
+/**
+ * May this account set the org-wide regularization limit? The same grant that
+ * opens Regularization -> Approval setup, where the number is edited —
+ * `hierarchy.manage` passes too, mirroring canSetRegularizationSetup in
+ * employeeController. hasExplicitPermission, so an unconfigured HR Manager is
+ * not swept in by the "HR can do everything" default.
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+const canSetRegularizationLimit = (req) => hasExplicitPermission(req.user, 'regularizationHierarchy.manage')
+  || hasExplicitPermission(req.user, 'hierarchy.manage');
 
 /**
  * Update the office coordinates/label, geofence threshold and/or the
@@ -2313,7 +2326,8 @@ const getSettings = asyncHandler(async (req, res) => {
  * @param {Object} [req.body.latePolicy] - {hour, minute, graceMinutes}; SuperAdmin only
  * @param {number} [req.body.minPresentHours] - day-minimum hours, 0-6; SuperAdmin only
  * @param {number} [req.body.lateAllowance] - free late arrivals a month, 0-31; SuperAdmin only
- * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy, minPresentHours, lateAllowance}}
+ * @param {number} [req.body.regularizationLimit] - regularizations an employee may raise a month, 0-31 (0 = unlimited); needs regularizationHierarchy.manage
+ * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy, minPresentHours, lateAllowance, regularizationLimit}}
  */
 // PUT /api/attendance/settings  (HR/Admin)
 // Update the office coordinates/label and/or the geofence threshold (metres).
@@ -2371,6 +2385,18 @@ const updateSettings = asyncHandler(async (req, res) => {
     s.lateAllowance = normalizeLateAllowance(req.body.lateAllowance);
   }
 
+  // How many regularizations an employee may raise for one month. NOT the
+  // SuperAdmin gate the three blocks above use — this one costs nobody money,
+  // and it is edited from Regularization -> Approval setup by whoever a Super
+  // Admin gave that tab to. Ignored for anyone else rather than refused, the
+  // same way those blocks are.
+  if (req.body.regularizationLimit !== undefined && canSetRegularizationLimit(req)) {
+    const n = Math.trunc(Number(req.body.regularizationLimit));
+    // Clamped as well as schema-validated: a NaN would otherwise save as null and
+    // read back as "unlimited", quietly switching the policy off.
+    s.regularizationLimit = Number.isFinite(n) ? Math.min(31, Math.max(0, n)) : s.regularizationLimit;
+  }
+
   await s.save();
   // Push the change into this process's cache immediately — services/latePolicy
   // would otherwise take up to five minutes to notice, and the admin who just
@@ -2385,6 +2411,7 @@ const updateSettings = asyncHandler(async (req, res) => {
     latePolicy: getLatePolicy(),
     minPresentHours: getMinPresentHours(),
     lateAllowance: getLateAllowance(),
+    regularizationLimit: s.regularizationLimit,
   });
 });
 

@@ -4,7 +4,7 @@
  * employee vs admin portal by role. Also hosts a "Forgot password?" modal that
  * files a request to HR via POST /password-reset-requests (no email client).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
@@ -14,6 +14,30 @@ import ThemeToggle from '../components/ThemeToggle';
 
 const BLANK_RESET = {
   name: '', email: '', employeeCode: '', phone: '', designation: '', department: '', reason: '',
+};
+
+// The identifier of whoever signed in last on this browser, so signing out and
+// back in does not mean typing an employee code again. Deliberately the
+// IDENTIFIER ONLY — never the password, which is not ours to keep.
+//
+// Written on a successful login rather than on logout: there are several ways a
+// session ends (the menu, the 401 interceptor, an account being deactivated),
+// and hooking each one would leave the ones we missed behaving differently.
+// Kept out of the auth store because that is cleared on logout, which is exactly
+// when this has to survive.
+//
+// Every access is guarded: storage throws outright in some privacy modes, and a
+// login screen that cannot render is a worse failure than one that does not
+// remember.
+const LAST_ID_KEY = 'hrms-last-identifier';
+const readLastIdentifier = () => {
+  try { return localStorage.getItem(LAST_ID_KEY) || ''; } catch { return ''; }
+};
+const rememberIdentifier = (value) => {
+  try {
+    const v = (value || '').trim();
+    if (v) localStorage.setItem(LAST_ID_KEY, v);
+  } catch { /* storage unavailable — the prefill is a convenience, not a feature to fail on */ }
 };
 
 export default function Login() {
@@ -28,12 +52,20 @@ export default function Login() {
     document.documentElement.removeAttribute('data-portal');
   }, []);
 
+  // With the code already filled in, the password is the only thing left to do,
+  // so start there. Runs once: re-focusing on every render would fight anyone
+  // who clicks back into the code field to correct it.
+  useEffect(() => {
+    if (readLastIdentifier()) passwordRef.current?.focus();
+  }, []);
+
   // What the user types to identify themselves: an employee code ("SSL 120"),
   // a role alias ("admin" / "CEO" / "MD") or, still, an email address.
   // Matching is case-insensitive and ignores the space inside a code.
-  const [identifier, setIdentifier] = useState('');
+  const [identifier, setIdentifier] = useState(readLastIdentifier);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const passwordRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -78,6 +110,9 @@ export default function Login() {
     setSubmitting(true);
     try {
       const { data } = await api.post('/auth/login', { identifier, password });
+      // Only once it is known to work — remembering a typo would hand the next
+      // sign-in a code that fails.
+      rememberIdentifier(identifier);
       setSession({ user: data.user, token: data.token });
       // Straight to the change screen, ignoring any remembered destination: an
       // admin set this password, so nothing else is reachable until it is
@@ -134,6 +169,7 @@ export default function Login() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
             <div className="relative">
               <input
+                ref={passwordRef}
                 type={showPassword ? 'text' : 'password'}
                 required
                 value={password}

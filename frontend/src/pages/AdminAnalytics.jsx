@@ -4,7 +4,7 @@
  * GET /analytics/overview and renders bar/pie/line charts. A department filter in
  * the page header re-fetches the overview for that department, so every chart and
  * stat card on the page reflects it. Clicking a hires/exits point opens a modal
- * listing who joined or left that month.
+ * listing everyone who joined and left that month.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -57,7 +57,7 @@ export default function AdminAnalytics() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(null); // { title, monthLabel, color, employees }
+  const [modal, setModal] = useState(null); // { monthLabel, dept, groups: [{ name, color, employees }] }
   const [dept, setDept] = useState('All'); // department filter — applies to the whole page
   const [refreshing, setRefreshing] = useState(false);
 
@@ -160,9 +160,27 @@ export default function AdminAnalytics() {
     const [y, m] = key.split('-').map(Number);
     return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
   };
-  const openPoint = (series, point) => {
-    setModal({ title: series.name, color: series.color, monthLabel: fullMonth(point.monthKey), dept, employees: point.employees || [] });
+  // Joining vs leaving is a good/bad pair, so it reads better in the reserved
+  // state colours than in two arbitrary series hues.
+  const hireExitSeries = [
+    { name: 'New Employees', color: CHART_STATUS.good, data: hiresLine },
+    { name: 'Exits', color: CHART_STATUS.critical, data: exitsLine },
+  ];
+  // Both series share one plot, so a month where (say) one person joined and one
+  // left draws two dots on the exact same spot and only the one painted last can
+  // be clicked. Clicking either therefore opens the whole month — every series
+  // with people that month, grouped — instead of just the dot that was hit.
+  const openPoint = (_series, point) => {
+    const groups = hireExitSeries
+      .map((s) => ({
+        name: s.name,
+        color: s.color,
+        employees: (s.data.find((p) => p.monthKey === point.monthKey) || {}).employees || [],
+      }))
+      .filter((g) => g.employees.length);
+    setModal({ monthLabel: fullMonth(point.monthKey), dept, groups });
   };
+  const modalTotal = modal ? modal.groups.reduce((n, g) => n + g.employees.length, 0) : 0;
 
   return (
     <div>
@@ -213,15 +231,7 @@ export default function AdminAnalytics() {
             <p className="text-xs text-gray-400 -mt-2 mb-1 text-center">
               {d.newHiresLast12mo ?? 0} joined, {d.exitsLast12mo ?? 0} left · click a dot to see who.
             </p>
-            <LineChart
-              series={[
-                // Joining vs leaving is a good/bad pair, so it reads better in
-                // the reserved state colours than in two arbitrary series hues.
-                { name: 'New Employees', color: CHART_STATUS.good, data: hiresLine },
-                { name: 'Exits', color: CHART_STATUS.critical, data: exitsLine },
-              ]}
-              onPointClick={openPoint}
-            />
+            <LineChart series={hireExitSeries} onPointClick={openPoint} />
           </ChartCard>
         </div>
 
@@ -237,35 +247,42 @@ export default function AdminAnalytics() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3 p-5 border-b border-gray-100">
               <div>
-                <h2 className="card-title flex items-center gap-2">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: modal.color }} />
-                  {modal.title}
-                </h2>
+                <h2 className="card-title">{modal.monthLabel}</h2>
                 <p className="text-sm text-gray-500 mt-0.5">
-                  {modal.monthLabel} · {modal.employees.length} {modal.employees.length === 1 ? 'person' : 'people'}
+                  {modalTotal} {modalTotal === 1 ? 'person' : 'people'}
                   {modal.dept && modal.dept !== 'All' ? ` · ${modal.dept}` : ''}
                 </p>
               </div>
               <button type="button" aria-label="Close" title="Close" onClick={() => setModal(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <div className="overflow-y-auto p-2">
-              {modal.employees.length === 0 ? (
+              {modal.groups.length === 0 ? (
                 <p className="text-sm text-gray-400 italic text-center py-6">No employees for this month.</p>
-              ) : modal.employees.map((emp, i) => (
-                <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50">
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white shrink-0" style={{ background: modal.color }}>
-                    {(emp.name || '?').charAt(0).toUpperCase()}
+              ) : modal.groups.map((group) => (
+                <div key={group.name} className="mb-1 last:mb-0">
+                  {/* One section per series, so a month with both joiners and
+                      leavers stays readable in a single modal. */}
+                  <div className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-semibold text-gray-700">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: group.color }} />
+                    {group.name} · {group.employees.length}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-gray-900 truncate">{emp.name}</div>
-                    <div className="text-xs text-gray-500 truncate">
-                      {[emp.designation, emp.department].filter(Boolean).join(' · ') || emp.employeeCode}
+                  {group.employees.map((emp, i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50">
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white shrink-0" style={{ background: group.color }}>
+                        {(emp.name || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-gray-900 truncate">{emp.name}</div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {[emp.designation, emp.department].filter(Boolean).join(' · ') || emp.employeeCode}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        {emp.employeeCode && <div className="text-[10px] font-mono text-gray-400">{emp.employeeCode}</div>}
+                        {emp.date && <div className="text-[11px] text-gray-500">{new Date(emp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>}
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    {emp.employeeCode && <div className="text-[10px] font-mono text-gray-400">{emp.employeeCode}</div>}
-                    {emp.date && <div className="text-[11px] text-gray-500">{new Date(emp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>}
-                  </div>
+                  ))}
                 </div>
               ))}
             </div>

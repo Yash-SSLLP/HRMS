@@ -112,6 +112,22 @@ const settingSchema = new mongoose.Schema(
       max: MAX_LATE_ALLOWANCE,
     },
 
+    // How many attendance regularizations one employee may raise for any single
+    // month. 0 (the default) means unlimited, so an untouched deployment behaves
+    // exactly as it did before this existed.
+    //
+    // Counted against the MONTH BEING CORRECTED, not the month the request was
+    // typed in — otherwise filing late for last month would spend this month's
+    // allowance. Rejected requests do not count: HR already said no, and
+    // charging the employee for it as well would be a second penalty.
+    //
+    // An individual can be raised or lowered off this number with
+    // EmployeeProfile.regularizationMonthlyLimit. Unlike lateAllowance this is
+    // NOT SuperAdmin-only — it costs nobody money, and it is edited from the
+    // regularization Approval setup tab by whoever holds
+    // regularizationHierarchy.manage.
+    regularizationLimit: { type: Number, default: 0, min: 0, max: 31 },
+
     // The contact strip printed along the bottom of the documents an employee
     // may forward outside the company — today the cashbook statement
     // (services/cashbookSummaryPdf.js).
