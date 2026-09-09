@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.12",
-  "versionCode": 93,
+  "versionName": "2.8.13",
+  "versionCode": 94,
   "notes": "Fixes the crash in 2.8.11. That build could show an error screen or close itself as soon as you signed in — this one opens normally, so please update. Saying thanks for a wish works properly now too: the \"Wishes for you\" card used to disappear the moment you marked your alerts as read, taking the Say thanks button with it. The card now stays until you close it yourself, so a wish still waiting for a reply is there when you come back to it."
 }
