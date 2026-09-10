@@ -17,6 +17,7 @@ import {
   FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
   FiKey, FiLock, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell, FiSmartphone,
+  FiRotateCw,
 } from 'react-icons/fi';
 // Feather has no money-ledger glyph, and its only currency mark is a dollar sign
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
@@ -122,6 +123,24 @@ export const adminNav = [
     { to: '/admin/my-khata', label: 'My Cashbook', icon: TbReceipt, roles: ['CEO', 'MD'],
       keywords: ['khata', 'advance', 'book', 'books', 'cashbook'] },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
+  ] },
+  // The daily rolling incentive. Its own category rather than a row under
+  // Payroll: it is recorded every day by whoever supervised the rolling — a
+  // standalone grant an ordinary supervisor can hold — and nothing in it touches
+  // the payroll module. `keepGroup` keeps it a real dropdown while it holds one
+  // item (see NavList in Layout.jsx): the collapsed form is labelled with the
+  // group name, and "Incentive" on its own does not say which incentive.
+  { group: 'Incentive', icon: FiRotateCw, keepGroup: true, items: [
+    // What a point is worth. Its own tab because the figure is COMPANY-WIDE —
+    // every incentive is paid in points and converted here — so it does not
+    // belong inside whichever module happened to be built first. First in the
+    // category because it is the thing every incentive under it depends on.
+    { to: '/admin/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
+      keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'conversion', 'incentive'] },
+    { to: '/admin/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
+      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'daily team', 'incentive', 'paid'],
+      tabs: [{ id: 'entries', label: 'Daily teams' }, { id: 'summary', label: 'Per employee' },
+        { id: 'points', label: 'Points per sheet' }] },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus, anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'] },
@@ -268,6 +287,16 @@ export const employeeNav = [
     // The review queue, for standalone-grant holders with no admin portal. Named
     // apart from the self-service "Expenses" row above, which lists only my own.
     { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },
+  ] },
+  // Its own category, exactly as in the admin portal (user decision
+  // 2026-09-10). Whoever holds a role in an incentive sees this whether or not
+  // they have an admin portal at all, and burying it under Payroll made it read
+  // as something to do with their own pay rather than a job they run.
+  { group: 'Incentive', icon: FiRotateCw, keepGroup: true, items: [
+    { to: '/employee/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
+      keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'incentive'] },
+    { to: '/employee/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
+      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'incentive', 'paid'] },
   ] },
   { group: 'Performance & Learning', icon: FiTrendingUp, items: [
     { to: '/employee/goals', label: 'Goals', icon: FiTarget },

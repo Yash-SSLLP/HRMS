@@ -6,7 +6,7 @@
 // alongside `signOut()` for a deliberate sign-out.
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
-import { isViewOnly } from '../config/permissions';
+import { isViewOnly, isReadOnlyExec } from '../config/permissions';
 
 // Strip any trailing slashes so we never build a double-slash URL like
 // "https://host//api" (which the backend treats as a different, unmatched path).
@@ -82,6 +82,15 @@ const VIEW_ONLY_POST_ALLOW = [
   /\/preview$/,
 ];
 
+// Modules where the SERVER deliberately lets a read-only CEO/MD write, so the
+// backstop above must not stop them one step earlier. Today that is the daily
+// rolling incentive: the executives set the day's team themselves (see
+// backend/routes/incentiveRoutes.js, which is where the rule really lives).
+//
+// This is for CEO/MD ONLY, never the God audit login — that account is refused
+// every unsafe method by `protect` and has no exceptions anywhere.
+const EXEC_WRITE_PATHS = [/\/incentives(\/|$|\?)/];
+
 // Endpoints reached WITHOUT signing in — a public document upload, a job
 // application, an exit feedback form, a public course. The server does not run
 // `protect` on these at all, so they are nobody's writes to refuse; blocking
@@ -105,6 +114,7 @@ function refusedAsViewOnly(config, user) {
   const url = String(config.url || '');
   if (PUBLIC_PATHS.test(url)) return false;
   if (method === 'post' && VIEW_ONLY_POST_ALLOW.some((re) => re.test(url))) return false;
+  if (isReadOnlyExec(user) && EXEC_WRITE_PATHS.some((re) => re.test(url))) return false;
   return true;
 }
 

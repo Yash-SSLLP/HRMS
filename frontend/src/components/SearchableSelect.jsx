@@ -386,7 +386,12 @@ export default function SearchableSelect({
             {filtered.length === 0 ? (
               <div className="ss-empty">
                 <FiSearch size={16} aria-hidden="true" />
-                <span>No matches for <span className="ss-empty-q">“{query.trim()}”</span></span>
+                {/* With nothing typed there is no term to quote — the list is
+                    simply empty (every candidate already taken, say), and
+                    “No matches for “”” reads like a bug. */}
+                {query.trim()
+                  ? <span>No matches for <span className="ss-empty-q">“{query.trim()}”</span></span>
+                  : <span>Nothing to choose from</span>}
               </div>
             ) : filtered.map((o, i) => {
               const on = isSelected(o.value);

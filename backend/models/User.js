@@ -133,6 +133,27 @@ const userSchema = new mongoose.Schema(
     // the employee who actually looks after company hardware and they get the
     // Assets register in their own portal, without becoming an admin.
     assetsAccess: { type: Boolean, default: false },
+    // Incentive access, per TAB. The section holds several incentives (Boys
+    // today, more later) and each is run by different people, so this is not one
+    // switch but a role per tab — see config/incentiveRoles.js for what a
+    // manager and a picker may each do, and for the 'all' pseudo-module that
+    // covers the whole section.
+    //
+    // Role-independent by design: the person who watches the team roll is a
+    // supervisor on the floor, not an HR admin, and has to be able to do their
+    // part without being made one.
+    incentiveRoles: {
+      type: [new mongoose.Schema({
+        module: { type: String, required: true },
+        role: { type: String, required: true },
+      }, { _id: false })],
+      default: [],
+    },
+    // SUPERSEDED by incentiveRoles above (2026-09-10). Kept only so an account
+    // granted before the change is not silently locked out: it is read as
+    // "manager of every incentive" until scripts/migrateIncentiveRoles.js has
+    // run, and nothing writes it any more.
+    incentiveAccess: { type: Boolean, default: false },
     // CEO/MD and God only. The set of companies this account may see (and, for
     // an exec in edit mode, manage), set by the Backend (SuperAdmin) on the
     // Permissions page. Semantics mirror the HRManager `permissions` default:

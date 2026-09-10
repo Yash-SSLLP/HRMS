@@ -144,6 +144,27 @@ const settingSchema = new mongoose.Schema(
       note: { type: String, trim: true, maxlength: 120, default: '' },
     },
 
+    // Incentives (Admin → Incentive). Defaults only: every entry copies both
+    // figures onto itself and then freezes them (IncentiveEntry.rupeePerPoint /
+    // pointsPerSheet), so changing either here never restates a day already
+    // recorded.
+    incentive: {
+      // WHAT ONE POINT IS WORTH. Company-wide on purpose — every incentive pays
+      // in points and this is the single place their rupee value is set, so a
+      // re-valuation moves all of them together (Admin → Incentive → Point
+      // Rate). Edited by whoever holds `incentive.manage`.
+      rupeePerPoint: { type: Number, default: 1, min: 0 },
+      // What one rolled sheet is worth, in points, in the BOYS incentive. Lives
+      // beside the universal figure rather than in that module because it is a
+      // default a person has to be able to change; another incentive will bring
+      // its own per-unit yield.
+      pointsPerSheet: { type: Number, default: 4, min: 0 },
+      // NOTE: there is deliberately no department setting. The Boys module is
+      // the BOYS department's incentive and only theirs — another department
+      // gets its own tab rather than a dropdown here (user decision
+      // 2026-09-10). The controller resolves the department name itself.
+    },
+
     // Letterhead branding, uploaded by a SuperAdmin from Admin → Email & Letter
     // Templates and applied to every generated document (offer, appointment,
     // payslip). Images are GridFS keys, same as User.photo — see services/storage.js.

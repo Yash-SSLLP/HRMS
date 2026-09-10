@@ -86,6 +86,7 @@ function invalidateScopeCompany(userIds) {
 // the whole promise of the account. Gating each router instead would make the
 // guarantee only as good as the newest route file.
 const { VIEW_ONLY_ROLES, isViewOnlyRole } = require('../utils/visibility');
+const { ALL_MODULES } = require('../config/incentiveRoles');
 
 /** Is this the permanently view-only audit account? */
 const isViewOnlyAccount = (user) => isViewOnlyRole(user?.role);
@@ -352,6 +353,11 @@ function hasPermission(user, cap) {
   // employee out of a specific account is gated separately, per account, by
   // CashAccount.operators (see services/khataLedger.js → resolveDisburseRights).
   if (cap === 'khata.manage' && user.khataAccess === true) return true;
+  // The incentive module is NOT gated by this catalogue any more — it uses a
+  // role per tab (incentiveRole above), because a picker and a manager need
+  // different things. `incentive.manage` survives only as the nav's question
+  // "does this person have ANY role in an incentive", answered here.
+  if (cap === 'incentive.manage') return canUseIncentive(user, ALL_MODULES) || incentiveRole(user, 'boys') !== null;
   if (user.role === 'LDManager') return cap === 'courses.manage';
   // Account Managers settle reimbursements out of the cashbook, so they hold the
   // expense capability alongside it.
@@ -542,6 +548,95 @@ const requireAdvanceApprover = (req, res, next) => {
 };
 
 /**
+ * What role does this account hold in one incentive tab?
+ *
+ * Resolution order, and it matters:
+ *   1. HR / CEO / MD / SuperAdmin run every incentive by role — they are never
+ *      listed in `incentiveRoles` and never need to be.
+ *   2. An 'all' assignment covers every tab, including ones added later.
+ *   3. A per-tab assignment covers that tab.
+ *   4. The retired `incentiveAccess` boolean, read as a manager of everything,
+ *      so an account granted before roles existed is not locked out before
+ *      scripts/migrateIncentiveRoles.js runs.
+ * @param {object|null} user
+ * @param {string} moduleKey - a key from config/incentiveRoles.js, e.g. 'boys'
+ * @returns {'manager'|'picker'|null}
+ */
+function incentiveRole(user, moduleKey) {
+  if (!user) return null;
+  if (['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(user.role)) return 'manager';
+  // The God audit account reads every screen and writes nothing; `protect`
+  // refuses its writes, so calling it a manager here only draws the page.
+  if (isViewOnlyAccount(user)) return 'manager';
+  const list = Array.isArray(user.incentiveRoles) ? user.incentiveRoles : [];
+  if (list.some((r) => r.module === ALL_MODULES && r.role === 'manager')) return 'manager';
+  const own = list.find((r) => r.module === moduleKey);
+  if (own) return own.role;
+  if (user.incentiveAccess === true) return 'manager'; // legacy, pre-roles
+  return null;
+}
+
+/** May this account RUN this incentive tab — rates, work done, corrections? */
+const canManageIncentive = (user, moduleKey) => incentiveRole(user, moduleKey) === 'manager';
+
+/** May this account open this incentive tab at all (manager or picker)? */
+const canUseIncentive = (user, moduleKey) => incentiveRole(user, moduleKey) !== null;
+
+/**
+ * Route guard: this incentive tab is open to its manager and its pickers.
+ * WHICH of the two they are decides what the handlers then let them do — a
+ * picker may put a team together and nothing else.
+ * @param {string} moduleKey
+ * @returns {import('express').RequestHandler}
+ */
+const requireIncentiveAccess = (moduleKey) => (req, res, next) => {
+  if (canUseIncentive(req.user, moduleKey)) return next();
+  res.status(403);
+  return next(new Error('You do not have a role in this incentive. Ask a Super Admin for one.'));
+};
+
+/**
+ * Route guard: only the tab's manager (or HR/exec/Backend) gets past.
+ * @param {string} moduleKey
+ * @returns {import('express').RequestHandler}
+ */
+const requireIncentiveManager = (moduleKey) => (req, res, next) => {
+  if (canManageIncentive(req.user, moduleKey)) return next();
+  res.status(403);
+  return next(new Error('Only the manager of this incentive can change that.'));
+};
+
+/**
+ * May this account mark incentive points as PAID?
+ *
+ * SuperAdmin, HR Manager, CEO or MD — the company settling what it owes. It is
+ * deliberately NARROWER than the rest of the incentive module, which a floor
+ * supervisor can hold through the standalone `incentiveAccess` grant: recording
+ * who rolled what is the supervisor's job, and declaring it paid for is the
+ * company's (user decision 2026-09-10).
+ *
+ * A read-only CEO/MD passes, like every other write in this module — see
+ * routes/incentiveRoutes.js for that exception. The God audit login does not:
+ * `protect` refuses its unsafe methods before any route runs.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+function canPayIncentive(user) {
+  return !!user && ['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(user.role);
+}
+
+/**
+ * Route guard for marking incentive points paid (and unmarking them).
+ * @returns {import('express').RequestHandler}
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
+const requireIncentivePayer = (req, res, next) => {
+  if (canPayIncentive(req.user)) return next();
+  res.status(403);
+  return next(new Error('Only HR, a CEO, MD or Super Admin can mark points as paid.'));
+};
+
+/**
  * May this account sanction a payslip its own subject prepared?
  *
  * SuperAdmin, CEO or MD — the same bench that sanctions a cash advance, and for
@@ -602,6 +697,13 @@ module.exports = {
   requireAdvanceApprover,
   canApproveSelfPayslip,
   requireSelfPayslipApprover,
+  canPayIncentive,
+  requireIncentivePayer,
+  incentiveRole,
+  canManageIncentive,
+  canUseIncentive,
+  requireIncentiveAccess,
+  requireIncentiveManager,
   MANAGER_PROFILE_ROLES,
   isManagerProfileRole,
   canEditManagerProfiles,

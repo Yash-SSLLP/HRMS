@@ -124,6 +124,8 @@ const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics.jsx'));
 const AdminCashbook = lazy(() => import('./pages/AdminCashbook.jsx'));
 const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
 const AdminKhata = lazy(() => import('./pages/AdminKhata.jsx'));
+const AdminBoysIncentive = lazy(() => import('./pages/AdminBoysIncentive.jsx'));
+const AdminIncentivePoints = lazy(() => import('./pages/AdminIncentivePoints.jsx'));
 const EmployeeKhata = lazy(() => import('./pages/EmployeeKhata.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
 const AdminPushNotifications = lazy(() => import('./pages/AdminPushNotifications.jsx'));
@@ -258,6 +260,8 @@ export default function App() {
         <Route path="khata" element={<AdminKhata />} />
         {/* CEO/MD self-service khatabook inside the admin portal (they have no employee portal). */}
         <Route path="my-khata" element={<EmployeeKhata />} />
+        <Route path="boys-incentive" element={<AdminBoysIncentive />} />
+        <Route path="incentive-points" element={<AdminIncentivePoints />} />
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
@@ -333,6 +337,11 @@ export default function App() {
         <Route path="khata" element={<EmployeeKhata />} />
         {/* The khata admin surface for standalone-grant holders who have no admin portal. */}
         <Route path="khata-manage" element={<AdminKhata />} />
+        {/* Same for the incentive module — the supervisor who records the day's
+            rolling team is an ordinary employee with the standalone grant.
+            The backend's incentive.manage gate is the real check. */}
+        <Route path="boys-incentive" element={<AdminBoysIncentive />} />
+        <Route path="incentive-points" element={<AdminIncentivePoints />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />

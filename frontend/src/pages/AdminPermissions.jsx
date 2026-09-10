@@ -40,7 +40,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import ToggleSwitch from '../components/ToggleSwitch';
 import { roleLabel } from '../config/roles';
-import { GRANTABLE_ROLES } from '../config/permissions';
+import { GRANTABLE_ROLES, INCENTIVE_MODULES, INCENTIVE_ROLE_LABELS } from '../config/permissions';
 import { useAuthStore } from '../store/authStore';
 
 /**
@@ -75,6 +75,7 @@ const GRANT_HELP = {
   cashbook: 'Open the cashbook: record money in and out of the company’s cash accounts. A standalone grant — any account can hold it, whatever their role.',
   expenses: 'Review, approve and settle staff expense claims.',
   assets: 'Issue, return and track company assets.',
+  incentive: 'A role per incentive tab. Manager runs it — the point rate, the yield, the sheet counts, and correcting anything saved. Picker only puts together their own team for the day, and cannot edit it once saved.',
   khata: 'Open the employee cashbook: give cash advances to staff, confirm what they spend, and settle up.',
   khataExport: 'Download every employee’s balances and full ledger as a spreadsheet. No role grants this on its own — reading the ledger on screen and walking out with a copy of it are different decisions.',
   wfh: 'Lets them tick “working from home” on a punch. That punch is not measured against the office geofence, and the day records as WFH.',
@@ -283,6 +284,39 @@ export default function AdminPermissions() {
     path: 'assets-access', field: 'assetsAccess', enabled: !u.assetsAccess, errorText: 'Could not update assets access',
   });
 
+  /**
+   * Set somebody's role in ONE incentive tab.
+   *
+   * A dropdown rather than a switch, because the section holds several
+   * incentives and each is run by different people — and because the two roles
+   * are not degrees of the same access: a manager runs the tab, a picker only
+   * puts together their own team and cannot edit it afterwards.
+   *
+   * Same optimistic shape as the toggles above: paint the choice, let the
+   * server's answer overwrite it, put it back on a failure.
+   */
+  const setIncentiveRole = async (u, moduleKey, role) => {
+    const id = u._id || u.id;
+    const before = u.incentiveRoles || [];
+    const after = [...before.filter((r) => r.module !== moduleKey), ...(role ? [{ module: moduleKey, role }] : [])];
+    setBusyId(`${id}:incentiveRoles`); setError('');
+    // The retired boolean outranks the list in incentiveRole(), so clear it here
+    // too or the row would keep reading as a manager of everything.
+    patchRow(id, { incentiveRoles: after, incentiveAccess: false });
+    try {
+      const { data } = await api.patch(`/admin/users/${id}/incentive-role`, { module: moduleKey, role: role || null });
+      if (data?.incentiveRoles) patchRow(id, { incentiveRoles: data.incentiveRoles });
+    } catch (err) {
+      patchRow(id, { incentiveRoles: before, incentiveAccess: u.incentiveAccess });
+      setError(err.response?.data?.message || 'Could not set the incentive role');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** What this row holds in one tab, '' when nothing. */
+  const roleIn = (u, moduleKey) => (u.incentiveRoles || []).find((r) => r.module === moduleKey)?.role || '';
+
   // Two separate khata grants on purpose. The first opens the module so someone
   // can hand cash to staff and settle it; the second lets them download every
   // employee's ledger as a spreadsheet, which is data leaving the building and
@@ -420,7 +454,7 @@ export default function AdminPermissions() {
     );
   }
 
-  const COLS = 10;
+  const COLS = 11;
 
   return (
     <div>
@@ -587,6 +621,7 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Company Accounts</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.incentive}>Incentive</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Employee Cashbook</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">CEO / MD</th>
@@ -659,6 +694,38 @@ export default function AdminPermissions() {
                   <td className="px-4 py-3">
                     <ToggleSwitch checked={!!u.assetsAccess} busy={isBusy('assetsAccess')} label="Assets access"
                       title={GRANT_HELP.assets} onChange={() => toggleAssets(u)} />
+                  </td>
+
+                  {/* One dropdown per incentive tab. A second incentive adds a
+                      row here and nothing else — the endpoint takes the tab as a
+                      parameter. HR and the executives run every incentive by
+                      role, so there is nothing to choose for them. */}
+                  <td className="px-4 py-3">
+                    {['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(u.role) ? (
+                      <span className="text-xs text-gray-400" title="Runs every incentive by their role.">
+                        By role
+                      </span>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {INCENTIVE_MODULES.map((m) => (
+                          <label key={m.key} className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500 w-24 shrink-0" title={m.hint}>{m.label}</span>
+                            <select
+                              value={roleIn(u, m.key)}
+                              disabled={isBusy('incentiveRoles')}
+                              onChange={(e) => setIncentiveRole(u, m.key, e.target.value)}
+                              className="border rounded-lg px-2 py-1 text-xs disabled:opacity-60"
+                              aria-label={`${m.label} role`}
+                            >
+                              <option value="">None</option>
+                              {m.roles.map((r) => (
+                                <option key={r} value={r}>{INCENTIVE_ROLE_LABELS[r]}</option>
+                              ))}
+                            </select>
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   </td>
 
                   {/* Reaching the module and taking its data out are two

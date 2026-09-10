@@ -613,6 +613,59 @@ const setAssetsAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Give somebody a role in ONE incentive tab — or take it away.
+ *
+ * Not a switch: the Incentive section holds several incentives and each is run
+ * by different people, so access is a role per tab (see config/incentiveRoles.js
+ * for what a manager and a picker may each do). One call sets one tab, so the
+ * UI is a dropdown per tab and this stays the same shape however many tabs
+ * exist.
+ *
+ * Role-independent by design, like the flags above: the person who picks the
+ * team is a supervisor on the floor, not an admin. HR, CEO, MD and SuperAdmin
+ * are managers of everything by role and are never stored here — assigning one
+ * of them a role would be noise, so it is refused.
+ *
+ * @route PATCH /api/admin/users/:id/incentive-role  (SuperAdmin)
+ * @param {string} req.body.module - a key from config/incentiveRoles.js ('all', 'boys', …)
+ * @param {string|null} req.body.role - 'manager' | 'picker', or null/'' to remove
+ * @returns {{id, incentiveRoles: Array}}
+ */
+const setIncentiveRole = asyncHandler(async (req, res) => {
+  const { ALL_MODULES, MODULE_KEYS, isValidAssignment } = require('../config/incentiveRoles');
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  const moduleKey = String(req.body.module || '').trim();
+  const role = String(req.body.role || '').trim();
+  if (!MODULE_KEYS.includes(moduleKey)) {
+    res.status(400);
+    throw new Error('Unknown incentive');
+  }
+  if (role && !isValidAssignment(moduleKey, role)) {
+    res.status(400);
+    throw new Error(moduleKey === ALL_MODULES
+      ? 'Only a manager can be set across every incentive — a picker belongs to one.'
+      : 'That role does not exist for this incentive');
+  }
+  if (['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(user.role)) {
+    res.status(400);
+    throw new Error(`${user.firstName} runs every incentive by their role already — there is nothing to assign.`);
+  }
+
+  const kept = (user.incentiveRoles || []).filter((r) => r.module !== moduleKey);
+  user.incentiveRoles = role ? [...kept, { module: moduleKey, role }] : kept;
+  // The retired boolean would otherwise keep answering "manager of everything"
+  // in incentiveRole and quietly outrank whatever was just chosen.
+  user.incentiveAccess = false;
+  await user.save();
+  res.json({ id: user._id, incentiveRoles: user.incentiveRoles });
+});
+
+/**
  * Grant or revoke permission to edit the profiles of MANAGER accounts.
  *
  * Its own grant rather than part of `employees.manage`, for the same reason the
@@ -1433,6 +1486,7 @@ module.exports = {
   setCashbookAccess,
   setExpensesAccess,
   setAssetsAccess,
+  setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,
   setManagerProfileAccess,

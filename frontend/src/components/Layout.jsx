@@ -17,7 +17,7 @@ import api, { signOut } from '../api/client';
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare } from 'react-icons/fi';
+import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare, FiStar } from 'react-icons/fi';
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
@@ -133,7 +133,12 @@ function NavList({ items, user, onNavigate }) {
     // it as a plain section link straight to that item. It still carries an
     // icon (the group's own, else the item's) so it reads as a clickable row
     // rather than an inert section heading.
-    if (children.length === 1) {
+    //
+    // `keepGroup` opts out. The collapsed row is labelled with the GROUP name,
+    // which is right when the two names say the same thing ("Help" → "Help") and
+    // wrong when the item's name is the informative one: "Incentive" alone does
+    // not say WHICH incentive, and that category is expected to gain siblings.
+    if (children.length === 1 && !g.keepGroup) {
       const only = children[0];
       const Icon = g.icon || only.icon;
       return (
@@ -723,6 +728,52 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
   );
 }
 
+/**
+ * What the company still owes ME in incentive points, in the top bar.
+ *
+ * UNPAID rather than earned: the earned figure only ever goes up and answers
+ * nothing, while this is the number somebody actually wants at a glance. Zero is
+ * a real and good answer — "all settled" — so it stays put rather than appearing
+ * and vanishing as payments land.
+ *
+ * Fed by `GET /incentives/me`, the one route in that module an ordinary employee
+ * may call (everything else needs a role in it). Shown to EVERY employee, zero
+ * included (user decision 2026-09-10): a standing 0 says "nothing outstanding",
+ * which is information, and a chip that comes and goes as payments land is a
+ * moving target rather than a place to look.
+ *
+ * POINTS, never rupees: what a point is worth is a company figure, set on
+ * Incentive → Point Rate, and is not an employee's business.
+ */
+function PointsPill() {
+  const [mine, setMine] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/incentives/me')
+      .then(({ data }) => { if (!cancelled && data) setMine(data); })
+      // Silent: a hiccup simply leaves the chip out until the next load.
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Only until the first answer lands — after that a zero is shown like any
+  // other figure. Accounts with no employee record (CEO/MD/Backend) earn no
+  // points at all, and the server says so with hasIncentive:false.
+  if (!mine || mine.hasIncentive === false) return null;
+  const value = Math.round((Number(mine.unpaidPoints) || 0) * 100) / 100;
+  return (
+    <span
+      className="hidden md:inline-flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200"
+      title={`${value} incentive point${value === 1 ? '' : 's'} not yet paid to you`}
+    >
+      <FiStar size={12} aria-hidden="true" />
+      <strong className="tabular-nums">{value}</strong>
+      <span className="font-normal">unpaid</span>
+    </span>
+  );
+}
+
 function ProfileMenu({ user, employeeCode, onLogout }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
@@ -1027,6 +1078,10 @@ export default function Layout({ navItems = [], sectionTitle }) {
           </div>
 
           <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
+
+          {/* Between the search and the account cluster — the gap that was there
+              anyway. Renders nothing for the staff who earn no points. */}
+          <span className="ml-2 shrink-0"><PointsPill /></span>
 
           {viewOnlyExec && (
             <span className="hidden xl:inline-flex items-center gap-1 ml-1 shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200"

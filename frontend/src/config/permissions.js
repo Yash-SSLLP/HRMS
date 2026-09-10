@@ -32,6 +32,10 @@ export function hasPermission(user, cap) {
   // cash-ledger module for anyone. WHICH company account they may pay out of is
   // decided per account on the server (CashAccount.operators), not here.
   if (cap === 'khata.manage' && user.khataAccess === true) return true;
+  // The incentive module is NOT gated by this catalogue any more — it uses a
+  // role per tab (incentiveRole below). This key survives only as the nav's
+  // question "does this person have ANY role in an incentive".
+  if (cap === 'incentive.manage') return canUseIncentive(user, 'all') || incentiveRole(user, 'boys') !== null;
   if (user.role === 'LDManager') return cap === 'courses.manage';
   // Account Managers settle reimbursements out of the cashbook, so they hold the
   // expense capability alongside it.
@@ -78,6 +82,59 @@ export function hasExplicitPermission(user, cap) {
  */
 export const canExportKhata = (user) => !!user
   && (user.role === 'SuperAdmin' || user.khataExportAccess === true);
+
+
+/**
+ * The incentive tabs a role can be assigned in, and the roles themselves.
+ * Mirrors backend/config/incentiveRoles.js — the server validates, this only
+ * draws the dropdowns. Adding a tab there means adding it here.
+ */
+export const INCENTIVE_MODULES = [
+  { key: 'all', label: 'All incentives', hint: 'Runs every incentive tab, including ones added later.', roles: ['manager'] },
+  { key: 'boys', label: 'Boys Incentive', hint: 'The daily rolling teams.', roles: ['manager', 'picker'] },
+];
+
+export const INCENTIVE_ROLE_LABELS = { manager: 'Manager', picker: 'Picker' };
+
+/**
+ * What role does this account hold in one incentive tab? Mirrors incentiveRole
+ * in the backend's authMiddleware, resolution order and all: HR/CEO/MD/Backend
+ * run every incentive by role, then an 'all' assignment, then the tab's own,
+ * then the retired `incentiveAccess` boolean (so an account granted before roles
+ * existed is not locked out before the migration runs).
+ * @param {object|null} user
+ * @param {string} moduleKey
+ * @returns {'manager'|'picker'|null}
+ */
+export function incentiveRole(user, moduleKey) {
+  if (!user) return null;
+  if (['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(user.role)) return 'manager';
+  if (isViewOnlyAccount(user)) return 'manager';
+  const list = Array.isArray(user.incentiveRoles) ? user.incentiveRoles : [];
+  if (list.some((r) => r.module === 'all' && r.role === 'manager')) return 'manager';
+  const own = list.find((r) => r.module === moduleKey);
+  if (own) return own.role;
+  if (user.incentiveAccess === true) return 'manager';
+  return null;
+}
+
+/** May this account RUN this incentive tab — rates, sheet counts, corrections? */
+export const canManageIncentive = (user, moduleKey) => incentiveRole(user, moduleKey) === 'manager';
+
+/** May this account open this incentive tab at all (manager or picker)? */
+export const canUseIncentive = (user, moduleKey) => incentiveRole(user, moduleKey) !== null;
+
+/**
+ * May this account mark incentive points as PAID? Mirrors canPayIncentive in the
+ * backend's authMiddleware — and, like it, answers on ROLE alone rather than
+ * through hasPermission. The incentive module is grantable to a floor supervisor
+ * (User.incentiveAccess), and recording who rolled what is their job; declaring
+ * it paid for is the company's, so it stays with HR and the executives.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const canPayIncentive = (user) => !!user
+  && ['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(user.role);
 
 /**
  * Roles whose employee profile is protected by the manager-profile grant.

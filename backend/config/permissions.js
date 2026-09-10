@@ -84,6 +84,12 @@ const PERMISSIONS = [
   // must also be listed on the specific CashAccount (CashAccount.operators).
   { key: 'khata.manage', label: 'Employee cashbook (cash advances & settlements)', group: 'Payroll & Finance' },
   { key: 'travel.manage', label: 'Travel requests', group: 'Payroll & Finance' },
+  // The daily rolling incentive (Incentive → Boys Incentive): who was on the
+  // team, how many rollings they did and what a rolling pays. Its own key rather
+  // than part of payroll.manage — the team is recorded on the floor every day by
+  // whoever was watching, and that person has no business in the payroll module.
+  // Also grantable to any account at all via User.incentiveAccess.
+  { key: 'incentive.manage', label: 'Incentive (daily team rollings)', group: 'Payroll & Finance' },
   { key: 'compliance.view', label: 'Compliance reports', group: 'Payroll & Finance' },
 
   // Performance & learning

@@ -190,6 +190,7 @@ app.use('/api/cashbook', require('./routes/cashbookRoutes'));
 app.use('/api/khata', require('./routes/khataRoutes'));
 app.use('/api/declarations', require('./routes/declarationRoutes'));
 app.use('/api/compliance', require('./routes/complianceRoutes'));
+app.use('/api/incentives', require('./routes/incentiveRoutes'));
 
 app.use('/api/surveys', require('./routes/surveyRoutes'));
 app.use('/api/travel', require('./routes/travelRoutes'));
