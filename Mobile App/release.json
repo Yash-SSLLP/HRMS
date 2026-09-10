@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.13",
-  "versionCode": 94,
-  "notes": "Fixes the crash in 2.8.11. That build could show an error screen or close itself as soon as you signed in — this one opens normally, so please update. Saying thanks for a wish works properly now too: the \"Wishes for you\" card used to disappear the moment you marked your alerts as read, taking the Say thanks button with it. The card now stays until you close it yourself, so a wish still waiting for a reply is there when you come back to it."
+  "versionName": "2.8.14",
+  "versionCode": 95,
+  "notes": "Wishing someone sticks now. The Wish button used to come back every time you opened the app, so the same colleague could be wished the same birthday over and over — wish once and it stays done, and it returns just once on the day itself if you got in early. Search remembers where you have been: open it and your recent pages, people and accounts are right there, with an X on any row and a Clear all. In My Cashbook, a bill you attached opens properly — a PDF bill used to arrive as a broken image. And if you run your phone at a larger text size, the filter chips on Attendance and Payroll no longer get sliced off; every chip in the app now grows with your text instead of cutting the label off. For managers and HR: emergency leave has its own tab under Approvals, where you can confirm one that stands or reject one that should not, and a leave's type or dates can now be corrected without rejecting it and asking for it again."
 }

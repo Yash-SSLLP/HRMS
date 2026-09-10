@@ -63,6 +63,10 @@ const OUT_INK = '#C93B3B';
 // before the reader gets as far as the strike-through.
 const MUTED = '#6B7280';
 const FAINT = '#9AA1AA';
+// The one colour on the page that means "this is clickable". A bill link is the
+// only interactive thing in the document, so it gets a colour nothing else uses
+// — printed out, it still reads as a reference rather than as a mistake.
+const LINK_INK = '#1D4ED8';
 
 // A4 at the reference's own scale, so the geometry below is its geometry.
 const PAGE_W = 595.92;
@@ -179,6 +183,22 @@ function billsFor(bills, row) {
 }
 
 /**
+ * The web address of one row's full-size bill, or ''.
+ *
+ * Same Map-keyed-by-row-id shape as `bills`, and deliberately independent of it:
+ * the rows a reader most needs to open are the ones with no thumbnail — a
+ * scanned PDF invoice, a bill past the report's byte cap — so a link exists
+ * whether or not any bytes were drawn.
+ * @param {Map<string, string>|null} links
+ * @param {object} row
+ * @returns {string}
+ */
+function billLinkFor(links, row) {
+  if (!links || typeof links.get !== 'function') return '';
+  return String(links.get(String(row._id)) || '');
+}
+
+/**
  * Fold the filtered rows into their totals.
  *
  * `counted` is how many rows were money; `entries.length` is how many were
@@ -275,7 +295,7 @@ function groupByDay(entries = [], opening = 0) {
 function renderCashbookReport(input, variant) {
   const {
     company = {}, logo = null, employee = {}, book = null, range = {},
-    entries = [], bills = null, footer = {},
+    entries = [], bills = null, billLinks = null, footer = {},
   } = input;
   const generatedAt = input.generatedAt || new Date();
   const billsSkipped = Number(input.billsSkipped) || 0;
@@ -334,6 +354,28 @@ function renderCashbookReport(input, variant) {
       doc.font(bold ? F.bold : F.regular).fontSize(size).fillColor(color)
         .text(text, x, y, { width, align, lineBreak: false, characterSpacing: spacing });
       return doc.widthOfString(text, { characterSpacing: spacing });
+    };
+    // A clickable run of text: link blue, underlined, with the annotation over
+    // exactly the glyphs it drew.
+    //
+    // pdfkit's own `link: true` text option only works inside its flowing layout
+    // — it hangs the annotation off the line box it just laid out. This document
+    // places every string absolutely with lineBreak:false, so there is no line
+    // box to hang anything off and the rectangle has to be measured and
+    // registered by hand. Same reason fit() exists a few lines up.
+    const linkRun = (s, x, y, url, opts = {}) => {
+      const { size = 6.8, width = BLOCK_W } = opts;
+      const text = fit(s, width, { size });
+      doc.font(F.regular).fontSize(size).fillColor(LINK_INK)
+        .text(text, x, y, { width, align: 'left', lineBreak: false });
+      const w = doc.widthOfString(text);
+      doc.moveTo(x, y + size + 0.5).lineTo(x + w, y + size + 0.5).lineWidth(0.4).stroke(LINK_INK);
+      // .stroke() leaves its colour on the document, exactly as box() warns.
+      doc.strokeColor(BORDER).fillColor(INK);
+      // A point of slack above and below: a hit area the exact height of the
+      // glyphs is a hard target for a mouse and an impossible one for a thumb.
+      doc.link(x, y - 1, w, size + 3, url);
+      return w;
     };
     // Wrapped body text with a hard ceiling, so a 500-character remark can never
     // push a block past the space measured for it.
@@ -627,18 +669,46 @@ function renderCashbookReport(input, variant) {
           const tint = dead ? { bg: '#FDECEA', fg: OUT_INK } : { bg: '#FFF6E5', fg: '#8A6100' };
           chip(statusLabel, ENTRY_X[2] - 6 - statusW, y + PAD_TOP + LINE_1 - 1, tint);
         }
+        // Where the full-size bill lives, when the caller gave us somewhere to
+        // point. A 34pt thumbnail proves a bill exists and settles nothing else,
+        // so the picture is the way in rather than the whole answer.
+        const link = billLinkFor(billLinks, e);
+        // Say a bill exists even when its bytes were not fetched (?bills=0) or
+        // could not be drawn (a scanned PDF invoice). Dropping the fact reads
+        // exactly like a row that never had a bill — and on those rows the words
+        // are the ONLY way in, since there is no thumbnail to hang the link on.
+        const billNote = !bill.images.length && (bill.other || e.hasAttachment)
+          ? (link ? 'View bill' : 'bill on file')
+          : '';
         const meta = [
           book ? '' : e.khataName,          // the book is in the title on a one-book report
           e.code,
           showBy && e.byName ? `Added by ${e.byName}` : '',
-          // Say a bill exists even when its bytes were not fetched (?bills=0) or
-          // could not be drawn (a scanned PDF invoice). Dropping the fact reads
-          // exactly like a row that never had a bill.
-          !bill.images.length && (bill.other || e.hasAttachment) ? 'bill on file' : '',
+          // Only when it is NOT a link: a linked run has to be drawn separately
+          // so the annotation can sit over exactly the glyphs it opens.
+          link ? '' : billNote,
         ].filter(Boolean).join(' · ');
+        const metaW = dw - (statusW ? statusW + 6 : 0);
+        // Room for the link is taken out of the meta line BEFORE it is drawn.
+        // Measured first and subtracted, rather than fitted into whatever the
+        // meta left over: a long remark would otherwise eat the whole line and
+        // the one clickable thing on the row would silently not be drawn.
+        let noteW = 0;
+        if (link && billNote) {
+          doc.font(F.regular).fontSize(6.8);
+          noteW = doc.widthOfString(`${billNote} · `);
+        }
+        let usedW = 0;
         if (meta) {
-          write(meta, dx, y + PAD_TOP + LINE_1,
-            { size: 6.8, color: FAINT, width: dw - (statusW ? statusW + 6 : 0) });
+          usedW = write(meta, dx, y + PAD_TOP + LINE_1,
+            { size: 6.8, color: FAINT, width: Math.max(0, metaW - noteW) });
+        }
+        if (noteW) {
+          const sepW = usedW
+            ? write(' · ', dx + usedW, y + PAD_TOP + LINE_1, { size: 6.8, color: FAINT, width: 14 })
+            : 0;
+          linkRun(billNote, dx + usedW + sepW, y + PAD_TOP + LINE_1, link,
+            { size: 6.8, width: metaW - usedW - sepW });
         }
         if (bill.images.length) {
           let bxx = dx;
@@ -653,6 +723,14 @@ function renderCashbookReport(input, variant) {
             doc.restore();
             doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).lineWidth(0.6).stroke(GRID);
             doc.strokeColor(BORDER);
+            // The whole square opens the full-size bill. Drawn in link blue so
+            // the picture reads as clickable rather than as decoration — the
+            // thumbnail is the affordance, and a reader has no other cue.
+            if (link) {
+              doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).lineWidth(0.8).stroke(LINK_INK);
+              doc.strokeColor(BORDER);
+              doc.link(bxx, y + THUMB_TOP, THUMB, THUMB, link);
+            }
             bxx += THUMB + 5;
           }
         }
@@ -720,8 +798,13 @@ function renderCashbookReport(input, variant) {
     const notes = [];
     if (opening) notes.push(`Opening balance ${rs(opening)} carried in from before this period.`);
     notes.push('Only approved entries are counted. Rejected and reversed rows are shown struck through and add up to nothing.');
+    // Only where there is something to click: on a document with no links the
+    // sentence is an instruction the reader cannot follow.
+    if (variant !== 'daywise' && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
+      notes.push('Bill thumbnails are links: tap one to open the full-size bill.');
+    }
     if (billsSkipped) {
-      notes.push(`${billsSkipped} bill${billsSkipped === 1 ? ' was' : 's were'} not embedded — open them from the book in the app, or narrow the filters and download again.`);
+      notes.push(`${billsSkipped} bill${billsSkipped === 1 ? ' was' : 's were'} not embedded — open them from the link on the row, or narrow the filters and download again.`);
     }
     wrap(notes.join(' '), X0, y, BLOCK_W, 3, { size: 7.4, color: billsSkipped ? OUT_INK : FAINT });
 
@@ -756,6 +839,9 @@ function renderCashbookReport(input, variant) {
  *   purpose, category, paymentMode, direction, amount, status, movement, khataName,
  *   byName, confirmedByCompany, hasAttachment, walletBalanceAfter }
  * @param {Map<string, Buffer|Buffer[]>} [input.bills] - entryId -> image bytes, ALREADY READ
+ * @param {Map<string, string>} [input.billLinks] - entryId -> web address of the
+ *   full-size bill. Hung on the thumbnail, or on the words that stand in for one
+ *   where no image was drawn. Omit it and the document prints exactly as before.
  *   by the caller: the Promise executor below is synchronous and cannot await storage.
  * @param {number} [input.billsSkipped]    - bills the caller dropped against its own caps
  * @param {Array<{label: string, value: string}>} [input.filterSummary] - printed under the duration box

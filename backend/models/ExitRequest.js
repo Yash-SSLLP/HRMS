@@ -165,7 +165,10 @@ exitRequestSchema.index(
 );
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-exitRequestSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: who is leaving.
+// Without it the audit screen has only an id fragment to show, because this
+// record has no name or title of its own. See plugins/auditStatus.js.
+exitRequestSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 
 module.exports = mongoose.model('ExitRequest', exitRequestSchema);
 module.exports.EXIT_TYPES = EXIT_TYPES;

@@ -28,6 +28,7 @@ const DocumentSubmitForm = lazy(() => import('./pages/DocumentSubmitForm.jsx'));
 const EmployeeDocSubmit = lazy(() => import('./pages/EmployeeDocSubmit.jsx'));
 const LetterDownload = lazy(() => import('./pages/LetterDownload.jsx'));
 const PublicCoursePage = lazy(() => import('./pages/PublicCoursePage.jsx'));
+const PublicBill = lazy(() => import('./pages/PublicBill.jsx'));
 
 // In-app pages are lazy-loaded — the Layout shows a skeleton (Suspense) while
 // each page's chunk loads, and this code-splits the bundle.
@@ -209,6 +210,11 @@ export default function App() {
 
       {/* Public — no-login course viewer (shareable link) */}
       <Route path="/learn/:token" element={<PublicCoursePage />} />
+
+      {/* Public — the full-size bill behind a thumbnail in a cashbook statement
+          PDF. Signature-gated rather than login-gated: a PDF viewer opens a link
+          in a plain tab with nowhere to put a bearer header. See PublicBill. */}
+      <Route path="/bill/:id/:sig" element={<PublicBill />} />
 
       {/* Admin portal — role-gated to admin/exec roles; sidebar nav swaps to the
           single-page nav for the LMS-only and cashbook-only admins. */}

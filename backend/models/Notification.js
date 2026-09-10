@@ -40,10 +40,38 @@ const notificationSchema = new mongoose.Schema(
     // last month's birthday greetings do not pile up on someone's home screen.
     // Null / absent = never expires (every other notification type today).
     expiresAt: { type: Date },
+    /**
+     * WHICH OCCASION a celebration wish was for. Wish-specific, and it sits here
+     * for the same reason `thankedAt` does — the wish IS a notification, there
+     * is no other document to hang it on.
+     *
+     * WHY IT IS NEEDED AT ALL. The Wish button used to be hidden by component
+     * state alone, so it came back on every page load and a colleague could be
+     * wished the same birthday over and over. Answering "have I already wished
+     * them?" needs the wish to say who it was for, which occasion, and which
+     * DAY that occasion falls on — a title reading "🎂 X sent you a birthday
+     * wish" can be shown to a person but cannot be queried.
+     *
+     * `occasionOn` is the IST calendar date of the occasion (not of the wish):
+     * it is the same value for a greeting sent five days early and one sent on
+     * the day, which is exactly what makes them comparable. `onTheDay` splits
+     * those two into the module's two wishing windows — see sendWish.
+     *
+     * Absent on every notification that is not a wish, and on wishes sent before
+     * this existed; both read as "no record", which is the honest answer.
+     */
+    celebration: {
+      kind: { type: String },        // 'birthday' | 'anniversary' | 'marriage'
+      occasionOn: { type: String },  // 'YYYY-MM-DD', IST
+      onTheDay: { type: Boolean },   // sent on or after the day, rather than early
+    },
   },
   { timestamps: true }
 );
 
 notificationSchema.index({ recipient: 1, createdAt: -1 });
+// "Which of these people have I already wished, for this occasion?" — one query
+// per dashboard load, so it is worth an index.
+notificationSchema.index({ sender: 1, 'celebration.occasionOn': 1 }, { sparse: true });
 
 module.exports = mongoose.model('Notification', notificationSchema);

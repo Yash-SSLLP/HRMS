@@ -6,6 +6,9 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
+import LeaveAmendModal from './LeaveAmendModal';
+import { useAuthStore } from '../store/authStore';
+import { hasPermission } from '../config/permissions';
 import { promptDialog, confirmDialog } from './dialogs';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
@@ -75,20 +78,33 @@ const empName = (r) => `${r.employee?.user?.firstName || ''} ${r.employee?.user?
 export default function LeaveApprovalsInbox({ onCount }) {
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
+  // Emergency leave that was granted on filing and that nobody has yet ruled on.
+  // Its own list, not folded into `pending`: these days have already been taken,
+  // and a queue whose buttons say Approve would be describing a decision that is
+  // no longer available to anyone.
+  const [emergency, setEmergency] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
-  const [tab, setTab] = useState('pending'); // 'pending' (to approve) | 'history'
+  const [tab, setTab] = useState('pending'); // 'pending' | 'emergency' | 'history'
+  // The request being edited, or null. One modal for every tab.
+  const [amending, setAmending] = useState(null);
+  // The audit grant: see every leave's full trail, and correct one that is
+  // already decided. Without it the Edit button stops at open requests, which is
+  // exactly what the server enforces.
+  const mayEditDecided = hasPermission(useAuthStore.getState().user, 'leave.history');
 
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const [p, h] = await Promise.all([
+      const [p, h, e] = await Promise.all([
         api.get('/approvals/leave?scope=pending'),
         api.get('/approvals/leave?scope=history'),
+        api.get('/approvals/leave?scope=emergency'),
       ]);
       setPending(p.data.requests || []);
       setHistory(h.data.requests || []);
+      setEmergency(e.data.requests || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load approvals');
     } finally {
@@ -143,12 +159,58 @@ export default function LeaveApprovalsInbox({ onCount }) {
     }
   };
 
+  /**
+   * Confirm that an emergency leave stands, or reject it.
+   *
+   * Emergency leave is granted the moment it is filed — nobody was asked — so
+   * this is the only place anyone gets to disagree with it. Rejecting takes the
+   * days off the calendar and they count as absence instead, which is a real
+   * cost to the employee, so the confirmation says so plainly and the reason is
+   * required rather than optional.
+   */
+  const review = async (r, decision) => {
+    if (decision === 'reject' && !(await confirmDialog({
+      title: `Reject ${empName(r)}'s emergency leave?`,
+      message: `${r.totalDays} day${r.totalDays === 1 ? '' : 's'} will stop being leave and count as absence instead. `
+        + 'They are told, with your reason. You can put it back afterwards if this turns out to be wrong.',
+      tone: 'danger',
+      confirmText: 'Reject the leave',
+    }))) return;
+    const note = await promptDialog({
+      message: decision === 'reject'
+        ? 'Why is it being rejected? The employee sees this.'
+        : 'Optional note (the employee sees this):',
+    });
+    if (note === null) return;
+    if (decision === 'reject' && !note.trim()) return;
+    setBusyId(r._id); setError('');
+    try {
+      await api.patch(`/leave/emergency/${r._id}/review`, { decision, note });
+      // Out of the queue in place — the same reason `decide` does it rather than
+      // reloading: a full reload drops the reviewer back to the top of a list
+      // they were working down.
+      setEmergency((prev) => prev.filter((x) => x._id !== r._id));
+      api.get('/approvals/leave?scope=history')
+        .then((h) => setHistory(h.data.requests || []))
+        .catch(() => {});
+    } catch (err) {
+      setError(err.response?.data?.message || `Could not ${decision} the leave`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   // Chain-history minus the ones already shown in the actionable list.
   // Report the pending count to the page shell (ApprovalsBoard) so the summary
   // rail and this section's count pill can show it. Optional — the inbox still
   // works standalone. Held back until the first load finishes, so "0" always
   // means "all clear" and never "not fetched yet".
-  useEffect(() => { if (!loading) onCount?.(pending.length); }, [loading, pending, onCount]);
+  // Both queues count towards the section badge: an emergency leave nobody has
+  // ruled on is as much "waiting on you" as a request awaiting approval, and a
+  // badge that ignored it would leave the tab looking clear while it is not.
+  useEffect(() => {
+    if (!loading) onCount?.(pending.length + emergency.length);
+  }, [loading, pending, emergency, onCount]);
 
   const pendingIds = new Set(pending.map((r) => r._id));
   const others = history.filter((r) => !pendingIds.has(r._id));
@@ -193,6 +255,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
       {/* Tabs: the actionable approval queue is kept separate from history. */}
       <div className="inline-flex items-center gap-1 p-1 mb-4 rounded-xl bg-gray-100 border border-gray-200">
         {tabBtn('pending', 'To approve', pending.length)}
+        {tabBtn('emergency', 'Emergency', emergency.length)}
         {tabBtn('history', 'History', others.length)}
       </div>
 
@@ -217,10 +280,84 @@ export default function LeaveApprovalsInbox({ onCount }) {
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
                   <div className="flex gap-2 shrink-0">
+                    {/* Correcting the ask is a third answer alongside yes and
+                        no: a request with the wrong dates or the wrong type does
+                        not need rejecting, it needs fixing. */}
+                    <button onClick={() => setAmending(r)} disabled={busyId === r._id}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">Edit</button>
                     <button onClick={() => decide(r._id, 'approve')} disabled={busyId === r._id}
                       className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
                     <button onClick={() => decide(r._id, 'reject')} disabled={busyId === r._id}
                       className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-red-600 hover:bg-red-50 disabled:opacity-50">Reject</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Emergency leave: already taken, still unruled-on. The wording carries the
+          whole difference from the queue above — nothing here is being approved,
+          because it already happened. */}
+      {tab === 'emergency' && (
+        <div>
+          <p className="text-xs text-gray-500 mb-3 max-w-2xl">
+            Emergency leave is granted the moment it is filed — nobody is asked first, which is the point of it.
+            These are the ones you were told about and nobody has ruled on yet. <strong>Confirm</strong> the ones
+            that stand; <strong>reject</strong> one that should not, which takes those days off the calendar and
+            counts them as absence instead.
+          </p>
+          {emergency.length === 0 ? (
+            <ApprovalsEmpty hint="Emergency leave taken by anyone in your reporting line appears here, already granted, for you to confirm or reject." />
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {emergency.map((r) => (
+                <li key={r._id} className="py-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-gray-900">
+                      {empName(r)}
+                      <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d
+                      {r.lopDays > 0 && <span className="text-red-600 font-medium"> · {r.lopDays} LOP</span>}
+                      {r.reason ? ` · “${r.reason}”` : ''}
+                    </div>
+                    {/* Repeat use is the thing a reviewer most needs to know before
+                        deciding, so it is stated on the row rather than left to be
+                        inferred from the dates. */}
+                    {r.emergencyFlagged && (
+                      <div className="text-[11px] text-red-700 mt-0.5">
+                        ⚑ {r.emergencyIndexInMonth} emergency leaves that month
+                      </div>
+                    )}
+                    {r.doubleCut && (
+                      <div className="text-[11px] text-red-600 mt-0.5 font-medium">
+                        Charged at double pay{r.doubleCutByName ? ` by ${r.doubleCutByName}` : ''} · undo it before rejecting
+                      </div>
+                    )}
+                    <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    <button onClick={() => setAmending(r)} disabled={busyId === r._id}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                      Edit
+                    </button>
+                    <button onClick={() => review(r, 'confirm')} disabled={busyId === r._id}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
+                      Confirm
+                    </button>
+                    <button onClick={() => review(r, 'reject')} disabled={busyId === r._id}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-red-600 hover:bg-red-50 disabled:opacity-50">
+                      Reject
+                    </button>
+                    <button onClick={() => toggleDoubleCut(r)} disabled={busyId === r._id}
+                      className={`text-xs px-3 py-1.5 rounded-lg border border-gray-300 disabled:opacity-50 ${
+                        r.doubleCut ? 'text-gray-600 hover:bg-gray-50' : 'text-red-600 hover:bg-red-50'}`}
+                      title={r.doubleCut ? 'Remove the double salary cut' : 'Charge this day at 2× salary in payroll'}>
+                      {r.doubleCut ? 'Undo double cut' : 'Double cut'}
+                    </button>
                   </div>
                 </li>
               ))}
@@ -252,9 +389,52 @@ export default function LeaveApprovalsInbox({ onCount }) {
                         Charged at double pay{r.doubleCutByName ? ` by ${r.doubleCutByName}` : ''}
                       </div>
                     )}
+                    {/* How an emergency leave ended up. 'Approved' on one of these
+                        only ever meant "taken", so the row has to say separately
+                        whether a human agreed with it. */}
+                    {r.leaveType === 'Emergency Leave' && r.emergencyReview?.status
+                      && r.emergencyReview.status !== 'Pending' && (
+                      <div className={`text-[11px] mt-0.5 ${r.emergencyReview.status === 'Rejected' ? 'text-red-700' : 'text-green-700'}`}>
+                        {r.emergencyReview.status === 'Rejected' ? 'Rejected' : 'Confirmed'} by{' '}
+                        {r.emergencyReview.byName || 'a reviewer'}
+                        {r.emergencyReview.byRole ? ` (${r.emergencyReview.byRole})` : ''}
+                        {r.emergencyReview.note ? ` — “${r.emergencyReview.note}”` : ''}
+                      </div>
+                    )}
+                    {/* EVERY CORRECTION MADE TO THIS LEAVE, oldest last. The
+                        chain above says who approved what; without this the row
+                        could not say that the thing they approved has since been
+                        changed, or by whom — and a record that quietly differs
+                        from the decision is the one an audit asks about. Shown
+                        to everyone who can see the row: the trail is the point
+                        of a history tab, and the GRANT is about changing it. */}
+                    {(r.amendments || []).length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {r.amendments.map((a, i) => (
+                          <div key={a.at || i} className="text-[11px] text-gray-500">
+                            <span className="text-gray-400">{fmtDate(a.at)}</span>{' '}
+                            {a.byName || 'Someone'}
+                            {a.byRole ? ` (${a.byRole})` : ''} changed {a.summary}
+                            {a.note ? ` \\u2014 \\u201c${a.note}\\u201d` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    {/* Still correctable once approved: the days are on a
+                        calendar somebody has to live with, and the API amends
+                        that calendar with the request. A CANCELLED or REJECTED
+                        one is correctable too, but only with the audit grant —
+                        changing what a settled record says is a different act
+                        from fixing a live one. */}
+                    {(r.status === 'Approved' || (mayEditDecided && ['Cancelled', 'Rejected'].includes(r.status))) && (
+                      <button onClick={() => setAmending(r)} disabled={busyId === r._id}
+                        className="text-gray-600 hover:underline">
+                        Edit
+                      </button>
+                    )}
                     {r.leaveType === 'Emergency Leave' && r.status === 'Approved' && (
                       <button onClick={() => toggleDoubleCut(r)} disabled={busyId === r._id}
                         className={r.doubleCut ? 'text-gray-600 hover:underline' : 'text-red-600 hover:underline'}
@@ -269,6 +449,13 @@ export default function LeaveApprovalsInbox({ onCount }) {
             </ul>
           )}
         </div>
+      )}
+      {amending && (
+        <LeaveAmendModal
+          request={amending}
+          onClose={() => setAmending(null)}
+          onSaved={() => load()}
+        />
       )}
     </div>
   );

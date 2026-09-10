@@ -58,8 +58,59 @@ const { scopeUserField, scopeUserFilter, cannotSeeUser } = require('../utils/emp
 // hideSuperAdminFilter keeps a Backend login out of the colleague picker, exactly
 // as it does in the chat directory this module's sharing flow was copied from.
 const { isNonStaffRole, hideSuperAdminFilter } = require('../utils/visibility');
+// Bill links printed inside a statement PDF. See utils/signedLink.js for why an
+// HMAC rather than a stored token, and receiptLinkFor below for what it builds.
+const { signId, verifyId } = require('../utils/signedLink');
+const { appBaseUrl } = require('../config/appUrl');
 
 const USER_FIELDS = 'firstName lastName email role photo';
+
+/** Namespaces the bill signatures so one can never be replayed elsewhere. */
+const RECEIPT_LINK_SCOPE = 'khata-receipt';
+
+/**
+ * The public web address of one entry's bill, or '' when there is no bill.
+ *
+ * Points at the WEB app, not at the API: the reader clicked a thumbnail in a
+ * document and expects a page, and the page can show a scanned PDF invoice —
+ * the one kind of bill a PDF thumbnail can never draw — as well as a photo.
+ * The page fetches the bytes from the two public routes at the bottom of this
+ * file using the same id and signature.
+ * @param {object} entry - Lean or hydrated; needs `_id` and `attachment`.
+ * @returns {string}
+ */
+function receiptLinkFor(entry) {
+  if (!entry?.attachment?.storagePath) return '';
+  const id = String(entry._id);
+  return `${appBaseUrl()}/bill/${id}/${signId(RECEIPT_LINK_SCOPE, id)}`;
+}
+
+/**
+ * Fill a spreadsheet's Bill cell with a link to the bill itself.
+ *
+ * The exports used to print the word "Yes" here, which tells a reconciler that a
+ * bill exists and then leaves them to go and find it — back into the portal, to
+ * the right person, to the right book, to the right row. The same signed link
+ * the statement PDF hangs on its thumbnails costs nothing to put in a cell, and
+ * turns the column from a fact into the document.
+ *
+ * `'Yes'` survives as the fallback for the case where no link can be built at
+ * all (no APP_BASE_URL, no signing secret): the column must not go BLANK on a
+ * row that has a bill, which would read as a missing receipt.
+ * @param {object} cell - An exceljs cell.
+ * @param {object} entry - A ledger row carrying `_id` and `attachment`.
+ * @sideEffects Sets the cell's value and font.
+ */
+function writeBillCell(cell, entry) {
+  if (!entry?.attachment?.storagePath) return;
+  const url = receiptLinkFor(entry);
+  if (!url) { cell.value = 'Yes'; return; }
+  cell.value = { text: 'View bill', hyperlink: url };
+  // Excel does not style a hyperlink on its own when the cell value is set
+  // programmatically — without this it is plain black text that happens to be
+  // clickable, which nobody clicks.
+  cell.font = { color: { argb: 'FF1D4ED8' }, underline: true };
+}
 
 /**
  * How many colleagues one book may be shared with.
@@ -224,6 +275,14 @@ const publicEntry = (e, viewer, opts = {}) => ({
     ? {}
     : { balanceAfter: e.walletBalanceAfter }),
   hasAttachment: !!e.attachment?.storagePath,
+  // WHAT the bill is, not just that there is one. The mobile app has no tab to
+  // open a stream in: it downloads the bytes to a file and hands that file to
+  // the OS, which picks the viewer from the name and the mime. Without these it
+  // guessed — every bill was saved as `.jpg`, so a PDF invoice reached the OS
+  // labelled as a photo and opened as a broken image. Same two keys, same
+  // names, as the company cashbook's mapper.
+  attachmentName: e.attachment?.name || undefined,
+  attachmentMime: e.attachment?.mime || undefined,
   // Has anybody on the company side actually looked at this expense? 'Approved'
   // does not answer that for an expense, which posts unreviewed — see the
   // KhataEntry schema. Until this is true the row is still correctable.
@@ -1639,7 +1698,8 @@ const listMyAccounts = asyncHandler(async (req, res) => {
  * "and what have they spent it on?".
  * @route GET /api/khata/employees  (khata.manage)
  * @param {string} [req.query.q] - Name/email/book search.
- * @param {string} [req.query.filter] - 'outstanding' | 'payable' | 'settled' | 'all'.
+ * @param {string} [req.query.filter] - 'active' (non-zero either way — what the
+ *   screen opens on) | 'outstanding' | 'payable' | 'settled' | 'all'.
  * @returns {{count: number, rows: Object[]}}
  */
 const listKhatas = asyncHandler(async (req, res) => {
@@ -1692,8 +1752,16 @@ const listKhatas = asyncHandler(async (req, res) => {
     };
   });
 
+  // 'active' is the one the screen opens on: anybody whose position is not zero,
+  // in EITHER direction. A wallet opens itself the first time somebody is looked
+  // at, so the list had grown into a staff directory in which the handful of
+  // people actually carrying company money were buried among dozens of ₹0.00
+  // rows. 'outstanding' and 'payable' are each half of it, and neither on its
+  // own answers "who has money in play"; 'all' and 'settled' are still there for
+  // the times you want the person who owes nothing.
   const filter = req.query.filter || 'all';
-  if (filter === 'outstanding') rows = rows.filter((r) => r.total > 0);
+  if (filter === 'active') rows = rows.filter((r) => r.total !== 0);
+  else if (filter === 'outstanding') rows = rows.filter((r) => r.total > 0);
   else if (filter === 'payable') rows = rows.filter((r) => r.total < 0);
   else if (filter === 'settled') rows = rows.filter((r) => r.total === 0);
 
@@ -3287,6 +3355,10 @@ const exportExcel = asyncHandler(async (req, res) => {
     { header: 'Moves Company Cash', key: 'movesCash', width: 18 },
     { header: 'Mode', key: 'mode', width: 12 },
     { header: 'Reference', key: 'reference', width: 16 },
+    // Next to the reference number, because the two are read together: this is
+    // the sheet an auditor reconciles against the cashbook, and "which row is
+    // this" and "show me the bill" are one question.
+    { header: 'Bill', key: 'bill', width: 12 },
     { header: 'Status', key: 'status', width: 16 },
     { header: 'Recorded By', key: 'createdBy', width: 20 },
     { header: 'Approved By (CEO/MD)', key: 'execBy', width: 20 },
@@ -3314,6 +3386,8 @@ const exportExcel = asyncHandler(async (req, res) => {
       reviewedBy: name(e.reviewedBy),
     });
     ['given', 'returned', 'balanceAfter'].forEach((c) => { row.getCell(c).numFmt = MONEY; });
+    // A link to the bill rather than a note that one exists — see writeBillCell.
+    writeBillCell(row.getCell('bill'), e);
   }
 
   // Column totals, addressed by the column's own letter so inserting a column
@@ -3623,6 +3697,20 @@ async function streamStatement(req, res, employeeId, opts = {}) {
       ? await readBillsFor(rows)
       : { bills: null, billsSkipped: 0 };
 
+    // A THUMBNAIL IS TOO SMALL TO CHECK A FIGURE AGAINST. 34pt of a photographed
+    // bill says a bill exists; it does not say what it is for or what it cost.
+    // So every row that has one carries a link to the full image, and the
+    // renderer hangs it on the thumbnail — or, where the bytes were never drawn
+    // (a scanned PDF, a row past the caps, ?bills=0), on the words that stand in
+    // for it. Built for EVERY row with a bill rather than only the drawn ones:
+    // the rows without a picture are exactly the ones a reader most needs to
+    // open, and a link costs the document nothing.
+    const billLinks = new Map();
+    for (const e of rows) {
+      const url = receiptLinkFor(e);
+      if (url) billLinks.set(String(e._id), url);
+    }
+
     const render = report === 'daywise' ? renderDaywiseReport : renderEntriesReport;
     pdf = await render({
       company: require('../config/company'),
@@ -3633,6 +3721,7 @@ async function streamStatement(req, res, employeeId, opts = {}) {
       opening,
       entries: rows,
       bills,
+      billLinks,
       billsSkipped,
       // The filters that produced these rows, printed under the duration box, so
       // two downloads of the same book cannot look identical and disagree about
@@ -3740,7 +3829,9 @@ const myReportXlsx = asyncHandler(async (req, res) => {
   ws.columns = [
     { width: 13 }, { width: 10 }, { width: 22 }, { width: 16 }, { width: 40 },
     { width: 16 }, { width: 11 }, { width: 14 }, { width: 14 }, { width: 14 },
-    { width: 16 }, { width: 20 }, { width: 8 },
+    // The last one is the Bill column: wide enough for "View bill" now that it
+    // is a link and not the word "Yes".
+    { width: 16 }, { width: 20 }, { width: 12 },
   ];
 
   /** A "Label: value" line in the header block, label bold. */
@@ -3802,9 +3893,12 @@ const myReportXlsx = asyncHandler(async (req, res) => {
       counts(e) ? e.walletBalanceAfter : null,
       STATUS_WORDS[e.status] || e.status,
       e.byName || '',
-      e.hasAttachment ? 'Yes' : '',
+      // Filled in below: a hyperlink cannot be given as a bare array value.
+      null,
     ]);
     [8, 9, 10].forEach((c) => { row.getCell(c).numFmt = MONEY; });
+    // A link to the bill rather than the bare word "Yes" — see writeBillCell.
+    writeBillCell(row.getCell(13), e);
   }
 
   if (rows.length) {
@@ -3867,6 +3961,77 @@ const getReceipt = asyncHandler(async (req, res) => {
   if (!(await storage.streamTo(entry.attachment.storagePath, res))) bad(res, 'Receipt file missing', 404);
 });
 
+/**
+ * Load an entry from a signed public link, or answer 404.
+ *
+ * ONE PLACE, because the two public routes below must agree exactly about what
+ * a valid link is: a page that renders and an image that 404s is worse than
+ * neither working. A bad signature reads as not-found rather than forbidden —
+ * a probe should not be able to tell a real entry id from an invented one.
+ * @param {object} req
+ * @param {object} res
+ * @param {object} [opts]
+ * @param {boolean} [opts.full] - Populate the book and the person, for the page.
+ * @returns {Promise<object>} The entry; never returns when the link is bad.
+ */
+async function entryFromSignedLink(req, res, opts = {}) {
+  const { id, sig } = req.params;
+  if (!isId(id) || !verifyId(RECEIPT_LINK_SCOPE, id, sig)) {
+    bad(res, 'This bill link is invalid or has expired.', 404);
+  }
+  const query = KhataEntry.findById(id).select('attachment amount date code purpose category direction status expenseBook employee');
+  if (opts.full) query.populate('expenseBook', 'name').populate('employee', 'firstName lastName');
+  const entry = await query;
+  if (!entry || !entry.attachment?.storagePath) bad(res, 'This bill link is invalid or has expired.', 404);
+  return entry;
+}
+
+/**
+ * Public: what the bill on a signed link belongs to (no login).
+ *
+ * Only the facts already printed beside the thumbnail in the document the
+ * reader is holding — the amount, the date, the reference, the book. Nothing
+ * about the wallet, the balance or anybody else's rows.
+ * @route GET /api/khata/public/receipt/:id/:sig/meta  (PUBLIC, signature-gated)
+ * @returns {object} 404 when the signature does not match.
+ */
+const publicReceiptMeta = asyncHandler(async (req, res) => {
+  const e = await entryFromSignedLink(req, res, { full: true });
+  res.json({
+    code: e.code,
+    date: e.date,
+    amount: e.amount,
+    direction: e.direction,
+    status: e.status,
+    purpose: e.purpose,
+    category: e.category,
+    khataName: e.expenseBook?.name || null,
+    employeeName: e.employee?.firstName
+      ? `${e.employee.firstName} ${e.employee.lastName || ''}`.trim()
+      : null,
+    fileName: e.attachment.name || null,
+    mime: e.attachment.mime || null,
+    sizeBytes: e.attachment.sizeBytes || null,
+  });
+});
+
+/**
+ * Public: stream the bill itself from a signed link (no login).
+ *
+ * `inline`, not `attachment`: the whole point of the link is that a reader who
+ * clicked a 34pt thumbnail in a PDF gets to LOOK at the full bill, and a
+ * download prompt is not looking at it.
+ * @route GET /api/khata/public/receipt/:id/:sig  (PUBLIC, signature-gated)
+ * @returns {binary} 404 when the signature does not match.
+ */
+const publicReceipt = asyncHandler(async (req, res) => {
+  const entry = await entryFromSignedLink(req, res);
+  if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
+  const name = String(entry.attachment.name || `bill-${entry.code || entry._id}`).replace(/["\\]/g, '');
+  res.setHeader('Content-Disposition', `inline; filename="${name}"`);
+  if (!(await storage.streamTo(entry.attachment.storagePath, res))) bad(res, 'Receipt file missing', 404);
+});
+
 module.exports = {
   // employee self-service
   getMyKhata, getMyBook, requestAdvance, recordMyExpense, recordMyRefund, updateMyExpense,
@@ -3890,5 +4055,5 @@ module.exports = {
   // account operators
   listOperators, setOperators,
   // receipts
-  getReceipt,
+  getReceipt, publicReceipt, publicReceiptMeta,
 };

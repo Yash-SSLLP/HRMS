@@ -62,10 +62,19 @@ const graceEnds12 = (p) => {
 const fmtDist = (m) => (m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
 const mapLink = (loc) => (loc ? `https://www.google.com/maps?q=${loc.lat},${loc.lng}` : null);
 
-// True when a punch was made beyond the geofence. WFH punches are expected to
-// be away, so they are never treated as out-of-range.
-const isOutsideOffice = (distanceM, thresholdM, wfh) =>
-  !wfh && thresholdM != null && distanceM != null && distanceM > thresholdM;
+// True when a punch was made beyond the geofence AND that is a finding.
+//
+// TWO THINGS EXEMPT A PUNCH, and both mean the same thing here: the distance is
+// still real and still shown, it is simply not a problem.
+//   wfh    — the employee declared this punch as working from home;
+//   exempt — `remotePunchAllowed`, the standing per-person grant to punch from
+//            anywhere. The server has always sent it on every record and has
+//            always honoured it in its own flag (see resolveGeofence and
+//            `distantPunch` in attendanceController); this screen was the one
+//            place that ignored it, so somebody granted the run of the country
+//            still had every punch marked "⚠ Outside" in amber.
+const isOutsideOffice = (distanceM, thresholdM, wfh, exempt) =>
+  !wfh && !exempt && thresholdM != null && distanceM != null && distanceM > thresholdM;
 
 // The geofence radius that applies to a record: the employee's assigned work
 // location's range (from the API), falling back to the global office threshold.
@@ -73,17 +82,20 @@ const radiusFor = (r, fallback) => (r.geofenceRadiusM != null ? r.geofenceRadius
 
 // A record is flagged when either punch was outside the employee's work area.
 const isRecordFlagged = (r, fallback) =>
-  isOutsideOffice(r.checkInDistanceM, radiusFor(r, fallback), r.checkInWfh) ||
-  isOutsideOffice(r.checkOutDistanceM, radiusFor(r, fallback), r.checkOutWfh);
+  isOutsideOffice(r.checkInDistanceM, radiusFor(r, fallback), r.checkInWfh, r.remotePunchAllowed) ||
+  isOutsideOffice(r.checkOutDistanceM, radiusFor(r, fallback), r.checkOutWfh, r.remotePunchAllowed);
 
 // One punch's location: a distance pill linking to the captured coordinates.
 // Punches beyond the employee's work-location geofence get an explicit "Outside"
-// flag for HR/admin review. WFH punches are never flagged.
-function DistanceTag({ label, loc, distanceM, thresholdM, wfh, locationName }) {
+// flag for HR/admin review. WFH punches, and anyone allowed to punch from
+// anywhere, are never flagged.
+function DistanceTag({ label, loc, distanceM, thresholdM, wfh, exempt, locationName }) {
   const has = loc && distanceM != null;
-  const far = has && isOutsideOffice(distanceM, thresholdM, wfh);
+  const far = has && isOutsideOffice(distanceM, thresholdM, wfh, exempt);
   const place = locationName || 'work area';
-  // Soft tinted chip; colour reflects the punch state (in-range / WFH / outside).
+  // Soft tinted chip; colour reflects the punch state (in-range / WFH / allowed
+  // anywhere / outside). Green for an exempt punch, because for that person a
+  // 60 km distance is exactly as correct as a 5 m one.
   const tone = wfh
     ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
     : far
@@ -104,6 +116,14 @@ function DistanceTag({ label, loc, distanceM, thresholdM, wfh, locationName }) {
         <span style={{ minWidth: '3.5rem' }} className="inline-flex items-center justify-center px-2 py-0.5 text-gray-300">-</span>
       )}
       {wfh && <span className="px-1 rounded bg-indigo-100 text-indigo-700 text-[10px] font-medium">WFH</span>}
+      {/* Said once per row, not as a warning: a reader looking at a 3 km punch
+          needs to know WHY it is not a finding, or they will go and ask. */}
+      {has && !wfh && exempt && (
+        <span className="px-1 rounded bg-gray-100 text-gray-600 text-[10px] font-medium"
+          title="This employee is allowed to punch from anywhere, so distance from the work area is not a finding.">
+          Anywhere
+        </span>
+      )}
       {far && (
         <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold"
           title={`${label === 'In' ? 'Check-in' : 'Check-out'} was ${fmtDist(distanceM)} from ${place} (outside the ${fmtDist(thresholdM)} range).`}>
@@ -327,7 +347,9 @@ export default function AdminAttendance() {
           lng: Number(settingsForm.office.lng),
           label: settingsForm.office.label,
         },
-        geofenceThresholdM: Number(settingsForm.geofenceThresholdM),
+        // Only sent by the role allowed to set it. The server ignores it from
+        // anyone else; not sending it keeps the request honest about intent.
+        ...(isSuperAdmin ? { geofenceThresholdM: Number(settingsForm.geofenceThresholdM) } : {}),
         // Sent only by a SuperAdmin — the server ignores it from anyone else,
         // and sending it anyway would make a disabled field look editable.
         ...(isSuperAdmin ? {
@@ -685,9 +707,11 @@ export default function AdminAttendance() {
                 <td className="px-4 py-3">
                   <div className="flex flex-col gap-1">
                     <DistanceTag label="In" loc={r.checkInLocation} distanceM={r.checkInDistanceM}
-                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkInWfh} locationName={r.locationName} />
+                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkInWfh}
+                      exempt={r.remotePunchAllowed} locationName={r.locationName} />
                     <DistanceTag label="Out" loc={r.checkOutLocation} distanceM={r.checkOutDistanceM}
-                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkOutWfh} locationName={r.locationName} />
+                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkOutWfh}
+                      exempt={r.remotePunchAllowed} locationName={r.locationName} />
                   </div>
                 </td>
                 <td className="px-4 py-3 text-right font-mono">{formatHours(r.hoursWorked)}</td>
@@ -755,11 +779,27 @@ export default function AdminAttendance() {
                     target="_blank" rel="noreferrer" className="text-sm text-gray-500 hover:underline">Preview on map</a>
                 )}
               </div>
+              {/* SUPER ADMIN ONLY. This one number decides company-wide whether
+                  a punch counts as being at work: widen it and every out-of-range
+                  punch quietly becomes compliant, in the exports and the month
+                  summary payroll reads as well as on this screen. That is a
+                  policy switch, not a correction, so it sits with the late policy
+                  and the minimum hours rather than with the office pin. The
+                  server ignores the field from anyone else either way. */}
               <div>
-                <label className="block text-sm text-gray-700">Geofence threshold (metres)</label>
-                <input type="number" min="0" required value={settingsForm.geofenceThresholdM}
-                  onChange={(e) => setSettingsForm({ ...settingsForm, geofenceThresholdM: e.target.value })}
-                  className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                <div className="flex items-baseline justify-between">
+                  <label className="block text-sm text-gray-700">Geofence threshold (metres)</label>
+                  {!isSuperAdmin && <span className="text-[11px] text-amber-700">Super Admin only</span>}
+                </div>
+                {isSuperAdmin ? (
+                  <input type="number" min="0" required value={settingsForm.geofenceThresholdM}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, geofenceThresholdM: e.target.value })}
+                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                ) : (
+                  <p className="mt-1 text-sm text-gray-500">
+                    {settingsForm.geofenceThresholdM} m — ask a Super Admin to change the range.
+                  </p>
+                )}
               </div>
 
               {/* ---- Late marking (SuperAdmin only) ---- */}

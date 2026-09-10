@@ -18,9 +18,10 @@ import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { hasLeft } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
-import { hasExplicitPermission } from '../config/permissions';
+import { hasExplicitPermission, hasPermission } from '../config/permissions';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import LeaveAmendModal from '../components/LeaveAmendModal';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -63,6 +64,12 @@ function RequestsTab({ onRefreshing }) {
     }
   };
 
+  // The request being edited, or null.
+  const [amending, setAmending] = useState(null);
+  // The audit grant: correct a leave that is already decided, and change what
+  // its outcome says. The server enforces the same rule.
+  const mayEditDecided = hasPermission(useAuthStore((s) => s.user), 'leave.history');
+
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
 
   // HR override: leave normally climbs the reporting hierarchy on its own (see the
@@ -98,6 +105,39 @@ function RequestsTab({ onRefreshing }) {
     if (note === null) return;
     try {
       await api.patch(`/leave/emergency/${r._id}/double-cut`, { apply, note });
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Action failed');
+    }
+  };
+
+  /**
+   * Confirm that an emergency leave stands, or reject it.
+   *
+   * Emergency leave is granted the moment it is filed, so this is the only place
+   * anyone disagrees with it. Rejecting takes the days off the calendar and they
+   * count as absence instead — a real cost to the employee, so the reason is
+   * required and they are told.
+   */
+  const reviewEmergency = async (r, decision) => {
+    const who = r.employee?.user?.firstName || 'The employee';
+    if (decision === 'reject' && !(await confirmDialog({
+      title: 'Reject this emergency leave?',
+      message: `${r.totalDays} day(s) will stop being leave and count as absence instead. ${who} is told, `
+        + 'with your reason. You can put it back afterwards if this turns out to be wrong.',
+      tone: 'danger',
+      confirmText: 'Reject the leave',
+    }))) return;
+    const note = await promptDialog({
+      message: decision === 'reject'
+        ? 'Why is it being rejected? The employee sees this.'
+        : 'Optional note (the employee sees this):',
+      initialValue: '',
+    });
+    if (note === null) return;
+    if (decision === 'reject' && !note.trim()) { toast.error('A reason is required.'); return; }
+    try {
+      await api.patch(`/leave/emergency/${r._id}/review`, { decision, note });
       await load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Action failed');
@@ -175,11 +215,30 @@ function RequestsTab({ onRefreshing }) {
                   )}
                 </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
+                  {/* Correcting a request is not an override and carries no
+                      warning banner: fixing wrong dates or the wrong type is
+                      ordinary HR work, and it is available on an approved leave
+                      too, where the API moves the calendar with it. */}
+                  {(['Pending', 'Approved'].includes(r.status)
+                    || (mayEditDecided && ['Cancelled', 'Rejected'].includes(r.status)))
+                    && !r.doubleCut && (
+                    <button onClick={() => setAmending(r)} className="text-gray-600 hover:underline">Edit</button>
+                  )}
                   {r.status === 'Pending' && (
                     <>
                       <div className="text-[11px] text-gray-400 mb-1">HR override</div>
                       <button onClick={() => decide(r._id, 'approve')} className="text-green-700 hover:underline">Force approve</button>
                       <button onClick={() => decide(r._id, 'reject')} className="text-red-600 hover:underline">Force reject</button>
+                    </>
+                  )}
+                  {/* Emergency leave asked nobody, so it gets its own pair: say
+                      it stands, or take it back off the calendar. Only while
+                      nobody has ruled on it — afterwards the row shows who did. */}
+                  {r.leaveType === 'Emergency Leave' && r.status === 'Approved'
+                    && (r.emergencyReview?.status || 'Pending') === 'Pending' && (
+                    <>
+                      <button onClick={() => reviewEmergency(r, 'confirm')} className="text-green-700 hover:underline">Confirm</button>
+                      <button onClick={() => reviewEmergency(r, 'reject')} className="text-red-600 hover:underline">Reject</button>
                     </>
                   )}
                   {r.leaveType === 'Emergency Leave' && r.status === 'Approved' && (
@@ -195,6 +254,14 @@ function RequestsTab({ onRefreshing }) {
           </tbody>
         </table>
       </div>
+
+      {amending && (
+        <LeaveAmendModal
+          request={amending}
+          onClose={() => setAmending(null)}
+          onSaved={() => load()}
+        />
+      )}
     </div>
   );
 }

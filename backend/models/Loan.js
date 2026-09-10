@@ -32,7 +32,10 @@ const loanSchema = new mongoose.Schema(
 );
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-loanSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: who is borrowing.
+// Without it the audit screen has only an id fragment to show, because this
+// record has no name or title of its own. See plugins/auditStatus.js.
+loanSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 
 module.exports = mongoose.model('Loan', loanSchema);
 module.exports.LOAN_TYPES = LOAN_TYPES;

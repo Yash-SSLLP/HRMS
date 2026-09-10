@@ -37,6 +37,16 @@ const isEmergencyType = (t) => t === EMERGENCY_LEAVE;
 // Pending -> in approval chain; Approved/Rejected -> final decision; Cancelled -> withdrawn.
 const LEAVE_STATUS = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
 
+// Where an emergency leave stands with the people it was reported to.
+//
+// 'Approved' on an emergency leave means TAKEN, not CHECKED — it is granted the
+// instant it is filed, before anybody has looked at it. This is the looking, and
+// it is a second axis rather than a replacement: the request status says whether
+// the day is leave, this says whether anyone has agreed that it should be. Every
+// emergency leave starts 'Pending' here and stays that way until a manager on
+// the ladder, HR, or one of the executives who were told decides.
+const EMERGENCY_REVIEW_STATUS = ['Pending', 'Confirmed', 'Rejected'];
+
 // One rung of the leave approval ladder. A request climbs the chain: the
 // applicant's manager, then that manager's manager, and finally HR, who has the
 // last word on every leave request.
@@ -117,6 +127,25 @@ const leaveRequestSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Every change HR or a manager made to this request after it was filed,
+    // oldest first. Editing a leave rewrites figures the employee — and payroll
+    // — may already have acted on: the days they are away, and how many of them
+    // are paid. So what it used to say stays on the record rather than vanishing,
+    // the same bargain the khata makes with a corrected expense.
+    amendments: {
+      type: [new mongoose.Schema({
+        at: { type: Date, default: Date.now },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byName: String,
+        byRole: String,
+        // Human-readable, e.g. 'type Paid Leave → Unpaid Leave; dates 12 Sep–14 Sep → 12 Sep–13 Sep'.
+        summary: { type: String, trim: true, maxlength: 600 },
+        // Why — the employee is shown this.
+        note: { type: String, trim: true, maxlength: 500 },
+      }, { _id: false })],
+      default: [],
+    },
+
     // ----- Emergency leave -----
     // Emergency leave is granted on filing, so instead of an approval ladder the
     // chain is recorded as "informed". Which emergency of the month this was
@@ -124,6 +153,33 @@ const leaveRequestSchema = new mongoose.Schema(
     // told it is a repeat, and any of them can then charge the day at double.
     emergencyIndexInMonth: { type: Number, default: 0 },
     emergencyFlagged: { type: Boolean, default: false },
+
+    // ----- The after-the-fact review of an emergency leave -----
+    // Granting on filing is what makes emergency leave useful: somebody whose
+    // child is in hospital should not be waiting on an approval queue. The cost
+    // of that is a day of leave nobody agreed to, and this is the balance —
+    // whoever was INFORMED can afterwards say the day stands (Confirmed) or that
+    // it should not (Rejected, which un-stamps the calendar and leaves the day
+    // an unapproved absence).
+    //
+    // A decision here is not final: the same people can change it, because a
+    // rejection made in haste would otherwise leave the employee marked absent
+    // with no route back except HR editing attendance by hand.
+    //
+    // `Pending` is the honest default and the one the review queue reads. Rows
+    // filed before this existed have no sub-document at all, which reads as
+    // Pending too — correct, since nobody ever reviewed them.
+    emergencyReview: {
+      status: { type: String, enum: EMERGENCY_REVIEW_STATUS, default: 'Pending', index: true },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      byName: String,
+      // Which hat they wore — a manager on the ladder, HR, or an executive who
+      // was told. Worth keeping: "rejected by the MD" and "rejected by HR" are
+      // not the same fact to the employee reading it.
+      byRole: String,
+      at: Date,
+      note: { type: String, trim: true, maxlength: 500 },
+    },
     // Double salary cut: the day costs 2× a day's pay in that month's payroll
     // (see the emergencyPenalty deduction). Reversible until the payslip is run.
     doubleCut: { type: Boolean, default: false },
@@ -181,14 +237,19 @@ const leaveBalanceSchema = new mongoose.Schema(
 leaveBalanceSchema.index({ employee: 1, year: 1 }, { unique: true });
 
 // Audit-status plugin: logs LeaveRequest `status` transitions to AuditLog.
-leaveRequestSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: whose leave it is (an
+// EmployeeProfile; the plugin hops to the User behind it). Without it the
+// audit screen has only an id fragment to show, because this record has no
+// name or title of its own. See plugins/auditStatus.js.
+leaveRequestSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 const LeaveRequest = mongoose.model('LeaveRequest', leaveRequestSchema);
 const LeaveBalance = mongoose.model('LeaveBalance', leaveBalanceSchema);
 
 // The reporting-hierarchy rung shape is reused by other models that climb the
 // same approval ladder (e.g. ExitRequest). Exported so they share one definition.
 module.exports = {
-  LeaveRequest, LeaveBalance, LEAVE_STATUS, approvalStepSchema, CHAIN_STEP_STATUS,
+  LeaveRequest, LeaveBalance, LEAVE_STATUS, EMERGENCY_REVIEW_STATUS,
+  approvalStepSchema, CHAIN_STEP_STATUS,
   LEAVE_TYPES, LEGACY_LEAVE_TYPES,
   PAID_LEAVE, UNPAID_LEAVE, EMERGENCY_LEAVE, MATERNITY_LEAVE,
   isUnpaidType, isMaternityType, isEmergencyType,

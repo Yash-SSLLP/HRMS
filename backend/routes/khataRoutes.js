@@ -31,7 +31,10 @@
  * Sharing moves no money: a collaborator's spending comes out of their OWN
  * wallet, and the owner's balance does not move.
  *
- * All routes require authentication (router.use(protect)).
+ * All routes require authentication (router.use(protect)) EXCEPT the two
+ * `/public/receipt/:id/:sig` ones, which are reached from a link printed inside
+ * a statement PDF and are gated by the signature instead — see the block above
+ * `router.use(protect)`.
  */
 const express = require('express');
 const { createUpload } = require('../middleware/upload');
@@ -59,6 +62,21 @@ const receiptUpload = createUpload({
 // media element cannot set one). The handler does its own owner/manager check.
 // GET /entries/:id/receipt — stream an entry receipt; protectMedia + owner-or-manager check in controller.
 router.get('/entries/:id/receipt', protectMedia, ctrl.getReceipt);
+
+// ----- The bill behind a link printed in a statement PDF — NO LOGIN -----
+//
+// Above `protect` deliberately. A PDF viewer opens a link in a plain browser
+// tab: there is nowhere to put a bearer header, and putting the reader's token
+// in the document would hand their whole session to anyone the file is
+// forwarded to. So the id is HMAC-signed instead (utils/signedLink.js) and the
+// signature is the whole of the access check — it grants one thing, reading one
+// bill, to whoever holds a document that already has that bill printed on it.
+// A wrong signature answers 404, not 403, so these cannot be probed for which
+// entry ids exist.
+// GET /public/receipt/:id/:sig/meta — what the bill belongs to; public (signature-gated).
+router.get('/public/receipt/:id/:sig/meta', ctrl.publicReceiptMeta);
+// GET /public/receipt/:id/:sig — the bill itself, inline; public (signature-gated).
+router.get('/public/receipt/:id/:sig', ctrl.publicReceipt);
 
 router.use(protect);
 

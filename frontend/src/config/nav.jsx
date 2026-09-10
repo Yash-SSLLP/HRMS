@@ -70,8 +70,8 @@ export const adminNav = [
     { to: '/admin/holidays', label: 'Holidays & Festivals', icon: FiSun, perm: 'leave.manage' },
   ] },
   { group: 'People & Organization', icon: FiUsers, items: [
-    { to: '/admin/employees', label: 'Employees', icon: FiBriefcase, perm: 'employees.manage' },
     { to: '/admin/users', label: 'Users', icon: FiUsers, perm: 'users.manage' },
+    { to: '/admin/employees', label: 'Employees', icon: FiBriefcase, perm: 'employees.manage' },
     { to: '/admin/org-chart', label: 'Org Chart', icon: FiGitBranch },
     // Backend only — the Companies tab was deliberately pulled from HR and the
     // executives (user decision 2026-08-26); the routes enforce the same.

@@ -12,6 +12,8 @@ const {
   previewLeave,
   cancelMyRequest,
   setDoubleCut,
+  reviewEmergencyLeave,
+  amendLeaveRequest,
   listAllRequests,
   approveRequest,
   rejectRequest,
@@ -41,6 +43,21 @@ router.patch('/me/requests/:id/cancel', cancelMyRequest);
 // leave at double pay. Sits ABOVE the leave.manage gate on purpose: the handler
 // authorises HR *or* a manager on that employee's reporting ladder itself.
 router.patch('/emergency/:id/double-cut', setDoubleCut);
+// PATCH /emergency/:id/review — confirm that an emergency leave stands, or
+// reject it (which un-stamps the calendar and turns the days back into absence).
+// Sits above the leave.manage gate for the SAME reason as the double cut, and is
+// authorised by the same rule: the handler asks assertLeaveReviewer, which
+// admits managers on the ladder, HR, and the CEO/MD who were told about it.
+// Emergency leave is granted on filing and asks nobody — this is the only place
+// anyone gets to disagree with it.
+router.patch('/emergency/:id/review', reviewEmergencyLeave);
+
+// PATCH /requests/:id/amend — change a leave request's type or dates on the
+// employee's behalf. Above the leave.manage gate for the same reason as the two
+// emergency routes: the handler asks assertLeaveReviewer, which admits managers
+// on the ladder and the CEO/MD as well as HR — a manager correcting their own
+// report's dates should not need the HR capability to do it.
+router.patch('/requests/:id/amend', amendLeaveRequest);
 
 // HR/Admin — everything below requires the 'leave.manage' permission.
 router.use(requirePermission('leave.manage'));

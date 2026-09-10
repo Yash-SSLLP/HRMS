@@ -89,6 +89,87 @@ function occasionDateFrom(recurring) {
   return nextYear.getTime() - Date.now() <= EARLY_WISH_WINDOW_MS ? nextYear : null;
 }
 
+/**
+ * The IST calendar date of an occasion, as 'YYYY-MM-DD', or ''.
+ *
+ * The key a wish is filed under. Derived from `occasionDateFrom` rather than
+ * from the stored birthday, so a December greeting for a January birthday is
+ * filed under NEXT January — the same value the greeting sent on the day itself
+ * will carry, which is the whole point: the two have to be comparable.
+ * @param {Date|string|null} recurring
+ * @returns {string}
+ */
+function occasionKeyFrom(recurring) {
+  const at = occasionDateFrom(recurring);
+  if (!at) return '';
+  const { y, m, d } = istParts(at);
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+/**
+ * TWO WISHING WINDOWS PER OCCASION, and this says which one today is in.
+ *
+ * The rule the module now keeps: you may wish somebody ONCE in advance and ONCE
+ * on the day, and that is all. Wishing five days early spends the early window,
+ * so the button goes; the morning of the birthday opens the second window and it
+ * comes back exactly once; using it ends the occasion.
+ *
+ * Before this the button was hidden by component state alone, so it returned on
+ * every page load and the same colleague could be wished the same birthday over
+ * and over — which is what this exists to stop.
+ *
+ * On-or-AFTER, not on: the widget keeps an occasion listed for two days
+ * afterwards, and somebody who wished nobody until the day after has still only
+ * wished once. Folding "late" into the on-the-day window is what stops a third
+ * bite.
+ * @param {string} occasionOn - 'YYYY-MM-DD' from occasionKeyFrom
+ * @returns {boolean} true once today has reached the occasion
+ */
+function isOnTheDay(occasionOn) {
+  if (!occasionOn) return true; // no date on file — treat every wish as the one
+  const { y, m, d } = istParts(new Date());
+  const today = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  return today >= occasionOn;
+}
+
+/**
+ * Which of these people the viewer has already wished, for the occasion each
+ * event names, in the window today falls in.
+ *
+ * ONE QUERY for the whole card. The alternative — asking per row — is a dozen
+ * round trips on a dashboard that renders on every page load.
+ * @param {object} req
+ * @param {Array<object>} events - upcoming events, each with userId/type/date
+ * @returns {Promise<Set<string>>} keys of `${userId}|${type}` already wished now
+ */
+async function wishesAlreadySent(req, events) {
+  const wishable = events.filter((e) => e.userId);
+  if (!wishable.length) return new Set();
+  const dates = [...new Set(wishable.map((e) => occasionKeyFrom(e.date)).filter(Boolean))];
+  if (!dates.length) return new Set();
+
+  const sent = await Notification.find({
+    sender: req.user._id,
+    type: 'celebration',
+    'celebration.occasionOn': { $in: dates },
+  }).select('recipient celebration').lean();
+
+  // Keyed by the window too, so an early wish stops blocking the moment the day
+  // arrives — which is exactly the behaviour being bought here.
+  const done = new Set(sent.map((n) => [
+    String(n.recipient), n.celebration?.kind, n.celebration?.occasionOn, n.celebration?.onTheDay ? 'day' : 'early',
+  ].join('|')));
+
+  const out = new Set();
+  for (const e of wishable) {
+    const on = occasionKeyFrom(e.date);
+    if (!on) continue;
+    const window = isOnTheDay(on) ? 'day' : 'early';
+    if (done.has([String(e.userId), e.type, on, window].join('|'))) out.add(`${e.userId}|${e.type}`);
+  }
+  return out;
+}
+
 // The next `n` IST calendar days, as {m, d, daysAway}.
 function nextNDays(n) {
   const out = [];
@@ -299,6 +380,25 @@ const todayCelebrations = asyncHandler(async (req, res) => {
     if (years >= 1) companies.push({ ...companyPayload(c, years), date: c.foundedOn });
   }
 
+  // Same "have I already wished them?" flag the upcoming list carries, so a
+  // wish sent from today's card does not come back on the next load either. The
+  // occasion is the array a row sits in, so it is tagged on before asking.
+  const tagged = [
+    ...birthdays.map((e) => ({ ...e, type: 'birthday' })),
+    ...anniversaries.map((e) => ({ ...e, type: 'anniversary' })),
+    ...marriages.map((e) => ({ ...e, type: 'marriage' })),
+  ];
+  const already = await wishesAlreadySent(req, tagged);
+  const stamp = (list, type) => list.forEach((e) => {
+    e.alreadyWished = already.has(`${e.userId}|${type}`);
+    // Everything in this list IS today, so there is no early window left to
+    // promise — the flag can only mean "done".
+    e.wishWindow = 'day';
+  });
+  stamp(birthdays, 'birthday');
+  stamp(anniversaries, 'anniversary');
+  stamp(marriages, 'marriage');
+
   res.json({
     today: new Date().toISOString().slice(0, 10),
     birthdays,
@@ -410,6 +510,21 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
   }
 
   events.sort((a, b) => a.daysAway - b.daysAway);
+
+  // Whether the viewer has already used up this occasion's current wishing
+  // window. Sent as a flag rather than left to the client, because the answer
+  // depends on today's IST date and on rows the client cannot see: a browser
+  // that was left open overnight would otherwise still be hiding a button the
+  // birthday has since re-opened.
+  const already = await wishesAlreadySent(req, events);
+  for (const e of events) {
+    const on = occasionKeyFrom(e.date);
+    e.alreadyWished = already.has(`${e.userId}|${e.type}`);
+    // Which window the flag is about, so the card can say "you can wish again on
+    // the day" instead of leaving a disappeared button unexplained.
+    e.wishWindow = on ? (isOnTheDay(on) ? 'day' : 'early') : 'day';
+  }
+
   res.json({ days: months ? null : days, months, count: events.length, events });
 });
 
@@ -765,6 +880,29 @@ const sendWish = asyncHandler(async (req, res) => {
   const occasionAt = occasionDateFrom(recipient.dates[kind]) || new Date();
   const expiresAt = new Date(occasionAt.getTime() + WISH_VISIBLE_DAYS_AFTER * 24 * 60 * 60 * 1000);
 
+  // ONE WISH PER WINDOW — see isOnTheDay for the two windows and why. Enforced
+  // here and not only in the widget: the button being hidden is a courtesy, this
+  // is the rule. Without it a page reload, a second device or a direct call
+  // could all send the same person the same greeting again.
+  const occasionOn = occasionKeyFrom(recipient.dates[kind]);
+  const onTheDay = isOnTheDay(occasionOn);
+  if (occasionOn) {
+    const duplicate = await Notification.findOne({
+      sender: req.user._id,
+      recipient: recipient.user._id,
+      type: 'celebration',
+      'celebration.kind': kind,
+      'celebration.occasionOn': occasionOn,
+      'celebration.onTheDay': onTheDay,
+    }).select('_id').lean();
+    if (duplicate) {
+      res.status(409);
+      throw new Error(onTheDay
+        ? `You have already wished ${toFirst} for this ${occasion.toLowerCase()}.`
+        : `You have already sent ${toFirst} an early ${occasion.toLowerCase()} wish — you can wish them again on the day itself.`);
+    }
+  }
+
   await Notification.create({
     recipient: recipient.user._id,
     // The sender as an ID, not just as words inside the title. The title has
@@ -776,6 +914,9 @@ const sendWish = asyncHandler(async (req, res) => {
     title: `${emoji} ${fromName} sent you a ${occasion.toLowerCase()} wish`,
     body: wishLine,
     expiresAt,
+    // What this wish was FOR — the only queryable record of it. See the
+    // `celebration` block in models/Notification.js.
+    celebration: { kind, occasionOn: occasionOn || undefined, onTheDay },
   });
 
   // NO CHAT MESSAGE. A wish used to also open a chat thread with the sender,

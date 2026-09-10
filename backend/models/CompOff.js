@@ -21,7 +21,11 @@ const compOffSchema = new mongoose.Schema(
 );
 
 // Audit-status plugin: logs every `status` transition to AuditLog with actor attribution.
-compOffSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: who worked the day
+// being banked. Without it the audit screen has only an id fragment to show,
+// because this record has no name or title of its own. See
+// plugins/auditStatus.js.
+compOffSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 
 module.exports = mongoose.model('CompOff', compOffSchema);
 module.exports.COMPOFF_STATUS = COMPOFF_STATUS;

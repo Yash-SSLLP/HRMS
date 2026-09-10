@@ -5,7 +5,7 @@
  * and self-heals Pending requests whose chain was never built.
  */
 const asyncHandler = require('express-async-handler');
-const { LeaveRequest } = require('../models/Leave');
+const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const ExitRequest = require('../models/ExitRequest');
 const Regularization = require('../models/Regularization');
 const Attendance = require('../models/Attendance');
@@ -61,6 +61,47 @@ function chainInboxFilter(user, scope) {
   return all ? { status: 'Pending' } : { currentApprover: user._id, status: 'Pending' };
 }
 
+/**
+ * Emergency leaves this person was told about and has not yet ruled on.
+ *
+ * A SEPARATE QUEUE FROM 'pending', because it is a different kind of waiting.
+ * A pending leave is waiting to happen; an emergency leave has ALREADY happened
+ * — it was granted the instant it was filed — and what is waiting is only
+ * whether anybody agrees that it should have. Merging the two would put days
+ * already taken into a queue whose buttons say Approve.
+ *
+ * `currentApprover` is null on these (nobody's turn was ever required), so the
+ * chain filter above finds none of them. Membership is instead "was I informed":
+ * a rung on the recorded ladder, or one of the executives in `execsToNotify` —
+ * exactly the rule leaveController's assertLeaveReviewer enforces on the
+ * write, so the queue cannot offer a button the API would refuse.
+ * @param {object} user
+ * @returns {Object} a Mongo filter
+ */
+function emergencyReviewFilter(user) {
+  const mine = seesAllApprovals(user) ? {} : {
+    $or: [
+      { 'approvalChain.approver': user._id },
+      { execsToNotify: user._id },
+    ],
+  };
+  return {
+    ...mine,
+    leaveType: EMERGENCY_LEAVE,
+    // Withdrawn by the employee: there is nothing left to agree or disagree with.
+    status: { $ne: 'Cancelled' },
+    // Absent sub-document reads as Pending — every row filed before the review
+    // existed is genuinely unreviewed, so it belongs in the queue.
+    $and: [{
+      $or: [
+        { 'emergencyReview.status': 'Pending' },
+        { 'emergencyReview.status': { $exists: false } },
+        { emergencyReview: null },
+      ],
+    }],
+  };
+}
+
 // Rebuild the approval chain for any Pending request that has none yet (created
 // before the hierarchy feature, or by an older backend). Runs on inbox load so
 // stuck requests route to the right approver from the live org-chart hierarchy.
@@ -89,20 +130,26 @@ function populateLeave(query) {
 
 /**
  * List leave requests for the current approver.
- * @route GET /api/approvals/leave?scope=pending|history
- * @param {string} [req.query.scope] - 'pending' (awaiting my decision) or 'history' (any request I'm in the chain of)
+ * @route GET /api/approvals/leave?scope=pending|history|emergency
+ * @param {string} [req.query.scope] - 'pending' (awaiting my decision), 'history'
+ *   (any request I'm in the chain of), or 'emergency' (granted already, awaiting
+ *   my confirm/reject)
  * @returns {{scope, count, requests: Object[]}}
  * @sideeffect heals orphaned Pending chains on load
  */
-// GET /api/approvals/leave?scope=pending|history
-// pending  → requests awaiting MY decision right now (the action list).
-// history  → every request I appear anywhere in the chain of, so a higher
-//            approver (e.g. a CEO) can see one a lower manager already rejected.
+// GET /api/approvals/leave?scope=pending|history|emergency
+// pending   → requests awaiting MY decision right now (the action list).
+// history   → every request I appear anywhere in the chain of, so a higher
+//             approver (e.g. a CEO) can see one a lower manager already rejected.
+// emergency → leave that was granted on filing and that I was told about, which
+//             nobody has yet confirmed or rejected. Its own queue on purpose —
+//             see emergencyReviewFilter.
 const listMyLeaveApprovals = asyncHandler(async (req, res) => {
   await healOrphanChains();
-  const me = req.user._id;
-  const scope = req.query.scope === 'history' ? 'history' : 'pending';
-  const filter = chainInboxFilter(req.user, scope);
+  const scope = ['history', 'emergency'].includes(req.query.scope) ? req.query.scope : 'pending';
+  const filter = scope === 'emergency'
+    ? emergencyReviewFilter(req.user)
+    : chainInboxFilter(req.user, scope);
   const requests = await populateLeave(LeaveRequest.find(filter));
   res.json({ scope, count: requests.length, requests });
 });
@@ -447,7 +494,10 @@ const rejectWorkOnLeave = decideWorkOnLeaveRoute('reject');
  * The trade-off: a legacy request whose chain was never built (currentApprover
  * null) is not counted here until an inbox load heals it.
  * @route GET /api/approvals/count
- * @returns {{leave: number, exits: number, clearances: number, total: number}}
+ * @returns {{leave, emergencyLeave, exits, clearances, regularizations,
+ *   workOnLeave, total}} — `emergencyLeave` is days already taken awaiting a
+ *   confirm/reject, counted separately from `leave` because they are not the
+ *   same kind of waiting.
  */
 const countMyApprovals = asyncHandler(async (req, res) => {
   const me = req.user._id;
@@ -456,8 +506,12 @@ const countMyApprovals = asyncHandler(async (req, res) => {
   const all = seesAllApprovals(req.user);
   const mine = all ? {} : { currentApprover: me };
   const section = all ? { completed: false } : { assignedTo: me, completed: false };
-  const [leave, exits, clearances, regularizations, workOnLeave] = await Promise.all([
+  const [leave, emergencyLeave, exits, clearances, regularizations, workOnLeave] = await Promise.all([
     LeaveRequest.countDocuments({ ...mine, status: 'Pending' }),
+    // Its own tally, never folded into `leave`: these are days already taken,
+    // waiting only on somebody agreeing they should have been. Same filter the
+    // list uses, so the badge and the queue cannot disagree.
+    LeaveRequest.countDocuments(emergencyReviewFilter(req.user)),
     ExitRequest.countDocuments({ ...mine, status: 'Pending' }),
     ExitRequest.countDocuments({
       status: 'InClearance',
@@ -470,11 +524,12 @@ const countMyApprovals = asyncHandler(async (req, res) => {
   ]);
   res.json({
     leave,
+    emergencyLeave,
     exits,
     clearances,
     regularizations,
     workOnLeave,
-    total: leave + exits + clearances + regularizations + workOnLeave,
+    total: leave + emergencyLeave + exits + clearances + regularizations + workOnLeave,
   });
 });
 

@@ -67,7 +67,10 @@ expenseSchema.set('toJSON', {
 expenseSchema.pre('save', require('../services/sequence').stampCode('EXP', 'expenseDate'));
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-expenseSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: who is claiming it.
+// Without it the audit screen has only an id fragment to show, because this
+// record has no name or title of its own. See plugins/auditStatus.js.
+expenseSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 
 module.exports = mongoose.model('Expense', expenseSchema);
 module.exports.EXPENSE_CATEGORIES = EXPENSE_CATEGORIES;

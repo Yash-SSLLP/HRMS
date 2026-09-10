@@ -53,7 +53,11 @@ const reviewSchema = new mongoose.Schema(
 
 const ReviewCycle = mongoose.model('ReviewCycle', reviewCycleSchema);
 // Audit-status plugin: logs Review `status` transitions to AuditLog.
-reviewSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: who is being
+// reviewed, not who is reviewing. Without it the audit screen has only an id
+// fragment to show, because this record has no name or title of its own. See
+// plugins/auditStatus.js.
+reviewSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 const Review = mongoose.model('Review', reviewSchema);
 
 module.exports = ReviewCycle;

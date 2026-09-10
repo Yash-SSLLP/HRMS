@@ -468,6 +468,24 @@ export default function EmployeeKhata() {
     setModal(entry.type === 'refund' ? 'refund' : 'expense');
   };
 
+  /**
+   * Open the bill attached to a row.
+   *
+   * Fetched as a blob with the bearer header rather than linked with
+   * `?access_token=`, matching AdminKhata and AdminCashbook — a token in a URL
+   * ends up in history, logs and referrers. The employee is allowed this by the
+   * same owner-or-manager rule the company side goes through; it is their own
+   * bill, and until now the only way back to it was to ask the company for it.
+   */
+  const viewReceipt = async (id) => {
+    try {
+      const res = await api.get(`/khata/entries/${id}/receipt`, { responseType: 'blob' });
+      window.open(URL.createObjectURL(res.data), '_blank', 'noopener');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not open the bill');
+    }
+  };
+
   const createKhata = async (e) => {
     e.preventDefault();
     if (!newKhata.name.trim()) { toast.error('Give the book a name'); return; }
@@ -1260,6 +1278,16 @@ export default function EmployeeKhata() {
                         confirms it — and that gap is exactly when it can still
                         be corrected. Say which side of it this row is on, and
                         offer the correction where it is still open. */}
+                    {/* The bill you attached, back out again. Worth having on
+                        your own statement and not only on the company's screen:
+                        an expense you are asked about weeks later is a figure
+                        and a remark until you can see the bill behind it. */}
+                    {e.hasAttachment && (
+                      <button onClick={() => viewReceipt(e._id)}
+                        className="block text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5">
+                        View bill
+                      </button>
+                    )}
                     {canEditMine(e, khatas) && (
                       <button onClick={() => openEdit(e)}
                         className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5">

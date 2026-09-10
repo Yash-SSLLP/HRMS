@@ -116,11 +116,27 @@ export default function AdminAuditLog() {
                 </td>
                 <td className="px-4 py-3 text-gray-600">{it.entity}</td>
                 <td className="px-4 py-3 text-gray-800">{it.entityLabel || <span className="text-gray-400 font-mono text-xs">{String(it.entityId || '').slice(-6)}</span>}</td>
+                {/* A BLANK "from" IS A CREATION, NOT A TRANSITION. The plugin
+                    logs an empty fromStatus when the record was born carrying
+                    the status — a leave filed and auto-approved in one act, say.
+                    Drawn as "- → Approved" that reads as somebody approving
+                    something, which is the opposite of what happened and put a
+                    junior employee's name next to an approval they never made.
+                    So a creation says so in words. */}
                 <td className="px-4 py-3">
                   <span className="text-xs text-gray-500">{it.field}:</span>{' '}
-                  <span className="text-gray-500 line-through">{it.fromStatus || '-'}</span>
-                  <span className="mx-1 text-gray-400">→</span>
-                  <span className="font-medium text-gray-900">{it.toStatus || '-'}</span>
+                  {it.fromStatus ? (
+                    <>
+                      <span className="text-gray-500 line-through">{it.fromStatus}</span>
+                      <span className="mx-1 text-gray-400">→</span>
+                      <span className="font-medium text-gray-900">{it.toStatus || '-'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-gray-500">created as</span>{' '}
+                      <span className="font-medium text-gray-900">{it.toStatus || '-'}</span>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}

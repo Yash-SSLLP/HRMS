@@ -48,6 +48,20 @@ const PERMISSIONS = [
   // rewiring who approves an employee's leave from now on is a standing one.
   // Granted per account — an HR Manager does NOT get it by being HR.
   { key: 'leaveHierarchy.manage', label: 'Leave approval hierarchy (who approves whose leave)', group: 'Time & Attendance' },
+  // The full history of every leave — who approved it at each rung, and every
+  // correction made to it since — plus the right to correct one that is already
+  // DECIDED: reviving a cancelled leave, turning a rejected one into a day
+  // actually taken, or the reverse.
+  //
+  // Its own key, and not part of leave.manage, for the same reason the two above
+  // are separate. `leave.manage` decides requests that are still open — a day's
+  // work, and reversible by the next decision. This one rewrites the record of
+  // days that are already settled: it moves the attendance calendar for a month
+  // payroll may have closed, and it is the only way to make a leave say
+  // something other than what the approvers said at the time. That is an audit
+  // capability, so it is handed out deliberately rather than inherited by being
+  // HR.
+  { key: 'leave.history', label: 'All leave history (approvals + edits) & correct decided leave', group: 'Time & Attendance' },
   // The Regularization -> Approval setup tab: who signs off whose attendance
   // corrections, and how many corrections a month each employee may raise. Its
   // own key for the same reason leaveHierarchy.manage is: deciding one request

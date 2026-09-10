@@ -215,7 +215,11 @@ const changeRequestSchema = new mongoose.Schema(
 );
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-changeRequestSchema.plugin(require('./plugins/auditStatus'));
+// `person` names the row after the person it is about: whose record the
+// change lands on, which is not always who asked for it. Without it the
+// audit screen has only an id fragment to show, because this record has no
+// name or title of its own. See plugins/auditStatus.js.
+changeRequestSchema.plugin(require('./plugins/auditStatus'), { person: 'targetUser' });
 
 module.exports = mongoose.model('ChangeRequest', changeRequestSchema);
 module.exports.CHANGE_REQUEST_STATUSES = CHANGE_REQUEST_STATUSES;

@@ -128,7 +128,11 @@ cashbookEntrySchema.pre('save', async function stampSeries() {
 });
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-cashbookEntrySchema.plugin(require('./plugins/auditStatus'));
+// `person` names the row after the person it is about: whose voucher or
+// ledger row it is; blank on a plain company entry, which is about no one.
+// Without it the audit screen has only an id fragment to show, because this
+// record has no name or title of its own. See plugins/auditStatus.js.
+cashbookEntrySchema.plugin(require('./plugins/auditStatus'), { person: 'employee' });
 
 const CashbookEntry = mongoose.model('CashbookEntry', cashbookEntrySchema);
 

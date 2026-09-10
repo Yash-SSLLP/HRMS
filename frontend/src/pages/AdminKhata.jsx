@@ -330,7 +330,11 @@ export default function AdminKhata() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [peopleFilter, setPeopleFilter] = useState({ q: '', filter: 'all' });
+  // Opens on 'active' — anybody whose position is not zero, either way. A wallet
+  // opens itself the first time a person is looked at, so 'all' had turned this
+  // into a staff directory where the few people actually carrying company money
+  // were buried among ₹0.00 rows. Everyone is still one dropdown away.
+  const [peopleFilter, setPeopleFilter] = useState({ q: '', filter: 'active' });
   // What is being TYPED into the People search box, which is 350ms ahead of the
   // filter actually in force. Both search boxes on this page used to refetch on
   // every keystroke: typing "Ramesh" was six round trips to /khata/employees,
@@ -888,7 +892,18 @@ export default function AdminKhata() {
           branch: bolding only the selected tab would re-measure its label and
           slide every tab to its right across on each click. Selection is
           colour alone. */}
-      <div className="flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
+      {/* `topbar-scroll` is index.css's hidden-scrollbar helper, and it is
+          load-bearing here rather than cosmetic. `overflow-x: auto` forces the
+          OTHER axis to `auto` as well — CSS will not scroll one axis and leave
+          the other visible — and every tab carries `-mb-px`, so the strip's
+          content is exactly 1px taller than its box (measured: scrollHeight 38,
+          clientHeight 37). Windows drew a full 15px-wide vertical scrollbar,
+          trough and arrow buttons and all, for that one pixel, hard against the
+          right-hand end of the tab row. Hiding the scrollbar removes it and
+          gives the 15px back, while leaving the strip able to scroll sideways
+          on a phone — which is why this is the same helper ApprovalsBoard's tab
+          strip and Layout's top bar already carry. */}
+      <div className="topbar-scroll flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
         {TABS
           .filter(([k]) => (k !== 'accounts' || isSuperAdmin) && (k !== 'sanctions' || isApprover))
           .map(([key, label]) => (
@@ -992,10 +1007,13 @@ export default function AdminKhata() {
             <select value={peopleFilter.filter}
               onChange={(e) => setPeopleFilter({ ...peopleFilter, filter: e.target.value })}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-              <option value="all">Everyone</option>
+              {/* First and default: the question this screen exists to answer.
+                  The two directions below it are each half of this one. */}
+              <option value="active">Anyone with a balance</option>
               <option value="outstanding">Holding company cash</option>
               <option value="payable">Company owes them</option>
               <option value="settled">Settled up</option>
+              <option value="all">Everyone</option>
             </select>
             {/* Also reachable from inside a person, but most people look for it
                 here first — so it is on the list as well. */}
@@ -1009,12 +1027,35 @@ export default function AdminKhata() {
 
           <div className="bg-white shadow rounded-lg overflow-hidden">
             {rows.length === 0 ? (
-              <div className="px-4 py-10 text-center">
-                <p className="text-gray-700 font-medium">Nobody holds a wallet yet</p>
-                <p className="text-gray-500 text-xs mt-1">
-                  A wallet opens itself the first time you give someone money. Use “New entry” above.
-                </p>
-              </div>
+              /* Two different empty states, kept apart on purpose. The list now
+                 opens FILTERED, so "nobody holds a wallet yet" would be a plain
+                 falsehood on a company where everyone happens to be settled up —
+                 and it reads as data loss to somebody who knows there are forty
+                 people. Say which one it is, and offer the way out. */
+              peopleFilter.filter !== 'all' || peopleFilter.q ? (
+                <div className="px-4 py-10 text-center">
+                  <p className="text-gray-700 font-medium">
+                    {peopleFilter.q ? 'Nobody matches that search' : 'Nobody has a balance right now'}
+                  </p>
+                  <p className="text-gray-500 text-xs mt-1">
+                    {peopleFilter.q
+                      ? 'Try a different name, employee code or book.'
+                      : 'Everyone is settled up — no advance is out and nothing is owed.'}
+                  </p>
+                  <button type="button"
+                    onClick={() => { setPeopleSearch(''); setPeopleFilter({ q: '', filter: 'all' }); }}
+                    className="text-xs text-gray-600 hover:text-gray-900 hover:underline mt-2">
+                    Show everyone
+                  </button>
+                </div>
+              ) : (
+                <div className="px-4 py-10 text-center">
+                  <p className="text-gray-700 font-medium">Nobody holds a wallet yet</p>
+                  <p className="text-gray-500 text-xs mt-1">
+                    A wallet opens itself the first time you give someone money. Use “New entry” above.
+                  </p>
+                </div>
+              )
             ) : (
               <ul className="divide-y divide-gray-100">
                 {/* One row per PERSON — which is simply what the data is now, one
@@ -1211,6 +1252,7 @@ export default function AdminKhata() {
             onReverse={viewOnly ? undefined : reverse}
             onEdit={viewOnly ? undefined : openExpenseEdit}
             onConfirm={viewOnly ? undefined : confirmExpense}
+            onViewBill={viewReceipt}
             showEmployee={false} />
         </div>
       )}
@@ -1313,7 +1355,8 @@ export default function AdminKhata() {
           <EntryTable entries={visibleEntries}
             onReverse={viewOnly ? undefined : reverse}
             onEdit={viewOnly ? undefined : openExpenseEdit}
-            onConfirm={viewOnly ? undefined : confirmExpense} showEmployee
+            onConfirm={viewOnly ? undefined : confirmExpense}
+            onViewBill={viewReceipt} showEmployee
             dateDir={dateDir} onToggleDate={toggleDateDir} />
         </div>
       )}
@@ -2321,10 +2364,17 @@ export default function AdminKhata() {
  * per-employee view leaves it out on purpose: those rows come straight from the
  * server in date order and there is no sort state behind them to reverse, and a
  * header that looks sortable but is not is worse than a plain one.
- * @param {{entries: Object[], onReverse: Function, showEmployee: boolean,
- *   dateDir?: 'asc'|'desc', onToggleDate?: Function}} props
+ * `onViewBill` is NOT one of the write handlers and is never withheld from a
+ * read-only account. Opening the bill an employee attached is the whole of
+ * checking their spending, the server allows it to anyone who may see the row,
+ * and a statement that shows a ₹1,026 expense with no way to see what it was
+ * for is a figure the reader has to take on trust.
+ * @param {{entries: Object[], onReverse: Function, onViewBill?: Function,
+ *   showEmployee: boolean, dateDir?: 'asc'|'desc', onToggleDate?: Function}} props
  */
-function EntryTable({ entries, onReverse, onEdit, onConfirm, showEmployee, dateDir, onToggleDate }) {
+function EntryTable({
+  entries, onReverse, onEdit, onConfirm, onViewBill, showEmployee, dateDir, onToggleDate,
+}) {
   return (
     <div className="bg-white shadow rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
@@ -2397,6 +2447,17 @@ function EntryTable({ entries, onReverse, onEdit, onConfirm, showEmployee, dateD
                       currentColor, so a hover-only red would show a grey pill
                       right up until the pointer lands on it). */}
                   <div className="flex flex-wrap items-center justify-end gap-2">
+                    {/* First, and in the link colour rather than the grey of the
+                        write actions: it is the one action here that only READS,
+                        it is the only one a view-only account gets, and it is
+                        what a reader checking a figure reaches for. Rendered
+                        only where a bill exists — an advance never has one, and
+                        a dead "no bill" note on every second row is noise. */}
+                    {e.hasAttachment && onViewBill && (
+                      <button onClick={() => onViewBill(e._id)} className="text-xs text-indigo-600 hover:underline">
+                        Bill
+                      </button>
+                    )}
                     {e.editable && onEdit && (
                       <button onClick={() => onEdit(e)} className="text-xs text-gray-500 hover:underline">
                         Edit

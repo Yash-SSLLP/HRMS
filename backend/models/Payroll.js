@@ -281,7 +281,10 @@ payrollSchema.pre('save', function computeTotals(next) {
 });
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-payrollSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: whose payslip it is.
+// Without it the audit screen has only an id fragment to show, because this
+// record has no name or title of its own. See plugins/auditStatus.js.
+payrollSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 
 const Payroll = mongoose.model('Payroll', payrollSchema);
 Payroll.RELEASE_STATES = RELEASE_STATES;

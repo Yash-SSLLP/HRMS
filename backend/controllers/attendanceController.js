@@ -2343,7 +2343,7 @@ const canSetRegularizationLimit = (req) => hasExplicitPermission(req.user, 'regu
  * late-marking policy (SuperAdmin only for the last two blocks).
  * @route PUT /api/attendance/settings  (HR/Admin)
  * @param {Object} [req.body.office] - {lat, lng, label}
- * @param {number} [req.body.geofenceThresholdM] - clamped >= 0
+ * @param {number} [req.body.geofenceThresholdM] - clamped >= 0; SuperAdmin only
  * @param {Object} [req.body.latePolicy] - {hour, minute, graceMinutes}; SuperAdmin only
  * @param {number} [req.body.minPresentHours] - day-minimum hours, 0-6; SuperAdmin only
  * @param {number} [req.body.lateAllowance] - free late arrivals a month, 0-31; SuperAdmin only
@@ -2358,7 +2358,19 @@ const updateSettings = asyncHandler(async (req, res) => {
   if (lat != null && Number.isFinite(Number(lat))) s.office.lat = Number(lat);
   if (lng != null && Number.isFinite(Number(lng))) s.office.lng = Number(lng);
   if (typeof label === 'string' && label.trim()) s.office.label = label.trim();
-  if (req.body.geofenceThresholdM != null && Number.isFinite(Number(req.body.geofenceThresholdM))) {
+  // THE GEOFENCE RADIUS IS A SUPERADMIN DECISION. It is the one number on this
+  // page that decides, company-wide, whether somebody's punch counts as being at
+  // work — widen it and every out-of-range punch quietly becomes compliant,
+  // including in the exports and the month summary that payroll reads. That is
+  // not the same kind of act as correcting the office pin or its label, which
+  // any attendance manager may still do, so it moves up to the role that owns
+  // the policy switches beside it (late policy, minimum hours, reminders).
+  // Silently ignored for anyone else, matching how the blocks below behave and
+  // how employeeController strips its SuperAdmin-only fields — the UI does not
+  // offer the field to them, so a request carrying it is not a user's mistake.
+  if (req.body.geofenceThresholdM != null
+    && Number.isFinite(Number(req.body.geofenceThresholdM))
+    && req.user.role === 'SuperAdmin') {
     s.geofenceThresholdM = Math.max(0, Number(req.body.geofenceThresholdM));
   }
 

@@ -905,10 +905,10 @@ async function notifyEmergencyTaken(request, profile, chain) {
     await notifyMany([...ids], {
       type: 'leave',
       audience: 'admin',
-      title: flagged ? 'Repeat emergency leave — please review' : 'Emergency leave taken',
+      title: flagged ? 'Repeat emergency leave — please review' : 'Emergency leave taken — please review',
       body: flagged
-        ? `${who} has now taken emergency leave ${nth} times this month (latest ${days}). It needed no approval, but repeat use is flagged — you can charge the day at double pay from the leave record.`
-        : `${who} has taken emergency leave (${days}). Emergency leave needs no approval — you're being informed.`,
+        ? `${who} has now taken emergency leave ${nth} times this month (latest ${days}). It was granted without approval, and repeat use is flagged — confirm it if it stands, or reject it to turn those days back into absence. You can also charge the day at double pay.`
+        : `${who} has taken emergency leave (${days}). It was granted on filing without approval — confirm it if it stands, or reject it if it should not.`,
       link: 'leave',
     });
 
@@ -929,16 +929,17 @@ async function notifyEmergencyTaken(request, profile, chain) {
             ? `Repeat emergency leave — ${who} (${nth} this month)`
             : `Emergency leave — ${who} (${days})`,
           text: [
-            `${who} has taken emergency leave. No approval is required for it; this is to inform you.`,
+            `${who} has taken emergency leave. It is granted the moment it is filed — no approval is required — so this is to inform you, and to let you say afterwards whether it stands.`,
             '',
             `Dates      : ${fmt(request.startDate)}${request.isHalfDay ? ' (half day)' : ` – ${fmt(request.endDate)}`}`,
             `Total days : ${request.totalDays}`,
             `Reason     : ${request.reason || '-'}`,
             `This month : emergency leave #${nth}`,
             '',
+            'In the portal, under Approvals → Emergency leave, you can CONFIRM that it stands or REJECT it. Rejecting takes those days off the calendar and they count as absence instead; the employee is told the reason.',
             flagged
-              ? 'This is a repeat within the same month and has been flagged. If it is being misused, you or HR can apply a double salary cut for that day from the leave record in the portal.'
-              : 'No action is needed.',
+              ? 'This is a repeat within the same month and has been flagged. If it is being misused, you or HR can also apply a double salary cut for that day.'
+              : '',
           ].join('\n'),
         },
         { type: 'leave', id: request._id }
@@ -1200,10 +1201,19 @@ const markLeaveForEmployee = asyncHandler(async (req, res) => {
  * @returns {{request: Object}} (201)
  */
 // POST /api/leave/me/requests
-const applyForLeave = asyncHandler(async (req, res) => {
-  const profile = await getMyProfileOrFail(req.user._id, res);
-  const { leaveType, startDate, endDate, isHalfDay, halfDaySession, reason } = req.body;
-
+/**
+ * Validate the shape of a leave — its type and its span — and say how many days
+ * it is.
+ *
+ * ONE COPY, because applyForLeave and amendLeaveRequest have to agree about what
+ * a valid leave is. They did not start out sharing it, and the moment they stop
+ * agreeing an amendment can write a request the apply form would have refused —
+ * a half-day spanning two dates, an end before a start, a retired type code.
+ * @param {object} input - { leaveType, startDate, endDate, isHalfDay, halfDaySession }
+ * @param {object} res - For setting the status before throwing.
+ * @returns {number} totalDays (0.5 for a half day)
+ */
+function leaveDaysOrFail({ leaveType, startDate, endDate, isHalfDay, halfDaySession }, res) {
   if (!leaveType || !startDate || !endDate) {
     res.status(400);
     throw new Error('leaveType, startDate, endDate are required');
@@ -1212,8 +1222,6 @@ const applyForLeave = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error(`Invalid leaveType. Allowed: ${LEAVE_TYPES.join(', ')}`);
   }
-
-  let totalDays;
   if (isHalfDay) {
     if (new Date(startDate).toDateString() !== new Date(endDate).toDateString()) {
       res.status(400);
@@ -1223,14 +1231,23 @@ const applyForLeave = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error('halfDaySession (FirstHalf|SecondHalf) is required for half-day leave');
     }
-    totalDays = 0.5;
-  } else {
-    totalDays = daysInclusive(startDate, endDate);
-    if (totalDays <= 0) {
-      res.status(400);
-      throw new Error('endDate must be on/after startDate');
-    }
+    return 0.5;
   }
+  const totalDays = daysInclusive(startDate, endDate);
+  if (totalDays <= 0) {
+    res.status(400);
+    throw new Error('endDate must be on/after startDate');
+  }
+  return totalDays;
+}
+
+const applyForLeave = asyncHandler(async (req, res) => {
+  const profile = await getMyProfileOrFail(req.user._id, res);
+  const { leaveType, startDate, endDate, isHalfDay, halfDaySession, reason } = req.body;
+
+  const totalDays = leaveDaysOrFail(
+    { leaveType, startDate, endDate, isHalfDay, halfDaySession }, res
+  );
 
   // Apply the monthly paid-leave quota (2 paid days/calendar month) up front so
   // the record — and the employee — know how much of this request is LOP.
@@ -1362,6 +1379,51 @@ const previewLeave = asyncHandler(async (req, res) => {
  * @returns {{request: Object}}
  * @sideeffect notifies the employee; the month's payroll then deducts 2× that day
  */
+/**
+ * Who may act on somebody's leave request over the applicant's head.
+ *
+ * ONE RULE, THREE HANDLERS. Charging an emergency day at double pay, rejecting
+ * an emergency leave outright, and amending a request's type or dates are the
+ * same authority — "this is your report, or your employee, so you get a say in
+ * it" — and three copies of the check would drift the first time any changed.
+ *
+ * The people it lets in are exactly the people the request was routed to or
+ * reported to:
+ *   - a manager seated on this employee's leave ladder (on an emergency leave
+ *     every rung is recorded as Skipped/informed, so the chain is still the
+ *     list of who was told);
+ *   - the executives in `execsToNotify`. A CEO/MD is no longer a rung, but they
+ *     are still sent the notice — so the authority has to follow them off the
+ *     chain, or their own notification points at a 403;
+ *   - HR, via `leave.manage`, walled to their own assigned employees UNLESS
+ *     they also sit on the ladder, in which case the rung is the stronger claim
+ *     and holds regardless of who the employee is partnered with. A SuperAdmin
+ *     holds `leave.manage` implicitly and is walled by nothing.
+ * @param {object} req
+ * @param {object} res - For setting the status before throwing.
+ * @param {object} request - The leave request.
+ * @param {string} action - Named in the 403, e.g. 'reject an emergency leave'.
+ * @returns {Promise<{onLadder: boolean, isHrActor: boolean}>} Which hat they wore.
+ */
+async function assertLeaveReviewer(req, res, request, action) {
+  const onLadder = (request.approvalChain || [])
+    .some((s) => s.approver && String(s.approver) === String(req.user._id))
+    || (request.execsToNotify || []).some((id) => String(id) === String(req.user._id));
+  const isHrActor = hasPermission(req.user, 'leave.manage');
+  if (!isHrActor && !onLadder) {
+    res.status(403);
+    throw new Error(`Only this employee's managers or HR can ${action}.`);
+  }
+  if (isHrActor && !onLadder) {
+    const prof = await EmployeeProfile.findById(request.employee).select('hrPartner company');
+    if (cannotManageProfile(req, prof)) {
+      res.status(403);
+      throw new Error('You can only manage employees assigned to you');
+    }
+  }
+  return { onLadder, isHrActor };
+}
+
 const setDoubleCut = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
   if (!request) {
@@ -1377,29 +1439,7 @@ const setDoubleCut = asyncHandler(async (req, res) => {
     throw new Error(`This emergency leave is ${request.status} — nothing to charge.`);
   }
 
-  // Either HR (leave.manage) or someone on this employee's reporting ladder.
-  // `execsToNotify` counts as the ladder: a CEO/MD is no longer seated on the
-  // chain, but they are still sent the "repeat emergency leave" notice whose
-  // body tells them they can charge the day double — so the authority has to
-  // follow them off the chain, or that notice points at a 403.
-  const onLadder = (request.approvalChain || [])
-    .some((s) => s.approver && String(s.approver) === String(req.user._id))
-    || (request.execsToNotify || []).some((id) => String(id) === String(req.user._id));
-  const isHrActor = hasPermission(req.user, 'leave.manage');
-  if (!isHrActor && !onLadder) {
-    res.status(403);
-    throw new Error('Only this employee\'s managers or HR can charge an emergency leave double.');
-  }
-  // An HR Manager acting purely as HR (not sitting on this employee's ladder)
-  // may only touch their own assigned employees. A ladder approver keeps their
-  // authority regardless of who the employee is partnered with.
-  if (isHrActor && !onLadder) {
-    const dcProfile = await EmployeeProfile.findById(request.employee).select('hrPartner company');
-    if (cannotManageProfile(req, dcProfile)) {
-      res.status(403);
-      throw new Error('You can only manage employees assigned to you');
-    }
-  }
+  await assertLeaveReviewer(req, res, request, 'charge an emergency leave double');
 
   const apply = req.body.apply !== false;
   request.doubleCut = apply;
@@ -1429,6 +1469,408 @@ const setDoubleCut = asyncHandler(async (req, res) => {
     }
   } catch (err) {
     console.error('double-cut notify failed:', err.message);
+  }
+
+  res.json({ request });
+});
+
+/**
+ * Confirm or reject an emergency leave after the fact.
+ *
+ * WHY THIS EXISTS. Emergency leave is granted the instant it is filed, and that
+ * is the point of it — somebody whose child is in hospital should not be sitting
+ * in an approval queue. The cost is a day of leave that nobody agreed to. This
+ * is the other half of that bargain: the managers on the ladder, HR, and the
+ * executives who were told each get to say afterwards whether it stands.
+ *
+ * CONFIRM changes no money and no calendar. It is the record that a human looked
+ * at it — which is exactly what 'Approved' does NOT mean on an emergency leave —
+ * and it takes the row out of the review queue.
+ *
+ * REJECT un-stamps the calendar, so the day stops being leave and goes back to
+ * being an unapproved absence. That is what rejecting a leave means; it is a
+ * real consequence for the employee, so they are told, with the reason.
+ *
+ * NEITHER IS FINAL. The same people can change their mind either way, and the
+ * calendar follows. A rejection made in haste would otherwise leave somebody
+ * marked absent with no route back except HR editing attendance by hand.
+ *
+ * No balance is touched in either direction: emergency leave is granted without
+ * ever passing through advanceApproval, which is the only place a leave balance
+ * is deducted, so there is nothing to give back.
+ * @route PATCH /api/leave/emergency/:id/review  (manager, HR, or informed exec)
+ * @param {string} req.params.id - leave request id
+ * @param {string} req.body.decision - 'confirm' | 'reject'
+ * @param {string} [req.body.note] - the employee sees this; required to reject
+ * @returns {{request: Object}}
+ * @sideeffect on reject, removes the auto-stamped leave days; notifies the employee
+ */
+const reviewEmergencyLeave = asyncHandler(async (req, res) => {
+  const request = await LeaveRequest.findById(req.params.id);
+  if (!request) {
+    res.status(404);
+    throw new Error('Leave request not found');
+  }
+  if (!isEmergencyType(request.leaveType)) {
+    res.status(400);
+    throw new Error('Only emergency leave is reviewed this way — everything else climbs an approval chain.');
+  }
+  if (request.status === 'Cancelled') {
+    res.status(400);
+    throw new Error('This emergency leave was withdrawn by the employee — there is nothing to decide.');
+  }
+
+  const decision = String(req.body.decision || '').toLowerCase();
+  if (!['confirm', 'reject'].includes(decision)) {
+    res.status(400);
+    throw new Error("Say whether this is a 'confirm' or a 'reject'.");
+  }
+  const note = String(req.body.note || '').trim();
+  // A rejection costs the employee the day. They are owed the reason, and asking
+  // for it here is also what stops a queue being cleared with a row of taps.
+  if (decision === 'reject' && !note) {
+    res.status(400);
+    throw new Error('Give a reason — the employee is told why their emergency leave was rejected.');
+  }
+
+  const { onLadder, isHrActor } = await assertLeaveReviewer(
+    req, res, request, 'confirm or reject an emergency leave'
+  );
+
+  // A double cut is a penalty that only lands on an APPROVED emergency leave —
+  // payroll counts no other kind. Rejecting one while the cut stands would
+  // silently erase the penalty, which is the same trap cancelMyRequest guards.
+  // Lift the cut first, deliberately, or leave it and confirm.
+  if (decision === 'reject' && request.doubleCut) {
+    res.status(400);
+    throw new Error('This emergency leave is charged at double pay. Undo the double cut first, then reject it.');
+  }
+
+  const already = request.emergencyReview?.status || 'Pending';
+  const wasApproved = request.status === 'Approved';
+
+  if (decision === 'reject') {
+    // Take the days back off the calendar only if they are on it. Re-rejecting
+    // an already-rejected row must not delete a second, unrelated stamp.
+    if (wasApproved) await unstampLeaveAttendance(request);
+    request.status = 'Rejected';
+    request.decisionAt = new Date();
+    request.decisionNote = `Emergency leave rejected on review — ${note}`;
+  } else if (already === 'Rejected') {
+    // Reinstating: put the day back exactly as grantEmergencyLeave first did.
+    request.status = 'Approved';
+    request.decisionAt = new Date();
+    request.decisionNote = 'Emergency leave confirmed on review — reinstated';
+    await stampLeaveAttendance(request);
+  }
+
+  request.emergencyReview = {
+    status: decision === 'reject' ? 'Rejected' : 'Confirmed',
+    by: req.user._id,
+    byName: req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    // The hat, not just the name — "rejected by the MD" and "rejected by HR" are
+    // different facts to the employee reading it. A rung on the ladder wins,
+    // since that is the stronger claim (see assertLeaveReviewer).
+    byRole: onLadder ? (req.user.role || 'Manager') : (isHrActor ? 'HR' : req.user.role),
+    at: new Date(),
+    note,
+  };
+  await request.save();
+
+  // Tell the employee. A confirm is reassurance; a rejection turns their day
+  // into an absence, and finding that out from a payslip is the wrong way.
+  try {
+    const prof = await EmployeeProfile.findById(request.employee).select('user');
+    if (prof?.user) {
+      const days = `${request.totalDays} day${request.totalDays === 1 ? '' : 's'}`;
+      const who = request.emergencyReview.byName || 'Your manager';
+      await notify({
+        recipient: prof.user,
+        type: 'leave',
+        audience: 'employee',
+        title: decision === 'reject' ? 'Emergency leave rejected' : 'Emergency leave confirmed',
+        body: decision === 'reject'
+          ? `${who} has rejected your emergency leave (${days}). Those days are no longer leave and now count as absence. Reason: ${note}`
+          : `${who} has confirmed your emergency leave (${days}).${note ? ` Note: ${note}` : ''}`,
+        link: 'leave',
+      });
+    }
+  } catch (err) {
+    console.error('emergency review notify failed:', err.message);
+  }
+  // HR keeps its running status line for every leave, the same as an approval
+  // or a cancellation. Skipped when HR is the one who just decided.
+  try {
+    await notifyHrInformational(request, decision === 'reject' ? 'rejected' : 'confirmed', req.user._id);
+  } catch (err) {
+    console.error('emergency review HR notify failed:', err.message);
+  }
+
+  res.json({ request });
+});
+
+/**
+ * Amend a leave request's TYPE or DURATION on the employee's behalf.
+ *
+ * WHY ANYONE NEEDS THIS. A leave is filed in a hurry, by the person least able
+ * to classify it. Somebody books three days and comes back after two; somebody
+ * files Paid Leave for what HR knows is unpaid; somebody puts the wrong dates in.
+ * Until now the only repair was to reject the request and have them file it
+ * again, which loses the original record and, on an approved leave, leaves the
+ * calendar stamped for days nobody took.
+ *
+ * THE ORDER BELOW IS NOT ARBITRARY. On an APPROVED leave the request is not just
+ * a row — it has already been written onto the attendance calendar and drawn
+ * down a balance bucket. The old shape has to be fully undone before the new one
+ * is applied, or the two overlap:
+ *
+ *   1. un-stamp the OLD span     — else days nobody is taking stay marked OnLeave
+ *   2. restore the OLD balance   — else a Maternity edit leaks the bucket
+ *   3. write the new fields
+ *   4. consume the NEW balance, then re-stamp the NEW span — which also
+ *      recomputes paid-vs-LOP, since the 2-days-a-month quota lands differently
+ *      on a different month.
+ *
+ * Step 4 is ordered balance-then-calendar because the balance is the step that
+ * can still REFUSE. A leave the bucket will not cover is rolled all the way back
+ * — fields, balance and calendar — so a rejected amendment is a no-op rather
+ * than a request left with neither its old shape nor its new one.
+ *
+ * A PENDING request has none of that behind it, so it is a plain field write.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO is re-route the request. Changing the type
+ * does not rebuild the approval ladder, restart a decided request, or auto-grant
+ * one that has become Emergency Leave: an edit that silently approved something
+ * would be a decision hiding inside a correction. The status stays where it was,
+ * and whoever holds it decides it as normal.
+ * @route PATCH /api/leave/requests/:id/amend  (manager, HR, or informed exec)
+ * @param {string} req.params.id - leave request id
+ * @param {string} [req.body.leaveType] [req.body.startDate] [req.body.endDate]
+ * @param {boolean} [req.body.isHalfDay] [req.body.halfDaySession]
+ * @param {string} [req.body.status] - Approved (taken) | Rejected | Cancelled;
+ *   needs the leave.history grant, as does amending an already-decided leave
+ * @param {string} req.body.note - why; the employee is shown it
+ * @returns {{request: Object}}
+ * @sideeffect re-stamps the calendar, moves the balance, notifies the employee
+ */
+const amendLeaveRequest = asyncHandler(async (req, res) => {
+  const request = await LeaveRequest.findById(req.params.id);
+  if (!request) {
+    res.status(404);
+    throw new Error('Leave request not found');
+  }
+  if (!['Pending', 'Approved', 'Rejected', 'Cancelled'].includes(request.status)) {
+    res.status(400);
+    throw new Error(`This request is ${request.status} — there is nothing left to amend.`);
+  }
+  // A DECIDED leave is a settled record, not an open request. Correcting one —
+  // reviving a cancelled day, turning a rejection into a day actually taken —
+  // rewrites what the approvers said at the time and moves an attendance month
+  // that payroll may already have closed. So it needs the audit grant rather
+  // than the day-to-day one. Pending and Approved stay open to any manager on
+  // the ladder, which is what makes fixing a typo cheap.
+  const decided = ['Rejected', 'Cancelled'].includes(request.status);
+  if (decided && !hasPermission(req.user, 'leave.history')) {
+    res.status(403);
+    throw new Error(`This leave is ${request.status.toLowerCase()}. Correcting a decided leave needs the "All leave history" permission.`);
+  }
+  // The penalty was decided against a specific span of days. Silently
+  // re-pointing it at different ones is the kind of quiet money change this
+  // module avoids everywhere else, so undoing it stays a deliberate act.
+  if (request.doubleCut) {
+    res.status(400);
+    throw new Error('This leave is charged at double pay. Undo the double cut first, then amend it.');
+  }
+
+  await assertLeaveReviewer(req, res, request, 'amend a leave request');
+
+  const note = String(req.body.note || '').trim();
+  if (!note) {
+    res.status(400);
+    throw new Error('Say why it is being changed — the employee is shown the reason.');
+  }
+
+  // Anything not sent keeps its current value, so a caller changing only the
+  // type does not have to resend the dates and risk shifting them.
+  const ymd = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+  const next = {
+    leaveType: req.body.leaveType || request.leaveType,
+    startDate: req.body.startDate || ymd(request.startDate),
+    endDate: req.body.endDate || ymd(request.endDate),
+    isHalfDay: req.body.isHalfDay === undefined ? !!request.isHalfDay : !!req.body.isHalfDay,
+    halfDaySession: req.body.halfDaySession || request.halfDaySession,
+  };
+  const totalDays = leaveDaysOrFail(next, res);
+
+  /**
+   * WHAT THE DAY ACTUALLY WAS, which is the other half of correcting a leave.
+   *
+   * The three settable answers, in the words the screen uses:
+   *   Approved  — "taken". The days are leave and go back on the calendar.
+   *   Rejected  — refused. The days come off; attendance decides what they were,
+   *               which for somebody who did not come in is an absence.
+   *   Cancelled — withdrawn. Same effect on the calendar as Rejected; it says
+   *               nobody refused it, the leave simply did not happen.
+   *
+   * There is no 'Present' status because presence is not a property of a leave —
+   * it is what the attendance calendar says once the leave stops claiming the
+   * day. Taking a leave off the calendar is what makes the day available to be a
+   * working day again, so "they were present after all" IS Rejected/Cancelled
+   * plus whatever their punches say.
+   *
+   * 'Pending' is deliberately NOT settable: putting a decided request back into
+   * a queue would need a live approval chain rebuilt around an org chart that
+   * has since moved, and it is not what anybody correcting a record wants.
+   */
+  const SETTABLE_STATUS = ['Approved', 'Rejected', 'Cancelled'];
+  let nextStatus = request.status;
+  if (req.body.status !== undefined && req.body.status !== request.status) {
+    if (!SETTABLE_STATUS.includes(req.body.status)) {
+      res.status(400);
+      throw new Error(`Status must be one of: ${SETTABLE_STATUS.join(', ')}.`);
+    }
+    // Changing the OUTCOME is the audit act — it overrules the approvers — so it
+    // needs the same grant that correcting a decided leave does, even when the
+    // request being changed is still open.
+    if (!hasPermission(req.user, 'leave.history')) {
+      res.status(403);
+      throw new Error('Changing a leave\'s status needs the "All leave history" permission.');
+    }
+    nextStatus = req.body.status;
+  }
+
+  const before = {
+    leaveType: request.leaveType,
+    startDate: ymd(request.startDate),
+    endDate: ymd(request.endDate),
+    isHalfDay: !!request.isHalfDay,
+    totalDays: request.totalDays,
+    status: request.status,
+  };
+  const changedType = before.leaveType !== next.leaveType;
+  const changedSpan = before.startDate !== next.startDate
+    || before.endDate !== next.endDate
+    || before.isHalfDay !== next.isHalfDay;
+  const changedStatus = before.status !== nextStatus;
+  if (!changedType && !changedSpan && !changedStatus) {
+    res.status(400);
+    throw new Error('Nothing was changed.');
+  }
+
+  const wasApproved = request.status === 'Approved';
+  const willBeApproved = nextStatus === 'Approved';
+  if (wasApproved) {
+    // 1 + 2: undo the old shape completely before writing the new one.
+    await unstampLeaveAttendance(request);
+    if (balanceBucketFor(request.leaveType)) {
+      const bal = await getOrCreateBalance(request.employee, new Date(request.startDate).getFullYear());
+      adjustBalance(bal, request.leaveType, -request.totalDays);
+      await bal.save();
+    }
+  }
+
+  // 3: the new shape.
+  request.leaveType = next.leaveType;
+  request.startDate = next.startDate;
+  request.endDate = next.endDate;
+  request.isHalfDay = next.isHalfDay;
+  request.halfDaySession = next.isHalfDay ? next.halfDaySession : undefined;
+  request.totalDays = totalDays;
+  if (changedStatus) {
+    request.status = nextStatus;
+    request.decisionAt = new Date();
+    // Nobody's turn any more: a corrected record is settled by definition, and a
+    // rung left Pending would keep the row sitting in somebody's inbox.
+    request.currentApprover = null;
+    for (const s of request.approvalChain || []) {
+      if (s.status === 'Pending' || s.status === 'Waiting') s.status = 'Skipped';
+    }
+  }
+  // A repeat count belongs to the month the leave is IN, so moving the dates —
+  // or switching to emergency — has to re-ask rather than carry the old answer.
+  if (isEmergencyType(next.leaveType)) {
+    const nth = (await countEmergencyInMonth(request.employee, next.startDate, request._id)) + 1;
+    request.emergencyIndexInMonth = nth;
+    request.emergencyFlagged = nth >= EMERGENCY_FLAG_FROM;
+  }
+
+  const spanOf = (x) => `${x.startDate}${x.isHalfDay ? ' (half day)' : ` – ${x.endDate}`}`;
+  // 'taken' rather than 'Approved' in the summary the employee reads: on a
+  // correction after the fact, what they want to know is whether the day counted
+  // as leave, not which internal state it landed in.
+  const STATUS_WORD = { Approved: 'taken as leave', Rejected: 'rejected', Cancelled: 'cancelled' };
+  const summary = [
+    changedType ? `type ${before.leaveType} → ${next.leaveType}` : '',
+    changedSpan
+      ? `dates ${spanOf(before)} → ${spanOf(next)} (${before.totalDays}d → ${totalDays}d)`
+      : '',
+    changedStatus
+      ? `status ${STATUS_WORD[before.status] || before.status} → ${STATUS_WORD[nextStatus] || nextStatus}`
+      : '',
+  ].filter(Boolean).join('; ');
+  const byName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
+  request.amendments.push({
+    at: new Date(), by: req.user._id, byName, byRole: req.user.role, summary, note,
+  });
+
+  if (willBeApproved) {
+    try {
+      await consumeBalanceOrThrow(request);
+    } catch (err) {
+      // Put back exactly what was undone above.
+      Object.assign(request, {
+        leaveType: before.leaveType,
+        startDate: before.startDate,
+        endDate: before.endDate,
+        isHalfDay: before.isHalfDay,
+        totalDays: before.totalDays,
+        status: before.status,
+      });
+      request.amendments.pop();
+      if (wasApproved && balanceBucketFor(before.leaveType)) {
+        const bal = await getOrCreateBalance(request.employee, new Date(before.startDate).getFullYear());
+        adjustBalance(bal, before.leaveType, before.totalDays);
+        await bal.save();
+      }
+      if (wasApproved) await stampLeaveAttendance(request);
+      res.status(err.status || 400);
+      throw err;
+    }
+  }
+  await request.save();
+  // The calendar only ever carries an APPROVED leave, so the days go back on
+  // exactly when the corrected record says they were taken — which is how
+  // reviving a cancelled leave puts it back, and how rejecting an approved one
+  // frees the day to be an ordinary working day again.
+  if (willBeApproved) await stampLeaveAttendance(request);
+
+  // The employee's own record of when they are away, and how much of it is paid,
+  // has just been rewritten by somebody else. That is not something to discover
+  // from a calendar.
+  try {
+    const prof = await EmployeeProfile.findById(request.employee).select('user');
+    if (prof?.user) {
+      await notify({
+        recipient: prof.user,
+        type: 'leave',
+        audience: 'employee',
+        title: 'Your leave request was changed',
+        body: `${byName || 'HR'} changed your leave: ${summary}. It is now `
+          + `${leaveLabel(request.leaveType)}, ${spanOf(next)} (${request.totalDays} day`
+          + `${request.totalDays === 1 ? '' : 's'}`
+          + `${willBeApproved && request.lopDays > 0 ? `, ${request.lopDays} unpaid` : ''})`
+          + `${willBeApproved ? '' : ` — ${STATUS_WORD[nextStatus] || nextStatus}, so those days are not leave`}`
+          + `. Reason: ${note}`,
+        link: 'leave',
+      });
+    }
+  } catch (err) {
+    console.error('leave amendment notify failed:', err.message);
+  }
+  try {
+    await notifyHrInformational(request, 'amended', req.user._id);
+  } catch (err) {
+    console.error('leave amendment HR notify failed:', err.message);
   }
 
   res.json({ request });
@@ -2101,6 +2543,8 @@ module.exports = {
   previewLeave,
   cancelMyRequest,
   setDoubleCut,
+  reviewEmergencyLeave,
+  amendLeaveRequest,
   listAllRequests,
   approveRequest,
   rejectRequest,

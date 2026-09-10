@@ -43,7 +43,10 @@ const travelRequestSchema = new mongoose.Schema(
 );
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-travelRequestSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: who is travelling.
+// Without it the audit screen has only an id fragment to show, because this
+// record has no name or title of its own. See plugins/auditStatus.js.
+travelRequestSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 
 module.exports = mongoose.model('TravelRequest', travelRequestSchema);
 module.exports.TRAVEL_MODES = TRAVEL_MODES;

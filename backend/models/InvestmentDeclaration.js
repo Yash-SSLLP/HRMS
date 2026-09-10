@@ -47,7 +47,10 @@ const investmentDeclarationSchema = new mongoose.Schema(
 investmentDeclarationSchema.index({ employee: 1, financialYear: 1 }, { unique: true });
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-investmentDeclarationSchema.plugin(require("./plugins/auditStatus"));
+// `person` names the row after the person it is about: whose declaration it
+// is. Without it the audit screen has only an id fragment to show, because
+// this record has no name or title of its own. See plugins/auditStatus.js.
+investmentDeclarationSchema.plugin(require("./plugins/auditStatus"), { person: "employee" });
 
 module.exports = mongoose.model('InvestmentDeclaration', investmentDeclarationSchema);
 module.exports.REGIMES = REGIMES;

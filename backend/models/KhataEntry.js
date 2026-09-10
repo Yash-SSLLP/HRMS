@@ -245,7 +245,11 @@ khataEntrySchema.virtual('signedAmount').get(function signedAmount() {
 khataEntrySchema.pre('save', require('../services/sequence').stampCode('KHT', 'date'));
 
 // Audit-status plugin: logs `status` transitions to AuditLog with actor attribution.
-khataEntrySchema.plugin(require('./plugins/auditStatus'));
+// `person` names the row after the person it is about: whose khata the row
+// belongs to. Without it the audit screen has only an id fragment to show,
+// because this record has no name or title of its own. See
+// plugins/auditStatus.js.
+khataEntrySchema.plugin(require('./plugins/auditStatus'), { person: 'employee' });
 
 module.exports = mongoose.model('KhataEntry', khataEntrySchema);
 module.exports.DIRECTIONS = DIRECTIONS;

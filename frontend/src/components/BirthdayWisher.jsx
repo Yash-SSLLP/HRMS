@@ -148,7 +148,16 @@ export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
             const k = keyOf(e);
             const occ = occasionOf(e);
             const isSelf = isMe(e);
-            const wished = sent[k];
+            // Wished ALREADY, in the window today falls in — from the server,
+            // because the answer outlives this component. The local `sent` map
+            // is only the optimistic half: it settles the row between the POST
+            // and the next load, and the server flag survives a reload. Hiding
+            // the button by component state alone is exactly what let the same
+            // colleague be wished the same birthday over and over.
+            const wished = sent[k] || e.alreadyWished;
+            // An early wish is spent for the run-up only. Saying so turns a
+            // vanished button into a promise: it comes back on the day.
+            const againOnTheDay = wished && !sent[k] && e.wishWindow === 'early';
             // A company anniversary has nobody to wish — the row just says so.
             const canWish = occ.wishable !== false;
             return (
@@ -185,8 +194,12 @@ export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
                     ) : isSelf ? (
                       <span className="text-xs text-gray-500 italic shrink-0">That&apos;s you</span>
                     ) : wished ? (
-                      <span className="text-xs text-green-600 font-medium shrink-0 inline-flex items-center gap-1">
-                        <FiCheck aria-hidden="true" /> Wish sent
+                      <span
+                        title={againOnTheDay ? 'You can wish them again on the day itself' : undefined}
+                        className="text-xs text-green-600 font-medium shrink-0 inline-flex items-center gap-1"
+                      >
+                        <FiCheck aria-hidden="true" />
+                        {againOnTheDay ? 'Wished · again on the day' : 'Wish sent'}
                       </span>
                     ) : (
                       <button

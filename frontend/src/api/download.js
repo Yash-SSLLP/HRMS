@@ -64,5 +64,19 @@ export async function downloadTableXlsx({ filename, sheetName, headers, rows, mo
  */
 export async function fetchImageObjectUrl(url) {
   const res = await api.get(url, { responseType: 'blob' });
-  return URL.createObjectURL(res.data);
+  const blob = res.data;
+  // WHAT CAME BACK HAS TO BE AN IMAGE, and until now nothing checked. A 2xx
+  // carrying anything else — a JSON error body a proxy turned into a 200, an
+  // empty response, an HTML login page from an expired session — was wrapped in
+  // an object URL all the same, the <img> could not decode it, and the page
+  // showed the browser's broken-image glyph with the alt text beside it. A
+  // broken glyph tells the reader nothing and the developer less; rejecting
+  // here routes it to AuthImage's honest "n/a" fallback instead, and lets the
+  // next mount retry rather than caching the failure as a picture.
+  if (!(blob instanceof Blob) || blob.size === 0 || !/^image\//i.test(blob.type || '')) {
+    const err = new Error(`Not an image (${blob?.type || 'no type'}, ${blob?.size ?? 0} bytes)`);
+    err.notAnImage = true;
+    throw err;
+  }
+  return URL.createObjectURL(blob);
 }
