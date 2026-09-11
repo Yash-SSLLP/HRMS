@@ -39,8 +39,13 @@ async function joinCutoff(userId) {
 const listNotifications = asyncHandler(async (req, res) => {
   const meId = req.user._id;
   const filter = { recipient: meId, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)) };
+  // Fifty is the ceiling AND the default: the alerts screen pages through
+  // nothing, it just shows the recent ones. A home screen that renders five
+  // asks for a handful instead (`?limit=`), which is the difference between a
+  // fast home screen and a slow one on a phone.
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 50);
   const [notifications, unreadCount] = await Promise.all([
-    Notification.find(filter).sort({ createdAt: -1 }).limit(50).lean(),
+    Notification.find(filter).sort({ createdAt: -1 }).limit(limit).lean(),
     Notification.countDocuments({ ...filter, readAt: null }),
   ]);
   res.json({ unreadCount, notifications });

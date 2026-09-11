@@ -37,9 +37,15 @@ const listAnnouncements = asyncHandler(async (req, res) => {
   const filter = isPortalViewer(req.user) || hasPermission(req.user, 'announcements.manage')
     ? {}
     : activeWindowQuery(new Date());
+  // `?limit=N` for the callers that show a few recent ones (the two home
+  // screens). Absent means everything, which is what the admin page and the
+  // banner need — this list has no natural end, so it is the CALLER's job to
+  // say how much of it they are going to render.
+  const limit = Math.min(Math.max(Number(req.query.limit) || 0, 0), 200);
   const docs = await Announcement.find(filter)
     .populate('createdBy', 'firstName lastName')
     .sort({ pinned: -1, createdAt: -1 })
+    .limit(limit) // 0 = no limit, mongoose
     .lean();
   const me = String(req.user._id);
   // Expose a per-user `dismissed` flag (used to hide it from the overview

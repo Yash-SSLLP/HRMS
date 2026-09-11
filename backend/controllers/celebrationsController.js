@@ -303,6 +303,11 @@ function companyPayload(c, years) {
   };
 }
 
+// Exactly what a celebration needs off a profile: the three dates it can fall
+// on, and the six fields personPayload prints. Named here rather than inline so
+// the two callers cannot drift apart.
+const CELEBRATION_FIELDS = 'user employeeCode designation department dateOfBirth dateOfJoining dateOfMarriage';
+
 async function loadActiveProfiles(req) {
   const viewer = req.user;
   // Profiles for active users who have not exited (SuperAdmin hidden from
@@ -314,8 +319,17 @@ async function loadActiveProfiles(req) {
     ...companyScopeFilter(req),
   };
   if (hidden.length) filter.user = { $nin: hidden };
+  // .select + .lean, and both matter. This used to pull every field of every
+  // profile — the documents array, bank details, addresses, statutory ids —
+  // and hydrate a full Mongoose document per employee, all to read three dates
+  // and six scalars. Measured on a phone against the live backend, the two
+  // endpoints built on it were the slowest calls in the app at ~1.7-2.0s, on
+  // every single visit to the home screen. Nothing here calls a document
+  // method, so there is nothing to hydrate for.
   const profiles = await EmployeeProfile.find(filter)
-    .populate({ path: 'user', select: 'firstName lastName email isActive' });
+    .select(CELEBRATION_FIELDS)
+    .populate({ path: 'user', select: 'firstName lastName email isActive' })
+    .lean();
   return profiles.filter((p) => p.user && p.user.isActive !== false);
 }
 
