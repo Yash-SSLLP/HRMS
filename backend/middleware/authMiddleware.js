@@ -348,6 +348,9 @@ function hasPermission(user, cap) {
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (cap === 'assets.manage' && user.assetsAccess === true) return true;
+  // Deciding loans and advances is the same kind of standalone grant: the
+  // person who sanctions an advance is usually in accounts, not HR.
+  if (cap === 'loans.manage' && user.loansAccess === true) return true;
   // Khata access is the same kind of standalone grant — it opens the employee
   // cash-ledger module for anyone, whatever their role. Paying a specific
   // employee out of a specific account is gated separately, per account, by
@@ -637,6 +640,57 @@ const requireIncentivePayer = (req, res, next) => {
 };
 
 /**
+ * May this account CREDIT points to somebody directly — a bonus outside any
+ * team-day (models/IncentiveCredit)?
+ *
+ * The paying bench (HR, CEO, MD, SuperAdmin) plus a MANAGER OF EVERY INCENTIVE,
+ * and that last one is the difference: the section-wide assignment is given to
+ * whoever runs the incentives as a whole, and deciding somebody has earned extra
+ * is exactly that job (user decision 2026-09-11). A manager of ONE tab is not
+ * included — their remit is that tab's arithmetic, not the points pool.
+ *
+ * Deliberately WIDER than canPayIncentive and narrower than the module at large:
+ * awarding points is not the same act as handing over money for them, and a
+ * picker does neither.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+function canCreditIncentive(user) {
+  if (!user) return false;
+  if (canPayIncentive(user)) return true;
+  const list = Array.isArray(user.incentiveRoles) ? user.incentiveRoles : [];
+  return list.some((r) => r.module === ALL_MODULES && r.role === 'manager');
+}
+
+/**
+ * Route guard for crediting points (and taking a credit back).
+ * @returns {import('express').RequestHandler}
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
+const requireIncentiveCreditor = (req, res, next) => {
+  if (canCreditIncentive(req.user)) return next();
+  res.status(403);
+  return next(new Error('Only HR, a CEO, MD, a Super Admin or a manager of all incentives can credit points.'));
+};
+
+/**
+ * Route guard for the SECTION-WIDE screens — the ones that span every incentive
+ * rather than belonging to one tab, such as the points dashboard.
+ *
+ * Any role in any incentive gets past: a picker earns from the same points pool
+ * and the per-employee roll-up inside their own tab already shows them what
+ * everybody else earned, so a dashboard over the same figures adds no reach.
+ * What they may DO there is gated separately (crediting, paying).
+ * @returns {import('express').RequestHandler}
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
+const requireIncentiveSection = (req, res, next) => {
+  if (canUseIncentive(req.user, ALL_MODULES) || incentiveRole(req.user, 'boys') !== null) return next();
+  res.status(403);
+  return next(new Error('You do not have a role in any incentive. Ask a Super Admin for one.'));
+};
+
+/**
  * May this account sanction a payslip its own subject prepared?
  *
  * SuperAdmin, CEO or MD — the same bench that sanctions a cash advance, and for
@@ -699,6 +753,9 @@ module.exports = {
   requireSelfPayslipApprover,
   canPayIncentive,
   requireIncentivePayer,
+  canCreditIncentive,
+  requireIncentiveCreditor,
+  requireIncentiveSection,
   incentiveRole,
   canManageIncentive,
   canUseIncentive,

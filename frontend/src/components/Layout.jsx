@@ -260,6 +260,12 @@ function NotificationBell({ isAdmin, portal }) {
     // and inert, which is the honest result on a desktop.
     if (n.link === 'app-update') return null;
     if (n.link === 'calendar') return isAdmin ? '/admin/calendar' : '/employee/calendar';
+    // Stored as a bare slug by the recruitment notifier, and a bare slug
+    // navigates RELATIVE to whatever page is open — so it only landed when the
+    // notification happened to be opened from the portal root. It is a real
+    // page in both portals: a CEO/MD has no employee portal and reads the
+    // rounds booked with them under /admin.
+    if (n.link === 'interviews') return portal === 'employee' ? '/employee/interviews' : '/admin/my-interviews';
     // Legacy course links were stored as "/learning"; the actual route lives
     // under the employee portal. Normalise so older notifications still land.
     if (n.link === '/learning' || n.link.startsWith('/learning/')) return `/employee${n.link}`;
@@ -270,6 +276,7 @@ function NotificationBell({ isAdmin, portal }) {
       if (n.link === '/admin/expenses') return '/employee/expenses-manage';
       if (n.link === '/admin/cashbook') return '/employee/cashbook-manage';
       if (n.link === '/admin/khata') return '/employee/khata-manage';
+      if (n.link === '/admin/loans') return '/employee/loans-manage';
     }
     return n.link;
   };

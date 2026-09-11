@@ -9,7 +9,7 @@ import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
-import { peopleOptions } from '../utils/peopleOptions';
+import { peopleOptions, hasLeft } from '../utils/peopleOptions';
 
 const STATUS = ['Todo', 'InProgress', 'Review', 'Done'];
 const PRIORITY = ['Low', 'Medium', 'High', 'Urgent'];
@@ -23,6 +23,10 @@ const PRIORITY_STYLES = {
   Low: 'text-gray-500', Medium: 'text-blue-600', High: 'text-amber-600', Urgent: 'text-red-600',
 };
 const blank = { title: '', description: '', project: '', assignedTo: '', status: 'Todo', priority: 'Medium', dueDate: '' };
+// The assignee picker's one non-person choice. A sentinel rather than a second
+// control, because "who is this for" is a single question — and it can never
+// collide with a real value, which is always a Mongo id.
+const EVERYONE = '__all__';
 const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 export default function AdminTasks() {
@@ -61,6 +65,14 @@ export default function AdminTasks() {
   };
   useEffect(() => { load(); }, [statusFilter]);
 
+  // How many people "All employees" actually means. Counted the same way the
+  // server counts it (utils/peoplePicker + utils/departed): the loaded list
+  // already excludes inactive accounts, system logins and the executives, and
+  // hasLeft takes out anyone working through a notice period — who is in no
+  // picker anywhere, and must not be handed a new task either. A number that
+  // disagreed with what got created would be worse than no number at all.
+  const assignableCount = users.filter((u) => !hasLeft(u)).length;
+
   const openCreate = () => { setEditingId(null); setForm(blank); setShowModal(true); };
   const openEdit = (t) => {
     setEditingId(t._id);
@@ -74,12 +86,29 @@ export default function AdminTasks() {
 
   const save = async (e) => {
     e.preventDefault();
+    const everyone = !editingId && form.assignedTo === EVERYONE;
+    // Everyone gets their OWN copy of the task, so this is not one save but
+    // dozens — and the rows it adds cannot be undone in one click. Ask first,
+    // with the number in the question, and ask BEFORE the button starts saying
+    // "Saving…" over a question nobody has answered yet.
+    if (everyone && !(await confirmDialog({
+      message: `Create this task separately for all ${assignableCount} employees? Each person gets their own copy to complete, and they stay on this list one row per person.`,
+      confirmText: 'Create for everyone',
+    }))) return;
     setSaving(true);
     setError('');
     try {
-      const payload = { ...form, project: form.project || undefined, assignedTo: form.assignedTo || undefined };
+      const payload = {
+        ...form,
+        project: form.project || undefined,
+        assignedTo: everyone ? undefined : (form.assignedTo || undefined),
+        ...(everyone ? { assignToAll: true } : {}),
+      };
       if (editingId) await api.put(`/tasks/${editingId}`, payload);
-      else await api.post('/tasks', payload);
+      else {
+        const { data } = await api.post('/tasks', payload);
+        if (everyone) toast.success(`Task created for ${data.count} ${data.count === 1 ? 'person' : 'people'}`);
+      }
       setShowModal(false);
       await load();
     } catch (err) {
@@ -170,8 +199,18 @@ export default function AdminTasks() {
                   <SearchableSelect value={form.assignedTo} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">-</option>
+                    {/* Only when creating: "everyone" makes one task per person,
+                        and an existing task belongs to the one person holding it. */}
+                    {!editingId && assignableCount > 0 && (
+                      <option value={EVERYONE}>All employees ({assignableCount})</option>
+                    )}
                     {peopleOptions(users, (u) => `${u.firstName} ${u.lastName}`, { keep: [form.assignedTo] })}
                   </SearchableSelect>
+                  {form.assignedTo === EVERYONE && (
+                    <p className="mt-1 text-xs text-amber-600">
+                      Each of the {assignableCount} gets their own copy to complete — {assignableCount} rows on this list.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Priority</label>

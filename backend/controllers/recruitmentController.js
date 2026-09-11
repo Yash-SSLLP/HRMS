@@ -12,7 +12,10 @@ const path = require('path');
 const crypto = require('crypto');
 const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
-const { CANDIDATE_STAGES, ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS } = require('../models/Candidate');
+const {
+  CANDIDATE_STAGES, ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS,
+  ASSESSMENT_RATINGS, ROUND_RECOMMENDATIONS,
+} = require('../models/Candidate');
 const User = require('../models/User');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const EmployeeProfile = require('../models/EmployeeProfile');
@@ -414,6 +417,106 @@ const deleteCandidate = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+// ===== The written assessment behind a round =====
+// Two paths write it: HR from Recruitment, and the assigned interviewer from
+// "My Interviews". Both store the same structured write-up, so the merge, the
+// clamping and the validation live here once rather than drifting apart.
+
+// How long a useful write-up tends to be. ADVICE, not a rule: the form says so
+// while the remarks are shorter, and saves anyway. It was briefly enforced with
+// a 400 and that was wrong — an interviewer who has finished the call and
+// picked a verdict must be able to record it, and half the value (the ratings
+// and the recommendation) is lost entirely if the save is refused. Sent to the
+// clients as `suggestedRemarkChars` so one number drives every hint.
+const SUGGESTED_REMARK_CHARS = 20;
+
+/**
+ * One competency score as a whole 1-5.
+ * @param {*} v
+ * @returns {number|undefined} undefined for "not rated" (blank or 0), which is
+ *   deliberately not the same as a 1.
+ */
+function ratingValue(v) {
+  if (v === '' || v === null || v === undefined) return undefined;
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.min(n, 5);
+}
+
+/**
+ * Merge an `assessment` payload into a round (ratings, strengths, concerns,
+ * recommendation). Absent keys keep what is already stored, so a client may
+ * send one field without wiping the rest.
+ * @param {object} round - the round sub-document, mutated in place
+ * @param {object} body - the request body (no-op unless it carries `assessment`)
+ * @param {import('express').Response} res - for the 400 status on a bad recommendation
+ * @throws 400 Error when `recommendation` is off the list
+ */
+function applyAssessment(round, body, res) {
+  if (body.assessment === undefined) return;
+  const patch = body.assessment || {};
+  const current = round.assessment?.toObject?.() || round.assessment || {};
+  const ratings = { ...(current.ratings?.toObject?.() || current.ratings || {}) };
+  if (patch.ratings !== undefined) {
+    const given = patch.ratings || {};
+    ASSESSMENT_RATINGS.forEach((k) => {
+      if (Object.prototype.hasOwnProperty.call(given, k)) ratings[k] = ratingValue(given[k]);
+    });
+  }
+  const text = (key) => (patch[key] !== undefined ? (String(patch[key] || '').trim() || undefined) : current[key]);
+  let recommendation = current.recommendation;
+  if (patch.recommendation !== undefined) {
+    const rec = String(patch.recommendation || '').trim();
+    if (rec && !ROUND_RECOMMENDATIONS.includes(rec)) {
+      res.status(400);
+      throw new Error(`recommendation must be one of ${ROUND_RECOMMENDATIONS.join(', ')}`);
+    }
+    recommendation = rec || undefined;
+  }
+  round.assessment = { ratings, strengths: text('strengths'), concerns: text('concerns'), recommendation };
+}
+
+/**
+ * The assessment in the shape every client can render without null-checking:
+ * a score per competency (0 = not rated) and three plain strings.
+ * @param {object} r - a round sub-document
+ * @returns {{ratings: Object<string, number>, strengths: string, concerns: string, recommendation: string}}
+ */
+function assessmentOut(r) {
+  const a = r.assessment?.toObject?.() || r.assessment || {};
+  const given = a.ratings?.toObject?.() || a.ratings || {};
+  const ratings = {};
+  ASSESSMENT_RATINGS.forEach((k) => { ratings[k] = Number(given[k]) || 0; });
+  return {
+    ratings,
+    strengths: a.strengths || '',
+    concerns: a.concerns || '',
+    recommendation: a.recommendation || '',
+  };
+}
+
+/**
+ * An earlier round packaged as CONTEXT for a later one: the verdict, who gave
+ * it, and their write-up. Carries no meeting link or scheduling controls — this
+ * is somebody else's round, to be read and not acted on.
+ * @param {object} r - a round sub-document
+ * @param {number} idx - its position in `candidate.rounds`
+ * @returns {Object}
+ */
+function roundSummary(r, idx) {
+  return {
+    index: idx,
+    label: r.label || `Round ${idx + 1}`,
+    status: r.status,
+    interviewerName: r.interviewerName || '',
+    decidedByName: r.decidedByName || '',
+    scheduledAt: r.scheduledAt,
+    decidedAt: r.decidedAt,
+    feedback: r.feedback || '',
+    assessment: assessmentOut(r),
+  };
+}
+
 /**
  * HR edits an interview round: status, feedback, schedule, meeting link, interviewer.
  * @route PATCH /api/recruitment/candidates/:id/round  (HR)
@@ -421,6 +524,7 @@ const deleteCandidate = asyncHandler(async (req, res) => {
  * @param {number} req.body.index - round index
  * @param {string} [req.body.status] - one of ROUND_STATUS
  * @param {string} [req.body.feedback] / [req.body.scheduledAt] / [req.body.meetingLink]
+ * @param {Object} [req.body.assessment] - ratings / strengths / concerns / recommendation
  * @param {number} [req.body.meetDurationMinutes] - clamped 15-240
  * @param {string} [req.body.interviewer] - user id ('' clears)
  * @returns {{candidate: Object}}
@@ -452,9 +556,16 @@ const setRound = asyncHandler(async (req, res) => {
       throw new Error(`status must be one of ${ROUND_STATUS.join(', ')}`);
     }
     round.status = req.body.status;
-    round.decidedAt = ['Cleared', 'Rejected'].includes(req.body.status) ? new Date() : undefined;
+    // Only a CHANGE of status re-stamps the decision time. Both clients send
+    // the current status with every save, so re-stamping unconditionally moved
+    // "Decided <when>" to today every time somebody reopened a finished round
+    // to expand on their remarks.
+    if (statusChanged) {
+      round.decidedAt = ['Cleared', 'Rejected'].includes(req.body.status) ? new Date() : undefined;
+    }
   }
   if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
+  applyAssessment(round, req.body, res);
   if (req.body.scheduledAt !== undefined) round.scheduledAt = req.body.scheduledAt || undefined;
   if (req.body.meetingLink !== undefined) round.meetingLink = req.body.meetingLink || undefined;
   // Interview duration (minutes), clamped to a sane range. Used for the Google
@@ -504,6 +615,7 @@ const setRound = asyncHandler(async (req, res) => {
       byName: req.user.fullName,
       at: new Date(),
       feedback: req.body.feedback !== undefined ? req.body.feedback : round.feedback,
+      recommendation: round.assessment?.recommendation || undefined,
     });
     // Also record interview-round status changes in the central audit log.
     AuditLog.create({
@@ -542,6 +654,12 @@ const setRound = asyncHandler(async (req, res) => {
 // round status. HR sees the same status/feedback (+ audit trail) in admin.
 
 // Shape one round for the interviewer-facing list.
+//
+// `previousRounds` is the part that makes a later round worth sitting: whoever
+// takes Round 3 opens it holding what Rounds 1 and 2 scored, praised and
+// worried about, instead of interviewing the candidate cold and repeating the
+// first two panels' questions. It is context only — read-only summaries of
+// somebody else's round (roundSummary), never anything this interviewer can edit.
 function interviewItem(c, r, idx) {
   return {
     candidateId: c._id,
@@ -554,10 +672,17 @@ function interviewItem(c, r, idx) {
     label: r.label || `Round ${idx + 1}`,
     status: r.status,
     feedback: r.feedback || '',
+    assessment: assessmentOut(r),
     scheduledAt: r.scheduledAt,
     durationMinutes: r.meetDurationMinutes || null,
     meetingLink: r.meetingLink || '',
     decidedAt: r.decidedAt,
+    decidedByName: r.decidedByName || '',
+    // Every round BEFORE this one, with its verdict and write-up.
+    previousRounds: (c.rounds || []).slice(0, idx).map((prev, i) => roundSummary(prev, i)),
+    // The length a write-up is nudged towards (never enforced) — one number,
+    // so the hint cannot drift between the web form and the app's sheet.
+    suggestedRemarkChars: SUGGESTED_REMARK_CHARS,
   };
 }
 
@@ -594,7 +719,8 @@ const myInterviews = asyncHandler(async (req, res) => {
  * @param {string} req.params.id - candidate id
  * @param {number} req.body.index - round index (caller must be its interviewer)
  * @param {string} [req.body.status] - one of ROUND_STATUS
- * @param {string} [req.body.feedback]
+ * @param {string} [req.body.feedback] - overall remarks
+ * @param {Object} [req.body.assessment] - ratings / strengths / concerns / recommendation
  * @returns {{interview: Object}}
  * @sideeffect writes to AuditLog; auto-creates the document link once all rounds are Cleared
  */
@@ -625,9 +751,16 @@ const setMyInterviewRound = asyncHandler(async (req, res) => {
       throw new Error(`status must be one of ${ROUND_STATUS.join(', ')}`);
     }
     round.status = req.body.status;
-    round.decidedAt = ['Cleared', 'Rejected'].includes(req.body.status) ? new Date() : undefined;
+    // Only a CHANGE of status re-stamps the decision time. Both clients send
+    // the current status with every save, so re-stamping unconditionally moved
+    // "Decided <when>" to today every time somebody reopened a finished round
+    // to expand on their remarks.
+    if (statusChanged) {
+      round.decidedAt = ['Cleared', 'Rejected'].includes(req.body.status) ? new Date() : undefined;
+    }
   }
   if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
+  applyAssessment(round, req.body, res);
 
   // Same audit trail HR edits get, so HR sees who decided what and when.
   if (statusChanged) {
@@ -639,6 +772,7 @@ const setMyInterviewRound = asyncHandler(async (req, res) => {
       byName: req.user.fullName,
       at: new Date(),
       feedback: req.body.feedback !== undefined ? req.body.feedback : round.feedback,
+      recommendation: round.assessment?.recommendation || undefined,
     });
     AuditLog.create({
       entity: 'Candidate.round',

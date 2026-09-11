@@ -18,8 +18,12 @@
  *             manager, which is what makes the day's record worth anything.
  *
  * `ALL_MODULES` ('all') is the section-wide assignment — a manager of every
- * incentive, present and future. HR, CEO, MD and SuperAdmin hold that by role
- * and are never listed here.
+ * incentive, present and future. It also carries ONE power no per-tab manager
+ * has: crediting points to somebody directly, outside any team-day (see
+ * canCreditIncentive in middleware/authMiddleware.js). The points pool is
+ * company-wide, so awarding into it belongs to whoever runs the section rather
+ * than to one tab's supervisor. HR, CEO, MD and SuperAdmin hold that by role and
+ * are never listed here.
  *
  * Keep `key` values stable: they are stored on User documents.
  */
@@ -31,7 +35,7 @@ const INCENTIVE_MODULES = [
   {
     key: ALL_MODULES,
     label: 'All incentives',
-    hint: 'Runs every incentive tab, including ones added later.',
+    hint: 'Runs every incentive tab, including ones added later, and can credit points to anybody on the Points Dashboard.',
     roles: ['manager'],
   },
   {

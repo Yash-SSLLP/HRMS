@@ -24,6 +24,7 @@ const {
   setCashbookAccess,
   setExpensesAccess,
   setAssetsAccess,
+  setLoansAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,
@@ -138,6 +139,8 @@ router.patch('/users/:id/cashbook-access', restrictTo('SuperAdmin'), setCashbook
 router.patch('/users/:id/expenses-access', restrictTo('SuperAdmin'), setExpensesAccess);
 // PATCH /users/:id/assets-access — grant/revoke the assets register; protected, SuperAdmin only.
 router.patch('/users/:id/assets-access', restrictTo('SuperAdmin'), setAssetsAccess);
+// PATCH /users/:id/loans-access — grant/revoke loan & advance approvals; protected, SuperAdmin only.
+router.patch('/users/:id/loans-access', restrictTo('SuperAdmin'), setLoansAccess);
 // PATCH /users/:id/incentive-role — set this account's role in ONE incentive
 // tab (manager / picker / none); protected, SuperAdmin only.
 router.patch('/users/:id/incentive-role', restrictTo('SuperAdmin'), setIncentiveRole);

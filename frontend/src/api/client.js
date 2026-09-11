@@ -89,7 +89,14 @@ const VIEW_ONLY_POST_ALLOW = [
 //
 // This is for CEO/MD ONLY, never the God audit login — that account is refused
 // every unsafe method by `protect` and has no exceptions anywhere.
-const EXEC_WRITE_PATHS = [/\/incentives(\/|$|\?)/];
+//
+// The second is the interviewer's own round. HR puts a CEO/MD on the final
+// round like anybody else, and /recruitment/my-interviews authorises on
+// IDENTITY rather than on a capability — the server only lets you touch a
+// round whose `interviewer` is you (see setMyInterviewRound). Blocking it
+// here would strand every round booked with an executive: they could read the
+// panel notes and never record their own verdict.
+const EXEC_WRITE_PATHS = [/\/incentives(\/|$|\?)/, /\/recruitment\/my-interviews(\/|$|\?)/];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job
 // application, an exit feedback form, a public course. The server does not run

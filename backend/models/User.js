@@ -133,6 +133,15 @@ const userSchema = new mongoose.Schema(
     // the employee who actually looks after company hardware and they get the
     // Assets register in their own portal, without becoming an admin.
     assetsAccess: { type: Boolean, default: false },
+    // Loans & advances — the same standalone grant, for whoever decides them.
+    // Sanctioning an advance is an accounts job more often than an HR one, and
+    // the `permissions` array only reaches HR Manager and Manager accounts, so
+    // without this there was no way to hand loan approvals to the person who
+    // actually does them. It opens the whole module (see the routes): the
+    // queue, approve/decline, raising one on an employee's behalf, and
+    // recording repayments. The company wall still applies — they see only
+    // their own company's people (loanController scopeUserField/cannotSeeUser).
+    loansAccess: { type: Boolean, default: false },
     // Incentive access, per TAB. The section holds several incentives (Boys
     // today, more later) and each is run by different people, so this is not one
     // switch but a role per tab — see config/incentiveRoles.js for what a

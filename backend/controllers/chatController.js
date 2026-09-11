@@ -236,6 +236,58 @@ const respondRequest = asyncHandler(async (req, res) => {
  * @returns {{count: number, connections: Object[]}}
  * @sideeffect marks messages addressed to the caller as delivered
  */
+/**
+ * How many chat messages the caller has not read — one number, for a badge.
+ *
+ * Its own endpoint because the two list endpoints are the wrong tool for a
+ * badge: they populate every participant and fetch a last message per thread,
+ * and listConnections MARKS MESSAGES DELIVERED as it goes. The app polls its
+ * badges every 30 seconds, so that turned a count into a write plus two
+ * list-sized responses per user per half minute. Nothing here writes, and the
+ * two aggregations are the same ones the lists use, minus everything a number
+ * does not need.
+ * @route GET /api/chat/unread
+ * @returns {{direct: number, groups: number, total: number}}
+ */
+const unreadCount = asyncHandler(async (req, res) => {
+  const meId = req.user._id;
+
+  const [conns, groups] = await Promise.all([
+    Connection.find({ status: 'accepted', $or: [{ requester: meId }, { recipient: meId }] })
+      .select('_id').lean(),
+    ChatGroup.find({ 'members.user': meId }).select('members').lean(),
+  ]);
+
+  // A group counts from MY own lastReadAt, which is per member — so each group
+  // contributes its own cutoff, exactly as listGroups builds it.
+  const mine = groups
+    .map((g) => ({ id: g._id, mem: (g.members || []).find((m) => String(m.user) === String(meId)) }))
+    .filter((g) => g.mem && g.mem.status === 'accepted');
+
+  const [direct, grouped] = await Promise.all([
+    conns.length
+      ? Message.countDocuments({
+        connection: { $in: conns.map((c) => c._id) },
+        sender: { $ne: meId },
+        readAt: null,
+        deletedFor: { $ne: meId },
+      })
+      : 0,
+    mine.length
+      ? Message.countDocuments({
+        sender: { $ne: meId },
+        deletedFor: { $ne: meId },
+        $or: mine.map(({ id, mem }) => ({
+          group: id,
+          ...(mem.lastReadAt ? { createdAt: { $gt: mem.lastReadAt } } : {}),
+        })),
+      })
+      : 0,
+  ]);
+
+  res.json({ direct, groups: grouped, total: direct + grouped });
+});
+
 // GET /api/chat/connections  — accepted connections with last message + unread count
 const listConnections = asyncHandler(async (req, res) => {
   const meId = req.user._id;
@@ -1105,6 +1157,7 @@ module.exports = {
   listRequests,
   respondRequest,
   listConnections,
+  unreadCount,
   getMessages,
   sendMessage,
   deleteMessage,

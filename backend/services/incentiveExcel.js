@@ -302,9 +302,10 @@ async function parseWorkbook(buffer) {
 /**
  * Write the incentive export: the day-by-day teams, and what each person earned.
  *
- * Two sheets in one file on purpose — "who was on which team" and "how many
- * points does each person have this month" are the two questions this module
- * exists to answer, and a finance team asked one is about to ask the other.
+ * Three sheets in one file on purpose — "who was on which team", "how many
+ * points does each person have this month" and "where did the points that were
+ * not rolled come from" are the questions this module exists to answer, and a
+ * finance team asked one is about to ask the next.
  *
  * IN POINTS, NOT RUPEES (user decision 2026-09-10). The whole module counts in
  * points; what a point is worth is one number, set on Incentive > Point Rate,
@@ -312,11 +313,12 @@ async function parseWorkbook(buffer) {
  * @param {import('http').ServerResponse} res - Express response
  * @param {object} data
  * @param {Object[]} data.entries - IncentiveEntry lean docs, newest first
- * @param {Object[]} data.people - summary rows: {name, employeeCode, department, days, pickerDays, sheets, points, paidPoints, unpaidPoints}
+ * @param {Object[]} data.people - summary rows: {name, employeeCode, department, days, pickerDays, sheets, teamPoints, creditPoints, points, paidPoints, unpaidPoints}
+ * @param {Object[]} [data.credits] - IncentiveCredit lean docs: points handed over outside any team-day
  * @param {string} [data.rangeLabel] - human range, written into the sheet title cell note
  * @returns {Promise<void>}
  */
-async function writeExport(res, { entries = [], people = [], rangeLabel = '' } = {}) {
+async function writeExport(res, { entries = [], people = [], credits = [], rangeLabel = '' } = {}) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Sequence Surface';
   wb.created = new Date();
@@ -332,7 +334,12 @@ async function writeExport(res, { entries = [], people = [], rangeLabel = '' } =
     { header: 'Sheet Rolled', key: 'sheets', width: 12 },
     { header: 'Points/sheet', key: 'perSheet', width: 12 },
     { header: 'Team points', key: 'teamPoints', width: 12 },
+    { header: 'To non-rolling', key: 'nonRollingPoints', width: 14 },
+    { header: 'Team keeps', key: 'rollingPoints', width: 12 },
     { header: 'Points each', key: 'pointsEach', width: 12 },
+    { header: 'Non-rolling', key: 'nonRolling', width: 44 },
+    { header: 'Present', key: 'nonRollingHeads', width: 9 },
+    { header: 'Each (non-rolling)', key: 'nonRollingEach', width: 17 },
     { header: 'Status', key: 'status', width: 12 },
     { header: 'Note', key: 'note', width: 28 },
     { header: 'Recorded by', key: 'by', width: 22 },
@@ -350,19 +357,32 @@ async function writeExport(res, { entries = [], people = [], rangeLabel = '' } =
       sheets: e.sheets == null ? '' : e.sheets,
       perSheet: e.pointsPerSheet || 0,
       teamPoints: e.sheets == null ? '' : (e.teamPoints || 0),
+      nonRollingPoints: e.sheets == null ? '' : (e.nonRollingPoints || 0),
+      rollingPoints: e.sheets == null ? '' : (e.rollingPoints == null ? (e.teamPoints || 0) : e.rollingPoints),
       pointsEach: e.sheets == null ? '' : (e.perPersonPoints || 0),
+      // Present first, then whoever was listed and was not in — an absent name
+      // is part of the record, and the sheet is where a question about a day
+      // gets settled.
+      nonRolling: (e.nonRolling || [])
+        .map((m) => `${nameOf(m)}${m.present === false ? ' (absent)' : ''}`)
+        .join(', '),
+      nonRollingHeads: e.nonRollingHeadCount || 0,
+      nonRollingEach: e.sheets == null ? '' : (e.perNonRollingPoints || 0),
       status: e.sheets == null ? 'Pending' : 'Recorded',
       note: e.note || '',
       by: e.updatedByName || e.createdByName || '',
     });
   }
-  ['teamPoints', 'pointsEach'].forEach((k) => { ws.getColumn(k).numFmt = '#,##0.##'; });
+  ['teamPoints', 'nonRollingPoints', 'rollingPoints', 'pointsEach', 'nonRollingEach']
+    .forEach((k) => { ws.getColumn(k).numFmt = '#,##0.##'; });
   if (entries.length) {
     const totalRow = ws.addRow({
       date: 'TOTAL',
       heads: entries.reduce((s, e) => s + (e.headCount || 0), 0),
       sheets: entries.reduce((s, e) => s + (e.sheets || 0), 0),
       teamPoints: Math.round(entries.reduce((s, e) => s + (e.teamPoints || 0), 0) * 100) / 100,
+      nonRollingPoints: Math.round(entries.reduce((s, e) => s + (e.nonRollingPoints || 0), 0) * 100) / 100,
+      rollingPoints: Math.round(entries.reduce((s, e) => s + (e.rollingPoints == null ? (e.teamPoints || 0) : e.rollingPoints), 0) * 100) / 100,
     });
     totalRow.font = { bold: true };
   }
@@ -375,7 +395,10 @@ async function writeExport(res, { entries = [], people = [], rangeLabel = '' } =
     { header: 'Department', key: 'department', width: 20 },
     { header: 'Days', key: 'days', width: 10 },
     { header: 'Days as picker', key: 'pickerDays', width: 14 },
+    { header: 'Days non-rolling', key: 'nonRollingDays', width: 16 },
     { header: 'Sheet Rolled', key: 'sheets', width: 12 },
+    { header: 'Team points', key: 'teamPoints', width: 13 },
+    { header: 'Credited points', key: 'creditPoints', width: 15 },
     { header: 'Points', key: 'points', width: 12 },
     { header: 'Paid', key: 'paidPoints', width: 12 },
     { header: 'Unpaid', key: 'unpaidPoints', width: 12 },
@@ -388,22 +411,62 @@ async function writeExport(res, { entries = [], people = [], rangeLabel = '' } =
       department: p.department || '',
       days: p.days || 0,
       pickerDays: p.pickerDays || 0,
+      nonRollingDays: p.nonRollingDays || 0,
       sheets: p.sheets || 0,
+      teamPoints: p.teamPoints || 0,
+      creditPoints: p.creditPoints || 0,
       points: p.points || 0,
       paidPoints: p.paidPoints || 0,
       unpaidPoints: p.unpaidPoints || 0,
     });
   }
-  ['points', 'paidPoints', 'unpaidPoints'].forEach((k) => { ps.getColumn(k).numFmt = '#,##0.##'; });
+  ['teamPoints', 'creditPoints', 'points', 'paidPoints', 'unpaidPoints'].forEach((k) => { ps.getColumn(k).numFmt = '#,##0.##'; });
   if (people.length) {
     const totalRow = ps.addRow({
       code: 'TOTAL',
       days: people.reduce((s, p) => s + (p.days || 0), 0),
       pickerDays: people.reduce((s, p) => s + (p.pickerDays || 0), 0),
+      nonRollingDays: people.reduce((s, p) => s + (p.nonRollingDays || 0), 0),
       sheets: people.reduce((s, p) => s + (p.sheets || 0), 0),
+      teamPoints: Math.round(people.reduce((s, p) => s + (p.teamPoints || 0), 0) * 100) / 100,
+      creditPoints: Math.round(people.reduce((s, p) => s + (p.creditPoints || 0), 0) * 100) / 100,
       points: Math.round(people.reduce((s, p) => s + (p.points || 0), 0) * 100) / 100,
       paidPoints: Math.round(people.reduce((s, p) => s + (p.paidPoints || 0), 0) * 100) / 100,
       unpaidPoints: Math.round(people.reduce((s, p) => s + (p.unpaidPoints || 0), 0) * 100) / 100,
+    });
+    totalRow.font = { bold: true };
+  }
+
+  // Sheet 3 — the credits, which is the only place the REASON for a bonus is
+  // written down. Without it, a payout larger than the day-by-day record can
+  // account for has no explanation anywhere in the file.
+  const cs = wb.addWorksheet('Credits');
+  cs.columns = [
+    { header: 'Date', key: 'date', width: 14 },
+    { header: 'Employee Code', key: 'code', width: 16 },
+    { header: 'Name', key: 'name', width: 28 },
+    { header: 'Department', key: 'department', width: 20 },
+    { header: 'Points', key: 'points', width: 12 },
+    { header: 'Reason', key: 'reason', width: 44 },
+    { header: 'Credited by', key: 'by', width: 22 },
+  ];
+  styleHeader(cs, rangeLabel ? `Points credited outside a team-day — ${rangeLabel}` : '');
+  for (const c of credits) {
+    cs.addRow({
+      date: fmtDate(c.date),
+      code: c.employeeCode || '',
+      name: c.name || '',
+      department: c.department || '',
+      points: c.points || 0,
+      reason: c.reason || '',
+      by: c.createdByName || '',
+    });
+  }
+  cs.getColumn('points').numFmt = '#,##0.##';
+  if (credits.length) {
+    const totalRow = cs.addRow({
+      date: 'TOTAL',
+      points: Math.round(credits.reduce((s, c) => s + (c.points || 0), 0) * 100) / 100,
     });
     totalRow.font = { bold: true };
   }

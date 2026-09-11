@@ -20,6 +20,10 @@ import stageToast from '../components/stageToast';
 import LetterEditor from '../components/LetterEditor';
 import SearchableSelect from '../components/SearchableSelect';
 import { formatDateTime12 } from '../utils/time';
+import {
+  AssessmentForm, AssessmentView, PreviousRounds, RecommendationChip,
+  assessmentOf, hasAssessment, averageRating,
+} from '../components/InterviewAssessment';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -168,6 +172,13 @@ export default function AdminRecruitment() {
   const [meetDurations, setMeetDurations] = useState({}); // per-round chosen duration in minutes
   const [meetBusy, setMeetBusy] = useState(''); // key of the round whose Meet link is being created
   const [mail, setMail] = useState(null); // editable compose modal payload
+  // Which round's write-up is open ({candidateId, index}) and the draft in it.
+  // The round itself is looked up from `candidates` on every render rather than
+  // copied in here, so a save that refreshes the list is reflected behind the
+  // modal instead of leaving it showing a stale round.
+  const [fbRound, setFbRound] = useState(null);
+  const [fbDraft, setFbDraft] = useState(null);
+  const [fbSaving, setFbSaving] = useState(false);
 
   // Offer-letter modal
   const [offerCand, setOfferCand] = useState(null);
@@ -374,9 +385,31 @@ export default function AdminRecruitment() {
         setCandidates(merge);
         setJobCands((prev) => (prev.length ? merge(prev) : prev));
       }
+      return true;
     } catch (err) {
       toast.error(err.response?.data?.message || 'Round update failed');
+      return false;
     }
+  };
+
+  // ----- The interview write-up -----
+  // Scores, strengths, concerns, recommendation and the overall remarks, opened
+  // one round at a time next to what the EARLIER rounds said. A view-only
+  // account (a read-only CEO/MD, the God login) opens the same panel with the
+  // fields replaced by the read-back — reading the panel's verdict is most of
+  // why an executive is on this page.
+  const openFeedback = (c, index) => {
+    const r = c.rounds?.[index] || {};
+    setFbRound({ candidateId: c._id, index });
+    setFbDraft({ feedback: r.feedback || '', assessment: assessmentOf(r) });
+  };
+  const saveFeedback = async () => {
+    const c = candidates.find((x) => x._id === fbRound.candidateId);
+    if (!c) { setFbRound(null); return; }
+    setFbSaving(true);
+    const ok = await setRound(c, fbRound.index, { feedback: fbDraft.feedback, assessment: fbDraft.assessment });
+    setFbSaving(false);
+    if (ok) { setFbRound(null); toast.success('Assessment saved'); }
   };
 
   // An ISO/Date → value for a <input type="datetime-local"> (in local time).
@@ -889,13 +922,31 @@ export default function AdminRecruitment() {
                                 placeholder="Assign interviewer"
                               />
                             )}
-                            <input
-                              defaultValue={r.feedback || ''}
-                              onBlur={(e) => { if (e.target.value !== (r.feedback || '')) setRound(c, idx, { feedback: e.target.value }); }}
-                              placeholder={viewOnly ? 'No feedback' : 'Feedback…'}
-                              readOnly={viewOnly}
-                              className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs read-only:bg-gray-50 read-only:text-gray-500"
-                            />
+                            {/* The write-up. A single-line box used to sit here
+                                and collected a single line — "tty", "GOOD TO GO"
+                                — which is then the whole record the next round,
+                                HR and the CEO/MD read. The scores, strengths,
+                                concerns and recommendation open in a panel that
+                                also carries the earlier rounds. */}
+                            <button
+                              type="button"
+                              onClick={() => openFeedback(c, idx)}
+                              title={r.feedback || 'Open the interview assessment'}
+                              className="block w-full text-left border border-gray-200 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50"
+                            >
+                              <span className="flex items-center justify-between gap-1">
+                                <span className="font-medium text-gray-700">Assessment</span>
+                                <span className="flex items-center gap-1">
+                                  <RecommendationChip value={assessmentOf(r).recommendation} />
+                                  {averageRating(r) != null && (
+                                    <span className="text-[10px] text-gray-500">{averageRating(r).toFixed(1)}/5</span>
+                                  )}
+                                </span>
+                              </span>
+                              <span className={`block mt-0.5 truncate ${hasAssessment(r) ? 'text-gray-600' : 'text-amber-600'}`}>
+                                {hasAssessment(r) ? (r.feedback || 'Rated — no remarks written') : 'Not written up yet'}
+                              </span>
+                            </button>
                             {/* Interview schedule + auto Google Meet for this round */}
                             <div className="mt-2 space-y-1">
                               <input
@@ -980,6 +1031,82 @@ export default function AdminRecruitment() {
           </tbody>
         </table>
       </div>
+
+      {/* One round's full write-up, with every earlier round as context. */}
+      {fbRound && (() => {
+        const c = candidates.find((x) => x._id === fbRound.candidateId);
+        if (!c) return null;
+        const idx = fbRound.index;
+        const r = c.rounds?.[idx] || {};
+        const previous = (c.rounds || []).slice(0, idx).map((p, i) => ({
+          index: i,
+          label: p.label || `Round ${i + 1}`,
+          status: p.status,
+          interviewerName: p.interviewerName || '',
+          decidedByName: p.decidedByName || '',
+          decidedAt: p.decidedAt,
+          feedback: p.feedback || '',
+          assessment: p.assessment,
+        }));
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-5 my-8">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">{r.label || `Round ${idx + 1}`} · {c.name}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {c.job?.title || 'No role'} · {r.interviewerName || 'No interviewer assigned'}
+                    {r.decidedAt ? ` · decided ${fmtDateTime(r.decidedAt)}` : ''}
+                  </p>
+                </div>
+                <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{r.status}</span>
+              </div>
+
+              {previous.length > 0 && (
+                <div className="mt-4"><PreviousRounds rounds={previous} defaultOpen={false} /></div>
+              )}
+
+              <div className="mt-4">
+                {viewOnly
+                  ? <AssessmentView round={r} />
+                  : <AssessmentForm value={fbDraft} onChange={setFbDraft} />}
+              </div>
+
+              {(r.history || []).length > 0 && (
+                <div className="mt-4 border-t border-gray-100 pt-3">
+                  <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Change history</div>
+                  <ul className="space-y-0.5">
+                    {r.history.map((h, i) => (
+                      <li key={i} className="text-[11px] text-gray-500">
+                        <span className="font-medium text-gray-700">{h.status}</span>
+                        {h.recommendation ? ` · ${h.recommendation}` : ''}
+                        {' · '}{h.byName || 'Unknown'}{h.at ? ` · ${fmtDateTime(h.at)}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] text-gray-500 max-w-md">
+                  {viewOnly
+                    ? 'Recorded by the interviewer. The next round sees this alongside their own form.'
+                    : 'The next round\u2019s interviewer sees this before their call, and it stays on the candidate\u2019s record.'}
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setFbRound(null)} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Close</button>
+                  {!viewOnly && (
+                    <button onClick={saveFeedback} disabled={fbSaving}
+                      className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50">
+                      {fbSaving ? 'Saving…' : 'Save assessment'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {jobModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">

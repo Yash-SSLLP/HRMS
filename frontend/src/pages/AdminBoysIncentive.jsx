@@ -31,6 +31,19 @@
  * and what a sheet is worth in points — which is this module's own figure, unlike
  * the rupee value of a point.
  *
+ * THE DAY LIST IS IN TWO HALVES, behind a segmented control — Rolling Teams and
+ * Non Rolling Teams. They are two views of the SAME records, which is why it is
+ * a control inside the day list rather than a fourth tab beside it: a fixed
+ * percentage of every team's points goes to the people in the department who did
+ * NOT roll with it, split equally between the ones who were there. Presence
+ * starts from Attendance and a manager can overrule it where the record is wrong
+ * (user decision 2026-09-11). The group belongs to ONE team, not to the day, so
+ * three teams rolling on one day each give up their own share.
+ *
+ * Setting that group is MANAGER-ONLY, and deliberately not a picker's job: a
+ * picker puts their own team together, and deciding who else gets paid out of it
+ * is a different decision.
+ *
  * The people picker lists the Boys department and reaches everybody else through
  * search (the `searchOnly` optgroup in SearchableSelect). The department is FIXED
  * — other departments get their own tab, so there is nothing to choose. Its list
@@ -38,7 +51,8 @@
  * would 403 a supervisor holding only the standalone incentive grant.
  *
  * Backend: GET/POST /incentives, PUT/DELETE /incentives/:id,
- *          GET /incentives/people|summary|settings, PUT /incentives/settings,
+ *          GET /incentives/people|summary|settings|non-rolling-options,
+ *          PUT /incentives/settings,
  *          GET /incentives/template.xlsx|export.xlsx, POST /incentives/import.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -117,7 +131,7 @@ export default function AdminBoysIncentive() {
   // Which department the picker lists first. Comes from the server so the client
   // groups by the spelling the server actually matched; it is never chosen here.
   const [department, setDepartment] = useState('Boys');
-  const [settings, setSettings] = useState({ pointsPerSheet: 4, rupeePerPoint: 1 });
+  const [settings, setSettings] = useState({ pointsPerSheet: 4, rupeePerPoint: 1, nonRollingSharePct: 30 });
 
   const [entries, setEntries] = useState([]);
   const [entryTotals, setEntryTotals] = useState(null);
@@ -151,6 +165,19 @@ export default function AdminBoysIncentive() {
   const [pointsForm, setPointsForm] = useState(null);
   const [savingPoints, setSavingPoints] = useState(false);
 
+  // Which half of the Daily teams tab is showing. A segmented control rather
+  // than a third page tab: these are two views of THE SAME days — who rolled,
+  // and who took a cut of what they rolled — so they belong inside the day list
+  // rather than beside it.
+  const [group, setGroup] = useState('rolling');
+  // The non-rolling group being edited: { entry, sharePct, people: [...] } or null.
+  const [nonRollingFor, setNonRollingFor] = useState(null);
+  const [loadingGroup, setLoadingGroup] = useState(false);
+  const [savingGroup, setSavingGroup] = useState(false);
+  // The non-rolling share editor on the rate tab: the typed value, or null.
+  const [shareForm, setShareForm] = useState(null);
+  const [savingShare, setSavingShare] = useState(false);
+
   const [showImport, setShowImport] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
@@ -176,6 +203,7 @@ export default function AdminBoysIncentive() {
         setSettings((s) => ({
           pointsPerSheet: data.pointsPerSheet ?? s.pointsPerSheet,
           rupeePerPoint: data.rupeePerPoint ?? s.rupeePerPoint,
+          nonRollingSharePct: data.nonRollingSharePct ?? s.nonRollingSharePct,
         }));
       })
       .catch((err) => setError(err.response?.data?.message || 'Could not load the employee list'));
@@ -410,6 +438,121 @@ export default function AdminBoysIncentive() {
     }
   };
 
+  /**
+   * The month's entries folded into DAYS — which is the unit the non-rolling
+   * group works in. One group per day, shared by every team that rolled that
+   * day: three teams earning 40, 40 and 20 at 30% hand over 12 + 12 + 6, and
+   * the group splits the 30 equally.
+   *
+   * The group is stored on every entry of the day (see applyDayGroup on the
+   * server), so the first one that has it speaks for the day; the points are
+   * summed across the teams.
+   */
+  const days = useMemo(() => {
+    const by = new Map();
+    for (const e of entries) {
+      const key = dateInput(e.date);
+      if (!by.has(key)) by.set(key, { key, date: e.date, teams: [], dayPoints: 0, sharedPoints: 0, pending: 0 });
+      const day = by.get(key);
+      day.teams.push(e);
+      day.dayPoints += Number(e.teamPoints) || 0;
+      day.sharedPoints += Number(e.nonRollingPoints) || 0;
+      if (e.sheets == null) day.pending += 1;
+    }
+    return [...by.values()].map((day) => {
+      const listed = day.teams.find((e) => (e.nonRolling || []).length)?.nonRolling || [];
+      const present = listed.filter((m) => m.present !== false);
+      return {
+        ...day,
+        listed,
+        present,
+        // One person's share of the WHOLE day, which is what they are paid.
+        perPerson: present.length ? day.sharedPoints / present.length : 0,
+        sharePct: day.teams[0]?.nonRollingSharePct ?? settings.nonRollingSharePct,
+      };
+    });
+  }, [entries, settings.nonRollingSharePct]);
+
+  /**
+   * Open the non-rolling group editor for a DAY.
+   *
+   * The candidate list comes from the SERVER, not from `people`: it is the
+   * department minus everybody already rolling that day, and it carries what
+   * Attendance says about each of them — which is what the presence ticks start
+   * from. Working it out on the client would mean re-deriving both rules in a
+   * second place and getting the attendance half wrong.
+   */
+  const openNonRolling = async (day) => {
+    setLoadingGroup(true);
+    try {
+      const { data } = await api.get('/incentives/non-rolling-options', {
+        params: { date: day.key },
+      });
+      setNonRollingFor({
+        day,
+        sharePct: data.sharePct,
+        department: data.department,
+        people: data.people || [],
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load the department list');
+    } finally {
+      setLoadingGroup(false);
+    }
+  };
+
+  /** Tick somebody into or out of the group, or flip their presence. */
+  const setGroupRow = (employee, patch) => setNonRollingFor((g) => ({
+    ...g,
+    people: g.people.map((p) => (String(p.employee) === String(employee) ? { ...p, ...patch } : p)),
+  }));
+
+  /**
+   * Save the group. Everybody TICKED is sent — present or not — because an
+   * absent name is part of the record: "we considered them and they were not in"
+   * is a different statement from "we never listed them".
+   */
+  const saveNonRolling = async () => {
+    setSavingGroup(true);
+    try {
+      const { data } = await api.put('/incentives/non-rolling/day', {
+        date: nonRollingFor.day.key,
+        members: nonRollingFor.people
+          .filter((p) => p.selected)
+          .map((p) => ({ employee: p.employee, present: !!p.present })),
+      });
+      setNonRollingFor(null);
+      await load({ quiet: true });
+      toast.success(data.teams > 1
+        ? `Group saved for the day — all ${data.teams} teams`
+        : 'Non-rolling group saved');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save the group');
+    } finally {
+      setSavingGroup(false);
+    }
+  };
+
+  /**
+   * Change what share of a DAY's points goes to the people who did not roll.
+   * Like the per-sheet yield beside it, it fills in a NEW day and never restates
+   * one already recorded — each day froze its own copy.
+   */
+  const saveShare = async (ev) => {
+    ev.preventDefault();
+    setSavingShare(true);
+    try {
+      const { data } = await api.put('/incentives/settings', { nonRollingSharePct: shareForm });
+      setSettings((st) => ({ ...st, ...data.settings }));
+      setShareForm(null);
+      toast.success('Saved');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save');
+    } finally {
+      setSavingShare(false);
+    }
+  };
+
   const remove = async (e) => {
     const ok = await confirmDialog({
       tone: 'danger',
@@ -513,7 +656,7 @@ export default function AdminBoysIncentive() {
     <div>
       <PageHeader
         title="Boys Incentive"
-        subtitle={`One team a day. Sheets × points a sheet = the team's points, split equally between everyone on it — the picker included.${
+        subtitle={`One team a day. Sheets × points a sheet = the team's points. A share goes to the department members who did not roll, and the rest is split equally between everyone on the team — the picker included.${
           // A picker's one restriction, said once and in the open. The row only
           // has room for "Saved", and a tooltip is invisible on a touch screen.
           isManager ? '' : ' Pick your team each morning — once it is saved, the manager of this incentive makes any correction.'
@@ -549,15 +692,43 @@ export default function AdminBoysIncentive() {
       </div>
 
       {tab === 'entries' && (
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search team, person or note…"
-            className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]" />
-          {refreshing && <span className="text-xs text-gray-400">Refreshing…</span>}
-        </div>
+        <>
+          {/* The two halves of a day, as a segmented control: who rolled, and
+              who took a cut of what they rolled. They are two views of the SAME
+              records, which is why this is a control inside the day list rather
+              than a third tab beside it. */}
+          <div className="inline-flex items-center gap-1 p-1 mb-4 rounded-xl bg-gray-100 border border-gray-200">
+            {[
+              ['rolling', 'Rolling Teams', entries.length],
+              ['nonRolling', 'Non Rolling Group', days.filter((d) => d.listed.length).length],
+            ].map(([k, label, count]) => {
+              const on = group === k;
+              return (
+                <button key={k} type="button" onClick={() => setGroup(k)} aria-pressed={on}
+                  className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                    on ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200' : 'text-gray-500 hover:text-gray-800'
+                  }`}>
+                  {label}
+                  <span className={`text-[11px] font-bold leading-none px-1.5 py-0.5 rounded-full tabular-nums ${
+                    on ? 'accent-bg on-accent' : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search team, person or note…"
+              className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]" />
+            {refreshing && <span className="text-xs text-gray-400">Refreshing…</span>}
+          </div>
+        </>
       )}
 
-      {/* ---------------------------------------------------------- entries -- */}
-      {tab === 'entries' && (
+      {/* --------------------------------------------------- rolling teams -- */}
+      {tab === 'entries' && group === 'rolling' && (
         loading ? (
           <p className="text-sm text-gray-500">Loading…</p>
         ) : (
@@ -650,6 +821,14 @@ export default function AdminBoysIncentive() {
                         <td className="px-4 py-3 text-right tabular-nums">
                           {e.sheets == null ? '—' : points(e.teamPoints)}
                           <div className="text-[11px] text-gray-400">{points(e.pointsPerSheet)}/sheet</div>
+                          {/* Where the rest of it went. Without this line the
+                              team points and the points each stop reconciling
+                              and the row looks like it is losing money. */}
+                          {e.sheets != null && e.nonRollingPoints > 0 && (
+                            <div className="text-[11px] text-indigo-600">
+                              −{points(e.nonRollingPoints)} to non-rolling
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
                           {e.sheets == null ? '—' : points(e.perPersonPoints)}
@@ -679,6 +858,242 @@ export default function AdminBoysIncentive() {
             )}
           </>
         )
+      )}
+
+      {/* ----------------------------------------------- non-rolling teams -- */}
+      {tab === 'entries' && group === 'nonRolling' && (
+        loading ? (
+          <p className="text-sm text-gray-500">Loading…</p>
+        ) : entries.length === 0 ? (
+          <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
+            Nothing recorded for this month yet — a non-rolling group belongs to a team's day, so
+            record the day first.
+          </div>
+        ) : (
+          <>
+            {/* The department's side of the same days, a row per DAY: the group is
+                chosen once for the day and shares in everything rolled on it. */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              {[
+                ['Days with a group', days.filter((d) => d.listed.length).length, `of ${days.length}`],
+                ['Not set yet', days.filter((d) => !d.listed.length).length,
+                  'those days keep every point with the teams'],
+                ['Points handed over', points(days.reduce((sum, d) => sum + d.sharedPoints, 0)),
+                  'across every team of every day'],
+                ['Share of a day', `${points(settings.nonRollingSharePct)}%`, 'on a new day'],
+              ].map(([label, value, hint]) => (
+                <div key={label} className="bg-white shadow rounded-xl px-4 py-3">
+                  <div className="text-xs text-gray-500">{label}</div>
+                  <div className="text-xl font-semibold text-gray-900 mt-0.5">{value}</div>
+                  {hint ? <div className="text-[11px] text-gray-400 mt-0.5">{hint}</div> : null}
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-white shadow rounded-xl overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-gray-600">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-medium">Date</th>
+                    <th className="text-left px-4 py-3 font-medium">Rolled that day</th>
+                    <th className="text-left px-4 py-3 font-medium">Sharing with</th>
+                    <th className="text-right px-4 py-3 font-medium">Present</th>
+                    <th className="text-right px-4 py-3 font-medium">Points shared</th>
+                    <th className="text-right px-4 py-3 font-medium">Points each</th>
+                    {!viewOnly && isManager && <th className="px-4 py-3" />}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {days.map((d) => (
+                    <tr key={d.key} className="align-top">
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="text-gray-900">{fmtDate(d.date)}</div>
+                        <div className="text-xs text-gray-400">
+                          {d.teams.length} team{d.teams.length === 1 ? '' : 's'}
+                          {d.pending ? ` · ${d.pending} awaiting a sheet count` : ''}
+                        </div>
+                      </td>
+                      {/* Whose points are being shared. Named, because the group
+                          is taking a cut of each of these teams. */}
+                      <td className="px-4 py-3 min-w-[200px]">
+                        <ul className="space-y-0.5 text-xs text-gray-600">
+                          {d.teams.map((e) => (
+                            <li key={e._id}>
+                              {e.picker?.name}
+                              <span className="text-gray-400">
+                                {' · '}
+                                {e.sheets == null ? 'no sheet count yet' : `${points(e.teamPoints)} pts`}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="text-[11px] text-gray-400 mt-1">
+                          {d.pending === d.teams.length
+                            ? 'Nothing counted yet'
+                            : `${points(d.dayPoints)} points rolled on the day`}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 min-w-[240px]">
+                        {d.listed.length === 0 ? (
+                          <span className="text-xs text-gray-400">Nobody — the teams keep all their points</span>
+                        ) : (
+                          <ul className="space-y-0.5 text-xs">
+                            {d.listed.map((m) => (
+                              <li key={String(m.employee)} className={m.present === false ? 'text-gray-400' : 'text-gray-600'}>
+                                {m.employeeCode} · {m.name}
+                                {m.present === false && <span className="ml-1">— absent</span>}
+                                {/* An override is worth saying out loud: the tick
+                                    disagrees with the attendance record. */}
+                                {m.present !== false && m.attendance && m.attendance !== 'Present' && m.attendance !== 'HalfDay' && (
+                                  <span className="ml-1 text-amber-600">— marked present ({m.attendance})</span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {d.listed.length ? `${d.present.length}/${d.listed.length}` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {!d.sharedPoints ? '—' : points(d.sharedPoints)}
+                        {d.listed.length > 0 && (
+                          <div className="text-[11px] text-gray-400">{points(d.sharePct)}% of the day</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
+                        {!d.present.length || !d.sharedPoints ? '—' : points(d.perPerson)}
+                      </td>
+                      {!viewOnly && isManager && (
+                        <td className="px-4 py-3 whitespace-nowrap text-right">
+                          <button onClick={() => openNonRolling(d)} disabled={loadingGroup}
+                            className="text-blue-600 hover:underline">
+                            {d.listed.length ? 'Edit group' : 'Set group'}
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )
+      )}
+
+      {/* ------------------------------------------------ non-rolling group -- */}
+      {nonRollingFor && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
+            <h2 className="card-title mb-1">Non-rolling group for the day</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              {fmtDate(nonRollingFor.day.date)} · {nonRollingFor.day.teams.length}{' '}
+              team{nonRollingFor.day.teams.length === 1 ? '' : 's'} rolling
+              ({nonRollingFor.day.teams.map((e) => e.picker?.name).filter(Boolean).join(', ')}).{' '}
+              <strong>{points(nonRollingFor.sharePct)}%</strong> of everything they roll today is
+              split equally between the people ticked below who were <strong>present</strong>.
+              One group for the whole day — anybody who rolled is already paid, so they are not
+              on this list. Presence starts from Attendance; change it where the record is wrong.
+            </p>
+
+            {(() => {
+              const chosen = nonRollingFor.people.filter((p) => p.selected);
+              const present = chosen.filter((p) => p.present);
+              // The DAY's pot — every team's points added up, which is what the
+              // percentage comes off. A team still awaiting its sheet count adds
+              // nothing yet, which is why the note below says how many are pending.
+              const pot = nonRollingFor.day.dayPoints || 0;
+              const counted = nonRollingFor.day.teams.length - nonRollingFor.day.pending;
+              const cut = present.length ? Math.round(pot * (nonRollingFor.sharePct / 100) * 100) / 100 : 0;
+              return (
+                <div className="text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4">
+                  {counted === 0 ? (
+                    <>No sheet count has been filled in for the day yet, so there is nothing to share.
+                      Setting the group now is fine — the points follow when the figures land.</>
+                  ) : present.length === 0 ? (
+                    <>Nobody present, so the teams keep all {points(pot)} points of the day.</>
+                  ) : (
+                    <>
+                      {points(pot)} points rolled today × {points(nonRollingFor.sharePct)}% ={' '}
+                      <strong>{points(cut)}</strong> shared between {present.length}{' '}
+                      {present.length === 1 ? 'person' : 'people'} ={' '}
+                      <strong>{points(cut / present.length)} each</strong>. The teams keep{' '}
+                      {points(Math.round((pot - cut) * 100) / 100)} between them.
+                      {nonRollingFor.day.pending > 0 && (
+                        <span className="text-gray-500">
+                          {' '}({nonRollingFor.day.pending} team{nonRollingFor.day.pending === 1 ? '' : 's'} still
+                          to be counted — the share grows when they are.)
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+            {nonRollingFor.people.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                Everybody in {nonRollingFor.department} is on a rolling team that day, so there is
+                nobody left to share with.
+              </p>
+            ) : (
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-[46vh] overflow-y-auto">
+                {nonRollingFor.people.map((p) => (
+                  <div key={String(p.employee)} className="flex items-center gap-3 px-3 py-2">
+                    <label className="flex items-center gap-2 flex-1 min-w-0 min-h-[40px] cursor-pointer">
+                      <input type="checkbox" className="rounded" checked={!!p.selected}
+                        onChange={(ev) => setGroupRow(p.employee, { selected: ev.target.checked })} />
+                      <span className="min-w-0">
+                        <span className="block text-sm text-gray-900 truncate">{p.name}</span>
+                        <span className="block text-xs text-gray-400">
+                          {p.employeeCode}
+                          {' · '}
+                          {p.attendance
+                            ? `Attendance: ${p.attendance}`
+                            : 'No attendance record for that day'}
+                        </span>
+                      </span>
+                    </label>
+                    {p.selected && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* Present or not, on the row itself: the whole job here
+                            is correcting a handful of these, and a second modal
+                            to do it would be one too many. */}
+                        {[[true, 'Present'], [false, 'Absent']].map(([val, label]) => (
+                          <button key={label} type="button"
+                            onClick={() => setGroupRow(p.employee, { present: val })}
+                            className={`px-2.5 py-1 text-xs rounded-lg border min-h-[40px] ${
+                              !!p.present === val
+                                ? (val ? 'bg-green-50 border-green-300 text-green-800' : 'bg-gray-100 border-gray-300 text-gray-700')
+                                : 'border-transparent text-gray-400 hover:text-gray-700'
+                            }`}>
+                            {label}
+                          </button>
+                        ))}
+                        {/* An override is a disagreement with a record that
+                            EXISTS. No record at all is not a disagreement — it
+                            is the default doing its job, and the row already
+                            says so underneath the name. */}
+                        {p.attendance && !!p.present !== !!p.attendancePresent && (
+                          <span className="text-[11px] text-amber-600 ml-1 whitespace-nowrap">overridden</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-4">
+              <button type="button" onClick={() => setNonRollingFor(null)}
+                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+              <button type="button" onClick={saveNonRolling} disabled={savingGroup}
+                className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                {savingGroup ? 'Saving…' : 'Save group'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ---------------------------------------------------------- summary -- */}
@@ -835,7 +1250,8 @@ export default function AdminBoysIncentive() {
 
       {/* -------------------------------------------------- points per sheet -- */}
       {tab === 'points' && (
-        <div className="bg-white shadow rounded-xl p-6 max-w-xl">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-4xl">
+        <div className="bg-white shadow rounded-xl p-6">
           <h2 className="card-title mb-1">Points per sheet</h2>
           <p className="text-sm text-gray-500 mb-4">
             What one rolled sheet is worth. It fills in a new day and can still be changed on the
@@ -850,7 +1266,10 @@ export default function AdminBoysIncentive() {
               <p className="text-xs text-gray-400 mt-4">
                 A team of 5 rolling 10 sheets earns{' '}
                 {points(10 * (Number(settings.pointsPerSheet) || 0))} points — {' '}
-                {points((10 * (Number(settings.pointsPerSheet) || 0)) / 5)} each.
+                {points((10 * (Number(settings.pointsPerSheet) || 0)) / 5)} each{' '}
+                {/* Said out loud, or this card and the one beside it disagree
+                    about what a head actually takes home. */}
+                before the non-rolling share.
               </p>
               {!viewOnly && (
                 <button onClick={() => setPointsForm(String(settings.pointsPerSheet))}
@@ -875,6 +1294,59 @@ export default function AdminBoysIncentive() {
               </div>
             </form>
           )}
+        </div>
+
+        {/* The other half of what a team's points are worth: how much of them
+            never belonged to the team in the first place. It sits beside the
+            per-sheet yield because the two are read together — one decides the
+            size of the pot, the other how it is divided. */}
+        <div className="bg-white shadow rounded-xl p-6">
+          <h2 className="card-title mb-1">Non-rolling share</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            How much of a day&apos;s points goes to the people in the department who did not roll
+            with it, split equally between the ones who were present. Taken only when somebody
+            present is actually listed — a team with no group keeps everything.
+          </p>
+
+          {shareForm === null ? (
+            <>
+              <div className="text-3xl font-semibold text-gray-900">{points(settings.nonRollingSharePct)}%</div>
+              <div className="text-xs text-gray-500 mt-1">of every team&apos;s points</div>
+              <p className="text-xs text-gray-400 mt-4">
+                A team of 5 rolling 10 sheets earns{' '}
+                {points(10 * (Number(settings.pointsPerSheet) || 0))} points; {' '}
+                {points((10 * (Number(settings.pointsPerSheet) || 0)) * (Number(settings.nonRollingSharePct) || 0) / 100)}{' '}
+                of those go to the non-rolling group and the team keeps{' '}
+                {points((10 * (Number(settings.pointsPerSheet) || 0)) * (1 - (Number(settings.nonRollingSharePct) || 0) / 100))}{' '}
+                — {points(((10 * (Number(settings.pointsPerSheet) || 0)) * (1 - (Number(settings.nonRollingSharePct) || 0) / 100)) / 5)} each.
+              </p>
+              {!viewOnly && (
+                <button onClick={() => setShareForm(String(settings.nonRollingSharePct))}
+                  className="mt-5 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Change</button>
+              )}
+            </>
+          ) : (
+            <form onSubmit={saveShare} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Non-rolling share (%) *</label>
+                <input autoFocus required type="number" min="0" max="100" step="0.01" value={shareForm}
+                  onChange={(e) => setShareForm(e.target.value)}
+                  className="block w-full border rounded-lg px-3 py-2" />
+                <p className="text-xs text-gray-400 mt-1">
+                  A day already recorded keeps the figure it was saved with.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setShareForm(null)}
+                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={savingShare}
+                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  {savingShare ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
         </div>
       )}
 

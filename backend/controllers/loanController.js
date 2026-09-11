@@ -5,8 +5,13 @@
  */
 const asyncHandler = require('express-async-handler');
 const Loan = require('../models/Loan');
+const User = require('../models/User');
+const EmployeeProfile = require('../models/EmployeeProfile');
 const khataSync = require('../services/khataSync');
 const { scopeUserField, cannotSeeUser } = require('../utils/employeeScope');
+const { pickableUserFilter } = require('../utils/peoplePicker');
+const { notify, notifyMany } = require('../services/notify');
+const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { istParts } = require('../utils/istDate');
 
 // The longest repayment an employee may propose. A cap rather than a policy
@@ -28,6 +33,62 @@ const emiFor = (principal, months) => (months > 0 ? Math.round(Number(principal)
 
 // Populated employee sub-fields returned for loan references
 const USER_FIELDS = 'firstName lastName email';
+
+// ===== Telling people =====
+// A loan is a conversation between an employee and whoever decides it, and
+// both halves of it used to be silent: a request sat in a queue nobody was
+// told about, and a decision reached the employee only if they went looking.
+// Every call below is best-effort (.catch swallows it) — the money decision
+// has already been saved, and a push that fails must not undo it.
+
+// Where each audience should land. The clients rewrite the first one per
+// portal (a standalone `loansAccess` holder has no admin portal — see
+// resolveLink in components/Layout.jsx and ADMIN_PATH_SCREENS in the app).
+const DECIDER_LINK = '/admin/loans';
+const BORROWER_LINK = '/employee/loans';
+
+const rupees = (n) => `\u20b9${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+const personName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
+
+/**
+ * Tell whoever decides loans that something is waiting on them.
+ *
+ * Asked as a CAPABILITY, not a role: `loans.manage` is held by HR, by a
+ * granted Manager and by anyone a SuperAdmin ticked `loansAccess` for — the
+ * accounts clerk who actually sanctions advances. Walled to the requester's
+ * own company, and never sent back to the person who caused it.
+ * @param {import('express').Request} req
+ * @param {{title: string, body: string}} message
+ */
+async function notifyDeciders(req, { title, body }) {
+  const recipients = (await scopeRecipientsToCompany(
+    await usersHoldingAny('loans.manage'),
+    req.user.scopeCompanyId,
+  )).filter((id) => String(id) !== String(req.user._id));
+  if (!recipients.length) return;
+  // audience 'all': a decider may hold the module through a standalone grant
+  // and live entirely in My Portal, where an 'admin' notification never shows.
+  await notifyMany(recipients, { type: 'loan', audience: 'all', title, body, link: DECIDER_LINK });
+}
+
+/**
+ * Tell the borrower what happened to their loan.
+ * @param {Object} loan
+ * @param {{title: string, body: string}} message
+ * @param {Object} [actor] - who did it, so the notification can be replied to
+ */
+async function notifyBorrower(loan, { title, body }, actor) {
+  if (!loan?.employee) return;
+  await notify({
+    recipient: loan.employee,
+    sender: actor?._id,
+    type: 'loan',
+    audience: 'all',
+    title,
+    body,
+    link: BORROWER_LINK,
+  });
+}
 
 // ===== Employee self-service =====
 /**
@@ -102,6 +163,14 @@ const requestLoan = asyncHandler(async (req, res) => {
     recoveryStartMonth: startMonth,
     status: 'Pending',
   });
+
+  notifyDeciders(req, {
+    title: 'New loan request',
+    body: `${personName(req.user) || 'An employee'} asked for ${rupees(loan.principal)}`
+      + ` (${loan.type || 'advance'}) over ${loan.tenureMonths} month${loan.tenureMonths === 1 ? '' : 's'}`
+      + ` at ${rupees(loan.emi)} a month.`,
+  }).catch(() => {});
+
   res.status(201).json({ loan });
 });
 
@@ -122,6 +191,41 @@ const listAll = asyncHandler(async (req, res) => {
     .populate('employee', USER_FIELDS)
     .sort({ createdAt: -1 });
   res.json({ count: loans.length, loans });
+});
+
+/**
+ * The people a loan can be raised for.
+ *
+ * Its own endpoint rather than /admin/users, which is gated on role
+ * (SuperAdmin/HR/CEO/MD/L&D). Loans are grantable to ANY account through
+ * User.loansAccess — the person who sanctions an advance is as often the
+ * accounts clerk as HR — and that person would otherwise reach the queue and
+ * be refused the list of people they are deciding for. Gated by the same
+ * `loans.manage` capability as the rest of the module, walled to the caller's
+ * own company, and shaped like a /admin/users row so the pickers (which apply
+ * the portal-wide "a leaver is in no picker" rule) need no special case.
+ * @route GET /api/loans/employee-options   (loans.manage)
+ * @returns {{count: number, users: Object[]}}
+ */
+const employeeOptions = asyncHandler(async (req, res) => {
+  // Active, no system logins, no executives unless opted in, own company only.
+  const users = await User.find(await pickableUserFilter(req))
+    .select('firstName lastName email isActive')
+    .sort({ firstName: 1 })
+    .lean();
+
+  // `departed` is what the pickers read to keep somebody serving out a notice
+  // period off the list — `isActive` alone still calls them a colleague on the
+  // day after they walked out (see utils/peopleOptions on the clients).
+  const exits = await EmployeeProfile.find({ user: { $in: users.map((u) => u._id) }, dateOfExit: { $ne: null } })
+    .select('user dateOfExit')
+    .lean();
+  const exitBy = new Map(exits.map((p) => [String(p.user), p.dateOfExit]));
+
+  res.json({
+    count: users.length,
+    users: users.map((u) => ({ ...u, dateOfExit: exitBy.get(String(u._id)) || null })),
+  });
 });
 
 /**
@@ -161,6 +265,15 @@ const createForEmployee = asyncHandler(async (req, res) => {
     status: 'Approved',
     reviewedBy: req.user._id,
   });
+
+  // Nobody asked for this one — the employee is hearing about it for the
+  // first time, so the message says what it is rather than "approved".
+  notifyBorrower(loan, {
+    title: 'A loan has been set up for you',
+    body: `${loan.type || 'A loan'} of ${rupees(loan.principal)}`
+      + `${loan.emi ? `, recovered at ${rupees(loan.emi)} a month` : ''}.`,
+  }, req.user).catch(() => {});
+
   res.status(201).json({ loan });
 });
 
@@ -189,8 +302,11 @@ const reviewLoan = asyncHandler(async (req, res) => {
     recoveryStartYear, recoveryStartMonth,
   } = req.body;
   // Remembered before the overwrite so the khata is posted only on the FIRST
-  // activation, not every time an already-active loan is edited.
+  // activation, not every time an already-active loan is edited — and so the
+  // employee is told about a real DECISION rather than about somebody fixing
+  // an EMI on a loan whose status never moved.
   const wasActive = loan.status === 'Active';
+  const prevStatus = loan.status;
   if (status) loan.status = status;
   if (reviewNote !== undefined) loan.reviewNote = reviewNote;
 
@@ -218,6 +334,33 @@ const reviewLoan = asyncHandler(async (req, res) => {
   // approval it is following. Pass `cashAccount` to bank the payout as well.
   if (becameActive) {
     await khataSync.syncLoanDisbursement(loan, req.user, { cashAccount: req.body.cashAccount });
+  }
+
+  // Only a STATUS change is news. Correcting an EMI or a start month on an
+  // already-approved loan is housekeeping, and a push for it would teach
+  // people to ignore the ones that matter.
+  if (status && status !== prevStatus) {
+    const amount = rupees(loan.principal);
+    const plan = loan.emi ? ` ${rupees(loan.emi)} a month will be recovered from your salary.` : '';
+    const message = {
+      Approved: {
+        title: 'Your loan request was approved',
+        body: `${loan.type || 'Loan'} of ${amount} approved.${plan}`,
+      },
+      Rejected: {
+        title: 'Your loan request was declined',
+        body: loan.reviewNote ? `${amount}: ${loan.reviewNote}` : `${loan.type || 'Loan'} of ${amount} was not approved.`,
+      },
+      Active: {
+        title: 'Your loan has been disbursed',
+        body: `${amount} released.${plan}`,
+      },
+      Closed: {
+        title: 'Your loan is fully repaid',
+        body: `Nothing is outstanding on your ${(loan.type || 'loan').toLowerCase()} of ${amount}.`,
+      },
+    }[loan.status];
+    if (message) notifyBorrower(loan, message, req.user).catch(() => {});
   }
 
   res.json({ loan });
@@ -251,9 +394,17 @@ const recordRepayment = asyncHandler(async (req, res) => {
   // loan down. Best-effort; a failure here never voids a recorded repayment.
   await khataSync.syncLoanRepayment(loan, amount, req.user, { cashAccount: req.body.cashAccount });
 
+  // What is LEFT is the part people actually want to know.
+  notifyBorrower(loan, {
+    title: loan.balance === 0 ? 'Your loan is fully repaid' : 'Repayment recorded',
+    body: loan.balance === 0
+      ? `${rupees(amount)} recorded. Nothing is outstanding.`
+      : `${rupees(amount)} recorded. ${rupees(loan.balance)} still outstanding.`,
+  }, req.user).catch(() => {});
+
   res.json({ loan });
 });
 
 module.exports = {
-  listMine, requestLoan, listAll, createForEmployee, reviewLoan, recordRepayment,
+  listMine, requestLoan, listAll, employeeOptions, createForEmployee, reviewLoan, recordRepayment,
 };

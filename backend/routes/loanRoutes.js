@@ -5,7 +5,7 @@
  */
 const express = require('express');
 const {
-  listMine, requestLoan, listAll, createForEmployee, reviewLoan, recordRepayment,
+  listMine, requestLoan, listAll, employeeOptions, createForEmployee, reviewLoan, recordRepayment,
 } = require('../controllers/loanController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
@@ -22,6 +22,10 @@ router.post('/', requestLoan);
 router.use(requirePermission('loans.manage'));
 // GET / — list all loans; protected, requires 'loans.manage'.
 router.get('/', listAll);
+// GET /employee-options — who a loan can be raised for; protected, requires 'loans.manage'.
+// Its own picker because /admin/users is role-gated and this module is
+// grantable to any account (User.loansAccess).
+router.get('/employee-options', employeeOptions);
 // POST /admin — create a loan on an employee's behalf; protected, requires 'loans.manage'.
 router.post('/admin', createForEmployee);
 // PATCH /:id/status — approve/reject a loan; protected, requires 'loans.manage'.

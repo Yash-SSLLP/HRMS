@@ -126,6 +126,7 @@ const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
 const AdminKhata = lazy(() => import('./pages/AdminKhata.jsx'));
 const AdminBoysIncentive = lazy(() => import('./pages/AdminBoysIncentive.jsx'));
 const AdminIncentivePoints = lazy(() => import('./pages/AdminIncentivePoints.jsx'));
+const AdminIncentiveDashboard = lazy(() => import('./pages/AdminIncentiveDashboard.jsx'));
 const EmployeeKhata = lazy(() => import('./pages/EmployeeKhata.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
 const AdminPushNotifications = lazy(() => import('./pages/AdminPushNotifications.jsx'));
@@ -262,6 +263,7 @@ export default function App() {
         <Route path="my-khata" element={<EmployeeKhata />} />
         <Route path="boys-incentive" element={<AdminBoysIncentive />} />
         <Route path="incentive-points" element={<AdminIncentivePoints />} />
+        <Route path="incentive-dashboard" element={<AdminIncentiveDashboard />} />
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
@@ -274,6 +276,10 @@ export default function App() {
         <Route path="projects" element={<AdminProjects />} />
         <Route path="tasks" element={<AdminTasks />} />
         <Route path="recruitment" element={<AdminRecruitment />} />
+        {/* CEO/MD take interview rounds too, and have no employee portal to
+            record them from — same page as /employee/interviews, which
+            authorises on identity rather than on a role. */}
+        <Route path="my-interviews" element={<EmployeeInterviews />} />
         <Route path="hiring-onboarding" element={<AdminHiringOnboarding />} />
         <Route path="new-joinees" element={<AdminNewJoinees />} />
         <Route path="assets" element={<AdminAssets />} />
@@ -342,6 +348,7 @@ export default function App() {
             The backend's incentive.manage gate is the real check. */}
         <Route path="boys-incentive" element={<AdminBoysIncentive />} />
         <Route path="incentive-points" element={<AdminIncentivePoints />} />
+        <Route path="incentive-dashboard" element={<AdminIncentiveDashboard />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />
@@ -350,6 +357,9 @@ export default function App() {
             no admin portal — the same page /admin/assets serves, mounted here.
             The backend's assets.manage gate is the real check. */}
         <Route path="assets-manage" element={<AdminAssets />} />
+        {/* Loan approvals for a standalone `loansAccess` holder — an accounts
+            clerk with no admin portal. Same page HR uses at /admin/loans. */}
+        <Route path="loans-manage" element={<AdminLoans />} />
         <Route path="goals" element={<EmployeeGoals />} />
         <Route path="reviews" element={<EmployeeReviews />} />
         <Route path="learning" element={<EmployeeLearning />} />

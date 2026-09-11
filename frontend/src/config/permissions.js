@@ -28,6 +28,9 @@ export function hasPermission(user, cap) {
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (cap === 'assets.manage' && user.assetsAccess === true) return true;
+  // Deciding loans and advances is the same kind of standalone grant — the
+  // person who sanctions an advance is usually in accounts, not HR.
+  if (cap === 'loans.manage' && user.loansAccess === true) return true;
   // Khata access is the same kind of standalone grant: it opens the employee
   // cash-ledger module for anyone. WHICH company account they may pay out of is
   // decided per account on the server (CashAccount.operators), not here.
@@ -90,7 +93,7 @@ export const canExportKhata = (user) => !!user
  * draws the dropdowns. Adding a tab there means adding it here.
  */
 export const INCENTIVE_MODULES = [
-  { key: 'all', label: 'All incentives', hint: 'Runs every incentive tab, including ones added later.', roles: ['manager'] },
+  { key: 'all', label: 'All incentives', hint: 'Runs every incentive tab, including ones added later, and can credit points to anybody on the Points Dashboard.', roles: ['manager'] },
   { key: 'boys', label: 'Boys Incentive', hint: 'The daily rolling teams.', roles: ['manager', 'picker'] },
 ];
 
@@ -135,6 +138,22 @@ export const canUseIncentive = (user, moduleKey) => incentiveRole(user, moduleKe
  */
 export const canPayIncentive = (user) => !!user
   && ['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(user.role);
+
+/**
+ * May this account CREDIT points to somebody — a bonus outside any team-day?
+ * Mirrors canCreditIncentive in the backend's authMiddleware: the paying bench
+ * plus a manager of EVERY incentive, whose job is the points section as a whole.
+ * Wider than canPayIncentive on purpose — awarding points and handing over money
+ * for them are two different acts — and narrower than the module at large.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const canCreditIncentive = (user) => {
+  if (!user) return false;
+  if (canPayIncentive(user)) return true;
+  const list = Array.isArray(user.incentiveRoles) ? user.incentiveRoles : [];
+  return list.some((r) => r.module === 'all' && r.role === 'manager');
+};
 
 /**
  * Roles whose employee profile is protected by the manager-profile grant.

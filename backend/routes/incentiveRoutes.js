@@ -4,6 +4,11 @@
  * The daily rolling incentive: who was on the team, how many sheets they rolled,
  * and what that earns in points.
  *
+ * It also carries the SECTION-WIDE routes — the points dashboard and the credits
+ * — which belong to the incentive section as a whole rather than to the Boys
+ * tab, because points are one company-wide pool. They sit above the Boys gate
+ * with gates of their own; see the block marked `section` below.
+ *
  * TWO ROLES, not one grant (see config/incentiveRoles.js). A MANAGER runs the
  * tab — the rates, the sheet counts, and correcting anything saved. A PICKER
  * puts together their own team for the day and nothing else: no sheet counts, no
@@ -27,10 +32,11 @@ const { createUpload } = require('../middleware/upload');
 const ctrl = require('../controllers/incentiveController');
 const {
   protect, requireIncentivePayer, requireIncentiveAccess, requireIncentiveManager,
+  requireIncentiveCreditor, requireIncentiveSection,
 } = require('../middleware/authMiddleware');
 
-// This router IS the Boys tab. A second incentive gets its own router and its
-// own module key; nothing here is shared by accident.
+// Everything below the section block is the Boys tab. A second incentive gets
+// its own module key and its own routes; nothing here is shared by accident.
 const MODULE = 'boys';
 
 const router = express.Router();
@@ -59,6 +65,25 @@ router.use(protect);
 // nobody else.
 router.get('/me', ctrl.myPoints);
 
+// ---------------------------------------------------------------- section ---
+// The SECTION-WIDE screen — every employee and what they hold in points,
+// wherever those points came from. Deliberately ABOVE the Boys gate: points are
+// one company-wide pool (a payment settles points without naming a module), so
+// the dashboard belongs to the section rather than to whichever incentive
+// happened to be built first.
+//
+// Its own gate for the same reason: a role in ANY incentive opens it, not a role
+// in this one. What a caller may DO there is narrower still — see below.
+router.get('/dashboard', requireIncentiveSection, ctrl.pointsDashboard);
+// The credits — points handed straight to somebody, outside any team-day.
+// Reading them is part of the dashboard; giving and taking them back is the
+// creditor's bench (HR / CEO / MD / SuperAdmin / manager of all incentives),
+// which is WIDER than the payer's and narrower than the module at large:
+// awarding points and handing over money for them are two different acts.
+router.get('/credits', requireIncentiveSection, ctrl.listCredits);
+router.post('/credits', requireIncentiveCreditor, ctrl.createCredit);
+router.delete('/credits/:id', requireIncentiveCreditor, ctrl.deleteCredit);
+
 // Past here you need a role in this tab — manager or picker. Which one you hold
 // decides what the handlers let you do.
 router.use(requireIncentiveAccess(MODULE));
@@ -69,6 +94,17 @@ const managerOnly = requireIncentiveManager(MODULE);
 // department. Its own endpoint because GET /employees is role-gated and would
 // 403 a standalone-grant holder.
 router.get('/people', ctrl.listPeople);
+
+// GET /non-rolling-options — who may take a cut of a team's points on a given
+// day (the department, minus anybody already rolling), with what Attendance says
+// about each of them. Open to the whole tab: a picker sees the group that shares
+// their team's points even though only a manager may set it.
+router.get('/non-rolling-options', ctrl.nonRollingOptions);
+
+// PUT /non-rolling/day — set the DAY's group (one group per day, shared by
+// every team that rolled). Manager only, like every other decision about who
+// gets paid out of a team's points.
+router.put('/non-rolling/day', managerOnly, ctrl.setDayGroup);
 
 // GET /settings — the default rate and default department.
 router.get('/settings', ctrl.getSettings);

@@ -7,6 +7,7 @@ const asyncHandler = require('express-async-handler');
 const Task = require('../models/Task');
 const { TASK_STATUS, TASK_PRIORITY } = require('../models/Task');
 const { scopeUserField } = require('../utils/employeeScope');
+const { pickablePeople } = require('../utils/peoplePicker');
 
 // Populated user sub-fields returned for assignedTo references
 const USER_FIELDS = 'firstName lastName email role';
@@ -52,8 +53,30 @@ const createTask = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('title is required');
   }
-  const task = await Task.create({ ...req.body, createdBy: req.user._id });
-  res.status(201).json({ task });
+  const { assignToAll, assignedTo, ...fields } = req.body;
+
+  // "Everyone" is a task EACH, not one task with many names on it: a task is
+  // something a person marks done, and a shared row would be done by whoever
+  // got there first. Built here rather than looped by the client so the
+  // recipient list obeys the same rules as every other people list — active
+  // accounts, no system logins, no executives unless a SuperAdmin opted them
+  // in, and the caller's own company only.
+  if (assignToAll) {
+    // pickablePeople, not the bare filter: it also drops anyone serving out a
+    // notice period, who is in no picker anywhere else either.
+    const people = await pickablePeople(req);
+    if (!people.length) {
+      res.status(400);
+      throw new Error('There is nobody to assign this task to.');
+    }
+    const tasks = await Task.insertMany(
+      people.map((u) => ({ ...fields, assignedTo: u._id, createdBy: req.user._id }))
+    );
+    return res.status(201).json({ count: tasks.length, tasks });
+  }
+
+  const task = await Task.create({ ...fields, assignedTo: assignedTo || undefined, createdBy: req.user._id });
+  res.status(201).json({ count: 1, task });
 });
 
 /**

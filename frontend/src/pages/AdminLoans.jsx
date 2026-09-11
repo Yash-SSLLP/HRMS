@@ -2,7 +2,10 @@
  * AdminLoans — loans & advances administration (admin portal). Lists/filters
  * loans from GET /loans, creates them on an employee's behalf via
  * POST /loans/admin, approves/rejects via PATCH /loans/:id/status and records
- * repayments via PATCH /loans/:id/repay. Employee list from GET /admin/users.
+ * repayments via PATCH /loans/:id/repay. Employee list from
+ * GET /loans/employee-options — the module's own picker, because this page is
+ * also reached by a standalone `loansAccess` holder who has no admin portal
+ * and would be refused the role-gated /admin/users.
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -50,7 +53,7 @@ export default function AdminLoans() {
     const q = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
     const [lRes, uRes] = await Promise.allSettled([
       api.get(`/loans${q}`),
-      api.get('/admin/users?active=true&excludeExecutives=true'),
+      api.get('/loans/employee-options'),
     ]);
     if (lRes.status === 'fulfilled') setLoans(lRes.value.data.loans);
     else setError(lRes.reason?.response?.data?.message || 'Failed to load loans');

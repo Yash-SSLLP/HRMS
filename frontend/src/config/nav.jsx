@@ -17,7 +17,7 @@ import {
   FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
   FiKey, FiLock, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell, FiSmartphone,
-  FiRotateCw,
+  FiRotateCw, FiVideo,
 } from 'react-icons/fi';
 // Feather has no money-ledger glyph, and its only currency mark is a dollar sign
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
@@ -138,14 +138,26 @@ export const adminNav = [
     { to: '/admin/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'conversion', 'incentive'] },
     { to: '/admin/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
-      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'daily team', 'incentive', 'paid'],
+      keywords: ['rolling', 'rollings', 'non rolling', 'non-rolling', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'daily team', 'incentive', 'paid', 'share', 'present'],
       tabs: [{ id: 'entries', label: 'Daily teams' }, { id: 'summary', label: 'Per employee' },
         { id: 'points', label: 'Points per sheet' }] },
+    // Every employee and the points they hold, across every incentive. It sits
+    // BELOW the individual tabs in the list but spans all of them: points are one
+    // company-wide pool, and this is where the company sees what it owes, credits
+    // somebody extra and settles up.
+    { to: '/admin/incentive-dashboard', label: 'Points Dashboard', icon: FiBarChart2, perm: 'incentive.manage',
+      keywords: ['points', 'dashboard', 'credit', 'credit points', 'bonus', 'award', 'pay', 'payout', 'owed', 'balance', 'incentive', 'department'],
+      tabs: [{ id: 'people', label: 'Everyone' }, { id: 'credits', label: 'Credits given' }] },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus, anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'] },
     { to: '/admin/hiring-onboarding', label: 'Offers & Joining', icon: FiClipboard, perm: 'recruitment.candidates' },
     { to: '/admin/new-joinees', label: 'New Joinee Records', icon: FiUserCheck, perm: 'recruitment.candidates' },
+    // The rounds HR assigned to THIS executive. CEO/MD have no employee portal,
+    // so without this row a final round booked with them has nowhere to be read
+    // or written up — the same reason /admin/my-khata exists.
+    { to: '/admin/my-interviews', label: 'My Interviews', icon: FiVideo, roles: ['CEO', 'MD'],
+      keywords: ['interview', 'interviews', 'panel', 'candidate', 'feedback', 'round', 'rounds'] },
     { to: '/admin/onboarding', label: 'Onboarding Checklist', icon: FiCheckSquare, perm: 'onboarding.manage' },
     { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage' },
   ] },
@@ -287,6 +299,11 @@ export const employeeNav = [
     // The review queue, for standalone-grant holders with no admin portal. Named
     // apart from the self-service "Expenses" row above, which lists only my own.
     { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },
+    // Same idea for whoever decides loans and advances (User.loansAccess): the
+    // queue of everyone's requests, named apart from the "Loans & Advances" row
+    // above, which is only what this person has borrowed themselves.
+    { to: '/employee/loans-manage', label: 'Loan Approvals', icon: FiCreditCard, perm: 'loans.manage',
+      keywords: ['loan', 'loans', 'advance', 'advances', 'emi', 'approve', 'sanction'] },
   ] },
   // Its own category, exactly as in the admin portal (user decision
   // 2026-09-10). Whoever holds a role in an incentive sees this whether or not
@@ -296,7 +313,10 @@ export const employeeNav = [
     { to: '/employee/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'incentive'] },
     { to: '/employee/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
-      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'incentive', 'paid'] },
+      keywords: ['rolling', 'rollings', 'non rolling', 'non-rolling', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'incentive', 'paid', 'share', 'present'] },
+    { to: '/employee/incentive-dashboard', label: 'Points Dashboard', icon: FiBarChart2, perm: 'incentive.manage',
+      keywords: ['points', 'dashboard', 'credit', 'credit points', 'bonus', 'award', 'pay', 'payout', 'owed', 'balance', 'incentive', 'department'],
+      tabs: [{ id: 'people', label: 'Everyone' }, { id: 'credits', label: 'Credits given' }] },
   ] },
   { group: 'Performance & Learning', icon: FiTrendingUp, items: [
     { to: '/employee/goals', label: 'Goals', icon: FiTarget },

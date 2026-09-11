@@ -13,7 +13,10 @@ const User = require('../models/User');
 const { hasPermission } = require('../middleware/authMiddleware');
 
 // The fields hasPermission consults — extend if its rules grow.
-const PERMISSION_FIELDS = '_id role permissions cashbookAccess expensesAccess assetsAccess execEditAccess';
+// Every standalone grant flag hasPermission() reads has to be SELECTED here,
+// or the holder silently drops out of every fan-out that asks for their
+// capability — the query says they don't hold it because the field is absent.
+const PERMISSION_FIELDS = '_id role permissions cashbookAccess expensesAccess assetsAccess khataAccess loansAccess execEditAccess';
 
 /**
  * Ids of every active user holding AT LEAST ONE of the given capabilities.

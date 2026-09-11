@@ -6,8 +6,10 @@
  * arithmetic (sheets -> points -> money), the one-team-per-picker rule, the
  * double-pay guard, the per-person roll-up, the morning-create / evening-fill
  * split, what a manager may do that a picker may not, paying people their
- * points (in parts), and a full spreadsheet round trip through
- * services/incentiveExcel.
+ * points (in parts), the non-rolling group that takes a cut of what a team rolls
+ * (its attendance-led presence and the hand override), the section-wide points
+ * dashboard and the credits that feed it, and a full spreadsheet round trip
+ * through services/incentiveExcel.
  *
  * Same shape as scripts/testCompanyScope.js. Run:
  *   node scripts/testIncentive.js
@@ -144,8 +146,54 @@ const FakePayment = {
   insertMany: async (rows) => { rows.forEach((r) => payments.push({ _id: `pay${payments.length + 1}`, ...r })); return rows; },
 };
 
+// Credits — points handed to somebody outside any team-day. A third in-memory
+// collection, and one every roll-up now has to read: points are one pool, so a
+// summary that missed these would refuse to pay somebody their own bonus.
+const credits = [];
+const FakeCredit = {
+  find: (filter) => query(credits.filter((d) => matches(d, filter))),
+  findOne: (filter) => {
+    const hit = credits.find((d) => matches(d, filter));
+    if (!hit) return query(null);
+    hit.deleteOne = async () => { credits.splice(credits.indexOf(hit), 1); };
+    return query(hit);
+  },
+  create: async (fields) => {
+    // Stands in for the model's pre-save hook.
+    const d = new Date(fields.date);
+    const row = {
+      ...fields,
+      _id: `cr${credits.length + 1}`,
+      date: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0),
+      points: Math.round((Number(fields.points) || 0) * 100) / 100,
+    };
+    credits.push(row);
+    return row;
+  },
+};
+
+// Attendance, which is where "was this person here that day?" is answered for a
+// non-rolling group. A plain array the tests fill in per day; presence is read
+// the way the controller reads it (a worked status, or any punch at all).
+const attendance = [];
+const FakeAttendance = {
+  find: (filter) => query(attendance.filter((d) => matches(d, filter))),
+};
+/** Put a day's attendance in the fixture. `status` null clears the record. */
+const setAttendance = (ymdStr, employeeId, status) => {
+  const [y, m, d] = ymdStr.split('-').map(Number);
+  const at = new Date(y, m - 1, d, 0, 0, 0, 0);
+  const i = attendance.findIndex(
+    (r) => String(r.employee) === String(employeeId) && new Date(r.date).getTime() === at.getTime(),
+  );
+  if (i >= 0) attendance.splice(i, 1);
+  if (status) attendance.push({ employee: employeeId, date: at, status });
+};
+
 stub('../models/IncentiveEntry', FakeEntry);
 stub('../models/IncentivePayment', FakePayment);
+stub('../models/IncentiveCredit', FakeCredit);
+stub('../models/Attendance', FakeAttendance);
 stub('../models/Setting', { getSettings: async () => settingsDoc });
 
 // EmployeeProfile is stubbed for the controller's own people query. The real
@@ -739,14 +787,20 @@ const DAY2 = '2026-09-11';
     assert.ok(res.payload.people.some((x) => x.department === 'Packing'));
   });
 
-  await check('two settings, both validated, and nothing else', async () => {
+  await check('three settings, all validated, and nothing else', async () => {
     const read = await call(ctrl.getSettings);
-    assert.deepStrictEqual(Object.keys(read.payload.settings).sort(), ['pointsPerSheet', 'rupeePerPoint']);
+    assert.deepStrictEqual(
+      Object.keys(read.payload.settings).sort(),
+      ['nonRollingSharePct', 'pointsPerSheet', 'rupeePerPoint'],
+    );
 
-    for (const body of [{ rupeePerPoint: -1 }, { pointsPerSheet: -5 }]) {
+    for (const body of [{ rupeePerPoint: -1 }, { pointsPerSheet: -5 }, { nonRollingSharePct: -1 }]) {
       const bad = await call(ctrl.updateSettings, { body });
       assert.strictEqual(bad.statusCode, 400, `a negative ${Object.keys(body)[0]} is refused`);
     }
+    // More than everything is refused too — a team cannot give away 120%.
+    const tooMuch = await call(ctrl.updateSettings, { body: { nonRollingSharePct: 120 } });
+    assert.strictEqual(tooMuch.statusCode, 400);
 
     const ok = await call(ctrl.updateSettings, {
       body: { rupeePerPoint: 0.5, pointsPerSheet: 6, defaultDepartment: 'Packing' },
@@ -777,6 +831,498 @@ const DAY2 = '2026-09-11';
     const res = await call(ctrl.deleteEntry, { params: { id: target._id } });
     assert.strictEqual(res.statusCode, 200, res.error);
     assert.ok(!store.includes(target));
+  });
+
+  // ------------------------------------------------- points dashboard --------
+  //
+  // The section-wide screen: every employee, and points from wherever they came.
+  // The thing worth asserting hardest is that a CREDIT is not a second currency —
+  // it lands in the same pool the teams earn into, so it shows up in the Boys
+  // roll-up, is payable, and is refused a take-back once it has been paid for.
+  //
+  // The credits are dated into NOVEMBER, a month the fixture leaves empty, so
+  // every figure below is the credit and nothing else. September is where the
+  // teams are, and mixing the two would prove nothing about either.
+
+  console.log('\nPoints dashboard and credits');
+
+  await check('the creditor bench is wider than the payer bench, and both are narrow', async () => {
+    const { canCreditIncentive, canPayIncentive: canPay } = require('../middleware/authMiddleware');
+    for (const role of ['SuperAdmin', 'HRManager', 'CEO', 'MD']) {
+      assert.strictEqual(canCreditIncentive({ role }), true, role);
+    }
+    // A manager of EVERY incentive credits but does not pay.
+    const allManager = { role: 'Employee', incentiveRoles: [{ module: 'all', role: 'manager' }] };
+    assert.strictEqual(canCreditIncentive(allManager), true, 'manager of all incentives');
+    assert.strictEqual(canPay(allManager), false, 'but does not settle');
+    // A manager of ONE tab does neither: their remit is that tab's arithmetic.
+    const boysManager = { role: 'Employee', incentiveRoles: [{ module: 'boys', role: 'manager' }] };
+    assert.strictEqual(canCreditIncentive(boysManager), false, 'manager of one tab');
+    assert.strictEqual(canCreditIncentive({ role: 'Employee', incentiveAccess: true }), false, 'legacy grant');
+    assert.strictEqual(canCreditIncentive(null), false);
+  });
+
+  await check('lists EVERY employee, zeros and all, with a department filter', async () => {
+    const res = await call(ctrl.pointsDashboard, { query: { month: '2026-09' } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.people.length, PEOPLE.length, 'everybody is on the list');
+    // Sorted by points, so whoever is owed most reads first and the zeros sink.
+    assert.ok(res.payload.people[0].points >= res.payload.people[1].points);
+    // Every department on the ROSTER is offered, not merely the earning ones —
+    // the filter has to reach a department nobody in it has earned in yet.
+    assert.deepStrictEqual(res.payload.departments, ['Boys', 'Packing']);
+    assert.strictEqual(res.payload.can.credit, true, 'a SuperAdmin credits');
+    assert.strictEqual(res.payload.can.pay, true);
+
+    const boys = await call(ctrl.pointsDashboard, { query: { month: '2026-09', department: 'Boys' } });
+    assert.ok(boys.payload.people.every((r) => r.department === 'Boys'));
+    assert.strictEqual(boys.payload.people.length, PEOPLE.length - 1);
+    // ...but the roster the credit picker is built from is NOT narrowed by it.
+    // A credit form that could only reach the department on screen is a trap.
+    assert.strictEqual(boys.payload.roster.length, PEOPLE.length, 'the picker still reaches everybody');
+    assert.ok(boys.payload.roster.some((r) => r.department === 'Packing'));
+
+    // THE ZEROS, which is what this screen has that the per-incentive tabs do
+    // not: a month nobody earned in still lists the whole roster, because a list
+    // that hides them cannot be used to find the person who was missed.
+    const quiet = await call(ctrl.pointsDashboard, { query: { month: '2026-11' } });
+    assert.strictEqual(quiet.payload.people.length, PEOPLE.length);
+    assert.ok(quiet.payload.people.every((r) => r.points === 0), 'all at zero');
+    assert.strictEqual(quiet.payload.totals.earners, 0, 'and counted as nobody earning');
+    const earners = await call(ctrl.pointsDashboard, { query: { month: '2026-11', withPointsOnly: 'true' } });
+    assert.strictEqual(earners.payload.people.length, 0, 'the toggle clears them away');
+  });
+
+  await check('credits points to several people at once, each in their own row', async () => {
+    const res = await call(ctrl.createCredit, {
+      body: { employees: [id(2), id(5)], points: 10, reason: 'Stood in on Sunday', date: '2026-11-20' },
+    });
+    assert.strictEqual(res.statusCode, 201, res.error);
+    assert.strictEqual(res.payload.credited, 2);
+    assert.strictEqual(res.payload.points, 20, 'ten EACH, not ten shared out');
+    // Own rows, so one can be taken back without touching the other.
+    assert.strictEqual(credits.length, 2);
+    assert.ok(credits.every((c) => c.points === 10 && c.reason === 'Stood in on Sunday'));
+    assert.strictEqual(credits[0].employeeCode, 'SSL102', 'the snapshot is taken');
+    assert.strictEqual(new Date(credits[0].date).getHours(), 12, 'pinned to local noon');
+  });
+
+  await check('refuses a credit with no reason, no points or nobody named', async () => {
+    const noReason = await call(ctrl.createCredit, { body: { employees: [id(2)], points: 5 } });
+    assert.strictEqual(noReason.statusCode, 400);
+    assert.match(noReason.error, /what the points are for/i);
+
+    const noPoints = await call(ctrl.createCredit, { body: { employees: [id(2)], points: 0, reason: 'x' } });
+    assert.strictEqual(noPoints.statusCode, 400);
+
+    const nobody = await call(ctrl.createCredit, { body: { employees: [], points: 5, reason: 'x' } });
+    assert.strictEqual(nobody.statusCode, 400);
+
+    const stranger = await call(ctrl.createCredit, {
+      body: { employees: ['64e000000000000000000099'], points: 5, reason: 'x' },
+    });
+    assert.strictEqual(stranger.statusCode, 400, 'somebody who has left cannot be credited');
+    assert.strictEqual(credits.length, 2, 'nothing was written');
+  });
+
+  await check('a credit joins the SAME pool the teams earn into', async () => {
+    // The dashboard splits it out...
+    const board = await call(ctrl.pointsDashboard, { query: { month: '2026-11' } });
+    const p5 = board.payload.people.find((r) => r.employeeCode === 'SSL105');
+    assert.strictEqual(p5.teamPoints, 0, 'no team rolled in November');
+    assert.strictEqual(p5.creditPoints, 10);
+    assert.strictEqual(p5.points, 10, 'and it still counts as points');
+    assert.strictEqual(p5.unpaidPoints, 10, 'so it is owed');
+    assert.strictEqual(board.payload.totals.creditPoints, 20);
+    assert.strictEqual(board.payload.totals.earners, 2);
+
+    // ...and the BOYS per-employee tab adds it in too, which is the rule that
+    // matters: that tab's Paid column settles from the same pool, so leaving
+    // credits out of it would read a credited-and-paid person as overpaid.
+    const sum = await call(ctrl.summary, { query: { month: '2026-11' } });
+    assert.strictEqual(sum.payload.people.length, 2, 'only the two credited');
+    const s5 = sum.payload.people.find((r) => r.employeeCode === 'SSL105');
+    assert.ok(s5, 'somebody with ONLY credits is on the roll-up');
+    assert.strictEqual(s5.points, 10);
+    assert.strictEqual(s5.teamPoints, 0);
+    assert.strictEqual(s5.creditPoints, 10);
+
+    // ...and an employee's own total sees it, in the month and over their life.
+    FakeProfile.findOne = () => query({ _id: id(5) });
+    const mine = await call(ctrl.myPoints, { query: { month: '2026-11' }, user: { _id: 'u5', role: 'Employee' } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(mine.payload.points, 10);
+    assert.strictEqual(mine.payload.creditPoints, 10);
+    assert.strictEqual(mine.payload.days, 0, 'no team days in November');
+    // Cross-checked against the dashboard over all dates rather than restated:
+    // two code paths that disagree about one person's lifetime is the bug.
+    const allTime = await call(ctrl.pointsDashboard, {});
+    const a5 = allTime.payload.people.find((r) => r.employeeCode === 'SSL105');
+    assert.strictEqual(mine.payload.lifetimePoints, a5.points, 'lifetime = teams + credits');
+    assert.ok(a5.teamPoints > 0, 'and September is in there');
+  });
+
+  await check('credited points can actually be paid', async () => {
+    // SSL105 was on no team in November. Before credits were folded into the
+    // earned map, this call refused them as owed nothing at all.
+    const res = await call(ctrl.payPoints, {
+      body: { month: '2026-11', payments: [{ employee: id(5), points: 10 }] },
+    });
+    assert.strictEqual(res.statusCode, 201, res.error);
+    const board = await call(ctrl.pointsDashboard, { query: { month: '2026-11' } });
+    const p5 = board.payload.people.find((r) => r.employeeCode === 'SSL105');
+    assert.strictEqual(p5.paidPoints, 10);
+    assert.strictEqual(p5.unpaidPoints, 0);
+
+    // And a rupee more than was credited is still refused.
+    const over = await call(ctrl.payPoints, {
+      body: { month: '2026-11', payments: [{ employee: id(5), points: 1 }] },
+    });
+    assert.strictEqual(over.statusCode, 400);
+    assert.strictEqual(over.payload.code, 'OVERPAID');
+  });
+
+  await check('a credit already paid for cannot be taken back', async () => {
+    const paidFor = credits.find((c) => c.employeeCode === 'SSL105');
+    const res = await call(ctrl.deleteCredit, { params: { id: paidFor._id } });
+    assert.strictEqual(res.statusCode, 400, 'the money has left the building');
+    assert.match(res.error, /already been paid/i);
+    assert.ok(credits.includes(paidFor), 'and the row survives, since it is the only record of why');
+  });
+
+  await check('an unpaid credit is taken back, and the points go with it', async () => {
+    const target = credits.find((c) => c.employeeCode === 'SSL102');
+    const res = await call(ctrl.deleteCredit, { params: { id: target._id } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+
+    const after = await call(ctrl.pointsDashboard, { query: { month: '2026-11' } });
+    const now = after.payload.people.find((r) => r.employeeCode === 'SSL102');
+    assert.strictEqual(now.creditPoints, 0);
+    assert.strictEqual(now.points, 0, 'the points went with the row');
+    assert.strictEqual(after.payload.totals.creditPoints, 10, 'the other credit is untouched');
+  });
+
+  await check('the credits list is the audit trail, with the reason on it', async () => {
+    const res = await call(ctrl.listCredits, { query: { month: '2026-11' } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.count, 1, 'one of the two was taken back');
+    assert.strictEqual(res.payload.points, 10);
+    assert.strictEqual(res.payload.credits[0].reason, 'Stood in on Sunday');
+    assert.strictEqual(res.payload.credits[0].createdByName, 'The Backend');
+
+    const forOne = await call(ctrl.listCredits, { query: { month: '2026-11', employee: id(5) } });
+    assert.strictEqual(forOne.payload.count, 1);
+    const otherMonth = await call(ctrl.listCredits, { query: { month: '2026-09' } });
+    assert.strictEqual(otherMonth.payload.count, 0, 'a credit belongs to the month it is dated in');
+  });
+
+  // ------------------------------------------------- non-rolling group -------
+  //
+  // The rest of the department takes a cut of what a team rolls. The numbers are
+  // chosen to divide cleanly so a wrong share is a wrong NUMBER, not a rounding
+  // argument: 5 sheets x 4 points = 20 for the team, 30% = 6 to the department,
+  // 14 left for a team of two = 7 each, 6 split two ways = 3 each.
+  //
+  // October is used throughout: the fixture's teams are in September and the
+  // credits are in November, so nothing here can be confused with either.
+
+  console.log('\nNon-rolling group');
+
+  const OCT = '2026-10-05';
+  const octEntry = () => store.find((d) => d.teamName === 'October');
+
+  await check('the cut comes off the top and is split between the people who were there', async () => {
+    setAttendance(OCT, id(3), 'Present');
+    setAttendance(OCT, id(4), 'Present');
+
+    const res = await call(ctrl.createEntry, {
+      body: {
+        date: OCT,
+        teamName: 'October',
+        picker: id(1),
+        members: [id(2)],
+        sheets: 5,
+        nonRolling: [{ employee: id(3) }, { employee: id(4) }],
+      },
+    });
+    assert.strictEqual(res.statusCode, 201, res.error);
+    const e = res.payload.entry;
+
+    assert.strictEqual(e.teamPoints, 20, '5 sheets x 4 points');
+    assert.strictEqual(e.nonRollingSharePct, 30, 'the company figure, frozen onto the day');
+    assert.strictEqual(e.nonRollingPoints, 6, '30% of 20');
+    assert.strictEqual(e.rollingPoints, 14, 'and the team keeps the rest');
+    // The property every report leans on: the two halves are the whole pot.
+    assert.strictEqual(e.rollingPoints + e.nonRollingPoints, e.teamPoints);
+
+    assert.strictEqual(e.headCount, 2);
+    assert.strictEqual(e.perPersonPoints, 7, '14 between two rollers');
+    assert.strictEqual(e.nonRollingHeadCount, 2);
+    assert.strictEqual(e.perNonRollingPoints, 3, '6 between two non-rollers');
+
+    // Presence came from Attendance, and what it said is kept on the row.
+    assert.ok(e.nonRolling.every((m) => m.present === true));
+    assert.ok(e.nonRolling.every((m) => m.attendance === 'Present'));
+  });
+
+  await check('presence follows attendance, and a manager can overrule it', async () => {
+    // They did not punch in. Nothing else about the day changes.
+    setAttendance(OCT, id(4), 'Absent');
+    const auto = await call(ctrl.updateEntry, {
+      params: { id: octEntry()._id },
+      body: { nonRolling: [{ employee: id(3) }, { employee: id(4) }] },
+    });
+    assert.strictEqual(auto.statusCode, 200, auto.error);
+    const absent = auto.payload.entry.nonRolling.find((m) => m.employeeCode === 'SSL104');
+    assert.strictEqual(absent.present, false, 'attendance says they were not in');
+    assert.strictEqual(auto.payload.entry.nonRollingHeadCount, 1);
+    assert.strictEqual(auto.payload.entry.perNonRollingPoints, 6, 'the whole cut to the one who was there');
+    // An absent person STAYS on the row — "considered and not in" is a different
+    // statement from "never listed", and only the first survives a question.
+    assert.strictEqual(auto.payload.entry.nonRolling.length, 2);
+    // The rolling side is untouched by any of this.
+    assert.strictEqual(auto.payload.entry.perPersonPoints, 7);
+
+    // The punch never registered but they were plainly there. The tick wins...
+    const forced = await call(ctrl.updateEntry, {
+      params: { id: octEntry()._id },
+      body: { nonRolling: [{ employee: id(3) }, { employee: id(4), present: true }] },
+    });
+    assert.strictEqual(forced.statusCode, 200, forced.error);
+    const over = forced.payload.entry.nonRolling.find((m) => m.employeeCode === 'SSL104');
+    assert.strictEqual(over.present, true);
+    // ...and the attendance snapshot still says Absent, so the override reads as
+    // an override rather than as a disagreement with the attendance module.
+    assert.strictEqual(over.attendance, 'Absent');
+    assert.strictEqual(forced.payload.entry.perNonRollingPoints, 3);
+
+    setAttendance(OCT, id(4), 'Present'); // put the fixture back
+  });
+
+  await check('no group, or nobody present, means no cut at all', async () => {
+    // A day put together in the morning has no group yet. Taking 30% anyway
+    // would delete points that nobody ever receives.
+    const bare = await call(ctrl.createEntry, {
+      body: { date: '2026-10-06', teamName: 'No group', picker: id(1), members: [id(2)], sheets: 5 },
+    });
+    assert.strictEqual(bare.statusCode, 201, bare.error);
+    assert.strictEqual(bare.payload.entry.nonRollingPoints, 0);
+    assert.strictEqual(bare.payload.entry.rollingPoints, 20);
+    assert.strictEqual(bare.payload.entry.perPersonPoints, 10, 'the team keeps the lot');
+
+    // Same when everybody listed turned out to be absent.
+    const allOut = await call(ctrl.updateEntry, {
+      params: { id: bare.payload.entry._id },
+      body: { nonRolling: [{ employee: id(3), present: false }, { employee: id(4), present: false }] },
+    });
+    assert.strictEqual(allOut.statusCode, 200, allOut.error);
+    assert.strictEqual(allOut.payload.entry.nonRollingPoints, 0, 'nobody to pay');
+    assert.strictEqual(allOut.payload.entry.perPersonPoints, 10);
+    assert.strictEqual(allOut.payload.entry.nonRolling.length, 2, 'but the record of who was asked survives');
+  });
+
+  await check('a roller cannot also take a non-rolling share, and nor can an outsider', async () => {
+    const roller = await call(ctrl.updateEntry, {
+      params: { id: octEntry()._id },
+      body: { nonRolling: [{ employee: id(2) }] },
+    });
+    assert.strictEqual(roller.statusCode, 400, 'they are already paid a rolling share');
+    assert.match(roller.error, /already earns/i);
+
+    // SSL105 is in Packing. An outsider may stand IN for a rolling team, but the
+    // cut belongs to the department the work is done in.
+    const outsider = await call(ctrl.updateEntry, {
+      params: { id: octEntry()._id },
+      body: { nonRolling: [{ employee: id(5) }] },
+    });
+    assert.strictEqual(outsider.statusCode, 400);
+    assert.match(outsider.error, /not in Boys/i);
+
+    // Neither attempt touched what was already saved.
+    assert.strictEqual(octEntry().nonRolling.length, 2);
+  });
+
+  await check('only the manager decides who shares a team\'s points', async () => {
+    // They are person 2; the controller looks their profile up by user id.
+    FakeProfile.findOne = () => query({ _id: id(2) });
+    const res = await call(ctrl.createEntry, {
+      user: PICKER,
+      body: {
+        date: '2026-10-07',
+        picker: id(2),
+        members: [id(1)],
+        nonRolling: [{ employee: id(3) }],
+      },
+    });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(res.statusCode, 403, 'a picker puts their own team together, nothing more');
+    assert.match(res.error, /manager decides/i);
+    assert.ok(!store.some((e) => new Date(e.date).getDate() === 7 && new Date(e.date).getMonth() === 9),
+      'and the day was not recorded without the group either');
+  });
+
+  await check('the share percentage is frozen on the day it was recorded', async () => {
+    const before = octEntry().nonRollingSharePct;
+    settingsDoc.incentive.nonRollingSharePct = 50;
+
+    const later = await call(ctrl.createEntry, {
+      body: {
+        date: '2026-10-08',
+        teamName: 'Renegotiated',
+        picker: id(1),
+        members: [id(2)],
+        sheets: 5,
+        nonRolling: [{ employee: id(3), present: true }],
+      },
+    });
+    assert.strictEqual(later.statusCode, 201, later.error);
+    assert.strictEqual(later.payload.entry.nonRollingSharePct, 50, 'the new figure');
+    assert.strictEqual(later.payload.entry.nonRollingPoints, 10, 'half of 20');
+    assert.strictEqual(later.payload.entry.perPersonPoints, 5, 'and the team keeps 10, two ways');
+
+    assert.strictEqual(octEntry().nonRollingSharePct, before, 'the earlier day is untouched');
+    assert.strictEqual(octEntry().nonRollingPoints, 6, 'and still pays what it always did');
+
+    settingsDoc.incentive.nonRollingSharePct = 30; // put the fixture back
+  });
+
+  await check('the same person may be non-rolling for two teams on one day', async () => {
+    // Three teams roll, each gives up its own 30% — so somebody who was in all
+    // day collects a share from each. That is exactly what makes the per-team
+    // rule add up to the day for them.
+    const second = await call(ctrl.createEntry, {
+      body: {
+        date: OCT,
+        teamName: 'October two',
+        picker: id(2),
+        members: [id(1)],
+        sheets: 5,
+        nonRolling: [{ employee: id(3) }],
+        allowDuplicates: true,
+      },
+    });
+    assert.strictEqual(second.statusCode, 201, second.error);
+    assert.strictEqual(second.payload.entry.perNonRollingPoints, 6, 'the whole cut, one person');
+
+    // ...and they are now warned about if somebody tries to ROLL them as well,
+    // because that really would pay them twice for the same work.
+    const clash = await call(ctrl.createEntry, {
+      body: { date: OCT, teamName: 'Third', picker: id(3), members: [id(4)], sheets: 1 },
+    });
+    assert.strictEqual(clash.statusCode, 409);
+    assert.strictEqual(clash.payload.code, 'DUPLICATE_PEOPLE');
+    assert.ok(
+      clash.payload.people.some((x) => /non-rolling/.test(x.teamName)),
+      'and the warning says WHICH kind of team they are already on',
+    );
+  });
+
+  await check('the roll-up pays each person their own share, not the other one', async () => {
+    const res = await call(ctrl.summary, { query: { month: '2026-10' } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    const by = (code) => res.payload.people.find((r) => r.employeeCode === code);
+
+    // October holds: 'October' (20 pts, 6 out), 'No group' (20 pts, none out),
+    // 'Renegotiated' (20 pts, 10 out) and 'October two' (20 pts, 6 out).
+    // SSL103 is non-rolling on three of them: 3 + 10 + 6.
+    const p3 = by('SSL103');
+    assert.strictEqual(p3.teamPoints, 19, 'three non-rolling shares');
+    assert.strictEqual(p3.nonRollingDays, 3);
+    assert.strictEqual(p3.pickerDays, 0);
+    assert.strictEqual(p3.sheets, 0, 'a non-roller rolled nothing, so no sheets are theirs');
+
+    // SSL101 rolled on all four days: 7 + 10 + 5 + 7.
+    const p1 = by('SSL101');
+    assert.strictEqual(p1.teamPoints, 29);
+    assert.strictEqual(p1.sheets, 20, 'four days at five sheets');
+    assert.strictEqual(p1.nonRollingDays, 0);
+
+    // Nothing is created or lost by the split: every point the teams earned is
+    // in somebody's column.
+    const potted = store
+      .filter((e) => new Date(e.date).getMonth() === 9 && new Date(e.date).getFullYear() === 2026)
+      .reduce((sum, e) => sum + (e.teamPoints || 0), 0);
+    const handedOut = res.payload.people.reduce((sum, r) => sum + r.teamPoints, 0);
+    assert.strictEqual(Math.round(handedOut * 100) / 100, Math.round(potted * 100) / 100,
+      'the shares add back up to the pot');
+  });
+
+  await check('a non-roller is paid their non-rolling share and no more', async () => {
+    const res = await call(ctrl.payPoints, {
+      body: { month: '2026-10', payments: [{ employee: id(3), points: 19 }] },
+    });
+    assert.strictEqual(res.statusCode, 201, res.error);
+
+    const over = await call(ctrl.payPoints, {
+      body: { month: '2026-10', payments: [{ employee: id(3), points: 0.5 }] },
+    });
+    assert.strictEqual(over.statusCode, 400, 'a rolling share would have been much more');
+    assert.strictEqual(over.payload.code, 'OVERPAID');
+  });
+
+  await check('a re-uploaded spreadsheet leaves the group alone', async () => {
+    // The sheet records who ROLLED. A corrected upload must not wipe a group
+    // somebody set by hand, nor thaw the percentage that day froze.
+    const before = octEntry();
+    const wasGroup = before.nonRolling.length;
+    const wasPct = before.nonRollingSharePct;
+    settingsDoc.incentive.nonRollingSharePct = 45;
+
+    const wb = await sheetBuffer([
+      { date: '05/10/2026', teamName: 'October', picker: 'SSL101', members: 'SSL102', sheets: 10 },
+    ]);
+    const res = await call(ctrl.importEntries, { file: { buffer: wb } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.updated, 1);
+
+    const after = octEntry();
+    assert.strictEqual(after.sheets, 10, 'the sheet count was corrected');
+    assert.strictEqual(after.nonRolling.length, wasGroup, 'and the group survived it');
+    assert.strictEqual(after.nonRollingSharePct, wasPct, 'on the percentage it was recorded with');
+    assert.strictEqual(after.teamPoints, 40);
+    assert.strictEqual(after.nonRollingPoints, 12, '30% of the corrected figure, not 45%');
+
+    settingsDoc.incentive.nonRollingSharePct = 30;
+  });
+
+  await check('the options list offers the department minus whoever is rolling', async () => {
+    const res = await call(ctrl.nonRollingOptions, {
+      query: { date: OCT, entry: octEntry()._id },
+    });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.department, 'Boys');
+    assert.strictEqual(res.payload.sharePct, 30, "the ENTRY's frozen figure, not today's setting");
+
+    const codes = res.payload.people.map((r) => r.employeeCode);
+    // SSL101 and SSL102 roll that day; SSL105 is Packing.
+    assert.ok(!codes.includes('SSL101') && !codes.includes('SSL102'), 'rollers are not offered');
+    assert.ok(!codes.includes('SSL105'), 'and neither is another department');
+    assert.deepStrictEqual(codes, ['SSL103', 'SSL104']);
+
+    const three = res.payload.people.find((r) => r.employeeCode === 'SSL103');
+    assert.strictEqual(three.selected, true, 'already in this group');
+    assert.strictEqual(three.present, true);
+    assert.strictEqual(three.attendance, 'Present', 'what the attendance record says');
+    assert.strictEqual(three.attendancePresent, true);
+
+    // NO RECORD AT ALL is not evidence of absence: a punch that never
+    // registered would otherwise quietly underpay exactly the people this share
+    // exists for. So they start PRESENT, with the missing record on the row so
+    // the default is visible rather than mysterious.
+    setAttendance(OCT, id(4), null);
+    const noRecord = await call(ctrl.nonRollingOptions, { query: { date: OCT } });
+    const four = noRecord.payload.people.find((r) => r.employeeCode === 'SSL104');
+    assert.strictEqual(four.attendance, null, 'nothing to report');
+    assert.strictEqual(four.present, true, 'and so they are offered as present');
+    assert.strictEqual(four.attendancePresent, false, 'though attendance itself vouches for nothing');
+
+    // A record that SAYS they were out is respected, which is the other half.
+    setAttendance(OCT, id(4), 'OnLeave');
+    const onLeave = await call(ctrl.nonRollingOptions, { query: { date: OCT } });
+    const away = onLeave.payload.people.find((r) => r.employeeCode === 'SSL104');
+    assert.strictEqual(away.present, false);
+    assert.strictEqual(away.attendance, 'OnLeave');
+    setAttendance(OCT, id(4), 'Present');
   });
 
   console.log(`\n${passed} checks passed${process.exitCode ? ' (with failures above)' : ''}\n`);

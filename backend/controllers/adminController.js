@@ -613,6 +613,27 @@ const setAssetsAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke the standalone Loans & advances grant. Role-independent like
+ * cashbook, expenses, khata and assets above: whoever sanctions an advance is
+ * as often the accounts clerk as HR, and the `permissions` array only reaches
+ * HR Manager and Manager accounts. Opens the whole module — the queue,
+ * approve/decline, raising a loan for an employee, and repayments.
+ * @route PATCH /api/admin/users/:id/loans-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, loansAccess}}
+ */
+const setLoansAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.loansAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, loansAccess: user.loansAccess });
+});
+
+/**
  * Give somebody a role in ONE incentive tab — or take it away.
  *
  * Not a switch: the Incentive section holds several incentives and each is run
@@ -1486,6 +1507,7 @@ module.exports = {
   setCashbookAccess,
   setExpensesAccess,
   setAssetsAccess,
+  setLoansAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,

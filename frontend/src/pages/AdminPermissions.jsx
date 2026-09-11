@@ -75,6 +75,7 @@ const GRANT_HELP = {
   cashbook: 'Open the cashbook: record money in and out of the company’s cash accounts. A standalone grant — any account can hold it, whatever their role.',
   expenses: 'Review, approve and settle staff expense claims.',
   assets: 'Issue, return and track company assets.',
+  loans: 'Decide staff loans and salary advances: the queue of requests, approve or decline, raise one on somebody’s behalf, and record repayments. A standalone grant — sanctioning an advance is as often an accounts job as an HR one, and this is the only way to give it to an account that is neither.',
   incentive: 'A role per incentive tab. Manager runs it — the point rate, the yield, the sheet counts, and correcting anything saved. Picker only puts together their own team for the day, and cannot edit it once saved.',
   khata: 'Open the employee cashbook: give cash advances to staff, confirm what they spend, and settle up.',
   khataExport: 'Download every employee’s balances and full ledger as a spreadsheet. No role grants this on its own — reading the ledger on screen and walking out with a copy of it are different decisions.',
@@ -284,6 +285,10 @@ export default function AdminPermissions() {
     path: 'assets-access', field: 'assetsAccess', enabled: !u.assetsAccess, errorText: 'Could not update assets access',
   });
 
+  const toggleLoans = (u) => toggleAccess(u, {
+    path: 'loans-access', field: 'loansAccess', enabled: !u.loansAccess, errorText: 'Could not update loan access',
+  });
+
   /**
    * Set somebody's role in ONE incentive tab.
    *
@@ -454,7 +459,9 @@ export default function AdminPermissions() {
     );
   }
 
-  const COLS = 11;
+  // Account, Role, Company Accounts, Expenses, Assets, Loans, Incentive,
+  // Employee Cashbook, Attendance, CEO/MD, Manager profiles, Capabilities.
+  const COLS = 12;
 
   return (
     <div>
@@ -498,6 +505,7 @@ export default function AdminPermissions() {
               ['Company Accounts', GRANT_HELP.cashbook],
               ['Expenses', GRANT_HELP.expenses],
               ['Assets', GRANT_HELP.assets],
+              ['Loans & Advances', GRANT_HELP.loans],
               ['Employee Cashbook · Module', GRANT_HELP.khata],
               ['Employee Cashbook · Export', GRANT_HELP.khataExport],
               ['Attendance · WFH', GRANT_HELP.wfh],
@@ -621,6 +629,7 @@ export default function AdminPermissions() {
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Company Accounts</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.loans}>Loans</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.incentive}>Incentive</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Employee Cashbook</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
@@ -694,6 +703,11 @@ export default function AdminPermissions() {
                   <td className="px-4 py-3">
                     <ToggleSwitch checked={!!u.assetsAccess} busy={isBusy('assetsAccess')} label="Assets access"
                       title={GRANT_HELP.assets} onChange={() => toggleAssets(u)} />
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <ToggleSwitch checked={!!u.loansAccess} busy={isBusy('loansAccess')} label="Loan approvals"
+                      title={GRANT_HELP.loans} onChange={() => toggleLoans(u)} />
                   </td>
 
                   {/* One dropdown per incentive tab. A second incentive adds a

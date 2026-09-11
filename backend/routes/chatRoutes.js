@@ -11,6 +11,7 @@ const {
   listRequests,
   respondRequest,
   listConnections,
+  unreadCount,
   getMessages,
   sendMessage,
   deleteMessage,
@@ -72,6 +73,9 @@ router.route('/requests')
 router.patch('/requests/:id', respondRequest);
 
 // GET /connections — list the current user's chat connections; protected.
+// GET /unread — one number for the badge, with none of the list work (and no
+// delivery marking): what the 30s poll should ask for.
+router.get('/unread', unreadCount);
 router.get('/connections', listConnections);
 
 // Group chats

@@ -9,6 +9,37 @@ const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'O
 const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 const NUM_ROUNDS = 4;
 
+// ===== The written assessment behind a round's verdict =====
+// Cleared/Rejected records WHAT was decided; none of it records WHY, and a
+// one-line "ok" is what a free-text box collects when nothing asks for more.
+// So a round carries a structured panel write-up: a score per competency, the
+// strengths and the concerns as separate questions (a reviewer skimming four
+// rounds wants the risks in one column), and a hiring recommendation. The
+// overall remark stays in `feedback` — the paragraph everything else supports.
+
+// Competencies scored 1 (well below the bar) - 5 (outstanding). Absent/0 means
+// NOT RATED, which is deliberately different from a 1: an interviewer who did
+// not probe the area should not be recorded as having failed the candidate on it.
+const ASSESSMENT_RATINGS = ['technical', 'communication', 'problemSolving', 'experience', 'cultureFit'];
+
+// The strength of the opinion behind the verdict. Without it a reluctant pass
+// and an emphatic one are both just "Cleared" to whoever reads the round next.
+const ROUND_RECOMMENDATIONS = ['Strong Hire', 'Hire', 'Borderline', 'No Hire'];
+
+// A fresh options object per path — mongoose keeps the object it is handed, so
+// sharing one literal across five paths shares their state too.
+const ratingPath = () => ({ type: Number, min: 0, max: 5 });
+
+const roundAssessmentSchema = new mongoose.Schema(
+  {
+    ratings: Object.fromEntries(ASSESSMENT_RATINGS.map((k) => [k, ratingPath()])),
+    strengths: { type: String, trim: true },
+    concerns: { type: String, trim: true },
+    recommendation: { type: String, enum: [...ROUND_RECOMMENDATIONS, ''] },
+  },
+  { _id: false }
+);
+
 // One entry per status change of a round — the audit trail of who decided what.
 const roundHistorySchema = new mongoose.Schema(
   {
@@ -17,6 +48,9 @@ const roundHistorySchema = new mongoose.Schema(
     byName: { type: String, trim: true },
     at: { type: Date, default: Date.now },
     feedback: { type: String, trim: true },
+    // The recommendation as it stood at this change, so a verdict that softened
+    // between two sittings is visible in the trail rather than overwritten.
+    recommendation: { type: String, trim: true },
   },
   { _id: false }
 );
@@ -25,7 +59,12 @@ const roundSchema = new mongoose.Schema(
   {
     label: { type: String, trim: true },
     status: { type: String, enum: ROUND_STATUS, default: 'Pending' },
+    // The interviewer's overall remark: the paragraph HR and the next round read.
     feedback: { type: String, trim: true },
+    // Scores, strengths, concerns and the hiring recommendation behind it.
+    // Left unset (rather than defaulted to an empty sub-document) so a round
+    // nobody has assessed is distinguishable from one scored all-zero.
+    assessment: { type: roundAssessmentSchema },
     scheduledAt: { type: Date },
     decidedAt: { type: Date },
     // Employee (User) HR assigned to take this interview round.
@@ -269,4 +308,6 @@ module.exports = mongoose.model('Candidate', candidateSchema);
 module.exports.CANDIDATE_STAGES = CANDIDATE_STAGES;
 module.exports.CANDIDATE_DOC_STATUS = CANDIDATE_DOC_STATUS;
 module.exports.ROUND_STATUS = ROUND_STATUS;
+module.exports.ASSESSMENT_RATINGS = ASSESSMENT_RATINGS;
+module.exports.ROUND_RECOMMENDATIONS = ROUND_RECOMMENDATIONS;
 module.exports.defaultRounds = defaultRounds;
