@@ -9,7 +9,8 @@ const Regularization = require('../models/Regularization');
 const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
-const { notify, notifyBackend } = require('../services/notify');
+const { notify, notifyMany } = require('../services/notify');
+const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { isReadOnlyExec } = require('../middleware/authMiddleware');
 const { scopeUserField } = require('../utils/employeeScope');
 const Setting = require('../models/Setting');
@@ -184,15 +185,26 @@ async function buildRegularizationChain(employeeUserId) {
 
 // Tell the person whose turn it is. Best-effort — a failed notification must
 // never stop the request being filed or advanced.
+//
+// 'all', NOT 'admin'. A rung on this ladder is whoever a SuperAdmin named, and
+// that is very often a shift or ops lead with no admin portal at all — the
+// decision route is gated on BEING the current approver rather than on
+// attendance.manage, precisely so it can be. An 'admin' notification is filtered
+// out of My Portal, so the one person whose turn it was is the one person who
+// could not see that it was their turn.
+//
+// The link is the APPROVALS queue for the same reason: that is where their turn
+// appears, in either portal, whereas the Regularizations tab is an admin page
+// they may not be able to open.
 async function notifyRegApprover(approverUserId, item, applicantName) {
   try {
     await notify({
       recipient: approverUserId,
       type: 'regularization',
-      audience: 'admin',
+      audience: 'all',
       title: 'Regularization needs your approval',
       body: `${applicantName} raised an attendance regularization (${item.type}) - it's awaiting your approval.`,
-      link: 'regularizations',
+      link: 'approvals',
     });
   } catch (err) {
     console.error('regularization approver notify failed:', err.message);
@@ -215,6 +227,109 @@ async function notifyRegEmployeeStep(item, step, next, note) {
     });
   } catch (err) {
     console.error('regularization step notify failed:', err.message);
+  }
+}
+
+/**
+ * Is this request sitting with HR right now?
+ *
+ * HR IS THE LAST RUNG OF EVERY LADDER, and it is an implicit one: the named
+ * approvers are decided through the approvals inbox, and when the last of them
+ * says yes the request does NOT become Approved — it stays Pending with nobody's
+ * name on it, which is precisely the state an unladdered request is born in. One
+ * condition therefore answers "is this HR's to decide" for both shapes of
+ * request, and it is the condition the flat HR review path has always used.
+ *
+ * `currentApprover: null` also matches documents predating the field, which is
+ * the correct answer for them: they were always HR's.
+ * @type {Object} a Mongo filter fragment
+ */
+const AWAITING_HR = { status: 'Pending', currentApprover: null };
+
+/** The same question, asked of a document already in hand. */
+const isAwaitingHr = (item) => item.status === 'Pending' && !item.currentApprover;
+
+/**
+ * Tell HR a request is theirs to decide.
+ *
+ * WHEN, and why it is not simply "on arrival". A request with a configured
+ * ladder belongs to its named approver first: telling HR at the same moment
+ * puts a decision in their inbox that is not theirs to make yet, and — worse —
+ * one that may never become theirs, because the approver can reject it. So this
+ * fires on exactly two occasions, which are the two ways a request reaches HR:
+ *
+ *   · on arrival, ONLY when no ladder is configured. That request goes straight
+ *     to the flat HR path; nobody else is coming.
+ *   · once the ladder has approved it in full, and HR becomes the final rung.
+ *
+ * A rejection anywhere on the ladder is the end of the request and produces
+ * nothing here: it never reaches HR, so there is nothing to tell them about.
+ *
+ * "HR" is `attendance.manage`, which is what the Regularizations tab is gated
+ * on — and, since a SuperAdmin holds every capability, the Backend is inside
+ * this bench rather than notified separately. Walled to the requester's own
+ * company, so another company's HR never hears about their people; SuperAdmins
+ * cross the wall, as they do everywhere.
+ *
+ * Best-effort, like every other notifier here.
+ * @param {Object} item - the Regularization doc
+ * @param {{title: string, body: string, exclude?: Array}} message
+ * @returns {Promise<void>}
+ */
+async function notifyRegHr(item, { title, body, exclude = [] }) {
+  try {
+    const profile = await EmployeeProfile.findOne({ user: item.employee }).select('company').lean();
+    const bench = await scopeRecipientsToCompany(
+      await usersHoldingAny('attendance.manage'),
+      profile?.company
+    );
+    // The requester is excluded whatever their role: an HR raising their own
+    // correction does not need telling that they raised it.
+    const skip = new Set([...exclude, item.employee].filter(Boolean).map(String));
+    const ids = bench.filter((id) => !skip.has(String(id)));
+    if (!ids.length) return;
+    await notifyMany(ids, {
+      type: 'regularization',
+      audience: 'admin',
+      title,
+      body,
+      // The full admin path, not the bare 'regularizations' slug the
+      // employee-facing alerts use: a bare slug navigates RELATIVE to whatever
+      // page is open on the web, and on mobile it resolves to the tapper's OWN
+      // regularization list rather than the review tab this alert is about.
+      link: '/admin/regularizations',
+    });
+  } catch (err) {
+    console.error('regularization HR notify failed:', err.message);
+  }
+}
+
+/**
+ * Tell the employee their last named approver said yes and HR now has it.
+ *
+ * A separate message from notifyRegEmployeeStep, which says "it now needs
+ * <name>'s approval" — there is no name to give here, because the final rung is
+ * the HR bench rather than one person. Saying "approved" on its own would be
+ * worse: the day has not been corrected yet, and the employee would go looking
+ * for a change that has not happened.
+ * @param {Object} item
+ * @param {Object} [step] - the rung that just approved
+ * @param {string} [note]
+ * @returns {Promise<void>}
+ */
+async function notifyRegEmployeeHandover(item, step, note) {
+  try {
+    await notify({
+      recipient: item.employee,
+      type: 'regularization',
+      audience: 'employee',
+      title: 'Regularization with HR for final approval',
+      body: `${step?.approverName || 'Your approver'} approved your ${item.type} regularization for ${fmtDay(item.date)}.`
+        + ` It now needs HR's final approval before the day is corrected.${note ? ` Note: ${note}` : ''}`,
+      link: 'regularizations',
+    });
+  } catch (err) {
+    console.error('regularization handover notify failed:', err.message);
   }
 }
 
@@ -321,10 +436,22 @@ async function applyToAttendance(item, reviewer) {
 // GET /api/regularizations/me  — the caller's own requests
 const listMine = asyncHandler(async (req, res) => {
   const [items, quota] = await Promise.all([
-    Regularization.find({ employee: req.user._id }).sort({ createdAt: -1 }),
+    Regularization.find({ employee: req.user._id }).sort({ createdAt: -1 }).lean(),
     quotaFor(req.user._id, monthKeyIST(new Date())),
   ]);
-  res.json({ count: items.length, items, quota });
+  // "Pending" alone cannot tell the employee whether anyone has looked at it
+  // yet. Their own request now has two waiting rooms — their approver's, then
+  // HR's — and which one it is in is the thing they actually want to know.
+  res.json({
+    count: items.length,
+    items: items.map((r) => ({
+      ...r,
+      awaitingHr: isAwaitingHr(r),
+      waitingOn: isAwaitingHr(r) ? null
+        : (r.approvalChain || []).find((s) => String(s.approver) === String(r.currentApprover))?.approverName || null,
+    })),
+    quota,
+  });
 });
 
 /**
@@ -393,17 +520,18 @@ const createRequest = asyncHandler(async (req, res) => {
 
   const name = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
   if (chain.length) {
+    // The ladder owns it now. HR is told when — and only if — the ladder
+    // approves it in full; see notifyRegHr. Telling them both at once put a
+    // decision in HR's inbox that was not theirs yet and might never be.
     await notifyRegApprover(chain[0].approver, item, name);
+  } else {
+    // No ladder: the request falls to the flat HR path, where HR is the sole
+    // reviewer. If they are not told now, nobody is coming.
+    await notifyRegHr(item, {
+      title: 'New regularization request',
+      body: `${name} raised a ${item.type} regularization for ${fmtDay(item.date)}.`,
+    });
   }
-  // Unconditional: with no configured approver the request falls to the flat HR
-  // path, which told NOBODY it had arrived.
-  await notifyBackend({
-    type: 'regularization',
-    title: 'New regularization request',
-    body: `${name} raised a ${item.type} regularization for ${fmtDay(item.date)}.`,
-    link: 'approvals',
-    exclude: [chain.length ? chain[0].approver : null, item.employee],
-  });
 
   res.status(201).json({ item });
 });
@@ -418,6 +546,12 @@ const createRequest = asyncHandler(async (req, res) => {
 const listAll = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
+  // ?awaitingHr=true — the DECISION QUEUE rather than the desk. An approvals
+  // inbox must list exactly what the badge beside it counts, and since HR became
+  // the final rung those are no longer all the Pending ones: a request still
+  // climbing its ladder is somebody else's turn. The desk (the Regularizations
+  // tab) deliberately does NOT pass this — it shows everything, labelled.
+  if (String(req.query.awaitingHr) === 'true') Object.assign(filter, AWAITING_HR);
   // Company wall: only requests from employees this admin may see
   // (Regularization.employee is a User id). No-op for unrestricted viewers.
   await scopeUserField(req, filter);
@@ -425,8 +559,24 @@ const listAll = asyncHandler(async (req, res) => {
   const items = await Regularization.find(filter)
     .populate('employee', EMPLOYEE_FIELDS)
     .populate('reviewedBy', 'firstName lastName role') // who did the regularization
-    .sort({ createdAt: -1 });
-  res.json({ count: items.length, items });
+    .sort({ createdAt: -1 })
+    .lean();
+  // WHOSE TURN IT IS, stamped on every row. Every Pending request used to be
+  // HR's to decide, so the queue needed no such distinction; now a Pending one
+  // may still be climbing its ladder, and a queue that cannot tell the two apart
+  // invites HR to decide requests the named approver has not seen — which is an
+  // override, and works, but is not what the list looks like it is offering.
+  res.json({
+    count: items.length,
+    items: items.map((r) => ({
+      ...r,
+      awaitingHr: isAwaitingHr(r),
+      // Who it is sitting with, when that is not HR. Read off the chain rather
+      // than populated, so this costs no extra query.
+      waitingOn: isAwaitingHr(r) ? null
+        : (r.approvalChain || []).find((s) => String(s.approver) === String(r.currentApprover))?.approverName || null,
+    })),
+  });
 });
 
 /**
@@ -459,10 +609,15 @@ async function applicantNameOf(userId) {
  * approvers. The acting user MUST be the current approver, so an ordinary
  * employee named as an approver can decide without holding attendance.manage.
  *
- * Approve → advance to the next rung, or, on the LAST rung, finalize and apply
- * the correction to the attendance record. Reject → stop the chain immediately.
- * The apply deliberately fires only at the end: a 2-step request must not touch
- * attendance after step 1.
+ * Approve → advance to the next rung, or, on the last NAMED rung, hand the
+ * request to HR, who are the final rung of every ladder: it stays Pending with
+ * no current approver, which is the AWAITING_HR state, and attendance is left
+ * untouched until HR decides. Reject → stop the chain immediately.
+ *
+ * Nothing here writes to the attendance record except the SuperAdmin override,
+ * which is the one case where the decider is also the final authority. A 2-step
+ * request must not touch attendance after step 1, and no request may touch it
+ * before HR has seen it.
  * @param {Object} item - the Regularization doc (mutated + saved)
  * @param {*} userId - the acting approver
  * @param {'approve'|'reject'} action
@@ -508,11 +663,11 @@ async function advanceRegularizationApproval(item, userId, action, note, actor) 
     for (const st of overridden) st.status = 'Skipped';
     if (overridden.length) {
       try {
-        const { notifyMany } = require('../services/notify');
         const who = await applicantNameOf(item.employee);
         await notifyMany(overridden.map((st) => st.approver).filter(Boolean), {
           type: 'regularization',
-          audience: 'admin',
+          // 'all', like notifyRegApprover: a named approver may have no admin portal.
+          audience: 'all',
           title: `Regularization ${action === 'approve' ? 'approved' : 'rejected'} by the Backend`,
           body: `${who}'s ${item.type} regularization was decided by a Super Admin - no action is needed from you.`,
           link: 'regularizations',
@@ -551,66 +706,128 @@ async function advanceRegularizationApproval(item, userId, action, note, actor) 
     return { item, applied: false };
   }
 
-  // Last rung — the correction takes effect now.
+  // The last NAMED rung. HR is the rung after it, so this is a hand-over, not a
+  // finalisation: the request stays Pending with nobody's name on it, which is
+  // the state that puts it in front of HR (see AWAITING_HR). Attendance is NOT
+  // touched — the correction takes effect when HR says so, and applying it here
+  // would make HR's decision cosmetic.
   if (step) { step.status = 'Approved'; step.decidedAt = now; step.note = note; }
-  item.status = 'Approved';
   item.currentApprover = null;
-  item.reviewedBy = userId;
-  item.reviewedAt = now;
-  item.reviewNote = note;
-  await item.save();
-  let applied = null;
-  try {
-    applied = await applyToAttendance(item, actor);
-  } catch (err) {
-    // Same rule as the HR path: the decision stands even if applying fails.
-    console.error('Regularization apply failed:', err.message);
+
+  // The one exception is the Backend overriding the ladder. A SuperAdmin
+  // deciding from the approvals inbox IS the final authority — they hold every
+  // capability, so routing their approval on to the HR bench they are already
+  // in would park the request in front of the person who just approved it.
+  if (override) {
+    item.status = 'Approved';
+    item.reviewedBy = userId;
+    item.reviewedAt = now;
+    item.reviewNote = note;
+    await item.save();
+    let applied = null;
+    try {
+      applied = await applyToAttendance(item, actor);
+    } catch (err) {
+      // Same rule as the HR path: the decision stands even if applying fails.
+      console.error('Regularization apply failed:', err.message);
+    }
+    await notifyRegEmployeeDecision(item, note);
+    return { item, applied: !!applied };
   }
-  await notifyRegEmployeeDecision(item, note);
-  return { item, applied: !!applied };
+
+  await item.save();
+
+  const who = await applicantNameOf(item.employee);
+  const decidedBy = step?.approverName || 'Their approver';
+  await notifyRegEmployeeHandover(item, step, note);
+  await notifyRegHr(item, {
+    title: 'Regularization needs your final approval',
+    body: `${decidedBy} approved ${who}'s ${item.type} regularization for ${fmtDay(item.date)}.`
+      + ' It is with you for the final approval.',
+    // Everyone who signed it off already knows; an approver who also holds
+    // attendance.manage would otherwise be told to approve their own approval.
+    exclude: (item.approvalChain || []).map((s) => s.approver),
+  });
+  return { item, applied: false };
 }
 
-const reviewRequest = asyncHandler(async (req, res) => {
-  const { status, reviewNote } = req.body;
-
-  if (!['Approved', 'Rejected'].includes(status)) {
-    res.status(400);
-    throw new Error('status must be Approved or Rejected');
-  }
-
-  const item = await Regularization.findById(req.params.id);
-  if (!item) {
-    res.status(404);
-    throw new Error('Regularization request not found');
-  }
-
+/**
+ * WHO may decide a regularization from HR's side, whatever ladder it is on.
+ *
+ * Three refusals, and every one of them is a control rather than a convenience,
+ * which is why they live here instead of being written out at each entry point:
+ * HR's final approval is reachable from the Regularizations tab AND from the
+ * approvals inbox now, and a rule enforced at one door is not a rule.
+ *
+ * Throws with `.status` set, in the shape advanceRegularizationApproval uses, so
+ * either caller can pass it straight to the error handler.
+ * @param {Object} actor - req.user
+ * @param {Object} item - the Regularization doc
+ * @returns {Promise<void>}
+ */
+async function assertCanDecideAsHr(actor, item) {
+  const refuse = (status, message) => {
+    const err = new Error(message);
+    err.status = status;
+    throw err;
+  };
   // Nobody signs off their own attendance correction, whatever their role.
-  if (String(item.employee) === String(req.user._id)) {
-    res.status(403);
-    throw new Error('You cannot review your own regularization request.');
+  if (String(item.employee) === String(actor._id)) {
+    refuse(403, 'You cannot review your own regularization request.');
   }
-
   // An HR's own request needs an executive or a SuperAdmin — HR reviewing HR
   // (each other's, or their own via a colleague) would defeat the control.
   const requester = await User.findById(item.employee).select('role');
-  if (requester?.role === HR_ROLE && !HR_REVIEW_ROLES.includes(req.user.role)) {
-    res.status(403);
-    throw new Error('An HR regularization can only be approved by the CEO, MD or a Super Admin.');
+  if (requester?.role === HR_ROLE && !HR_REVIEW_ROLES.includes(actor.role)) {
+    refuse(403, 'An HR regularization can only be approved by the CEO, MD or a Super Admin.');
   }
   // …and the exception goes no further: a VIEW-ONLY exec's write access here
   // covers HR requests only. Everyone else's still belongs to HR, so they stay
   // read-only on those, as on every other admin screen. (An exec a SuperAdmin
   // has put in edit mode decides any request, like HR.)
-  if (isReadOnlyExec(req.user) && requester?.role !== HR_ROLE) {
-    res.status(403);
-    throw new Error('CEO/MD accounts review HR regularizations only; this one is for HR to decide.');
+  if (isReadOnlyExec(actor) && requester?.role !== HR_ROLE) {
+    refuse(403, 'CEO/MD accounts review HR regularizations only; this one is for HR to decide.');
   }
+}
 
-  // HR deciding a request that has a configured ladder is an OVERRIDE: void the
-  // rungs that never got their turn and tell those approvers it is off their
-  // plate, so it can't sit in their inbox as a ghost. (Mirrors the leave
-  // override valve — HR keeps a way to unstick a request whose named approver
-  // is unavailable.)
+/**
+ * HR's decision — the final rung of every ladder, and the whole of the review
+ * for a request that never had one.
+ *
+ * Extracted from the route so the approvals inbox can reach the SAME code: HR
+ * used to decide only from the Regularizations tab, and bolting a second
+ * implementation onto the inbox would have given the two doors different rules
+ * about self-review, HR's own corrections and view-only executives.
+ *
+ * @param {Object} item - the Regularization doc (mutated + saved)
+ * @param {Object} actor - req.user
+ * @param {'Approved'|'Rejected'} status
+ * @param {string} [reviewNote]
+ * @returns {Promise<{item: Object, applied: boolean}>}
+ * @throws {Error} with `.status` when this account may not decide it
+ */
+async function decideAsHr(item, actor, status, reviewNote) {
+  if (!['Approved', 'Rejected'].includes(status)) {
+    const err = new Error('status must be Approved or Rejected');
+    err.status = 400;
+    throw err;
+  }
+  await assertCanDecideAsHr(actor, item);
+
+  // This is BOTH halves of HR's role now, and which one it is depends
+  // entirely on whether any rung is still live:
+  //
+  //   · no live rung — the normal final approval. A request that has cleared its
+  //     ladder (or never had one) is HR's own turn, so `overridden` comes back
+  //     empty and nothing below fires. This is the common path.
+  //   · a live rung — HR is stepping OVER a named approver who has not decided.
+  //     Still allowed, deliberately: it is the valve that unsticks a request
+  //     whose approver is away, and it mirrors the leave override. The rungs
+  //     that never got their turn are voided and told, so the request cannot sit
+  //     in their inbox as a ghost.
+  //
+  // The clients label the two so nobody overrides by accident — see the
+  // `awaitingHr` / `waitingOn` fields listAll stamps on each row.
   const overridden = (item.approvalChain || []).filter(
     (s) => s.status === 'Pending' || s.status === 'Waiting'
   );
@@ -619,19 +836,19 @@ const reviewRequest = asyncHandler(async (req, res) => {
 
   item.status = status;
   item.reviewNote = reviewNote;
-  item.reviewedBy = req.user._id;
+  item.reviewedBy = actor._id;
   item.reviewedAt = new Date();
   await item.save();
 
   if (overridden.length) {
     const name = await applicantNameOf(item.employee);
     try {
-      const { notifyMany } = require('../services/notify');
       await notifyMany(
         overridden.map((s) => s.approver).filter(Boolean),
         {
           type: 'regularization',
-          audience: 'admin',
+          // 'all', like notifyRegApprover: a named approver may have no admin portal.
+          audience: 'all',
           title: `Regularization ${status.toLowerCase()} by HR`,
           body: `${name}'s ${item.type} regularization was ${status.toLowerCase()} by HR - no action is needed from you.`,
           link: 'regularizations',
@@ -645,7 +862,7 @@ const reviewRequest = asyncHandler(async (req, res) => {
   let applied = null;
   if (status === 'Approved') {
     try {
-      applied = await applyToAttendance(item, req.user);
+      applied = await applyToAttendance(item, actor);
     } catch (err) {
       // The decision stands even if applying fails (e.g. no profile) — HR can
       // still fix the record manually from the attendance views.
@@ -666,7 +883,29 @@ const reviewRequest = asyncHandler(async (req, res) => {
     link: 'regularizations',
   }).catch(() => {});
 
-  res.json({ item, applied: !!applied });
+  return { item, applied: !!applied };
+}
+
+/**
+ * HR decides a request from the Regularizations tab.
+ * @route PATCH /api/regularizations/:id/status  (admin)
+ * @param {string} req.params.id
+ * @param {'Approved'|'Rejected'} req.body.status
+ * @param {string} [req.body.reviewNote]
+ * @returns {{item: Object, applied: boolean}}
+ */
+const reviewRequest = asyncHandler(async (req, res) => {
+  const item = await Regularization.findById(req.params.id);
+  if (!item) {
+    res.status(404);
+    throw new Error('Regularization request not found');
+  }
+  try {
+    res.json(await decideAsHr(item, req.user, req.body.status, req.body.reviewNote));
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
 });
 
 /**
@@ -742,5 +981,13 @@ const adminCreate = asyncHandler(async (req, res) => {
 module.exports = {
   listMine, createRequest, listAll, reviewRequest, adminCreate,
   // Used by the shared approvals inbox (controllers/approvalController.js).
+  // advanceRegularizationApproval moves a NAMED rung; decideAsHr is the final
+  // rung, and the inbox needs both because it now shows both.
   advanceRegularizationApproval,
+  decideAsHr,
+  // "It is HR's turn" — exported so the HR badge counts the same requests this
+  // module hands to HR. Spelled out in two places, the badge and the queue drift
+  // the first time either is touched, and a badge that disagrees with the list
+  // behind it is worse than no badge.
+  AWAITING_HR,
 };

@@ -5,12 +5,17 @@
  *     PATCH /regularizations/:id/status (an approval applies the corrected
  *     punch). CEO/MD see the oversight columns (who changed what); their only
  *     action here is deciding an HR's OWN request, which HR may not decide for
- *     themselves. Deciding a request that has a configured ladder is an
- *     OVERRIDE — it voids the remaining steps.
+ *     themselves.
  *
- *  2. Approval setup — who signs off each employee's regularizations, 1 or 2
- *     steps, in order, plus how many corrections a month each may raise.
- *     Unconfigured employees stay on the flat HR review in tab 1.
+ *     HR IS THE FINAL RUNG of every ladder, so a Pending row is one of two
+ *     things and the Status cell says which: "Your approval" (it has cleared its
+ *     named approvers, or never had any) or "With <name>" (still climbing).
+ *     Deciding the second is an OVERRIDE — it voids the remaining steps — so it
+ *     asks first rather than looking like every other row.
+ *
+ *  2. Approval setup — who signs off each employee's regularizations BEFORE it
+ *     reaches HR: 1 or 2 steps, in order, plus how many corrections a month each
+ *     may raise. Unconfigured employees come straight to HR in tab 1.
  *
  *     Behind the `regularizationHierarchy.manage` grant, which a Super Admin
  *     ticks per account — so HR can be given this tab without also being given
@@ -26,7 +31,7 @@ import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { hasLeft } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
-import { promptDialog } from '../components/dialogs';
+import { confirmDialog, promptDialog } from '../components/dialogs';
 import { toast } from 'react-toastify';
 import { formatTime12 as fmt12 } from '../utils/time';
 import { hasExplicitPermission, isViewOnly } from '../config/permissions';
@@ -91,6 +96,18 @@ function RequestsTab() {
 
   const review = async (r, status) => {
     setError('');
+    // Deciding a request that has not reached you yet SKIPS its named approver.
+    // That is a real power — the way to unstick a request whose approver is away
+    // — but it is not the normal act this button performs, so it asks first.
+    if (r.status === 'Pending' && r.awaitingHr === false) {
+      const ok = await confirmDialog({
+        title: `${status === 'Approved' ? 'Approve' : 'Reject'} before their approver?`,
+        message: `This is still with ${r.waitingOn || 'their approver'}. Deciding it now skips that step — they will be told it no longer needs them.`,
+        confirmText: status === 'Approved' ? 'Approve anyway' : 'Reject anyway',
+        tone: 'warning',
+      });
+      if (!ok) return;
+    }
     let reviewNote = '';
     if (status === 'Rejected') {
       reviewNote = (await promptDialog({ message: 'Reason for rejection (optional):' })) || '';
@@ -199,6 +216,22 @@ function RequestsTab() {
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[r.status]}`}>
                     {r.status}
                   </span>
+                  {/* Whose turn a Pending request is on. HR is the FINAL rung of
+                      every ladder, so "Pending" now covers two different things:
+                      still climbing to its named approver, or sitting with you.
+                      Deciding the first is an override — allowed, and the valve
+                      for an approver who is away — but it should be a choice,
+                      not something you do because the row looked like every
+                      other row. */}
+                  {r.status === 'Pending' && (
+                    r.awaitingHr ? (
+                      <div className="text-[11px] text-gray-500 mt-1">Your approval</div>
+                    ) : (
+                      <div className="text-[11px] text-amber-700 mt-1" title="Deciding this now overrides their approval step">
+                        With {r.waitingOn || 'their approver'}
+                      </div>
+                    )
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
                   {r.status !== 'Pending' ? (

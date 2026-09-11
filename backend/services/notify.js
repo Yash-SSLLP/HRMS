@@ -7,16 +7,23 @@
  *
  * Push is best-effort and fire-and-forget: a push failure must never break the
  * request that triggered it, so we never await it in the caller's critical path.
+ *
+ * `awaitPush` is the exception, and it exists for SCRIPTS. A one-off script
+ * notifies, then disconnects Mongo and exits — and fire-and-forget pushes that
+ * had not yet read DeviceToken die mid-flight with "Client must be connected",
+ * so the in-app rows land and the phones stay silent. A script has no request to
+ * protect and every reason to wait, so it passes `awaitPush: true` and the push
+ * becomes part of the call. Request paths must never set it.
  */
 const Notification = require('../models/Notification');
 const { pushToUsers } = require('./push');
 
 /**
  * Notify a single recipient.
- * @param {{recipient:string, sender?:string, type?:string, title:string, body?:string, link?:string, data?:object}} input
+ * @param {{recipient:string, sender?:string, type?:string, title:string, body?:string, link?:string, data?:object, awaitPush?:boolean}} input
  * @returns {Promise<Notification>}
  */
-async function notify({ recipient, sender, type = 'general', audience = 'all', title, body, link, data }) {
+async function notify({ recipient, sender, type = 'general', audience = 'all', title, body, link, data, awaitPush = false }) {
   if (!recipient || !title) throw new Error('notify requires recipient and title');
 
   // `sender` is optional and only set for person-to-person notifications, so a
@@ -24,12 +31,13 @@ async function notify({ recipient, sender, type = 'general', audience = 'all', t
   // every notification the system itself raises.
   const doc = await Notification.create({ recipient, sender, type, audience, title, body, link });
 
-  // Fire push without blocking the caller.
-  pushToUsers(recipient, {
+  // Fire push without blocking the caller (unless the caller asked to wait).
+  const sending = pushToUsers(recipient, {
     title,
     body,
     data: { notificationId: String(doc._id), type, link: link || null, ...(data || {}) },
   }).catch((err) => console.error('push (notify) failed:', err.message));
+  if (awaitPush) await sending;
 
   return doc;
 }
@@ -40,7 +48,7 @@ async function notify({ recipient, sender, type = 'general', audience = 'all', t
  * @param {string[]} recipients
  * @param {{type?:string, title:string, body?:string, link?:string, data?:object}} input
  */
-async function notifyMany(recipients, { type = 'general', audience = 'all', title, body, link, data } = {}) {
+async function notifyMany(recipients, { type = 'general', audience = 'all', title, body, link, data, awaitPush = false } = {}) {
   const ids = [...new Set((recipients || []).map(String))].filter(Boolean);
   if (!ids.length || !title) return { created: 0 };
 
@@ -48,11 +56,12 @@ async function notifyMany(recipients, { type = 'general', audience = 'all', titl
     ids.map((recipient) => ({ recipient, type, audience, title, body, link }))
   );
 
-  pushToUsers(ids, {
+  const sending = pushToUsers(ids, {
     title,
     body,
     data: { type, link: link || null, ...(data || {}) },
   }).catch((err) => console.error('push (notifyMany) failed:', err.message));
+  if (awaitPush) await sending;
 
   return { created: ids.length };
 }

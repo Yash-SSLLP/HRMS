@@ -266,6 +266,15 @@ function NotificationBell({ isAdmin, portal }) {
     // page in both portals: a CEO/MD has no employee portal and reads the
     // rounds booked with them under /admin.
     if (n.link === 'interviews') return portal === 'employee' ? '/employee/interviews' : '/admin/my-interviews';
+    // Two more bare slugs with a page in BOTH portals, and the same relative-
+    // navigation bug as 'interviews' above. 'approvals' is where a named
+    // approver acts on a request whatever their role — a regularization or
+    // leave rung is often somebody with no admin portal, who reads it in My
+    // Portal. 'regularizations' is the employee's own list of corrections.
+    if (n.link === 'approvals') return portal === 'employee' ? '/employee/approvals' : '/admin/approvals';
+    if (n.link === 'regularizations' || n.link === 'regularization') {
+      return portal === 'employee' ? '/employee/regularizations' : '/admin/regularizations';
+    }
     // Legacy course links were stored as "/learning"; the actual route lives
     // under the employee portal. Normalise so older notifications still land.
     if (n.link === '/learning' || n.link.startsWith('/learning/')) return `/employee${n.link}`;

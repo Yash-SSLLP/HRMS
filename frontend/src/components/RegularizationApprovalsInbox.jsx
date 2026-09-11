@@ -9,8 +9,13 @@
  * /approvals/regularizations routes and scoped server-side to
  * `currentApprover === me`, exactly like the leave and exit inboxes.
  *
- * Employees with no configured approvers never appear here; their requests stay
- * on the flat HR-review path in Admin → Regularizations.
+ * TWO KINDS OF ROW, and the pill on the right says which. A NAMED step, where
+ * approving passes the request up the ladder; and HR's FINAL step (`awaitingHr`
+ * — no current approver, because HR is the last rung of every ladder and is not
+ * in the chain array), where approving APPLIES the correction to the day. The
+ * second kind reaches anyone holding `attendance.manage`, walled to their own
+ * company, and covers employees with no configured approvers too — those come
+ * straight here rather than climbing first.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -44,8 +49,14 @@ function ChangeLine({ label, from, to }) {
 }
 
 // Where this request sits in its ladder, e.g. "Step 1 of 2".
+//
+// HR is the final rung and is NOT in `approvalChain` — the chain holds only the
+// approvers a SuperAdmin named. So a cleared chain has no Pending rung to point
+// at, and counting the array would label HR's own turn "Step 2 of 2", naming the
+// step that has just finished rather than the one being asked for.
 function stepLabel(r) {
   const chain = r.approvalChain || [];
+  if (r.awaitingHr) return chain.length ? `Final · after ${chain.length} step${chain.length === 1 ? '' : 's'}` : 'Final';
   if (!chain.length) return null;
   const idx = chain.findIndex((s) => s.status === 'Pending');
   return `Step ${(idx < 0 ? chain.length : idx + 1)} of ${chain.length}`;
@@ -122,8 +133,16 @@ export default function RegularizationApprovalsInbox({ onCount }) {
                   </div>
                   <div className="text-sm text-gray-700 mt-1">{r.reason}</div>
                 </div>
+                {/* The final rung reads differently from a step on the way to
+                    it: approving here APPLIES the correction to the day, where
+                    approving a named step only passes it on. Same pill, own
+                    colour, so a mixed queue can be scanned rather than read. */}
                 {stepLabel(r) && (
-                  <span className="text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
+                  <span className={`text-xs px-2 py-1 rounded-full border shrink-0 ${
+                    r.awaitingHr
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                  }`}>
                     {stepLabel(r)}
                   </span>
                 )}

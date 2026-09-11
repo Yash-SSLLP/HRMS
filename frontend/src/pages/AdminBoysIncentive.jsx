@@ -630,27 +630,54 @@ export default function AdminBoysIncentive() {
   }, [month]);
 
   // Live arithmetic in the form, so nobody has to trust the number after saving.
-  // The same sum the server does (IncentiveEntry.recalc): the pot first, then
-  // one equal share of it. Shown live so nobody has to trust the figure after
-  // saving to find out what a person actually gets.
+  //
+  // It must be the SAME sum the server does (IncentiveEntry.recalc), which means
+  // the non-rolling cut belongs in it: the pot, then the cut, then one equal
+  // share of what is LEFT. Dividing the whole pot instead promised every roller
+  // ~43% more than the day would actually pay them the moment a group was set —
+  // and the form is where people look to find out what they are getting.
+  //
+  // THE CUT IS ONLY TAKEN WHEN SOMEBODY IS THERE TO RECEIVE IT, exactly as
+  // recalc has it: no group on that day, or a group where everyone was absent,
+  // and the team keeps the lot. The group belongs to the DAY, so it is read off
+  // the day rather than off this team. A day outside the loaded month is not in
+  // `days` and reads as "no group" — the same answer the server gives for a day
+  // that has none, and the figure corrects itself on save either way.
   const preview = useMemo(() => {
     if (!form) return null;
     const heads = (form.members?.length || 0) + (form.picker ? 1 : 0);
     const pending = form.sheets === '' || form.sheets == null;
     const sheets = Math.max(0, Number(form.sheets) || 0);
     const perSheet = Math.max(0, Number(settings.pointsPerSheet) || 0);
+    const perPoint = Math.max(0, Number(settings.rupeePerPoint) || 0);
     const teamPoints = Math.round(sheets * perSheet * 100) / 100;
-    const pointsEach = heads ? Math.round((teamPoints / heads) * 100) / 100 : 0;
-    const total = Math.round(teamPoints * settings.rupeePerPoint * 100) / 100;
+
+    const day = days.find((d) => d.key === form.date);
+    const sharePct = day && day.present.length
+      ? (day.sharePct ?? settings.nonRollingSharePct)
+      : 0;
+    const cut = Math.round(teamPoints * (sharePct / 100) * 100) / 100;
+    // Subtraction, not a second multiplication — the two halves have to add back
+    // up to the pot exactly, which is the property every total leans on.
+    const rollingPoints = Math.round((teamPoints - cut) * 100) / 100;
+    const pointsEach = heads ? Math.round((rollingPoints / heads) * 100) / 100 : 0;
+
     return {
       heads,
       pending,
       teamPoints,
+      sharePct,
+      cut,
+      nonRollingHeads: day ? day.present.length : 0,
+      rollingPoints,
       pointsEach,
-      total,
-      per: heads ? Math.round((total / heads) * 100) / 100 : 0,
+      // Money follows the points, as it does on the server: the pot's value is
+      // what the day costs, a head's value is their own share — not the pot
+      // divided by the heads.
+      total: Math.round(teamPoints * perPoint * 100) / 100,
+      per: Math.round(pointsEach * perPoint * 100) / 100,
     };
-  }, [form, settings.pointsPerSheet, settings.rupeePerPoint]);
+  }, [form, days, settings.pointsPerSheet, settings.rupeePerPoint, settings.nonRollingSharePct]);
 
   return (
     <div>
@@ -1466,6 +1493,15 @@ export default function AdminBoysIncentive() {
                   ) : (
                     <>
                       {' '}· team earns <strong>{points(preview.teamPoints)} points</strong>
+                      {/* Said out loud only when a cut is actually taken. On a
+                          day with no non-rolling group the team keeps the lot,
+                          and "− 0 to non-rolling" would invent a deduction. */}
+                      {preview.cut > 0 && (
+                        <>
+                          {' '}· −{points(preview.cut)} to the {preview.nonRollingHeads} not rolling
+                          {' '}({points(preview.sharePct)}%)
+                        </>
+                      )}
                       {' '}· <strong>{points(preview.pointsEach)} points</strong> each
                     </>
                   )}

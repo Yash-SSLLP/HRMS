@@ -291,6 +291,15 @@ export default function EmployeeRegularizations() {
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[r.status]}`}>
                     {r.status}
                   </span>
+                  {/* "Pending" on its own cannot say whether anyone has looked at
+                      it. A correction waits in two rooms — its named approver's,
+                      then HR's, who give the final approval — and which one it is
+                      in is the thing you actually want to know. */}
+                  {r.status === 'Pending' && (
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      {r.awaitingHr ? 'With HR' : `With ${r.waitingOn || 'your approver'}`}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

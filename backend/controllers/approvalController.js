@@ -9,7 +9,7 @@ const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const ExitRequest = require('../models/ExitRequest');
 const Regularization = require('../models/Regularization');
 const Attendance = require('../models/Attendance');
-const { advanceRegularizationApproval } = require('./regularizationController');
+const { advanceRegularizationApproval, decideAsHr, AWAITING_HR } = require('./regularizationController');
 const { listWorkOnLeaveClaims, decideWorkOnLeave } = require('./attendanceController');
 const { advanceApproval, ensureApprovalChain } = require('./leaveController');
 const {
@@ -337,10 +337,37 @@ const listMyClearances = asyncHandler(async (req, res) => {
  * @param {string} [req.query.scope] - 'pending' (awaiting me) or 'history' (any chain I'm in)
  * @returns {{scope, count, requests: Object[]}}
  */
+/**
+ * The regularization inbox filter — the chain rungs, PLUS HR's final rung.
+ *
+ * HR is the last rung of every ladder, but not a NAMED one: a cleared request
+ * carries no `currentApprover`, so the chain filter finds none of them and HR's
+ * own turn was invisible here — they had to go to the Regularizations tab to
+ * find work the inbox had told them about. This adds that queue for anyone who
+ * can actually decide it.
+ *
+ * TWO THINGS IT MUST NOT SKIP. The company wall (the chain half needs none —
+ * a named approver was picked explicitly — but "every request waiting on HR" is
+ * a fan-out, and without the wall it spans companies). And the SuperAdmin, who
+ * already matches every Pending request through `seesAllApprovals`; $or-ing a
+ * second clause onto that would only duplicate rows.
+ * @param {import('express').Request} req
+ * @param {'pending'|'history'} scope
+ * @returns {Promise<Object>} a Mongo filter
+ */
+async function regularizationInboxFilter(req, scope) {
+  const base = chainInboxFilter(req.user, scope);
+  if (scope !== 'pending' || seesAllApprovals(req.user) || !hasPermission(req.user, 'attendance.manage')) {
+    return base;
+  }
+  const hrQueue = { ...AWAITING_HR };
+  await scopeUserField(req, hrQueue); // Regularization.employee is a User id
+  return { $or: [base, hrQueue] };
+}
+
 const listMyRegularizationApprovals = asyncHandler(async (req, res) => {
-  const me = req.user._id;
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
-  const filter = chainInboxFilter(req.user, scope);
+  const filter = await regularizationInboxFilter(req, scope);
   const requests = await Regularization.find(filter)
     .populate('employee', 'firstName lastName email role')
     .sort({ date: -1 })
@@ -352,7 +379,14 @@ const listMyRegularizationApprovals = asyncHandler(async (req, res) => {
   // a pending request has them empty — which is exactly when the approver needs
   // to know what is being changed.
   const withCurrent = await attachCurrentPunches(requests);
-  res.json({ scope, count: withCurrent.length, requests: withCurrent });
+  // Which rung each row is at, stamped rather than re-derived on the client —
+  // the same field name the module's own list endpoints use, so one rule about
+  // "is this HR's turn" reaches every screen that draws these requests.
+  res.json({
+    scope,
+    count: withCurrent.length,
+    requests: withCurrent.map((r) => ({ ...r, awaitingHr: r.status === 'Pending' && !r.currentApprover })),
+  });
 });
 
 /**
@@ -404,8 +438,16 @@ async function attachCurrentPunches(requests) {
 }
 
 // Shared by the approve/reject routes below — both are the same call with a
-// different action, and both are scoped to `currentApprover === me` inside
-// advanceRegularizationApproval.
+// different action.
+//
+// WHICH RUNG is being decided decides which function runs, and the item itself
+// answers that: one with a `currentApprover` is at a NAMED rung, scoped to
+// `currentApprover === me` inside advanceRegularizationApproval; one without is
+// at HR's final rung, and goes through the same decideAsHr the Regularizations
+// tab uses — including its refusals (your own request, an HR's own correction, a
+// view-only exec). Routing it to advance instead would have answered HR with
+// "this regularization is not awaiting your approval", since a null
+// currentApprover reads there as an override only a SuperAdmin may make.
 const decideRegularization = (action) =>
   asyncHandler(async (req, res) => {
     const item = await Regularization.findById(req.params.id);
@@ -414,9 +456,13 @@ const decideRegularization = (action) =>
       throw new Error('Regularization request not found');
     }
     try {
-      const out = await advanceRegularizationApproval(
-        item, req.user._id, action, req.body.note, req.user
-      );
+      // A SuperAdmin keeps the advance path even on a cleared request: it is
+      // their documented override, and it finalises and applies exactly as it
+      // did before HR became a rung.
+      const hrRung = !item.currentApprover && req.user.role !== 'SuperAdmin';
+      const out = hrRung
+        ? await decideAsHr(item, req.user, action === 'approve' ? 'Approved' : 'Rejected', req.body.note)
+        : await advanceRegularizationApproval(item, req.user._id, action, req.body.note, req.user);
       res.json(out);
     } catch (err) {
       res.status(err.status || 400);
@@ -575,8 +621,13 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     ? TravelRequest.countDocuments(await scopeUserField(req, { status: 'Pending' }))
     : NONE;
   // GET /regularizations?status=Pending       (attendance.manage) employee = User
+  // `currentApprover: null` is the "it is HR's turn" half of Pending: a request
+  // still climbing its configured ladder carries its approver's id and is not
+  // HR's to decide yet. Without it HR's badge counts other people's queues, and
+  // a badge you cannot clear is one people stop reading. (Also matches the
+  // documents that predate the field, which were always HR's.)
   const regularizationQ = may('attendance.manage')
-    ? Regularization.countDocuments(await scopeUserField(req, { status: 'Pending' }))
+    ? Regularization.countDocuments(await scopeUserField(req, { ...AWAITING_HR }))
     : NONE;
   // GET /loans?status=Pending                 (loans.manage)      employee = User
   const loanQ = may('loans.manage')
