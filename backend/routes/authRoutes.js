@@ -11,6 +11,7 @@ const {
   logout,
   me,
   updateMyCredentials,
+  updateMyHomePins,
   uploadMyAvatar,
   deleteMyAvatar,
   getUserAvatar,
@@ -41,6 +42,10 @@ router.post('/logout', protect, logout);
 router.get('/me', protect, me);
 // PATCH /me/credentials — update own username/password; protected.
 router.patch('/me/credentials', protect, updateMyCredentials);
+// PATCH /me/home-pins — the quick actions this person keeps on their home
+// screen. Self-service by nature: it changes nothing but their own shortcuts,
+// so it needs no capability beyond being signed in.
+router.patch('/me/home-pins', protect, updateMyHomePins);
 
 // Profile photo (self-service upload/remove + viewing any user's avatar)
 // POST /me/avatar — upload own avatar; protected + multer single 'photo' (5MB image-only).

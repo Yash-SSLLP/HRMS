@@ -31,7 +31,7 @@ const express = require('express');
 const { createUpload } = require('../middleware/upload');
 const ctrl = require('../controllers/incentiveController');
 const {
-  protect, requireIncentivePayer, requireIncentiveAccess, requireIncentiveManager,
+  protect, restrictTo, requireIncentivePayer, requireIncentiveAccess, requireIncentiveManager,
   requireIncentiveCreditor, requireIncentiveSection,
 } = require('../middleware/authMiddleware');
 
@@ -64,6 +64,27 @@ router.use(protect);
 // handler reads the caller's own employee record and takes no id, so it can see
 // nobody else.
 router.get('/me', ctrl.myPoints);
+// ...and where those points CAME FROM, day by day. Same reasoning, same
+// placement: it reads the caller's own record and takes no id.
+router.get('/me/history', ctrl.myHistory);
+
+// ------------------------------------------------------------ leaderboard ---
+// "How am I doing against everyone else?" — the employee-facing standing, and
+// the second half of the My Incentive screen.
+//
+// ALSO ABOVE EVERY GATE, and for the same reason as /me: the people on a
+// leaderboard are the people who EARN points, none of whom hold a role in the
+// module. What it may show them is not a capability question at all — it is a
+// per-department rule a SuperAdmin sets below, and the handler applies it.
+//
+// The settings pair is SuperAdmin-only rather than `incentive.manage`: deciding
+// what one department learns about another department's earnings is a company
+// decision, not the decision of whoever runs a tab. Declared BEFORE the plain
+// '/leaderboard' route for clarity only — Express matches both exactly.
+router.route('/leaderboard/settings')
+  .get(restrictTo('SuperAdmin'), ctrl.getLeaderboardSettings)
+  .put(restrictTo('SuperAdmin'), ctrl.updateLeaderboardSettings);
+router.get('/leaderboard', ctrl.leaderboard);
 
 // ---------------------------------------------------------------- section ---
 // The SECTION-WIDE screen — every employee and what they hold in points,

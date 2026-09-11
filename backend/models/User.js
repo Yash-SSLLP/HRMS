@@ -188,6 +188,25 @@ const userSchema = new mongoose.Schema(
     dateOfBirth: { type: Date, default: null },
     dateOfJoining: { type: Date, default: null },
     dateOfMarriage: { type: Date, default: null },
+
+    // ===== Home-screen quick actions the person pinned for themselves =====
+    // The route keys of the tiles shown under "Quick actions" on the app's home
+    // screen, in the order they were chosen. Owned by the CLIENT: the server
+    // stores names it does not interpret, because which destinations exist is a
+    // question about the app, not about the database, and a whitelist here would
+    // have to be edited every time a screen is added.
+    //
+    // `undefined` (never set) and `[]` are DIFFERENT answers and the difference
+    // matters: undefined means "never customised", so the client applies its own
+    // defaults; an empty array is somebody who deliberately cleared every pin and
+    // must not have the defaults handed back to them on the next launch. Hence
+    // `default: undefined` — the same contract `permissions` and `companies` use
+    // above. The "More" tile is not stored: it is permanent and the client
+    // appends it.
+    //
+    // Here rather than on EmployeeProfile so an account with no profile (CEO/MD,
+    // SuperAdmin) can pin too, and so it follows the person to a new phone.
+    homePins: { type: [String], default: undefined },
   },
   { timestamps: true }
 );

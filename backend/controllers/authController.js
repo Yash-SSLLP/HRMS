@@ -211,6 +211,55 @@ const updateMyCredentials = asyncHandler(async (req, res) => {
 });
 
 /**
+ * How many tiles the home screen's quick-action grid can carry before it stops
+ * being quick. Four to a row, three rows, less the permanent "More" tile.
+ */
+const MAX_HOME_PINS = 11;
+
+/**
+ * Set which quick actions the caller has pinned to their home screen.
+ *
+ * The server stores route keys it does not interpret — see `homePins` in
+ * models/User.js for why the whitelist belongs to the client. What it DOES
+ * enforce is shape: strings, trimmed, de-duplicated, and few enough to fit a
+ * screen, so a malformed client cannot write a list that renders as a wall of
+ * blank tiles.
+ *
+ * An EMPTY array is a valid, meaningful save ("I want no pins but More"), so it
+ * is stored as `[]` rather than treated as "reset me". Resetting to the app's
+ * defaults is `{ pins: null }`, which clears the field back to unset.
+ *
+ * @route PATCH /api/auth/me/home-pins  (protected)
+ * @param {string[]|null} req.body.pins - route keys in display order, or null to
+ *   go back to the client's defaults
+ * @returns {{user: Object}}; 400 when `pins` is neither an array nor null
+ */
+// PATCH /api/auth/me/home-pins  (protected)
+const updateMyHomePins = asyncHandler(async (req, res) => {
+  const { pins } = req.body;
+  if (pins !== null && pins !== undefined && !Array.isArray(pins)) {
+    res.status(400);
+    throw new Error('Send the pinned shortcuts as a list.');
+  }
+
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error('Account not found');
+  }
+
+  if (pins === null || pins === undefined) {
+    user.homePins = undefined;
+  } else {
+    const clean = pins.map((p) => String(p || '').trim()).filter((p) => p && p.length <= 40);
+    user.homePins = [...new Set(clean)].slice(0, MAX_HOME_PINS);
+  }
+
+  await user.save();
+  res.json({ user: user.toJSON() });
+});
+
+/**
  * Upload the caller's profile photo, replacing any existing one.
  * @route POST /api/auth/me/avatar  (protected, multipart field: photo)
  * @param {File} req.file - the image (required)
@@ -367,7 +416,7 @@ const getUserBanner = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  signup, login, logout, me, updateMyCredentials,
+  signup, login, logout, me, updateMyCredentials, updateMyHomePins,
   uploadMyAvatar, deleteMyAvatar, getUserAvatar,
   uploadMyBanner, deleteMyBanner, getUserBanner,
 };

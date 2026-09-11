@@ -55,7 +55,7 @@ changes the arithmetic — but it *does* decide which book a row is filed under:
 | Movement | Book | Because |
 |---|---|---|
 | `expense` | **required** | Spending is the thing that needs a heading. |
-| `refund` | **required** | Money coming back is the mirror of the spending it undoes, so it belongs under the same heading. See **Cash In on a book** below. |
+| `refund` | **required** | Money coming back is the mirror of the spending it undoes, so it belongs under the same heading. See **The `refund` movement** below — filing one is no longer offered, but the rule still governs every row already on the ledger. |
 | everything else | `null` | An advance, a return, a reimbursement or a payroll recovery moves the pot itself and belongs to no one book. |
 
 > The field is `movement` on `CashbookEntry`. It was `type` on the legacy
@@ -473,7 +473,16 @@ could rename the book, answer for its figures, or be asked to close it.
 
 ---
 
-## Cash In on a book — the `refund` movement
+## The `refund` movement
+
+> **Filing one was withdrawn from the employee app and portal on 2026-09-11**
+> (user decision). `POST /khata/me/refund` still stands, and everything below
+> still describes what a refund *is*: rows already on the ledger keep reading
+> correctly, one already filed stays correctable through the same form, and the
+> company side can still post one. What went is the **Cash In** button that used
+> to raise them — money coming towards an employee is, in practice, the
+> company's advance, and asking for that is now a button of its own, against the
+> wallet rather than against any book.
 
 A book only ever went one way. Every movement filed under one was an `expense`,
 so a book could grow, and could be corrected by reversal, but nothing could come
@@ -878,7 +887,7 @@ own ledger — in which case the new figure is the correct one).
    no grant behind it.
 
 > **A book card reading a negative "spent"** either means the book has been
-> refunded more than it was ever charged — a real state, see **Cash In on a
+> refunded more than it was ever charged — a real state, see **The `refund`
 > book** — or that the migration has not been run on that database and the books
 > still contain advances filed under them from the days of per-book advances.
 > `migrateKhataWallet.js --apply` detaches those and replays every total.

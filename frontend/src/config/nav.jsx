@@ -148,6 +148,12 @@ export const adminNav = [
     { to: '/admin/incentive-dashboard', label: 'Points Dashboard', icon: FiBarChart2, perm: 'incentive.manage',
       keywords: ['points', 'dashboard', 'credit', 'credit points', 'bonus', 'award', 'pay', 'payout', 'owed', 'balance', 'incentive', 'department'],
       tabs: [{ id: 'people', label: 'Everyone' }, { id: 'credits', label: 'Credits given' }] },
+    // Who may see whose points on the EMPLOYEE leaderboard. Gated on the ROLE,
+    // not on `incentive.manage`: both endpoints behind it are
+    // restrictTo('SuperAdmin'), and what one department learns about another's
+    // earnings is not a decision that belongs to whoever runs a tab.
+    { to: '/admin/incentive-leaderboard', label: 'Leaderboard Access', icon: FiAward, roles: ['SuperAdmin'],
+      keywords: ['leaderboard', 'ranking', 'rank', 'visibility', 'who can see', 'department', 'incentive', 'points'] },
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus, anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'] },
@@ -310,6 +316,12 @@ export const employeeNav = [
   // they have an admin portal at all, and burying it under Payroll made it read
   // as something to do with their own pay rather than a job they run.
   { group: 'Incentive', icon: FiRotateCw, keepGroup: true, items: [
+    // MY OWN points — the one row in this group that is NOT gated. Everybody
+    // who can earn points can read their own, which is the whole reason the
+    // page exists; the three rows under it are for whoever RUNS an incentive.
+    { to: '/employee/my-incentive', label: 'My Incentive', icon: FiAward,
+      keywords: ['incentive', 'points', 'my points', 'leaderboard', 'rank', 'ranking', 'unpaid', 'earned', 'rolling', 'standing'],
+      tabs: [{ id: 'points', label: 'My points' }, { id: 'board', label: 'Leaderboard' }] },
     { to: '/employee/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'incentive'] },
     { to: '/employee/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',

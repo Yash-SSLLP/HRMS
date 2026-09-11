@@ -163,6 +163,40 @@ const settingSchema = new mongoose.Schema(
       // the BOYS department's incentive and only theirs — another department
       // gets its own tab rather than a dropdown here (user decision
       // 2026-09-10). The controller resolves the department name itself.
+
+      // WHO MAY SEE WHOSE POINTS on the employee-facing leaderboard
+      // (My Incentive ▸ Leaderboard). SuperAdmin-only, and deliberately here
+      // rather than behind `incentive.manage`: it decides what one department
+      // learns about another's earnings, which is a company decision, not a
+      // supervisor's (user decision 2026-09-11).
+      //
+      // A person's OWN points are never governed by this — they always see
+      // their own row, on the first tab, whatever is set here. This is only
+      // about the comparison.
+      leaderboard: {
+        // Off hides the tab for everyone. The date-wise tab stays.
+        enabled: { type: Boolean, default: true },
+        // What a department with NO rule below sees. 'own' is the safe default
+        // — opening the whole company's earnings to everybody has to be a
+        // choice somebody made, not what happens when nobody configured it.
+        defaultScope: { type: String, enum: ['own', 'all', 'none'], default: 'own' },
+        // The rules. One row per VIEWING department, naming the departments it
+        // may see: { department: 'IT', canView: ['IT', 'HR'] }. A viewer's own
+        // department is always readable to them — the controller adds it — so a
+        // rule only ever has to list the OTHERS.
+        visibility: {
+          type: [
+            new mongoose.Schema(
+              {
+                department: { type: String, trim: true, required: true },
+                canView: { type: [String], default: [] },
+              },
+              { _id: false }
+            ),
+          ],
+          default: [],
+        },
+      },
     },
 
     // Letterhead branding, uploaded by a SuperAdmin from Admin → Email & Letter

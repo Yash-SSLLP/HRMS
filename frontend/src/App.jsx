@@ -127,6 +127,8 @@ const AdminKhata = lazy(() => import('./pages/AdminKhata.jsx'));
 const AdminBoysIncentive = lazy(() => import('./pages/AdminBoysIncentive.jsx'));
 const AdminIncentivePoints = lazy(() => import('./pages/AdminIncentivePoints.jsx'));
 const AdminIncentiveDashboard = lazy(() => import('./pages/AdminIncentiveDashboard.jsx'));
+const AdminIncentiveLeaderboard = lazy(() => import('./pages/AdminIncentiveLeaderboard.jsx'));
+const EmployeeIncentive = lazy(() => import('./pages/EmployeeIncentive.jsx'));
 const EmployeeKhata = lazy(() => import('./pages/EmployeeKhata.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
 const AdminPushNotifications = lazy(() => import('./pages/AdminPushNotifications.jsx'));
@@ -264,6 +266,9 @@ export default function App() {
         <Route path="boys-incentive" element={<AdminBoysIncentive />} />
         <Route path="incentive-points" element={<AdminIncentivePoints />} />
         <Route path="incentive-dashboard" element={<AdminIncentiveDashboard />} />
+        {/* SuperAdmin only — the page says so and both endpoints behind it are
+            restrictTo('SuperAdmin'). */}
+        <Route path="incentive-leaderboard" element={<AdminIncentiveLeaderboard />} />
         <Route path="declarations" element={<AdminInvestmentDeclarations />} />
         <Route path="compliance" element={<AdminCompliance />} />
         <Route path="leave" element={<AdminLeave />} />
@@ -349,6 +354,9 @@ export default function App() {
         <Route path="boys-incentive" element={<AdminBoysIncentive />} />
         <Route path="incentive-points" element={<AdminIncentivePoints />} />
         <Route path="incentive-dashboard" element={<AdminIncentiveDashboard />} />
+        {/* My own points — ungated, unlike the three above it: earning points is
+            not a capability. */}
+        <Route path="my-incentive" element={<EmployeeIncentive />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />

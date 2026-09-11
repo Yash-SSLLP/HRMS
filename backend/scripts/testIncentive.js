@@ -8,8 +8,10 @@
  * split, what a manager may do that a picker may not, paying people their
  * points (in parts), the non-rolling group that takes a cut of what a team rolls
  * (its attendance-led presence and the hand override), the section-wide points
- * dashboard and the credits that feed it, and a full spreadsheet round trip
- * through services/incentiveExcel.
+ * dashboard and the credits that feed it, a full spreadsheet round trip through
+ * services/incentiveExcel, and the EMPLOYEE half of the module — my own points
+ * day by day, and the leaderboard with the per-department visibility rules a
+ * SuperAdmin sets over it.
  *
  * Same shape as scripts/testCompanyScope.js. Run:
  *   node scripts/testIncentive.js
@@ -117,6 +119,13 @@ const query = (result) => {
 };
 FakeEntry.find = (filter) => query(store.filter((d) => matches(d, filter)));
 FakeEntry.findOne = (filter) => query(store.find((d) => matches(d, filter)) || null);
+// createEntry and setDayGroup both RE-READ the day after applyDayGroup has
+// written through its own copies of it, so the caller is handed the entry as it
+// actually now stands rather than the one it built. Without this the two
+// handlers threw "findById is not a function" and every case that sets a
+// non-rolling group failed for a reason that had nothing to do with the rule
+// under test.
+FakeEntry.findById = (docId) => query(store.find((d) => String(d._id) === String(docId)) || null);
 FakeEntry.create = async (fields) => new FakeEntry(fields).save();
 
 const settingsDoc = {
@@ -1223,10 +1232,16 @@ const DAY2 = '2026-09-11';
     const by = (code) => res.payload.people.find((r) => r.employeeCode === code);
 
     // October holds: 'October' (20 pts, 6 out), 'No group' (20 pts, none out),
-    // 'Renegotiated' (20 pts, 10 out) and 'October two' (20 pts, 6 out).
-    // SSL103 is non-rolling on three of them: 3 + 10 + 6.
+    // 'Renegotiated' (20 pts at 50%, 10 out) and 'October two' (20 pts, 6 out).
+    // SSL103 is the only one present in the group on three of them: 6 + 10 + 6.
+    //
+    // Not four: on 'No group' everybody in the group was marked absent, so the
+    // cut was never taken and they are not a payee of that day at all. And not
+    // half-shares on the 5th either — the day's group is ONE group shared by
+    // both of its teams (models/IncentiveEntry), and the last write to it left
+    // SSL103 alone in it, so they take the whole of each team's cut.
     const p3 = by('SSL103');
-    assert.strictEqual(p3.teamPoints, 19, 'three non-rolling shares');
+    assert.strictEqual(p3.teamPoints, 22, 'three non-rolling shares');
     assert.strictEqual(p3.nonRollingDays, 3);
     assert.strictEqual(p3.pickerDays, 0);
     assert.strictEqual(p3.sheets, 0, 'a non-roller rolled nothing, so no sheets are theirs');
@@ -1249,7 +1264,7 @@ const DAY2 = '2026-09-11';
 
   await check('a non-roller is paid their non-rolling share and no more', async () => {
     const res = await call(ctrl.payPoints, {
-      body: { month: '2026-10', payments: [{ employee: id(3), points: 19 }] },
+      body: { month: '2026-10', payments: [{ employee: id(3), points: 22 }] },
     });
     assert.strictEqual(res.statusCode, 201, res.error);
 
@@ -1323,6 +1338,343 @@ const DAY2 = '2026-09-11';
     assert.strictEqual(away.present, false);
     assert.strictEqual(away.attendance, 'OnLeave');
     setAttendance(OCT, id(4), 'Present');
+  });
+
+
+  // ===================================================== MY INCENTIVE =========
+  //
+  // The employee's own half of the module: where MY points came from, and how I
+  // compare. Both handlers sit above every capability gate in the router, so
+  // these run as a plain Employee wherever the answer should not depend on rank.
+
+  // December, kept clear of every other test's days so the totals below are
+  // exactly the rows this block creates.
+  const DEC = '2026-12';
+  const DEC5 = '2026-12-05';
+  const DEC6 = '2026-12-06';
+  const STAFF = { _id: '64f000000000000000000009', role: 'Employee', fullName: 'A Roller' };
+
+  await check('my history says where each point came from, day by day', async () => {
+    // One day: person 1 picks, person 2 rolls with them, person 3 is in the
+    // day's non-rolling group. 10 sheets x 4 = 40 team points; 30% (12) to the
+    // group, 28 split two ways = 14 each.
+    const day = await call(ctrl.createEntry, {
+      body: {
+        date: DEC5,
+        teamName: 'December',
+        picker: id(1),
+        members: [id(2)],
+        nonRolling: [{ employee: id(3) }],
+        sheets: 10,
+      },
+    });
+    assert.strictEqual(day.statusCode, 201, day.error);
+    assert.strictEqual(day.payload.entry.teamPoints, 40);
+    assert.strictEqual(day.payload.entry.perPersonPoints, 14);
+    assert.strictEqual(day.payload.entry.perNonRollingPoints, 12);
+
+    // ...and a second day nobody has filled a sheet count in for yet.
+    const pending = await call(ctrl.createEntry, {
+      body: { date: DEC6, teamName: 'Waiting', picker: id(1), members: [id(2)] },
+    });
+    assert.strictEqual(pending.statusCode, 201, pending.error);
+
+    // 5 points credited to person 1 on top, which is the third way points
+    // arrive and has to be a row of its own with its reason on it.
+    const credit = await call(ctrl.createCredit, {
+      body: { employees: [id(1)], points: 5, reason: 'Stood in on Sunday', date: DEC5 },
+    });
+    assert.strictEqual(credit.statusCode, 201, credit.error);
+
+    // THE PICKER'S OWN VIEW.
+    FakeProfile.findOne = () => query(PEOPLE[0]);
+    const mine = await call(ctrl.myHistory, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(mine.statusCode, 200, mine.error);
+    assert.strictEqual(mine.payload.hasIncentive, true);
+
+    const rolled = mine.payload.rows.find((r) => r.kind === 'rolling' && !r.pending);
+    assert.strictEqual(rolled.role, 'Picker', 'they picked that day');
+    assert.strictEqual(rolled.points, 14, 'a ROLLING share, not the team figure');
+    assert.strictEqual(rolled.sheets, 10);
+    assert.strictEqual(rolled.headCount, 2);
+
+    const waiting = mine.payload.rows.find((r) => r.pending);
+    assert.ok(waiting, 'the unfilled day is listed rather than hidden');
+    assert.strictEqual(waiting.sheets, null, 'and says it has no figure yet');
+    assert.strictEqual(waiting.points, 0);
+
+    const credited = mine.payload.rows.find((r) => r.kind === 'credit');
+    assert.strictEqual(credited.points, 5);
+    assert.strictEqual(credited.reason, 'Stood in on Sunday');
+
+    // Newest first, like every other feed in the portal.
+    const dates = mine.payload.rows.map((r) => new Date(r.date).getTime());
+    assert.deepStrictEqual(dates, [...dates].sort((a, b) => b - a), 'newest first');
+
+    assert.strictEqual(mine.payload.totals.teamPoints, 14);
+    assert.strictEqual(mine.payload.totals.creditPoints, 5);
+    assert.strictEqual(mine.payload.totals.points, 19, 'a credit joins the same pool');
+    assert.strictEqual(mine.payload.totals.unpaidPoints, 19, 'nothing settled yet');
+    assert.strictEqual(mine.payload.totals.pending, 1);
+    // The pending day's sheets are null, so only the filled day's 10 count.
+    assert.strictEqual(mine.payload.totals.sheets, 10);
+  });
+
+  await check('the home-screen total counts a non-rolling day too', async () => {
+    // THE BUG THIS PINS DOWN: GET /me matched only entries naming the person as
+    // the picker or a member, so somebody whose points came from being in the
+    // day's NON-ROLLING group had those days filtered out before the share was
+    // computed — and their home screen said zero while the ledger said
+    // otherwise. It is the same person and the same month as the history test
+    // above, so the two endpoints are asserted to agree rather than merely to
+    // each look plausible on their own.
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const [home, history] = await Promise.all([
+      call(ctrl.myPoints, { user: STAFF, query: { month: DEC } }),
+      call(ctrl.myHistory, { user: STAFF, query: { month: DEC } }),
+    ]);
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(home.statusCode, 200, home.error);
+    assert.strictEqual(home.payload.points, 12, "the group's share, not zero");
+    assert.strictEqual(home.payload.days, 1);
+    assert.strictEqual(
+      home.payload.points, history.payload.totals.points,
+      'the chip and the screen behind it must never disagree',
+    );
+    assert.strictEqual(home.payload.unpaidPoints, history.payload.totals.unpaidPoints);
+  });
+
+  await check('a non-roller sees their share of the day, on its own kind of row', async () => {
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const res = await call(ctrl.myHistory, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(res.statusCode, 200, res.error);
+
+    assert.strictEqual(res.payload.rows.length, 1, 'they were only in the one day');
+    const row = res.payload.rows[0];
+    assert.strictEqual(row.kind, 'nonRolling');
+    assert.strictEqual(row.role, 'Non-rolling');
+    assert.strictEqual(row.points, 12, "the group's share, NOT the rolling 14");
+    assert.strictEqual(res.payload.totals.points, 12);
+    // They did not roll, so the sheets are not theirs.
+    assert.strictEqual(res.payload.totals.sheets, 0);
+  });
+
+  await check('an account with no employee record is told so, not 404ed', async () => {
+    const res = await call(ctrl.myHistory, { query: { month: DEC } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.hasIncentive, false);
+    assert.deepStrictEqual(res.payload.rows, []);
+    assert.strictEqual(res.payload.totals.points, 0);
+  });
+
+  await check('what has been paid is on the history, so "still owed" has working behind it', async () => {
+    const paid = await call(ctrl.payPoints, {
+      body: { month: DEC, payments: [{ employee: id(1), points: 4 }], note: 'part payment' },
+    });
+    assert.strictEqual(paid.statusCode, 201, paid.error);
+
+    FakeProfile.findOne = () => query(PEOPLE[0]);
+    const res = await call(ctrl.myHistory, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(res.payload.totals.paidPoints, 4);
+    assert.strictEqual(res.payload.totals.unpaidPoints, 15, '19 earned less 4 handed over');
+    assert.strictEqual(res.payload.payments.length, 1);
+    assert.strictEqual(res.payload.payments[0].points, 4);
+    assert.strictEqual(res.payload.payments[0].note, 'part payment');
+  });
+
+  // ------------------------------------------------------------ leaderboard ---
+  //
+  // WHO IS ON IT is a SuperAdmin's per-department decision, and these are the
+  // four answers it can give: own department (the default), a named list,
+  // everybody, nobody.
+
+  /** Put the leaderboard rules back to factory between cases. */
+  const resetBoard = () => { settingsDoc.incentive.leaderboard = undefined; };
+
+  await check('by default you see your own department and no other', async () => {
+    resetBoard();
+    FakeProfile.findOne = () => query(PEOPLE[2]); // person 3, Boys
+    const res = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.enabled, true);
+    assert.strictEqual(res.payload.scope, 'own');
+    assert.deepStrictEqual(res.payload.departments, ['Boys']);
+
+    const depts = [...new Set(res.payload.people.map((p) => p.department))];
+    assert.deepStrictEqual(depts, ['Boys'], 'Packing is not on it');
+    assert.strictEqual(res.payload.people.length, 4, 'every Boy, including the zeros');
+
+    // Most points first, and the viewer's own row is both flagged and lifted out.
+    assert.strictEqual(res.payload.people[0].points, 19, 'the picker leads');
+    assert.strictEqual(res.payload.people[0].rank, 1);
+    assert.ok(res.payload.me, 'my own standing is answered separately');
+    assert.strictEqual(res.payload.me.isMe, true);
+    assert.strictEqual(res.payload.me.points, 12);
+
+    // Ties share a rank rather than being ordered arbitrarily.
+    const zeros = res.payload.people.filter((p) => p.points === 0);
+    assert.ok(zeros.length >= 1);
+    assert.strictEqual(new Set(zeros.map((p) => p.rank)).size, 1, 'ties share a rank');
+  });
+
+  await check('a leaderboard never leaks what a colleague is owed', async () => {
+    resetBoard();
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const res = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    for (const row of res.payload.people) {
+      for (const banned of ['paidPoints', 'unpaidPoints', 'amount', 'rupees', 'teamPoints', 'creditPoints']) {
+        assert.ok(!(banned in row), `${banned} must never reach a colleague's screen`);
+      }
+    }
+  });
+
+  await check('a rule opens exactly the departments it names, plus your own', async () => {
+    settingsDoc.incentive.leaderboard = {
+      enabled: true,
+      defaultScope: 'own',
+      // Saved lower-case on purpose: a rule has to govern the department it
+      // names however it was typed.
+      visibility: [{ department: 'boys', canView: ['packing'] }],
+    };
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const res = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(res.payload.scope, 'custom');
+    assert.deepStrictEqual(res.payload.departments, ['Boys', 'Packing'],
+      "own department first, and spelled as the roster spells it");
+    assert.strictEqual(res.payload.people.length, 5);
+
+    // And the filter is enforced, not merely offered.
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const one = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC, department: 'Packing' } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(one.statusCode, 200, one.error);
+    assert.deepStrictEqual([...new Set(one.payload.people.map((p) => p.department))], ['Packing']);
+  });
+
+  await check('asking for a department you may not see is refused', async () => {
+    resetBoard(); // back to own-department-only
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const res = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC, department: 'Packing' } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(res.statusCode, 403, 'the wall is on the server, not on the chips');
+    assert.match(res.error || '', /cannot see that department/i);
+  });
+
+  await check('the default can be opened to everyone, or closed to nobody', async () => {
+    settingsDoc.incentive.leaderboard = { enabled: true, defaultScope: 'all', visibility: [] };
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const all = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(all.payload.scope, 'all');
+    assert.deepStrictEqual(all.payload.departments, ['Boys', 'Packing']);
+
+    settingsDoc.incentive.leaderboard = { enabled: true, defaultScope: 'none', visibility: [] };
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const none = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(none.payload.scope, 'none');
+    assert.deepStrictEqual(none.payload.departments, []);
+    assert.deepStrictEqual(none.payload.people, [], 'nothing to rank');
+    resetBoard();
+  });
+
+  await check('switched off org-wide, the tab answers 200 with nothing on it', async () => {
+    settingsDoc.incentive.leaderboard = { enabled: false };
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const res = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    // Not a 403: the company has decided, which is not an error the person can
+    // act on — the client simply does not offer the tab.
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.enabled, false);
+    assert.deepStrictEqual(res.payload.people, []);
+    resetBoard();
+  });
+
+  await check('somebody with no employee record sees every department', async () => {
+    resetBoard(); // own-department-only, which they have none of
+    const res = await call(ctrl.leaderboard, { query: { month: DEC } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    assert.strictEqual(res.payload.scope, 'all', 'they read the whole pool anyway');
+    assert.deepStrictEqual(res.payload.departments, ['Boys', 'Packing']);
+    assert.strictEqual(res.payload.me, null, 'and they are on nobody else’s leaderboard');
+  });
+
+  await check('a leaver is on nobody’s leaderboard', async () => {
+    resetBoard();
+    // A DEACTIVATED LOGIN rather than a last working day, deliberately: the
+    // date half of utils/departed compares against `new Date()`, so a fixture
+    // date would decide this test by what today happens to be.
+    PEOPLE[3].user.isActive = false;
+    FakeProfile.findOne = () => query(PEOPLE[2]);
+    const res = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+    PEOPLE[3].user.isActive = true;
+    const codes = res.payload.people.map((p) => p.employeeCode);
+    assert.ok(!codes.includes('SSL104'), 'their balance is settled on the admin dashboard, not here');
+  });
+
+  // --------------------------------------------- the rules, as a SuperAdmin ---
+
+  await check('the rules round-trip, and are normalised on the way in', async () => {
+    resetBoard();
+    const saved = await call(ctrl.updateLeaderboardSettings, {
+      body: {
+        enabled: true,
+        defaultScope: 'own',
+        visibility: [
+          { department: 'Boys', canView: ['Packing', 'Packing', '', '  '] },
+          // A rule naming nobody is KEPT: "own department only, deliberately"
+          // is a different statement from having no rule at all.
+          { department: 'Packing', canView: [] },
+          // A duplicate row, and a nameless one — neither can be stored.
+          { department: 'boys', canView: ['Boys'] },
+          { department: '   ', canView: ['Boys'] },
+        ],
+      },
+    });
+    assert.strictEqual(saved.statusCode, 200, saved.error);
+    const rules = saved.payload.leaderboard.visibility;
+    assert.strictEqual(rules.length, 2, 'the duplicate and the nameless row are dropped');
+    assert.deepStrictEqual(rules[0], { department: 'Boys', canView: ['Packing'] }, 'de-duplicated and trimmed');
+    assert.deepStrictEqual(rules[1], { department: 'Packing', canView: [] }, 'an empty rule survives');
+    assert.deepStrictEqual(saved.payload.departments, ['Boys', 'Packing']);
+
+    const read = await call(ctrl.getLeaderboardSettings, {});
+    assert.strictEqual(read.statusCode, 200, read.error);
+    assert.strictEqual(read.payload.leaderboard.defaultScope, 'own');
+    assert.strictEqual(read.payload.leaderboard.visibility.length, 2);
+    resetBoard();
+  });
+
+  await check('an unknown default is refused rather than stored', async () => {
+    resetBoard();
+    const res = await call(ctrl.updateLeaderboardSettings, { body: { defaultScope: 'everyone' } });
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.error || '', /own.*all.*none/i);
+
+    const notAList = await call(ctrl.updateLeaderboardSettings, { body: { visibility: 'Boys' } });
+    assert.strictEqual(notAList.statusCode, 400);
+    resetBoard();
+  });
+
+  await check('each half of the rules is settable on its own', async () => {
+    resetBoard();
+    await call(ctrl.updateLeaderboardSettings, {
+      body: { visibility: [{ department: 'Boys', canView: ['Packing'] }] },
+    });
+    // Switching the board off must not require re-sending every rule.
+    const off = await call(ctrl.updateLeaderboardSettings, { body: { enabled: false } });
+    assert.strictEqual(off.statusCode, 200, off.error);
+    assert.strictEqual(off.payload.leaderboard.enabled, false);
+    assert.strictEqual(off.payload.leaderboard.visibility.length, 1, 'the rule is still there');
+    resetBoard();
   });
 
   console.log(`\n${passed} checks passed${process.exitCode ? ' (with failures above)' : ''}\n`);

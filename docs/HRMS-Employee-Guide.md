@@ -218,7 +218,7 @@ Spending is now filed through **My Cashbook**, which covers the same ground agai
 If the company gives you cash to spend on its behalf, this is where it is accounted for. You hold **one advance** — your wallet — and you file what you spend under **books**, which are simply named headings: "Site A — materials", "Vehicle and fuel", whatever the work needs. The books say what the money went *on*; the wallet says how much of it is *left*.
 
 - **Cash Out** — record an expense against a book, or return unspent cash. An expense needs a **bill** every time, and it counts the moment you file it.
-- **Cash In** — ask for an advance, record money that came **back** into a book (a supplier refund, a cancelled booking, unused material returned), or claim what the company owes you once you have spent past your advance.
+- **Ask for an advance** — money from the company into your wallet. It is asked for against the wallet, never against a particular book: the wallet is the pot, and a book is only what the spending is filed under. Nothing is paid until it is approved.
 - An entry you filed stays **yours to correct until the accounts team confirms it**. After that, ask them to reverse it and file it again — nothing posted is ever quietly rewritten.
 
 [!NOTE] Filing an expense or a refund records where you were at that moment, and the form says so before you submit. Only the Backend can see it — not HR, not the accounts team, not your manager.

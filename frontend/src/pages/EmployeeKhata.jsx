@@ -279,10 +279,17 @@ export default function EmployeeKhata() {
   const [camera, setCamera] = useState(false);
   const fileRef = useRef(null);
 
-  // Which side of the wallet somebody pressed. Cash In and Cash Out each cover
-  // three and two things respectively, and asking "which kind?" once is kinder
-  // than five buttons that all look equally likely.
-  const [sheet, setSheet] = useState(null); // 'in' | 'out'
+  // Which side of the wallet somebody pressed — only 'out' now, which covers
+  // two things (spending the advance, handing cash back), so asking "which
+  // kind?" once is kinder than two more buttons on the card.
+  //
+  // 'in' is gone (user decision 2026-09-11). Cash In was a chooser over three
+  // inbound events — an advance, a supplier refund into a book, a claim — and
+  // money coming towards an employee is, in practice, the company's advance. So
+  // the advance is its own button now and opens the form directly; it is asked
+  // for AGAINST THE WALLET and never against a book, because the wallet is the
+  // pot and a book is only what spending is filed under.
+  const [sheet, setSheet] = useState(null); // 'out'
 
   // ----- Statement search + filters -----
   // All client-side: GET /khata/me has already been loaded, so filtering here is
@@ -794,24 +801,13 @@ export default function EmployeeKhata() {
   // reader's spending, and could show a five-figure total to somebody who has
   // not spent a rupee.
   const totalSpent = khatas.filter((k) => !k.owner).reduce((a, k) => a + (k.spent || 0), 0);
-  // What the Cash In / Cash Out sheet offers, and why each choice might be shut.
-  const cashInOptions = [
-    { key: 'request', label: 'Ask for an advance', hint: 'Money from the company into your wallet.' },
-    {
-      key: 'refund',
-      label: 'Money back into a book',
-      hint: 'A supplier refund, a cancelled booking, unused material returned.',
-      disabled: postableKhatas.length === 0,
-      why: 'You need an open book to put money back into.',
-    },
-    {
-      key: 'claim',
-      label: 'Claim what I am owed',
-      hint: 'You spent past your advance and the company owes you the difference.',
-      disabled: !(totals.claimable > 0),
-      why: 'Nothing to claim — you have not spent past your advance.',
-    },
-  ];
+  // What the Cash Out sheet offers, and why each choice might be shut. There is
+  // no Cash In table any more — see the note on `sheet` above.
+  //
+  // FILING A SUPPLIER REFUND IS NO LONGER OFFERED ANYWHERE. POST /khata/me/refund
+  // is deliberately left standing on the server so refunds already on the ledger
+  // keep reading correctly, and so one already filed stays CORRECTABLE through
+  // the same form (modal === 'refund' is still reachable from a row's Edit).
   const cashOutOptions = [
     {
       key: 'expense',
@@ -900,12 +896,14 @@ export default function EmployeeKhata() {
                 Ask to be paid {money(totals.claimable)}
               </button>
             )}
-            {/* Two buttons, not five: the sign-colour rule says which way the
-                money goes before a word is read, and each opens a short list of
-                what that direction can mean. */}
-            <button onClick={() => setSheet('in')}
+            {/* Two buttons: the sign-colour rule says which way the money goes
+                before a word is read. IN is one thing now and says so, so it
+                opens the form directly — a chooser with a single answer in it is
+                a click that asks nothing. OUT still asks, because spending the
+                advance and handing cash back really are two different events. */}
+            <button onClick={() => open('request')}
               className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium">
-              + Cash In
+              Ask for an advance
             </button>
             <button onClick={() => setSheet('out')}
               className="px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium">
@@ -1592,22 +1590,18 @@ export default function EmployeeKhata() {
         </div>
       )}
 
-      {/* Which kind of Cash In / Cash Out. Two buttons on the wallet and a short
-          list behind each beats five buttons that all look equally likely. */}
+      {/* Which kind of Cash Out. A short list behind one button beats two more
+          buttons on a card that already carries three. */}
       {sheet && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
-            <h3 className={`text-lg font-semibold ${sheet === 'in' ? 'text-emerald-700' : 'text-red-700'}`}>
-              {sheet === 'in' ? 'Cash In' : 'Cash Out'}
-            </h3>
+            <h3 className="text-lg font-semibold text-red-700">Cash Out</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              {sheet === 'in'
-                ? 'Money coming towards you — into your wallet, or back onto one of your books.'
-                : 'Money leaving your wallet — spent on the job, or handed back to the company.'}
+              Money leaving your wallet — spent on the job, or handed back to the company.
             </p>
 
             <div className="space-y-2">
-              {(sheet === 'in' ? cashInOptions : cashOutOptions).map((o) => (
+              {cashOutOptions.map((o) => (
                 <button key={o.key} type="button" disabled={o.disabled}
                   onClick={() => { setSheet(null); open(o.key); }}
                   className="w-full text-left border border-gray-200 rounded-lg p-3 hover:border-gray-400 disabled:opacity-50 disabled:hover:border-gray-200">

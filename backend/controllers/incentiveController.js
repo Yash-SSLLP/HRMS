@@ -1511,7 +1511,19 @@ const myPoints = asyncHandler(async (req, res) => {
     : `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   const { filter: dateFilter, from, to } = dateRange({ month: monthParam });
 
-  const mine = { $or: [{ 'picker.employee': profile._id }, { 'members.employee': profile._id }] };
+  // ALL THREE WAYS ONTO A DAY, not two. A person who did not roll but was in the
+  // day's non-rolling group is a payee of that entry (models/IncentiveEntry.payees)
+  // and is owed a share of it — and this filter used to leave those entries out
+  // entirely, so the home screen under-reported exactly the people whose points
+  // arrive that way, sometimes as zero. The share() below already handled them
+  // correctly; they simply never reached it.
+  const mine = {
+    $or: [
+      { 'picker.employee': profile._id },
+      { 'members.employee': profile._id },
+      { 'nonRolling.employee': profile._id },
+    ],
+  };
   const [monthEntries, allEntries, monthCredits, allCredits] = await Promise.all([
     IncentiveEntry.find({ $and: [mine, dateFilter] }).lean(),
     // The lifetime figure is what somebody actually wants to know when they look
@@ -1549,6 +1561,456 @@ const myPoints = asyncHandler(async (req, res) => {
     unpaidPoints: Math.round((points - paidPoints) * 100) / 100,
     days: monthEntries.length,
     lifetimePoints: Math.round((share(allEntries) + creditTotal(allCredits)) * 100) / 100,
+  });
+});
+
+// ------------------------------------------------------- my own incentive ---
+//
+// THE EMPLOYEE'S OWN VIEW OF THE MODULE (My Incentive), and the only part of it
+// somebody who merely EARNS points can reach. Two questions, two handlers:
+//
+//   myHistory   — "where did my points come from?", day by day.
+//   leaderboard — "how am I doing against everyone else?", and WHO "everyone
+//                 else" is, is a SuperAdmin's decision (see below).
+//
+// Both sit ABOVE every capability gate in routes/incentiveRoutes.js, beside
+// GET /me and for the same reason: a person earning points holds no role in the
+// module, and a screen about their own earnings cannot be behind the gate that
+// guards running the module.
+
+/**
+ * The caller's own employee record, or null when they have none (CEO, MD and
+ * SuperAdmin have no profile at all — see utils/visibility NON_STAFF_ROLES).
+ * @param {import('express').Request} req
+ * @returns {Promise<Object|null>} lean profile with department and code
+ */
+async function myProfile(req) {
+  return EmployeeProfile.findOne({ user: req.user._id })
+    .select('employeeCode department designation company user')
+    .lean();
+}
+
+/** Points read back without float dust: 2.8, never 2.7999999999999998. */
+const paise = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * WHO MAY SEE WHOSE POINTS on the leaderboard, as configured by a SuperAdmin
+ * (Setting.incentive.leaderboard), with every default filled in.
+ *
+ * Read through this rather than off the settings document directly: the block
+ * is absent on every installation older than the feature, and an undefined
+ * `defaultScope` there must not read as "show everything".
+ * @returns {Promise<{enabled: boolean, defaultScope: 'own'|'all'|'none',
+ *   visibility: Array<{department: string, canView: string[]}>}>}
+ */
+async function leaderboardConfig() {
+  const s = await Setting.getSettings();
+  const cfg = (s.incentive && s.incentive.leaderboard) || {};
+  return {
+    enabled: cfg.enabled !== false,
+    defaultScope: ['own', 'all', 'none'].includes(cfg.defaultScope) ? cfg.defaultScope : 'own',
+    visibility: (Array.isArray(cfg.visibility) ? cfg.visibility : [])
+      .filter((r) => r && String(r.department || '').trim())
+      .map((r) => ({
+        department: String(r.department).trim(),
+        canView: [...new Set((Array.isArray(r.canView) ? r.canView : [])
+          .map((d) => String(d || '').trim())
+          .filter(Boolean))],
+      })),
+  };
+}
+
+/**
+ * Which departments this viewer's leaderboard may cover.
+ *
+ * THE RULES, in order:
+ *   no employee record (SuperAdmin / CEO / MD)  → every department. They already
+ *       read the whole points dashboard; narrowing them here would be theatre.
+ *   a rule for their department                 → exactly what it lists, plus
+ *       their OWN department, which is always readable and so never has to be
+ *       listed in the rule.
+ *   no rule                                     → whatever `defaultScope` says:
+ *       'own' (their department), 'all' (every department) or 'none'.
+ *
+ * Matching is case-insensitive and returns the department names as the ROSTER
+ * spells them, so a rule saved as "it" still governs the "IT" department and the
+ * filter chips read the way the rest of the portal does.
+ *
+ * @param {string} myDepartment - the viewer's department ('' when they have none)
+ * @param {Object} cfg - from leaderboardConfig()
+ * @param {string[]} allDepartments - every department on the roster in range
+ * @param {boolean} unrestricted - true for a viewer with no employee record
+ * @returns {{departments: string[], scope: 'all'|'own'|'custom'|'none'}}
+ */
+function visibleDepartments(myDepartment, cfg, allDepartments, unrestricted) {
+  if (unrestricted) return { departments: [...allDepartments], scope: 'all' };
+
+  const lower = (v) => String(v || '').trim().toLowerCase();
+  // The roster's own spelling wins, so the answer reads like the rest of the app.
+  const canonical = (name) => allDepartments.find((d) => lower(d) === lower(name)) || String(name || '').trim();
+  const own = myDepartment ? canonical(myDepartment) : '';
+
+  const rule = cfg.visibility.find((r) => lower(r.department) === lower(myDepartment));
+  if (rule) {
+    const named = rule.canView.map(canonical).filter(Boolean);
+    // Own department first — it is the one they are actually part of, and a
+    // list that opened on somebody else's team would read as the wrong page.
+    const list = [...new Set([own, ...named].filter(Boolean))];
+    return { departments: list, scope: 'custom' };
+  }
+
+  if (cfg.defaultScope === 'all') return { departments: [...allDepartments], scope: 'all' };
+  if (cfg.defaultScope === 'none') return { departments: [], scope: 'none' };
+  return { departments: own ? [own] : [], scope: 'own' };
+}
+
+/**
+ * My own points, DAY BY DAY — the first tab of My Incentive.
+ *
+ * GET /me answers "what am I owed" in one number for a home screen; this answers
+ * "where did that number come from", which is the question somebody actually
+ * has when the number surprises them. Every row is one of the three ways points
+ * arrive, and says which:
+ *
+ *   rolling     — I was on the team that rolled, picker or member.
+ *   nonRolling  — I did not roll that day but the day's teams shared their cut
+ *                 with the group I was in (see models/IncentiveEntry).
+ *   credit      — somebody credited me points directly, with a reason.
+ *
+ * A day whose sheet count has not been filled in yet is returned as PENDING with
+ * zero points rather than being hidden: "we have not counted it yet" is a
+ * different and more useful answer than a day that is simply missing.
+ *
+ * Reads the caller's OWN record and takes no employee id, so it can see nobody
+ * else — which is what lets it sit above every gate in the router.
+ *
+ * @route GET /api/incentives/me/history  (protected; any signed-in employee)
+ * @param {string} [req.query.month] - 'YYYY-MM'; defaults to this month
+ * @returns {{hasIncentive: boolean, month: string, range: object, rows: Object[],
+ *   totals: object, payments: Object[], lifetimePoints: number}}
+ */
+const myHistory = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req);
+  const monthParam = /^\d{4}-\d{1,2}$/.test(String(req.query.month || ''))
+    ? String(req.query.month)
+    : `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const { filter: dateFilter, from, to } = dateRange({ month: monthParam });
+
+  // No employee record — an exec or the Backend account. There is nothing to
+  // total, and answering plainly beats a 404 to a screen that is only asking.
+  if (!profile) {
+    return res.json({
+      hasIncentive: false,
+      month: monthParam,
+      range: { from, to, label: rangeLabel(from, to) },
+      rows: [],
+      payments: [],
+      totals: {
+        points: 0, teamPoints: 0, creditPoints: 0, paidPoints: 0, unpaidPoints: 0, days: 0, sheets: 0, pending: 0,
+      },
+      lifetimePoints: 0,
+    });
+  }
+
+  const mine = { $or: [{ 'picker.employee': profile._id }, { 'members.employee': profile._id }, { 'nonRolling.employee': profile._id }] };
+  const [monthEntries, allEntries, monthCredits, allCredits, paidRows] = await Promise.all([
+    IncentiveEntry.find({ $and: [mine, dateFilter] }).sort({ date: -1 }).lean(),
+    // The lifetime figure is what somebody wants in the first week of a month,
+    // when this month says almost nothing. One more small query.
+    IncentiveEntry.find(mine).lean(),
+    IncentiveCredit.find({ employee: profile._id, date: { $gte: from, $lte: to } }).sort({ date: -1 }).lean(),
+    IncentiveCredit.find({ employee: profile._id }).select('points').lean(),
+    IncentivePayment.find({
+      employee: profile._id,
+      period: { $gte: IncentivePayment.monthStart(from), $lte: IncentivePayment.monthStart(to) },
+    }).sort({ paidAt: -1 }).lean(),
+  ]);
+
+  /** This person's share of a list of days — the same sum GET /me reports. */
+  const share = (rows) => paise(rows.reduce((sum, e) => {
+    const hit = IncentiveEntry.payees(e).find((p) => String(p.employee) === String(profile._id));
+    return hit ? sum + (hit.sharePoints || 0) : sum;
+  }, 0));
+
+  // One row per day I earned on, newest first. `payees` is what decides my
+  // share — never `perPersonPoints`, which is the ROLLING share and would pay a
+  // non-rolling day far too much (see models/IncentiveEntry.payees).
+  const rows = [];
+  let sheets = 0;
+  let pending = 0;
+  for (const e of monthEntries) {
+    const hit = IncentiveEntry.payees(e).find((p) => String(p.employee) === String(profile._id));
+    // Listed but marked absent from the day's non-rolling group: not a payee,
+    // and deliberately not a row — there is nothing to explain.
+    if (!hit) continue;
+    const waiting = IncentiveEntry.isPending(e);
+    if (waiting) pending += 1;
+    if (!hit.isNonRolling) sheets += e.sheets || 0;
+    rows.push({
+      _id: String(e._id),
+      kind: hit.isNonRolling ? 'nonRolling' : 'rolling',
+      date: e.date,
+      teamName: e.teamName || '',
+      pickerName: e.picker?.name || '',
+      role: hit.isNonRolling ? 'Non-rolling' : (hit.isPicker ? 'Picker' : 'Member'),
+      sheets: e.sheets == null ? null : e.sheets,
+      pending: waiting,
+      headCount: e.headCount || 0,
+      teamPoints: e.teamPoints || 0,
+      points: paise(hit.sharePoints),
+      note: e.note || '',
+    });
+  }
+  for (const c of monthCredits) {
+    rows.push({
+      _id: String(c._id),
+      kind: 'credit',
+      date: c.date,
+      points: paise(c.points),
+      reason: c.reason || '',
+      byName: c.createdByName || '',
+    });
+  }
+  rows.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const teamPoints = share(monthEntries);
+  const creditPoints = paise(monthCredits.reduce((s, c) => s + (c.points || 0), 0));
+  const points = paise(teamPoints + creditPoints);
+  const paidPoints = paise(paidRows.reduce((s, r) => s + (r.points || 0), 0));
+
+  res.json({
+    hasIncentive: true,
+    month: monthParam,
+    range: { from, to, label: rangeLabel(from, to) },
+    rows,
+    // What the company has actually handed over this month, so "still owed" has
+    // something on screen behind it rather than being a number to be trusted.
+    payments: paidRows.map((p) => ({
+      _id: String(p._id),
+      points: paise(p.points),
+      paidAt: p.paidAt || p.createdAt,
+      byName: p.paidByName || '',
+      note: p.note || '',
+    })),
+    totals: {
+      points,
+      teamPoints,
+      creditPoints,
+      paidPoints,
+      unpaidPoints: paise(points - paidPoints),
+      days: rows.filter((r) => r.kind !== 'credit').length,
+      sheets,
+      pending,
+    },
+    lifetimePoints: paise(share(allEntries) + allCredits.reduce((s, c) => s + (c.points || 0), 0)),
+  });
+});
+
+/**
+ * The leaderboard — everyone the viewer is allowed to see, by points earned.
+ *
+ * WHAT IS AND IS NOT ON IT. Points earned, days, and a rank. NOT what anybody
+ * has been paid or is still owed: that is what the company owes a colleague, it
+ * is nobody else's business, and it is the one figure the admin dashboard exists
+ * for. NOT rupees either — the whole module counts in points and their rupee
+ * value is a company figure (see the module docblock).
+ *
+ * WHO IS ON IT is a SuperAdmin's decision, per department
+ * (Setting.incentive.leaderboard): IT may be set to see IT and HR and no one
+ * else, Boys to see only Boys. A viewer always sees their own department, and
+ * the whole tab can be switched off org-wide. See visibleDepartments above.
+ *
+ * The company wall applies underneath all of that, as everywhere in this module:
+ * the roster is the viewer's own company's (utils/employeeScope).
+ *
+ * @route GET /api/incentives/leaderboard  (protected; any signed-in employee)
+ * @param {string} [req.query.month] - 'YYYY-MM'; defaults to this month
+ * @param {string} [req.query.department] - narrow to one visible department
+ * @returns {{enabled: boolean, month, range, departments: string[],
+ *   myDepartment: string, scope: string, people: Object[], me: Object|null, totals: object}}
+ *   403 for a department this viewer may not see
+ */
+const leaderboard = asyncHandler(async (req, res) => {
+  const monthParam = /^\d{4}-\d{1,2}$/.test(String(req.query.month || ''))
+    ? String(req.query.month)
+    : `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const { filter: dateFilter, from, to } = dateRange({ month: monthParam });
+  const range = { from, to, label: rangeLabel(from, to) };
+
+  const [cfg, profile] = await Promise.all([leaderboardConfig(), myProfile(req)]);
+  const base = {
+    enabled: cfg.enabled,
+    month: monthParam,
+    range,
+    departments: [],
+    myDepartment: profile?.department || '',
+    scope: 'none',
+    people: [],
+    me: null,
+    totals: { people: 0, earners: 0, points: 0 },
+  };
+  // Switched off org-wide. Answered as a 200 rather than a 403 so the client can
+  // simply not offer the tab — there is no error here, the company has decided.
+  if (!cfg.enabled) return res.json(base);
+
+  const roster = await pickablePeople(req);
+  const allDepartments = [...new Set(roster.map((p) => String(p.department || '').trim()).filter(Boolean))].sort();
+  // No employee record = SuperAdmin / CEO / MD, who read the whole pool anyway.
+  const { departments, scope } = visibleDepartments(profile?.department || '', cfg, allDepartments, !profile);
+  base.departments = departments;
+  base.scope = scope;
+  if (!departments.length) return res.json(base);
+
+  const lower = (v) => String(v || '').trim().toLowerCase();
+  const wanted = String(req.query.department || '').trim();
+  if (wanted && !departments.some((d) => lower(d) === lower(wanted))) {
+    res.status(403);
+    throw new Error('You cannot see that department\'s leaderboard.');
+  }
+  const shown = wanted ? departments.filter((d) => lower(d) === lower(wanted)) : departments;
+  const shownSet = new Set(shown.map(lower));
+
+  // Everyone in the departments on screen, at zero until the days say otherwise.
+  const byPerson = new Map();
+  for (const p of roster) {
+    if (!shownSet.has(lower(p.department))) continue;
+    byPerson.set(String(p._id), {
+      employee: String(p._id),
+      name: fullName(p),
+      employeeCode: p.employeeCode || '',
+      department: String(p.department || '').trim(),
+      designation: p.designation || '',
+      days: 0,
+      points: 0,
+      isMe: !!profile && String(p._id) === String(profile._id),
+    });
+  }
+
+  const and = [entryScopeFilter(req), dateFilter].filter((f) => Object.keys(f).length);
+  const [entries, credits] = await Promise.all([
+    IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
+    creditsInRange(req, from, to),
+  ]);
+
+  // Somebody who has LEFT is deliberately absent from the roster above and so
+  // cannot appear here: a leaderboard is a standing among colleagues, and the
+  // admin dashboard is where a departed person's balance is settled.
+  for (const e of entries) {
+    for (const p of IncentiveEntry.payees(e)) {
+      const row = byPerson.get(String(p.employee));
+      if (!row) continue;
+      row.days += 1;
+      row.points = paise(row.points + (p.sharePoints || 0));
+    }
+  }
+  for (const c of credits) {
+    const row = byPerson.get(String(c.employee));
+    if (!row) continue;
+    row.points = paise(row.points + (c.points || 0));
+  }
+
+  // Most points first; ties keep the same rank and are alphabetical among
+  // themselves, so the order is stable between two loads of the same month.
+  const people = [...byPerson.values()]
+    .sort((a, b) => b.points - a.points || String(a.name).localeCompare(String(b.name)));
+  let rank = 0;
+  let lastPoints = null;
+  people.forEach((row, i) => {
+    if (lastPoints === null || row.points !== lastPoints) {
+      rank = i + 1;
+      lastPoints = row.points;
+    }
+    row.rank = rank;
+  });
+
+  res.json({
+    ...base,
+    people,
+    // The viewer's own standing, lifted out so a screen can show it without
+    // hunting for the row — and so it is still answerable when they are far
+    // enough down the list to be off the top of it.
+    me: people.find((p) => p.isMe) || null,
+    totals: {
+      people: people.length,
+      earners: people.filter((p) => p.points > 0).length,
+      points: paise(people.reduce((s, p) => s + p.points, 0)),
+    },
+  });
+});
+
+/**
+ * The leaderboard visibility rules, plus the department list to build them from.
+ *
+ * SuperAdmin only — see the note on Setting.incentive.leaderboard for why this
+ * is not behind `incentive.manage`.
+ * @route GET /api/incentives/leaderboard/settings  (SuperAdmin)
+ * @returns {{leaderboard: object, departments: string[]}}
+ */
+const getLeaderboardSettings = asyncHandler(async (req, res) => {
+  const [cfg, roster] = await Promise.all([leaderboardConfig(), pickablePeople(req)]);
+  res.json({
+    leaderboard: cfg,
+    // Every department in use, so the editor can offer them rather than asking
+    // somebody to type a name that has to match exactly.
+    departments: [...new Set(roster.map((p) => String(p.department || '').trim()).filter(Boolean))].sort(),
+  });
+});
+
+/**
+ * Set the leaderboard visibility rules.
+ *
+ * Each half is settable on its own, so switching the tab off does not require
+ * re-sending every rule. A rule listing NO departments is kept rather than
+ * dropped: "IT sees only itself" is a deliberate statement and has to survive a
+ * reload, which it would not if an empty list were read as "no rule, use the
+ * default".
+ *
+ * @route PUT /api/incentives/leaderboard/settings  (SuperAdmin)
+ * @param {boolean} [req.body.enabled]
+ * @param {'own'|'all'|'none'} [req.body.defaultScope]
+ * @param {Array<{department: string, canView: string[]}>} [req.body.visibility]
+ * @returns {{leaderboard: object, departments: string[]}}
+ */
+const updateLeaderboardSettings = asyncHandler(async (req, res) => {
+  const s = await Setting.getSettings();
+  if (!s.incentive) s.incentive = {};
+  if (!s.incentive.leaderboard) s.incentive.leaderboard = {};
+
+  if (req.body.enabled !== undefined) s.incentive.leaderboard.enabled = !!req.body.enabled;
+  if (req.body.defaultScope !== undefined) {
+    const v = String(req.body.defaultScope);
+    if (!['own', 'all', 'none'].includes(v)) {
+      res.status(400);
+      throw new Error('The default has to be "own", "all" or "none".');
+    }
+    s.incentive.leaderboard.defaultScope = v;
+  }
+  if (req.body.visibility !== undefined) {
+    if (!Array.isArray(req.body.visibility)) {
+      res.status(400);
+      throw new Error('Send the department rules as a list.');
+    }
+    const seen = new Set();
+    const rules = [];
+    for (const raw of req.body.visibility) {
+      const department = String(raw?.department || '').trim();
+      if (!department || seen.has(department.toLowerCase())) continue;
+      seen.add(department.toLowerCase());
+      rules.push({
+        department,
+        canView: [...new Set((Array.isArray(raw.canView) ? raw.canView : [])
+          .map((d) => String(d || '').trim())
+          .filter(Boolean))],
+      });
+    }
+    s.incentive.leaderboard.visibility = rules;
+  }
+
+  await s.save();
+  const [cfg, roster] = await Promise.all([leaderboardConfig(), pickablePeople(req)]);
+  res.json({
+    leaderboard: cfg,
+    departments: [...new Set(roster.map((p) => String(p.department || '').trim()).filter(Boolean))].sort(),
   });
 });
 
@@ -2120,6 +2582,10 @@ const deleteCredit = asyncHandler(async (req, res) => {
 
 module.exports = {
   myPoints,
+  myHistory,
+  leaderboard,
+  getLeaderboardSettings,
+  updateLeaderboardSettings,
   listPeople,
   listEntries,
   summary,

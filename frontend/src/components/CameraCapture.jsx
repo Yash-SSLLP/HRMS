@@ -11,9 +11,16 @@
  * The rear camera is requested (`facingMode: 'environment'`) because the first
  * use of this is photographing a paper receipt; it's an `ideal` constraint, so
  * a laptop with only a front camera still works.
+ *
+ * IT CAN BE FLIPPED. `ideal` means the browser is free to hand over the front
+ * camera when there is no back one, and a phone in a stand, or a bill pinned to
+ * the wall behind you, wants the other lens whichever one it started on. The
+ * button is hidden when the device has only one camera to offer — an option
+ * that changes nothing is worse than no option. The phone twin carries the same
+ * control (mobile/src/components/PhotoCamera.js).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FiCamera, FiRefreshCw, FiCheck, FiX } from 'react-icons/fi';
+import { FiCamera, FiRefreshCw, FiCheck, FiX, FiRepeat } from 'react-icons/fi';
 
 /**
  * @param {object} props
@@ -30,13 +37,19 @@ export default function CameraCapture({ onCapture, onClose, title = 'Take a phot
   const [shot, setShot] = useState(null); // { url, blob }
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(true);
+  // Which lens is live, and whether there is a second one to switch to. The
+  // count is only known after permission has been granted — enumerateDevices
+  // hides labels and, on Firefox, devices entirely until then — so the button
+  // appears once the stream is running rather than on mount.
+  const [facing, setFacing] = useState('environment');
+  const [canFlip, setCanFlip] = useState(false);
 
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
   }, []);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (mode = 'environment') => {
     setError('');
     setStarting(true);
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -45,17 +58,27 @@ export default function CameraCapture({ onCapture, onClose, title = 'Take a phot
       return;
     }
     try {
+      // Any previous stream must be released BEFORE asking for the other lens:
+      // a phone will not open both at once, and the second request comes back
+      // NotReadableError while the first is still held.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        video: { facingMode: { ideal: mode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
       streamRef.current = stream;
+      setFacing(mode);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         // Autoplay can reject if the element is still mounting; the play button
         // isn't shown, so swallow it — the stream still attaches.
         await videoRef.current.play().catch(() => {});
       }
+      // Now that permission has been granted the device list is readable.
+      navigator.mediaDevices.enumerateDevices?.()
+        .then((devices) => setCanFlip(devices.filter((d) => d.kind === 'videoinput').length > 1))
+        .catch(() => {});
     } catch (err) {
       // NotAllowedError (blocked), NotFoundError (no camera), NotReadableError
       // (another app holds it) all land here — say which so it is actionable.
@@ -95,8 +118,13 @@ export default function CameraCapture({ onCapture, onClose, title = 'Take a phot
   const retake = () => {
     if (shot?.url) URL.revokeObjectURL(shot.url);
     setShot(null);
-    start();
+    // Back on whichever lens they had chosen, not on the default: a retake is a
+    // second attempt at the same shot.
+    start(facing);
   };
+
+  /** Swap lenses, restarting the preview on the other one. */
+  const flip = () => start(facing === 'environment' ? 'user' : 'environment');
 
   const accept = () => {
     if (!shot) return;
@@ -126,6 +154,17 @@ export default function CameraCapture({ onCapture, onClose, title = 'Take a phot
 
         {starting && !shot && (
           <p className="mt-2 text-xs text-gray-500">Starting the camera…</p>
+        )}
+        {canFlip && !shot && !error && (
+          <button
+            type="button"
+            onClick={flip}
+            disabled={starting}
+            className="mt-2 inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 disabled:opacity-60"
+          >
+            <FiRepeat size={14} />
+            {facing === 'environment' ? 'Use the front camera' : 'Use the back camera'}
+          </button>
         )}
         {error && (
           <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
