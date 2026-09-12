@@ -148,6 +148,16 @@ export const adminNav = [
     { to: '/admin/incentive-dashboard', label: 'Points Dashboard', icon: FiBarChart2, perm: 'incentive.manage',
       keywords: ['points', 'dashboard', 'credit', 'credit points', 'bonus', 'award', 'pay', 'payout', 'owed', 'balance', 'incentive', 'department'],
       tabs: [{ id: 'people', label: 'Everyone' }, { id: 'credits', label: 'Credits given' }] },
+    // The standing itself, over every department. Gated on the ROLE rather than
+    // `incentive.manage`, and on the same four as the leaderboard's own
+    // unrestricted bench (canPayIncentive in middleware/authMiddleware.js): the
+    // per-department curtain is for colleagues comparing earnings and does not
+    // apply to the people who settle them. A tab supervisor who holds
+    // `incentive.manage` is NOT one of them and reads the ranking on My
+    // Incentive, under whatever rule their department has.
+    { to: '/admin/incentive-board', label: 'Leaderboard', icon: FiAward,
+      roles: ['SuperAdmin', 'HRManager', 'CEO', 'MD'],
+      keywords: ['leaderboard', 'ranking', 'rank', 'standing', 'top', 'best', 'points', 'incentive', 'department', 'earned'] },
     // Who may see whose points on the EMPLOYEE leaderboard. Gated on the ROLE,
     // not on `incentive.manage`: both endpoints behind it are
     // restrictTo('SuperAdmin'), and what one department learns about another's

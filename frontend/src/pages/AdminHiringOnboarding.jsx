@@ -258,6 +258,7 @@ export default function AdminHiringOnboarding() {
       medical: a.medical ?? '',
       accidentInsurance: a.accidentInsurance ?? '',
       location: a.location || '',
+      employmentType: a.employmentType || 'Full-Time Employee',
       workingHours: a.workingHours || '',
       joiningDate: toDateInput(a.joiningDate || c.onboarding?.joiningDate || o.joiningDate),
       probationMonths: a.probationMonths ?? o.probationMonths ?? 3,
@@ -512,6 +513,27 @@ export default function AdminHiringOnboarding() {
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Place of posting</label>
                 <input value={apptForm.location} onChange={(e) => setApptForm({ ...apptForm, location: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+              {/* Named in the key-facts panel at the head of the letter. A list
+                  with a free-text fallback: nearly every appointment is the
+                  first option, but a fixed-term or consultancy one must be able
+                  to say so on the letter. */}
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Employment type</label>
+                <input
+                  list="appt-employment-types"
+                  value={apptForm.employmentType}
+                  onChange={(e) => setApptForm({ ...apptForm, employmentType: e.target.value })}
+                  className="block w-full border rounded-lg px-3 py-2"
+                />
+                <datalist id="appt-employment-types">
+                  <option value="Full-Time Employee" />
+                  <option value="Part-Time Employee" />
+                  <option value="Fixed-Term Employee" />
+                  <option value="Trainee" />
+                  <option value="Intern" />
+                  <option value="Consultant" />
+                </datalist>
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-600 mb-1">Working hours / shift</label>

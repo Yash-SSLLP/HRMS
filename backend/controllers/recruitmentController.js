@@ -1553,8 +1553,18 @@ const generateAppointment = asyncHandler(async (req, res) => {
   }
   const b = req.body || {};
   const data = {
+    // The code HR allots on the letter. It was being collected on the form and
+    // held in the schema but never written here, so every appointment letter and
+    // salary annexure printed without one and the acceptance stub identified
+    // nobody once it was detached and filed.
+    employeeCode: (b.employeeCode || '').trim().toUpperCase(),
     designation: b.designation || candidate.offer?.data?.position || '',
     department: b.department || candidate.offer?.data?.department || '',
+    // The appointment form does not ask for an address — the offer already did,
+    // and it is the same person. Falls back to it so the letter can address the
+    // candidate properly without HR typing it twice.
+    address: b.address || candidate.offer?.data?.address || '',
+    employmentType: b.employmentType || 'Full-Time Employee',
     reportingManager: b.reportingManager || '',
     location: b.location || '',
     workingHours: b.workingHours || '',
@@ -1569,6 +1579,11 @@ const generateAppointment = asyncHandler(async (req, res) => {
     employerPf: num(b.employerPf),
     gratuity: num(b.gratuity),
     otherAllowances: num(b.otherAllowances),
+    // Dropped here for the same reason as employeeCode: the form collects both
+    // and Annexure I reads both, so a medical premium or accident cover that HR
+    // had entered simply never reached the sheet.
+    medical: num(b.medical),
+    accidentInsurance: num(b.accidentInsurance),
     // The wording HR approved in the letter editor, if they changed anything.
     body: cleanLetterBody(b.body),
   };

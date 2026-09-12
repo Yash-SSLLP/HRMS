@@ -28,6 +28,9 @@ const {
   getPublicDocRequest,
   submitPublicDocs,
 } = require('../controllers/employeeController');
+const {
+  draftAppointmentLetter, previewAppointmentLetter, issueAppointmentLetter,
+} = require('../controllers/employeeLetterController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -109,6 +112,24 @@ router.post('/:id/doc-link', createDocLink);
 router.post('/:id/documents/email', emailDocLink);
 // GET /:id/export.zip — export one employee's files as a zip; protected, requires 'employees.manage'.
 router.get('/:id/export.zip', exportEmployeeZip);
+
+// ---------------------------------------------------------------- letters ---
+// An appointment letter for somebody who is ALREADY an employee. The
+// recruitment router issues one to a CANDIDATE; this issues one from the
+// employee record, for everybody who was here before the portal or arrived
+// through the bulk import and so has no letter anywhere.
+//
+// Same capability as the rest of this file: issuing a letter of appointment is
+// managing an employee. The figures are NOT typeable — they are derived from the
+// record so the letter and the payslip cannot disagree; see the controller.
+//
+// POST /:id/letters/appointment/draft — the wording, for the editor to prefill.
+router.post('/:id/letters/appointment/draft', draftAppointmentLetter);
+// POST /:id/letters/appointment/preview — render it, save nothing.
+router.post('/:id/letters/appointment/preview', previewAppointmentLetter);
+// POST /:id/letters/appointment — issue it and file it against the employee.
+// 409 when one is already on file unless { replace: true }.
+router.post('/:id/letters/appointment', issueAppointmentLetter);
 
 // GET /:id — fetch; PUT — update; DELETE — delete an employee; protected, requires 'employees.manage'.
 router.route('/:id')

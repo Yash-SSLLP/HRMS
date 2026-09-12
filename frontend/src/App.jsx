@@ -128,6 +128,7 @@ const AdminBoysIncentive = lazy(() => import('./pages/AdminBoysIncentive.jsx'));
 const AdminIncentivePoints = lazy(() => import('./pages/AdminIncentivePoints.jsx'));
 const AdminIncentiveDashboard = lazy(() => import('./pages/AdminIncentiveDashboard.jsx'));
 const AdminIncentiveLeaderboard = lazy(() => import('./pages/AdminIncentiveLeaderboard.jsx'));
+const AdminIncentiveBoard = lazy(() => import('./pages/AdminIncentiveBoard.jsx'));
 const EmployeeIncentive = lazy(() => import('./pages/EmployeeIncentive.jsx'));
 const EmployeeKhata = lazy(() => import('./pages/EmployeeKhata.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
@@ -266,6 +267,9 @@ export default function App() {
         <Route path="boys-incentive" element={<AdminBoysIncentive />} />
         <Route path="incentive-points" element={<AdminIncentivePoints />} />
         <Route path="incentive-dashboard" element={<AdminIncentiveDashboard />} />
+        {/* The standing itself, over every department. The endpoint decides who
+            may see whom; SuperAdmin, HR, CEO and MD see the lot. */}
+        <Route path="incentive-board" element={<AdminIncentiveBoard />} />
         {/* SuperAdmin only — the page says so and both endpoints behind it are
             restrictTo('SuperAdmin'). */}
         <Route path="incentive-leaderboard" element={<AdminIncentiveLeaderboard />} />

@@ -1624,8 +1624,7 @@ async function leaderboardConfig() {
  * Which departments this viewer's leaderboard may cover.
  *
  * THE RULES, in order:
- *   no employee record (SuperAdmin / CEO / MD)  → every department. They already
- *       read the whole points dashboard; narrowing them here would be theatre.
+ *   unrestricted (see below)                    → every department.
  *   a rule for their department                 → exactly what it lists, plus
  *       their OWN department, which is always readable and so never has to be
  *       listed in the rule.
@@ -1639,9 +1638,36 @@ async function leaderboardConfig() {
  * @param {string} myDepartment - the viewer's department ('' when they have none)
  * @param {Object} cfg - from leaderboardConfig()
  * @param {string[]} allDepartments - every department on the roster in range
- * @param {boolean} unrestricted - true for a viewer with no employee record
+ * @param {boolean} unrestricted - true for a viewer the curtain cannot apply to;
+ *   see seesEveryDepartment()
  * @returns {{departments: string[], scope: 'all'|'own'|'custom'|'none'}}
  */
+/**
+ * Does the per-department curtain apply to this viewer at all?
+ *
+ * NO, for two groups:
+ *   · an account with NO EMPLOYEE RECORD — a SuperAdmin, CEO or MD. There is no
+ *     "own department" to scope them to, so there is nothing to apply.
+ *   · the PAYING BENCH — SuperAdmin, HR, CEO, MD (canPayIncentive). HR is the
+ *     one of the four that does have an employee record, and before this it was
+ *     scoped to its own department like anybody else. That was theatre: the same
+ *     account opens the Points Dashboard, which lists EVERY employee's points
+ *     across every department along with what each has been paid and is still
+ *     owed. Hiding a colleague's rank from somebody who settles their bonus
+ *     protects nothing.
+ *
+ * The curtain is for COLLEAGUES comparing earnings, which is what a SuperAdmin
+ * configures it for. It was never meant to scope the people who run the payroll
+ * side of the module.
+ *
+ * @param {object|null} user - req.user
+ * @param {object|null} profile - their EmployeeProfile, or null
+ * @returns {boolean}
+ */
+function seesEveryDepartment(user, profile) {
+  return !profile || canPayIncentive(user);
+}
+
 function visibleDepartments(myDepartment, cfg, allDepartments, unrestricted) {
   if (unrestricted) return { departments: [...allDepartments], scope: 'all' };
 
@@ -1820,6 +1846,10 @@ const myHistory = asyncHandler(async (req, res) => {
  * else, Boys to see only Boys. A viewer always sees their own department, and
  * the whole tab can be switched off org-wide. See visibleDepartments above.
  *
+ * That curtain is for colleagues comparing earnings. It does NOT apply to the
+ * paying bench — SuperAdmin, HR, CEO, MD — who already read every department's
+ * points, and their pay, on the Points Dashboard. See seesEveryDepartment.
+ *
  * The company wall applies underneath all of that, as everywhere in this module:
  * the roster is the viewer's own company's (utils/employeeScope).
  *
@@ -1844,6 +1874,10 @@ const leaderboard = asyncHandler(async (req, res) => {
     range,
     departments: [],
     myDepartment: profile?.department || '',
+    // Whether the per-department curtain applied to this viewer. Sent so a screen
+    // can say "everyone in the company" without inferring it from `scope`, which
+    // also reads 'all' when a SuperAdmin has simply set the default that way.
+    unrestricted: seesEveryDepartment(req.user, profile),
     scope: 'none',
     people: [],
     me: null,
@@ -1855,8 +1889,9 @@ const leaderboard = asyncHandler(async (req, res) => {
 
   const roster = await pickablePeople(req);
   const allDepartments = [...new Set(roster.map((p) => String(p.department || '').trim()).filter(Boolean))].sort();
-  // No employee record = SuperAdmin / CEO / MD, who read the whole pool anyway.
-  const { departments, scope } = visibleDepartments(profile?.department || '', cfg, allDepartments, !profile);
+  const { departments, scope } = visibleDepartments(
+    profile?.department || '', cfg, allDepartments, seesEveryDepartment(req.user, profile)
+  );
   base.departments = departments;
   base.scope = scope;
   if (!departments.length) return res.json(base);

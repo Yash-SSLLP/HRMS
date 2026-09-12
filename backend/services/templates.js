@@ -155,6 +155,7 @@ async function renderMail(key, vars = {}, fallback = {}) {
  *   blank line          → new paragraph
  *   **wrapped in stars**→ bold paragraph
  *   - Heading: text     → numbered term with a bold heading
+ *   a plain line under it→ a further paragraph of that same term
  * @param {string} key - Registry key.
  * @param {Object} vars - Variable values.
  * @param {Array} fallbackBlocks - Blocks to use if the template can't be resolved.
@@ -185,15 +186,29 @@ function parseLetterBody(text) {
     .flatMap((chunk) => {
       // A run of "- Heading: text" lines becomes one numbered term each, so a
       // list of clauses can be written as consecutive lines in one block.
+      //
+      // A line that does NOT open a new "- " clause is a further PARAGRAPH of
+      // the one above it, joined into that term's text with a newline. The
+      // appointment letter's longer clauses run to four or five paragraphs
+      // each, and while the test was `every` rather than "the first line" they
+      // could only be written as one unbroken block of type.
       const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
-      if (lines.every((l) => l.startsWith('- '))) {
-        return lines.map((l) => {
+      if (lines.length && lines[0].startsWith('- ')) {
+        const terms = [];
+        lines.forEach((l) => {
+          if (!l.startsWith('- ')) {
+            // A continuation with no term above it can only be stray text.
+            if (terms.length) terms[terms.length - 1].text += `\n${l}`;
+            else terms.push({ type: 'para', text: l });
+            return;
+          }
           const rest = l.slice(2);
           const at = rest.indexOf(':');
-          return at > 0
+          terms.push(at > 0
             ? { type: 'term', head: rest.slice(0, at).trim(), text: rest.slice(at + 1).trim() }
-            : { type: 'para', text: rest };
+            : { type: 'para', text: rest });
         });
+        return terms;
       }
       const joined = lines.join(' ');
       const bold = /^\*\*[\s\S]*\*\*$/.test(joined);

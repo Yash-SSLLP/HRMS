@@ -231,6 +231,14 @@ const candidateSchema = new mongoose.Schema(
         employeeCode: String,
         designation: String,
         department: String,
+        // Printed in the letter's addressee block. Not asked for on the
+        // appointment form — it carries over from the offer, which already
+        // collected it for the same person.
+        address: String,
+        // Named in the key-facts panel at the head of the letter. Free text
+        // rather than an enum: "Full-Time Employee" covers almost every letter,
+        // but a fixed-term or consultancy appointment says so here.
+        employmentType: String,
         reportingManager: String,
         location: String,
         workingHours: String,
@@ -245,10 +253,11 @@ const candidateSchema = new mongoose.Schema(
         employerPf: Number,
         gratuity: Number,
         otherAllowances: Number,
-        // Annexure A figures that are neither an earning nor a percentage of the
-        // CTC: a fixed rupee amount each. Medical is DEDUCTED from the salary,
-        // accident cover is a benefit ON TOP of it — which is why they sit in
-        // different sections of the annexure despite being entered alike.
+        // Annexure I figures that are neither an earning nor a percentage of the
+        // CTC: a fixed rupee amount each. Medical is DEDUCTED from the salary
+        // (Part C), accident cover is carried by the company ON TOP of it
+        // (Part B) — which is why they sit in different parts of the sheet
+        // despite being entered alike.
         medical: Number,
         accidentInsurance: Number,
         // See the note on offer.data.body.

@@ -17,6 +17,7 @@
     "test:khata": "node scripts/testKhataLedger.js",
     "test:khata:db": "node scripts/testKhataIntegration.js",
     "test:salary": "node scripts/testSalaryRevision.js",
+    "test:emp-letter": "node scripts/testEmployeeAppointmentLetter.js",
     "test:import": "node scripts/testEmployeeImport.js",
     "test:salary-import": "node scripts/testSalaryStructureImport.js",
     "test:salary-excel": "node scripts/testSalaryStructureExcel.js",

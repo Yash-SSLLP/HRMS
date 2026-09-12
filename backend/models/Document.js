@@ -73,6 +73,23 @@ const documentSchema = new mongoose.Schema(
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     note: { type: String, maxlength: 500 },
 
+    // Which part of the portal PRODUCED this file, when the portal produced it
+    // at all. Absent on everything a person uploaded, which is most rows.
+    //
+    // It exists so a re-issue can find the copy it supersedes without touching
+    // a file somebody uploaded by hand: an appointment letter scanned in and
+    // signed is not the same object as the one this portal generated, and only
+    // the latter may be replaced. Keep the values stable — they are matched on.
+    generatedBy: {
+      type: String,
+      // 'candidate-letter' — carried onto the employee at conversion from the
+      //   recruitment flow (services/candidateDocuments.js).
+      // 'employee-letter'  — issued straight from the employee record
+      //   (controllers/employeeLetterController.js).
+      enum: ['candidate-letter', 'employee-letter'],
+      index: true,
+    },
+
     // HR verification workflow: an employee-submitted doc starts 'Submitted';
     // HR reviews and marks it 'Verified' (or 'Rejected' with a note).
     status: { type: String, enum: ['Submitted', 'Verified', 'Rejected'], default: 'Submitted', index: true },

@@ -23,6 +23,12 @@ const COMPANY = {
   // Defaults for the letter signatory block (overridable per-letter from the form).
   defaultSignatoryName: process.env.ORG_HR_SIGNATORY || 'Reena Angel',
   defaultSignatoryTitle: process.env.ORG_HR_TITLE || 'Human Resources Business Partner',
+  // The appointment letter is countersigned by the CEO beside HR. These name the
+  // second column when no CEO signature has been uploaded (Admin → Templates →
+  // Logo & signatures) — an uploaded one carries its own name and title and wins.
+  // Without them the column printed a title above a blank line and no name at all.
+  defaultCeoName: process.env.ORG_CEO_NAME || 'Piyus Lunia',
+  defaultCeoTitle: process.env.ORG_CEO_TITLE || 'Chief Executive Officer',
   // Governing-law state for the appointment letter's standard clauses.
   governingState: process.env.ORG_GOVERNING_STATE || 'Karnataka',
   logoPath: process.env.ORG_LOGO_PATH || null,

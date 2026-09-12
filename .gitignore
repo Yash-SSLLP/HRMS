@@ -46,3 +46,7 @@ mobile/
 !Mobile App/*.json
 !Mobile App/*.md
 
+
+# Local backups of superseded letters taken before a re-issue (scripts/fixAndIssue*).
+# Real employee documents — never commit these.
+letter-backups/

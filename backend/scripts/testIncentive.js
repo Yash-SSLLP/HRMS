@@ -1606,6 +1606,62 @@ const DAY2 = '2026-09-11';
     assert.strictEqual(res.payload.me, null, 'and they are on nobody else’s leaderboard');
   });
 
+  // The paying bench — SuperAdmin, HR, CEO, MD — is not subject to the curtain
+  // even when it HAS an employee record, which HR does and the other three do
+  // not. The same account reads every department's points AND their pay on the
+  // Points Dashboard, so scoping the ranking to their own team protected
+  // nothing and just made the admin leaderboard look broken.
+  await check('HR sees every department, curtain or no curtain', async () => {
+    const HR = { _id: '64f00000000000000000000a', role: 'HRManager', fullName: 'An HR Manager' };
+
+    // The strictest setting there is: a rule that names nobody, on a viewer who
+    // sits inside a department. An ordinary employee here would see only Boys.
+    settingsDoc.incentive.leaderboard = {
+      enabled: true,
+      defaultScope: 'none',
+      visibility: [{ department: 'Boys', canView: [] }],
+    };
+    FakeProfile.findOne = () => query(PEOPLE[2]); // in Boys, like STAFF above
+
+    const hr = await call(ctrl.leaderboard, { user: HR, query: { month: DEC } });
+    const staff = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
+    FakeProfile.findOne = noProfile;
+
+    assert.strictEqual(hr.statusCode, 200, hr.error);
+    assert.strictEqual(hr.payload.scope, 'all');
+    assert.strictEqual(hr.payload.unrestricted, true);
+    assert.deepStrictEqual(hr.payload.departments, ['Boys', 'Packing'], 'every department, with the filter built from it');
+
+    // ...and the same rule still binds an ordinary colleague, which is the half
+    // of this that must not have moved.
+    assert.strictEqual(staff.payload.unrestricted, false);
+    assert.deepStrictEqual(staff.payload.departments, ['Boys'], 'the curtain still applies to colleagues');
+
+    // Widening WHO is listed must not widen WHAT is listed about them.
+    for (const row of hr.payload.people) {
+      for (const banned of ['paidPoints', 'unpaidPoints', 'amount', 'rupees']) {
+        assert.ok(!(banned in row), `${banned} is the dashboard's business, not the leaderboard's`);
+      }
+    }
+    resetBoard();
+  });
+
+  await check('HR may filter the leaderboard to any department', async () => {
+    const HR = { _id: '64f00000000000000000000a', role: 'HRManager', fullName: 'An HR Manager' };
+    settingsDoc.incentive.leaderboard = { enabled: true, defaultScope: 'own', visibility: [] };
+    FakeProfile.findOne = () => query(PEOPLE[2]); // Boys
+
+    // Packing is not their own department, and with defaultScope 'own' an
+    // ordinary Boys employee is refused it (asserted a few cases above).
+    const res = await call(ctrl.leaderboard, { user: HR, query: { month: DEC, department: 'Packing' } });
+    FakeProfile.findOne = noProfile;
+
+    assert.strictEqual(res.statusCode, 200, res.error);
+    const depts = [...new Set(res.payload.people.map((p) => p.department))];
+    assert.deepStrictEqual(depts, ['Packing'], 'filtered to the one asked for');
+    resetBoard();
+  });
+
   await check('a leaver is on nobody’s leaderboard', async () => {
     resetBoard();
     // A DEACTIVATED LOGIN rather than a last working day, deliberately: the

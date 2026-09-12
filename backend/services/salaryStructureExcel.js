@@ -398,12 +398,20 @@ async function writeWorkbook(res, rows, { includeSample = false, structures = nu
     const sample = ws.addRow({
       employeeName: `${SAMPLE_PREFIX} — Asha Patel (delete or overwrite this row)`,
       employeeCode: 'SSL001',
-      basic: 20000,
-      hra: 10000,
-      specialAllowance: 12500,
-      conveyance: 2500,
-      medical: 2500,
-      lta: 2500,
+      // The company's standard split — 60 / 30 / 10 and nothing in the other
+      // three — on a round ₹50,000 a month, so the row adds up in the head and
+      // matches what the New Structure form prefills (PCT_FIELDS in
+      // pages/AdminSalaryStructures.jsx, and the schema defaults behind it).
+      //
+      // The unused three are shown as an explicit 0 rather than left blank:
+      // blank reads as "I did not get to this", 0 as "we do not use it", and
+      // somebody copying this row down wants the second meaning.
+      basic: 30000,
+      hra: 15000,
+      specialAllowance: 5000,
+      conveyance: 0,
+      medical: 0,
+      lta: 0,
       annualCtc: 600000,
       structureName: '',
       monthlyGross: 50000,

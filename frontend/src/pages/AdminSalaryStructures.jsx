@@ -29,14 +29,19 @@ const inr = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 0,
 });
 
-// [stateKey, label, default] for each percentage component
+// [stateKey, label, default] for each percentage component.
+//
+// The defaults are the split the company actually uses — 60 / 30 / 10, nothing
+// in the other three — and they match the schema defaults in
+// models/SalaryStructure.js. They are a STARTING POINT, not a rule: every field
+// stays editable and a structure can be built to any shape that totals 100%.
 const PCT_FIELDS = [
-  ['basicPct', 'Basic', 40],
-  ['hraPct', 'HRA', 20],
-  ['specialAllowancePct', 'Special Allowance', 25],
-  ['conveyancePct', 'Conveyance', 5],
-  ['medicalPct', 'Medical', 5],
-  ['ltaPct', 'LTA', 5],
+  ['basicPct', 'Basic', 60],
+  ['hraPct', 'HRA', 30],
+  ['specialAllowancePct', 'Special Allowance', 10],
+  ['conveyancePct', 'Conveyance', 0],
+  ['medicalPct', 'Medical', 0],
+  ['ltaPct', 'LTA', 0],
 ];
 
 // Rows shown in the preview breakdown table: [responseKey, label]

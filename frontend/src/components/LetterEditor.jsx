@@ -54,13 +54,18 @@ function PdfPreview({ url, title, onClose }) {
 }
 
 /**
- * @param {string} candidateId
+ * @param {string} [candidateId] - for the recruitment flow; ignored when `basePath` is given
  * @param {'offer'|'appointment'} kind
  * @param {Object} form - the in-progress field values (sent with draft/preview)
  * @param {Object[]|null} value - edited blocks, or null while untouched
  * @param {(blocks: Object[]|null) => void} onChange - null means "standard wording"
+ * @param {string} [basePath] - the `…/letters/<kind>` prefix to POST draft and
+ *   preview to. Defaults to the candidate's, so every existing caller is
+ *   unchanged; the employee flow passes its own because the same two endpoints
+ *   live on the employee router for somebody who is already on the payroll.
  */
-export default function LetterEditor({ candidateId, kind, form, value, onChange }) {
+export default function LetterEditor({ candidateId, kind, form, value, onChange, basePath }) {
+  const base = basePath || `/recruitment/candidates/${candidateId}/letters/${kind}`;
   const [open, setOpen] = useState(false);
   const [blocks, setBlocks] = useState(value || null);
   const [defaults, setDefaults] = useState(null);
@@ -77,7 +82,7 @@ export default function LetterEditor({ candidateId, kind, form, value, onChange 
   useEffect(() => {
     if (!open || blocks || loading) return;
     setLoading(true);
-    api.post(`/recruitment/candidates/${candidateId}/letters/${kind}/draft`, form)
+    api.post(`${base}/draft`, form)
       .then(({ data }) => { setBlocks(data.blocks); setDefaults(data.defaults); })
       .catch((err) => setError(err.response?.data?.message || 'Could not load the letter text'))
       .finally(() => setLoading(false));
@@ -105,7 +110,7 @@ export default function LetterEditor({ candidateId, kind, form, value, onChange 
     setBusy(true); setError('');
     try {
       const res = await api.post(
-        `/recruitment/candidates/${candidateId}/letters/${kind}/preview`,
+        `${base}/preview`,
         { ...form, body: blocks || undefined },
         { responseType: 'blob' },
       );
@@ -139,6 +144,7 @@ export default function LetterEditor({ candidateId, kind, form, value, onChange 
           <p className="text-[11px] text-gray-500 mb-2">
             This is the {label} as it will print. Edit any part, or leave it to use the standard wording.
             The letterhead, salutation and signature block are always added.
+            {kind === 'appointment' && ' Inside a numbered term, each line is a separate paragraph.'}
           </p>
 
           {loading && <div className="text-sm text-gray-500">Loading the wording…</div>}
@@ -164,8 +170,12 @@ export default function LetterEditor({ candidateId, kind, form, value, onChange 
                         <FiTrash2 size={13} />
                       </button>
                     </div>
+                    {/* A clause is no longer one sentence: the appointment
+                        letter's longer terms run to four or five paragraphs,
+                        one per line, so two rows hid most of what is there. */}
                     <textarea
-                      value={b.text} onChange={(e) => edit(i, { text: e.target.value })} rows={b.type === 'term' ? 2 : 3}
+                      value={b.text} onChange={(e) => edit(i, { text: e.target.value })}
+                      rows={Math.min(8, Math.max(3, String(b.text || '').split('\n').length + 1))}
                       className="w-full border rounded px-2 py-1.5 text-xs leading-relaxed"
                     />
                   </div>

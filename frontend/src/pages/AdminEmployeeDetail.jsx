@@ -14,6 +14,7 @@ import { hasPermission, isViewOnly, canAdministerEmployee } from '../config/perm
 import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
+import IssueAppointmentLetter from '../components/IssueAppointmentLetter';
 
 const DOC_STATUS_STYLES = {
   Submitted: 'bg-amber-100 text-amber-800',
@@ -89,6 +90,7 @@ export default function AdminEmployeeDetail() {
   // The document open in the preview modal, so a set can be verified
   // without downloading every file first.
   const [previewDoc, setPreviewDoc] = useState(null);
+  const [issuing, setIssuing] = useState(false);
 
   const loadDocs = async () => {
     try {
@@ -255,11 +257,22 @@ export default function AdminEmployeeDetail() {
 
       {/* Document submission link + verification */}
       <div className="bg-white shadow rounded-lg p-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between gap-2 mb-3">
           <h2 className="card-title">Document Submission</h2>
-          {token ? (
-            <button onClick={generateLink} disabled={docBusy} className="text-xs text-gray-500 hover:underline">Regenerate link</button>
-          ) : null}
+          <div className="flex items-center gap-3 shrink-0">
+            {/* An appointment letter for somebody already on the payroll. The
+                recruitment flow only ever issues one to a CANDIDATE, so anybody
+                who predates the portal or came in through the bulk import has
+                no letter on file at all. */}
+            {canEdit && (
+              <button onClick={() => setIssuing(true)} className="text-xs text-gray-700 hover:underline whitespace-nowrap">
+                Issue appointment letter
+              </button>
+            )}
+            {token ? (
+              <button onClick={generateLink} disabled={docBusy} className="text-xs text-gray-500 hover:underline">Regenerate link</button>
+            ) : null}
+          </div>
         </div>
         {token ? (
           <div className="flex gap-2 mb-4">
@@ -361,6 +374,14 @@ export default function AdminEmployeeDetail() {
           <Field label="Account type" value={bank.accountType} />
         </Card>
       </div>
+
+      {issuing && (
+        <IssueAppointmentLetter
+          profile={profile}
+          onClose={() => setIssuing(false)}
+          onIssued={loadDocs}
+        />
+      )}
 
       {previewDoc && <DocPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />}
     </div>
