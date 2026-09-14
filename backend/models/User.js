@@ -206,6 +206,10 @@ const userSchema = new mongoose.Schema(
     mailIdentity: {
       email: { type: String, default: null, lowercase: true, trim: true },
       refreshToken: { type: String, default: null, select: false },
+      // The scopes Google actually granted, space-separated. Interview invites
+      // need calendar.events on top of gmail.send; a grant made before that
+      // was asked for lacks it, and the account page says so.
+      scopes: { type: String, default: '' },
       connectedAt: { type: Date, default: null },
       lastSentAt: { type: Date, default: null },
       lastError: { type: String, default: null },

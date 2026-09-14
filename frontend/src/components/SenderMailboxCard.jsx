@@ -25,8 +25,9 @@ import { confirmDialog } from './dialogs';
 import { formatDateTime12 } from '../utils/time';
 
 // Mirrors backend/services/mailIdentity SENDER_ROLES — only to decide whether
-// to render at all; the server is the gate.
-const SENDER_ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager'];
+// to render at all (and, in MailComposeModal, whether a send needs a connected
+// mailbox); the server is the gate.
+export const SENDER_ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager'];
 
 export default function SenderMailboxCard() {
   const user = useAuthStore((s) => s.user);
@@ -127,10 +128,6 @@ export default function SenderMailboxCard() {
     try { await navigator.clipboard.writeText(status.redirectUri); setCopied(true); } catch { /* ignore */ }
   };
 
-  const companyLine = status?.companySender
-    ? <>the company mailbox (<span className="font-medium text-gray-700">{status.companySender}</span>)</>
-    : 'the company mailbox';
-
   return (
     <div className="bg-white shadow rounded-lg p-5 mb-4">
       <div className="flex gap-3">
@@ -140,8 +137,11 @@ export default function SenderMailboxCard() {
           <p className="text-sm text-gray-500 mt-1">
             Letters, payslips, interview invites and every other email you send from HRMS
             {status?.connected
-              ? <> leave from <span className="font-medium text-gray-700">{status.email}</span> and sit in its Sent folder.</>
-              : <> currently leave from {companyLine} with your name on them. Connect your Google account and they will leave from your own address instead, so replies come straight to you.</>}
+              ? <> leave from <span className="font-medium text-gray-700">{status.email}</span> and sit in its Sent folder.
+                  {status.calendar
+                    ? ' Interview invites go on your own calendar too.'
+                    : ' Interview invites need calendar access, which this connection does not have — reconnect to add it.'}</>
+              : <> leave only from your own address. Until you connect your Google account, HRMS will not send them for you: connect it and they go out from your mailbox, with replies coming straight to you.</>}
           </p>
 
           {error && (
@@ -160,8 +160,8 @@ export default function SenderMailboxCard() {
               <FiAlertTriangle className="shrink-0 mt-0.5" />
               <span>
                 Google has stopped accepting this connection
-                {status.lastErrorAt ? ` (since ${formatDateTime12(status.lastErrorAt)})` : ''}, so your emails are
-                going out from {companyLine} for now. Reconnect to fix it.
+                {status.lastErrorAt ? ` (since ${formatDateTime12(status.lastErrorAt)})` : ''}, so HRMS is not
+                sending your emails at all until you reconnect.
                 <span className="block text-xs text-amber-700 mt-1 break-words">{status.lastError}</span>
               </span>
             </div>
@@ -205,8 +205,9 @@ export default function SenderMailboxCard() {
 
           {!status?.connected && (
             <p className="mt-3 text-[11px] text-gray-400">
-              Google will ask you to allow HRMS to <b>send email on your behalf</b> — that is the only permission
-              taken; HRMS can never read your inbox. You can disconnect here at any time.
+              Google will ask you to allow HRMS to <b>send email on your behalf</b> and to <b>add events to your
+              calendar</b> (for interview invites) — nothing more; HRMS can never read your inbox. You can
+              disconnect here at any time.
             </p>
           )}
 

@@ -280,6 +280,8 @@ async function notifyApprover(approverUserId, request, applicantName) {
     if (appr?.email) {
       await enqueueMail(
         {
+          // A workflow notice, not the applicant's letter: the company mailbox.
+          sender: null,
           to: [appr.email],
           subject: `Leave approval needed - ${applicantName} (${request.leaveType}, ${request.totalDays}d)`,
           text: [
@@ -660,6 +662,8 @@ async function emailLeaveToHr(profile, request, applicant) {
 
     await enqueueMail(
       {
+        // A workflow notice, not the applicant's letter: the company mailbox.
+        sender: null,
         to: [...recipients],
         replyTo: applicant.email,
         subject: `Leave request from ${name} (${request.leaveType}, ${request.totalDays}d)`,
@@ -925,6 +929,8 @@ async function notifyEmergencyTaken(request, profile, chain) {
       await enqueueMail(
         {
           to,
+          // A workflow notice, not the applicant's letter: the company mailbox.
+          sender: null,
           subject: flagged
             ? `Repeat emergency leave — ${who} (${nth} this month)`
             : `Emergency leave — ${who} (${days})`,

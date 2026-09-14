@@ -39,6 +39,7 @@ const { notify, notifyMany } = require('../services/notify');
 const { usersHoldingAny, usersInRoles, scopeRecipientsToCompany } = require('../services/audience');
 const { buildYtd, computeYtdFrom } = require('../services/payslipYtd');
 const { enqueueMail } = require('../services/email');
+const mailIdentity = require('../services/mailIdentity');
 // The covering email is editable in Settings -> Templates ('payslip.mail'); it
 // used to be hardcoded here, so anything HR typed there was ignored.
 const { renderMail } = require('../services/templates');
@@ -2580,6 +2581,8 @@ const markPayslipSent = asyncHandler(async (req, res) => {
 // PDF attached — HR sees and can edit the exact subject + body first. Mirrors
 // the offer/appointment letter flow so every portal email is review-then-send.
 const emailPayslip = asyncHandler(async (req, res) => {
+  // The payslip leaves from the sender's own mailbox, or not at all.
+  await mailIdentity.assertCanSendMail(req.user);
   const payslip = await Payroll.findById(req.params.id).populate(PAYSLIP_PDF_POPULATE);
   if (!payslip) {
     res.status(404);

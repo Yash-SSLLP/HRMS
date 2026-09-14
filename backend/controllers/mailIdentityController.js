@@ -55,6 +55,9 @@ function statusOf(user) {
   return {
     connected: Boolean(mi.email),
     email: mi.email || null,
+    // Interview invites go on the person's own calendar only when calendar
+    // access was granted; a connection made before that was asked for lacks it.
+    calendar: mailIdentity.hasCalendarScope({ scopes: mi.scopes }),
     connectedAt: mi.connectedAt || null,
     lastSentAt: mi.lastSentAt || null,
     lastError: mi.lastError || null,
@@ -158,7 +161,7 @@ const finishConnect = asyncHandler(async (req, res) => {
       throw new Error('You did not allow HRMS to send email. Tick "Send email on your behalf" on the Google screen and try again.');
     }
     const info = await googleOAuth.fetchUserInfo(accessToken);
-    await mailIdentity.connect(claims.uid, { email: info.email, refreshToken });
+    await mailIdentity.connect(claims.uid, { email: info.email, refreshToken, scopes: scope });
     return back({ mail: 'connected', email: info.email });
   } catch (err) {
     console.error('[mailIdentity] connect failed:', err.message);

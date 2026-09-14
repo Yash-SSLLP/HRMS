@@ -13,8 +13,8 @@ const EmailOutbox = require('../models/EmailOutbox');
 const storage = require('./storage');
 const googleMail = require('./googleMail');
 const googleOAuth = require('./googleOAuth');
-const { currentUser } = require('../middleware/requestContext');
-const { canSend } = require('./mailIdentity');
+const { als } = require('../middleware/requestContext');
+const mailIdentity = require('./mailIdentity');
 
 // Map outbox attachment refs to nodemailer attachments. Prefers a storage path
 // (read from GridFS), else uses inline base64 bytes embedded in `content`.
@@ -82,18 +82,41 @@ function resolveFrom(rawFrom) {
  * @sideEffects Sends a real email (network) except in the mocked/log path.
  */
 async function sendMail(opts) {
-  // A person's own connected mailbox (opts.identity, resolved by the worker from
-  // the outbox row's `sender`). Gmail only — there is no SMTP equivalent of
-  // "send as this person" — and no fallback HERE: the worker decides what to do
-  // when the grant is refused (mark it broken, resend from the company mailbox),
-  // because it is the worker that owns the retry ladder and the user record.
-  if (opts.identity) {
+  // WHOSE MAILBOX. An explicit identity wins (the worker resolved it from the
+  // outbox row's `sender`). Otherwise the acting user of the current request,
+  // strictly: a person's mail leaves only from their own connected Google
+  // account, and a missing or refused connection is a MailboxRequiredError,
+  // never a quiet send from the company mailbox. `sender: null` means the mail
+  // is nobody's (a system notification) and takes the company path below —
+  // the worker always passes it, so a tick kicked from inside somebody's
+  // request can never inherit that person as the sender of other rows.
+  let identity = opts.identity || null;
+  if (!identity && opts.sender !== null) {
+    ({ identity } = await mailIdentity.senderForContext(opts.sender));
+  }
+  if (identity) {
+    // Gmail only — there is no SMTP equivalent of "send as this person".
     if (!googleOAuth.hasClient()) {
       const err = new Error('Google OAuth client is not configured on the server.');
       err.permanent = true;
       throw err;
     }
-    return googleMail.send(opts);
+    try {
+      const info = await googleMail.send({ ...opts, identity });
+      await mailIdentity.markSent(identity.userId);
+      return info;
+    } catch (err) {
+      // Google refused the grant (revoked, expired test-mode token). Remember
+      // it so the account page asks for a reconnect, and say so plainly: the
+      // mail did NOT go, and it will not go from anywhere else.
+      if (err.permanent) {
+        await mailIdentity.markBroken(identity.userId, err.message);
+        err.message = `Google refused ${identity.email} (${err.message}). `
+          + 'Reconnect your mailbox under My Account → "Send email from your own mailbox" and send again.';
+        err.hint = 'reconnect';
+      }
+      throw err;
+    }
   }
 
   // Preferred transport: Gmail API via the shared Google OAuth credentials.
@@ -147,19 +170,17 @@ async function sendMail(opts) {
  * Enqueue an email for asynchronous delivery with retry.
  *
  * @param {Object} opts       to / subject / text / html / from / replyTo / sender
- *   `sender` (User id) names whose mailbox to send from when they have connected
- *   one. Omitted → the acting user of the current request, if their role may
- *   send as themselves (services/mailIdentity SENDER_ROLES); pass `null` to
- *   force the company mailbox for a mail nobody personally authored.
+ *   `sender` names whose mailbox the mail leaves from. Omitted → the acting user
+ *   of the current request when their role sends as itself (services/mailIdentity
+ *   SENDER_ROLES) — and they MUST have a working mailbox, or this throws a
+ *   MailboxRequiredError before anything is queued. Pass `null` for a mail
+ *   nobody personally authored (a system notification): the company mailbox.
  * @param {Object} [related]  { type: 'exit', id: ObjectId }
  * @returns {Promise<EmailOutbox doc>}
+ * @throws {MailboxRequiredError} Personal sender without a connected mailbox.
  */
 async function enqueueMail(opts, related = {}) {
-  let sender = opts.sender;
-  if (sender === undefined) {
-    const actor = currentUser();
-    sender = actor && canSend(actor) ? actor._id : undefined;
-  }
+  const { sender } = await mailIdentity.senderForContext(opts.sender);
   const row = await EmailOutbox.create({
     to: Array.isArray(opts.to) ? opts.to.join(',') : opts.to,
     cc: Array.isArray(opts.cc) ? opts.cc.join(',') : opts.cc,
@@ -178,10 +199,12 @@ async function enqueueMail(opts, related = {}) {
   });
 
   // Kick the worker so dev-mode + healthy SMTP cases deliver almost immediately.
-  // Lazy-required to avoid circular import.
+  // Lazy-required to avoid circular import. Run OUTSIDE this request's context:
+  // AsyncLocalStorage follows setImmediate, the tick drains every due row —
+  // other people's included — and nothing in it may see this request's user.
   try {
     const worker = require('./emailWorker');
-    if (worker.tick) setImmediate(() => worker.tick().catch(() => {}));
+    if (worker.tick) setImmediate(() => als.exit(() => worker.tick().catch(() => {})));
   } catch (_) { /* worker not started yet — its own interval will catch up */ }
 
   return row;

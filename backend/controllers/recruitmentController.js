@@ -34,6 +34,7 @@ const { getBranding } = require('../services/branding');
 const { enqueueMail, sendMail } = require('../services/email');
 const { notify } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
+const mailIdentity = require('../services/mailIdentity');
 const { computeNextEmployeeCode } = require('./lifecycleController');
 const { viewerCompanyScope } = require('../utils/employeeScope');
 
@@ -911,7 +912,21 @@ async function meetInviteRecipients(candidate, round) {
 // pass sendEmail: false to review/edit that email first (the response's
 // `mail` object holds the editable defaults for the compose modal).
 const createRoundMeet = asyncHandler(async (req, res) => {
-  if (!googleCalendar.isConfigured()) {
+  // The event goes on the ACTING user's own Google Calendar, so Google's
+  // invitation reaches the candidate and the interviewer from them — like
+  // every other mail they send. That needs their connected mailbox, with the
+  // calendar permission granted at connect time; refused up front, before
+  // anything is created. (A non-sender role, e.g. an employee interviewer,
+  // still uses the company calendar.)
+  const identity = await mailIdentity.assertCanSendMail(req.user);
+  if (identity && !mailIdentity.hasCalendarScope(identity)) {
+    res.status(409);
+    throw new Error(
+      'Your Google account was connected without calendar access, which interview invites need. '
+      + 'Reconnect it under My Account → "Send email from your own mailbox" and allow calendar access.'
+    );
+  }
+  if (!identity && !googleCalendar.isConfigured()) {
     res.status(503);
     throw new Error(
       'Google Meet is not configured on the server. Set GOOGLE_OAUTH_CLIENT_ID / _SECRET / _REFRESH_TOKEN.'
@@ -958,6 +973,7 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   let result;
   try {
     result = await googleCalendar.createMeetEvent({
+      identity,
       summary: `Interview: ${candidate.name}${jobTitle} (${roundLabel})`,
       description:
         `Interview round: ${roundLabel}\n` +
@@ -1043,6 +1059,8 @@ const createRoundMeet = asyncHandler(async (req, res) => {
 // subject + body in the compose modal before it goes out; empty fields fall
 // back to the defaults. The candidate's résumé is attached.
 const sendRoundMeetEmail = asyncHandler(async (req, res) => {
+  // The invite leaves from the sender's own mailbox, or not at all.
+  await mailIdentity.assertCanSendMail(req.user);
   const candidate = await Candidate.findById(req.params.id)
     .select('+resumeData')
     .populate('job', 'title');
@@ -1285,6 +1303,8 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Unknown letter type');
   }
+  // The letter leaves from the sender's own mailbox, or not at all.
+  await mailIdentity.assertCanSendMail(req.user);
   const candidate = await Candidate.findById(req.params.id);
   if (!candidate) {
     res.status(404);
@@ -1413,6 +1433,9 @@ async function streamLetter(res, relPath, filename) {
  */
 // POST /api/recruitment/candidates/:id/offer
 const generateOffer = asyncHandler(async (req, res) => {
+  // "Generate and email": the mail leaves from the sender's own mailbox, or
+  // the whole request is refused here — before the letter is rendered.
+  if (req.body?.email) await mailIdentity.assertCanSendMail(req.user);
   const candidate = await Candidate.findById(req.params.id);
   if (!candidate) {
     res.status(404);
@@ -1546,6 +1569,8 @@ const updateOnboarding = asyncHandler(async (req, res) => {
  */
 // POST /api/recruitment/candidates/:id/appointment
 const generateAppointment = asyncHandler(async (req, res) => {
+  // "Generate and email": see generateOffer.
+  if (req.body?.email) await mailIdentity.assertCanSendMail(req.user);
   const candidate = await Candidate.findById(req.params.id);
   if (!candidate) {
     res.status(404);
@@ -1969,6 +1994,8 @@ async function emailRejectedDocuments(candidate, actor) {
 
 // POST /api/recruitment/candidates/:id/documents/request — (re)generate the link.
 const requestDocuments = asyncHandler(async (req, res) => {
+  // The request leaves from the sender's own mailbox, or not at all.
+  await mailIdentity.assertCanSendMail(req.user);
   const candidate = await Candidate.findById(req.params.id);
   if (!candidate) {
     res.status(404);
@@ -2357,6 +2384,9 @@ const confirmDocuments = asyncHandler(async (req, res) => {
 // PATCH /api/recruitment/candidates/:id/documents/:fileId/status  (HR)
 const reviewCandidateDocument = asyncHandler(async (req, res) => {
   const { status, note } = req.body;
+  // A rejection is written to the candidate from the reviewer's own mailbox —
+  // so a reviewer without one is stopped before the verdict is recorded.
+  if (status === 'Rejected') await mailIdentity.assertCanSendMail(req.user);
   if (!CANDIDATE_DOC_STATUS.includes(status)) {
     res.status(400);
     throw new Error(`status must be one of ${CANDIDATE_DOC_STATUS.join(', ')}`);

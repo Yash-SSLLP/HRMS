@@ -13,6 +13,7 @@ const ExitRequest = require('../models/ExitRequest');
 const Candidate = require('../models/Candidate');
 const { sendMail } = require('./email');
 const mailIdentity = require('./mailIdentity');
+const { notify } = require('./notify');
 
 const POLL_INTERVAL_MS = 30_000;            // 30s
 const STALE_LOCK_MS = 2 * 60_000;           // claim back rows stuck in 'Sending' > 2 min
@@ -23,15 +24,15 @@ let intervalHandle = null;
 let ticking = false;
 
 /**
- * Send one outbox row from the right mailbox. If the person who queued it
- * (row.sender) has connected their own Google account, the mail leaves from
- * that; when Google refuses their grant (revoked, expired), the grant is marked
- * broken so the account page asks them to reconnect, and THIS mail is re-sent
- * from the company mailbox in the same attempt rather than dying — a dead
- * personal token must never cost a candidate their offer letter.
+ * Send one outbox row from the right mailbox. A row with a `sender` is that
+ * person's mail and leaves from THEIR connected Google account — and from
+ * nowhere else: if the connection is gone or Google refuses it, the row dies
+ * with a reason and the sender is told in-app, rather than the mail quietly
+ * going out from the company mailbox under their name. A row without a sender
+ * is the system's and takes the company mailbox.
  * @param {Object} row - EmailOutbox document.
  * @returns {Promise<{messageId?:string, sentFrom?:string, mocked?:boolean}>}
- * @sideEffects Sends email; may stamp User.mailIdentity (lastSentAt / lastError).
+ * @sideEffects Sends email; may stamp User.mailIdentity and create a Notification.
  */
 async function deliver(row) {
   const base = {
@@ -43,18 +44,49 @@ async function deliver(row) {
     from: row.from,
     replyTo: row.replyTo,
     attachments: row.attachments,
+    // Never derive a sender from the request context in here: a tick can run
+    // inside whichever request kicked it, and that person is not this row's.
+    sender: null,
   };
-  const identity = row.sender ? await mailIdentity.resolveIdentity(row.sender) : null;
-  if (!identity) return sendMail(base);
+  if (!row.sender) return sendMail(base);
+
+  const { identity, reason } = await mailIdentity.loadIdentity(row.sender);
+  if (!identity) {
+    const err = new Error(reason === 'broken' || reason === 'unreadable'
+      ? 'Google no longer accepts the sender\'s mailbox connection.'
+      : 'The sender has not connected a Google mailbox.');
+    err.permanent = true;
+    err.hint = 'reconnect';
+    await tellSender(row, err.message);
+    throw err;
+  }
   try {
-    const info = await sendMail({ ...base, identity });
-    await mailIdentity.markSent(identity.userId);
-    return info;
+    return await sendMail({ ...base, identity });
   } catch (err) {
-    if (!err.permanent) throw err;
-    await mailIdentity.markBroken(identity.userId, err.message);
-    console.warn(`[emailWorker] ${identity.email}'s mailbox refused (${err.message}); sending from the company mailbox instead.`);
-    return sendMail(base);
+    if (err.permanent) await tellSender(row, err.message);
+    throw err;
+  }
+}
+
+/**
+ * Tell the person whose mail just died, in-app, so a refused mailbox never
+ * turns into a candidate who was silently never written to.
+ * @param {Object} row - The dead EmailOutbox row.
+ * @param {string} reason
+ * @returns {Promise<void>} Never rejects.
+ */
+async function tellSender(row, reason) {
+  try {
+    await notify({
+      recipient: row.sender,
+      type: 'general',
+      audience: 'all',
+      title: 'Email not sent',
+      body: `"${row.subject}" to ${row.to} did not go out: ${reason} `
+        + 'Reconnect your mailbox under My Account → "Send email from your own mailbox" and send it again.',
+    });
+  } catch (err) {
+    console.error('[emailWorker] could not notify the sender:', err.message);
   }
 }
 
@@ -104,8 +136,9 @@ async function processOne() {
     // later message queues behind it — so fail fast and say what to do.
     if (err.permanent) {
       row.status = 'Dead';
-      row.lastError = `${row.lastError} — not retried: re-authorise with `
-        + 'node scripts/getGoogleRefreshToken.js, then restart the server.';
+      row.lastError = `${row.lastError} — not retried: ${err.hint === 'reconnect'
+        ? 'the sender must reconnect their mailbox under My Account and send again.'
+        : 're-authorise with node scripts/getGoogleRefreshToken.js, then restart the server.'}`;
     } else if (row.attempts >= (row.maxAttempts || 6)) {
       row.status = 'Dead';
     } else {

@@ -16,7 +16,7 @@
  * When unconfigured, isConfigured() is false and callers fall back gracefully.
  */
 const crypto = require('crypto');
-const { refreshAccessToken } = require('./googleOAuth');
+const { refreshAccessToken, hasClient } = require('./googleOAuth');
 
 /**
  * Whether the Google OAuth credentials needed for Calendar/Gmail are all present.
@@ -48,14 +48,24 @@ async function getAccessToken() {
 
 /**
  * Create a Google Calendar event with a Meet link and invite attendees.
- * @param {{summary:string, description?:string, start:Date, end:Date, attendees?:string[]}} opts
+ *
+ * With `identity` (a person's connected Google account, services/mailIdentity)
+ * the event goes on THEIR primary calendar and Google's invitation reaches the
+ * attendees from them — the same rule as every other mail they send. Without
+ * it, the company calendar (the env refresh token) is used.
+ * @param {{summary:string, description?:string, start:Date, end:Date, attendees?:string[],
+ *   identity?: {userId:string, refreshToken:string}|null}} opts
  * @returns {Promise<{meetingLink:string, eventId:string, htmlLink:string}>}
  */
-async function createMeetEvent({ summary, description, start, end, attendees = [] }) {
-  if (!isConfigured()) throw new Error('Google Calendar is not configured on the server.');
+async function createMeetEvent({ summary, description, start, end, attendees = [], identity = null }) {
+  if (identity ? !hasClient() : !isConfigured()) {
+    throw new Error('Google Calendar is not configured on the server.');
+  }
 
-  const token = await getAccessToken();
-  const calendarId = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const token = identity
+    ? await refreshAccessToken(identity.refreshToken, `user:${identity.userId}`)
+    : await getAccessToken();
+  const calendarId = identity ? 'primary' : encodeURIComponent(process.env.GOOGLE_CALENDAR_ID || 'primary');
 
   const uniqueEmails = [...new Set(attendees.filter((e) => e && /@/.test(e)).map((e) => e.trim().toLowerCase()))];
 
