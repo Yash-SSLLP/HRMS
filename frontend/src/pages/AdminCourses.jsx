@@ -2,9 +2,12 @@
  * AdminCourses — LMS course authoring & administration (admin portal). Lists
  * courses from GET /courses/admin/all and CRUDs them via /courses, with a module
  * editor that uploads videos directly to Cloudinary (signed via
- * /courses/upload-signature) or accepts Drive links. Side modals handle assign,
- * roster, self-enroll approvals, issue reports, public-share leads/feedback and
- * comment moderation, each hitting the relevant /courses/* endpoint.
+ * /courses/upload-signature) or accepts Drive links, and pins as many
+ * timestamped questions inside a video as the author wants (CheckpointEditor).
+ * Side modals handle assign, roster, the in-video answer log
+ * (/courses/:id/checkpoint-answers), self-enroll approvals, issue reports,
+ * public-share leads/feedback and comment moderation, each hitting the relevant
+ * /courses/* endpoint.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -15,8 +18,14 @@ import { useViewOnly } from '../hooks/useViewOnly';
 import CourseVideoPlayer from '../components/CourseVideoPlayer';
 import { confirmDialog } from '../components/dialogs';
 import { downloadTableXlsx } from '../api/download';
+import { fmtClock, parseClock } from '../utils/checkpoints';
 
 const CATEGORIES = ['Technical', 'Soft Skills', 'Compliance', 'Leadership', 'Onboarding', 'Other'];
+// Cloudinary's per-file ceiling on the plan this runs on. Checked before a byte
+// moves — the server never sees the file, so a too-big one otherwise uploads for
+// minutes and then dies as an unexplained "network error". Same cap the phone
+// applies (mobile CoursesAdminScreen).
+const MAX_VIDEO_MB = 100;
 
 // Mirror of backend utils/drive.parseDriveFileId for live link validation.
 const parseDriveId = (input) => {
@@ -30,7 +39,14 @@ const parseDriveId = (input) => {
   );
 };
 
-const blankModule = () => ({ type: 'video', videoSource: 'cloudinary', title: '', driveUrl: '', cloudinaryPublicId: '', content: '' });
+const blankModule = () => ({ type: 'video', videoSource: 'cloudinary', title: '', driveUrl: '', cloudinaryPublicId: '', content: '', checkpoints: [] });
+// A new in-video question. `_clock` is the "1:30" the author types; atSec is what
+// gets saved, and the two are kept in step by the timestamp field below.
+const blankCheckpoint = () => ({
+  atSec: 0, _clock: '0:00', question: '', type: 'single',
+  options: [{ text: '', correct: false }, { text: '', correct: false }],
+  explanation: '', requireCorrect: true,
+});
 const blank = () => ({ title: '', description: '', category: 'Other', courseType: 'internal', durationHours: 0, deadlineDays: 0, active: true, modules: [] });
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 
@@ -61,7 +77,14 @@ function uploadToCloudinary(sig, file, onProgress) {
         reject(new Error(msg));
       }
     };
-    xhr.onerror = () => reject(new Error('Upload failed - network error'));
+    // Cloudinary cuts the connection rather than answering when a file is over
+    // the account's per-file ceiling, so a bare "network error" is usually a
+    // too-big file — say so, and name the other things that cause it.
+    xhr.onerror = () => reject(new Error(
+      'The upload could not reach Cloudinary. Usually that means the file is too large for the plan '
+      + `(the limit is ${MAX_VIDEO_MB} MB), or something on this network or a browser extension blocked the request.`
+    ));
+    xhr.onabort = () => reject(new Error('Upload cancelled.'));
     xhr.send(fd);
   });
 }
@@ -92,6 +115,7 @@ export default function AdminCourses() {
   const [showApprovals, setShowApprovals] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [shareFor, setShareFor] = useState(null); // course (share/leads/feedback hub)
+  const [answersFor, setAnswersFor] = useState(null); // course (in-video question log)
   const [showComments, setShowComments] = useState(false);
 
   const load = async () => {
@@ -147,6 +171,19 @@ export default function AdminCourses() {
         cloudinaryVersion: m.cloudinaryVersion || undefined,
         cloudinaryFormat: m.cloudinaryFormat || '',
         videoSizeBytes: m.videoSizeBytes || 0,
+        // Carried through, not dropped: the server rewrites the whole module
+        // list on save, so a field we don't send back is a field we erase.
+        durationSec: m.durationSec || 0,
+        checkpoints: (m.checkpoints || []).map((c) => ({
+          _id: c._id,
+          atSec: c.atSec || 0,
+          _clock: fmtClock(c.atSec || 0),
+          question: c.question || '',
+          type: c.type || 'single',
+          options: (c.options || []).map((o) => ({ text: o.text || '', correct: !!o.correct })),
+          explanation: c.explanation || '',
+          requireCorrect: c.requireCorrect !== false,
+        })),
         content: m.content || '',
       })),
     });
@@ -167,6 +204,13 @@ export default function AdminCourses() {
     if (!file) return;
     if (!/^video\//i.test(file.type || '')) {
       patchModule(idx, { _uploadError: 'Please choose a video file.' });
+      return;
+    }
+    if (file.size > MAX_VIDEO_MB * 1024 * 1024) {
+      patchModule(idx, {
+        _uploadError: `That file is ${(file.size / (1024 * 1024)).toFixed(1)} MB - over the ${MAX_VIDEO_MB} MB limit. `
+          + 'Compress it or split the lesson in two.',
+      });
       return;
     }
     patchModule(idx, { _uploadPct: 0, _uploadError: '' });
@@ -198,6 +242,21 @@ export default function AdminCourses() {
       const m = form.modules[badVideo];
       setError(`Module ${badVideo + 1}: ${m.videoSource === 'cloudinary' ? 'upload a video file.' : 'enter a valid Google Drive video link.'}`);
       return;
+    }
+    // In-video questions: the server checks these too, but catching them here
+    // saves a round trip and points at the exact question.
+    for (let i = 0; i < form.modules.length; i += 1) {
+      const cps = form.modules[i].checkpoints || [];
+      for (let j = 0; j < cps.length; j += 1) {
+        const c = cps[j];
+        const where = `Module ${i + 1}, question ${j + 1} (${fmtClock(c.atSec)})`;
+        if (!String(c.question || '').trim()) { setError(`${where}: type the question.`); return; }
+        const filled = (c.options || []).filter((o) => String(o.text || '').trim());
+        if (c.type !== 'text' && filled.length < 2) { setError(`${where}: add at least two answer choices.`); return; }
+        if (c.type === 'single' && filled.filter((o) => o.correct).length > 1) {
+          setError(`${where}: a single-choice question can only have one right answer.`); return;
+        }
+      }
     }
     setSaving(true);
     setError('');
@@ -290,6 +349,9 @@ export default function AdminCourses() {
                 {c.moduleCount - c.videoCount > 0 && (
                   <span className="bg-gray-100 text-gray-700 rounded-md px-2 py-0.5">📄 {c.moduleCount - c.videoCount} text</span>
                 )}
+                {c.questionCount > 0 && (
+                  <span className="bg-purple-50 text-purple-700 rounded-md px-2 py-0.5">❓ {c.questionCount} question{c.questionCount === 1 ? '' : 's'}</span>
+                )}
                 <span className="bg-blue-50 text-blue-700 rounded-md px-2 py-0.5">👥 {c.enrollmentCount} enrolled</span>
                 <span className="bg-green-50 text-green-700 rounded-md px-2 py-0.5">✓ {c.completedCount} done</span>
                 {c.overdueCount > 0 && <span className="bg-red-50 text-red-700 rounded-md px-2 py-0.5">⏰ {c.overdueCount} overdue</span>}
@@ -309,6 +371,9 @@ export default function AdminCourses() {
                   </>
                 )}
                 <button onClick={() => setRosterFor(c)} className="text-gray-600 hover:underline">Roster</button>
+                {c.questionCount > 0 && (
+                  <button onClick={() => setAnswersFor(c)} className="text-purple-600 hover:underline">Answers</button>
+                )}
                 {(c.courseType === 'external' || c.isPublic) && (
                   <button onClick={() => setShareFor(c)} className="text-emerald-600 hover:underline">Public link</button>
                 )}
@@ -439,7 +504,7 @@ export default function AdminCourses() {
                                   )}
                                   {m._uploadError && <div className="text-xs text-red-600">✗ {m._uploadError}</div>}
                                   {!m.cloudinaryPublicId && !uploading && !m._uploadError && (
-                                    <div className="text-xs text-gray-400">MP4/MOV/WebM. Uploads straight to Cloudinary (private).</div>
+                                    <div className="text-xs text-gray-400">MP4/MOV/WebM up to {MAX_VIDEO_MB} MB. Uploads straight to Cloudinary (private).</div>
                                   )}
                                 </div>
                               ) : (
@@ -463,9 +528,17 @@ export default function AdminCourses() {
                                 </div>
                               )}
                               {canPreview && previewModIdx === idx && (
-                                <CourseVideoPlayer courseId={editingId} module={{ _id: m._id, title: m.title }} preview />
+                                <CourseVideoPlayer
+                                  courseId={editingId}
+                                  module={{ _id: m._id, title: m.title, checkpoints: (m.checkpoints || []).filter((c) => c._id) }}
+                                  preview
+                                />
                               )}
                               <textarea rows={2} placeholder="Notes shown under the video (optional)" value={m.content} onChange={(e) => updateModule(idx, 'content', e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                              <CheckpointEditor
+                                checkpoints={m.checkpoints || []}
+                                onChange={(next) => updateModule(idx, 'checkpoints', next)}
+                              />
                             </>
                           ) : (
                             <textarea rows={4} placeholder="Text content" value={m.content} onChange={(e) => updateModule(idx, 'content', e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm" />
@@ -489,10 +562,142 @@ export default function AdminCourses() {
 
       {assignFor && <AssignModal course={assignFor} onClose={() => setAssignFor(null)} onDone={() => { setAssignFor(null); load(); }} />}
       {rosterFor && <RosterModal course={rosterFor} onClose={() => setRosterFor(null)} />}
+      {answersFor && <AnswersModal course={answersFor} onClose={() => setAnswersFor(null)} />}
       {showApprovals && <ApprovalsModal onClose={() => setShowApprovals(false)} onChange={load} />}
       {showReports && <ReportsModal onClose={() => setShowReports(false)} onChange={load} />}
       {shareFor && <ShareModal course={shareFor} onClose={() => setShareFor(null)} onChange={load} />}
       {showComments && <CommentsModal onClose={() => setShowComments(false)} onChange={load} />}
+    </div>
+  );
+}
+
+// ===== In-video questions for one video lesson =====
+// Questions the learner has to answer before the video will go on. As many as
+// you like, at any timestamp. A question with no right answer marked is a poll:
+// it's still compulsory, the answer is still logged, but anything gets them
+// through. Controlled: takes the array, hands back a new one.
+const QUESTION_TYPES = [
+  ['single', 'One answer'],
+  ['multiple', 'Choose all that apply'],
+  ['text', 'Type the answer'],
+];
+
+function CheckpointEditor({ checkpoints, onChange }) {
+  const patch = (i, p) => onChange(checkpoints.map((c, n) => (n === i ? { ...c, ...p } : c)));
+  const patchOpt = (i, oi, p) => patch(i, {
+    options: (checkpoints[i].options || []).map((o, n) => (n === oi ? { ...o, ...p } : o)),
+  });
+
+  return (
+    <div className="border border-dashed border-gray-300 rounded-lg p-3 bg-white">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-700">
+          ❓ Questions in this video
+          {checkpoints.length > 0 && <span className="text-gray-400 font-normal"> · {checkpoints.length}</span>}
+        </span>
+        <button type="button" onClick={() => onChange([...checkpoints, blankCheckpoint()])}
+          className="text-xs text-blue-600 hover:underline">+ Add question</button>
+      </div>
+
+      {checkpoints.length === 0 ? (
+        <p className="text-[11px] text-gray-400 mt-1">
+          None yet. A question pauses the video at its timestamp — the learner can’t carry on until they answer it.
+        </p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {checkpoints.map((c, i) => {
+            const graded = (c.options || []).some((o) => o.correct && String(o.text || '').trim());
+            return (
+              <div key={i} className="border rounded-lg p-3 bg-gray-50/60 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 shrink-0">Pause at</span>
+                  <input
+                    value={c._clock ?? fmtClock(c.atSec)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const secs = parseClock(raw);
+                      patch(i, secs === null ? { _clock: raw } : { _clock: raw, atSec: secs });
+                    }}
+                    onBlur={() => patch(i, { _clock: fmtClock(c.atSec) })}
+                    placeholder="m:ss"
+                    className="w-24 border rounded-lg px-2 py-1.5 text-sm text-center"
+                  />
+                  <span className="text-[11px] text-gray-400">m:ss into the video</span>
+                  <button type="button" onClick={() => onChange(checkpoints.filter((_, n) => n !== i))}
+                    className="ml-auto text-xs text-red-600 hover:underline">Remove</button>
+                </div>
+
+                <textarea rows={2} value={c.question} onChange={(e) => patch(i, { question: e.target.value })}
+                  placeholder="The question *" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+
+                <div className="inline-flex rounded-lg border bg-white overflow-hidden text-xs">
+                  {QUESTION_TYPES.map(([val, label]) => (
+                    <button key={val} type="button" onClick={() => patch(i, { type: val })}
+                      className={`px-3 py-1.5 ${c.type === val ? 'bg-gray-900 text-white' : 'text-gray-600'}`}>{label}</button>
+                  ))}
+                </div>
+
+                {c.type === 'text' ? (
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] text-gray-500">
+                      Accepted answers (case and spacing are ignored). Leave empty to accept anything.
+                    </div>
+                    {(c.options || []).map((o, oi) => (
+                      <div key={oi} className="flex items-center gap-2">
+                        <input value={o.text} onChange={(e) => patchOpt(i, oi, { text: e.target.value, correct: true })}
+                          placeholder="An answer you'd accept" className="flex-1 border rounded-lg px-3 py-1.5 text-sm" />
+                        <button type="button" onClick={() => patch(i, { options: c.options.filter((_, n) => n !== oi) })}
+                          className="text-xs text-gray-400 hover:text-red-600">✕</button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => patch(i, { options: [...(c.options || []), { text: '', correct: true }] })}
+                      className="text-xs text-blue-600 hover:underline">+ Add an accepted answer</button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] text-gray-500">
+                      Tick the right answer{c.type === 'multiple' ? 's' : ''}. Tick none and it becomes a poll — still compulsory, but any answer gets them through.
+                    </div>
+                    {(c.options || []).map((o, oi) => (
+                      <div key={oi} className="flex items-center gap-2">
+                        <button type="button" title={o.correct ? 'This is the right answer' : 'Mark as the right answer'}
+                          onClick={() => {
+                            // Single-choice: ticking one unticks the rest.
+                            if (c.type === 'single' && !o.correct) {
+                              patch(i, { options: c.options.map((x, n) => ({ ...x, correct: n === oi })) });
+                            } else {
+                              patchOpt(i, oi, { correct: !o.correct });
+                            }
+                          }}
+                          className={`shrink-0 w-6 h-6 rounded-full border flex items-center justify-center text-xs ${
+                            o.correct ? 'bg-green-600 border-green-600 text-white' : 'border-gray-300 text-transparent hover:border-green-400'
+                          }`}>✓</button>
+                        <input value={o.text} onChange={(e) => patchOpt(i, oi, { text: e.target.value })}
+                          placeholder={`Choice ${oi + 1}`} className="flex-1 border rounded-lg px-3 py-1.5 text-sm" />
+                        <button type="button" onClick={() => patch(i, { options: c.options.filter((_, n) => n !== oi) })}
+                          className="text-xs text-gray-400 hover:text-red-600">✕</button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => patch(i, { options: [...(c.options || []), { text: '', correct: false }] })}
+                      className="text-xs text-blue-600 hover:underline">+ Add choice</button>
+                  </div>
+                )}
+
+                <input value={c.explanation} onChange={(e) => patch(i, { explanation: e.target.value })}
+                  placeholder="Shown after they answer (optional)" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+
+                {graded && (
+                  <label className="flex items-center gap-2 text-xs text-gray-600">
+                    <input type="checkbox" checked={c.requireCorrect !== false}
+                      onChange={(e) => patch(i, { requireCorrect: e.target.checked })} />
+                    They must answer it correctly to carry on (otherwise a wrong answer is just recorded)
+                  </label>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -612,6 +817,163 @@ function RosterModal({ course, onClose }) {
       )}
       <div className="flex justify-end pt-4"><button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button></div>
     </Modal>
+  );
+}
+
+// ===== In-video question answers =====
+// Who answered what, on which question. Two views over the same fetch: the
+// per-question roll-up (how many got it right first time), and the raw log —
+// one row per ATTEMPT, so a wrong answer followed by a right one shows both.
+function AnswersModal({ course, onClose }) {
+  const [data, setData] = useState(null);
+  const [tab, setTab] = useState('questions');
+  const [only, setOnly] = useState(''); // '' | wrong | correct
+  const [moduleId, setModuleId] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setData(null);
+    api.get(`/courses/${course._id}/checkpoint-answers`, {
+      params: { only: only || undefined, module: moduleId || undefined },
+    })
+      .then(({ data: d }) => setData(d))
+      .catch((err) => setError(err.response?.data?.message || 'Failed to load'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [course._id, only, moduleId]);
+
+  const lessons = useMemo(() => {
+    const seen = new Map();
+    (data?.questions || []).forEach((q) => { if (!seen.has(String(q.module))) seen.set(String(q.module), q.moduleTitle); });
+    return [...seen.entries()];
+  }, [data]);
+
+  const who = (a) => a.answeredBy
+    || (a.employee ? `${a.employee.firstName || ''} ${a.employee.lastName || ''}`.trim() || a.employee.email : '')
+    || a.viewer?.name || 'Someone';
+
+  const exportAnswers = async () => {
+    const rows = (data?.answers || []).map((a) => [
+      new Date(a.createdAt).toLocaleString('en-IN'),
+      who(a),
+      a.audience === 'public' ? 'Public viewer' : 'Employee',
+      a.employee?.email || a.viewer?.email || a.viewer?.phone || '',
+      a.moduleTitle || '',
+      fmtClock(a.atSec),
+      a.question || '',
+      (a.answer || []).join(' | '),
+      a.graded ? (a.correct ? 'Correct' : 'Wrong') : 'Not graded',
+      a.attempt,
+    ]);
+    try {
+      await downloadTableXlsx({
+        filename: `${course.title}-question-answers`,
+        sheetName: 'Answers',
+        headers: ['When', 'Who', 'Type', 'Contact', 'Lesson', 'At', 'Question', 'Answered', 'Result', 'Attempt'],
+        rows,
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not export the answers');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="card-title">In-video questions · “{course.title}”</h2>
+          <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
+        </div>
+
+        <div className="flex gap-2 border-b mb-3 overflow-x-auto">
+          {[['questions', 'By question'], ['log', 'Answer log']].map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`px-3 py-2 text-sm -mb-px border-b-2 whitespace-nowrap ${tab === k ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{label}</button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <select value={moduleId} onChange={(e) => setModuleId(e.target.value)} className="border rounded-lg px-2 py-1.5 text-xs">
+            <option value="">All lessons</option>
+            {lessons.map(([id, title]) => <option key={id} value={id}>{title}</option>)}
+          </select>
+          {tab === 'log' && (
+            <>
+              {[['', 'All'], ['wrong', 'Wrong only'], ['correct', 'Correct only']].map(([v, label]) => (
+                <button key={v || 'all'} onClick={() => setOnly(v)}
+                  className={`px-3 py-1.5 text-xs rounded-lg border ${only === v ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'}`}>{label}</button>
+              ))}
+              {data?.answers?.length > 0 && (
+                <button onClick={exportAnswers} className="ml-auto text-xs text-blue-600 hover:underline">Export Excel</button>
+              )}
+            </>
+          )}
+        </div>
+
+        {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+
+        {!data ? (
+          <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
+        ) : tab === 'questions' ? (
+          (data.questions || []).length === 0 ? (
+            <p className="text-sm text-gray-500">This course has no in-video questions yet. Add them while editing a video lesson.</p>
+          ) : (
+            <div className="max-h-96 overflow-y-auto divide-y">
+              {(data.questions || [])
+                .filter((q) => !moduleId || String(q.module) === moduleId)
+                .map((q) => (
+                  <div key={q._id} className="py-3">
+                    <div className="text-xs text-gray-400">{q.moduleTitle} · at {fmtClock(q.atSec)}</div>
+                    <div className="text-sm text-gray-900 mt-0.5">{q.question}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {q.options.map((o) => (
+                        <span key={o.text} className={`inline-block mr-2 ${o.correct ? 'text-green-700 font-medium' : ''}`}>
+                          {o.correct ? '✓ ' : ''}{o.text}
+                        </span>
+                      ))}
+                      {!q.graded && <span className="text-gray-400">(not graded - any answer is accepted)</span>}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2 text-[11px]">
+                      <span className="bg-gray-100 text-gray-700 rounded-md px-2 py-0.5">{q.answeredBy} answered</span>
+                      <span className="bg-gray-100 text-gray-700 rounded-md px-2 py-0.5">{q.attempts} attempt{q.attempts === 1 ? '' : 's'}</span>
+                      {q.graded && (
+                        <>
+                          <span className="bg-green-50 text-green-700 rounded-md px-2 py-0.5">{q.firstTimeRight} right first time</span>
+                          {q.answeredBy > q.eventuallyRight && (
+                            <span className="bg-red-50 text-red-700 rounded-md px-2 py-0.5">{q.answeredBy - q.eventuallyRight} never got it</span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )
+        ) : (data.answers || []).length === 0 ? (
+          <p className="text-sm text-gray-500">No answers recorded yet.</p>
+        ) : (
+          <div className="max-h-96 overflow-y-auto divide-y">
+            {data.answers.map((a) => (
+              <div key={a._id} className="py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-900 truncate">{who(a)}</span>
+                  {a.audience === 'public' && <span className="text-[11px] bg-emerald-50 text-emerald-700 rounded px-1.5 py-0.5">Public</span>}
+                  {a.attempt > 1 && <span className="text-[11px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">attempt {a.attempt}</span>}
+                  <span className={`ml-auto shrink-0 text-xs rounded px-2 py-0.5 ${
+                    !a.graded ? 'bg-gray-100 text-gray-600' : a.correct ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'
+                  }`}>{!a.graded ? 'Recorded' : a.correct ? '✓ Correct' : '✗ Wrong'}</span>
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">{a.moduleTitle} · at {fmtClock(a.atSec)} · {fmtDate(a.createdAt)}</div>
+                <div className="text-sm text-gray-700 mt-1">{a.question}</div>
+                <div className="text-sm text-gray-900 mt-0.5">→ {(a.answer || []).join(', ') || '-'}</div>
+              </div>
+            ))}
+            {data.count >= 3000 && <p className="text-xs text-gray-400 py-2">Showing the most recent 3000 answers.</p>}
+          </div>
+        )}
+
+        <div className="flex justify-end pt-4"><button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button></div>
+      </div>
+    </div>
   );
 }
 

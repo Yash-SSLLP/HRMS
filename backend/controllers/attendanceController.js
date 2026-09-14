@@ -32,6 +32,7 @@ const { notify, notifyMany, notifyBackend } = require('../services/notify');
 const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
 const { hasPermission, hasExplicitPermission, isPortalViewer } = require('../middleware/authMiddleware');
 const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope, assertNotOwnRequest } = require('../utils/employeeScope');
+const { HIDDEN_ROLES } = require('../utils/visibility');
 // Punching in on a day you are on approved leave. The leave-side rules (which
 // day a leave still claims, who sits at the top of the ladder, and how a day is
 // handed back) live in leaveController; this module owns the punch and the
@@ -2472,6 +2473,47 @@ const deleteRecord = asyncHandler(async (req, res) => {
 
 // ===== Rest-day duty (Sunday / Comp Off worked → double pay) =====
 
+// Audit entity for rest-day decisions. Named like 'Candidate.round': it is a
+// decision on a subdocument, which the auditStatus plugin cannot see — and
+// Attendance is not plugged at all, because punches are far too noisy.
+const REST_DAY_AUDIT_ENTITY = 'Attendance.doublePay';
+
+/**
+ * One audit row per rest-day decision: the first approval or rejection, and
+ * every later Change. The record keeps only the LATEST decision — doublePay is
+ * overwritten — so without this row a Change erases who decided before it.
+ * These rows are what the claim lists show inline (buildRestDayClaims), and
+ * they also appear on the portal-wide Audit Log.
+ *
+ * Best-effort, like auditPunchEdit: the decision is already saved, and a failed
+ * audit write must not turn it into an error. doublePay.decidedBy still names
+ * whoever decided last.
+ * @param {Object} record the saved Attendance document
+ * @param {{from: string, to: string, by: Object, profile: Object}} change
+ *   profile = the employee's EmployeeProfile with `user` populated (for the label)
+ */
+async function logRestDayDecision(record, { from, to, by, profile }) {
+  try {
+    const AuditLog = require('../models/AuditLog');
+    const who = `${profile?.user?.firstName || ''} ${profile?.user?.lastName || ''}`.trim()
+      || profile?.employeeCode || 'Employee';
+    await AuditLog.create({
+      entity: REST_DAY_AUDIT_ENTITY,
+      entityId: record._id,
+      // ymdLocal (IST), not toISOString — see auditPunchEdit for why.
+      entityLabel: `${who} · ${ymdLocal(record.date)}`,
+      field: 'doublePay',
+      fromStatus: from,
+      toStatus: to,
+      by: by?._id,
+      byName: `${by?.firstName || ''} ${by?.lastName || ''}`.trim(),
+      byRole: by?.role,
+    });
+  } catch (err) {
+    console.error('rest-day decision audit failed:', err.message);
+  }
+}
+
 /**
  * Collect a month's rest-day duty claims — days that are a Sunday or an org-wide
  * Comp Off day AND were actually worked. Shared with the manager controller so
@@ -2479,9 +2521,13 @@ const deleteRecord = asyncHandler(async (req, res) => {
  * @param {{empIds?: string[]|null, year: number, month: number, state?: string, employee?: string}} opts
  *   empIds scopes to a set of EmployeeProfile ids (a manager's reports); null = whole org.
  *   state ∈ pending|approved|rejected|all (default all).
+ *   viewer = the requesting user; decides whether a SuperAdmin decider is named
+ *   or shown as "the Backend" (null is treated as a non-SuperAdmin — the safe side).
  * @returns {Promise<{year, month, counts: {pending,approved,rejected}, claims: Object[]}>}
+ *   each claim carries `decision` (the latest: status/byName/byRole/at, null while
+ *   pending) and `history` (every recorded decision, oldest first).
  */
-async function buildRestDayClaims({ empIds = null, year, month, state = 'all', employee = null }) {
+async function buildRestDayClaims({ empIds = null, year, month, state = 'all', employee = null, viewer = null }) {
   const { start, end } = monthRange(year, month);
 
   const attFilter = { date: { $gte: start, $lt: end }, checkIn: { $ne: null } };
@@ -2492,6 +2538,7 @@ async function buildRestDayClaims({ empIds = null, year, month, state = 'all', e
     Attendance.find(attFilter)
       .select('employee date status checkIn checkOut hoursWorked doublePay remarks halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight')
       .populate({ path: 'employee', select: 'employeeCode designation user', populate: { path: 'user', select: 'firstName lastName' } })
+      .populate({ path: 'doublePay.decidedBy', select: 'firstName lastName role' })
       .sort({ date: 1 })
       .lean(),
     require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date name type').lean().catch(() => []),
@@ -2501,6 +2548,14 @@ async function buildRestDayClaims({ empIds = null, year, month, state = 'all', e
   const compOffNames = new Map(
     (holidays || []).filter((h) => h.type === COMP_OFF).map((h) => [ymdLocal(h.date), h.name])
   );
+
+  // Who a decision is shown as. A SuperAdmin is "the Backend" to everyone else —
+  // the rule that keeps SuperAdmin rows off the Audit Log for non-SuperAdmins
+  // (auditController) and SuperAdmin accounts out of every people listing.
+  const namesBackend = viewer?.role === 'SuperAdmin';
+  const actor = (name, role) => (!namesBackend && HIDDEN_ROLES.includes(role)
+    ? { byName: 'the Backend', byRole: null }
+    : { byName: name || 'Unknown', byRole: role || null });
 
   const counts = { pending: 0, approved: 0, rejected: 0 };
   const claims = [];
@@ -2523,7 +2578,24 @@ async function buildRestDayClaims({ empIds = null, year, month, state = 'all', e
       dayName: compOffNames.get(key) || null,
       extraDays: restDayCredit(r),           // 1 or 0.5 — what approval would pay
       state: st,
-      doublePay: r.doublePay || null,
+      // Without decidedBy: populated, it is a person's name and role, and the
+      // masked `decision` below is the only way a decider leaves this function.
+      doublePay: r.doublePay
+        ? { status: r.doublePay.status, days: r.doublePay.days, decidedAt: r.doublePay.decidedAt, note: r.doublePay.note }
+        : null,
+      // The latest decision, off the record itself — so it is right even for a
+      // day decided before decisions were logged, where `history` is empty.
+      decision: r.doublePay?.status
+        ? {
+          status: r.doublePay.status,
+          at: r.doublePay.decidedAt || null,
+          ...actor(
+            [r.doublePay.decidedBy?.firstName, r.doublePay.decidedBy?.lastName].filter(Boolean).join(' '),
+            r.doublePay.decidedBy?.role,
+          ),
+        }
+        : null,
+      history: [],
       employee: r.employee
         ? {
           _id: r.employee._id,
@@ -2533,6 +2605,23 @@ async function buildRestDayClaims({ empIds = null, year, month, state = 'all', e
         }
         : null,
     });
+  }
+
+  // Every recorded decision per claim, oldest first — one query for the month.
+  if (claims.length) {
+    const rows = await require('../models/AuditLog')
+      .find({ entity: REST_DAY_AUDIT_ENTITY, entityId: { $in: claims.map((c) => c._id) } })
+      .select('entityId fromStatus toStatus byName byRole at')
+      .sort({ at: 1 })
+      .lean()
+      .catch(() => []);
+    const byClaim = new Map();
+    rows.forEach((row) => {
+      const key = String(row.entityId);
+      if (!byClaim.has(key)) byClaim.set(key, []);
+      byClaim.get(key).push({ from: row.fromStatus, to: row.toStatus, at: row.at, ...actor(row.byName, row.byRole) });
+    });
+    claims.forEach((c) => { c.history = byClaim.get(String(c._id)) || []; });
   }
 
   return { year, month, counts, claims };
@@ -2557,6 +2646,13 @@ async function applyRestDayDecision(record, { decision, note, by }) {
     throw err;
   }
 
+  // Re-sending the decision the day already carries (a double-click, a stale
+  // page) changes nothing. It must not re-stamp decidedBy either: that would
+  // quietly hand somebody else's approval to whoever clicked second — exactly
+  // what the decision trail exists to prevent — and re-notify the employee.
+  const from = record.doublePay?.status || 'Pending';
+  if (from === decision) return record;
+
   record.doublePay = {
     status: decision,
     days: decision === 'Approved' ? restDayCredit(record) : 0,
@@ -2566,11 +2662,15 @@ async function applyRestDayDecision(record, { decision, note, by }) {
   };
   await record.save();
 
-  const profile = await EmployeeProfile.findById(record.employee).select('user').lean();
+  const profile = await EmployeeProfile.findById(record.employee)
+    .select('user employeeCode').populate('user', 'firstName lastName').lean();
+  await logRestDayDecision(record, { from, to: decision, by, profile });
+
   if (profile?.user) {
     const day = new Date(record.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
     await notify({
-      recipient: profile.user,
+      // user is populated now (for the audit label), so pass the id.
+      recipient: profile.user._id,
       type: 'attendance',
       audience: 'employee',
       title: decision === 'Approved' ? 'Double pay approved' : 'Double pay not approved',
@@ -2607,6 +2707,7 @@ const listRestDayWork = asyncHandler(async (req, res) => {
     month,
     state: req.query.state || 'all',
     employee,
+    viewer: req.user,
   }));
 });
 

@@ -209,11 +209,21 @@ Save a draft as often as you like. Once **submitted**, the form becomes read-onl
 
 ### 7.4 Expenses
 
-Spending is now filed through **My Cashbook**, which covers the same ground against the advance you are holding — see section 7.5. Separate expense claims are no longer raised from the menu.
+Spending is now filed through **My Cashbook**, which covers the same ground against the advance you are holding — see section 7.6. Separate expense claims are no longer raised from the menu.
 
 [!NOTE] Claims you filed before this changed are still with HR and will be processed as normal, through Pending, Approved and Reimbursed. You simply no longer start new ones here.
 
-### 7.5 My Cashbook
+### 7.5 My Incentive
+
+If you earn incentive points, this is where they are explained. It has two tabs.
+
+**My points** lists the month day by day, and every row says how the points arrived: a day you were on a rolling team, a day the team you were in shared its cut with you, or points **credited** to you directly with the reason attached. Under the list is what the company has actually paid you this month, so "still owed" is a figure you can check rather than one you have to trust.
+
+**Leaderboard** ranks you against your colleagues by points earned in the month, with a department filter. Which departments you can see there is set centrally by the Super Admin — it is not the same for everyone, and the note at the bottom of the tab says what your own list covers.
+
+[!NOTE] The leaderboard shows points **earned** and nothing else. What a colleague has been paid, or is still owed, is never on it — those figures are yours alone and are on the first tab. Nothing in this screen is shown in rupees: what a point is worth is a company-wide figure applied when you are paid.
+
+### 7.6 My Cashbook
 
 If the company gives you cash to spend on its behalf, this is where it is accounted for. You hold **one advance** — your wallet — and you file what you spend under **books**, which are simply named headings: "Site A — materials", "Vehicle and fuel", whatever the work needs. The books say what the money went *on*; the wallet says how much of it is *left*.
 
@@ -246,7 +256,7 @@ Each can be downloaded as a **PDF** to send or print, or as an **Excel** file to
 
 [!NOTE] Only approved entries count towards the totals. Anything rejected or reversed is still listed, struck through, so a report never hides part of the history.
 
-### 7.6 Travel
+### 7.7 Travel
 
 Raise a request with the purpose, origin and destination, dates, mode of travel, estimated cost, any advance needed, and notes. If you have already paid, complete the reimbursement block and attach the bill. The request status and the reimbursement status are tracked separately.
 
@@ -269,6 +279,10 @@ Goals assigned to you, with their period and status. You update your progress on
 **My Courses** lists your approved enrolments with status, deadline, and progress. **Course Catalog** is everything on offer; requesting a course sends an enrolment request for approval, so you may see "awaiting approval" for a while.
 
 The **course player** shows the video alongside the curriculum and tracks your progress as you go. Progress is measured on genuine watch time, so skipping ahead will not complete a module. If something is wrong with a course, use **Report an issue**.
+
+A video may have **questions built into it**. When playback reaches one the video stops and the question covers it — answer it and the video carries on, and until you do, it will not. The skip-ahead lock holds there too, so you cannot jump past a question you have not answered. Some questions have a right answer and you have to get it right, with as many attempts as you need; others simply record what you said and let you on either way. Every answer is saved against your name, including the ones you got wrong, so answer them honestly.
+
+A question you have already answered is never asked again, and a lesson you have already finished plays straight through if you watch it a second time.
 
 ---
 
@@ -324,7 +338,7 @@ These appear only when they are relevant to you:
 
 - **Approvals** — if you are anyone's reporting manager, or sit in someone's approval hierarchy, their requests land here for your decision. This covers leave, attendance regularizations, work on a leave day, resignations, and no-dues clearance.
 - **My Team** — for managers, a presence board of your direct reports showing who is in, on leave, or absent, with times, WFH tags and hours.
-- **My Interviews** — rounds where you are the interviewer. Join the meeting, read the résumé, set the result, and save your feedback.
+- **My Interviews** — rounds where you are the interviewer. Open one and you get what the earlier rounds already found: their ratings, what they praised, what they flagged and what they left for you to probe. Join the meeting, read the résumé, then record your own assessment — a score per competency, strengths, concerns, a recommendation, and overall remarks. Nothing is compulsory — whatever you have entered is recorded when you save — but the remarks are the whole record of the round: HR, the next round’s interviewer and the CEO/MD all read them.
 - **Onboarding** — your joining checklist, which you move through as you go.
 - **Org Chart** — a visual of the company's reporting structure.
 

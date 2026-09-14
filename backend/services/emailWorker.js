@@ -12,6 +12,7 @@ const EmailOutbox = require('../models/EmailOutbox');
 const ExitRequest = require('../models/ExitRequest');
 const Candidate = require('../models/Candidate');
 const { sendMail } = require('./email');
+const mailIdentity = require('./mailIdentity');
 
 const POLL_INTERVAL_MS = 30_000;            // 30s
 const STALE_LOCK_MS = 2 * 60_000;           // claim back rows stuck in 'Sending' > 2 min
@@ -20,6 +21,42 @@ const BACKOFF_SECONDS = [60, 300, 1800, 7200, 21600, 43200]; // 1m, 5m, 30m, 2h,
 
 let intervalHandle = null;
 let ticking = false;
+
+/**
+ * Send one outbox row from the right mailbox. If the person who queued it
+ * (row.sender) has connected their own Google account, the mail leaves from
+ * that; when Google refuses their grant (revoked, expired), the grant is marked
+ * broken so the account page asks them to reconnect, and THIS mail is re-sent
+ * from the company mailbox in the same attempt rather than dying — a dead
+ * personal token must never cost a candidate their offer letter.
+ * @param {Object} row - EmailOutbox document.
+ * @returns {Promise<{messageId?:string, sentFrom?:string, mocked?:boolean}>}
+ * @sideEffects Sends email; may stamp User.mailIdentity (lastSentAt / lastError).
+ */
+async function deliver(row) {
+  const base = {
+    to: row.to,
+    cc: row.cc,
+    subject: row.subject,
+    text: row.text,
+    html: row.html,
+    from: row.from,
+    replyTo: row.replyTo,
+    attachments: row.attachments,
+  };
+  const identity = row.sender ? await mailIdentity.resolveIdentity(row.sender) : null;
+  if (!identity) return sendMail(base);
+  try {
+    const info = await sendMail({ ...base, identity });
+    await mailIdentity.markSent(identity.userId);
+    return info;
+  } catch (err) {
+    if (!err.permanent) throw err;
+    await mailIdentity.markBroken(identity.userId, err.message);
+    console.warn(`[emailWorker] ${identity.email}'s mailbox refused (${err.message}); sending from the company mailbox instead.`);
+    return sendMail(base);
+  }
+}
 
 /**
  * Atomically claim and process the single most-due outbox row: mark it Sending,
@@ -46,21 +83,13 @@ async function processOne() {
   if (!row) return null;
 
   try {
-    const info = await sendMail({
-      to: row.to,
-      cc: row.cc,
-      subject: row.subject,
-      text: row.text,
-      html: row.html,
-      from: row.from,
-      replyTo: row.replyTo,
-      attachments: row.attachments,
-    });
+    const info = await deliver(row);
 
     row.status = 'Sent';
     row.sentAt = new Date();
     row.lastAttemptAt = row.sentAt;
     row.messageId = info.messageId || (info.mocked ? 'mocked' : undefined);
+    row.sentFrom = info.sentFrom || (info.mocked ? 'mocked' : undefined);
     row.lastError = undefined;
     row.attempts = (row.attempts || 0) + 1;
     await row.save();

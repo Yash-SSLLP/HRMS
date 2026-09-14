@@ -429,6 +429,7 @@ const listTeamRestDayWork = asyncHandler(async (req, res) => {
     year: Number(req.query.year) || now.getFullYear(),
     month: Number(req.query.month) || now.getMonth() + 1,
     state: req.query.state || 'all',
+    viewer: req.user,
   }));
 });
 

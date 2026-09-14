@@ -12,6 +12,8 @@ const {
   enroll,
   streamModuleVideo,
   updateModuleProgress,
+  answerCheckpoint,
+  listCheckpointAnswers,
   completeTextModule,
   reportIssue,
   submitFeedback,
@@ -55,6 +57,8 @@ router.get('/me', myLearning);
 router.post('/:id/enroll', enroll);
 // PATCH /:id/modules/:mid/progress — update watch progress; protected.
 router.patch('/:id/modules/:mid/progress', updateModuleProgress);
+// POST /:id/modules/:mid/checkpoints/:cid/answer — answer an in-video question; protected.
+router.post('/:id/modules/:mid/checkpoints/:cid/answer', answerCheckpoint);
 // POST /:id/modules/:mid/complete — mark a text module complete; protected.
 router.post('/:id/modules/:mid/complete', completeTextModule);
 // POST /:id/report — report an issue with a course; protected.
@@ -85,6 +89,8 @@ router.post('/', createCourse);
 router.post('/:id/assign', assignCourse);
 // GET /:id/enrollments — course roster; protected, requires 'courses.manage'.
 router.get('/:id/enrollments', courseRoster);
+// GET /:id/checkpoint-answers — in-video question log; protected, requires 'courses.manage'.
+router.get('/:id/checkpoint-answers', listCheckpointAnswers);
 // Public sharing + moderation
 // GET /comments — list all comments for moderation; protected, requires 'courses.manage'.
 router.get('/comments', listAllComments);

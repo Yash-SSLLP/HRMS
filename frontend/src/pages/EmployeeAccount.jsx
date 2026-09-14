@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import ProfilePhotoCard from '../components/ProfilePhotoCard';
+import SenderMailboxCard from '../components/SenderMailboxCard';
 import { useAuthStore } from '../store/authStore';
 import SearchableSelect from '../components/SearchableSelect';
 import { formatDateTime12 } from '../utils/time';
@@ -143,6 +144,9 @@ export default function EmployeeAccount() {
       <PageHeader title="Account & Change Requests" subtitle="Update your login or request changes to your details" />
 
       <ProfilePhotoCard />
+
+      {/* Renders only for roles that send mail from HRMS (HR, admins, execs). */}
+      <SenderMailboxCard />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

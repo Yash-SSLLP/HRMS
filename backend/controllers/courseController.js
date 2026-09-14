@@ -2,15 +2,19 @@
  * Course/LMS controller — internal courses with video (Cloudinary signed upload +
  * authenticated signed-URL 302; Google Drive kept as legacy) or text modules, plus
  * enrollments (Enrollment) with accurate anti-cheat watch progress, assign vs
- * self-enroll-with-approval, deadlines, issue reports, and feedback. Also admin
+ * self-enroll-with-approval, deadlines, issue reports, and feedback. A video
+ * lesson can also carry timestamped QUESTIONS (utils/checkpoints): playback and
+ * watch credit both stop at the first one the learner hasn't answered, and every
+ * attempt is logged to CheckpointAnswer for the admin. Also admin
  * moderation of the public-course sharing (leads/comments/video feedback). Course
  * administration is gated to COURSE_ADMIN_ROLES (SuperAdmin/HRManager/LDManager).
  */
 const crypto = require('crypto');
 const asyncHandler = require('express-async-handler');
 const Course = require('../models/Course');
-const { Enrollment, CourseReport, REPORT_CATEGORIES, CourseViewer, CourseComment, VideoFeedback } = require('../models/Course');
+const { Enrollment, CourseReport, REPORT_CATEGORIES, CourseViewer, CourseComment, VideoFeedback, CheckpointAnswer } = require('../models/Course');
 const { parseDriveFileId, streamDriveFile } = require('../utils/drive');
+const { normalizeCheckpoints, learnerCheckpoint, gradeAnswer, gateSec } = require('../utils/checkpoints');
 const cloudinary = require('../services/cloudinary');
 const { notify, notifyMany } = require('../services/notify');
 const User = require('../models/User');
@@ -65,6 +69,8 @@ function normalizeModules(modules) {
     const out = { title: (m.title || '').trim(), type, content: m.content || '', durationSec: Number(m.durationSec) || 0 };
     if (m._id) out._id = m._id; // keep stable ids on edit
     if (type === 'video') {
+      // Questions live inside a video only — a timestamp means nothing on a reading.
+      out.checkpoints = normalizeCheckpoints(m.checkpoints, `Lesson ${i + 1} ("${(m.title || '').trim() || 'Untitled'}")`);
       const videoSource = m.videoSource === 'cloudinary' ? 'cloudinary' : 'drive';
       out.videoSource = videoSource;
       if (videoSource === 'cloudinary') {
@@ -157,7 +163,9 @@ const listCourses = asyncHandler(async (req, res) => {
 });
 
 // Strip a course's Drive links so employees only ever reach the video through
-// the authenticated in-portal stream endpoint, never the raw Drive URL.
+// the authenticated in-portal stream endpoint, never the raw Drive URL. The
+// in-video questions come through too, but only ever answer-free (see
+// learnerCheckpoint) — the right answer never leaves the server.
 function safeCourse(course) {
   if (!course) return course;
   const modules = (course.modules || []).map((m) => ({
@@ -168,6 +176,7 @@ function safeCourse(course) {
     videoSource: m.type === 'video' ? (m.videoSource || 'drive') : undefined,
     content: m.content,
     durationSec: m.durationSec,
+    checkpoints: m.type === 'video' ? (m.checkpoints || []).map(learnerCheckpoint) : undefined,
   }));
   return { ...course, modules };
 }
@@ -269,6 +278,20 @@ const streamModuleVideo = asyncHandler(async (req, res) => {
   await streamDriveFile(module.driveFileId, req, res);
 });
 
+// The learner's progress row for one module, created on the enrollment if this
+// is the first time they've opened it. Returns the live subdocument.
+function progressFor(enrollment, moduleId) {
+  let mp = enrollment.moduleProgress.find((m) => String(m.module) === String(moduleId));
+  if (!mp) {
+    enrollment.moduleProgress.push({ module: moduleId, watchedSec: 0, durationSec: 0, completed: false });
+    mp = enrollment.moduleProgress[enrollment.moduleProgress.length - 1];
+  }
+  return mp;
+}
+
+// The in-video questions this learner has already got past, as a string Set.
+const clearedSet = (mp) => new Set((mp?.clearedCheckpoints || []).map(String));
+
 // Load the caller's Approved enrollment for a course, or fail with a clear error.
 async function getApprovedEnrollment(courseId, userId, res) {
   const enrollment = await Enrollment.findOne({ course: courseId, employee: userId });
@@ -308,17 +331,23 @@ const updateModuleProgress = asyncHandler(async (req, res) => {
   const watchedSec = Math.max(0, Number(req.body.watchedSec) || 0);
   const durationSec = Math.max(0, Number(req.body.durationSec) || 0);
 
-  let mp = enrollment.moduleProgress.find((m) => String(m.module) === String(module._id));
-  if (!mp) {
-    mp = { module: module._id, watchedSec: 0, durationSec: 0, completed: false };
-    enrollment.moduleProgress.push(mp);
-    mp = enrollment.moduleProgress[enrollment.moduleProgress.length - 1];
-  }
+  const mp = progressFor(enrollment, module._id);
   // Watched time only ever increases; keep the best duration we've seen.
-  mp.watchedSec = Math.max(mp.watchedSec || 0, watchedSec);
+  let credited = Math.max(mp.watchedSec || 0, watchedSec);
   if (durationSec > 0) mp.durationSec = durationSec;
-  // Complete once ~95% of a known-length video has actually been watched.
-  if (!mp.completed && mp.durationSec > 0 && mp.watchedSec >= 0.95 * mp.durationSec) {
+
+  // The question gate, enforced here and not only in the player: watch credit
+  // stops dead at the first in-video question they haven't got past (+1s of
+  // tolerance), so a patched client can't report its way through one. An
+  // already-completed module is left alone — a question added later doesn't
+  // retroactively un-finish somebody.
+  const gate = mp.completed ? null : gateSec(module, clearedSet(mp));
+  if (gate !== null) credited = Math.min(credited, gate + 1);
+  mp.watchedSec = credited;
+
+  // Complete once ~95% of a known-length video has actually been watched — and
+  // never while a question is still unanswered.
+  if (!mp.completed && gate === null && mp.durationSec > 0 && mp.watchedSec >= 0.95 * mp.durationSec) {
     mp.completed = true;
     mp.completedAt = new Date();
   }
@@ -326,6 +355,83 @@ const updateModuleProgress = asyncHandler(async (req, res) => {
   recomputeProgress(enrollment, course);
   await enrollment.save();
   res.json({ enrollment: withDueMeta(enrollment.toObject()) });
+});
+
+/**
+ * Answer an in-video checkpoint question. Every attempt is logged; a correct
+ * one (or any answer to an ungraded / non-blocking question) clears the gate so
+ * playback and watch credit can carry on past that timestamp.
+ * @route POST /api/courses/:id/modules/:mid/checkpoints/:cid/answer
+ * @param {number[]} [req.body.optionIndexes] - chosen option index(es)
+ * @param {string} [req.body.text] - typed answer for a `text` question
+ * @returns {{correct, graded, cleared, attempt, explanation, enrollment}}
+ */
+// POST /api/courses/:id/modules/:mid/checkpoints/:cid/answer  { optionIndexes | text }
+const answerCheckpoint = asyncHandler(async (req, res) => {
+  const course = await Course.findById(req.params.id);
+  if (!course) {
+    res.status(404);
+    throw new Error('Course not found');
+  }
+  const module = course.modules.id(req.params.mid);
+  const checkpoint = module && module.checkpoints ? module.checkpoints.id(req.params.cid) : null;
+  if (!checkpoint) {
+    res.status(404);
+    throw new Error('Question not found');
+  }
+
+  // Grading throws a 400 when nothing was answered — that IS the rule here.
+  const graded = gradeAnswer(checkpoint, req.body);
+
+  // A course admin previewing the lesson has no enrollment: let them try the
+  // question, but keep their trial run out of the learners' log.
+  const enrollment = await Enrollment.findOne({ course: course._id, employee: req.user._id });
+  if (!enrollment && canPreviewCourse(req.user)) {
+    return res.json({ ...graded, attempt: 0, preview: true, explanation: checkpoint.explanation || '' });
+  }
+  if (!enrollment) {
+    res.status(404);
+    throw new Error('Enrollment not found');
+  }
+  if (enrollment.approvalStatus !== 'Approved') {
+    res.status(403);
+    throw new Error('Your enrollment is not approved yet.');
+  }
+
+  const attempt = 1 + await CheckpointAnswer.countDocuments({
+    checkpoint: checkpoint._id,
+    employee: req.user._id,
+  });
+  await CheckpointAnswer.create({
+    course: course._id,
+    module: module._id,
+    moduleTitle: module.title,
+    checkpoint: checkpoint._id,
+    question: checkpoint.question,
+    atSec: checkpoint.atSec,
+    audience: 'employee',
+    employee: req.user._id,
+    answeredBy: req.user.fullName || req.user.email,
+    answer: graded.answer,
+    graded: graded.graded,
+    correct: graded.correct,
+    cleared: graded.cleared,
+    attempt,
+  });
+
+  if (graded.cleared) {
+    const mp = progressFor(enrollment, module._id);
+    if (!clearedSet(mp).has(String(checkpoint._id))) mp.clearedCheckpoints.push(checkpoint._id);
+    await enrollment.save();
+  }
+
+  res.json({
+    ...graded,
+    attempt,
+    // Only worth showing once they're past it — until then it could give the answer away.
+    explanation: graded.cleared ? (checkpoint.explanation || '') : '',
+    enrollment: withDueMeta(enrollment.toObject()),
+  });
 });
 
 /**
@@ -517,6 +623,7 @@ const listAdmin = asyncHandler(async (req, res) => {
         ...c,
         moduleCount: (c.modules || []).length,
         videoCount: (c.modules || []).filter((m) => m.type !== 'text').length,
+        questionCount: (c.modules || []).reduce((n, m) => n + (m.checkpoints || []).length, 0),
         enrollmentCount: approved.length,
         completedCount: approved.filter((e) => e.status === 'Completed').length,
         pendingCount: enrollments.filter((e) => e.approvalStatus === 'Pending').length,
@@ -622,6 +729,7 @@ const deleteCourse = asyncHandler(async (req, res) => {
   }
   const ids = cloudinaryIdsOf(course);
   await Enrollment.deleteMany({ course: course._id });
+  await CheckpointAnswer.deleteMany({ course: course._id });
   await CourseReport.deleteMany({ course: course._id });
   await CourseViewer.deleteMany({ course: course._id });
   await CourseComment.deleteMany({ course: course._id });
@@ -867,6 +975,81 @@ const deleteComment = asyncHandler(async (req, res) => {
 });
 
 /**
+ * The in-video question log for one course: every answer anyone has given, plus
+ * a per-question roll-up (how many answered, how many got it right).
+ * @route GET /api/courses/:id/checkpoint-answers?module=&only=  (admin)
+ * @param {string} req.params.id - course id
+ * @param {string} [req.query.module] - limit to one lesson
+ * @param {string} [req.query.only] - 'wrong' | 'correct'
+ * @returns {{count, answers, questions}} answers newest first (max 3000)
+ */
+// GET /api/courses/:id/checkpoint-answers — who answered what, per question
+const listCheckpointAnswers = asyncHandler(async (req, res) => {
+  const course = await Course.findById(req.params.id).lean();
+  if (!course) {
+    res.status(404);
+    throw new Error('Course not found');
+  }
+  const filter = { course: course._id };
+  if (req.query.module) filter.module = req.query.module;
+  if (req.query.only === 'wrong') filter.correct = false;
+  else if (req.query.only === 'correct') filter.correct = true;
+
+  const answers = await CheckpointAnswer.find(filter)
+    .populate('employee', 'firstName lastName email')
+    .populate('viewer', 'name phone email location')
+    .sort({ createdAt: -1 })
+    .limit(3000)
+    .lean();
+
+  // Roll-up per question, over EVERY answer (not the filtered slice, and not
+  // the 3000-row page) so the numbers don't move under a filter: the first
+  // attempt per person is the score, later attempts are retries. Fetched raw
+  // rather than reusing `answers` — those are POPULATED, so `a.employee` is a
+  // document and would stringify to "[object Object]" for everyone alike,
+  // collapsing the whole cohort into one person.
+  const all = await CheckpointAnswer.find({ course: course._id })
+    .select('checkpoint employee viewer correct attempt')
+    .lean();
+  const stats = new Map();
+  all.forEach((a) => {
+    const key = String(a.checkpoint);
+    const s = stats.get(key) || { attempts: 0, people: new Set(), firstRight: 0, everRight: new Set() };
+    s.attempts += 1;
+    // Lean rows, so these are plain ObjectIds. A row with neither (shouldn't
+    // happen) counts as its own person rather than merging with every other.
+    const who = String(a.employee || a.viewer || a._id);
+    s.people.add(who);
+    if (a.attempt === 1 && a.correct) s.firstRight += 1;
+    if (a.correct) s.everRight.add(who);
+    stats.set(key, s);
+  });
+
+  const questions = [];
+  (course.modules || []).forEach((m) => {
+    (m.checkpoints || []).forEach((c) => {
+      const s = stats.get(String(c._id));
+      questions.push({
+        _id: c._id,
+        module: m._id,
+        moduleTitle: m.title,
+        atSec: c.atSec,
+        question: c.question,
+        type: c.type,
+        options: (c.options || []).map((o) => ({ text: o.text, correct: !!o.correct })),
+        graded: (c.options || []).some((o) => o.correct),
+        answeredBy: s ? s.people.size : 0,
+        attempts: s ? s.attempts : 0,
+        firstTimeRight: s ? s.firstRight : 0,
+        eventuallyRight: s ? s.everRight.size : 0,
+      });
+    });
+  });
+
+  res.json({ count: answers.length, answers, questions });
+});
+
+/**
  * List public per-video feedback for a course (max 2000).
  * @route GET /api/courses/:id/video-feedback  (admin)
  * @param {string} req.params.id - course id
@@ -894,6 +1077,8 @@ module.exports = {
   enroll,
   streamModuleVideo,
   updateModuleProgress,
+  answerCheckpoint,
+  listCheckpointAnswers,
   completeTextModule,
   reportIssue,
   submitFeedback,

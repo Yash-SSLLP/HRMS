@@ -13,6 +13,7 @@
  */
 const storage = require('./storage');
 const { isConfigured, getAccessToken } = require('./googleCalendar');
+const { refreshAccessToken } = require('./googleOAuth');
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
@@ -108,23 +109,39 @@ function buildRawMessage({ from, to, cc, replyTo, subject, text, html, attachmen
 }
 
 /**
- * Send an email through the Gmail API using the shared Google OAuth access token.
- * Builds a raw RFC 2822 MIME message (base64url) and POSTs it to messages/send.
- * @param {Object} opts - { to, cc, from, replyTo, subject, text, html, attachments }.
+ * Send an email through the Gmail API. Builds a raw RFC 2822 MIME message
+ * (base64url) and POSTs it to messages/send.
+ *
+ * Two mailboxes can be behind the call. Without `opts.identity` it is the
+ * company account (env refresh token, GOOGLE_MAIL_SENDER as the address, the
+ * caller's display name kept). With `opts.identity` — a person's own connected
+ * mailbox from services/mailIdentity — the access token comes from THEIR
+ * refresh token and the From address is theirs, so the mail genuinely leaves
+ * their Gmail (and sits in their Sent folder).
+ *
+ * @param {Object} opts - { to, cc, from, replyTo, subject, text, html, attachments, identity? }.
  *   `to`/`cc` accept a string or an array of addresses; `attachments` items carry
- *   either a `storagePath` or base64 `content` plus `filename`/`contentType`.
- * @returns {Promise<{messageId:string, response:string}>} Gmail message id on success.
+ *   either a `storagePath` or base64 `content` plus `filename`/`contentType`;
+ *   `identity` is { userId, email, name, refreshToken }.
+ * @returns {Promise<{messageId:string, response:string, sentFrom:string}>} Gmail message id on success.
  * @throws {Error} If the Gmail API responds with a non-2xx status.
  * @sideEffects Performs a network call to the Gmail API (sends real email).
  */
 async function send(opts) {
-  const token = await getAccessToken();
-  const senderAddr = getSenderAddress();
+  const identity = opts.identity || null;
+  const token = identity
+    ? await refreshAccessToken(identity.refreshToken, `user:${identity.userId}`)
+    : await getAccessToken();
+  const senderAddr = identity ? identity.email : getSenderAddress();
+  // A Reply-To that just repeats the From address is noise; drop it.
+  const replyTo = identity && opts.replyTo && String(opts.replyTo).trim().toLowerCase() === identity.email
+    ? undefined
+    : opts.replyTo;
   const raw = buildRawMessage({
-    from: buildFrom(opts.from, senderAddr),
+    from: buildFrom(opts.from || (identity ? identity.name : ''), senderAddr),
     to: Array.isArray(opts.to) ? opts.to.join(', ') : opts.to,
     cc: Array.isArray(opts.cc) ? opts.cc.join(', ') : opts.cc,
-    replyTo: opts.replyTo,
+    replyTo,
     subject: opts.subject,
     text: opts.text,
     html: opts.html,
@@ -145,7 +162,7 @@ async function send(opts) {
     if (res.status === 401 || res.status === 403) err.permanent = true;
     throw err;
   }
-  return { messageId: json.id, response: 'gmail:ok' };
+  return { messageId: json.id, response: 'gmail:ok', sentFrom: senderAddr || 'gmail' };
 }
 
 module.exports = { isConfigured, send };

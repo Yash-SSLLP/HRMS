@@ -1,6 +1,7 @@
 // Public (no-login) course viewer. Anyone with a course's publicToken can:
 //   - view the course after filling a short lead form (name/phone/location[/email])
-//   - stream its videos (tied to their lead session, no account)
+//   - stream its videos (tied to their lead session, no account), answering any
+//     in-video question that blocks playback
 //   - read APPROVED comments and post their own (held for admin approval)
 //   - submit per-video feedback (rating + fixed questions)
 // All endpoints here are unauthenticated — access is gated by the course being
@@ -8,8 +9,9 @@
 const crypto = require('crypto');
 const asyncHandler = require('express-async-handler');
 const Course = require('../models/Course');
-const { CourseViewer, CourseComment, VideoFeedback, VIDEO_FEEDBACK_QUESTIONS } = require('../models/Course');
+const { CourseViewer, CourseComment, VideoFeedback, CheckpointAnswer, VIDEO_FEEDBACK_QUESTIONS } = require('../models/Course');
 const { streamDriveFile } = require('../utils/drive');
+const { learnerCheckpoint, gradeAnswer } = require('../utils/checkpoints');
 const cloudinary = require('../services/cloudinary');
 const { notifyMany } = require('../services/notify');
 const User = require('../models/User');
@@ -32,6 +34,8 @@ function publicSafeCourse(course) {
       videoSource: m.type === 'video' ? (m.videoSource || 'drive') : undefined,
       content: m.content,
       durationSec: m.durationSec,
+      // In-video questions, answer-free (learnerCheckpoint strips every flag).
+      checkpoints: m.type === 'video' ? (m.checkpoints || []).map(learnerCheckpoint) : undefined,
     })),
   };
 }
@@ -60,14 +64,79 @@ async function requireViewer(course, sessionToken, res) {
 
 /**
  * Public: fetch a course by its public token (video refs stripped).
- * @route GET /api/public/courses/:token  (PUBLIC, no auth)
+ * @route GET /api/public/courses/:token?viewer=<sessionToken>  (PUBLIC, no auth)
  * @param {string} req.params.token - the course publicToken
- * @returns {{course: Object, feedbackQuestions: Array}}
+ * @param {string} [req.query.viewer] - viewer sessionToken; when given, the
+ *   in-video questions this viewer has already cleared come back too, so a
+ *   returning viewer isn't asked the same question twice
+ * @returns {{course: Object, feedbackQuestions: Array, clearedCheckpoints: string[]}}
  */
 // GET /api/public/courses/:token — course + feedback questions (no video refs)
 const getPublicCourse = asyncHandler(async (req, res) => {
   const course = await findPublicCourse(req.params.token, res);
-  res.json({ course: publicSafeCourse(course), feedbackQuestions: VIDEO_FEEDBACK_QUESTIONS });
+
+  // Best-effort: an unknown/expired viewer token just means "nothing cleared".
+  let clearedCheckpoints = [];
+  if (req.query.viewer) {
+    const viewer = await CourseViewer.findOne({ course: course._id, sessionToken: req.query.viewer }).select('_id').lean();
+    if (viewer) {
+      clearedCheckpoints = await CheckpointAnswer.find({ course: course._id, viewer: viewer._id, cleared: true })
+        .distinct('checkpoint');
+    }
+  }
+
+  res.json({
+    course: publicSafeCourse(course),
+    feedbackQuestions: VIDEO_FEEDBACK_QUESTIONS,
+    clearedCheckpoints: clearedCheckpoints.map(String),
+  });
+});
+
+/**
+ * Public: a registered viewer answers an in-video question. Same rules as the
+ * internal player — every attempt is logged, and a wrong answer to a graded,
+ * gated question does not let them carry on.
+ * @route POST /api/public/courses/:token/modules/:mid/checkpoints/:cid/answer  (PUBLIC)
+ * @param {string} req.body.viewer - viewer sessionToken (required)
+ * @param {number[]} [req.body.optionIndexes] / @param {string} [req.body.text]
+ * @returns {{correct, graded, cleared, attempt, explanation}}
+ */
+// POST /api/public/courses/:token/modules/:mid/checkpoints/:cid/answer
+const answerPublicCheckpoint = asyncHandler(async (req, res) => {
+  const course = await findPublicCourse(req.params.token, res);
+  const viewer = await requireViewer(course, req.body.viewer, res);
+
+  const module = course.modules.id(req.params.mid);
+  const checkpoint = module && module.checkpoints ? module.checkpoints.id(req.params.cid) : null;
+  if (!checkpoint) {
+    res.status(404);
+    throw new Error('Question not found');
+  }
+
+  const graded = gradeAnswer(checkpoint, req.body);
+  const attempt = 1 + await CheckpointAnswer.countDocuments({ checkpoint: checkpoint._id, viewer: viewer._id });
+  await CheckpointAnswer.create({
+    course: course._id,
+    module: module._id,
+    moduleTitle: module.title,
+    checkpoint: checkpoint._id,
+    question: checkpoint.question,
+    atSec: checkpoint.atSec,
+    audience: 'public',
+    viewer: viewer._id,
+    answeredBy: viewer.name,
+    answer: graded.answer,
+    graded: graded.graded,
+    correct: graded.correct,
+    cleared: graded.cleared,
+    attempt,
+  });
+
+  res.json({
+    ...graded,
+    attempt,
+    explanation: graded.cleared ? (checkpoint.explanation || '') : '',
+  });
 });
 
 /**
@@ -248,6 +317,7 @@ module.exports = {
   getPublicCourse,
   registerViewer,
   streamPublicVideo,
+  answerPublicCheckpoint,
   listPublicComments,
   postPublicComment,
   postPublicFeedback,

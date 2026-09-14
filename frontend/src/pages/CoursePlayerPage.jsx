@@ -2,7 +2,9 @@
  * CoursePlayerPage — full-page LMS course player for employees, route
  * /employee/learning/:courseId. Loads the learner's enrollments from
  * GET /courses/me, plays video/text lessons, and posts progress/completion,
- * issue reports and end-of-course feedback to /courses/:courseId/*.
+ * issue reports and end-of-course feedback to /courses/:courseId/*. A video
+ * lesson can pause on an in-video question the learner must answer before it
+ * goes on — the player owns that (components/CourseVideoPlayer).
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
@@ -153,6 +155,7 @@ export default function CoursePlayerPage() {
                 courseId={courseId}
                 module={active}
                 initialWatchedSec={activeProgress?.watchedSec || 0}
+                clearedCheckpoints={activeProgress?.clearedCheckpoints || []}
                 moduleCompleted={completedSet.has(String(active._id))}
                 onProgress={applyUpdated}
                 onError={() => setVideoFailed(true)}
@@ -207,7 +210,10 @@ export default function CoursePlayerPage() {
                   </span>
                   <span className="min-w-0">
                     <span className={`block text-sm ${isActive ? 'font-semibold text-indigo-900' : 'text-gray-800'} truncate`}>{m.title}</span>
-                    <span className="text-[11px] text-gray-400">{m.type === 'text' ? '📄 Reading' : '🎬 Video'}</span>
+                    <span className="text-[11px] text-gray-400">
+                      {m.type === 'text' ? '📄 Reading' : '🎬 Video'}
+                      {(m.checkpoints || []).length > 0 && ` · ${m.checkpoints.length} question${m.checkpoints.length === 1 ? '' : 's'}`}
+                    </span>
                   </span>
                 </button>
               );

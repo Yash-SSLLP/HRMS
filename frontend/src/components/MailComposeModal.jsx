@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { composeMail } from '../api/compose';
 import { confirmDialog } from './dialogs';
+import { useAuthStore } from '../store/authStore';
 
 /**
  * Editable email composer. Prefills an editable subject + body (with any public
@@ -49,6 +50,12 @@ export default function MailComposeModal({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  // Which mailbox a server-delivered mail will actually leave from: the
+  // sender's own connected Google account (My Account → SenderMailboxCard), or
+  // the company one when they have none — or theirs has been refused by Google,
+  // in which case the server falls back to the company mailbox for them.
+  const mailIdentity = useAuthStore((s) => s.user?.mailIdentity);
+  const ownMailbox = mailIdentity?.email && !mailIdentity?.lastError ? mailIdentity.email : null;
 
   // Re-seed the editable fields each time the modal is (re)opened.
   useEffect(() => {
@@ -93,7 +100,9 @@ export default function MailComposeModal({
         </div>
         <p className="text-sm text-gray-500 mb-4">
           {note || (onSend
-            ? 'Review and edit the message below · it is sent from the company mailbox.'
+            ? <>Review and edit the message below · it is sent from {ownMailbox
+              ? <>your mailbox (<span className="font-medium text-gray-700">{ownMailbox}</span>)</>
+              : 'the company mailbox'}.</>
             : 'Review and edit the message, then open it in your email to send.')}{' '}
           {to ? <>To: <span className="font-medium text-gray-700">{to}</span></> : null}
         </p>

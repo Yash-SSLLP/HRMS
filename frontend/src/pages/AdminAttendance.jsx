@@ -8,7 +8,7 @@
  * it from anyone else — so it renders read-only for HR rather than offering a
  * control that would silently do nothing.
  */
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useDateSort, DateSortButton } from '../components/DateSort';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -17,6 +17,7 @@ import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
+import { DecidedBy, DecisionHistory } from '../components/RestDayDecisionLog';
 import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
@@ -214,6 +215,14 @@ export default function AdminAttendance() {
   const [duty, setDuty] = useState({ claims: [], counts: { pending: 0, approved: 0, rejected: 0 } });
   const [dutyBusy, setDutyBusy] = useState('');   // id being decided
   const [dutyOpen, setDutyOpen] = useState(true);
+  // Claims whose decision history is unfolded (ids). A Set, so several can be
+  // open at once while comparing.
+  const [dutyLogOpen, setDutyLogOpen] = useState(() => new Set());
+  const toggleDutyLog = (id) => setDutyLogOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const loadDuty = async (f = filter) => {
     try {
@@ -581,7 +590,8 @@ export default function AdminAttendance() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {duty.claims.map((c) => (
-                    <tr key={c._id} className={c.state === 'Pending' ? 'bg-amber-50/40' : ''}>
+                    <Fragment key={c._id}>
+                    <tr className={c.state === 'Pending' ? 'bg-amber-50/40' : ''}>
                       <td className="px-4 py-2 whitespace-nowrap">{fmtDate(c.date)}</td>
                       <td className="px-4 py-2">
                         {c.employee?.name || '-'}
@@ -612,20 +622,45 @@ export default function AdminAttendance() {
                             )}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-2">
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                              c.state === 'Approved' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
-                              {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
+                          <span className="inline-flex flex-col items-end gap-1">
+                            <span className="inline-flex items-center gap-2">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                c.state === 'Approved' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+                                {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
+                              </span>
+                              {!viewOnly && (
+                                <button disabled={dutyBusy === c._id}
+                                  onClick={() => decideDuty(c, c.state === 'Approved' ? 'Rejected' : 'Approved')}
+                                  className="text-blue-600 hover:underline disabled:opacity-50 text-xs">Change</button>
+                              )}
                             </span>
-                            {!viewOnly && (
-                              <button disabled={dutyBusy === c._id}
-                                onClick={() => decideDuty(c, c.state === 'Approved' ? 'Rejected' : 'Approved')}
-                                className="text-blue-600 hover:underline disabled:opacity-50 text-xs">Change</button>
-                            )}
+                            {/* Who decided it — and the whole trail, every approve / reject /
+                                change, since a Change overwrites the decision on the record. */}
+                            <span className="inline-flex items-center gap-2">
+                              <DecidedBy decision={c.decision} />
+                              {c.history?.length > 0 && (
+                                <button type="button" onClick={() => toggleDutyLog(String(c._id))}
+                                  aria-expanded={dutyLogOpen.has(String(c._id))}
+                                  className="text-[11px] leading-4 font-medium text-indigo-600 hover:text-indigo-800">
+                                  History ({c.history.length}) {dutyLogOpen.has(String(c._id)) ? '▴' : '▾'}
+                                </button>
+                              )}
+                            </span>
                           </span>
                         )}
                       </td>
                     </tr>
+                    {dutyLogOpen.has(String(c._id)) && c.history?.length > 0 && (
+                      <tr className="bg-gray-50/70">
+                        <td colSpan={6} className="px-4 pt-1 pb-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                            Decision history · {c.employee?.name || 'Employee'} · {fmtDate(c.date)}
+                          </div>
+                          <DecisionHistory history={c.history} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

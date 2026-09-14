@@ -12,6 +12,9 @@ const nodemailer = require('nodemailer');
 const EmailOutbox = require('../models/EmailOutbox');
 const storage = require('./storage');
 const googleMail = require('./googleMail');
+const googleOAuth = require('./googleOAuth');
+const { currentUser } = require('../middleware/requestContext');
+const { canSend } = require('./mailIdentity');
 
 // Map outbox attachment refs to nodemailer attachments. Prefers a storage path
 // (read from GridFS), else uses inline base64 bytes embedded in `content`.
@@ -79,6 +82,20 @@ function resolveFrom(rawFrom) {
  * @sideEffects Sends a real email (network) except in the mocked/log path.
  */
 async function sendMail(opts) {
+  // A person's own connected mailbox (opts.identity, resolved by the worker from
+  // the outbox row's `sender`). Gmail only — there is no SMTP equivalent of
+  // "send as this person" — and no fallback HERE: the worker decides what to do
+  // when the grant is refused (mark it broken, resend from the company mailbox),
+  // because it is the worker that owns the retry ladder and the user record.
+  if (opts.identity) {
+    if (!googleOAuth.hasClient()) {
+      const err = new Error('Google OAuth client is not configured on the server.');
+      err.permanent = true;
+      throw err;
+    }
+    return googleMail.send(opts);
+  }
+
   // Preferred transport: Gmail API via the shared Google OAuth credentials.
   // isConfigured() only means the env vars are PRESENT — the refresh token can
   // still be revoked or expired. When it is (err.permanent), fall through to
@@ -123,17 +140,26 @@ async function sendMail(opts) {
     replyTo: opts.replyTo,
     attachments: await buildAttachments(opts.attachments),
   });
-  return { messageId: info.messageId, response: info.response };
+  return { messageId: info.messageId, response: info.response, sentFrom: `smtp:${from}` };
 }
 
 /**
  * Enqueue an email for asynchronous delivery with retry.
  *
- * @param {Object} opts       to / subject / text / html / from / replyTo
+ * @param {Object} opts       to / subject / text / html / from / replyTo / sender
+ *   `sender` (User id) names whose mailbox to send from when they have connected
+ *   one. Omitted → the acting user of the current request, if their role may
+ *   send as themselves (services/mailIdentity SENDER_ROLES); pass `null` to
+ *   force the company mailbox for a mail nobody personally authored.
  * @param {Object} [related]  { type: 'exit', id: ObjectId }
  * @returns {Promise<EmailOutbox doc>}
  */
 async function enqueueMail(opts, related = {}) {
+  let sender = opts.sender;
+  if (sender === undefined) {
+    const actor = currentUser();
+    sender = actor && canSend(actor) ? actor._id : undefined;
+  }
   const row = await EmailOutbox.create({
     to: Array.isArray(opts.to) ? opts.to.join(',') : opts.to,
     cc: Array.isArray(opts.cc) ? opts.cc.join(',') : opts.cc,
@@ -142,6 +168,7 @@ async function enqueueMail(opts, related = {}) {
     html: opts.html,
     from: opts.from,
     replyTo: opts.replyTo,
+    sender: sender || undefined,
     attachments: opts.attachments,
     status: 'Pending',
     attempts: 0,

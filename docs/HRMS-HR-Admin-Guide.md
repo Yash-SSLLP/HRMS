@@ -160,7 +160,11 @@ The pipeline from job post to converted employee.
 
 **Candidates** move through Applied, Shortlisted, Screening, Interview, Offer, Onboarding, New Joinee and Hired, or are rejected.
 
-**Interview rounds** are scheduled after shortlisting. Each round carries a status, an assigned interviewer who then sees it under My Interviews, feedback, timings and a meeting link. You can generate a real meeting link and email a branded invitation with the résumé attached.
+**Interview rounds** are scheduled after shortlisting. Each round carries a status, an assigned interviewer who then sees it under My Interviews, a written assessment, timings and a meeting link. You can generate a real meeting link and email a branded invitation with the résumé attached.
+
+**The assessment** is the record of why a round went the way it did. Open a round and it holds a rating per competency (technical skill, communication, problem solving, relevant experience, ownership and culture fit), strengths, concerns for the next round to probe, a hiring recommendation from Strong Hire to No Hire, and the overall remarks. Every round shows whoever opens it what the EARLIER rounds said, so the panel builds on itself instead of starting again each time. Nothing on the form is compulsory: the interviewer records the round with whatever they have entered, and a thin write-up is flagged to them rather than refused.
+
+[!TIP] A CEO or MD assigned to a round reads and records it under **My Interviews** in the admin portal — they have no employee portal, and it is the same page the interviewer uses.
 
 [!TIP] The interviewer picker is scoped to the job's department and lists everyone in it, not just managers. Type to search by name or designation, and use "show all employees" when the interviewer sits outside the department. Anyone already assigned stays visible even if they are from elsewhere, so re-opening a round never silently clears them.
 
@@ -260,6 +264,8 @@ Pay is spread across calendar days, so Sundays and holidays are already paid wit
 
 The attendance screen lists every such day with approve and reject actions, and a manager sees their own team's under My Team. Approving adds one extra day's salary, which is what makes it double; it appears on the payslip under Other Pay. A day left pending, or rejected, pays exactly as normal. Working an ordinary public holiday also pays normally — file the day as a Comp Off if it is meant to pay double.
 
+Every decision is kept. Under each approved or rejected day the screen shows who decided it and when, and **History** opens the whole trail — the first approval or rejection and every change after it, each with the person and the time — so changing a decision never erases who made the one before. A manager's My Team shows the same trail for their own people, a decision made by the Backend reads as "the Backend", and every entry also appears on the Audit Log.
+
 ---
 
 ## 7. Payroll and salary
@@ -358,6 +364,12 @@ Each person has one **wallet** (the company cash they hold) and as many named **
 [!WARNING] Reviews about an employee are shown to them anonymously. Protect that confidentiality — it is what makes the feedback honest.
 
 **Training** maintains programmes through their lifecycle. **Courses** is the learning platform: create internal or external courses with video or text modules, assign them, approve enrolment requests, view rosters, and moderate comments and issue reports. Video is hosted with signed upload and signed playback, and watch progress is measured on genuine viewing rather than on skipping ahead. L&D Managers see this page and nothing else.
+
+**Questions inside a video** are written while editing a video lesson: as many as you want, each pinned to a timestamp. Playback stops there and the learner cannot carry on until they answer. Tick a choice as the right answer and they have to get it right — with as many attempts as they need, or set it to record a wrong answer and let them on. Tick nothing and the question is a poll: still compulsory, still logged, but any answer gets them through. A question takes one answer, several, or free text, and can show an explanation once they are past it. The right answer never leaves the server, so it cannot be read out of the page.
+
+**Answers** on the course card is the log. Read it by question — how many answered, how many got it right first time, how many never did — or as every individual attempt, filtered to the wrong ones and exported to Excel. A retry is its own row, so a wrong answer followed by a right one shows both. Viewers of a publicly shared course answer the same questions and appear in the same log under the name they gave on the form.
+
+[!NOTE] The stop is enforced by the server, not only by the player: watch time is not credited past an unanswered question, and a lesson cannot complete while one is outstanding. A question added to a lesson somebody has already finished does not reopen it for them.
 
 ---
 

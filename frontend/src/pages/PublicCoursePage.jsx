@@ -6,11 +6,13 @@ import PublicVideoPlayer from '../components/PublicVideoPlayer';
 // PublicCoursePage — public (no-login) LMS course viewer at route /learn/:token.
 // Audience: anonymous external leads (no HRMS account); the token in the URL is
 // the only credential. Flow: fill a short lead form (once per browser) → watch
-// the course with a no-skip player → leave comments (held for approval) → give
-// per-video feedback.
-// Backend (all under /public/courses/:token): GET / (course + feedback questions),
-// POST /register (lead capture), GET/POST /comments, POST /feedback, and the
-// streamed video at /modules/:id/video.
+// the course with a no-skip player, answering any question pinned inside a video
+// → leave comments (held for approval) → give per-video feedback.
+// Backend (all under /public/courses/:token): GET / (course + feedback questions
+// + the questions this viewer has already cleared), POST /register (lead
+// capture), GET/POST /comments, POST /feedback, POST
+// /modules/:id/checkpoints/:cid/answer, and the streamed video at
+// /modules/:id/video.
 
 // localStorage key that persists the lead session per course token/browser.
 const lsKey = (token) => `pubcourse:${token}`;
@@ -33,6 +35,10 @@ export default function PublicCoursePage() {
   const [feedbackFor, setFeedbackFor] = useState(null); // module awaiting feedback
   const [doneFeedback, setDoneFeedback] = useState(() => new Set());
   const [base, setBase] = useState('');
+  // In-video questions this viewer has already got past. Seeded from the server
+  // (keyed on their lead session) so a returning viewer isn't re-asked, and kept
+  // here rather than in the player so it survives switching lessons.
+  const [clearedCps, setClearedCps] = useState(() => new Set());
 
   // Absolute API base is needed to build the raw <video> src (not an axios call).
   useEffect(() => { getBaseURL().then(setBase); }, []);
@@ -44,9 +50,12 @@ export default function PublicCoursePage() {
       setLoading(true);
       setError('');
       try {
-        const { data } = await api.get(`/public/courses/${token}`);
+        const { data } = await api.get(`/public/courses/${token}`, {
+          params: session?.sessionToken ? { viewer: session.sessionToken } : undefined,
+        });
         setCourse(data.course);
         setQuestions(data.feedbackQuestions || []);
+        setClearedCps(new Set((data.clearedCheckpoints || []).map(String)));
         if (data.course?.modules?.length) setActiveId(String(data.course.modules[0]._id));
       } catch (err) {
         setError(err.response?.data?.message || 'This course link is invalid or no longer available.');
@@ -54,6 +63,9 @@ export default function PublicCoursePage() {
         setLoading(false);
       }
     })();
+    // Only the token re-fetches. A viewer who registers just now has cleared
+    // nothing yet, so there is no reason to reload for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const modules = course?.modules || [];
@@ -104,6 +116,16 @@ export default function PublicCoursePage() {
                   key={active._id}
                   src={base ? `${base}/public/courses/${token}/modules/${active._id}/video?viewer=${encodeURIComponent(session.sessionToken)}` : ''}
                   durationSec={active.durationSec}
+                  checkpoints={active.checkpoints || []}
+                  cleared={clearedCps}
+                  onAnswer={async (cp, payload) => {
+                    const { data } = await api.post(
+                      `/public/courses/${token}/modules/${active._id}/checkpoints/${cp._id}/answer`,
+                      { ...payload, viewer: session.sessionToken },
+                    );
+                    return data;
+                  }}
+                  onCleared={(id) => setClearedCps((prev) => new Set(prev).add(id))}
                   onEnded={() => { if (!doneFeedback.has(String(active._id))) setFeedbackFor(active); }}
                 />
                 <div className="p-4 sm:p-6">
@@ -132,7 +154,10 @@ export default function PublicCoursePage() {
                     <span className={`mt-0.5 shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] ${isActive ? 'bg-indigo-600 text-white' : 'border border-gray-300 text-gray-400'}`}>{idx + 1}</span>
                     <span className="min-w-0">
                       <span className={`block text-sm ${isActive ? 'font-semibold text-indigo-900' : 'text-gray-800'} truncate`}>{m.title}</span>
-                      <span className="text-[11px] text-gray-400">{m.type === 'text' ? '📄 Reading' : '🎬 Video'}</span>
+                      <span className="text-[11px] text-gray-400">
+                        {m.type === 'text' ? '📄 Reading' : '🎬 Video'}
+                        {(m.checkpoints || []).length > 0 && ` · ${m.checkpoints.length} question${m.checkpoints.length === 1 ? '' : 's'}`}
+                      </span>
                     </span>
                   </button>
                 );

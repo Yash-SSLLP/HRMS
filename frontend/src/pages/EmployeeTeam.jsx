@@ -21,6 +21,7 @@ import AbsentAlert from '../components/AbsentAlert';
 import MarkOnLeaveModal from '../components/MarkOnLeaveModal';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import SearchableSelect from '../components/SearchableSelect';
+import { DecidedBy, DecisionHistory } from '../components/RestDayDecisionLog';
 import { formatTime12, formatHours, toYMD } from '../utils/time';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -130,6 +131,13 @@ export default function EmployeeTeam() {
   // Sunday / comp-off days my reports worked — each pays double once approved.
   const [duty, setDuty] = useState({ claims: [], counts: { pending: 0, approved: 0, rejected: 0 } });
   const [dutyBusy, setDutyBusy] = useState('');
+  // Claims whose decision history is unfolded (ids).
+  const [dutyLogOpen, setDutyLogOpen] = useState(() => new Set());
+  const toggleDutyLog = (id) => setDutyLogOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const loadDuty = async () => {
     try {
@@ -270,9 +278,27 @@ export default function EmployeeTeam() {
                           className="text-red-600 hover:underline disabled:opacity-50">Reject</button>
                       </span>
                     ) : (
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[c.state] || 'bg-gray-100 text-gray-600'}`}>
-                        {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
+                      <span className="inline-flex flex-col items-end gap-1">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[c.state] || 'bg-gray-100 text-gray-600'}`}>
+                          {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
+                        </span>
+                        {/* Who decided it, and every approve / reject / change since. */}
+                        <span className="inline-flex items-center gap-2">
+                          <DecidedBy decision={c.decision} />
+                          {c.history?.length > 0 && (
+                            <button type="button" onClick={() => toggleDutyLog(String(c._id))}
+                              aria-expanded={dutyLogOpen.has(String(c._id))}
+                              className="text-[11px] leading-4 font-medium text-indigo-600 hover:text-indigo-800">
+                              History ({c.history.length}) {dutyLogOpen.has(String(c._id)) ? '▴' : '▾'}
+                            </button>
+                          )}
+                        </span>
                       </span>
+                    )}
+                    {dutyLogOpen.has(String(c._id)) && c.history?.length > 0 && (
+                      <div className="basis-full rounded-lg bg-gray-50 px-3 py-2">
+                        <DecisionHistory history={c.history} />
+                      </div>
                     )}
                   </div>
                 ))}

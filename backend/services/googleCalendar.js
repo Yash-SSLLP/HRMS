@@ -16,8 +16,7 @@
  * When unconfigured, isConfigured() is false and callers fall back gracefully.
  */
 const crypto = require('crypto');
-
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const { refreshAccessToken } = require('./googleOAuth');
 
 /**
  * Whether the Google OAuth credentials needed for Calendar/Gmail are all present.
@@ -31,45 +30,20 @@ function isConfigured() {
   );
 }
 
-// Cache the short-lived access token until shortly before it expires.
-let cached = { token: null, expiresAt: 0 };
-
 /**
- * Get a valid short-lived OAuth access token, refreshing via the refresh-token
- * grant when the cached one is missing or within 60s of expiry. Shared by the
- * Calendar and Gmail services.
+ * Get a valid short-lived OAuth access token for the COMPANY credential
+ * (GOOGLE_OAUTH_REFRESH_TOKEN), refreshing when the cached one is missing or
+ * within 60s of expiry. Shared by the Calendar service and the company-mailbox
+ * path of the Gmail service; a person's own connected mailbox goes through
+ * services/googleOAuth.refreshAccessToken with their own token instead.
  * @returns {Promise<string>} A bearer access token.
- * @throws {Error} If the token refresh request fails.
- * @sideEffects Network call to Google's OAuth token endpoint; updates the module cache.
+ * @throws {Error} If the token refresh request fails. `err.permanent` is set on
+ *   invalid_grant — the token is expired, revoked, or was issued to different
+ *   credentials, and a human has to re-authorise (scripts/getGoogleRefreshToken.js).
+ * @sideEffects Network call to Google's OAuth token endpoint; updates the shared cache.
  */
 async function getAccessToken() {
-  if (cached.token && Date.now() < cached.expiresAt - 60_000) return cached.token;
-
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
-      client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
-      refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
-      grant_type: 'refresh_token',
-    }),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || !json.access_token) {
-    const detail = json.error_description || json.error || res.status;
-    const err = new Error(`Google OAuth token refresh failed: ${detail}`);
-    // `invalid_grant` means the refresh token is expired, revoked, or was issued
-    // to different credentials. No amount of retrying fixes it — a human has to
-    // re-authorise (scripts/getGoogleRefreshToken.js). Flag it so callers can
-    // stop burning their retry budget on it. NOTE: if the Google Cloud consent
-    // screen is still in "Testing", refresh tokens expire after 7 days; publish
-    // the app to stop this recurring weekly.
-    if (json.error === 'invalid_grant') err.permanent = true;
-    throw err;
-  }
-  cached = { token: json.access_token, expiresAt: Date.now() + (json.expires_in || 3600) * 1000 };
-  return cached.token;
+  return refreshAccessToken(process.env.GOOGLE_OAUTH_REFRESH_TOKEN, 'company');
 }
 
 /**

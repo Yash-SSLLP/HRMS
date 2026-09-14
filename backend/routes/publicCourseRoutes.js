@@ -6,6 +6,7 @@ const {
   getPublicCourse,
   registerViewer,
   streamPublicVideo,
+  answerPublicCheckpoint,
   listPublicComments,
   postPublicComment,
   postPublicFeedback,
@@ -19,6 +20,8 @@ router.get('/:token', getPublicCourse);
 router.post('/:token/register', registerViewer);
 // GET /:token/modules/:mid/video — stream a module video; public (sessionToken-gated).
 router.get('/:token/modules/:mid/video', streamPublicVideo);
+// POST /:token/modules/:mid/checkpoints/:cid/answer — answer an in-video question; public (sessionToken-gated).
+router.post('/:token/modules/:mid/checkpoints/:cid/answer', answerPublicCheckpoint);
 // GET /:token/comments — list public course comments; public.
 router.get('/:token/comments', listPublicComments);
 // POST /:token/comments — post a public comment; public (sessionToken-gated).

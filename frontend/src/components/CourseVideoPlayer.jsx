@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api, { getBaseURL } from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import CheckpointQuestion from './CheckpointQuestion';
+import { dueCheckpoint, gateSec, pendingCheckpoints } from '../utils/checkpoints';
 
 // In-portal player for a course video streamed from the backend Drive proxy.
 // The raw Drive URL is never exposed; the <video> hits our authenticated stream
@@ -15,16 +17,35 @@ import { useAuthStore } from '../store/authStore';
 // is unrestricted for admin preview, for a module already completed, or once
 // they've watched ≥95% of this video in the current session.
 //
+// In-video questions: when the lesson carries checkpoints, playback STOPS at the
+// first one the learner hasn't cleared and a question card covers the video —
+// including its controls, so the only way on is to answer. The same gate is
+// enforced server-side (watch credit stops there too), so this is UX, not the
+// security boundary.
+//
 // Props:
-//   courseId, module ({ _id, title, content, durationSec })
-//   preview  — admin preview mode: play only, no progress reporting, free seek
+//   courseId, module ({ _id, title, content, durationSec, checkpoints })
+//   preview  — admin preview mode: play only, no progress reporting, free seek,
+//              questions shown in place but skippable and not logged
 //   bare     — full-bleed video for the course stage (hides the extra watched bar)
 //   initialWatchedSec — saved watched seconds (seeds the no-skip watermark so a
 //                       returning learner can seek up to where they left off)
-//   moduleCompleted — the learner already finished this module → free seek
+//   clearedCheckpoints — ids of in-video questions this learner already answered
+//   moduleCompleted — the learner already finished this module → free seek, and
+//                     no questions on a re-watch
 //   onProgress(enrollment) — called with the updated enrollment after a save
 //   onError() — called when the video fails to load (so the page can prompt a report)
-export default function CourseVideoPlayer({ courseId, module, preview = false, bare = false, initialWatchedSec = 0, moduleCompleted = false, onProgress, onError }) {
+export default function CourseVideoPlayer({
+  courseId,
+  module,
+  preview = false,
+  bare = false,
+  initialWatchedSec = 0,
+  clearedCheckpoints,
+  moduleCompleted = false,
+  onProgress,
+  onError,
+}) {
   const token = useAuthStore((s) => s.token);
   const videoRef = useRef(null);
   const [src, setSrc] = useState('');
@@ -44,6 +65,20 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
   const sessionFreeRef = useRef(false);
   const lockTimerRef = useRef(null);
 
+  // ===== In-video questions =====
+  // A finished module isn't re-gated on a re-watch — they've already answered.
+  const checkpoints = useMemo(
+    () => (moduleCompleted ? [] : (module?.checkpoints || [])),
+    [module, moduleCompleted]
+  );
+  const [cleared, setCleared] = useState(() => new Set((clearedCheckpoints || []).map(String)));
+  const [activeCp, setActiveCp] = useState(null);
+  // Read inside the <video> callbacks, which close over the first render.
+  const clearedRef = useRef(cleared);
+  clearedRef.current = cleared;
+  const activeRef = useRef(activeCp);
+  activeRef.current = activeCp;
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -61,8 +96,17 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
     setWatchedSec(0);
     setLocked(false);
     setFailed(false);
+    setActiveCp(null);
+    setCleared(new Set((clearedCheckpoints || []).map(String)));
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId, module._id, token]);
+
+  // Whatever else happens (an autoplay, a stray click on the controls before the
+  // overlay paints), a question on screen means the video is not running.
+  useEffect(() => {
+    if (activeCp && videoRef.current) videoRef.current.pause();
+  }, [activeCp]);
 
   // True when the learner may seek anywhere (admin preview, already-done module,
   // or ≥95% watched this session).
@@ -84,6 +128,19 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
     }
   };
 
+  // Stop the video dead on a question and pin the playhead to its timestamp, so
+  // resuming after the answer carries on from exactly where it paused.
+  const raiseCheckpoint = (cp) => {
+    const v = videoRef.current;
+    if (!v || activeRef.current) return;
+    v.pause();
+    if (Number.isFinite(cp.atSec) && v.currentTime > cp.atSec + 0.5 && cp.atSec <= (v.duration || Infinity)) {
+      v.currentTime = cp.atSec;
+      lastTimeRef.current = cp.atSec;
+    }
+    setActiveCp(cp);
+  };
+
   const onTimeUpdate = () => {
     const v = videoRef.current;
     if (!v) return;
@@ -103,18 +160,27 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
       if (dur > 0 && creditedRef.current >= 0.95 * dur) sessionFreeRef.current = true;
     }
     lastTimeRef.current = t;
+
+    // A question due at this point stops everything (and is not reported past).
+    const due = dueCheckpoint(checkpoints, clearedRef.current, t);
+    if (due) { raiseCheckpoint(due); return; }
+
     report(false);
   };
 
   // No-skip: block a forward seek past the furthest-watched point by snapping
   // back to it. Backward seeks (into already-seen content) are always allowed.
+  // A pending question is a hard ceiling even when free seeking is allowed.
   const onSeeking = () => {
     const v = videoRef.current;
-    if (!v || canSeekFreely()) return;
-    const limit = maxAllowedRef.current + 1; // 1s tolerance for normal playback
-    if (v.currentTime > limit) {
-      v.currentTime = maxAllowedRef.current;
-      lastTimeRef.current = maxAllowedRef.current;
+    if (!v) return;
+    const gate = gateSec(checkpoints, clearedRef.current);
+    const ceiling = canSeekFreely()
+      ? (gate === null ? Infinity : gate)
+      : Math.min(maxAllowedRef.current, gate === null ? Infinity : gate);
+    if (v.currentTime > ceiling + 1) {
+      v.currentTime = Number.isFinite(ceiling) ? ceiling : 0;
+      lastTimeRef.current = v.currentTime;
       setLocked(true);
       clearTimeout(lockTimerRef.current);
       lockTimerRef.current = setTimeout(() => setLocked(false), 2600);
@@ -126,7 +192,42 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
     if (v && Number.isFinite(v.duration) && v.duration > 0) setDuration(v.duration);
   };
 
+  // A question pinned at (or past) the end of the video never comes due from a
+  // timeupdate — it comes due here.
+  const onEnded = () => {
+    report(true);
+    const [next] = pendingCheckpoints(checkpoints, clearedRef.current);
+    if (next) raiseCheckpoint(next);
+  };
+
+  // Answer → log it on the server → if they're through, mark it cleared locally
+  // so the gate moves on. An admin previewing gets the verdict back but nothing
+  // is written to the log (the server drops a preview answer).
+  const submitAnswer = async (payload) => {
+    const { data } = await api.post(
+      `/courses/${courseId}/modules/${module._id}/checkpoints/${activeCp._id}/answer`,
+      payload
+    );
+    if (data?.cleared) {
+      // The ref is written here, not left to the re-render: a timeupdate that
+      // lands in between would otherwise still see the question as pending.
+      const next = new Set(clearedRef.current).add(String(activeCp._id));
+      clearedRef.current = next;
+      setCleared(next);
+      if (data.enrollment) onProgress?.(data.enrollment);
+    }
+    return data;
+  };
+
+  const resume = () => {
+    activeRef.current = null; // same reason: play() must not re-raise it
+    setActiveCp(null);
+    const v = videoRef.current;
+    if (v) { lastTimeRef.current = v.currentTime; v.play().catch(() => {}); }
+  };
+
   const pct = duration > 0 ? Math.min(100, Math.round((watchedSec / duration) * 100)) : 0;
+  const questionCount = (module?.checkpoints || []).length;
 
   return (
     <div>
@@ -153,20 +254,29 @@ export default function CourseVideoPlayer({ courseId, module, preview = false, b
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={onTimeUpdate}
           onSeeking={onSeeking}
+          onPlay={() => { if (activeRef.current) videoRef.current?.pause(); }}
           onPause={() => report(true)}
-          onEnded={() => report(true)}
+          onEnded={onEnded}
           onError={() => { setFailed(true); onError?.(); }}
         />
-        {locked && (
+        {locked && !activeCp && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
             🔒 You can’t skip ahead - finish watching first
           </div>
+        )}
+        {activeCp && (
+          <CheckpointQuestion
+            checkpoint={activeCp}
+            onSubmit={submitAnswer}
+            onContinue={resume}
+            onSkip={preview ? resume : undefined}
+          />
         )}
       </div>
       {!preview && (
         <div className={bare ? 'mt-3 px-4 sm:px-6' : 'mt-3'}>
           <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-            <span>This video</span>
+            <span>This video{questionCount > 0 ? ` · ${questionCount} question${questionCount === 1 ? '' : 's'} inside` : ''}</span>
             <span>{pct}%</span>
           </div>
           <div className="h-2 bg-gray-100 rounded">

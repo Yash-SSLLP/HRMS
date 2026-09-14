@@ -50,3 +50,7 @@ mobile/
 # Local backups of superseded letters taken before a re-issue (scripts/fixAndIssue*).
 # Real employee documents — never commit these.
 letter-backups/
+
+# Local JSON backups taken before a khata deletion (scripts/deleteKhataForEmployees).
+# Real employee financial records — never commit these.
+khata-backups/

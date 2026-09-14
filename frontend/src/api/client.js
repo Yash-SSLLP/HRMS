@@ -96,7 +96,16 @@ const VIEW_ONLY_POST_ALLOW = [
 // round whose `interviewer` is you (see setMyInterviewRound). Blocking it
 // here would strand every round booked with an executive: they could read the
 // panel notes and never record their own verdict.
-const EXEC_WRITE_PATHS = [/\/incentives(\/|$|\?)/, /\/recruitment\/my-interviews(\/|$|\?)/];
+//
+// The third is their OWN sending mailbox (My Account → connect Google). It
+// touches nobody's data but their own account, and the server route has no
+// restrictTo gate — a read-only CEO who wishes staff by email may well want
+// the wish to leave from their own address.
+const EXEC_WRITE_PATHS = [
+  /\/incentives(\/|$|\?)/,
+  /\/recruitment\/my-interviews(\/|$|\?)/,
+  /\/mail-identity(\/|$|\?)/,
+];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job
 // application, an exit feedback form, a public course. The server does not run

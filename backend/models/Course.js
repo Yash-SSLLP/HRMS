@@ -2,8 +2,10 @@ const mongoose = require('mongoose');
 const { parseDriveFileId } = require('../utils/drive');
 
 // The LMS / e-learning module. This one file defines the whole learning domain as
-// several related models: Course (with embedded lesson `modules`), Enrollment
-// (an employee taking a course, with per-module watch progress), CourseReport
+// several related models: Course (with embedded lesson `modules`, each video
+// carrying timestamped `checkpoints` — the in-video questions), Enrollment (an
+// employee taking a course, with per-module watch progress and the checkpoints
+// they've cleared), CheckpointAnswer (the log of who answered what), CourseReport
 // (lesson issue tickets), and the public no-login engagement models
 // (CourseViewer, CourseComment, VideoFeedback). Default export is Course; the
 // others are attached as properties.
@@ -12,6 +14,40 @@ const MODULE_TYPES = ['video', 'text'];
 const ENROLLMENT_STATUS = ['Enrolled', 'InProgress', 'Completed']; // learner's progress through the course
 const APPROVAL_STATUS = ['Approved', 'Pending', 'Rejected']; // access gate on an enrollment (self-enrolls need approval)
 const ENROLL_SOURCE = ['Assigned', 'Self']; // how the enrollment was created (HR-assigned vs employee self-enroll)
+
+// ===== In-video checkpoint questions =====
+// A question the author pins to a TIMESTAMP inside a video lesson. Playback
+// stops there and will not resume until the learner answers it — and, when the
+// question has a right answer and `requireCorrect`, until they answer it
+// correctly. A lesson may carry as many as the author wants.
+//
+// A question with no option marked `correct` is UNGRADED: the answer is
+// recorded and the learner moves on either way (a poll / attention check).
+const CHECKPOINT_TYPES = ['single', 'multiple', 'text'];
+
+const checkpointOptionSchema = new mongoose.Schema(
+  {
+    text: { type: String, required: true, trim: true },
+    correct: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
+// `_id` is kept (mongoose default): the answer log points at it, so a question
+// keeps its identity across course edits and reorders.
+const checkpointSchema = new mongoose.Schema({
+  atSec: { type: Number, required: true, min: 0 },
+  question: { type: String, required: true, trim: true },
+  type: { type: String, enum: CHECKPOINT_TYPES, default: 'single' },
+  // For single/multiple these are the choices; for `text` they are the accepted
+  // answers (matched case-insensitively). None marked correct = ungraded.
+  options: [checkpointOptionSchema],
+  // Shown once they've answered — the "why".
+  explanation: { type: String, trim: true },
+  // Graded question: must they get it right to move on? false = record the
+  // answer and let them continue regardless.
+  requireCorrect: { type: Boolean, default: true },
+});
 
 // A single unit of a course. `_id` is kept (mongoose default) so an enrollment's
 // per-module progress can be keyed by a stable id even when modules are reordered.
@@ -36,6 +72,8 @@ const moduleSchema = new mongoose.Schema({
   // Video length in seconds, learned from the player on first play. Used as the
   // denominator for accurate watch progress.
   durationSec: { type: Number, default: 0, min: 0 },
+  // Questions pinned inside this video, kept sorted by timestamp.
+  checkpoints: [checkpointSchema],
 });
 
 // Keep driveFileId in sync with whatever link was provided. Tolerates a legacy
@@ -81,6 +119,9 @@ const moduleProgressSchema = new mongoose.Schema(
     durationSec: { type: Number, default: 0, min: 0 },
     completed: { type: Boolean, default: false },
     completedAt: { type: Date },
+    // In-video questions this learner has already got past. Anything not in
+    // here still blocks playback (and watch credit) at its timestamp.
+    clearedCheckpoints: [{ type: mongoose.Schema.Types.ObjectId }],
   },
   { _id: false }
 );
@@ -137,6 +178,36 @@ const courseReportSchema = new mongoose.Schema(
   { timestamps: true }
 );
 courseReportSchema.plugin(require('./plugins/auditStatus'), { entity: 'CourseReport' });
+
+// ===== In-video question answers (the log) =====
+// One row per ATTEMPT — a wrong answer followed by a right one leaves two rows,
+// which is the point: the log says who answered what, on which question, when.
+// The question text is snapshotted so the log still reads correctly after the
+// course is edited. Exactly one of `employee` (internal learner) / `viewer`
+// (public no-login viewer) identifies the answerer.
+const checkpointAnswerSchema = new mongoose.Schema(
+  {
+    course: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true, index: true },
+    module: { type: mongoose.Schema.Types.ObjectId, index: true },
+    moduleTitle: { type: String },
+    checkpoint: { type: mongoose.Schema.Types.ObjectId, index: true },
+    question: { type: String },
+    atSec: { type: Number, default: 0 },
+    audience: { type: String, enum: ['employee', 'public'], default: 'employee', index: true },
+    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+    viewer: { type: mongoose.Schema.Types.ObjectId, ref: 'CourseViewer', index: true },
+    // Display name at the time of answering (a public viewer has no account).
+    answeredBy: { type: String },
+    // What they picked — option text(s), or the free text they typed.
+    answer: [{ type: String }],
+    graded: { type: Boolean, default: false }, // the question had a right answer
+    correct: { type: Boolean, default: false },
+    cleared: { type: Boolean, default: false }, // did this attempt let them continue
+    attempt: { type: Number, default: 1 },
+  },
+  { timestamps: true }
+);
+checkpointAnswerSchema.index({ course: 1, createdAt: -1 });
 
 // ===== Public (no-login) course engagement =====
 
@@ -201,6 +272,7 @@ const CourseReport = mongoose.model('CourseReport', courseReportSchema);
 const CourseViewer = mongoose.model('CourseViewer', courseViewerSchema);
 const CourseComment = mongoose.model('CourseComment', courseCommentSchema);
 const VideoFeedback = mongoose.model('VideoFeedback', videoFeedbackSchema);
+const CheckpointAnswer = mongoose.model('CheckpointAnswer', checkpointAnswerSchema);
 
 module.exports = Course;
 module.exports.Enrollment = Enrollment;
@@ -208,8 +280,10 @@ module.exports.CourseReport = CourseReport;
 module.exports.CourseViewer = CourseViewer;
 module.exports.CourseComment = CourseComment;
 module.exports.VideoFeedback = VideoFeedback;
+module.exports.CheckpointAnswer = CheckpointAnswer;
 module.exports.COURSE_CATEGORIES = COURSE_CATEGORIES;
 module.exports.MODULE_TYPES = MODULE_TYPES;
+module.exports.CHECKPOINT_TYPES = CHECKPOINT_TYPES;
 module.exports.VIDEO_SOURCES = VIDEO_SOURCES;
 module.exports.ENROLLMENT_STATUS = ENROLLMENT_STATUS;
 module.exports.APPROVAL_STATUS = APPROVAL_STATUS;
