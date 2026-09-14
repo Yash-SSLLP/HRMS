@@ -1,7 +1,7 @@
 /**
- * BrandingSettings — the company logo and the CEO / MD / HR signature images
- * that get stamped onto every generated document (offer letter, appointment
- * letter, payslip).
+ * BrandingSettings — the company letterhead, the logo and the CEO / MD / HR
+ * signature images that get stamped onto every generated document (offer
+ * letter, appointment letter, relieving letter, payslip).
  *
  * Lives under Admin → Email & Letter Templates because it answers the same
  * question that page does — "what do our outgoing documents look like?" — the
@@ -107,22 +107,41 @@ export default function BrandingSettings() {
     setVersion((v) => v + 1);   // force the previews to refetch
   };
 
-  const uploadLogo = async (file) => {
-    setBusy('logo');
+  // The two single-image slots — the logo and the full-width letterhead — share
+  // one upload/remove shape; only the endpoint and the wording differ.
+  const IMAGE_SLOTS = {
+    logo: {
+      url: '/admin/org-settings/logo',
+      noun: 'Company logo',
+      removeTitle: 'Remove company logo?',
+      removeMessage: 'Letters and payslips will fall back to the built-in logo.',
+    },
+    letterhead: {
+      url: '/admin/org-settings/letterhead',
+      noun: 'Letterhead',
+      removeTitle: 'Remove the letterhead?',
+      removeMessage: 'The appointment letter will fall back to the built-in letterhead.',
+    },
+  };
+
+  const uploadImage = async (slot, file) => {
+    const s = IMAGE_SLOTS[slot];
+    setBusy(slot);
     try {
       const fd = new FormData(); fd.append('image', file);
-      const { data } = await api.post('/admin/org-settings/logo', fd);
-      applyResult(data); toast.success('Company logo updated');
+      const { data } = await api.post(s.url, fd);
+      applyResult(data); toast.success(`${s.noun} updated`);
     } catch (err) { toast.error(err.response?.data?.message || 'Upload failed'); }
     finally { setBusy(''); }
   };
 
-  const removeLogo = async () => {
-    if (!(await confirmDialog({ title: 'Remove company logo?', message: 'Letters and payslips will fall back to the built-in logo.' }))) return;
-    setBusy('logo');
+  const removeImage = async (slot) => {
+    const s = IMAGE_SLOTS[slot];
+    if (!(await confirmDialog({ title: s.removeTitle, message: s.removeMessage }))) return;
+    setBusy(slot);
     try {
-      const { data } = await api.delete('/admin/org-settings/logo');
-      applyResult(data); toast.success('Company logo removed');
+      const { data } = await api.delete(s.url);
+      applyResult(data); toast.success(`${s.noun} removed`);
     } catch (err) { toast.error(err.response?.data?.message || 'Could not remove'); }
     finally { setBusy(''); }
   };
@@ -181,21 +200,34 @@ export default function BrandingSettings() {
       )}
 
       <p className="text-sm text-gray-500 max-w-4xl">
-        These images are stamped onto every document the system generates — offer letters, appointment
-        letters and payslips. A transparent PNG works best; anything you upload here replaces the built-in
-        default everywhere at once, with no redeploy.
+        These images are stamped onto every document the system generates — offer, appointment and
+        relieving letters and payslips. A transparent PNG works best; anything you upload here replaces the
+        built-in default everywhere at once, with no redeploy.
       </p>
 
       <div className="bg-white shadow rounded-lg p-4">
         <ImageDrop
+          label="Letterhead"
+          hint="Printed full width at the top of every page of the appointment letter — logo, address and rule already composed. A wide banner (about 5:1) reproduces best."
+          url={IMAGE_SLOTS.letterhead.url}
+          version={version}
+          hasImage={!!branding?.hasLetterhead}
+          busy={busy === 'letterhead'}
+          onPick={(f) => uploadImage('letterhead', f)}
+          onRemove={() => removeImage('letterhead')}
+        />
+      </div>
+
+      <div className="bg-white shadow rounded-lg p-4">
+        <ImageDrop
           label="Company logo"
-          hint="Top-left of every letterhead. Wide/landscape art reproduces best."
-          url="/admin/org-settings/logo"
+          hint="Top-left of the offer and relieving letters and the payslip. Wide/landscape art reproduces best."
+          url={IMAGE_SLOTS.logo.url}
           version={version}
           hasImage={!!branding?.hasLogo}
           busy={busy === 'logo'}
-          onPick={uploadLogo}
-          onRemove={removeLogo}
+          onPick={(f) => uploadImage('logo', f)}
+          onRemove={() => removeImage('logo')}
         />
       </div>
 

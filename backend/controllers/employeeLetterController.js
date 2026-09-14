@@ -148,13 +148,18 @@ function letterData(profile, structure, body = {}) {
     hra: yearly(earnings.hra),
     specialAllowance: yearly(earnings.specialAllowance),
     conveyance: yearly(earnings.conveyanceAllowance),
-    medical: yearly(earnings.medicalAllowance),
+    // An EARNING, listed in Part A. It used to be sent as `medical`, which the
+    // annexure reads as the group medical PREMIUM (a Part C deduction) — so an
+    // employee whose structure carried a medical allowance was shown it coming
+    // OFF their salary, and a net pay short by that amount.
+    medicalAllowance: yearly(earnings.medicalAllowance),
     otherAllowances: yearly(earnings.lta),
     // The company runs neither scheme and offers neither benefit as standard;
     // the annexure prints PF/ESI as an explicit nil either way.
     employerPf: 0,
     gratuity: 0,
     accidentInsurance: 0,
+    medical: 0,
 
     // ----- the few things the record has no opinion about -----
     workingHours: body.workingHours || '',

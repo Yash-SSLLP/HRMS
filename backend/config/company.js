@@ -32,6 +32,11 @@ const COMPANY = {
   // Governing-law state for the appointment letter's standard clauses.
   governingState: process.env.ORG_GOVERNING_STATE || 'Karnataka',
   logoPath: process.env.ORG_LOGO_PATH || null,
+  // The full-width letterhead image (logo, address and rule already composed)
+  // printed at the top of every page of the appointment letter. Overrides the
+  // bundled backend/assets/letterhead.png; an upload in Admin → Templates →
+  // Logo & signatures overrides both.
+  letterheadPath: process.env.ORG_LETTERHEAD_PATH || null,
 };
 
 module.exports = COMPANY;

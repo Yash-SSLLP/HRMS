@@ -439,7 +439,7 @@ If a resignation gets stuck — the approver it is waiting on has left, or is un
 
 Completing an exit generates a feedback token for a public, no-login feedback form, sets the date of exit, and hands you an editable feedback email to review and send. Nothing is emailed automatically.
 
-Once an exit is **Completed**, a **Relieving Letter** button on it opens the letter as a PDF — same letterhead, signature block and layout as the offer and appointment letters. It is deliberately refused until no-dues clearance is satisfied (or explicitly overridden) and the last working day has passed, because the letter certifies both. Its wording is editable like every other letter, under Templates → *Relieving letter*.
+Once an exit is **Completed**, a **Relieving Letter** button on it opens the letter as a PDF — same letterhead, signature block and layout as the offer letter. It is deliberately refused until no-dues clearance is satisfied (or explicitly overridden) and the last working day has passed, because the letter certifies both. Its wording is editable like every other letter, under Templates → *Relieving letter*.
 
 [!IMPORTANT] The leaver can fetch the same letter themselves — from Resignation in the web portal or the mobile app while their login still works, and afterwards through the **same no-login link as their exit feedback**. That matters because completing an exit switches their account off: without the token link, the one person the letter is about could not open it.
 

@@ -857,6 +857,7 @@ const orgSettingsPayload = (s) => {
     },
     branding: {
       hasLogo: !!s.branding?.logoPath,
+      hasLetterhead: !!s.branding?.letterheadPath,
       signatures: SIGNATURE_KEYS.map((key) => {
         const hit = sigs.find((x) => x.key === key);
         return {
@@ -886,59 +887,86 @@ const CONTENT_TYPES = {
 const contentTypeFor = (p) => CONTENT_TYPES[path.extname(String(p || '')).toLowerCase()] || 'image/png';
 
 /**
- * Upload the company logo used on every letterhead.
- * @route POST /api/admin/org-settings/logo  (requires 'branding.manage', multipart field "image")
+ * Upload / remove / stream handlers for one single-image branding slot — the
+ * company logo and the full-width letterhead. Both follow the same sequence
+ * (save to GridFS, then move the pointer, then drop the old bytes), built once
+ * so the two cannot drift.
+ *
+ * @param {{field: string, ownerId: string, noun: string}} slot - the Setting
+ *   branding field holding the GridFS key, the storage owner id, and the word
+ *   used in messages
+ * @returns {{upload: Function, remove: Function, get: Function}} express handlers
  */
-const uploadBrandingLogo = asyncHandler(async (req, res) => {
-  if (!req.file) { res.status(400); throw new Error('No image uploaded'); }
-  const Setting = require('../models/Setting');
-  const s = await Setting.getSettings();
-  const previous = s.branding?.logoPath;
-  const { storagePath } = await storage.saveBuffer({
-    buffer: req.file.buffer,
-    ownerType: 'branding',
-    ownerId: 'logo',
-    originalName: req.file.originalname || 'logo.png',
+function brandingImageSlot({ field, ownerId, noun }) {
+  const upload = asyncHandler(async (req, res) => {
+    if (!req.file) { res.status(400); throw new Error('No image uploaded'); }
+    const Setting = require('../models/Setting');
+    const s = await Setting.getSettings();
+    const previous = s.branding?.[field];
+    const { storagePath } = await storage.saveBuffer({
+      buffer: req.file.buffer,
+      ownerType: 'branding',
+      ownerId,
+      originalName: req.file.originalname || `${ownerId}.png`,
+    });
+    s.branding = s.branding || {};
+    s.branding[field] = storagePath;
+    await s.save();
+    invalidateBranding();
+    // Only after the new pointer is safely persisted — a failed delete must never
+    // orphan the record we just wrote.
+    if (previous && previous !== storagePath) storage.remove(previous).catch(() => {});
+    res.json(brandingPayload(s));
   });
-  s.branding = s.branding || {};
-  s.branding.logoPath = storagePath;
-  await s.save();
-  invalidateBranding();
-  // Only after the new pointer is safely persisted — a failed delete must never
-  // orphan the record we just wrote.
-  if (previous && previous !== storagePath) storage.remove(previous).catch(() => {});
-  res.json(brandingPayload(s));
-});
+
+  const remove = asyncHandler(async (req, res) => {
+    const Setting = require('../models/Setting');
+    const s = await Setting.getSettings();
+    const previous = s.branding?.[field];
+    if (s.branding) s.branding[field] = '';
+    await s.save();
+    invalidateBranding();
+    if (previous) storage.remove(previous).catch(() => {});
+    res.json(brandingPayload(s));
+  });
+
+  // Protected: the image is only ever shown inside the admin UI, and the PDF
+  // renderers read the bytes from GridFS directly.
+  const get = asyncHandler(async (req, res) => {
+    const Setting = require('../models/Setting');
+    const s = await Setting.getSettings();
+    const p = s.branding?.[field];
+    if (!p) return res.status(404).json({ message: `No ${noun} uploaded` });
+    res.setHeader('Content-Type', contentTypeFor(p));
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    if (!(await storage.streamTo(p, res))) return res.status(404).json({ message: 'File not found' });
+  });
+
+  return { upload, remove, get };
+}
 
 /**
- * Remove the company logo, reverting letters to the bundled default.
- * @route DELETE /api/admin/org-settings/logo  (requires 'branding.manage')
+ * The company logo drawn on the offer and relieving letters and the payslip.
+ * @route POST   /api/admin/org-settings/logo  (requires 'branding.manage', multipart field "image")
+ * @route DELETE /api/admin/org-settings/logo  — revert to the bundled default
+ * @route GET    /api/admin/org-settings/logo  — stream it back for the admin preview
  */
-const deleteBrandingLogo = asyncHandler(async (req, res) => {
-  const Setting = require('../models/Setting');
-  const s = await Setting.getSettings();
-  const previous = s.branding?.logoPath;
-  if (s.branding) s.branding.logoPath = '';
-  await s.save();
-  invalidateBranding();
-  if (previous) storage.remove(previous).catch(() => {});
-  res.json(brandingPayload(s));
-});
+const logoSlot = brandingImageSlot({ field: 'logoPath', ownerId: 'logo', noun: 'logo' });
+const uploadBrandingLogo = logoSlot.upload;
+const deleteBrandingLogo = logoSlot.remove;
+const getBrandingLogo = logoSlot.get;
 
 /**
- * Stream the company logo back. Protected: it is only ever shown inside the
- * admin UI, and the PDF renderers read the bytes from GridFS directly.
- * @route GET /api/admin/org-settings/logo  (requires 'branding.manage')
+ * The full-width letterhead image printed at the top of every page of the
+ * appointment letter (logo, address and rule already composed).
+ * @route POST   /api/admin/org-settings/letterhead  (requires 'branding.manage', multipart field "image")
+ * @route DELETE /api/admin/org-settings/letterhead  — revert to the bundled default
+ * @route GET    /api/admin/org-settings/letterhead  — stream it back for the admin preview
  */
-const getBrandingLogo = asyncHandler(async (req, res) => {
-  const Setting = require('../models/Setting');
-  const s = await Setting.getSettings();
-  const p = s.branding?.logoPath;
-  if (!p) return res.status(404).json({ message: 'No logo uploaded' });
-  res.setHeader('Content-Type', contentTypeFor(p));
-  res.setHeader('Cache-Control', 'private, max-age=60');
-  if (!(await storage.streamTo(p, res))) return res.status(404).json({ message: 'File not found' });
-});
+const letterheadSlot = brandingImageSlot({ field: 'letterheadPath', ownerId: 'letterhead', noun: 'letterhead' });
+const uploadBrandingLetterhead = letterheadSlot.upload;
+const deleteBrandingLetterhead = letterheadSlot.remove;
+const getBrandingLetterhead = letterheadSlot.get;
 
 /**
  * Upload (or replace) one signature slot, and optionally its printed name/title.
@@ -1523,6 +1551,9 @@ module.exports = {
   uploadBrandingLogo,
   deleteBrandingLogo,
   getBrandingLogo,
+  uploadBrandingLetterhead,
+  deleteBrandingLetterhead,
+  getBrandingLetterhead,
   uploadBrandingSignature,
   deleteBrandingSignature,
   getBrandingSignature,

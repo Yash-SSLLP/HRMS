@@ -1,6 +1,7 @@
 /**
- * Letterhead branding — the company logo and the signature images a SuperAdmin
- * uploads under Admin → Email & Letter Templates → Logo & signatures.
+ * Letterhead branding — the company logo, the full-width letterhead image and
+ * the signature images a SuperAdmin uploads under Admin → Email & Letter
+ * Templates → Logo & signatures.
  *
  * Why this exists as a resolver rather than being read inside the renderers:
  * pdfkit's `doc.image()` needs BYTES, and the bytes live in GridFS behind an
@@ -9,8 +10,9 @@
  * `resolveLetterBody` already established (see letterPdf.js).
  *
  * Resolution order per image, most specific first:
- *   logo:      Setting.branding.logoPath → ORG_LOGO_PATH env → bundled assets/logo.png
- *   signature: Setting.branding.signatures[key] → ORG_SIGNATURE_PATH env (ceo only)
+ *   logo:       Setting.branding.logoPath → ORG_LOGO_PATH env → bundled assets/logo.png
+ *   letterhead: Setting.branding.letterheadPath → ORG_LETTERHEAD_PATH env → bundled assets/letterhead.png
+ *   signature:  Setting.branding.signatures[key] → ORG_SIGNATURE_PATH env (ceo only)
  *
  * That bundled fallback also fixes a long-standing asymmetry: payslips fell back
  * to assets/logo.png while letters fell back to nothing, so letters printed a
@@ -34,17 +36,20 @@ const readFileSafe = (p) => {
 };
 
 const BUNDLED_LOGO = path.join(__dirname, '..', 'assets', 'logo.png');
+// The company's approved letterhead (logo, address, rule), printed on every
+// page of the appointment letter. Bundled so the letter is right out of the box.
+const BUNDLED_LETTERHEAD = path.join(__dirname, '..', 'assets', 'letterhead.png');
 
 /**
  * Load the branding images.
- * @returns {Promise<{logo: Buffer|null, signatures: {ceo?: Sig, md?: Sig, hr?: Sig}}>}
+ * @returns {Promise<{logo: Buffer|null, letterhead: Buffer|null, signatures: {ceo?: Sig, md?: Sig, hr?: Sig}}>}
  *   where Sig = { image: Buffer, name: string, title: string }.
  * @sideEffects Reads GridFS and the filesystem; result cached for 30s.
  */
 async function getBranding() {
   if (cache.value && Date.now() - cache.at < TTL_MS) return cache.value;
 
-  const out = { logo: null, signatures: {} };
+  const out = { logo: null, letterhead: null, signatures: {} };
   try {
     // Lazily required: letterPdf is also used by scripts with no DB connection,
     // and those must still render (with the bundled/env fallbacks).
@@ -55,6 +60,9 @@ async function getBranding() {
 
     if (b.logoPath) {
       try { out.logo = await storage.readBuffer(b.logoPath); } catch { /* fall through */ }
+    }
+    if (b.letterheadPath) {
+      try { out.letterhead = await storage.readBuffer(b.letterheadPath); } catch { /* fall through */ }
     }
     for (const sig of b.signatures || []) {
       if (!sig?.storagePath) continue;
@@ -69,6 +77,10 @@ async function getBranding() {
   }
 
   if (!out.logo) out.logo = (COMPANY.logoPath && readFileSafe(COMPANY.logoPath)) || readFileSafe(BUNDLED_LOGO);
+  if (!out.letterhead) {
+    out.letterhead = (COMPANY.letterheadPath && readFileSafe(COMPANY.letterheadPath))
+      || readFileSafe(BUNDLED_LETTERHEAD);
+  }
   if (!out.signatures.ceo && process.env.ORG_SIGNATURE_PATH) {
     const image = readFileSafe(process.env.ORG_SIGNATURE_PATH);
     if (image) out.signatures.ceo = { image, name: '', title: '' };

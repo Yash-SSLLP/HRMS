@@ -82,31 +82,33 @@ Warm regards,
     'appointment.letter',
     'Appointment letter',
     'Recruitment',
-    'The body of the appointment letter PDF issued once a candidate joins. Page layout, letterhead, the key-facts panel, the signature block and Annexure I stay fixed. Inside a numbered clause, a line break starts a new paragraph.',
-`We are delighted to extend this letter of appointment to you for full-time employment with {{companyName}}. Your appointment is subject to the terms and conditions set out below and to the Company's policies as applicable from time to time.
+    'The body of the appointment letter PDF issued once a candidate joins — the wording of the company\'s approved letter. Page layout, letterhead, the facts table, the signature block and Annexure I stay fixed. Inside a numbered clause, a line break starts a new paragraph.',
+`We are delighted to extend this letter of appointment to you for full-time employment with {{companyName}}. Your appointment is subject to the terms and conditions set out below and the Company's policies as applicable from time to time.
 
 - Date of Appointment: Your appointment will be effective from {{joiningDate}}.
-- Salary & Compensation: Your total annual compensation is {{salaryAnnual}}. The detailed break-up of your pay package is provided in Annexure I attached to this letter.
+- Salary & Compensation: Your total annual compensation is {{salaryAnnual}}/- per annum. The detailed breakup of your pay package is provided in Annexure I attached to this letter.
 Your salary will ordinarily be paid between the 7th and 10th of every month, subject to payroll processing and applicable statutory deductions.
 Your compensation package has been determined with reference to your candidature, qualifications, relevant experience, skill set and the assessment conducted during the selection process. Accordingly, the package is specific to your role and candidature.
 The Company may, in accordance with applicable requirements and Company policy, revise the internal composition of salary components or allowances from time to time. Any such revision will be communicated as applicable.
-- Reporting Function: You will report to the {{reportingTo}}, or to such other person as may be designated by the management from time to time.
+- Reporting Function: You will report to {{reportingTo}}, or to such other person as may be designated by the management from time to time.
 - Placement: You are appointed as a full-time employee of {{companyName}}. Your normal place of work will be {{placeOfWork}}. You may also be required to work at other locations or travel for Company work where reasonably necessary for the performance of your duties.
-- Probation Period: You will be on probation for a period of {{probationPeriod}} from the first day of the calendar month following your date of joining, unless otherwise communicated in writing.
+- Probation Period: You will be on probation for a period of {{probationPeriod}} from the date of joining, unless otherwise communicated in writing.
 Your performance, conduct, attendance, suitability for the role and adherence to Company policies will be reviewed during the probation period. The Company may confirm your employment, extend the probation period or discontinue employment in accordance with the terms of employment and applicable law.
 You will continue to remain on probation until your services are formally confirmed in writing by the Company.
-- Leave & Holidays: Employees are eligible for {{annualLeaveDays}} days of paid leave per year, subject to the Company's leave policy, approval procedures and applicable law.
-Sick leave may be granted subject to the applicable leave rules. Where an employee takes more than two consecutive days of sick leave, the Company may require a medical certificate and supporting documentation.
-Paid leave and sick leave will be administered in accordance with Company policy and may not be clubbed where the applicable policy does not permit such combination. Leave encashment, if any, will be governed by the Company's policy and applicable law.
+- Leave & Holidays: Employees are eligible for {{annualLeaveDays}} days of paid leave per year, subject to the Company's leave policy, approval procedures, and applicable law. This entitlement comprises {{casualLeaveDays}} days of Casual Leave (CL) and {{sickLeaveDays}} days of Sick Leave (SL) per year.
+Sick leave may be granted subject to the applicable leave rules. Where an employee takes more than two consecutive days of sick leave, the Company may require a medical certificate and supporting prescription/documentation.
+Paid leave and sick leave will be administered in accordance with Company policy and may not be clubbed where the applicable policy does not permit such combination.
+Leave encashment, if any, will be governed by the Company's policy and applicable law.
 Absence for a continuous period of 10 days without prior approval or adequate communication, including unauthorised overstaying of leave or training, may be treated as unauthorised absence and may result in disciplinary action, up to and including termination, subject to applicable requirements.
-- Working Hours: The normal working days are Monday to Saturday. Normal working hours are {{workingHours}}, with a 30-minute lunch break and two tea breaks of 15 minutes each.
-You are expected to adhere strictly to the prescribed working hours and attendance requirements. Repeated late coming or irregular attendance may result in loss of pay and/or disciplinary action in accordance with Company policy. Unauthorised or unreported absence will not be treated as hours worked and will be subject to applicable loss-of-pay rules.
+- Working Hours: The normal working days are Monday to Saturday. Normal working hours are from {{workingHours}}, with a 30-minute lunch break and two tea breaks of 15 minutes each.
+You are expected to adhere strictly to the prescribed working hours and attendance requirements. Repeated late coming or irregular attendance may result in loss of pay and/or disciplinary action in accordance with Company policy.
+Unauthorised or unreported absence will not be treated as hours worked and will be subject to applicable loss-of-pay rules.
 The Company reserves the right to modify working days or hours based on business requirements, subject to applicable requirements.
-- Confidential Information: During your employment, you may acquire or develop confidential and proprietary information relating to the Company's business, operations, customers, clients, vendors, pricing, designs, processes, employees, commercial arrangements and other affairs (collectively, "Confidential Information").
+- Confidential Information: During your employment, you may acquire or develop confidential and proprietary information relating to the Company's business, operations, customers, clients, vendors, pricing, designs, processes, employees, commercial arrangements and other affairs (collectively, “Confidential Information”).
 You agree that such Confidential Information is for the Company's benefit and must not, during or after your employment, be directly or indirectly used, copied, disclosed or shared except for authorised Company purposes or with the Company's written consent.
 You may also be required to execute a separate Non-Disclosure Agreement (NDA). The obligations contained in such NDA will apply in addition to the confidentiality obligations stated in this appointment letter.
 - Compensation Confidentiality: Your compensation details are specific to your candidature and are to be treated as confidential, subject to any disclosure required by law or authorised by the Company. Unauthorised disclosure or misuse of compensation information may be dealt with under the Company's applicable policies.
-- Whole-time Service & Conflict of Interest: You are expected to devote your professional time and attention to your duties and to act in the best interests of the Company.
+- Whole-Time Service & Conflict of Interest: You are expected to devote your professional time and attention to your duties and to act in the best interests of the Company.
 You must not divulge or misuse trade secrets, confidential information or other proprietary information obtained through your employment.
 You must not, without prior written approval from the Company, undertake outside employment, business activity, consultancy or other engagement that conflicts with your duties or the Company's interests.
 - Resignation & Termination: After confirmation, your services may be terminated by either party by giving {{noticePeriodPossessive}} written notice or salary in lieu of the applicable notice period, subject to the terms of employment and applicable law.
@@ -116,30 +118,33 @@ In cases of unauthorised absence or suspected absconding, the Company may initia
 - Notice Period: The applicable notice period after confirmation is {{noticePeriod}}. The notice period cannot ordinarily be adjusted against available leave unless specifically approved by the Company.
 During the notice period, you are required to complete a proper handover of responsibilities, documents, Company property and work-related information. Your final release date will be communicated after completion of the required handover and exit formalities.
 - Communication: You are required to promptly inform the Company of any change in your residential address, contact details or other employment-related personal information required for official records.
-- Dress Code: Employees are expected to maintain a professional and well-groomed appearance when attending the workplace or representing the Company before clients, visitors, vendors or other external parties.
+- Employee Dress Code Policy: Employees are expected to maintain a professional and well-groomed appearance when attending the workplace or representing the Company before clients, visitors, vendors or other external parties.
 All clothing must be clean, appropriate and professional. Employees may follow appropriate attire consistent with their personal, religious or cultural practices while maintaining workplace professionalism.
-Formals or semi-formals are expected on weekdays. Appropriate Indian attire, formals or semi-formals may equally be worn.
+Formals or semi-formals are expected on weekdays. Appropriate Indian attire, formals or semi-formals may be worn by female employees.
 - Retirement: The normal retirement age will be {{retirementAge}} years, subject to applicable law and Company policy.
 - General Provisions: Malicious, derogatory or disruptive gossip, harassment, intimidation or conduct that adversely affects the workplace may be treated as a violation of Company policy and may result in disciplinary action.
-Prevention of Sexual Harassment (POSH): {{companyName}} is committed to providing a safe, respectful and inclusive workplace. Any unwelcome physical, verbal, written, electronic, visual, psychological or other conduct of a sexual nature, or conduct that violates workplace dignity, may be treated as sexual harassment or inappropriate workplace conduct. Employees may raise concerns through the Company's designated internal mechanism, and complaints will be handled in accordance with applicable law and Company policy, with appropriate confidentiality and due process.
-This appointment is subject to satisfactory verification of the information and references provided by you during the recruitment process. You will become eligible for applicable Company benefits in accordance with Company rules, your employment terms and applicable law.
+Prevention of Sexual Harassment (POSH): {{companyName}} is committed to providing a safe, respectful and inclusive workplace. Any unwelcome physical, verbal, written, electronic, visual, psychological or other conduct of a sexual nature, or conduct that violates workplace dignity, may be treated as sexual harassment or inappropriate workplace conduct.
+Employees may raise concerns through the Company's designated internal mechanism. Complaints will be handled in accordance with applicable law and Company policy, with appropriate confidentiality and due process.
+This appointment is subject to satisfactory verification of the information and references provided by you during the recruitment process.
+You will become eligible for applicable Company benefits in accordance with Company rules, your employment terms and applicable law.
 - Travel: You may be required to undertake travel for Company work. Approved business travel expenses will be reimbursed in accordance with the Company's Travel Policy and applicable approval procedures.
 - Company Property: You must take reasonable care of Company property entrusted to you for official use, including documents, devices, equipment, access cards, keys, records and other assets.
 All Company property must be returned upon request and, in any event, before or upon separation from employment. Any recovery arising from loss or damage will be dealt with in accordance with applicable law and Company policy.
 - Exit Formalities: Exit formalities will be completed on or before your last working day, subject to the Company's clearance process.
-Final settlement and issuance of service or separation documents will be subject to completion of the required handover, return of Company property, clearance of outstanding dues and approvals from the concerned departments, in accordance with Company policy and applicable requirements.
+Final settlement and issuance of service/separation documents will be subject to completion of required handover, return of Company property, clearance of outstanding dues and approvals from the concerned departments, in accordance with Company policy and applicable requirements.
 - Policy Compliance: You are required to comply with all applicable Company policies, procedures, lawful instructions and standards of professional conduct, including policies relating to attendance, leave, confidentiality, workplace behaviour, information security and use of Company property.
-- Acceptance of Appointment: Please confirm your acceptance of the above terms by signing and dating a copy of this appointment letter and returning it to the Company. Annexure I should also be signed in token of acceptance.
-
-**We welcome you to {{companyName}} and look forward to a productive and successful association with you.**`,
+- Acceptance of Appointment: Please confirm your acceptance of the above terms by signing and dating a copy of this appointment letter and returning it to the Company.
+We welcome you to {{companyName}} and look forward to a productive and successful association with you.`,
     ['candidateName', 'position', 'department', 'departmentClause', 'companyName', 'salaryMonthly',
       'salaryAnnual', 'joiningDate', 'employeeCode', 'location', 'companyCity', 'hrEmailClause',
       // The appointment letter's own wording. These print a PHRASE, not a number
       // — "one month" rather than "30 days", "two months'" with the apostrophe in
       // the right place — because that is how the clause is actually spoken.
+      // reportingTo carries its own article ("the Department Head / CEO", or a
+      // manager's bare name), so the clause reads "report to {{reportingTo}}".
       'reportingTo', 'placeOfWork', 'workingHours', 'probationPeriod', 'probationMonths',
       'noticePeriod', 'noticePeriodPossessive', 'noticePeriodDays', 'annualLeaveDays',
-      'retirementAge', 'employmentType']
+      'casualLeaveDays', 'sickLeaveDays', 'retirementAge', 'employmentType']
   ),
 
   mail(

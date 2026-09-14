@@ -67,7 +67,7 @@ const check = async (name, fn) => {
     await check('every Annexure component is payroll’s monthly figure × 12', () => {
       const pairs = [
         ['basic', 'basic'], ['hra', 'hra'], ['specialAllowance', 'specialAllowance'],
-        ['conveyance', 'conveyanceAllowance'], ['medical', 'medicalAllowance'],
+        ['conveyance', 'conveyanceAllowance'], ['medicalAllowance', 'medicalAllowance'],
         ['otherAllowances', 'lta'],
       ];
       for (const [letterKey, payrollKey] of pairs) {
@@ -80,8 +80,14 @@ const check = async (name, fn) => {
 
     await check('the letter’s gross matches the payslip’s gross', () => {
       const letterGross = data.basic + data.hra + data.specialAllowance
-        + data.conveyance + data.medical + data.otherAllowances;
+        + data.conveyance + data.medicalAllowance + data.otherAllowances;
       assert.strictEqual(letterGross, gross * 12, `letter ${letterGross} vs payroll ${gross * 12}`);
+    });
+
+    await check('a medical allowance is an earning, never the medical premium deduction', () => {
+      // The two used to share one key, and an employee's allowance printed in
+      // Part C as "Group Medical Coverage" — coming OFF the salary.
+      assert.strictEqual(data.medical, 0, `medical (the premium) should be 0, got ${data.medical}`);
     });
 
     await check('the stated CTC is the record’s, untouched', () => {

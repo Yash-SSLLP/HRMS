@@ -1,9 +1,11 @@
 /**
- * Offer-letter and appointment-letter PDF renderers (server-side, pdfkit).
+ * Offer-, appointment- and relieving-letter PDF renderers (server-side, pdfkit).
  *
  * Shares services/pdfFonts.js with the salary slip so the ₹ symbol renders from
- * the same bundled/configured Unicode font, else falls back to "Rs ". Layout
- * follows the uploaded Sequence Surfaces LLP offer letter.
+ * the same bundled/configured Unicode font, else falls back to "Rs ". The offer
+ * and relieving letters follow the uploaded Sequence Surfaces LLP offer letter;
+ * the appointment letter follows the company's approved Word document (see the
+ * APPOINTMENT LETTER section).
  */
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
@@ -25,12 +27,13 @@ const ordinal = (d) => {
   return d + (s[(v - 20) % 10] || s[v] || s[0]);
 };
 
-// "21st July, 2025"
+// "21st July 2025" — no comma, as the approved appointment letter writes its
+// dates. One formatter for every letter and covering email, so they agree.
 const longDate = (d) => {
   if (!d) return '__________';
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return '__________';
-  return `${ordinal(dt.getDate())} ${MONTHS[dt.getMonth()]}, ${dt.getFullYear()}`;
+  return `${ordinal(dt.getDate())} ${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
 };
 
 const todayLong = () => longDate(new Date());
@@ -52,9 +55,10 @@ const INK = '#1a1a1a';
 const MUTED = '#555555';
 const ACCENT = '#1f3a5f';
 // Brand gold, sampled from the Sequence Surfaces logo — the same ramp the web
-// app uses for the brand lockup (frontend/src/index.css --gold-*).
+// app uses for the brand lockup (frontend/src/index.css --gold-*). The rule
+// under the offer and relieving letters' letterhead; the appointment letter
+// prints the company's letterhead image instead.
 const GOLD = '#C7A24C';
-const GOLD_DARK = '#8A6B22';
 
 /**
  * The shared letterhead: logo left, address block right, a fine gold rule under
@@ -391,13 +395,15 @@ async function renderOfferLetter(data = {}) {
 }
 
 /**
- * The appointment letter's body, as editable blocks: an opening paragraph, the
- * numbered clauses, and a closing line. Same contract as offerBody() — this is
- * the default HR sees in the editor and what prints when they change nothing.
+ * The appointment letter's body, as editable blocks: an opening paragraph and
+ * the numbered clauses. Same contract as offerBody() — this is the default HR
+ * sees in the editor and what prints when they change nothing.
  *
- * A clause's `text` may carry '\n' separators, each one a paragraph break inside
- * that clause. The longer clauses run to four or five paragraphs and setting
- * them as a single block of type is what made the old letter unreadable.
+ * The wording is the approved Sequence Surfaces LLP letter's, paragraph for
+ * paragraph, with the figures and names filled in from the record. A clause's
+ * `text` may carry '\n' separators, each one a paragraph break inside that
+ * clause: the longer clauses run to four or five paragraphs and setting them as
+ * a single block of type is what made the old letter unreadable.
  *
  * @param {Object} data - the appointment fields
  * @param {string} R - the rupee glyph for the active font
@@ -407,24 +413,27 @@ function appointmentBody(data = {}, R = '₹') {
   const probation = monthsPhrase(data.probationMonths || 3);
   const notice = noticePhrase(data.noticePeriodDays || 30);
   const noticePoss = noticePossessive(data.noticePeriodDays || 30);
-  const ctc = data.ctcAnnual ? `${R}${formatINR(data.ctcAnnual)}/- per annum` : '__________ per annum';
+  const ctc = data.ctcAnnual ? `${R}${formatINR(data.ctcAnnual)}/- per annum` : '__________/- per annum';
   const hours = data.workingHours || '10:00 AM to 7:00 PM';
-  const reporting = data.reportingManager || 'Department Head / CEO';
+  // "report to Priya Sharma" but "report to the Department Head / CEO".
+  const reporting = data.reportingManager || 'the Department Head / CEO';
   const place = data.location || "the Company's office";
   const leaveDays = data.annualLeaveDays || 24;
+  const casual = data.casualLeaveDays || 12;
+  const sick = data.sickLeaveDays || 12;
   const retirement = data.retirementAge || 60;
 
   return [
     { type: 'para', text:
       `We are delighted to extend this letter of appointment to you for full-time employment with ${COMPANY.name}. `
-      + "Your appointment is subject to the terms and conditions set out below and to the Company's policies as "
+      + "Your appointment is subject to the terms and conditions set out below and the Company's policies as "
       + 'applicable from time to time.' },
 
     { type: 'term', head: 'Date of Appointment', text:
       `Your appointment will be effective from ${longDate(data.joiningDate)}.` },
 
     { type: 'term', head: 'Salary & Compensation', text:
-      `Your total annual compensation is ${ctc}. The detailed break-up of your pay package is provided in Annexure I `
+      `Your total annual compensation is ${ctc}. The detailed breakup of your pay package is provided in Annexure I `
       + 'attached to this letter.\n'
       + 'Your salary will ordinarily be paid between the 7th and 10th of every month, subject to payroll processing and '
       + 'applicable statutory deductions.\n'
@@ -435,7 +444,7 @@ function appointmentBody(data = {}, R = '₹') {
       + 'of salary components or allowances from time to time. Any such revision will be communicated as applicable.' },
 
     { type: 'term', head: 'Reporting Function', text:
-      `You will report to the ${reporting}, or to such other person as may be designated by the management from time to time.` },
+      `You will report to ${reporting}, or to such other person as may be designated by the management from time to time.` },
 
     { type: 'term', head: 'Placement', text:
       `You are appointed as a full-time employee of ${COMPANY.name}. Your normal place of work will be ${place}. `
@@ -443,8 +452,8 @@ function appointmentBody(data = {}, R = '₹') {
       + 'the performance of your duties.' },
 
     { type: 'term', head: 'Probation Period', text:
-      `You will be on probation for a period of ${probation} from the first day of the calendar month following your `
-      + 'date of joining, unless otherwise communicated in writing.\n'
+      `You will be on probation for a period of ${probation} from the date of joining, unless otherwise communicated `
+      + 'in writing.\n'
       + 'Your performance, conduct, attendance, suitability for the role and adherence to Company policies will be '
       + 'reviewed during the probation period. The Company may confirm your employment, extend the probation period or '
       + 'discontinue employment in accordance with the terms of employment and applicable law.\n'
@@ -452,23 +461,26 @@ function appointmentBody(data = {}, R = '₹') {
 
     { type: 'term', head: 'Leave & Holidays', text:
       `Employees are eligible for ${leaveDays} days of paid leave per year, subject to the Company's leave policy, `
-      + 'approval procedures and applicable law.\n'
+      + `approval procedures, and applicable law. This entitlement comprises ${casual} days of Casual Leave (CL) and `
+      + `${sick} days of Sick Leave (SL) per year.\n`
       + 'Sick leave may be granted subject to the applicable leave rules. Where an employee takes more than two '
-      + 'consecutive days of sick leave, the Company may require a medical certificate and supporting documentation.\n'
+      + 'consecutive days of sick leave, the Company may require a medical certificate and supporting '
+      + 'prescription/documentation.\n'
       + 'Paid leave and sick leave will be administered in accordance with Company policy and may not be clubbed where '
-      + 'the applicable policy does not permit such combination. Leave encashment, if any, will be governed by the '
-      + "Company's policy and applicable law.\n"
+      + 'the applicable policy does not permit such combination.\n'
+      + "Leave encashment, if any, will be governed by the Company's policy and applicable law.\n"
       + 'Absence for a continuous period of 10 days without prior approval or adequate communication, including '
       + 'unauthorised overstaying of leave or training, may be treated as unauthorised absence and may result in '
       + 'disciplinary action, up to and including termination, subject to applicable requirements.' },
 
     { type: 'term', head: 'Working Hours', text:
-      `The normal working days are Monday to Saturday. Normal working hours are ${hours}, with a 30-minute lunch break `
-      + 'and two tea breaks of 15 minutes each.\n'
+      `The normal working days are Monday to Saturday. Normal working hours are from ${hours}, with a 30-minute lunch `
+      + 'break and two tea breaks of 15 minutes each.\n'
       + 'You are expected to adhere strictly to the prescribed working hours and attendance requirements. Repeated late '
       + 'coming or irregular attendance may result in loss of pay and/or disciplinary action in accordance with Company '
-      + 'policy. Unauthorised or unreported absence will not be treated as hours worked and will be subject to '
-      + 'applicable loss-of-pay rules.\n'
+      + 'policy.\n'
+      + 'Unauthorised or unreported absence will not be treated as hours worked and will be subject to applicable '
+      + 'loss-of-pay rules.\n'
       + 'The Company reserves the right to modify working days or hours based on business requirements, subject to '
       + 'applicable requirements.' },
 
@@ -487,7 +499,7 @@ function appointmentBody(data = {}, R = '₹') {
       + 'disclosure required by law or authorised by the Company. Unauthorised disclosure or misuse of compensation '
       + "information may be dealt with under the Company's applicable policies." },
 
-    { type: 'term', head: 'Whole-time Service & Conflict of Interest', text:
+    { type: 'term', head: 'Whole-Time Service & Conflict of Interest', text:
       'You are expected to devote your professional time and attention to your duties and to act in the best interests '
       + 'of the Company.\n'
       + 'You must not divulge or misuse trade secrets, confidential information or other proprietary information '
@@ -518,13 +530,13 @@ function appointmentBody(data = {}, R = '₹') {
       'You are required to promptly inform the Company of any change in your residential address, contact details or '
       + 'other employment-related personal information required for official records.' },
 
-    { type: 'term', head: 'Dress Code', text:
+    { type: 'term', head: 'Employee Dress Code Policy', text:
       'Employees are expected to maintain a professional and well-groomed appearance when attending the workplace or '
       + 'representing the Company before clients, visitors, vendors or other external parties.\n'
       + 'All clothing must be clean, appropriate and professional. Employees may follow appropriate attire consistent '
       + 'with their personal, religious or cultural practices while maintaining workplace professionalism.\n'
-      + 'Formals or semi-formals are expected on weekdays. Appropriate Indian attire, formals or semi-formals may '
-      + 'equally be worn.' },
+      + 'Formals or semi-formals are expected on weekdays. Appropriate Indian attire, formals or semi-formals may be '
+      + 'worn by female employees.' },
 
     { type: 'term', head: 'Retirement', text:
       `The normal retirement age will be ${retirement} years, subject to applicable law and Company policy.` },
@@ -535,12 +547,13 @@ function appointmentBody(data = {}, R = '₹') {
       + `Prevention of Sexual Harassment (POSH): ${COMPANY.name} is committed to providing a safe, respectful and `
       + 'inclusive workplace. Any unwelcome physical, verbal, written, electronic, visual, psychological or other '
       + 'conduct of a sexual nature, or conduct that violates workplace dignity, may be treated as sexual harassment or '
-      + "inappropriate workplace conduct. Employees may raise concerns through the Company's designated internal "
-      + 'mechanism, and complaints will be handled in accordance with applicable law and Company policy, with '
-      + 'appropriate confidentiality and due process.\n'
+      + 'inappropriate workplace conduct.\n'
+      + "Employees may raise concerns through the Company's designated internal mechanism. Complaints will be handled "
+      + 'in accordance with applicable law and Company policy, with appropriate confidentiality and due process.\n'
       + 'This appointment is subject to satisfactory verification of the information and references provided by you '
-      + 'during the recruitment process. You will become eligible for applicable Company benefits in accordance with '
-      + 'Company rules, your employment terms and applicable law.' },
+      + 'during the recruitment process.\n'
+      + 'You will become eligible for applicable Company benefits in accordance with Company rules, your employment '
+      + 'terms and applicable law.' },
 
     { type: 'term', head: 'Travel', text:
       'You may be required to undertake travel for Company work. Approved business travel expenses will be reimbursed '
@@ -556,7 +569,7 @@ function appointmentBody(data = {}, R = '₹') {
     { type: 'term', head: 'Exit Formalities', text:
       "Exit formalities will be completed on or before your last working day, subject to the Company's clearance "
       + 'process.\n'
-      + 'Final settlement and issuance of service or separation documents will be subject to completion of the required '
+      + 'Final settlement and issuance of service/separation documents will be subject to completion of required '
       + 'handover, return of Company property, clearance of outstanding dues and approvals from the concerned '
       + 'departments, in accordance with Company policy and applicable requirements.' },
 
@@ -565,12 +578,12 @@ function appointmentBody(data = {}, R = '₹') {
       + 'of professional conduct, including policies relating to attendance, leave, confidentiality, workplace '
       + 'behaviour, information security and use of Company property.' },
 
+    // The welcome line is the clause's second paragraph, as on the approved
+    // letter — not a bold sign-off of its own.
     { type: 'term', head: 'Acceptance of Appointment', text:
       'Please confirm your acceptance of the above terms by signing and dating a copy of this appointment letter and '
-      + 'returning it to the Company. Annexure I should also be signed in token of acceptance.' },
-
-    { type: 'para', bold: true, text:
-      `We welcome you to ${COMPANY.name} and look forward to a productive and successful association with you.` },
+      + 'returning it to the Company.\n'
+      + `We welcome you to ${COMPANY.name} and look forward to a productive and successful association with you.` },
   ];
 }
 
@@ -686,7 +699,11 @@ async function resolveLetterBody(kind, data = {}) {
       // notice", not "30 days' written notice", and a template can only choose
       // between them if the phrase is built here. The raw numbers stay available
       // under their own names for anyone who wants them.
-      reportingTo: data.reportingManager || 'Department Head / CEO',
+      //
+      // reportingTo carries its own article: "report to Priya Sharma" but
+      // "report to the Department Head / CEO", so the template says
+      // "report to {{reportingTo}}" and reads correctly either way.
+      reportingTo: data.reportingManager || 'the Department Head / CEO',
       placeOfWork: data.location || "the Company's office",
       workingHours: data.workingHours || '10:00 AM to 7:00 PM',
       probationPeriod: monthsPhrase(data.probationMonths || 3),
@@ -696,6 +713,8 @@ async function resolveLetterBody(kind, data = {}) {
       // belong in the template's wording, where HR can change them for every
       // letter at once rather than typing them into each one.
       annualLeaveDays: data.annualLeaveDays || 24,
+      casualLeaveDays: data.casualLeaveDays || 12,
+      sickLeaveDays: data.sickLeaveDays || 12,
       retirementAge: data.retirementAge || 60,
       employmentType: data.employmentType || 'Full-Time Employee',
     };
@@ -709,40 +728,66 @@ async function resolveLetterBody(kind, data = {}) {
 // ===========================================================================
 // APPOINTMENT LETTER
 //
-// The appointment letter has its own layout vocabulary, deliberately separate
-// from the offer and relieving letters above. It is not a one-page note that
-// happens to be longer — it is the employment contract, twenty-one clauses of
-// it, and the things it needs (a facts panel, clause headings on their own
-// line, a running footer, a three-part compensation annexure) would be noise on
-// a letter that fits on a single sheet.
+// The plain "document" format of the approved Sequence Surfaces LLP letter
+// (Sequence_Surfaces_Appointment_Letter_Professional_6_Page…docx, Sept 2026):
 //
-// Keeping the two vocabularies apart is what lets this be redesigned without
-// touching what the offer and relieving letters print. They still share the
-// letterhead, which is the company's, not this letter's.
+//   · the company letterhead image on EVERY sheet, and a running footer
+//     "Company • Appointment Letter | Page n of N";
+//   · bold date and addressee, a centred underlined APPOINTMENT LETTER title;
+//   · a bordered two-column facts table with a grey label column;
+//   · clauses as "1. DATE OF APPOINTMENT" bold uppercase headings over plain
+//     paragraphs, numbered in order so a removed clause leaves no gap;
+//   · "For <Company>" over the signatories side by side (HR left, CEO/MD right),
+//     each the uploaded mark — or a signing line — at a size a reader can see,
+//     with the name and title centred beneath it;
+//   · a short Employee Acceptance (declaration, name, date/signature/place),
+//     kept on the same sheet as the signatures;
+//   · Annexure I on its own sheet: identity table, Part A/B/C tables with a
+//     shaded header row and a bold total row, Fixed CTC and Net Salary lines,
+//     a note, then the authorised signatory beside the employee's countersign.
+//
+// It has its own layout vocabulary, deliberately separate from the offer and
+// relieving letters above: it is the employment contract, twenty-one clauses
+// of it, and it is MEANT to run to several sheets. Pages break where the text
+// falls, never inside a heading, a table row, or the signing block.
 // ===========================================================================
 
-// Its own palette: a cooler ink and a deeper navy than the other two letters
-// use, which is what carries the heavier document.
-const A_INK = '#1b2430';
-const A_MUTED = '#6b7683';
-const A_ACCENT = '#12314f';
-const A_RULE = '#d7dde5';
-const A_HAIR = '#e7ecf2';
-const A_PANEL = '#f7f9fc';
-const A_BAND = '#e9eff6';
-const A_GOLD_SOFT = '#f6efdf';
+// Its own geometry: the approved document's 0.72" side margins and a body that
+// starts under the letterhead on every sheet.
+const A_M = 52;
+const A_X0 = A_M;
+const A_X1 = PAGE_W - A_M;
+const A_CW = A_X1 - A_X0;
+const A_HEAD_TOP = 24;                 // the drawn letterhead starts here
+const A_BODY_TOP = 112;                // …and the body under it
+const A_FOOT_Y = PAGE_H - 26;          // running footer baseline
+const A_BOTTOM = A_FOOT_Y - 14;        // nothing prints below this
+const A_MARGINS = { top: A_BODY_TOP, bottom: PAGE_H - A_BOTTOM, left: A_M, right: A_M };
 
-// Every sheet carries a running footer, so the body has to stop above it.
-const A_FOOTER_Y = PAGE_H - 44;
-const A_BOTTOM = A_FOOTER_Y - 16;
+// Plain black type on white, as the document is.
+const A_INK = '#000000';
+const A_MUTED = '#3a3a3a';
+const A_RULE = '#8c8c8c';
+const A_BORDER = '#000000';
+const A_FILL_LABEL = '#f1f1f1';
+const A_FILL_HEAD = '#e7e7e7';
 
-// What the annexure's signing block costs BESIDES the signature mark itself:
-// the "For <Company>" line and its gap, the drop below the mark, and the
-// countersign stub under that. Used to size the mark to whatever room the
-// compensation table left, so the annexure stays one sheet. Measured from a
-// rendered letter rather than added up from the constants below — the
-// arithmetic came out 1.3pt short, which is exactly enough to break the page.
-const SIGN_BLOCK_COST = 116;
+const A_BODY_PT = 10;       // the document sets 10.5pt Aptos; Noto Sans runs wider
+const A_LINE_GAP = 1.6;
+const A_P_AFTER = 5;        // the document's paragraph spacing
+const A_H_PT = 12;          // clause headings
+const A_H_BEFORE = 8;
+const A_H_AFTER = 4;
+const A_CELL_PT = 9.5;
+const A_CELL_PAD = 3;
+const A_TEXT_LINE = A_BODY_PT * 1.36 + A_LINE_GAP;
+const A_GUTTER = 24;        // between two side-by-side columns
+
+// The uploaded mark prints at a size a reader can actually see — the HR stamp
+// (601x415) comes out ~145pt wide at this height, about 5cm on paper.
+const A_MARK_H = 100;
+const A_MARK_W = 190;
+const A_LINE_W = 170;       // the signing line where there is no mark
 
 // Flat monthly professional tax. Mirrors PROFESSIONAL_TAX in the payroll
 // controller — Karnataka's Rs.200 a month — so the figure a candidate is shown
@@ -753,7 +798,7 @@ const WORDS = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight
   'nine', 'ten', 'eleven', 'twelve'];
 
 // "30 days" reads like a countdown; "one month" is how the clause is actually
-// spoken, and how the sample letter words it. Whole months get the word,
+// spoken, and how the approved letter words it. Whole months get the word,
 // anything else keeps the day count so an unusual notice period stays exact.
 function noticePhrase(days) {
   const d = Math.round(Number(days) || 30);
@@ -785,221 +830,160 @@ function firstName(full) {
   return s.split(/\s+/)[0] || 'Candidate';
 }
 
-/**
- * The running footer, drawn on every sheet once the document is complete.
- *
- * Deferred to the end deliberately: "Page 2 of 6" cannot be printed while the
- * page count is still growing, and pdfkit's bufferPages lets us go back for it.
- * It is also what makes a detached middle sheet identifiable, which matters for
- * a document people print, sign and file.
- */
-function apptFooter(doc, F, n, total) {
-  doc.moveTo(X0, A_FOOTER_Y - 10).lineTo(X1, A_FOOTER_Y - 10)
-    .strokeColor(A_HAIR).lineWidth(0.6).stroke();
-  doc.font(F.regular).fontSize(7.2).fillColor(A_MUTED)
-    .text(`${COMPANY.name}  ·  Letter of Appointment`, X0, A_FOOTER_Y, { width: CW * 0.7, lineBreak: false });
-  doc.font(F.bold).fontSize(7.2).fillColor(A_MUTED)
-    .text(`Page ${n} of ${total}`, X1 - CW * 0.3, A_FOOTER_Y, { width: CW * 0.3, align: 'right', lineBreak: false });
-  doc.fillColor(A_INK);
-}
+// ----- flow helpers ---------------------------------------------------------
+//
+// The document is built with real page margins (A_MARGINS) rather than the
+// `margin: 0` the other letters use, so pdfkit's own line wrapper breaks a long
+// paragraph onto a fresh sheet at the right place and starts it under the
+// letterhead. Everything that must not split — a heading and its opening
+// lines, a table row, the signing block — checks for room itself.
 
-/**
- * Start a continuation sheet.
- *
- * No letterhead — the logo and address belong on the first sheet only, the way
- * the printed letters read — but a short gold rule at the top, so a page pulled
- * out of the middle still looks like part of a set.
- */
-function apptPage(doc) {
-  doc.addPage({ size: 'A4', margin: 0 });
-  doc.rect(X0, M - 16, 44, 2).fill(GOLD);
-  doc.x = X0;
-  doc.y = M;
-  doc.fillColor(A_INK);
-  return M;
-}
-
-/** Guarantee `needed` points below the cursor, breaking the sheet if not. */
+/** Break the sheet unless `needed` points fit above the footer. */
 function apptRoom(doc, needed) {
-  if (doc.y + needed > A_BOTTOM) apptPage(doc);
-  return doc.y;
+  if (doc.y + needed > doc.page.maxY()) doc.addPage();
 }
 
-function apptPara(doc, F, text, opts = {}) {
-  doc.font(opts.bold ? F.bold : F.regular).fontSize(opts.size || 9.8).fillColor(opts.color || A_INK);
-  doc.text(text, opts.x ?? X0, opts.y, {
-    width: opts.width ?? CW, align: opts.align || 'left', lineGap: opts.lineGap ?? 2.2, ...opts,
-  });
-  doc.moveDown(opts.gap ?? 0.7);
-}
-
-/** A small uppercase label — this letter's recurring "eyebrow" type. */
-function apptEyebrow(doc, F, text, x, y, opts = {}) {
-  doc.font(F.bold).fontSize(opts.size || 7.4).fillColor(opts.color || A_MUTED)
-    .text(String(text).toUpperCase(), x, y, {
-      width: opts.width, characterSpacing: 0.9, lineBreak: false, align: opts.align || 'left',
-    });
+/** Space before a block — skipped at the top of a fresh sheet. */
+function apptGap(doc, pts) {
+  if (pts && doc.y > A_BODY_TOP + 0.5) doc.y += pts;
 }
 
 /**
- * The document title: a centred, letterspaced heading over a short gold rule.
+ * What a paragraph insists on having below the cursor before it prints: all of
+ * a short one, the first three lines of a long one — so a long paragraph may
+ * split across sheets but never leaves a single line behind. The font must
+ * already be set; apptHeading measures with the body face, which is what every
+ * clause paragraph prints in.
+ */
+function apptReserve(doc, text, opts) {
+  const h = doc.heightOfString(text, opts);
+  return Math.min(h, (doc.currentLineHeight(true) + opts.lineGap) * 3);
+}
+
+/** A flowing paragraph, breaking the sheet first when apptReserve says so. */
+function apptPara(doc, F, text, o = {}) {
+  const size = o.size || A_BODY_PT;
+  const opts = {
+    width: o.width ?? A_CW, align: o.align || 'left', lineGap: o.lineGap ?? A_LINE_GAP,
+    underline: !!o.underline,
+  };
+  doc.font(o.bold ? F.bold : F.regular).fontSize(size).fillColor(o.color || A_INK);
+  const reserve = apptReserve(doc, text, opts);
+  apptGap(doc, o.before);
+  apptRoom(doc, reserve);
+  doc.text(text, o.x ?? A_X0, doc.y, opts);
+  doc.y += o.after ?? A_P_AFTER;
+}
+
+/**
+ * "1. DATE OF APPOINTMENT" — kept with the opening lines of its clause.
  *
- * Replaces "Sub: Letter of Appointment" set in bold body type, which read like
- * an email subject line rather than the head of a contract.
+ * Reserves EXACTLY what apptPara will demand for the first paragraph, measured
+ * the same way. Reserving less (two lines, once) let the heading pass while the
+ * paragraph then broke the sheet — "4. PLACEMENT" alone at the foot of page 1.
  */
-function apptTitle(doc, F, y, title, kicker) {
-  let ty = y;
-  if (kicker) {
-    doc.font(F.bold).fontSize(7.4).fillColor(GOLD_DARK)
-      .text(kicker.toUpperCase(), X0, ty, { width: CW, align: 'center', characterSpacing: 1.6 });
-    ty = doc.y + 6;
-  }
-  doc.font(F.bold).fontSize(15).fillColor(A_ACCENT)
-    .text(title.toUpperCase(), X0, ty, { width: CW, align: 'center', characterSpacing: 2.4 });
-  const afterTitle = doc.y + 8;
-  // A short centred rule rather than a full-width one: it frames the title
-  // instead of cutting the page in half.
-  doc.rect(X0 + CW / 2 - 26, afterTitle, 52, 1.6).fill(GOLD);
-  doc.fillColor(A_INK);
-  return afterTitle + 14;
-}
-
-/**
- * The facts panel: designation, department, effective date and the rest, boxed
- * at the head of the letter.
- *
- * This is the block somebody actually looks for when they pull the letter out
- * of a drawer, and before this it was buried in the prose of the first four
- * clauses. Tinted panel, gold edge, labels in eyebrow type, values in bold.
- */
-function apptFacts(doc, F, rows) {
-  const labelW = 148;
-  const padX = 14;
-  const innerW = CW - padX * 2 - labelW;
-
-  // Measured first, so the panel can be drawn under its own text in one pass.
-  doc.font(F.bold).fontSize(9.6);
-  const heights = rows.map(([, v]) => Math.max(19, doc.heightOfString(String(v), { width: innerW }) + 10));
-  const panelH = heights.reduce((a, b) => a + b, 0) + 10;
-
-  apptRoom(doc, panelH + 10);
-  const top = doc.y;
-
-  doc.roundedRect(X0, top, CW, panelH, 3).fill(A_PANEL);
-  doc.rect(X0, top, 3, panelH).fill(GOLD);
-  doc.roundedRect(X0, top, CW, panelH, 3).strokeColor(A_RULE).lineWidth(0.7).stroke();
-
-  let ry = top + 5;
-  rows.forEach(([k, v], i) => {
-    if (i) doc.moveTo(X0 + padX, ry).lineTo(X1 - padX, ry).strokeColor(A_HAIR).lineWidth(0.6).stroke();
-    apptEyebrow(doc, F, k, X0 + padX, ry + 7.5, { width: labelW - 8 });
-    doc.font(F.bold).fontSize(9.6).fillColor(A_INK)
-      .text(String(v), X0 + padX + labelW, ry + 5, { width: innerW });
-    ry += heights[i];
-  });
-
-  doc.fillColor(A_INK);
-  doc.x = X0;
-  doc.y = top + panelH + 16;
-}
-
-/**
- * The facts panel's compact cousin: one tinted strip carrying a few label/value
- * pairs side by side. Used on the annexure, where four stacked rows of
- * who-this-is-for would cost the sheet the room its totals need.
- */
-function apptStrip(doc, F, pairs) {
-  const h = 34;
-  apptRoom(doc, h + 12);
-  const top = doc.y;
-  const colW = (CW - 24) / pairs.length;
-
-  doc.roundedRect(X0, top, CW, h, 3).fill(A_PANEL);
-  doc.rect(X0, top, 3, h).fill(GOLD);
-  doc.roundedRect(X0, top, CW, h, 3).strokeColor(A_RULE).lineWidth(0.7).stroke();
-
-  pairs.forEach(([k, v], i) => {
-    const x = X0 + 14 + i * colW;
-    if (i) doc.moveTo(x - 10, top + 7).lineTo(x - 10, top + h - 7).strokeColor(A_HAIR).lineWidth(0.6).stroke();
-    apptEyebrow(doc, F, k, x, top + 7, { width: colW - 14, size: 6.9 });
-    doc.font(F.bold).fontSize(9).fillColor(A_INK)
-      .text(String(v), x, top + 18, { width: colW - 14, lineBreak: false, ellipsis: true });
-  });
-
-  doc.fillColor(A_INK);
-  doc.x = X0;
-  doc.y = top + h + 11;
-}
-
-/**
- * One numbered clause: "07  WORKING HOURS" over its paragraphs.
- *
- * The previous renderer ran the heading into the text as "7. Working Hours: You
- * will…" — fine for a six-clause letter, unreadable across twenty-one. The
- * number sits in gold on a left rail, the heading is navy and letterspaced with
- * a hairline running out to the margin, and the body indents to the rail so the
- * whole clause reads as one unit.
- */
-function apptClause(doc, F, no, head, paragraphs) {
-  const railW = 26;
-  const bodyX = X0 + railW;
-  const bodyW = CW - railW;
-  const num = String(no).padStart(2, '0');
-
-  // Never strand a heading at the foot of a sheet: reserve the heading plus the
-  // first couple of lines of its first paragraph.
-  doc.font(F.regular).fontSize(9.8);
-  const firstH = Math.min(doc.heightOfString(paragraphs[0] || '', { width: bodyW, lineGap: 2.2 }), 30);
-  apptRoom(doc, 20 + firstH + 8);
-
-  const y = doc.y;
-  doc.font(F.bold).fontSize(9.6).fillColor(GOLD_DARK).text(num, X0, y + 0.5, { width: 20, lineBreak: false });
-  doc.font(F.bold).fontSize(9.6).fillColor(A_ACCENT)
-    .text(String(head).toUpperCase(), bodyX, y, { width: bodyW, characterSpacing: 0.9, lineBreak: false });
-  const headW = doc.widthOfString(String(head).toUpperCase(), { characterSpacing: 0.9 });
-  const ruleX = bodyX + headW + 8;
-  if (ruleX < X1 - 10) {
-    doc.moveTo(ruleX, y + 5).lineTo(X1, y + 5).strokeColor(A_HAIR).lineWidth(0.7).stroke();
-  }
-
-  doc.y = y + 15;
-  paragraphs.forEach((p, i) => {
-    doc.font(F.regular).fontSize(9.8);
-    const h = doc.heightOfString(p, { width: bodyW, lineGap: 2.2 });
-    apptRoom(doc, Math.min(h, 34) + 4);
-    apptPara(doc, F, p, { x: bodyX, width: bodyW, gap: i === paragraphs.length - 1 ? 0.85 : 0.5 });
-  });
-  doc.x = X0;
+function apptHeading(doc, F, no, head, firstText) {
+  doc.font(F.regular).fontSize(A_BODY_PT);
+  const firstH = apptReserve(doc, firstText || '', { width: A_CW, lineGap: A_LINE_GAP });
+  const label = `${no}. ${String(head).toUpperCase()}`;
+  doc.font(F.bold).fontSize(A_H_PT);
+  const hh = doc.heightOfString(label, { width: A_CW });
+  if (doc.y + A_H_BEFORE + hh + A_H_AFTER + firstH + A_P_AFTER > doc.page.maxY()) doc.addPage();
+  apptGap(doc, A_H_BEFORE);
+  doc.font(F.bold).fontSize(A_H_PT).fillColor(A_INK).text(label, A_X0, doc.y, { width: A_CW });
+  doc.y += A_H_AFTER;
 }
 
 // Print the block list. Paragraphs flow; terms are numbered in the order they
 // appear, so deleting one never leaves a gap in the numbering.
 function apptBlocks(doc, F, blocks) {
-  let termNo = 0;
+  let n = 0;
   blocks.forEach((b) => {
     if (b.type === 'term') {
-      termNo += 1;
-      // A clause's text may carry paragraph breaks. The longer clauses run to
-      // four or five paragraphs, and setting them as one wall of type is
-      // exactly what made the old letter look generated.
+      n += 1;
       const paras = String(b.text || '').split('\n').map((s) => s.trim()).filter(Boolean);
-      apptClause(doc, F, termNo, b.head, paras.length ? paras : ['']);
+      apptHeading(doc, F, n, b.head, paras[0]);
+      paras.forEach((p) => apptPara(doc, F, p));
     } else {
-      doc.font(F.regular).fontSize(9.8);
-      const h = doc.heightOfString(b.text || '', { width: CW, lineGap: 2.2 });
-      apptRoom(doc, Math.min(h, 40) + 6);
-      apptPara(doc, F, b.text, { bold: !!b.bold, gap: 0.9 });
+      apptPara(doc, F, b.text, { bold: !!b.bold });
     }
   });
 }
 
 /**
- * The two signing columns, resolved once and used on both the letter and the
- * annexure so the same people sign both sheets.
+ * A bordered table. `rows` is an array of string arrays; `widths` sums to the
+ * body width. Options: header (first row shaded, bold, repeated after a sheet
+ * break), labelCol (first column shaded + bold), totals (row indexes drawn bold
+ * on the label tint), align (per column). A row is never split across sheets.
+ */
+function apptTable(doc, F, rows, o = {}) {
+  const { widths } = o;
+  const align = o.align || widths.map(() => 'left');
+  const size = o.size || A_CELL_PT;
+  const inner = (i) => widths[i] - A_CELL_PAD * 2;
+
+  const rowHeight = (cells, bold) => {
+    doc.font(bold ? F.bold : F.regular).fontSize(size);
+    const h = Math.max(...cells.map((c, i) =>
+      doc.heightOfString(String(c ?? ''), { width: inner(i), lineGap: 0.6 })));
+    return Math.max(19, h + A_CELL_PAD * 2);
+  };
+
+  const drawRow = (cells, { bold = false, fillAll = null, fillFirst = null } = {}) => {
+    const h = rowHeight(cells, bold);
+    const top = doc.y;
+    let x = A_X0;
+    cells.forEach((c, i) => {
+      const fill = fillAll || (i === 0 ? fillFirst : null);
+      if (fill) doc.rect(x, top, widths[i], h).fill(fill);
+      doc.rect(x, top, widths[i], h).lineWidth(0.5).strokeColor(A_BORDER).stroke();
+      const cellBold = bold || (i === 0 && !!o.labelCol);
+      doc.font(cellBold ? F.bold : F.regular).fontSize(size).fillColor(A_INK);
+      const th = doc.heightOfString(String(c ?? ''), { width: inner(i), lineGap: 0.6 });
+      doc.text(String(c ?? ''), x + A_CELL_PAD, top + (h - th) / 2, {
+        width: inner(i), align: align[i], lineGap: 0.6,
+      });
+      x += widths[i];
+    });
+    doc.y = top + h;
+    doc.x = A_X0;
+  };
+
+  let body = rows;
+  let head = null;
+  if (o.header) { [head, ...body] = rows; }
+  const totals = new Set(o.totals || []);
+
+  // Never open a table with just its header at the foot of a sheet.
+  apptRoom(doc, rowHeight(body[0] || [], false) + (head ? rowHeight(head, true) : 0));
+
+  if (head) drawRow(head, { bold: true, fillAll: A_FILL_HEAD });
+  body.forEach((r, i) => {
+    const isTotal = totals.has(i);
+    // A row that will not fit breaks the sheet HERE, so the header can be
+    // repeated above it before it is drawn.
+    if (doc.y + rowHeight(r, isTotal) > doc.page.maxY()) {
+      doc.addPage();
+      if (head) drawRow(head, { bold: true, fillAll: A_FILL_HEAD });
+    }
+    drawRow(r, {
+      bold: isTotal,
+      fillAll: isTotal ? A_FILL_LABEL : null,
+      fillFirst: o.labelCol ? A_FILL_LABEL : null,
+    });
+  });
+  doc.y += o.after ?? 8;
+}
+
+// ----- signatures -----------------------------------------------------------
+
+/**
+ * The signatories, resolved once and used on both the letter and the annexure
+ * so the same people sign both sheets.
  *
  * HR on the left and the CEO (or the MD, where there is no CEO signature) on
  * the right, which is the order on the company's printed letters. BOTH columns
- * print even with nothing uploaded — an empty slot gets a signing rule so the
+ * print even with nothing uploaded — an empty slot gets a signing line so the
  * letter can be wet-signed, rather than quietly losing a signatory.
  */
 function apptColumns(data, brand) {
@@ -1021,161 +1005,184 @@ function apptColumns(data, brand) {
   ];
 }
 
-/** "For <Company>" over the signature columns. */
-function apptSignatures(doc, F, columns, opts = {}) {
-  // The uploaded signatures are wider than they are tall (the HR stamp is 601x415),
-  // so HEIGHT is what binds inside fit[] — the width cap of colW*0.82 (~181pt) is
-  // never reached. 46pt drew a 67pt-wide mark adrift in a 220pt column, which read
-  // as a thumbnail rather than a signature.
-  const imgH = opts.imgH || 110;
-  apptRoom(doc, 30 + imgH + 34 + (opts.extra || 0));
-
-  if (opts.closing !== false) {
-    doc.moveDown(0.6);
-    apptPara(doc, F, 'Yours sincerely,', { gap: 0.2 });
+/**
+ * One signatory: the mark (or a signing line), with the name and title CENTRED
+ * beneath it. A name pinned to the left edge sits off to one side of the stamp
+ * it belongs to and reads as a caption for the column rather than a signatory.
+ * Only ever nudged right — a name wider than the mark starts at the edge.
+ *
+ * The mark area is the same height whether or not there is an image, so two
+ * signatories drawn side by side put their names on the same line: a stamp sits
+ * at the bottom of the box and a signing line at the bottom edge.
+ */
+function apptSignatory(doc, F, c, o = {}) {
+  const markH = o.markH || A_MARK_H;
+  const x = o.x ?? A_X0;
+  apptGap(doc, o.before ?? 8);
+  const boxTop = doc.y;
+  let markW = A_LINE_W;
+  let drew = false;
+  if (c.image) {
+    try {
+      // Measured before drawing: fit[] scales to the smaller ratio, and a mark
+      // wider than it is tall comes out narrower than the box. openImage only
+      // parses the header and the same buffer is handed to doc.image() below.
+      const img = doc.openImage(c.image);
+      markW = img.width * Math.min(A_MARK_W / img.width, markH / img.height);
+      doc.image(c.image, x, boxTop, { fit: [A_MARK_W, markH], align: 'left', valign: 'bottom' });
+      drew = true;
+    } catch (err) {
+      // The name and title below still print, so the column survives — but say
+      // so, otherwise a corrupt upload disappears from every letter with
+      // nothing to diagnose.
+      console.error(`Signature image for "${c.slot}" could not be drawn:`, err.message);
+      markW = A_LINE_W;
+    }
   }
-  doc.font(F.bold).fontSize(9.8).fillColor(A_ACCENT)
-    .text(`For ${COMPANY.name}`, X0, doc.y, { characterSpacing: 0.3 });
+  if (!drew) {
+    doc.moveTo(x, boxTop + markH).lineTo(x + A_LINE_W, boxTop + markH)
+      .lineWidth(0.6).strokeColor(A_INK).stroke();
+  }
+  // Both lines at ABSOLUTE y positions: text placed explicitly with no `width`
+  // leaves pdfkit's cursor alone, so stacking off doc.y would overprint.
+  let y = boxTop + markH + 3;
+  [c.name, c.title].filter(Boolean).forEach((text) => {
+    doc.font(F.regular).fontSize(A_BODY_PT).fillColor(A_INK);
+    const w = doc.widthOfString(String(text));
+    doc.text(String(text), x + Math.max(0, (markW - w) / 2), y, { lineBreak: false });
+    y += A_TEXT_LINE;
+  });
+  doc.y = y + A_P_AFTER;
+  doc.x = A_X0;
+}
 
-  const colW = columns.length > 1 ? (CW - 46) / 2 : CW * 0.5;
-  const top = doc.y + 12;
+/** Height one signatory costs (mark area, name, title, gaps). */
+const apptSignatoryHeight = (markH = A_MARK_H, lines = 2) =>
+  8 + markH + 3 + lines * A_TEXT_LINE + A_P_AFTER;
 
-  const maxW = colW * 0.82;
-  const ruleW = colW * 0.86;
-
+/** "For <Company>" over the signatories side by side. */
+function apptSigning(doc, F, columns) {
+  apptPara(doc, F, `For ${COMPANY.name}`, { bold: true, before: A_H_BEFORE });
+  const colW = (A_CW - A_GUTTER) / 2;
+  const top = doc.y;
+  let end = top;
   columns.forEach((c, i) => {
-    const x = X0 + i * (colW + 46);
-    let drew = false;
-    // How wide the MARK above the name actually is. Not the column, and not the
-    // fit box either: fit[] scales to the smaller of the two ratios, and these
-    // stamps are wider than they are tall, so height binds and the drawn width
-    // comes out well short of the box. The name is centred on this, so it has to
-    // be measured rather than assumed. Falls back to the signing rule's width,
-    // which is the mark when there is no image.
-    let markW = ruleW;
-    if (c.image) {
-      try {
-        // Measured BEFORE drawing — openImage only parses the header, and the
-        // same buffer is handed to doc.image() below, so this costs nothing.
-        const img = doc.openImage(c.image);
-        markW = img.width * Math.min(maxW / img.width, imgH / img.height);
-        doc.image(c.image, x, top, { fit: [maxW, imgH], align: 'left', valign: 'bottom' });
-        drew = true;
-      } catch (err) {
-        // The name and title below still print, so the column survives — but say
-        // so, otherwise a corrupt upload disappears from every letter with
-        // nothing to diagnose.
-        console.error(`Signature image for "${c.slot}" could not be drawn:`, err.message);
-        markW = ruleW;
-      }
-    }
-    // A rule ONLY where there is nothing to stamp. And no decorative dash under
-    // a stamped one: signatures — real and placeholder alike — usually end in a
-    // baseline flourish of their own, so an added rule put two lines between the
-    // signature and the name and read as a double underline.
-    if (!drew) {
-      doc.moveTo(x, top + imgH).lineTo(x + ruleW, top + imgH)
-        .strokeColor('#98a3b0').lineWidth(0.8).stroke();
-    }
+    doc.y = top;
+    apptSignatory(doc, F, c, { before: 7, x: A_X0 + i * (colW + A_GUTTER) });
+    end = Math.max(end, doc.y);
+  });
+  doc.y = end;
+  doc.x = A_X0;
+}
+const apptSigningHeight = () => A_H_BEFORE + 14 + A_P_AFTER + apptSignatoryHeight();
 
-    // Centred UNDER THE MARK. A name pinned to the column's left edge sits off
-    // to one side of the stamp it belongs to and reads as a caption for the
-    // column rather than a signatory.
-    //
-    // Only ever nudged RIGHT: a name wider than the mark starts at the column
-    // edge instead, because centring that one would push it into the margin on
-    // the left column and into the gutter between the two on the right.
-    // Both lines are placed at an ABSOLUTE y rather than stacked off doc.y.
-    // Positioning text explicitly and passing no `width` leaves pdfkit's cursor
-    // where it was, so a second line drawn at `doc.y + …` lands on top of the
-    // first — which is exactly what it did.
-    const nameY = top + imgH + 9;
-    const centred = (text, font, size, color, yy) => {
-      doc.font(font).fontSize(size).fillColor(color);
-      const w = doc.widthOfString(String(text || ''));
-      doc.text(String(text || ''), x + Math.max(0, (markW - w) / 2), yy, { lineBreak: false });
-    };
-    centred(c.name, F.bold, 9.8, A_INK, nameY);
-    centred(c.title, F.regular, 8.4, A_MUTED, nameY + 13.5);
+const apptDeclaration = () =>
+  `I agree to accept employment with ${COMPANY.name} on the terms and conditions stated in this appointment letter.`;
+
+/** The letter's Employee Acceptance. */
+function apptAcceptance(doc, F, data) {
+  apptPara(doc, F, 'Employee Acceptance', { bold: true, before: A_H_BEFORE });
+  apptPara(doc, F, apptDeclaration());
+  apptPara(doc, F,
+    `Employee Name: ${data.candidateName || '__________'}\n`
+    + 'Date: ____________________    Signature: ____________________\n'
+    + 'Place: ____________________');
+}
+function apptAcceptanceHeight(doc, F) {
+  doc.font(F.regular).fontSize(A_BODY_PT);
+  return A_H_BEFORE + 14 + A_P_AFTER
+    + doc.heightOfString(apptDeclaration(), { width: A_CW, lineGap: A_LINE_GAP }) + A_P_AFTER
+    + 3 * A_TEXT_LINE + A_P_AFTER;
+}
+
+/**
+ * The letter's close: signatures and the acceptance as ONE unit. A signature on
+ * one sheet and its acceptance alone on the next reads as a printing error, so
+ * if the two will not fit together the whole close moves to a fresh sheet —
+ * which is what the approved document does with its page breaks.
+ */
+function apptClosing(doc, F, columns, data) {
+  apptRoom(doc, apptSigningHeight() + apptAcceptanceHeight(doc, F));
+  apptSigning(doc, F, columns);
+  apptAcceptance(doc, F, data);
+}
+
+// ----- letterhead + footer, stamped on every sheet once the count is known ---
+
+/**
+ * The letterhead on every sheet.
+ *
+ * Normally the uploaded (or bundled) letterhead IMAGE — logo, address and rule
+ * already composed, drawn full width. The drawn fallback (logo left, address
+ * right, a grey rule, phone and GSTIN under it) is the same composition from
+ * config/company.js, for an install with no letterhead file at all.
+ */
+function apptLetterhead(doc, F, brand) {
+  if (brand.letterhead) {
+    try {
+      doc.image(brand.letterhead, A_X0, 12, { width: A_CW });
+      return;
+    } catch (err) {
+      console.error('Letterhead image could not be drawn:', err.message);
+    }
+  }
+
+  let logoBottom = A_HEAD_TOP;
+  if (brand.logo) {
+    try {
+      doc.image(brand.logo, A_X0, A_HEAD_TOP, { fit: [150, 50], align: 'left', valign: 'top' });
+      logoBottom = A_HEAD_TOP + 50;
+    } catch (err) {
+      console.error('Letterhead logo could not be drawn:', err.message);
+      brand = { ...brand, logo: null };
+    }
+  }
+  if (!brand.logo) {
+    doc.font(F.bold).fontSize(17).fillColor(A_INK)
+      .text(COMPANY.name, A_X0, A_HEAD_TOP + 6, { width: A_CW * 0.5, lineBreak: false });
+    if (COMPANY.tagline) {
+      doc.font(F.regular).fontSize(8.5).fillColor(A_MUTED)
+        .text(COMPANY.tagline, A_X0, A_HEAD_TOP + 30, { width: A_CW * 0.5, lineBreak: false });
+    }
+    logoBottom = A_HEAD_TOP + 44;
+  }
+
+  // Address block, right-aligned and uppercase as on the printed letterhead.
+  const rightW = A_CW * 0.55;
+  const rightX = A_X1 - rightW;
+  let ry = A_HEAD_TOP + 1;
+  doc.font(F.regular).fontSize(8.6).fillColor(A_INK);
+  COMPANY.addressLines.forEach((l) => {
+    doc.text(String(l).toUpperCase(), rightX, ry, { width: rightW, align: 'right', lineBreak: false });
+    ry += 10.6;
   });
 
-  // Both columns were drawn from the same `top`, so put the cursor below the
-  // taller one rather than wherever the last column happened to end.
-  doc.y = top + imgH + 44;
-  doc.x = X0;
+  // The grey rule, with phone and GSTIN beneath it.
+  const ruleY = Math.max(logoBottom, ry) + 4;
+  doc.moveTo(A_X0, ruleY).lineTo(A_X1, ruleY).lineWidth(1.4).strokeColor(A_RULE).stroke();
+  let by = ruleY + 5;
+  doc.font(F.regular).fontSize(8.6).fillColor(A_INK);
+  const line = (s) => { doc.text(s, rightX, by, { width: rightW, align: 'right', lineBreak: false }); by += 10.6; };
+  if (COMPANY.phone) line(`Phone : ${COMPANY.phone}`);
+  if (COMPANY.email) line(COMPANY.email);
+  if (COMPANY.gstin) line(`GSTIN : ${COMPANY.gstin}`);
   doc.fillColor(A_INK);
 }
 
 /**
- * The signed declaration that closes the letter, boxed.
- *
- * An offer is a proposal, and "yes, I accept" is the whole of what is agreed.
- * An appointment letter is the employment contract and the countersigned copy is
- * what the company files, so the stub carries the declaration the employee is
- * actually signing — and repeats the name and code, because this sheet gets
- * detached and a signed page that identifies nobody is worthless.
+ * The running footer. Centred by hand: it sits BELOW the bottom margin, and
+ * giving pdfkit a `width` here makes its line wrapper notice that and add a
+ * page — one blank sheet after every real one.
  */
-function apptAcceptance(doc, F, who = {}) {
-  const padX = 14;
-  const innerW = CW - padX * 2;
-  const text = 'I have read this letter of appointment and I accept the terms and conditions set out in it. '
-    + 'I confirm that I understand my compensation and the deductions applicable to it as set out in Annexure I. '
-    + 'I declare that the information given by me in my application, resume and supporting documents is true and '
-    + 'complete, and I authorise the Company to verify it. If any of it is found to be false or misleading, I accept '
-    + 'that the Company may withdraw this appointment.';
-
-  doc.font(F.regular).fontSize(8.6);
-  const textH = doc.heightOfString(text, { width: innerW, lineGap: 1.8 });
-  // 25 above the text, then the name (20), signature/date (22), place (22) and
-  // the descender room the last rule needs. Under-measuring here is what put the
-  // "Place:" rule on top of the box's own bottom edge.
-  const boxH = 25 + textH + 14 + 20 + 22 + 22 + 12;
-  apptRoom(doc, boxH + 8);
-
-  const top = doc.y;
-  doc.roundedRect(X0, top, CW, boxH, 3).fill('#fcfdfe');
-  doc.roundedRect(X0, top, CW, boxH, 3).strokeColor(A_RULE).lineWidth(0.7).stroke();
-  doc.rect(X0, top, 3, boxH).fill(GOLD);
-
-  apptEyebrow(doc, F, 'Employee Acceptance', X0 + padX, top + 11, { color: GOLD_DARK, size: 7.6 });
-  doc.font(F.regular).fontSize(8.6).fillColor(A_INK)
-    .text(text, X0 + padX, top + 25, { width: innerW, lineGap: 1.8 });
-
-  let y = top + 25 + textH + 14;
-  const line = (label, x, w) => {
-    doc.font(F.regular).fontSize(8.6).fillColor(A_MUTED).text(label, x, y, { lineBreak: false });
-    const lw = doc.widthOfString(label);
-    doc.moveTo(x + lw + 4, y + 9.5).lineTo(x + w, y + 9.5).strokeColor('#b5bec9').lineWidth(0.7).stroke();
-  };
-  const half = innerW / 2;
-  const nameText = [who.employeeName, who.employeeCode].filter(Boolean).join('  ·  ');
-  doc.font(F.bold).fontSize(8.8).fillColor(A_INK).text(nameText, X0 + padX, y, { lineBreak: false });
-  y += 20;
-  line('Signature:', X0 + padX, half - 16);
-  line('Date:', X0 + padX + half, half - 16);
-  y += 22;
-  line('Place:', X0 + padX, half - 16);
-
-  doc.fillColor(A_INK);
-  doc.x = X0;
-  doc.y = top + boxH + 12;
-}
-
-/** The annexure's own short countersign line — the full declaration is on the letter. */
-function apptStub(doc, F, data) {
-  apptRoom(doc, 44);
-  const top = doc.y;
-  doc.moveTo(X0, top).lineTo(X1, top).strokeColor(A_HAIR).lineWidth(0.6).stroke();
-  apptEyebrow(doc, F, 'Accepted by', X0, top + 10, { color: GOLD_DARK });
-  doc.font(F.bold).fontSize(9).fillColor(A_INK)
-    .text([data.candidateName, data.employeeCode].filter(Boolean).join('  ·  '), X0, top + 22, { lineBreak: false });
-  const rx = X0 + CW * 0.5;
-  doc.font(F.regular).fontSize(8.6).fillColor(A_MUTED).text('Signature:', rx, top + 22, { lineBreak: false });
-  doc.moveTo(rx + 48, top + 32).lineTo(rx + 150, top + 32).strokeColor('#b5bec9').lineWidth(0.7).stroke();
-  doc.font(F.regular).fontSize(8.6).fillColor(A_MUTED).text('Date:', rx + 162, top + 22, { lineBreak: false });
-  doc.moveTo(rx + 190, top + 32).lineTo(X1, top + 32).strokeColor('#b5bec9').lineWidth(0.7).stroke();
+function apptFooter(doc, F, n, total) {
+  const s = `${COMPANY.name}  •  Appointment Letter  |  Page ${n} of ${total}`;
+  doc.font(F.regular).fontSize(7.5).fillColor(A_MUTED);
+  const w = doc.widthOfString(s);
+  doc.text(s, A_X0 + (A_CW - w) / 2, A_FOOT_Y, { lineBreak: false });
   doc.fillColor(A_INK);
 }
+
+// ----- Annexure I -----------------------------------------------------------
 
 /**
  * Annexure I — the compensation sheet, in the three-part shape of the letter it
@@ -1187,59 +1194,60 @@ function apptStub(doc, F, data) {
  *   Fixed CTC = A + B          the cost the company carries
  *   Net Salary = A - C         what lands in the bank
  *
- * EMPLOYER PF SITS IN B, NOT A. The previous annexure counted it as an earning,
- * which overstated take-home pay by the one figure a new joiner checks hardest.
- * The CTC is unchanged by the move; the net is not, and the net is the one that
- * was wrong.
+ * EMPLOYER PF SITS IN B, NOT A: counting it as an earning overstates take-home
+ * pay by the one figure a new joiner checks hardest. PF and ESI print at an
+ * explicit ZERO rather than being left out — the company runs neither today
+ * (see EPF_ENABLED / ESIC_ENABLED in payrollController), and a missing row
+ * reads as an oversight where a nil reads as a decision. Gratuity, accident
+ * cover and a medical premium are listed only when they carry a figure.
  *
- * PF and ESI print at an explicit ZERO rather than being left out. The company
- * runs neither today (see EPF_ENABLED / ESIC_ENABLED in payrollController), and
- * a missing row reads as an oversight where a nil reads as a decision — with a
- * footnote saying it would change if the schemes start. Gratuity and accident
- * cover, which are not a standing policy, are listed only when they carry a
- * figure: an unused benefit at zero is just noise.
+ * `medicalAllowance` is an EARNING (Part A); `medical` is the group medical
+ * premium that comes OFF the salary (Part C). They used to share one key, and
+ * an employee's allowance printed as a deduction.
  *
  * @param {PDFDocument} doc
  * @param {Object} F - fonts from setupFonts
- * @param {Object} brand - logo + signatures from services/branding
  * @param {Object} data - the appointment letter's data block
  * @param {Object[]} columns - the signing columns from apptColumns()
  */
-function apptAnnexure(doc, F, brand, data, columns) {
+function apptAnnexure(doc, F, data, columns) {
   const R = F.rupee;
-  doc.addPage({ size: 'A4', margin: 0 });
-  let y = drawLetterhead(doc, F, brand);
+  doc.addPage();
 
-  y = apptTitle(doc, F, y, 'Compensation & Benefit Sheet', 'Annexure I');
-  doc.y = y - 6;
+  apptPara(doc, F, 'ANNEXURE I', { bold: true, size: 12, align: 'center', underline: true, after: 4 });
+  apptPara(doc, F, 'COMPENSATION & BENEFIT SHEET', { bold: true, size: 13, align: 'center', after: 8 });
 
-  apptStrip(doc, F, [
-    ['Employee', [data.candidateName, data.employeeCode].filter(Boolean).join('  ·  ') || '-'],
+  // Three rows, as approved; the employee code rides with the name so a
+  // detached annexure still identifies exactly whose figures these are.
+  const half = [A_CW * 0.42, A_CW * 0.58];
+  apptTable(doc, F, [
+    ['Employee Name', [data.candidateName || '-', data.employeeCode && `(${data.employeeCode})`].filter(Boolean).join(' ')],
     ['Designation', data.designation || '-'],
     ['Location', data.location || COMPANY.city],
-  ]);
+  ], { widths: half, labelCol: true, after: 5 });
 
   const num = (v) => Math.round(Number(v || 0));
-  const perMonth = (annualV) => Math.round(Number(annualV || 0) / 12);
+  const perMonth = (annualV) => Math.round(num(annualV) / 12);
+  const money = (annualV) => [formatINR(perMonth(annualV)), formatINR(num(annualV))];
 
-  // Only components that were actually filled in are listed: an appointment with
-  // everything in Basic should print one earnings line, not five with four
+  // Only components that were actually filled in are listed: an appointment
+  // with everything in Basic should print one earnings line, not six with five
   // zeroes under it.
   const partA = [
-    ['Basic Salary', data.basic],
-    ['House Rent Allowance (HRA)', data.hra],
+    ['Basic', data.basic],
+    ['HRA', data.hra],
     ['Conveyance Allowance', data.conveyance],
+    ['Medical Allowance', data.medicalAllowance],
     ['Special Allowance', data.specialAllowance],
-    ['Other Allowances', data.otherAllowances],
+    ['Other Allowance', data.otherAllowances],
   ].filter(([, v]) => num(v) > 0);
   const totalA = partA.reduce((s, [, v]) => s + num(v), 0);
 
   const partB = [
-    ['Employer Provident Fund (EPF)', num(data.employerPf)],
     ['Employer ESI', 0],
+    ['Employer PF', num(data.employerPf)],
     ...(num(data.gratuity) > 0 ? [['Gratuity', num(data.gratuity)]] : []),
-    ...(num(data.accidentInsurance) > 0
-      ? [['Fixed Group Accident Insurance', num(data.accidentInsurance)]] : []),
+    ...(num(data.accidentInsurance) > 0 ? [['Fixed Group Accident Insurance', num(data.accidentInsurance)]] : []),
   ];
   const totalB = partB.reduce((s, [, v]) => s + num(v), 0);
 
@@ -1252,122 +1260,75 @@ function apptAnnexure(doc, F, brand, data, columns) {
   ];
   const totalC = partC.reduce((s, [, v]) => s + num(v), 0);
 
-  const colM = 108;
-  const colA = 108;
-  const labelW = CW - colM - colA;
-  const rowCount = partA.length + partB.length + partC.length + 3;
-  const rowH = rowCount > 11 ? 15.8 : 17.5;
-
-  // Each of these captures y FIRST. doc.text() advances doc.y, so reading it
-  // again for the second and third cell of a row put those cells a line below
-  // the band they belong to — which is how the header row came out empty and
-  // every section bar grew a blank strip under it.
-  const header = () => {
-    const yy = doc.y;
-    doc.rect(X0, yy, CW, rowH + 3).fill(A_ACCENT);
-    doc.font(F.bold).fontSize(7.8).fillColor('#ffffff');
-    doc.text('PARTICULARS', X0 + 10, yy + 7, { width: labelW - 16, characterSpacing: 0.8, lineBreak: false });
-    doc.text(`MONTHLY (${R})`, X0 + labelW, yy + 7, { width: colM - 10, align: 'right', characterSpacing: 0.8, lineBreak: false });
-    doc.text(`ANNUAL (${R})`, X0 + labelW + colM, yy + 7, { width: colA - 10, align: 'right', characterSpacing: 0.8, lineBreak: false });
-    doc.y = yy + rowH + 3;
-  };
-
-  const sectionBar = (label) => {
-    const yy = doc.y;
-    doc.rect(X0, yy, CW, 16).fill(A_GOLD_SOFT);
-    doc.font(F.bold).fontSize(7.6).fillColor(GOLD_DARK)
-      .text(label.toUpperCase(), X0 + 10, yy + 5, { width: CW - 20, characterSpacing: 1, lineBreak: false });
-    doc.y = yy + 16;
-  };
-
-  const row = (label, annualV, opts = {}) => {
-    const yy = doc.y;
-    if (opts.total) doc.rect(X0, yy, CW, rowH).fill(A_BAND);
-    else if (opts.zebra) doc.rect(X0, yy, CW, rowH).fill('#fbfcfe');
-    doc.font(opts.total ? F.bold : F.regular).fontSize(8.8).fillColor(opts.total ? A_ACCENT : A_INK);
-    doc.text(label, X0 + 10, yy + 5, { width: labelW - 16, lineBreak: false });
-    doc.text(formatINR(perMonth(annualV)), X0 + labelW, yy + 5, { width: colM - 10, align: 'right', lineBreak: false });
-    doc.text(formatINR(num(annualV)), X0 + labelW + colM, yy + 5, { width: colA - 10, align: 'right', lineBreak: false });
-    doc.y = yy + rowH;
-    doc.moveTo(X0, doc.y).lineTo(X1, doc.y).strokeColor(A_HAIR).lineWidth(0.5).stroke();
-  };
-
-  const tableTop = doc.y;
-  header();
-  sectionBar('Part A  ·  Gross Salary');
-  partA.forEach(([l, v], i) => row(l, v, { zebra: i % 2 === 1 }));
-  row('Total (A)', totalA, { total: true });
-
-  sectionBar('Part B  ·  Employer Contribution');
-  partB.forEach(([l, v], i) => row(l, v, { zebra: i % 2 === 1 }));
-  row('Total (B)', totalB, { total: true });
-
-  sectionBar('Part C  ·  Employee Deductions');
-  partC.forEach(([l, v], i) => row(l, v, { zebra: i % 2 === 1 }));
-  row('Total (C)', totalC, { total: true });
-
-  const tableBottom = doc.y;
-  doc.rect(X0, tableTop, CW, tableBottom - tableTop).strokeColor('#9dabba').lineWidth(0.9).stroke();
-  doc.moveTo(X0 + labelW, tableTop).lineTo(X0 + labelW, tableBottom).strokeColor(A_HAIR).lineWidth(0.5).stroke();
-  doc.moveTo(X0 + labelW + colM, tableTop).lineTo(X0 + labelW + colM, tableBottom).strokeColor(A_HAIR).lineWidth(0.5).stroke();
-
-  // ----- the two figures people actually look for -----
-  // One captured top for BOTH cards. apptEyebrow() and text() each move doc.y,
-  // so reading it per card stepped the second one down the page and off it.
-  const sumH = 44;
-  const sumW = (CW - 12) / 2;
-  const sumTop = tableBottom + 11;
-  [['Fixed CTC (A + B)', totalA + totalB], ['Net Salary (A − C)', totalA - totalC]]
-    .forEach(([label, annual], i) => {
-      const x = X0 + i * (sumW + 12);
-      doc.roundedRect(x, sumTop, sumW, sumH, 3).fill(i ? A_PANEL : A_GOLD_SOFT);
-      doc.roundedRect(x, sumTop, sumW, sumH, 3).strokeColor(i ? A_RULE : '#e4d5ad').lineWidth(0.8).stroke();
-      apptEyebrow(doc, F, label, x + 12, sumTop + 8, { color: i ? A_MUTED : GOLD_DARK, size: 7.2 });
-      doc.font(F.bold).fontSize(12.5).fillColor(A_ACCENT)
-        .text(`${R}${formatINR(annual)}`, x + 12, sumTop + 19, { width: sumW - 24, lineBreak: false });
-      doc.font(F.regular).fontSize(7.4).fillColor(A_MUTED)
-        .text(`per annum  ·  ${R}${formatINR(Math.round(annual / 12))} per month`,
-          x + 12, sumTop + 33, { width: sumW - 24, lineBreak: false });
+  const thirds = [A_CW - 2 * 118, 118, 118];
+  const money3 = (rows, totalLabel, total) => [
+    ['Particulars', `Monthly (${R})`, `Annual (${R})`],
+    ...rows.map(([l, v]) => [l, ...money(v)]),
+    [totalLabel, ...money(total)],
+  ];
+  const part = (title, rows, totalLabel, total) => {
+    // The part's title stays with its table.
+    apptRoom(doc, 5 + 14 + 3 + 19 * 2);
+    apptPara(doc, F, title, { bold: true, before: 5, after: 3 });
+    apptTable(doc, F, money3(rows, totalLabel, total), {
+      widths: thirds, header: true, align: ['left', 'right', 'right'], totals: [rows.length], after: 3,
     });
-  doc.x = X0;
-  doc.y = sumTop + sumH + 11;
+  };
+  part('Part A – Gross Salary', partA, 'Total – A', totalA);
+  part('Part B – Employer Contribution', partB, 'Total – B', totalB);
+  part('Part C – Employee Deductions', partC, 'Total – C', totalC);
 
-  doc.font(F.regular).fontSize(7.4).fillColor(A_MUTED).text(
-    'Provident Fund and ESI are nil because the Company does not currently operate those schemes; they will apply, and '
-    + `this annexure be revised, if that changes. Professional tax is deducted at ${R}${PT_MONTHLY} per month as per `
-    + 'prevailing law. Employer contributions (Part B) are a cost the Company carries on your behalf and form part of '
-    + 'your CTC, not a deduction from your salary. Income tax, where applicable, is deducted at source. This annexure '
-    + 'forms part of your letter of appointment.',
-    X0, doc.y, { width: CW, lineGap: 1.2 }
-  );
-  doc.y += 10;
+  const ctc = totalA + totalB;
+  const net = totalA - totalC;
+  apptPara(doc, F,
+    `Fixed CTC (Part A + B): ${R}${formatINR(Math.round(ctc / 12))} per month / ${R}${formatINR(ctc)} per annum`,
+    { bold: true, before: 8 });
+  apptPara(doc, F,
+    `Net Salary (after stated deductions): ${R}${formatINR(Math.round(net / 12))} per month / ${R}${formatINR(net)} per annum`,
+    { bold: true });
+  apptPara(doc, F,
+    'Note: Statutory contributions and deductions, where applicable, will be processed in accordance with applicable '
+    + 'law and Company policy. The compensation structure may be revised where required to comply with statutory '
+    + 'requirements.', { size: 9, lineGap: 1.2 });
 
-  // The signature is sized to WHATEVER ROOM THE TABLE LEFT, not to a fixed
-  // height. The annexure is a one-sheet document and the signing block is the
-  // last thing on it, so a letter with every optional component filled in — four
-  // rows longer than a plain one — pushed a fixed-height stamp onto a sheet of
-  // its own. That is the stranded-signature problem this file already solved
-  // once, for the letter.
-  //
-  // SIGN_BLOCK_COST is everything the block spends AROUND the mark: the
-  // "For …" line and its gap, the drop below the mark, and the countersign stub
-  // (see apptSignatures and apptStub). MEASURED, not derived — the arithmetic
-  // said 112 and the truth is 113.3, so the crowded annexure broke to a second
-  // sheet by 1.3pt. The floor keeps it a signature rather than a thumbnail; the
-  // ceiling matches the letter's own restraint on this sheet.
-  const room = A_BOTTOM - doc.y - SIGN_BLOCK_COST;
-  const markH = Math.max(34, Math.min(76, room));
-  if (room < 34) {
+  // ----- the close: company signatory left, employee acceptance right -----
+  // Side by side rather than stacked, which is what lets the mark print at a
+  // size a reader can see and still keeps the annexure to one sheet. The mark
+  // is sized to whatever room the tables left — a letter with every optional
+  // component filled in is four rows longer than a plain one — and the floor
+  // keeps it a signature rather than a thumbnail.
+  const hr = columns[0];
+  const auth = { slot: 'hr', image: hr && hr.image, name: 'Authorised Signatory', title: '' };
+  const fixed = 8 + 14 + A_P_AFTER + apptSignatoryHeight(0, 1);
+  const spare = doc.page.maxY() - doc.y - fixed;
+  const markH = Math.max(60, Math.min(A_MARK_H, spare));
+  if (spare < 60) {
     // Not a crash, but the annexure has just become two sheets and somebody
     // should know why rather than wondering. Says how much it was short by.
     console.warn(
-      `Annexure I overflowed: ${Math.round(34 - room)}pt short of fitting the signing block `
-      + 'on one sheet. The compensation table has more rows than the sheet can carry.'
+      `Annexure I overflowed: ${Math.round(60 - spare)}pt short of fitting its signing block on one sheet. `
+      + 'The compensation table has more rows than the sheet can carry.'
     );
   }
-  apptSignatures(doc, F, columns, { closing: false, extra: 48, imgH: markH });
-  apptStub(doc, F, data);
+  apptRoom(doc, fixed + markH);
+
+  const colW = (A_CW - A_GUTTER) / 2;
+  const rightX = A_X0 + colW + A_GUTTER;
+  const top = doc.y;
+  apptPara(doc, F, `For ${COMPANY.name}`, { bold: true, before: 8, width: colW });
+  apptSignatory(doc, F, auth, { before: 8, markH });
+  const leftEnd = doc.y;
+
+  doc.y = top;
+  apptPara(doc, F, 'Employee Acceptance', { bold: true, before: 8, x: rightX, width: colW });
+  apptPara(doc, F, `Employee Name: ${data.candidateName || '__________'}`, { x: rightX, width: colW, after: 8 });
+  apptPara(doc, F, 'Signature: ____________________________', { x: rightX, width: colW, after: 8 });
+  apptPara(doc, F, 'Date: __________________', { x: rightX, width: colW });
+  doc.y = Math.max(leftEnd, doc.y);
+  doc.x = A_X0;
 }
+
+// ----- the letter -----------------------------------------------------------
 
 /**
  * Render the appointment letter. Resolves { buffer, pages }.
@@ -1376,8 +1337,9 @@ function apptAnnexure(doc, F, brand, data, columns) {
  */
 function renderAppointmentOnce(data = {}) {
   return new Promise((resolve, reject) => {
-    // bufferPages, so the footer can print "Page 2 of 6" after the count is known.
-    const doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true });
+    // bufferPages, so the letterhead and "Page 2 of 6" can be stamped on every
+    // sheet after the count is known.
+    const doc = new PDFDocument({ size: 'A4', margins: A_MARGINS, bufferPages: true });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c));
     doc.on('error', reject);
@@ -1387,60 +1349,48 @@ function renderAppointmentOnce(data = {}) {
     const brand = data.brand || {};
     const columns = apptColumns(data, brand);
 
-    let y = drawLetterhead(doc, F, brand);
+    doc.x = A_X0;
+    doc.y = A_BODY_TOP;
 
-    // ----- date / reference / addressee -----
-    doc.font(F.regular).fontSize(9.4).fillColor(A_MUTED)
-      .text(`Date: ${todayLong()}`, X0, y, { width: CW * 0.5, lineBreak: false });
-    if (data.employeeCode) {
-      doc.font(F.regular).fontSize(9.4).fillColor(A_MUTED)
-        .text(`Ref: ${data.employeeCode}`, X1 - CW * 0.4, y, { width: CW * 0.4, align: 'right', lineBreak: false });
-    }
-    y += 20;
+    // ----- date, addressee, title, salutation -----
+    apptPara(doc, F, `Date: ${todayLong()}`, { bold: true });
+    apptPara(doc, F,
+      `To,\n${data.candidateName || ''}${data.address ? `\nAddress: ${data.address}` : ''}`,
+      { bold: true });
+    apptPara(doc, F, 'APPOINTMENT LETTER', {
+      bold: true, size: 16, align: 'center', underline: true, before: 5, after: 12,
+    });
+    apptPara(doc, F, `Dear ${firstName(data.candidateName)},`);
 
-    doc.font(F.regular).fontSize(9.4).fillColor(A_MUTED).text('To,', X0, y, { lineBreak: false });
-    doc.font(F.bold).fontSize(11).fillColor(A_INK)
-      .text(data.candidateName || '', X0, y + 13, { width: CW * 0.6 });
-    if (data.address) {
-      doc.font(F.regular).fontSize(9.2).fillColor(A_MUTED)
-        .text(data.address, X0, doc.y + 1, { width: CW * 0.6 });
-    }
-    y = doc.y + 20;
-
-    y = apptTitle(doc, F, y, 'Appointment Letter', 'Private & Confidential');
-    doc.y = y;
-
-    apptPara(doc, F, `Dear ${firstName(data.candidateName)},`, { gap: 0.7 });
-
-    // The lead paragraph sits ABOVE the facts panel and the clauses below it, so
-    // the letter opens with a sentence rather than a table.
+    // The lead paragraph sits ABOVE the facts table and the clauses below it,
+    // so the letter opens with a sentence rather than a table.
     const blocks = bodyOrDefault(data, appointmentBody(data, R));
     const lead = blocks[0] && blocks[0].type === 'para' ? blocks[0] : null;
-    if (lead) apptPara(doc, F, lead.text, { gap: 0.9 });
+    if (lead) apptPara(doc, F, lead.text);
 
-    apptFacts(doc, F, [
+    apptTable(doc, F, [
+      ...(data.employeeCode ? [['Employee Code', data.employeeCode]] : []),
       ['Designation', data.designation || '-'],
       ['Department', data.department || '-'],
       ['Date of Appointment', longDate(data.joiningDate)],
       ['Employment Type', data.employmentType || 'Full-Time Employee'],
-      ['Reporting To', data.reportingManager || 'Department Head / CEO'],
+      ['Reporting', data.reportingManager || 'Department Head / CEO'],
       ['Place of Work', data.location
         ? `${data.location} / as reasonably required for the role`
-        : 'Company office / as reasonably required for the role'],
-      ...(data.ctcAnnual ? [['Annual CTC', `${R}${formatINR(data.ctcAnnual)}/- per annum`]] : []),
-    ]);
+        : 'Company Office / as reasonably required for the role'],
+    ], { widths: [A_CW * 0.42, A_CW * 0.58], labelCol: true, after: 4 });
 
     apptBlocks(doc, F, lead ? blocks.slice(1) : blocks);
 
-    apptSignatures(doc, F, columns, { extra: 150 });
-    apptAcceptance(doc, F, { employeeName: data.candidateName, employeeCode: data.employeeCode });
+    apptClosing(doc, F, columns, data);
 
-    apptAnnexure(doc, F, brand, data, columns);
+    apptAnnexure(doc, F, data, columns);
 
-    // ----- the running footer, now that the page count is known -----
+    // ----- letterhead + footer on every sheet, now that the count is known -----
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i += 1) {
       doc.switchToPage(i);
+      apptLetterhead(doc, F, brand);
       apptFooter(doc, F, i - range.start + 1, range.count);
     }
     doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pages: range.count }));
@@ -1456,16 +1406,14 @@ function renderAppointmentOnce(data = {}) {
  * it is a one-page document by nature. This is the employment contract —
  * twenty-one clauses, a signing block and a signed declaration — and it is MEANT
  * to run to several sheets, exactly as the letter it is drawn from does.
- *
- * Squeezing that onto one sheet is not a smaller letter, it is an unreadable
- * one: the loop would try every scale, fail at each, and ship the SMALLEST — the
- * worst of the seven. Rendered once, at full size, and allowed to flow.
+ * Rendered once, at full size, and allowed to flow.
  *
  * @param {Object} data - { candidateName, employeeCode, address, designation,
  *   department, employmentType, reportingManager, location, workingHours,
  *   joiningDate, probationMonths, noticePeriodDays, ctcAnnual, basic, hra,
- *   specialAllowance, conveyance, otherAllowances, employerPf, gratuity,
- *   medical, accidentInsurance, signatoryName, signatoryTitle, brand, body }.
+ *   conveyance, medicalAllowance, specialAllowance, otherAllowances, employerPf,
+ *   gratuity, accidentInsurance, medical, signatoryName, signatoryTitle,
+ *   brand, body }.
  * @returns {Promise<Buffer>} the rendered PDF bytes
  * @throws Rejects if pdfkit emits an 'error' during rendering.
  */
@@ -1533,7 +1481,7 @@ async function renderRelievingLetter(data = {}) {
 module.exports = {
   renderOfferLetter, renderAppointmentLetter, renderRelievingLetter,
   letterBodyDefaults, resolveLetterBody,
-  // The letter's own date format ('21st July, 2025'). Exported so a covering
+  // The letter's own date format ('21st July 2025'). Exported so a covering
   // EMAIL can print the same dates as the PDF attached to it, rather than each
   // send site inventing its own.
   longDate,

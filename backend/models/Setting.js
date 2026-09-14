@@ -210,6 +210,11 @@ const settingSchema = new mongoose.Schema(
       // Company logo drawn at the top-left of every letterhead. Falls back to
       // ORG_LOGO_PATH, then the bundled backend/assets/logo.png.
       logoPath: { type: String, default: '' },
+      // The full-width letterhead image (logo, address and rule already
+      // composed) printed at the top of every page of the appointment letter.
+      // Falls back to ORG_LETTERHEAD_PATH, then the bundled
+      // backend/assets/letterhead.png.
+      letterheadPath: { type: String, default: '' },
       // Named signature slots. Keyed rather than free-form so a renderer can ask
       // for "the CEO's signature" without guessing at array order, and so
       // re-uploading one replaces it in place.

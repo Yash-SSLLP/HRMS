@@ -40,6 +40,9 @@ const {
   uploadBrandingLogo,
   deleteBrandingLogo,
   getBrandingLogo,
+  uploadBrandingLetterhead,
+  deleteBrandingLetterhead,
+  getBrandingLetterhead,
   uploadBrandingSignature,
   deleteBrandingSignature,
   getBrandingSignature,
@@ -114,6 +117,14 @@ router.route('/org-settings/logo')
   .get(getBrandingLogo)
   .post(brandingUpload.single('image'), uploadBrandingLogo)
   .delete(deleteBrandingLogo);
+
+// GET/POST/DELETE /org-settings/letterhead — the full-width letterhead image on
+// every page of the appointment letter
+router.route('/org-settings/letterhead')
+  .all(requirePermission('branding.manage'))
+  .get(getBrandingLetterhead)
+  .post(brandingUpload.single('image'), uploadBrandingLetterhead)
+  .delete(deleteBrandingLetterhead);
 
 // GET/POST/DELETE /org-settings/signature/:key  (key = ceo | md | hr)
 router.route('/org-settings/signature/:key')
