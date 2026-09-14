@@ -15,7 +15,6 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Company = require('../models/Company');
 const { enqueueMail } = require('../services/email');
-const mailIdentity = require('../services/mailIdentity');
 const { notify } = require('../services/notify');
 const { hiddenUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
 const { companyScopeFilter, viewerCompanyScope } = require('../utils/employeeScope');
@@ -820,10 +819,6 @@ const monthCalendar = asyncHandler(async (req, res) => {
 //   { employeeId | userId, type: 'birthday' | 'anniversary', message? }
 const sendWish = asyncHandler(async (req, res) => {
   const { employeeId, userId, type = 'birthday', message } = req.body || {};
-  // A wish from the Backend, the CEO or the MD goes by email as well, and that
-  // email leaves from THEIR mailbox or not at all — refused here, before the
-  // in-app wish is created, so nobody gets half a wish.
-  if (wishGoesByEmail(req.user)) await mailIdentity.assertCanSendMail(req.user);
   if (!employeeId && !userId) {
     res.status(400);
     throw new Error('employeeId or userId is required');

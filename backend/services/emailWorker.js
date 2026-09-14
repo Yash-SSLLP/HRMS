@@ -12,8 +12,6 @@ const EmailOutbox = require('../models/EmailOutbox');
 const ExitRequest = require('../models/ExitRequest');
 const Candidate = require('../models/Candidate');
 const { sendMail } = require('./email');
-const mailIdentity = require('./mailIdentity');
-const { notify } = require('./notify');
 
 const POLL_INTERVAL_MS = 30_000;            // 30s
 const STALE_LOCK_MS = 2 * 60_000;           // claim back rows stuck in 'Sending' > 2 min
@@ -22,73 +20,6 @@ const BACKOFF_SECONDS = [60, 300, 1800, 7200, 21600, 43200]; // 1m, 5m, 30m, 2h,
 
 let intervalHandle = null;
 let ticking = false;
-
-/**
- * Send one outbox row from the right mailbox. A row with a `sender` is that
- * person's mail and leaves from THEIR connected Google account — and from
- * nowhere else: if the connection is gone or Google refuses it, the row dies
- * with a reason and the sender is told in-app, rather than the mail quietly
- * going out from the company mailbox under their name. A row without a sender
- * is the system's and takes the company mailbox.
- * @param {Object} row - EmailOutbox document.
- * @returns {Promise<{messageId?:string, sentFrom?:string, mocked?:boolean}>}
- * @sideEffects Sends email; may stamp User.mailIdentity and create a Notification.
- */
-async function deliver(row) {
-  const base = {
-    to: row.to,
-    cc: row.cc,
-    subject: row.subject,
-    text: row.text,
-    html: row.html,
-    from: row.from,
-    replyTo: row.replyTo,
-    attachments: row.attachments,
-    // Never derive a sender from the request context in here: a tick can run
-    // inside whichever request kicked it, and that person is not this row's.
-    sender: null,
-  };
-  if (!row.sender) return sendMail(base);
-
-  const { identity, reason } = await mailIdentity.loadIdentity(row.sender);
-  if (!identity) {
-    const err = new Error(reason === 'broken' || reason === 'unreadable'
-      ? 'Google no longer accepts the sender\'s mailbox connection.'
-      : 'The sender has not connected a Google mailbox.');
-    err.permanent = true;
-    err.hint = 'reconnect';
-    await tellSender(row, err.message);
-    throw err;
-  }
-  try {
-    return await sendMail({ ...base, identity });
-  } catch (err) {
-    if (err.permanent) await tellSender(row, err.message);
-    throw err;
-  }
-}
-
-/**
- * Tell the person whose mail just died, in-app, so a refused mailbox never
- * turns into a candidate who was silently never written to.
- * @param {Object} row - The dead EmailOutbox row.
- * @param {string} reason
- * @returns {Promise<void>} Never rejects.
- */
-async function tellSender(row, reason) {
-  try {
-    await notify({
-      recipient: row.sender,
-      type: 'general',
-      audience: 'all',
-      title: 'Email not sent',
-      body: `"${row.subject}" to ${row.to} did not go out: ${reason} `
-        + 'Reconnect your mailbox under My Account → "Send email from your own mailbox" and send it again.',
-    });
-  } catch (err) {
-    console.error('[emailWorker] could not notify the sender:', err.message);
-  }
-}
 
 /**
  * Atomically claim and process the single most-due outbox row: mark it Sending,
@@ -115,13 +46,25 @@ async function processOne() {
   if (!row) return null;
 
   try {
-    const info = await deliver(row);
+    const info = await sendMail({
+      // The sender's own Cc was decided when the row was queued, inside their
+      // request. A tick can run inside somebody ELSE's request, so the
+      // transport must not consult the context here.
+      selfCopy: false,
+      to: row.to,
+      cc: row.cc,
+      subject: row.subject,
+      text: row.text,
+      html: row.html,
+      from: row.from,
+      replyTo: row.replyTo,
+      attachments: row.attachments,
+    });
 
     row.status = 'Sent';
     row.sentAt = new Date();
     row.lastAttemptAt = row.sentAt;
     row.messageId = info.messageId || (info.mocked ? 'mocked' : undefined);
-    row.sentFrom = info.sentFrom || (info.mocked ? 'mocked' : undefined);
     row.lastError = undefined;
     row.attempts = (row.attempts || 0) + 1;
     await row.save();
@@ -136,9 +79,8 @@ async function processOne() {
     // later message queues behind it — so fail fast and say what to do.
     if (err.permanent) {
       row.status = 'Dead';
-      row.lastError = `${row.lastError} — not retried: ${err.hint === 'reconnect'
-        ? 'the sender must reconnect their mailbox under My Account and send again.'
-        : 're-authorise with node scripts/getGoogleRefreshToken.js, then restart the server.'}`;
+      row.lastError = `${row.lastError} — not retried: re-authorise with `
+        + 'node scripts/getGoogleRefreshToken.js, then restart the server.';
     } else if (row.attempts >= (row.maxAttempts || 6)) {
       row.status = 'Dead';
     } else {

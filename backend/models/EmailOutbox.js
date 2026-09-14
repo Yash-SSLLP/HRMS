@@ -21,16 +21,6 @@ const emailOutboxSchema = new mongoose.Schema(
     from: String,
     replyTo: String,
 
-    // The account whose action queued this mail. If that person has connected
-    // their own Google mailbox (User.mailIdentity), the worker sends from it;
-    // otherwise, or when their grant has died, from the company mailbox.
-    // Stamped by enqueueMail from the request context, so no call site has to
-    // remember it. Absent on mails nobody triggered (crons, public forms).
-    sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    // Which mailbox it actually left from, recorded on success — the answer to
-    // "why did the candidate get this from the company address?" later.
-    sentFrom: String,
-
     // Optional attachments. Either reference a file on storage (storagePath —
     // streamed from disk at send time so the DB stays light) OR embed the bytes
     // inline as base64 in `content` (used for DB-stored files like résumés that

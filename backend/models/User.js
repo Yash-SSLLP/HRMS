@@ -189,33 +189,6 @@ const userSchema = new mongoose.Schema(
     dateOfJoining: { type: Date, default: null },
     dateOfMarriage: { type: Date, default: null },
 
-    // ===== The person's OWN sending mailbox =====
-    // Mail this account triggers (offer letters, payslips, interview invites,
-    // exit mails…) normally leaves from the one company Gmail account in the
-    // env (GOOGLE_MAIL_SENDER) with this person's name as the display name.
-    // Once they connect their own Google account here, it leaves from THEIR
-    // mailbox instead, so replies land with them and the recipient sees who
-    // actually wrote. See services/mailIdentity and routes/mailIdentityRoutes.
-    //
-    // refreshToken is sealed with utils/secretBox before it is stored and never
-    // selected by default — nothing that serialises a user can leak it, and a
-    // database dump holds only ciphertext. lastError is set when Google refuses
-    // the grant (revoked, expired test-mode token): the worker then falls back
-    // to the company mailbox for that mail and the account page asks the owner
-    // to reconnect.
-    mailIdentity: {
-      email: { type: String, default: null, lowercase: true, trim: true },
-      refreshToken: { type: String, default: null, select: false },
-      // The scopes Google actually granted, space-separated. Interview invites
-      // need calendar.events on top of gmail.send; a grant made before that
-      // was asked for lacks it, and the account page says so.
-      scopes: { type: String, default: '' },
-      connectedAt: { type: Date, default: null },
-      lastSentAt: { type: Date, default: null },
-      lastError: { type: String, default: null },
-      lastErrorAt: { type: Date, default: null },
-    },
-
     // ===== Home-screen quick actions the person pinned for themselves =====
     // The route keys of the tiles shown under "Quick actions" on the app's home
     // screen, in the order they were chosen. Owned by the CLIENT: the server
@@ -269,9 +242,6 @@ userSchema.set('toJSON', {
   transform: (_doc, ret) => {
     delete ret.password;
     delete ret.__v;
-    // Belt and braces: the field is select:false, but a doc loaded with
-    // '+mailIdentity.refreshToken' must still never serialise it.
-    if (ret.mailIdentity) delete ret.mailIdentity.refreshToken;
     return ret;
   },
 });

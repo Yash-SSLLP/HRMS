@@ -61,8 +61,7 @@ async function notifyEmailChanged(user, actor) {
       `If you were not expecting this, please contact HR straight away.\n\n` +
       `Regards,\n${hrName}\n${COMPANY.name}`,
   });
-  // An account notice, not personal correspondence: the company mailbox.
-  return enqueueMail({ sender: null, to: user.email, subject, text, replyTo: actor?.email },
+  return enqueueMail({ to: user.email, subject, text, replyTo: actor?.email },
     { type: 'user-email-change', id: user._id });
 }
 

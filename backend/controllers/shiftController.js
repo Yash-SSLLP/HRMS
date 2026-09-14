@@ -96,8 +96,6 @@ async function notifyShiftAssignment({ employeeId, shiftId, date, note, assigned
     if (employee.email) {
       await enqueueMail({
         to: employee.email,
-        // A roster notice, not personal correspondence: the company mailbox.
-        sender: null,
         subject: `New shift assigned — ${label} on ${when}`,
         text: [
           `Hi ${toFirst},`,
@@ -171,8 +169,6 @@ async function notifyStandingShift({ employeeId, shift, assignedBy }) {
     if (employee.email) {
       await enqueueMail({
         to: employee.email,
-        // A roster notice, not personal correspondence: the company mailbox.
-        sender: null,
         subject: `Your shift has changed — ${label}`,
         text: [
           `Hi ${toFirst},`,

@@ -202,8 +202,6 @@ app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/audit', require('./routes/auditRoutes'));
 app.use('/api/templates', require('./routes/templateRoutes'));
-// A person's own sending mailbox (Google OAuth) — see services/mailIdentity.
-app.use('/api/mail-identity', require('./routes/mailIdentityRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/push-reminders', require('./routes/pushReminderRoutes'));
 

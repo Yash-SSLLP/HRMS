@@ -26,7 +26,6 @@ const { hasPermission, hasExplicitPermission, isEditingExec } = require('../midd
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const { appointmentCodeHolder } = require('../utils/reservedCodes');
 const { sendMail } = require('../services/email');
-const mailIdentity = require('../services/mailIdentity');
 const { renderMail } = require('../services/templates');
 // Never hardcode the web origin — a localhost link in somebody's inbox is dead
 // on arrival. See config/appUrl.
@@ -1999,8 +1998,6 @@ const createDocLink = asyncHandler(async (req, res) => {
  */
 // POST /api/employees/:id/documents/email  (HR/Admin)
 const emailDocLink = asyncHandler(async (req, res) => {
-  // The request leaves from the sender's own mailbox, or not at all.
-  await mailIdentity.assertCanSendMail(req.user);
   const profile = await EmployeeProfile.findById(req.params.id).populate('user', 'firstName lastName email');
   if (!profile) {
     res.status(404);

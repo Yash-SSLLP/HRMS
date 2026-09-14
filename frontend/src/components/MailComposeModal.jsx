@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { composeMail } from '../api/compose';
 import { confirmDialog } from './dialogs';
-import { useAuthStore } from '../store/authStore';
-import { SENDER_ROLES } from './SenderMailboxCard';
 
 /**
  * Editable email composer. Prefills an editable subject + body (with any public
@@ -51,17 +49,6 @@ export default function MailComposeModal({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  // Which mailbox a server-delivered mail will actually leave from: the
-  // sender's own connected Google account (My Account → SenderMailboxCard), or
-  // the company one when they have none — or theirs has been refused by Google,
-  // in which case the server falls back to the company mailbox for them.
-  const mailIdentity = useAuthStore((s) => s.user?.mailIdentity);
-  const role = useAuthStore((s) => s.user?.role);
-  const ownMailbox = mailIdentity?.email && !mailIdentity?.lastError ? mailIdentity.email : null;
-  // A person who sends as themselves cannot send at all without a connected
-  // mailbox — the server refuses it — so say so here and hold the button,
-  // rather than let them edit a letter that will not go.
-  const needsMailbox = Boolean(onSend) && SENDER_ROLES.includes(role) && !ownMailbox;
 
   // Re-seed the editable fields each time the modal is (re)opened.
   useEffect(() => {
@@ -106,20 +93,10 @@ export default function MailComposeModal({
         </div>
         <p className="text-sm text-gray-500 mb-4">
           {note || (onSend
-            ? <>Review and edit the message below · it is sent from {ownMailbox
-              ? <>your mailbox (<span className="font-medium text-gray-700">{ownMailbox}</span>)</>
-              : needsMailbox ? 'your own mailbox, once it is connected' : 'the company mailbox'}.</>
+            ? 'Review and edit the message below · it is sent from the company mailbox, with a copy to you in Cc.'
             : 'Review and edit the message, then open it in your email to send.')}{' '}
           {to ? <>To: <span className="font-medium text-gray-700">{to}</span></> : null}
         </p>
-
-        {needsMailbox && (
-          <div className="mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-            {mailIdentity?.lastError
-              ? <>Google has stopped accepting your mailbox connection, so this cannot be sent. Reconnect it under <b>My Account → Send email from your own mailbox</b>, then come back.</>
-              : <>Email you send from HRMS leaves only from your own address. Connect your Google mailbox under <b>My Account → Send email from your own mailbox</b>, then come back to send this.</>}
-          </div>
-        )}
 
         <div className="space-y-3">
           {showCc && (
@@ -194,7 +171,7 @@ export default function MailComposeModal({
           <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
           <button
             onClick={submit}
-            disabled={sending || needsMailbox}
+            disabled={sending}
             className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60"
           >
             {sending ? (onSend ? 'Sending…' : 'Opening…') : (sendLabel || (onSend ? 'Send email' : 'Open in email'))}

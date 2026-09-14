@@ -13,7 +13,6 @@ const ExitRequest = require('../models/ExitRequest');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { enqueueMail, sendMail } = require('../services/email');
-const mailIdentity = require('../services/mailIdentity');
 // The covering wording is editable in Settings -> Templates ('relieving.mail').
 const { renderMail } = require('../services/templates');
 const COMPANY = require('../config/company');
@@ -699,8 +698,6 @@ const publicRelievingLetterPdf = asyncHandler(async (req, res) => {
  */
 // POST /api/exits/:id/relieving-letter/email  (HR/Admin)
 const emailRelievingLetter = asyncHandler(async (req, res) => {
-  // The letter leaves from the sender's own mailbox, or not at all.
-  await mailIdentity.assertCanSendMail(req.user);
   const exit = await ExitRequest.findById(req.params.id)
     .populate({ path: 'employee', populate: { path: 'user', select: 'firstName lastName email' } })
     .populate('handledBy', 'firstName lastName email');
@@ -960,8 +957,6 @@ const completeExit = asyncHandler(async (req, res) => {
 // the default recipient/subject/body for the compose modal; otherwise it
 // queues the mail, honouring any HR-edited subject/body.
 const resendExitEmail = asyncHandler(async (req, res) => {
-  // The exit mail leaves from the sender's own mailbox, or not at all.
-  await mailIdentity.assertCanSendMail(req.user);
   const exit = await ExitRequest.findById(req.params.id)
     .populate({ path: 'employee', populate: { path: 'user' } })
     .populate('handledBy');

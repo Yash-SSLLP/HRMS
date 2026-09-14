@@ -16,7 +16,8 @@
  * When unconfigured, isConfigured() is false and callers fall back gracefully.
  */
 const crypto = require('crypto');
-const { refreshAccessToken, hasClient } = require('./googleOAuth');
+
+const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 /**
  * Whether the Google OAuth credentials needed for Calendar/Gmail are all present.
@@ -30,42 +31,57 @@ function isConfigured() {
   );
 }
 
+// Cache the short-lived access token until shortly before it expires.
+let cached = { token: null, expiresAt: 0 };
+
 /**
- * Get a valid short-lived OAuth access token for the COMPANY credential
- * (GOOGLE_OAUTH_REFRESH_TOKEN), refreshing when the cached one is missing or
- * within 60s of expiry. Shared by the Calendar service and the company-mailbox
- * path of the Gmail service; a person's own connected mailbox goes through
- * services/googleOAuth.refreshAccessToken with their own token instead.
+ * Get a valid short-lived OAuth access token, refreshing via the refresh-token
+ * grant when the cached one is missing or within 60s of expiry. Shared by the
+ * Calendar and Gmail services.
  * @returns {Promise<string>} A bearer access token.
- * @throws {Error} If the token refresh request fails. `err.permanent` is set on
- *   invalid_grant — the token is expired, revoked, or was issued to different
- *   credentials, and a human has to re-authorise (scripts/getGoogleRefreshToken.js).
- * @sideEffects Network call to Google's OAuth token endpoint; updates the shared cache.
+ * @throws {Error} If the token refresh request fails.
+ * @sideEffects Network call to Google's OAuth token endpoint; updates the module cache.
  */
 async function getAccessToken() {
-  return refreshAccessToken(process.env.GOOGLE_OAUTH_REFRESH_TOKEN, 'company');
+  if (cached.token && Date.now() < cached.expiresAt - 60_000) return cached.token;
+
+  const res = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.access_token) {
+    const detail = json.error_description || json.error || res.status;
+    const err = new Error(`Google OAuth token refresh failed: ${detail}`);
+    // `invalid_grant` means the refresh token is expired, revoked, or was issued
+    // to different credentials. No amount of retrying fixes it — a human has to
+    // re-authorise (scripts/getGoogleRefreshToken.js). Flag it so callers can
+    // stop burning their retry budget on it. NOTE: if the Google Cloud consent
+    // screen is still in "Testing", refresh tokens expire after 7 days; publish
+    // the app to stop this recurring weekly.
+    if (json.error === 'invalid_grant') err.permanent = true;
+    throw err;
+  }
+  cached = { token: json.access_token, expiresAt: Date.now() + (json.expires_in || 3600) * 1000 };
+  return cached.token;
 }
 
 /**
  * Create a Google Calendar event with a Meet link and invite attendees.
- *
- * With `identity` (a person's connected Google account, services/mailIdentity)
- * the event goes on THEIR primary calendar and Google's invitation reaches the
- * attendees from them — the same rule as every other mail they send. Without
- * it, the company calendar (the env refresh token) is used.
- * @param {{summary:string, description?:string, start:Date, end:Date, attendees?:string[],
- *   identity?: {userId:string, refreshToken:string}|null}} opts
+ * @param {{summary:string, description?:string, start:Date, end:Date, attendees?:string[]}} opts
  * @returns {Promise<{meetingLink:string, eventId:string, htmlLink:string}>}
  */
-async function createMeetEvent({ summary, description, start, end, attendees = [], identity = null }) {
-  if (identity ? !hasClient() : !isConfigured()) {
-    throw new Error('Google Calendar is not configured on the server.');
-  }
+async function createMeetEvent({ summary, description, start, end, attendees = [] }) {
+  if (!isConfigured()) throw new Error('Google Calendar is not configured on the server.');
 
-  const token = identity
-    ? await refreshAccessToken(identity.refreshToken, `user:${identity.userId}`)
-    : await getAccessToken();
-  const calendarId = identity ? 'primary' : encodeURIComponent(process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const token = await getAccessToken();
+  const calendarId = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID || 'primary');
 
   const uniqueEmails = [...new Set(attendees.filter((e) => e && /@/.test(e)).map((e) => e.trim().toLowerCase()))];
 
