@@ -258,6 +258,17 @@ connectDB()
         console.warn('WARNING: emailed links are localhost. Anyone outside this machine '
           + 'who receives one cannot open it. Set APP_BASE_URL to the public web app URL.');
       }
+      // Same reasoning for the billing feed, and the same failure mode: without
+      // the key the Billing Incentive tab answers "not configured" and every
+      // billing person's points quietly read as zero across the whole module —
+      // the leaderboard, the Points Dashboard and their own home screen. That is
+      // a 200, not an error, so nothing else would ever say so. It works on a
+      // developer's machine and not on the deployed host, which is exactly the
+      // sort of difference a boot line exists to catch.
+      const billingFeed = require('./services/billingIncentive');
+      console.log(billingFeed.isConfigured()
+        ? `Billing incentive feed: on, from ${billingFeed.firstMonth()}`
+        : 'Billing incentive feed: OFF — BILLING_INCENTIVE_KEY is not set, so billing points count as zero everywhere.');
     });
   })
   .catch((err) => {

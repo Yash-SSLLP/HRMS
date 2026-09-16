@@ -44,6 +44,16 @@ const INCENTIVE_MODULES = [
     hint: 'The daily rolling teams.',
     roles: ['manager', 'picker'],
   },
+  {
+    key: 'billing',
+    label: 'Billing Incentive',
+    // MANAGER ONLY, and there is nothing for a picker to do: the billing team's
+    // work is counted in the billing system, not entered here, so nobody in the
+    // portal puts a team together or records what was done. A manager reads the
+    // figures and can ask for them to be re-fetched; that is the whole tab.
+    hint: 'The billing team\'s invoicing, read live from the billing system. Nothing is entered in the portal.',
+    roles: ['manager'],
+  },
 ];
 
 const INCENTIVE_ROLES = [

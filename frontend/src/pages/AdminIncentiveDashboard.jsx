@@ -19,6 +19,16 @@
  *  3. A DEPARTMENT filter, because the pool is company-wide: Boys is one
  *     incentive today and the roster here is everybody.
  *
+ * THREE SOURCES, ONE POOL. Points arrive from a team-day, from a credit, and
+ * from the billing system — that last one read live, never recorded here, and a
+ * WHOLE MONTH at a time because that is how billing settles. Somebody on the
+ * billing team can have a balance on this screen without ever appearing on a
+ * team, so the columns break the three apart: a total nobody can take apart is a
+ * total people argue with. The billing figures also come with conditions the
+ * others do not have — a month that could not be read, a row whose SSL code
+ * matches nobody here — and those are printed under the tiles rather than left
+ * for somebody to discover by reconciling two systems by hand.
+ *
  * TWO DIFFERENT BENCHES, and the server decides both — the page draws what
  * `can` says and never guesses, so a button on screen is never one the API would
  * refuse:
@@ -143,6 +153,13 @@ export default function AdminIncentiveDashboard() {
 
   const people = data?.people || [];
   const totals = data?.totals || null;
+  // What the billing feed managed to tell us. Defaulted here rather than at each
+  // use: an older answer from before billing existed has no `billing` block at
+  // all, and a screen that threw on it would be a worse bug than a missing note.
+  const billing = data?.billing || null;
+  const billingUnmatched = billing?.unmatched || [];
+  const billingFailed = billing?.failed || [];
+  const billingMonths = billing?.months || [];
 
   // The credit picker, memoised: a modal re-renders on every keystroke and this
   // list is the whole roster.
@@ -282,7 +299,7 @@ export default function AdminIncentiveDashboard() {
     <div>
       <PageHeader
         title="Points Dashboard"
-        subtitle="Everyone, and the points they hold this month — rolled, credited, paid and still owed."
+        subtitle="Everyone, and the points they hold this month — rolled, credited, billed, paid and still owed."
       >
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm" aria-label="Month" />
@@ -335,13 +352,18 @@ export default function AdminIncentiveDashboard() {
           ) : (
             <>
               {totals && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
                   {[
                     ['People', totals.people, totals.earners ? `${totals.earners} with points` : 'nobody has points yet'],
                     ['Points earned', points(totals.points),
                       totals.pending ? `not final — ${totals.pending} team${totals.pending === 1 ? '' : 's'} still to fill in` : ''],
                     ['From teams', points(totals.teamPoints), ''],
                     ['Credited', points(totals.creditPoints), totals.creditPoints ? 'given outside a team' : ''],
+                    // The third source. Read live from the billing system, so it
+                    // is the one tile whose figure can be short — the note under
+                    // these tiles says so when it is.
+                    ['From billing', points(totals.billingPoints),
+                      billing?.configured ? '' : 'billing feed not configured'],
                     ['Still owed', points(totals.unpaidPoints), totals.unpaidPoints ? 'not paid yet' : 'all settled'],
                   ].map(([label, value, hint]) => (
                     <div key={label} className="bg-white shadow rounded-xl px-4 py-3">
@@ -351,6 +373,42 @@ export default function AdminIncentiveDashboard() {
                     </div>
                   ))}
                 </div>
+              )}
+
+              {/* WHAT THE BILLING FIGURE IS WORTH, beside the figure itself.
+                  Every line here is a way the numbers above can be right about
+                  what the portal holds and wrong about what the company earned,
+                  and each one is a thing somebody has to go and fix at the
+                  billing end rather than here. */}
+              {(billingUnmatched.length > 0 || billingFailed.length > 0) && (
+                <div className="mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg space-y-1">
+                  {billingUnmatched.length > 0 && (
+                    <p>
+                      {billingUnmatched.length} billing {billingUnmatched.length === 1 ? 'row' : 'rows'} worth{' '}
+                      {points(billing?.unmatchedPoints)} points could not be matched to anybody in the portal,
+                      so they are in nobody&apos;s balance and nobody will be paid for them. The Billing
+                      Incentive tab lists them — the SSL code is missing or wrong at the billing end.
+                    </p>
+                  )}
+                  {billingFailed.length > 0 && (
+                    <p>
+                      {billingFailed.length === 1 ? 'A month' : `${billingFailed.length} months`} could not be
+                      read from the billing system ({billingFailed.map((f) => f.month).join(', ')}), so every
+                      billing figure here is short by whatever {billingFailed.length === 1 ? 'it' : 'they'} held.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* A part-month range still counts its billing months in full —
+                  said out loud, because the figures then answer a slightly wider
+                  question than the dates on screen. */}
+              {billing?.billingWholeMonths && billingMonths.length > 0 && (
+                <p className="mb-4 text-xs text-gray-500">
+                  A date range counts a billing month whole, because the billing system settles per
+                  month: {billingMonths.join(', ')} {billingMonths.length === 1 ? 'is' : 'are'} in the
+                  billing figures in full.
+                </p>
               )}
 
               {canPay && people.some((x) => x.unpaidPoints > 0) && (
@@ -376,7 +434,12 @@ export default function AdminIncentiveDashboard() {
                         <th className="text-right px-4 py-3 font-medium">Days</th>
                         <th className="text-right px-4 py-3 font-medium">From teams</th>
                         <th className="text-right px-4 py-3 font-medium">Credited</th>
-                        <th className="text-right px-4 py-3 font-medium">Total points</th>
+                        <th className="text-right px-4 py-3 font-medium">From billing</th>
+                        {/* This month's three sources added up, NOT a lifetime
+                            total — "Total Points" means a person's whole
+                            standing on the Leaderboard two rows up the nav, and
+                            two columns with one name would be read as one. */}
+                        <th className="text-right px-4 py-3 font-medium">Points this month</th>
                         <th className="text-right px-4 py-3 font-medium">Paid</th>
                         <th className="text-right px-4 py-3 font-medium">Still owed</th>
                         {(canCredit || canPay) && <th className="px-4 py-3" />}
@@ -414,6 +477,16 @@ export default function AdminIncentiveDashboard() {
                               <span className="text-indigo-700">{points(p.creditPoints)}</span>
                             ) : '—'}
                             {p.credits > 1 ? <div className="text-[11px] text-gray-400">{p.credits} credits</div> : null}
+                          </td>
+                          {/* Read live from the billing system and never
+                              recorded here, which is why it gets its own column
+                              rather than being folded into the teams figure:
+                              somebody on the billing team has a balance without
+                              ever having been on a team. */}
+                          <td className="px-4 py-3 text-right tabular-nums">
+                            {p.billingPoints ? (
+                              <span className="text-teal-700">{points(p.billingPoints)}</span>
+                            ) : '—'}
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">{points(p.points)}</td>
                           <td className="px-4 py-3 text-right tabular-nums text-green-700">{p.paidPoints ? points(p.paidPoints) : '—'}</td>

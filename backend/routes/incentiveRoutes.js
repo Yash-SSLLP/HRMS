@@ -1,13 +1,19 @@
 /**
  * Incentive router — mounted at /api/incentives.
  *
- * The daily rolling incentive: who was on the team, how many sheets they rolled,
- * and what that earns in points.
+ * Most of this file is the BOYS tab, the daily rolling incentive: who was on the
+ * team, how many sheets they rolled, and what that earns in points.
  *
- * It also carries the SECTION-WIDE routes — the points dashboard and the credits
- * — which belong to the incentive section as a whole rather than to the Boys
- * tab, because points are one company-wide pool. They sit above the Boys gate
- * with gates of their own; see the block marked `section` below.
+ * It also carries the SECTION-WIDE routes — the points dashboard, the credits
+ * and the leaderboard — which belong to the incentive section as a whole rather
+ * than to any one tab, because points are one company-wide pool. They sit above
+ * the Boys gate with gates of their own; see the block marked `section` below.
+ *
+ * And it carries the BILLING tab, which is a different animal: its figures are
+ * read live out of the billing system rather than entered here, so it is one
+ * read and a refresh (see controllers/billingIncentiveController.js). Its routes
+ * are also above the Boys gate, for the plain reason that a billing manager has
+ * no role in the Boys tab.
  *
  * TWO ROLES, not one grant (see config/incentiveRoles.js). A MANAGER runs the
  * tab — the rates, the sheet counts, and correcting anything saved. A PICKER
@@ -30,13 +36,15 @@
 const express = require('express');
 const { createUpload } = require('../middleware/upload');
 const ctrl = require('../controllers/incentiveController');
+const billingCtrl = require('../controllers/billingIncentiveController');
 const {
   protect, restrictTo, requireIncentivePayer, requireIncentiveAccess, requireIncentiveManager,
   requireIncentiveCreditor, requireIncentiveSection,
 } = require('../middleware/authMiddleware');
 
-// Everything below the section block is the Boys tab. A second incentive gets
-// its own module key and its own routes; nothing here is shared by accident.
+// The Boys tab's module key. A second incentive gets its OWN key and its own
+// block of routes — see the billing block further down — so nothing here is
+// shared by accident: the gate names the tab it guards, every time.
 const MODULE = 'boys';
 
 const router = express.Router();
@@ -96,6 +104,28 @@ router.get('/leaderboard', ctrl.leaderboard);
 // Its own gate for the same reason: a role in ANY incentive opens it, not a role
 // in this one. What a caller may DO there is narrower still — see below.
 router.get('/dashboard', requireIncentiveSection, ctrl.pointsDashboard);
+// ---- paying people their points. SECTION-WIDE, not the Boys tab's ----------
+//
+// Above the Boys gate because a payment SETTLES POINTS WITHOUT NAMING A MODULE
+// (models/IncentivePayment) — it is one pool, and since the Billing tab arrived
+// most of what is settled was never earned on a team at all. Sitting below that
+// gate, these three needed a role in the Boys tab to reach a handler that pays a
+// billing person. Nobody was actually locked out — requireIncentivePayer is
+// SuperAdmin/HR/CEO/MD and all four are managers of every module — but the
+// routing said something that was not true, and the next role added would have
+// found out the hard way.
+//
+// The gate itself is unchanged and is NARROWER than the rest of this router on
+// purpose: recording the day's work is a supervisor's job, settling it is the
+// company's. Reading the history is behind the same gate — it is the audit trail
+// of what was handed over.
+// GET /payments — every payment in a month.
+router.get('/payments', requireIncentivePayer, ctrl.listPayments);
+// POST /payments — pay people their points for a month, in full or in part.
+router.post('/payments', requireIncentivePayer, ctrl.payPoints);
+// DELETE /payments/:id — undo one payment.
+router.delete('/payments/:id', requireIncentivePayer, ctrl.deletePayment);
+
 // The credits — points handed straight to somebody, outside any team-day.
 // Reading them is part of the dashboard; giving and taking them back is the
 // creditor's bench (HR / CEO / MD / SuperAdmin / manager of all incentives),
@@ -104,6 +134,21 @@ router.get('/dashboard', requireIncentiveSection, ctrl.pointsDashboard);
 router.get('/credits', requireIncentiveSection, ctrl.listCredits);
 router.post('/credits', requireIncentiveCreditor, ctrl.createCredit);
 router.delete('/credits/:id', requireIncentiveCreditor, ctrl.deleteCredit);
+
+// ---------------------------------------------------------------- billing ---
+// The BILLING incentive — a second tab, with its own module key and its own
+// gate. DECLARED HERE, above the Boys gate below, because everything past that
+// line requires a role in the Boys tab and a billing manager holds no such
+// thing; a billing route underneath it would 403 the very people it is for.
+//
+// Its shape is unlike the Boys tab's on purpose. The billing team's work is
+// counted in the billing system, so there is nothing to record, correct or
+// delete — one read, and a refresh that only empties a cache. There is no picker
+// role for the same reason (see config/incentiveRoles.js).
+router.get('/billing', requireIncentiveAccess('billing'), billingCtrl.board);
+// Manager only: a refresh is a call into somebody else's system, and a page that
+// let anybody hammer it is how the billing team ends up revoking the key.
+router.post('/billing/refresh', requireIncentiveManager('billing'), billingCtrl.refreshBoard);
 
 // Past here you need a role in this tab — manager or picker. Which one you hold
 // decides what the handlers let you do.
@@ -140,17 +185,6 @@ router.get('/export.xlsx', ctrl.exportXlsx);
 // POST /import — bulk-record days from a filled-in workbook (multipart `file`).
 // Manager only: an upload carries sheet counts, which is the manager's entry.
 router.post('/import', managerOnly, sheetUpload.single('file'), ctrl.importEntries);
-
-// Paying people their points. A NARROWER gate than the rest of this router on
-// purpose: recording the day's work is a supervisor's job, settling it is the
-// company's. Reading the payment history is behind the same gate — it is the
-// audit trail of what was handed over.
-// GET /payments — every payment in a month.
-router.get('/payments', requireIncentivePayer, ctrl.listPayments);
-// POST /payments — pay people their points for a month, in full or in part.
-router.post('/payments', requireIncentivePayer, ctrl.payPoints);
-// DELETE /payments/:id — undo one payment.
-router.delete('/payments/:id', requireIncentivePayer, ctrl.deletePayment);
 
 // GET /summary — the same range rolled up per person: what each one earned.
 router.get('/summary', ctrl.summary);

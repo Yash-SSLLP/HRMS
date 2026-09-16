@@ -33,6 +33,11 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const Setting = require('../models/Setting');
 const incentiveExcel = require('../services/incentiveExcel');
+// The BILLING incentive's figures, read live out of the billing system rather
+// than recorded here. They belong to the same company-wide points pool as rolled
+// and credited points, so every roll-up below has to add them — see
+// billingByEmployee, which is the one place an SSL code becomes an employee id.
+const billingIncentive = require('../services/billingIncentive');
 const { viewerCompanyScope, employeeProfileScope } = require('../utils/employeeScope');
 const {
   canManageIncentive, incentiveRole, canCreditIncentive, canPayIncentive,
@@ -274,6 +279,87 @@ async function pickablePeople(req) {
 
 /** "Ramesh Kumar" from a populated profile. */
 const fullName = (p) => `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim();
+
+/**
+ * Everybody the caller may see, INCLUDING the people who have left.
+ *
+ * Wider than pickablePeople above, and the difference only started to matter
+ * once points could arrive from outside the portal. Somebody who resigned in
+ * July is on no team today, but the billing system still reports what they
+ * invoiced in June — and if the portal cannot place their SSL code those points
+ * do not vanish, they land in `unmatched` and the totals quietly stop agreeing
+ * with the billing system's. Worse, the moment anything is paid to them the
+ * dashboard renders `0 - paid` as a negative balance.
+ *
+ * So the screens that SETTLE money — the dashboard, the payment check, the
+ * billing tab — resolve billing codes against this list, while the LEADERBOARD
+ * keeps using pickablePeople: a ranking is a standing among current colleagues,
+ * which is the portal-wide rule for who appears in a picker or on a chart.
+ *
+ * @param {import('express').Request} req
+ * @returns {Promise<Object[]>} lean profiles, each with `left` set
+ */
+async function peopleIncludingLeavers(req) {
+  const profiles = await EmployeeProfile.find(employeeProfileScope(req))
+    .select('employeeCode department designation company user dateOfExit')
+    .populate('user', 'firstName lastName isActive')
+    .lean();
+  return profiles.filter((p) => p.user).map((p) => ({ ...p, left: hasDeparted(p.user, p) }));
+}
+
+/**
+ * How many points each person has been paid, over ALL time.
+ *
+ * The lifetime twin of paidByEmployee above, and the second half of "current
+ * points": what somebody holds today is everything they have ever earned less
+ * everything they have ever redeemed, which is not a question any single month
+ * can answer.
+ * @param {import('express').Request} req
+ * @returns {Promise<Map<string, number>>} employee id -> points paid, ever
+ */
+async function lifetimePaidByEmployee(req) {
+  const rows = await IncentivePayment.find(entryScopeFilter(req)).select('employee points').lean();
+  const out = new Map();
+  for (const r of rows) {
+    const key = String(r.employee);
+    out.set(key, Math.round(((out.get(key) || 0) + (r.points || 0)) * 100) / 100);
+  }
+  return out;
+}
+
+/**
+ * Billing points per employee id, for named months or for all time.
+ *
+ * THE ONE PLACE this file turns an SSL code into an employee id. What it returns
+ * is keyed exactly as the entry and credit roll-ups are, so every caller adds
+ * billing as a third `for` pass and changes nothing else about its arithmetic.
+ *
+ * `failed` is never empty for free: a month the billing system could not be
+ * reached for is NOT counted as zero, and each caller decides what to do about
+ * it (a screen says so; the payment check refuses to guess).
+ *
+ * @param {import('express').Request} req
+ * @param {{months?: string[]|null, roster?: Object[]}} [opts] - months null = lifetime
+ * @returns {Promise<{byEmployee: Map<string, number>, unmatched: Object[],
+ *   unmatchedPoints: number, failed: Object[], configured: boolean}>}
+ */
+async function billingByEmployee(req, opts = {}) {
+  if (!billingIncentive.isConfigured()) {
+    return { byEmployee: new Map(), unmatched: [], unmatchedPoints: 0, failed: [], configured: false };
+  }
+  const roster = opts.roster || await peopleIncludingLeavers(req);
+  const feed = opts.months
+    ? await billingIncentive.sumMonths(opts.months)
+    : await billingIncentive.lifetimeByCode();
+  const join = billingIncentive.attachToRoster(feed.byCode, roster, feed.codeless);
+  return {
+    byEmployee: join.byEmployee,
+    unmatched: join.unmatched,
+    unmatchedPoints: join.unmatchedPoints,
+    failed: feed.failed,
+    configured: true,
+  };
+}
 
 /** The snapshot shape stored on an entry's picker/members. */
 const snapshot = (p) => ({
@@ -1498,7 +1584,10 @@ const importEntries = asyncHandler(async (req, res) => {
  *   paidPoints: number, unpaidPoints: number, days: number, lifetimePoints: number}}
  */
 const myPoints = asyncHandler(async (req, res) => {
-  const profile = await EmployeeProfile.findOne({ user: req.user._id }).select('_id').lean();
+  // employeeCode as well as the id: the billing system names people by their
+  // SSL code, so without it this handler could not join a billing person's
+  // points and the home-screen chip would read zero for the whole team.
+  const profile = await EmployeeProfile.findOne({ user: req.user._id }).select('_id employeeCode').lean();
   const empty = {
     hasIncentive: false, month: '', points: 0, paidPoints: 0, unpaidPoints: 0, days: 0, lifetimePoints: 0,
   };
@@ -1543,12 +1632,30 @@ const myPoints = asyncHandler(async (req, res) => {
   const creditTotal = (rows) => Math.round(rows.reduce((s, r) => s + (r.points || 0), 0) * 100) / 100;
 
   const creditPoints = creditTotal(monthCredits);
-  const points = Math.round((share(monthEntries) + creditPoints) * 100) / 100;
+
+  // THE THIRD WAY POINTS ARRIVE, and the only one that is not a document in
+  // this database: the billing system's own figures, matched on the SSL code
+  // above. Left out, this chip would report zero for the entire billing team,
+  // who between them hold more points than everybody else put together.
+  // A month the billing system could not be read for is simply absent — a home
+  // screen is a glance, not a settlement, and `billingUnavailable` says so
+  // rather than pretending the missing month was a zero.
+  const myCode = billingIncentive.normaliseCode(profile.employeeCode);
+  const [billMonth, billLife] = myCode && billingIncentive.isConfigured()
+    ? await Promise.all([
+      billingIncentive.monthByCode(monthParam),
+      billingIncentive.lifetimeByCode(),
+    ])
+    : [{ byCode: new Map(), failed: [] }, { byCode: new Map(), failed: [] }];
+  const billingPoints = paise(billMonth.byCode.get(myCode)?.points || 0);
+  const billingLifetime = paise(billLife.byCode.get(myCode)?.points || 0);
+
+  const points = paise(share(monthEntries) + creditPoints + billingPoints);
   const paidRows = await IncentivePayment.find({
     employee: profile._id,
     period: { $gte: IncentivePayment.monthStart(from), $lte: IncentivePayment.monthStart(to) },
   }).select('points').lean();
-  const paidPoints = Math.round(paidRows.reduce((s, r) => s + (r.points || 0), 0) * 100) / 100;
+  const paidPoints = paise(paidRows.reduce((s, r) => s + (r.points || 0), 0));
 
   res.json({
     // True for anybody with an employee record — see the note above.
@@ -1557,10 +1664,15 @@ const myPoints = asyncHandler(async (req, res) => {
     points,
     // Broken out so a home screen can say WHERE the month's points came from.
     creditPoints,
+    billingPoints,
     paidPoints,
-    unpaidPoints: Math.round((points - paidPoints) * 100) / 100,
+    unpaidPoints: paise(points - paidPoints),
     days: monthEntries.length,
-    lifetimePoints: Math.round((share(allEntries) + creditTotal(allCredits)) * 100) / 100,
+    lifetimePoints: paise(share(allEntries) + creditTotal(allCredits) + billingLifetime),
+    // True when a billing month could not be read, so the figures above are
+    // short by an unknown amount and a screen can say so instead of implying
+    // the person has earned less than they have.
+    billingUnavailable: [...(billMonth.failed || []), ...(billLife.failed || [])].length > 0,
   });
 });
 
@@ -1797,11 +1909,42 @@ const myHistory = asyncHandler(async (req, res) => {
       byName: c.createdByName || '',
     });
   }
+
+  // A FOURTH KIND OF ROW: what the billing system says this person invoiced.
+  //
+  // It is ONE row for the whole month rather than one per day, and that is not
+  // a shortcut — the billing system settles per calendar month, because the
+  // rate band is worked out against the month's volume. There is no honest way
+  // to split it across days, so the row is dated the last day of the month and
+  // says what it is. Its `units` is the working behind the figure, the same job
+  // `sheets` does on a rolling day.
+  const myCode = billingIncentive.normaliseCode(profile.employeeCode);
+  const billMonth = myCode && billingIncentive.isConfigured()
+    ? await billingIncentive.monthByCode(monthParam)
+    : { byCode: new Map(), failed: [] };
+  const billLife = myCode && billingIncentive.isConfigured()
+    ? await billingIncentive.lifetimeByCode()
+    : { byCode: new Map(), failed: [] };
+  const myBilling = billMonth.byCode.get(myCode) || null;
+  const billingPoints = paise(myBilling?.points || 0);
+  if (myBilling && myBilling.points) {
+    rows.push({
+      _id: `billing-${monthParam}`,
+      kind: 'billing',
+      date: to,
+      points: billingPoints,
+      units: myBilling.units || 0,
+      invoices: myBilling.invoices || 0,
+      band: myBilling.band || '',
+      calculation: myBilling.calculation || '',
+      note: 'Billing for the whole month',
+    });
+  }
   rows.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const teamPoints = share(monthEntries);
   const creditPoints = paise(monthCredits.reduce((s, c) => s + (c.points || 0), 0));
-  const points = paise(teamPoints + creditPoints);
+  const points = paise(teamPoints + creditPoints + billingPoints);
   const paidPoints = paise(paidRows.reduce((s, r) => s + (r.points || 0), 0));
 
   res.json({
@@ -1822,24 +1965,52 @@ const myHistory = asyncHandler(async (req, res) => {
       points,
       teamPoints,
       creditPoints,
+      billingPoints,
       paidPoints,
       unpaidPoints: paise(points - paidPoints),
-      days: rows.filter((r) => r.kind !== 'credit').length,
+      // DAYS WORKED, so only the rows that ARE a day count. This was a denylist
+      // of one ('credit'), which meant the billing row — a whole month on one
+      // line — would have been counted as a single day's work. An allowlist
+      // cannot be wrong the same way when a fifth kind of row turns up.
+      days: rows.filter((r) => r.kind === 'rolling' || r.kind === 'nonRolling').length,
       sheets,
       pending,
     },
-    lifetimePoints: paise(share(allEntries) + allCredits.reduce((s, c) => s + (c.points || 0), 0)),
+    lifetimePoints: paise(
+      share(allEntries)
+      + allCredits.reduce((s, c) => s + (c.points || 0), 0)
+      + (billLife.byCode.get(myCode)?.points || 0)
+    ),
+    billingUnavailable: [...(billMonth.failed || []), ...(billLife.failed || [])].length > 0,
   });
 });
 
 /**
  * The leaderboard — everyone the viewer is allowed to see, by points earned.
  *
- * WHAT IS AND IS NOT ON IT. Points earned, days, and a rank. NOT what anybody
- * has been paid or is still owed: that is what the company owes a colleague, it
- * is nobody else's business, and it is the one figure the admin dashboard exists
- * for. NOT rupees either — the whole module counts in points and their rupee
- * value is a company figure (see the module docblock).
+ * WHAT IS ON IT, and the five columns are the same everywhere in the portal —
+ * here, on My Incentive, on both phone screens:
+ *
+ *   Name (SSL code) | Department | Designation | Current Points | Total Points
+ *
+ * TOTAL POINTS is the lifetime figure — everything this person has ever earned,
+ * from every incentive: days they rolled, days their team shared a cut with
+ * them, points credited to them directly, and what the billing system says they
+ * invoiced. CURRENT POINTS is that same total less everything they have redeemed.
+ * THE RANK IS ON TOTAL POINTS, not on the month: a leaderboard that reshuffled
+ * completely on the first of every month was a scoreboard of the last three
+ * weeks, and "who has earned the most here" is the question people actually ask
+ * (user decision 2026-09-16). The month figure is still returned for anything
+ * that wants it, but nothing ranks on it.
+ *
+ * THIS REVERSES AN EARLIER RULE, deliberately and on the record. Until now the
+ * leaderboard showed points EARNED and nothing else, because Total minus Current
+ * tells a colleague what somebody has been paid, and that was held to be nobody
+ * else's business (user decision 2026-09-11). The company has decided the
+ * opposite: a standing is what you have left as well as what you have earned,
+ * and both figures are now shown to everybody the visibility rules already let
+ * see each other (user decision 2026-09-16). What is still NOT here: rupees, a
+ * paid figure by itself, and anybody the viewer may not see at all.
  *
  * WHO IS ON IT is a SuperAdmin's decision, per department
  * (Setting.incentive.leaderboard): IT may be set to see IT and HR and no one
@@ -1917,14 +2088,30 @@ const leaderboard = asyncHandler(async (req, res) => {
       designation: p.designation || '',
       days: 0,
       points: 0,
+      // The two figures the board is columned and ranked on. Lifetime, both.
+      totalPoints: 0,
+      currentPoints: 0,
       isMe: !!profile && String(p._id) === String(profile._id),
     });
   }
 
   const and = [entryScopeFilter(req), dateFilter].filter((f) => Object.keys(f).length);
-  const [entries, credits] = await Promise.all([
+  const companyOnly = [entryScopeFilter(req)].filter((f) => Object.keys(f).length);
+  const [entries, credits, allEntries, allCredits, lifetimePaid, billing] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
     creditsInRange(req, from, to),
+    // EVERY day and EVERY credit, not just this month's — the rank is lifetime
+    // now, so the month's rows cannot answer it. Both collections are small
+    // (a day per team per day), and the alternative is a stored running total
+    // that would drift the first time a team was corrected.
+    IncentiveEntry.find(companyOnly.length ? { $and: companyOnly } : {}).lean(),
+    IncentiveCredit.find(companyOnly.length ? { $and: companyOnly } : {}).select('employee points').lean(),
+    lifetimePaidByEmployee(req),
+    // Billing points are in the same pool and count towards the same total.
+    // Resolved against the LEADERBOARD's roster, so somebody who has left is
+    // not ranked — see peopleIncludingLeavers on why the settling screens use
+    // a wider list than this one.
+    billingByEmployee(req, { roster }),
   ]);
 
   // Somebody who has LEFT is deliberately absent from the roster above and so
@@ -1944,16 +2131,42 @@ const leaderboard = asyncHandler(async (req, res) => {
     row.points = paise(row.points + (c.points || 0));
   }
 
-  // Most points first; ties keep the same rank and are alphabetical among
-  // themselves, so the order is stable between two loads of the same month.
+  // The lifetime total, built the same way over every day and every credit,
+  // plus whatever the billing system has for them.
+  for (const e of allEntries) {
+    for (const p of IncentiveEntry.payees(e)) {
+      const row = byPerson.get(String(p.employee));
+      if (!row) continue;
+      row.totalPoints = paise(row.totalPoints + (p.sharePoints || 0));
+    }
+  }
+  for (const c of allCredits) {
+    const row = byPerson.get(String(c.employee));
+    if (!row) continue;
+    row.totalPoints = paise(row.totalPoints + (c.points || 0));
+  }
+  for (const [id, pts] of billing.byEmployee) {
+    const row = byPerson.get(id);
+    if (!row) continue;
+    row.totalPoints = paise(row.totalPoints + pts);
+  }
+  // What is left after redeeming. Never clamped at zero: a negative figure
+  // means somebody has been paid for points a correction later removed, and
+  // hiding that would hide the only sign of it anybody sees.
+  for (const row of byPerson.values()) {
+    row.currentPoints = paise(row.totalPoints - (lifetimePaid.get(row.employee) || 0));
+  }
+
+  // RANKED ON THE LIFETIME TOTAL. Ties keep the same rank and are alphabetical
+  // among themselves, so the order is stable between two loads.
   const people = [...byPerson.values()]
-    .sort((a, b) => b.points - a.points || String(a.name).localeCompare(String(b.name)));
+    .sort((a, b) => b.totalPoints - a.totalPoints || String(a.name).localeCompare(String(b.name)));
   let rank = 0;
   let lastPoints = null;
   people.forEach((row, i) => {
-    if (lastPoints === null || row.points !== lastPoints) {
+    if (lastPoints === null || row.totalPoints !== lastPoints) {
       rank = i + 1;
-      lastPoints = row.points;
+      lastPoints = row.totalPoints;
     }
     row.rank = rank;
   });
@@ -1965,10 +2178,16 @@ const leaderboard = asyncHandler(async (req, res) => {
     // hunting for the row — and so it is still answerable when they are far
     // enough down the list to be off the top of it.
     me: people.find((p) => p.isMe) || null,
+    // Months the billing system could not be read for. The totals are short by
+    // whatever those held, and a screen says so rather than showing a smaller
+    // number as though it were the answer.
+    billingUnavailable: (billing.failed || []).length > 0,
     totals: {
       people: people.length,
-      earners: people.filter((p) => p.points > 0).length,
+      earners: people.filter((p) => p.totalPoints > 0).length,
       points: paise(people.reduce((s, p) => s + p.points, 0)),
+      totalPoints: paise(people.reduce((s, p) => s + p.totalPoints, 0)),
+      currentPoints: paise(people.reduce((s, p) => s + p.currentPoints, 0)),
     },
   });
 });
@@ -2089,10 +2308,14 @@ const payPoints = asyncHandler(async (req, res) => {
   const monthEnd = new Date(period.getFullYear(), period.getMonth() + 1, 0, 23, 59, 59, 999);
   const and = [entryScopeFilter(req), { date: { $gte: monthStart, $lte: monthEnd } }]
     .filter((f) => Object.keys(f).length);
-  const [entries, credits] = await Promise.all([
+  const monthKey = IncentivePayment.monthKey(period);
+  const [entries, credits, everyone] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
     creditsInRange(req, monthStart, monthEnd),
+    peopleIncludingLeavers(req),
   ]);
+  const billing = await billingByEmployee(req, { months: [monthKey], roster: everyone });
+  const byId = new Map(everyone.map((e) => [String(e._id), e]));
 
   const earned = new Map();
   const who = new Map();
@@ -2114,6 +2337,25 @@ const payPoints = asyncHandler(async (req, res) => {
       });
     }
   }
+  // AND BILLING POINTS, for the same reason twice over. Without this a person
+  // whose whole month was billing is in neither map, so `owed` reads 0 and every
+  // attempt to pay them is refused as an overpayment — and because `who` is also
+  // where the name, code, department and COMPANY on the saved payment come from,
+  // topping up `earned` alone would file a blank row outside the company wall.
+  for (const [key, pts] of billing.byEmployee) {
+    earned.set(key, Math.round(((earned.get(key) || 0) + pts) * 100) / 100);
+    if (!who.has(key)) {
+      const person = byId.get(key);
+      if (!person) continue;
+      who.set(key, {
+        employee: person._id,
+        name: fullName(person),
+        employeeCode: person.employeeCode || '',
+        department: person.department || '',
+        company: person.company || null,
+      });
+    }
+  }
   const already = await paidByEmployee(req, period, period);
 
   const over = [];
@@ -2126,13 +2368,23 @@ const payPoints = asyncHandler(async (req, res) => {
     }
   }
   if (over.length) {
+    // WHY A REFUSAL MIGHT BE WRONG, said out loud. When the billing system could
+    // not be reached, `earned` is short by whatever it holds, so somebody may be
+    // refused points they are genuinely owed. Under-counting can only ever
+    // refuse a payment, never make one too large, so this does not block the
+    // people whose month has nothing to do with billing — it just stops the
+    // refusal reading as a fact about what they earned.
+    const blind = (billing.failed || []).length > 0
+      ? ' The billing system could not be reached, so any billing points this month are missing from that figure.'
+      : '';
     res.status(400);
     return res.json({
       code: 'OVERPAID',
-      message: over.length === 1 && over[0].name
+      message: (over.length === 1 && over[0].name
         ? `${over[0].name} is owed ${over[0].owed} points this month, not ${over[0].asked}.`
-        : `${over.length} of these people would be paid more than they are owed this month.`,
+        : `${over.length} of these people would be paid more than they are owed this month.`) + blind,
       people: over.slice(0, 20),
+      billingUnavailable: (billing.failed || []).length > 0,
     });
   }
 
@@ -2308,12 +2560,23 @@ const pointsDashboard = asyncHandler(async (req, res) => {
   const { filter: dateFilter, from, to } = dateRange(req.query);
   const and = [entryScopeFilter(req), dateFilter].filter((f) => Object.keys(f).length);
 
-  const [entries, credits, roster, settings] = await Promise.all([
+  // The billing months this range covers. A BILLING MONTH CANNOT BE SPLIT (the
+  // rate band is worked out against a whole month's volume), so a range that
+  // covers part of a month counts that month whole and the screen says so —
+  // see `billingWholeMonths` in the answer below.
+  const billingMonths = billingIncentive.monthsBetween(from, to);
+
+  const [entries, credits, roster, settings, everyone] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
     creditsInRange(req, from, to),
     pickablePeople(req),
     incentiveSettings(),
+    // Leavers included, because billing keeps reporting what somebody invoiced
+    // before they resigned and this is the screen where that gets settled.
+    peopleIncludingLeavers(req),
   ]);
+  const billing = await billingByEmployee(req, { months: billingMonths, roster: everyone });
+  const byId = new Map(everyone.map((e) => [String(e._id), e]));
 
   const byPerson = new Map();
   const blank = (over) => ({
@@ -2332,6 +2595,10 @@ const pointsDashboard = asyncHandler(async (req, res) => {
     teamPoints: 0,
     creditPoints: 0,
     credits: 0,
+    // What the billing system says they invoiced in this range. A third way
+    // into the same pool, broken out so the screen can say where a figure came
+    // from — a billing person's whole balance arrives this way.
+    billingPoints: 0,
     points: 0,
     paidPoints: 0,
     unpaidPoints: 0,
@@ -2386,10 +2653,30 @@ const pointsDashboard = asyncHandler(async (req, res) => {
     row.credits += 1;
   }
 
-  // 4. What they have been handed already, and therefore what is still owed.
+  // 4. What the billing system says they invoiced. A person whose entire
+  //    balance arrives this way is on no team and has no credit, so they would
+  //    otherwise not be on this screen at all — hence the catch-up, in the same
+  //    shape as the two above.
+  for (const [key, pts] of billing.byEmployee) {
+    if (!byPerson.has(key)) {
+      const who = byId.get(key);
+      byPerson.set(key, blank({
+        employee: key,
+        name: who ? fullName(who) : '',
+        employeeCode: who?.employeeCode || '',
+        department: who?.department || '',
+        designation: who?.designation || '',
+        left: who ? !!who.left : true,
+      }));
+    }
+    const row = byPerson.get(key);
+    row.billingPoints = Math.round((row.billingPoints + pts) * 100) / 100;
+  }
+
+  // 5. What they have been handed already, and therefore what is still owed.
   const paid = await paidByEmployee(req, from, to);
   for (const [key, row] of byPerson) {
-    row.points = Math.round((row.teamPoints + row.creditPoints) * 100) / 100;
+    row.points = Math.round((row.teamPoints + row.creditPoints + row.billingPoints) * 100) / 100;
     row.paidPoints = paid.get(key) || 0;
     row.unpaidPoints = Math.round((row.points - row.paidPoints) * 100) / 100;
   }
@@ -2445,6 +2732,7 @@ const pointsDashboard = asyncHandler(async (req, res) => {
       points: Math.round(people.reduce((s, p) => s + p.points, 0) * 100) / 100,
       teamPoints: Math.round(people.reduce((s, p) => s + p.teamPoints, 0) * 100) / 100,
       creditPoints: Math.round(people.reduce((s, p) => s + p.creditPoints, 0) * 100) / 100,
+      billingPoints: Math.round(people.reduce((s, p) => s + p.billingPoints, 0) * 100) / 100,
       paidPoints: Math.round(people.reduce((s, p) => s + p.paidPoints, 0) * 100) / 100,
       unpaidPoints: Math.round(people.reduce((s, p) => s + p.unpaidPoints, 0) * 100) / 100,
       // Days still waiting on their sheet count — the figures above are short
@@ -2457,6 +2745,21 @@ const pointsDashboard = asyncHandler(async (req, res) => {
     can: {
       credit: canCreditIncentive(req.user),
       pay: canPayIncentive(req.user),
+    },
+    // WHAT THE BILLING FIGURES ABOVE ARE WORTH, said plainly rather than left
+    // for somebody to infer from a number that looks exact.
+    billing: {
+      configured: billing.configured,
+      // The months counted. A part-month range counted them whole; when that
+      // happened the screen has to say so.
+      months: billingMonths,
+      billingWholeMonths: !!(from || to),
+      // Months that could not be read at all — the totals are short by these.
+      failed: billing.failed,
+      // Billing rows the portal could not place against anybody, with what they
+      // are worth. Printed beside the totals so the two systems reconcile.
+      unmatched: billing.unmatched,
+      unmatchedPoints: billing.unmatchedPoints,
     },
   });
 });
@@ -2641,4 +2944,14 @@ module.exports = {
   createCredit,
   listCredits,
   deleteCredit,
+  // THE POOL'S OWN ARITHMETIC, shared with the Billing tab.
+  //
+  // It lives here rather than in a util because this file IS the points pool —
+  // the dashboard, the leaderboard and the payments are all in it, and a second
+  // copy of "who is on the roster" or "what has this person been paid, ever"
+  // would be a second answer to the same question. billingIncentiveController
+  // imports these; nothing here imports it back, so there is no cycle.
+  peopleIncludingLeavers,
+  lifetimePaidByEmployee,
+  billingByEmployee,
 };

@@ -125,6 +125,7 @@ const AdminCashbook = lazy(() => import('./pages/AdminCashbook.jsx'));
 const EmployeeCashbook = lazy(() => import('./pages/EmployeeCashbook.jsx'));
 const AdminKhata = lazy(() => import('./pages/AdminKhata.jsx'));
 const AdminBoysIncentive = lazy(() => import('./pages/AdminBoysIncentive.jsx'));
+const AdminBillingIncentive = lazy(() => import('./pages/AdminBillingIncentive.jsx'));
 const AdminIncentivePoints = lazy(() => import('./pages/AdminIncentivePoints.jsx'));
 const AdminIncentiveDashboard = lazy(() => import('./pages/AdminIncentiveDashboard.jsx'));
 const AdminIncentiveLeaderboard = lazy(() => import('./pages/AdminIncentiveLeaderboard.jsx'));
@@ -265,6 +266,9 @@ export default function App() {
         {/* CEO/MD self-service khatabook inside the admin portal (they have no employee portal). */}
         <Route path="my-khata" element={<EmployeeKhata />} />
         <Route path="boys-incentive" element={<AdminBoysIncentive />} />
+        {/* The billing team's own incentive — a window onto the billing system
+            rather than anything the portal records. */}
+        <Route path="billing-incentive" element={<AdminBillingIncentive />} />
         <Route path="incentive-points" element={<AdminIncentivePoints />} />
         <Route path="incentive-dashboard" element={<AdminIncentiveDashboard />} />
         {/* The standing itself, over every department. The endpoint decides who
@@ -356,9 +360,10 @@ export default function App() {
             rolling team is an ordinary employee with the standalone grant.
             The backend's incentive.manage gate is the real check. */}
         <Route path="boys-incentive" element={<AdminBoysIncentive />} />
+        <Route path="billing-incentive" element={<AdminBillingIncentive />} />
         <Route path="incentive-points" element={<AdminIncentivePoints />} />
         <Route path="incentive-dashboard" element={<AdminIncentiveDashboard />} />
-        {/* My own points — ungated, unlike the three above it: earning points is
+        {/* My own points — ungated, unlike the four above it: earning points is
             not a capability. */}
         <Route path="my-incentive" element={<EmployeeIncentive />} />
         <Route path="travel" element={<EmployeeTravel />} />

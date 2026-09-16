@@ -217,11 +217,16 @@ Spending is now filed through **My Cashbook**, which covers the same ground agai
 
 If you earn incentive points, this is where they are explained. It has two tabs.
 
-**My points** lists the month day by day, and every row says how the points arrived: a day you were on a rolling team, a day the team you were in shared its cut with you, or points **credited** to you directly with the reason attached. Under the list is what the company has actually paid you this month, so "still owed" is a figure you can check rather than one you have to trust.
+**My points** lists the month day by day, and every row says how the points arrived: a day you were on a rolling team, a day the team you were in shared its cut with you, points **credited** to you directly with the reason attached, or — if you are on the billing team — the month's invoicing. Under the list is what the company has actually paid you this month, so "still owed" is a figure you can check rather than one you have to trust. The month picker at the top of the screen belongs to this tab.
 
-**Leaderboard** ranks you against your colleagues by points earned in the month, with a department filter. Which departments you can see there is set centrally by the Super Admin — it is not the same for everyone, and the note at the bottom of the tab says what your own list covers.
+[!NOTE] Billing points arrive **once a month, as a single row for the whole month**. That is not the portal being slow: the billing system settles per calendar month and works out your band against the whole month's invoicing, so there is no honest way to show half of one. They are worth exactly what every other point is worth, they join the same pool, and they are paid the same way.
 
-[!NOTE] The leaderboard shows points **earned** and nothing else. What a colleague has been paid, or is still owed, is never on it — those figures are yours alone and are on the first tab. Nothing in this screen is shown in rupees: what a point is worth is a company-wide figure applied when you are paid.
+**Leaderboard** ranks you against your colleagues on everything earned **since the beginning**, not on this month. There are five columns — your name with your SSL code, department, designation, **Current Points** and **Total Points** — and no month picker, because neither figure belongs to a month. People on the same total share a rank. The department filter is still there, and which departments you can see is set centrally by the Super Admin — it is not the same for everyone, and the note at the bottom of the tab says what your own list covers.
+
+- **Total Points** is everything you have earned since you started earning points.
+- **Current Points** is what is left of it after everything redeemed — points you have already been paid for come off it.
+
+[!IMPORTANT] This changed in September 2026, and the change was deliberate. The leaderboard used to show points **earned** and nothing else, and this guide promised that what a colleague had been paid was never on it. That promise no longer holds: with Total Points and Current Points side by side, the difference between them is what somebody has been paid. The company decided the standing was worth more than keeping that apart. What is still not on the leaderboard is rupees, a paid figure of its own, and any breakdown of where the points came from — and what a point is worth is a company-wide figure applied when you are paid, not something shown on this screen.
 
 ### 7.6 My Cashbook
 
@@ -390,6 +395,7 @@ Almost everything above is in the Android app, organised under a **Menu**:
 
 - **Time and Attendance** — Leave, Attendance, Regularization, My Roster.
 - **Money** — Payslips, My Cashbook, Travel, Loans.
+- **Incentive** — My Incentive, which is open to everybody who can earn points; Point Rate, Boys Incentive, Billing Incentive and the Points Dashboard are there only if you run an incentive yourself.
 - **Growth** — Tasks, My Interviews, Goals, Reviews, Learning.
 - **Requests and lifecycle** — My Approvals, Change Requests, Complaints, Tax Declaration, Onboarding, Resignation.
 - **Workplace** — Announcements, Surveys, Documents, Assets, Org Chart, and this guide.

@@ -2,11 +2,11 @@
  * AdminIncentiveLeaderboard — who may see whose points on the employee
  * leaderboard (Incentive → Leaderboard Access).
  *
- * The leaderboard on My Incentive ranks colleagues by the points they earned.
- * That is a comparison between people's earnings, so WHO APPEARS ON IT IS A
- * COMPANY DECISION, not something each department settles for itself: IT may be
- * set to see IT and HR and nobody else, Boys only Boys. This page is where the
- * decision is written down.
+ * The leaderboard on My Incentive ranks colleagues by the points they have
+ * earned since they started. That is a comparison between people's earnings, so
+ * WHO APPEARS ON IT IS A COMPANY DECISION, not something each department settles
+ * for itself: IT may be set to see IT and HR and nobody else, Boys only Boys.
+ * This page is where the decision is written down.
  *
  * SUPERADMIN ONLY, and deliberately not behind `incentive.manage` — that
  * capability belongs to whoever runs an incentive tab, and what one department
@@ -14,12 +14,22 @@
  * (restrictTo('SuperAdmin') on both routes), so this page is not the gate, only
  * the door.
  *
- * TWO THINGS IT NEVER GOVERNS, both worth knowing before changing anything here:
- *  · A PERSON'S OWN POINTS. Everybody always sees their own, on the other tab of
- *    My Incentive, whatever is set here. This is only about the comparison.
- *  · WHAT ANYBODY IS OWED. The leaderboard shows points earned and nothing else
- *    — no paid figure, no outstanding figure, no rupees. Those live on the
- *    Points Dashboard.
+ * WHAT A RULE HERE ACTUALLY OPENS UP, because it is more than it used to be. The
+ * leaderboard's five columns are Name (SSL code), Department, Designation,
+ * Current Points and Total Points, both figures counting every month since the
+ * person started: total is everything they have earned, current is what is left
+ * after everything they have redeemed. The difference between the two is
+ * therefore what they have been paid, and for exactly that reason the board was
+ * to carry the total alone (user decision 2026-09-11). That rule stood until the
+ * company reversed it — a standing is what you have left as well as what you
+ * earned (user decision 2026-09-16) — so ticking a box on this page now lets one
+ * department read both figures for another. Still not
+ * on the board, whatever is ticked here: rupees, a paid figure standing on its
+ * own, and any breakdown of where somebody's points came from.
+ *
+ * ONE THING IT NEVER GOVERNS: A PERSON'S OWN POINTS. Everybody always sees their
+ * own, on the other tab of My Incentive, whatever is set here. This is only ever
+ * about the comparison.
  *
  * A viewer's OWN department is always readable to them, so a rule only ever has
  * to name the others; the grid shows it as ticked and disabled rather than
@@ -193,6 +203,22 @@ export default function AdminIncentiveLeaderboard() {
                 </span>
               </span>
             </label>
+
+            {/* WHAT A TICK ON THIS PAGE DISCLOSES, in the place where it is
+                being decided. The board carries two figures now and the gap
+                between them is what somebody has been paid; nobody should have
+                to open the board to find that out. Outside the label above on
+                purpose — reading it should not toggle the setting. */}
+            <p className="text-sm text-gray-500 mt-4 pt-4 border-t border-gray-100">
+              The board lists name and SSL code, department, designation, current points and total
+              points. Both figures count every month since a person started: total is everything
+              they have earned, current is what is left after everything they have redeemed — so the
+              gap between the two is what they have been paid. The company decided on
+              16 September 2026 that a standing is what you have left as well as what you earned;
+              until then the board carried the total alone, for exactly that reason. Rupees, a paid
+              figure on its own, and where anybody&apos;s points came from stay on the Points
+              Dashboard.
+            </p>
           </div>
 
           {enabled && (

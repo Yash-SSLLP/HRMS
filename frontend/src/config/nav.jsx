@@ -124,12 +124,18 @@ export const adminNav = [
       keywords: ['khata', 'advance', 'book', 'books', 'cashbook'] },
     { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
   ] },
-  // The daily rolling incentive. Its own category rather than a row under
-  // Payroll: it is recorded every day by whoever supervised the rolling — a
-  // standalone grant an ordinary supervisor can hold — and nothing in it touches
-  // the payroll module. `keepGroup` keeps it a real dropdown while it holds one
-  // item (see NavList in Layout.jsx): the collapsed form is labelled with the
-  // group name, and "Incentive" on its own does not say which incentive.
+  // TWO UNRELATED INCENTIVES live here, and there will be more: the daily rolling
+  // one the Boys department records for itself, and the billing team's, which is
+  // not recorded in the portal at all — it is read out of the billing system.
+  // What makes them one category is the POINTS: every incentive pays in the same
+  // company-wide points, so the rate, the dashboard and the leaderboards beneath
+  // them are shared no matter how many incentives sit above. Its own category
+  // rather than a row under Payroll: an incentive is run by whoever supervises
+  // the work — a standalone grant an ordinary supervisor can hold — and nothing
+  // in it touches the payroll module. `keepGroup` keeps it a real dropdown even
+  // when permissions leave it holding a single item (see NavList in Layout.jsx):
+  // the collapsed form is labelled with the group name, and "Incentive" on its
+  // own does not say which incentive.
   { group: 'Incentive', icon: FiRotateCw, keepGroup: true, items: [
     // What a point is worth. Its own tab because the figure is COMPANY-WIDE —
     // every incentive is paid in points and converted here — so it does not
@@ -141,6 +147,12 @@ export const adminNav = [
       keywords: ['rolling', 'rollings', 'non rolling', 'non-rolling', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'daily team', 'incentive', 'paid', 'share', 'present'],
       tabs: [{ id: 'entries', label: 'Daily teams' }, { id: 'summary', label: 'Per employee' },
         { id: 'points', label: 'Points per sheet' }] },
+    // The billing team's incentive, which is counted in the billing system and
+    // only READ here — no entry, no correction, no import (see the page). Listed
+    // like any other incentive all the same: the points it produces go into the
+    // same pool as the rolled ones.
+    { to: '/admin/billing-incentive', label: 'Billing Incentive', icon: TbReceipt, perm: 'incentive.manage',
+      keywords: ['billing', 'invoice', 'invoices', 'invoiced', 'units', 'ssl', 'ssl code', 'sales tracker', 'points', 'incentive', 'unmatched'] },
     // Every employee and the points they hold, across every incentive. It sits
     // BELOW the individual tabs in the list but spans all of them: points are one
     // company-wide pool, and this is where the company sees what it owes, credits
@@ -328,7 +340,7 @@ export const employeeNav = [
   { group: 'Incentive', icon: FiRotateCw, keepGroup: true, items: [
     // MY OWN points — the one row in this group that is NOT gated. Everybody
     // who can earn points can read their own, which is the whole reason the
-    // page exists; the three rows under it are for whoever RUNS an incentive.
+    // page exists; the rows under it are for whoever RUNS an incentive.
     { to: '/employee/my-incentive', label: 'My Incentive', icon: FiAward,
       keywords: ['incentive', 'points', 'my points', 'leaderboard', 'rank', 'ranking', 'unpaid', 'earned', 'rolling', 'standing'],
       tabs: [{ id: 'points', label: 'My points' }, { id: 'board', label: 'Leaderboard' }] },
@@ -336,6 +348,11 @@ export const employeeNav = [
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'incentive'] },
     { to: '/employee/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
       keywords: ['rolling', 'rollings', 'non rolling', 'non-rolling', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'incentive', 'paid', 'share', 'present'] },
+    // The billing team's, read out of the billing system rather than recorded
+    // here — the same page the admin portal mounts, for a grant holder with no
+    // admin portal of their own.
+    { to: '/employee/billing-incentive', label: 'Billing Incentive', icon: TbReceipt, perm: 'incentive.manage',
+      keywords: ['billing', 'invoice', 'invoices', 'invoiced', 'units', 'ssl', 'ssl code', 'sales tracker', 'points', 'incentive', 'unmatched'] },
     { to: '/employee/incentive-dashboard', label: 'Points Dashboard', icon: FiBarChart2, perm: 'incentive.manage',
       keywords: ['points', 'dashboard', 'credit', 'credit points', 'bonus', 'award', 'pay', 'payout', 'owed', 'balance', 'incentive', 'department'],
       tabs: [{ id: 'people', label: 'Everyone' }, { id: 'credits', label: 'Credits given' }] },

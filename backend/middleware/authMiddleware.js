@@ -86,7 +86,7 @@ function invalidateScopeCompany(userIds) {
 // the whole promise of the account. Gating each router instead would make the
 // guarantee only as good as the newest route file.
 const { VIEW_ONLY_ROLES, isViewOnlyRole } = require('../utils/visibility');
-const { ALL_MODULES } = require('../config/incentiveRoles');
+const { ALL_MODULES, MODULE_KEYS } = require('../config/incentiveRoles');
 
 /** Is this the permanently view-only audit account? */
 const isViewOnlyAccount = (user) => isViewOnlyRole(user?.role);
@@ -360,7 +360,7 @@ function hasPermission(user, cap) {
   // role per tab (incentiveRole above), because a picker and a manager need
   // different things. `incentive.manage` survives only as the nav's question
   // "does this person have ANY role in an incentive", answered here.
-  if (cap === 'incentive.manage') return canUseIncentive(user, ALL_MODULES) || incentiveRole(user, 'boys') !== null;
+  if (cap === 'incentive.manage') return holdsAnyIncentiveRole(user);
   if (user.role === 'LDManager') return cap === 'courses.manage';
   // Account Managers settle reimbursements out of the cashbook, so they hold the
   // expense capability alongside it.
@@ -579,6 +579,25 @@ function incentiveRole(user, moduleKey) {
   return null;
 }
 
+/**
+ * Does this account hold a role in ANY incentive tab?
+ *
+ * The question the nav asks ("offer the Incentive group at all?") and the one
+ * the section-wide screens ask ("may they open the Points Dashboard?"). It reads
+ * the module CATALOGUE rather than naming a tab, which is the whole point: this
+ * used to say `incentiveRole(user, 'boys')`, so the day a second incentive was
+ * added its manager would have been refused the dashboard listing the very
+ * points they run — and nothing would have pointed at this line.
+ *
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+function holdsAnyIncentiveRole(user) {
+  if (!user) return false;
+  if (canUseIncentive(user, ALL_MODULES)) return true;
+  return MODULE_KEYS.some((key) => key !== ALL_MODULES && incentiveRole(user, key) !== null);
+}
+
 /** May this account RUN this incentive tab — rates, work done, corrections? */
 const canManageIncentive = (user, moduleKey) => incentiveRole(user, moduleKey) === 'manager';
 
@@ -685,7 +704,7 @@ const requireIncentiveCreditor = (req, res, next) => {
  * @sideeffect On denial sets res.status(403) and forwards an Error via next().
  */
 const requireIncentiveSection = (req, res, next) => {
-  if (canUseIncentive(req.user, ALL_MODULES) || incentiveRole(req.user, 'boys') !== null) return next();
+  if (holdsAnyIncentiveRole(req.user)) return next();
   res.status(403);
   return next(new Error('You do not have a role in any incentive. Ask a Super Admin for one.'));
 };

@@ -84,12 +84,39 @@ const PERMISSIONS = [
   // must also be listed on the specific CashAccount (CashAccount.operators).
   { key: 'khata.manage', label: 'Employee cashbook (cash advances & settlements)', group: 'Payroll & Finance' },
   { key: 'travel.manage', label: 'Travel requests', group: 'Payroll & Finance' },
-  // The daily rolling incentive (Incentive → Boys Incentive): who was on the
-  // team, how many rollings they did and what a rolling pays. Its own key rather
-  // than part of payroll.manage — the team is recorded on the floor every day by
-  // whoever was watching, and that person has no business in the payroll module.
-  // Also grantable to any account at all via User.incentiveAccess.
-  { key: 'incentive.manage', label: 'Incentive (daily team rollings)', group: 'Payroll & Finance' },
+  // The whole Incentive menu, which is no longer one incentive: the daily
+  // rolling teams (Boys Incentive), the billing team's invoicing read live from
+  // the billing system (Billing Incentive), what a point is worth (Point Rate)
+  // and the pool all of them pay into (Points Dashboard). One key for the lot
+  // because it is one pool — a point is the same point whichever tab earned it,
+  // and whoever is trusted to run one tab is reading the same company-wide
+  // total as whoever runs the other. Finer than that — a role in ONE tab — is
+  // handed out per account through config/incentiveRoles.js; this key is the
+  // menu, not the tab. Its own key rather than part of payroll.manage: a
+  // rolling team is recorded on the floor every day by whoever was watching,
+  // and that person has no business in the payroll module.
+  //
+  // The label is served to both Permissions screens as the name of the
+  // capability, so it has to say which incentives it opens rather than just the
+  // one that happened to be built first.
+  //
+  // IT IS NOT A GRANT, AND TICKING IT DOES NOTHING. `hasPermission` answers this
+  // key before it ever looks at User.permissions — it returns
+  // holdsAnyIncentiveRole(user) (middleware/authMiddleware.js, mirrored in
+  // frontend/src/config/permissions.js and mobile/src/utils/roles.js) — and no
+  // route gates on it: incentiveRoutes.js uses requireIncentiveAccess,
+  // requireIncentiveManager and restrictTo only. So it is a QUESTION the nav
+  // asks ("does this account hold any incentive role?"), not an answer somebody
+  // stores. Access is handed out per tab in the Incentive column of the same
+  // Permissions page, which writes User.incentiveRoles.
+  //
+  // It stays in this catalogue because the catalogue is also what labels the key
+  // wherever it appears; if that checkbox is ever more confusing than useful, the
+  // fix is to filter it out of getPermissionCatalog, not to make it grant
+  // something. (The older `User.incentiveAccess` boolean is legacy: it is read
+  // once in incentiveRole() so a pre-roles account is not locked out, cleared the
+  // moment a real role is assigned, and given to nobody new.)
+  { key: 'incentive.manage', label: 'Incentive (rolling teams, billing & points)', group: 'Payroll & Finance' },
   { key: 'compliance.view', label: 'Compliance reports', group: 'Payroll & Finance' },
 
   // Performance & learning

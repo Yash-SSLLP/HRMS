@@ -548,7 +548,11 @@ const DAY2 = '2026-09-11';
     // A picker belongs to one tab's daily work, not to the whole section.
     assert.ok(!isValidAssignment(ALL_MODULES, 'picker'));
     assert.ok(!isValidAssignment('boys', 'admin'), 'no role outside the two');
-    assert.ok(!isValidAssignment('billing', 'manager'), 'no tab that does not exist yet');
+    // The Billing tab reads figures out of the billing system; nobody in the
+    // portal enters the work, so there is no team to pick and no picker role.
+    assert.ok(isValidAssignment('billing', 'manager'));
+    assert.ok(!isValidAssignment('billing', 'picker'), 'nothing for a picker to do on a tab with no data entry');
+    assert.ok(!isValidAssignment('accounts', 'manager'), 'no tab that does not exist');
   });
 
   await check('a role resolves the way the catalogue says', async () => {
@@ -1508,26 +1512,61 @@ const DAY2 = '2026-09-11';
     assert.deepStrictEqual(depts, ['Boys'], 'Packing is not on it');
     assert.strictEqual(res.payload.people.length, 4, 'every Boy, including the zeros');
 
-    // Most points first, and the viewer's own row is both flagged and lifted out.
-    assert.strictEqual(res.payload.people[0].points, 19, 'the picker leads');
-    assert.strictEqual(res.payload.people[0].rank, 1);
+    // RANKED ON THE LIFETIME TOTAL, not on the month. This is the assertion
+    // that pins the 2026-09-16 decision: whoever has earned the most here
+    // leads, even in a month somebody else has out-earned them.
+    const board = res.payload.people;
+    for (let i = 1; i < board.length; i += 1) {
+      assert.ok(board[i - 1].totalPoints >= board[i].totalPoints, 'ordered by lifetime total');
+    }
+    assert.strictEqual(board[0].rank, 1);
+    assert.ok(
+      board[0].points < board[1].points,
+      'and the fixture proves it is NOT the month: the leader had a quieter month than the runner-up',
+    );
+
+    // Current points is the total less everything redeemed, so the person who
+    // has been paid holds less than they have earned and nobody else moves.
+    for (const row of board) {
+      assert.ok(row.currentPoints <= row.totalPoints, 'you cannot hold more than you ever earned');
+    }
+    assert.ok(
+      board.some((r) => r.currentPoints < r.totalPoints),
+      'somebody in this fixture has been paid, and the board shows it',
+    );
+
     assert.ok(res.payload.me, 'my own standing is answered separately');
     assert.strictEqual(res.payload.me.isMe, true);
-    assert.strictEqual(res.payload.me.points, 12);
+    assert.strictEqual(res.payload.me.points, 12, "the month figure is still there for anything that wants it");
 
-    // Ties share a rank rather than being ordered arbitrarily.
-    const zeros = res.payload.people.filter((p) => p.points === 0);
-    assert.ok(zeros.length >= 1);
-    assert.strictEqual(new Set(zeros.map((p) => p.rank)).size, 1, 'ties share a rank');
+    // Ties share a rank rather than being ordered arbitrarily — on the figure
+    // the board is actually ranked by.
+    const tied = {};
+    for (const row of board) {
+      tied[row.totalPoints] = tied[row.totalPoints] || new Set();
+      tied[row.totalPoints].add(row.rank);
+    }
+    for (const ranks of Object.values(tied)) {
+      assert.strictEqual(ranks.size, 1, 'the same total is the same rank');
+    }
   });
 
-  await check('a leaderboard never leaks what a colleague is owed', async () => {
+  // WHAT A COLLEAGUE'S ROW MAY SAY — and this contract was deliberately
+  // WIDENED on 2026-09-16. It used to be earned points and nothing else,
+  // because Total minus Current is what somebody has been paid. The company
+  // decided a standing is what you have left as well as what you have earned,
+  // so both figures are now shown. What is still out is everything that turns
+  // points into money, and every per-source breakdown: a ranking is not a
+  // payables list and must not become readable as one.
+  await check('a leaderboard shows what you hold and what you earned, and nothing about money', async () => {
     resetBoard();
     FakeProfile.findOne = () => query(PEOPLE[2]);
     const res = await call(ctrl.leaderboard, { user: STAFF, query: { month: DEC } });
     FakeProfile.findOne = noProfile;
     for (const row of res.payload.people) {
-      for (const banned of ['paidPoints', 'unpaidPoints', 'amount', 'rupees', 'teamPoints', 'creditPoints']) {
+      assert.ok('currentPoints' in row, 'what they hold now');
+      assert.ok('totalPoints' in row, 'what they have ever earned');
+      for (const banned of ['paidPoints', 'unpaidPoints', 'amount', 'rupees', 'teamPoints', 'creditPoints', 'billingPoints']) {
         assert.ok(!(banned in row), `${banned} must never reach a colleague's screen`);
       }
     }
@@ -1637,7 +1676,9 @@ const DAY2 = '2026-09-11';
     assert.strictEqual(staff.payload.unrestricted, false);
     assert.deepStrictEqual(staff.payload.departments, ['Boys'], 'the curtain still applies to colleagues');
 
-    // Widening WHO is listed must not widen WHAT is listed about them.
+    // Widening WHO is listed must not widen WHAT is listed about them. HR reads
+    // the same five columns everybody else does — the paid figure by itself, and
+    // anything in rupees, stay on the Points Dashboard where they belong.
     for (const row of hr.payload.people) {
       for (const banned of ['paidPoints', 'unpaidPoints', 'amount', 'rupees']) {
         assert.ok(!(banned in row), `${banned} is the dashboard's business, not the leaderboard's`);

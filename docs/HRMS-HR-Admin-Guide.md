@@ -353,6 +353,43 @@ Each person has one **wallet** (the company cash they hold) and as many named **
 - **Employees share their own books, and nobody grants it.** The owner of a book can invite colleagues from their own company onto it — up to ten — either to *add entries* or to *only view*, and the invitation has to be accepted before anything opens. This is the one piece of access in the system that is not HR's to give or take away: it belongs to whoever opened the book. It hands nobody any money, because **what a guest spends comes out of their own advance, never the owner's** — the book simply totals what everyone put on it. Removing a member, or a member leaving, never removes their entries; those stay on the book with their name on them.
 - **Reports.** Any book — their own or one shared with them — prints as **All entries**, a **Day-wise summary** or a **Category-wise summary**, as a PDF or an Excel file, over whatever filters are on screen at the time; the filters used are printed on the document. Only approved entries are counted, while rejected and reversed ones are still listed and struck through. None of this needs the export grant: it is the person's own book, not the company ledger, which is what the **Export** switch in the Cashbook column of the Permissions page guards.
 
+### Incentive points
+
+Some teams are paid for what they produce rather than only for being here, and what they produce is counted in **points**. It has its own **Incentive** menu rather than a row under Payroll, because the work is recorded by whoever supervised it — a grant an ordinary supervisor can hold — and nothing in it touches the payroll module.
+
+- **Point Rate** — what one point is worth. A single company-wide figure, because every incentive is earned in points and converted here.
+- **Boys Incentive** — the daily rolling teams: who was on one, how many sheets they rolled, and the share taken off the top for the non-rolling group that day.
+- **Billing Incentive** — the billing team's invoicing, read live from the billing system. Described below.
+- **Points Dashboard** — every employee and the points they hold, across every incentive. This is where extra points are credited by hand with a reason, and where people are paid, in full or in part.
+- **Leaderboard** — the standing, described below.
+
+[!IMPORTANT] The points are **one company-wide pool**. A point earned on a rolling team, a point read from the billing system and a point credited by hand are the same point: they add up on the same Points Dashboard, count on the same leaderboards, and are settled through the same payments. Nothing in this menu is shown in rupees except the Point Rate tab itself.
+
+#### Billing Incentive
+
+The billing team is paid on what it invoices, and the invoices live in the **billing system**, not here. This tab is a window onto those figures joined to the portal's own records: the billing system supplies the name, the SSL code and the points; the portal supplies the department and the designation, which it is the system of record for.
+
+Pick a month and you get a row per person — units, invoices, the band that month landed in, the arithmetic behind it and the points it came to, with their lifetime totals alongside. The month picker offers the months the billing system actually has. Nothing here is entered, imported or corrected in the portal, and no figure from it is stored: a wrong figure is wrong at source, and correcting it in two places would leave it right in neither. The only control that **changes** anything is **Refresh**, which throws away what has already been fetched and asks the billing system again — and it is on the page only for whoever runs the incentive, so somebody who simply reads the tab will not find it. What everybody does get is the **search** box, which narrows the table by name, SSL code or department, and **Export**, which writes out exactly what is on screen, the search included. The unmatched list under the table has an Export of its own and behaves the same way.
+
+- **A month at a time, and the whole month.** The billing system settles per calendar month and works its bands out against a whole month's volume, so a month is the smallest honest slice — there is no answer for the first ten days of September, and a span of months is not the same question as those months added up.
+- **People are matched on their SSL code**, ignoring spaces and punctuation, so "SSL 81", "SSL81" and "ssl-81" are one person.
+- **A month that could not be read is named rather than counted as zero**, because those two are not the same answer and the difference is somebody's money.
+
+[!IMPORTANT] Somebody listed as **unmatched** is somebody the portal could not place: their row in the billing system carries an SSL code nobody here holds, or carries no code at all. Those rows are never dropped silently — they are shown under the table with their points and, where there is an obvious candidate, a suggested match, so the total on screen always reconciles against the billing system's own. **The correction belongs in the billing system**: put that person's SSL code on their record there, then press Refresh. Until it is done their points are credited to nobody — they count towards no one's total, reach no leaderboard, and cannot be paid.
+
+[!NOTE] Where the feed has not been configured the tab says so plainly and shows nothing else. That is a setting rather than a fault: the key that reads the billing system is held at the Backend.
+
+#### The leaderboard
+
+Five columns and nothing else: **Name (SSL code)**, **Department**, **Designation**, **Current Points** and **Total Points**. It is ranked on **Total Points**, and people on the same total share a rank.
+
+- **Total Points** is everything that person has earned since the beginning, from every incentive.
+- **Current Points** is what is left of it after everything redeemed — points already paid out come off it.
+
+There is no month picker on a leaderboard, because neither figure belongs to a month. Employees read the same standing under My Incentive, where which departments they may see is set centrally by the Backend; that curtain is for colleagues comparing earnings and does not apply to the people who settle them, so HR and the executives see the whole company.
+
+[!NOTE] This reverses an earlier rule, and it was reversed on purpose (September 2026). The leaderboard used to show earned points alone, so that nobody could work out what a colleague had been paid by subtracting one figure from the other. The company has decided the standing is worth more than that. Still off the leaderboard: rupees, a standalone paid figure, and any breakdown of which incentive the points came from.
+
 ---
 
 ## 9. Performance and learning
@@ -455,6 +492,7 @@ HR and managers get an admin surface in the Android app as well:
 - **My Approvals** — the same chain inbox as the web, covering leave, regularizations, work-on-leave claims, resignations and clearance.
 - **My Team**, **today's and monthly attendance**, **directory**, **employee detail**, **add employee**, and **work locations**.
 - **Payroll** — list, approve, mark paid, and PDF.
+- **Incentive** — Point Rate, Boys Incentive, Billing Incentive and the Points Dashboard, for whoever holds a role in an incentive. It is its own group rather than a row under Payroll, and it is there whether or not that person has an admin section at all.
 - **Recruitment** — jobs, candidates and interview rounds.
 - **Rewards and Recognition** — pick the winners, save a draft, and announce.
 
@@ -470,6 +508,7 @@ Role gating mirrors the web: HR can write, executives are read-only, and manager
 - **A payslip is not visible to the employee until it is released**, and editing it after release withdraws it again.
 - **You can write your own payslip, but not finish it.** It is frozen until a CEO, MD or the Backend sanctions it, and editing it afterwards puts it back in front of them.
 - **An exit does not deactivate anyone early.** The account stays live through the whole notice period.
+- **Billing points for somebody the portal cannot place are credited to nobody.** They sit in the unmatched list on the Billing Incentive tab until that person's SSL code is put on their record in the billing system. There is nothing to fix on our side, because the portal stores none of those figures.
 - **Removed modules.** The comp-off request workflow, the knowledge base, and the old peer recognition feature are gone. Comp-off survives only as a holiday type and as earned days in payroll.
 
 ---

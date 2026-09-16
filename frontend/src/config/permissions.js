@@ -38,7 +38,12 @@ export function hasPermission(user, cap) {
   // The incentive module is NOT gated by this catalogue any more — it uses a
   // role per tab (incentiveRole below). This key survives only as the nav's
   // question "does this person have ANY role in an incentive".
-  if (cap === 'incentive.manage') return canUseIncentive(user, 'all') || incentiveRole(user, 'boys') !== null;
+  // Reads the CATALOGUE rather than naming a tab: this used to ask only about
+  // 'boys', so the manager of any second incentive was refused the whole nav
+  // group — and nothing would have pointed at this line.
+  if (cap === 'incentive.manage') {
+    return canUseIncentive(user, 'all') || INCENTIVE_TABS.some((key) => incentiveRole(user, key) !== null);
+  }
   if (user.role === 'LDManager') return cap === 'courses.manage';
   // Account Managers settle reimbursements out of the cashbook, so they hold the
   // expense capability alongside it.
@@ -95,7 +100,13 @@ export const canExportKhata = (user) => !!user
 export const INCENTIVE_MODULES = [
   { key: 'all', label: 'All incentives', hint: 'Runs every incentive tab, including ones added later, and can credit points to anybody on the Points Dashboard.', roles: ['manager'] },
   { key: 'boys', label: 'Boys Incentive', hint: 'The daily rolling teams.', roles: ['manager', 'picker'] },
+  // No picker: the billing team's work is counted in the billing system, so
+  // nobody in the portal puts a team together or enters what was done.
+  { key: 'billing', label: 'Billing Incentive', hint: 'The billing team\'s invoicing, read live from the billing system. Nothing is entered in the portal.', roles: ['manager'] },
 ];
+
+/** Every real tab — 'all' is the section-wide assignment, not a tab. */
+const INCENTIVE_TABS = INCENTIVE_MODULES.filter((m) => m.key !== 'all').map((m) => m.key);
 
 export const INCENTIVE_ROLE_LABELS = { manager: 'Manager', picker: 'Picker' };
 
