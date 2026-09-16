@@ -36,9 +36,13 @@ function ask(req) {
   // interceptor with the reason, which is a worse-but-safe outcome; `confirm`
   // is where nearly all of the destructive flows actually gate.
   //
-  // `viewOnlyReads: true` opts an individual confirm out, for one that guards a
-  // read (there are none today).
-  if (req.type === 'confirm' && !req.viewOnlyReads
+  // `allowViewOnly: true` opts an individual confirm out. Two reasons to use it:
+  // a confirm that guards a READ, and — the live case — one that guards one of
+  // the handful of writes a read-only CEO/MD genuinely may make (overruling a
+  // leave request; see EXEC_WRITE_PATHS in api/client.js). The answer here is
+  // "would this account be refused?", and for those it is no, so answering the
+  // question for them would silently disable a power they hold.
+  if (req.type === 'confirm' && !req.allowViewOnly
       && isViewOnly(useAuthStore.getState().user)) {
     // Say so, rather than silently answering "no": a button that does nothing at
     // all when pressed reads as a broken page, which is the complaint this whole

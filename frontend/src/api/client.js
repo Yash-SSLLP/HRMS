@@ -96,7 +96,18 @@ const VIEW_ONLY_POST_ALLOW = [
 // round whose `interviewer` is you (see setMyInterviewRound). Blocking it
 // here would strand every round booked with an executive: they could read the
 // panel notes and never record their own verdict.
-const EXEC_WRITE_PATHS = [/\/incentives(\/|$|\?)/, /\/recruitment\/my-interviews(\/|$|\?)/];
+const EXEC_WRITE_PATHS = [
+  /\/incentives(\/|$|\?)/,
+  /\/recruitment\/my-interviews(\/|$|\?)/,
+  // LEAVE. The server lets a CEO/MD decide any leave request in their company
+  // out of turn, correct one, and rule on an emergency leave — without any
+  // capability and without edit mode, because that decision belongs to the
+  // office rather than to a grant (see leaveController's canOverrideLeave and
+  // assertLeaveReviewer, and the routes mounted above the leave.manage gate).
+  // The backstop must not refuse it one step earlier than the server would.
+  /\/leave\/requests\/[^/]+\/(approve|reject|amend)(\?|$)/,
+  /\/leave\/emergency\/[^/]+\/(review|double-cut)(\?|$)/,
+];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job
 // application, an exit feedback form, a public course. The server does not run

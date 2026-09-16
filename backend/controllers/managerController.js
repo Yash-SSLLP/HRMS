@@ -13,7 +13,7 @@ const { LeaveRequest } = require('../models/Leave');
 const { advanceApproval, grantOneDayLeaveFor } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { haversineMeters } = require('../utils/geo');
-const { lateMinutes, getLatePolicy } = require('../utils/workday');
+const { lateMinutes, getLatePolicy, graceMinutesFor } = require('../utils/workday');
 const {
   computeHeatmapWindow, computeDayDetails, runAttendanceExport,
   buildRestDayClaims, applyRestDayDecision,
@@ -223,7 +223,10 @@ const teamPresence = asyncHandler(async (req, res) => {
   // `today` is midnight IST as an absolute instant, and the policy is an IST
   // wall-clock time, so the cut-off is just that many minutes later — added to
   // the timestamp directly, which is server-timezone agnostic.
-  const cutoffMinutes = (policy.hour * 60) + policy.minute + (policy.graceMinutes || 0);
+  // The window is the one set for THIS day: an exception day moves the cut-off
+  // for everyone, and the alert has to move with it or it cries wolf on exactly
+  // the morning the company was told to take its time.
+  const cutoffMinutes = (policy.hour * 60) + policy.minute + graceMinutesFor(today);
   const cutoffAt = new Date(today.getTime() + cutoffMinutes * 60000);
   // Only TODAY can be "not yet due": a past day is settled and a future one has
   // not happened, so neither should suppress the list.

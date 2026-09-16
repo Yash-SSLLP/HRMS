@@ -11,6 +11,12 @@
  * offsets below are applied straight to it.
  */
 
+// 'YYYY-MM-DD' in IST — the key a per-day grace exception is stored under (see
+// graceMinutesFor). dateHelpers requires nothing, so this cannot cycle back into
+// here; the lazy require inside belowDayMinimum is only lazy because it pulls
+// restDay in alongside, which does.
+const { ymdIST } = require('./dateHelpers');
+
 const WORKDAY_START_HOUR = 10;   // default start: check-in after 10:00 AM IST is late
 const WORKDAY_END_HOUR = 19;     // 7:00 PM IST — assumed close for a missing punch-out
 const HALF_DAY_MIN_HOURS = 6;    // a day under this is a half day until regularized
@@ -164,6 +170,133 @@ function setLatePolicy(p) {
  */
 function getLatePolicy() {
   return { ...latePolicy };
+}
+
+/* ---------------------------------------------------------------------------
+ * PER-DAY GRACE EXCEPTIONS
+ *
+ * The grace window above is the everyday rule — six minutes, say. Some days are
+ * not everyday: a downpour, a transport strike, the morning after a company
+ * function. On those the window has to be wider FOR EVERYONE, and only on that
+ * date. Moving the standing window for a day and moving it back is not the same
+ * thing — somebody has to remember to move it back, and until they do the whole
+ * company is being judged by a rule meant for one morning.
+ *
+ * So an exception is a dated row that REPLACES graceMinutes on its own day
+ * rather than adding to it: "20 minutes on the 14th" means 20, whatever the
+ * standing window is, which is what whoever announced it to the office actually
+ * said. Nothing else about the day moves — the workday still starts at its usual
+ * time (and a person on a shift still starts at theirs), and a late arrival is
+ * still measured from that start, so every "late by" figure keeps answering the
+ * same question.
+ *
+ * Cached HERE, beside latePolicy, because lateMinutes() is synchronous — see the
+ * note above it. Keyed by the IST calendar day, since that is exactly what an
+ * attendance record's `date` is, and held as a 'YYYY-MM-DD' STRING rather than a
+ * Date so no timezone can shift an exception onto the day before it.
+ *
+ * Applied at READ time like the rest of the late rule, so adding an exception
+ * for a day already gone forgives that morning wherever it is still computed —
+ * the lists, the exports, a payroll month not yet run. A month already run is
+ * frozen on its own rows and does not move.
+ * ------------------------------------------------------------------------- */
+
+// A day list is meant to be exceptional. The cap is what stops a stuck client or
+// a pasted spreadsheet turning it into a second calendar; 200 is far more
+// special days than a year can sensibly have.
+const MAX_GRACE_OVERRIDES = 200;
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+let graceOverrides = [];             // the list itself, for editing and display
+let graceOverrideDays = new Map();   // 'YYYY-MM-DD' -> minutes, for the lookup
+
+/**
+ * Coerce a stored/posted exception list into usable rows.
+ *
+ * A row is DROPPED rather than defaulted when its date or its minutes are
+ * unusable. That is the opposite of the choice made everywhere else in this
+ * file, and deliberately so: a bad org-wide value has to become something,
+ * whereas a bad exception can simply not exist — and inventing one, especially
+ * inventing the `graceMinutes: 0` that an empty input coerces to, would mark a
+ * morning's worth of people late on a day somebody meant to forgive.
+ *
+ * A date listed twice is one rule, not two: the last row wins.
+ *
+ * @param {Array<{date: string, graceMinutes: number|string, note?: string}>} list
+ * @returns {Array<object>} normalized rows, oldest date first
+ */
+function normalizeGraceOverrides(list) {
+  if (!Array.isArray(list)) return [];
+  const byDate = new Map();
+  for (const raw of list) {
+    if (!raw) continue;
+    const date = typeof raw.date === 'string' ? raw.date.trim().slice(0, 10) : '';
+    if (!YMD_RE.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00+05:30`))) continue;
+    if (raw.graceMinutes === '' || raw.graceMinutes == null) continue;
+    const mins = Math.trunc(Number(raw.graceMinutes));
+    if (!Number.isFinite(mins)) continue;
+    const row = {
+      date,
+      graceMinutes: Math.min(MAX_GRACE_MINUTES, Math.max(0, mins)),
+      note: typeof raw.note === 'string' ? raw.note.trim().slice(0, 120) : '',
+    };
+    // Who set it and when, carried through untouched: the row is the record of
+    // the decision as well as the rule — see attendanceController's stamping.
+    if (raw.setBy) row.setBy = raw.setBy;
+    if (raw.setByName) row.setByName = String(raw.setByName).trim().slice(0, 80);
+    if (raw.setAt) row.setAt = raw.setAt;
+    byDate.set(date, row);
+  }
+  const rows = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  // Over the cap the LATEST days are the ones worth keeping: the earliest are
+  // spent days nobody is still being judged against.
+  return rows.length > MAX_GRACE_OVERRIDES ? rows.slice(-MAX_GRACE_OVERRIDES) : rows;
+}
+
+/**
+ * Replace the cached exception list. Mirrors setLatePolicy — see
+ * services/latePolicy.js for how the cache is kept in step with the Setting.
+ * @param {Array} list
+ * @returns {Array<object>} the list now in force
+ */
+function setGraceOverrides(list) {
+  graceOverrides = normalizeGraceOverrides(list);
+  graceOverrideDays = new Map(graceOverrides.map((o) => [o.date, o.graceMinutes]));
+  return getGraceOverrides();
+}
+
+/**
+ * The per-day exceptions in force (copies — mutate them freely).
+ * @returns {Array<object>}
+ */
+function getGraceOverrides() {
+  return graceOverrides.map((o) => ({ ...o }));
+}
+
+/**
+ * The grace window that applies on one day: the exception set for it, or the
+ * standing one.
+ *
+ * `date` may be an attendance record's `date` (IST midnight), any instant, or a
+ * 'YYYY-MM-DD' string. 0 is a real answer — a day can legitimately be set to no
+ * window at all — so the lookup tests for the KEY, never for truthiness.
+ *
+ * @param {Date|string|number} [date]
+ * @returns {number} minutes of grace on that day
+ */
+function graceMinutesFor(date) {
+  if (!graceOverrideDays.size || date == null) return latePolicy.graceMinutes;
+  let key;
+  if (typeof date === 'string' && YMD_RE.test(date)) {
+    key = date;
+  } else {
+    const d = new Date(date);
+    if (Number.isNaN(d.getTime())) return latePolicy.graceMinutes;
+    key = ymdIST(d);
+  }
+  const special = graceOverrideDays.get(key);
+  return special === undefined ? latePolicy.graceMinutes : special;
 }
 
 /**
@@ -329,11 +462,16 @@ function shiftEndAt(record) {
  * rule, where a SuperAdmin's change to the grace window applied to unstamped
  * records but not to stamped ones. One value, one behaviour.
  *
+ * Which window that is depends on the DAY: a date with an exception set for it
+ * uses that instead (see graceMinutesFor). The record's own `date` is what is
+ * asked, not today's, so a day is always judged by the rule that applied to it.
+ *
  * @param {{date: Date, shiftStart?: string}} record - the attendance record
  * @returns {Date}
  */
 function lateCutoff(record) {
-  return new Date(shiftStartAt(record).getTime() + latePolicy.graceMinutes * 60000);
+  const grace = graceMinutesFor(record && record.date);
+  return new Date(shiftStartAt(record).getTime() + grace * 60000);
 }
 
 /**
@@ -514,6 +652,11 @@ module.exports = {
   normalizeLatePolicy,
   setLatePolicy,
   getLatePolicy,
+  MAX_GRACE_OVERRIDES,
+  normalizeGraceOverrides,
+  setGraceOverrides,
+  getGraceOverrides,
+  graceMinutesFor,
   lateCutoff,
   workdayStart,
   WORKDAY_END_HOUR,

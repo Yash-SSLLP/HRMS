@@ -84,6 +84,43 @@ const settingSchema = new mongoose.Schema(
       graceMinutes: { type: Number, default: DEFAULT_LATE_POLICY.graceMinutes, min: 0, max: MAX_GRACE_MINUTES },
     },
 
+    // THE DAYS THAT GET THEIR OWN GRACE WINDOW. `latePolicy.graceMinutes` above
+    // is the everyday rule; this is the short list of days that were not
+    // everyday — a downpour, a transport strike, the morning after a company
+    // function — each carrying the window that applied instead, for everyone.
+    //
+    // A row REPLACES the standing window on its date rather than adding to it,
+    // and changes nothing else: the workday still starts when it always does, so
+    // "late by" still measures from there. Same SuperAdmin gate as latePolicy,
+    // for the same reason — a day's window decides who gets charged for arriving
+    // late on it.
+    //
+    // `date` is a 'YYYY-MM-DD' IST day rather than a Date so no timezone can
+    // shift an exception onto the morning before, and `setBy`/`setAt` make each
+    // row the record of who granted it as well as the rule itself.
+    // utils/workday.js holds the copy the late rule actually reads;
+    // services/latePolicy.js keeps the two in step, as it does for latePolicy.
+    graceOverrides: {
+      type: [
+        new mongoose.Schema(
+          {
+            date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+            graceMinutes: { type: Number, required: true, min: 0, max: MAX_GRACE_MINUTES },
+            // Why the day was different. Not required — but it is the only thing
+            // that will explain the row to whoever reads it next year.
+            note: { type: String, trim: true, maxlength: 120, default: '' },
+            setBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+            // The name as well as the id: an account can be renamed or removed,
+            // and the row still has to say who widened the window that morning.
+            setByName: { type: String, trim: true, maxlength: 80, default: '' },
+            setAt: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
+
     // The least a day has to run before it counts as worked at all. Under it the
     // day is marked Absent, which payroll charges as loss of pay — so like
     // latePolicy above this is SuperAdmin-only, and for the same reason: it

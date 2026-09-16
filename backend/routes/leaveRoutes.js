@@ -59,15 +59,21 @@ router.patch('/emergency/:id/review', reviewEmergencyLeave);
 // report's dates should not need the HR capability to do it.
 router.patch('/requests/:id/amend', amendLeaveRequest);
 
+// PATCH /requests/:id/approve · PATCH /requests/:id/reject — decide a request
+// out of turn, whoever's rung it is sitting on. Above the leave.manage gate for
+// the same reason the three routes above are: the handler authorises HR *or* an
+// executive itself (assertMayForceDecision), and a CEO/MD holds no capability
+// while read-only — overruling leave is the office's call, not a grant's. Both
+// still run the company wall, and both write the override to the request's own
+// amendments trail.
+router.patch('/requests/:id/approve', approveRequest);
+router.patch('/requests/:id/reject', rejectRequest);
+
 // HR/Admin — everything below requires the 'leave.manage' permission.
 router.use(requirePermission('leave.manage'));
 
 // GET /requests — list all leave requests; protected, requires 'leave.manage'.
 router.get('/requests', listAllRequests);
-// PATCH /requests/:id/approve — approve a leave request; protected, requires 'leave.manage'.
-router.patch('/requests/:id/approve', approveRequest);
-// PATCH /requests/:id/reject — reject a leave request; protected, requires 'leave.manage'.
-router.patch('/requests/:id/reject', rejectRequest);
 // POST /employees/:profileId/mark — record one day of leave for an employee who
 // is absent, already approved. HR's equivalent of the manager route
 // (POST /manager/team/:profileId/leave): same grant, but walled by company

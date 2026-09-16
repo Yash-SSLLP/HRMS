@@ -58,6 +58,20 @@ const graceEnds12 = (p) => {
   const total = (Number(p?.hour ?? 10) * 60 + Number(p?.minute ?? 0) + Number(p?.graceMinutes || 0)) % (24 * 60);
   return lateTime12({ hour: Math.floor(total / 60), minute: total % 60 });
 };
+// The same answer for one SPECIAL day, whose window replaces the standing one
+// rather than adding to it — so the cut-off time is the only thing that moves.
+const dayEnds12 = (policy, minutes) => graceEnds12({ ...policy, graceMinutes: minutes });
+// A stored exception as the form holds it: numbers as strings, because parsing
+// on every keystroke turns a box being emptied into a "0" under the cursor —
+// and 0 here means "no window at all", the harshest possible misreading of a
+// half-typed number.
+const graceRow = (o = {}) => ({
+  date: o.date || '',
+  graceMinutes: o.graceMinutes == null ? '' : String(o.graceMinutes),
+  note: o.note || '',
+  setByName: o.setByName || '',
+  setAt: o.setAt || null,
+});
 
 // Distance of a punch from the office: metres under 1 km, else km.
 const fmtDist = (m) => (m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`);
@@ -202,6 +216,7 @@ export default function AdminAttendance() {
     office: { lat: 0, lng: 0, label: '' },
     geofenceThresholdM: 200,
     latePolicy: { hour: 10, minute: 0, graceMinutes: 0 },
+    graceOverrides: [],
     minPresentHours: 1,
     lateAllowance: 5,
   });
@@ -324,10 +339,28 @@ export default function AdminAttendance() {
       office: { ...(live.office || {}) },
       geofenceThresholdM: live.geofenceThresholdM,
       latePolicy: { hour: 10, minute: 0, graceMinutes: 0, ...(live.latePolicy || {}) },
+      graceOverrides: (live.graceOverrides || []).map(graceRow),
       minPresentHours: live.minPresentHours ?? 1,
       lateAllowance: live.lateAllowance ?? 5,
     });
   };
+
+  // ---- days with their own grace window ----
+  // A new row starts BLANK rather than on today: a date that was filled in for
+  // you is a date somebody can save without reading, and this one decides who
+  // gets charged for a late arrival.
+  const addGraceDay = () => setSettingsForm((f) => ({
+    ...f,
+    graceOverrides: [...f.graceOverrides, graceRow()],
+  }));
+  const updateGraceDay = (i, patch) => setSettingsForm((f) => ({
+    ...f,
+    graceOverrides: f.graceOverrides.map((row, n) => (n === i ? { ...row, ...patch } : row)),
+  }));
+  const removeGraceDay = (i) => setSettingsForm((f) => ({
+    ...f,
+    graceOverrides: f.graceOverrides.filter((_, n) => n !== i),
+  }));
 
   const useMyLocation = () => {
     if (!('geolocation' in navigator)) {
@@ -373,6 +406,13 @@ export default function AdminAttendance() {
             minute: Number(settingsForm.latePolicy.minute),
             graceMinutes: Number(settingsForm.latePolicy.graceMinutes) || 0,
           },
+          // Half-filled rows are dropped here rather than sent: an empty minutes
+          // box would arrive as 0 — "no window at all" — on a day somebody was
+          // in the middle of forgiving. The server drops them too; this just
+          // means the list you get back is the list you meant.
+          graceOverrides: settingsForm.graceOverrides
+            .filter((o) => o.date && o.graceMinutes !== '')
+            .map((o) => ({ date: o.date, graceMinutes: Number(o.graceMinutes), note: o.note })),
         } : {}),
       });
       setSettings(data);
@@ -876,11 +916,87 @@ export default function AdminAttendance() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
-                  A check-in after <b>{graceEnds12(settingsForm.latePolicy)}</b> is marked late.
+                  A check-in after <b>{graceEnds12(settingsForm.latePolicy)}</b> is marked late
+                  {settingsForm.graceOverrides.length > 0 ? ', except on the days listed below' : ''}.
                   {' '}Payroll allows {settingsForm.lateAllowance} late day
                   {Number(settingsForm.lateAllowance) === 1 ? '' : 's'} a month (set below); each one
                   beyond that costs ₹200 or ₹400.
                 </p>
+
+                {/* ---- Days with their own window ----
+                    One morning is not like the rest — a downpour, a strike, the
+                    day after a company function — and the window has to be wider
+                    for everyone on that date only. Widening the standing window
+                    and remembering to put it back is the thing this replaces. */}
+                <div className="mt-4 pt-3 border-t border-dashed">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h4 className="text-sm font-semibold text-gray-800">Days with their own window</h4>
+                    {isSuperAdmin && (
+                      <button type="button" onClick={addGraceDay}
+                        className="text-sm text-blue-600 hover:underline">+ Add a day</button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    A date here uses its own window instead of the {settingsForm.latePolicy.graceMinutes || 0}-minute
+                    one above — for everyone, on that day alone. The workday still starts at the same
+                    time, so a late arrival is still counted from there.
+                  </p>
+
+                  {settingsForm.graceOverrides.length === 0 ? (
+                    <p className="text-xs text-gray-500 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
+                      No special days. Every day uses the window above.
+                    </p>
+                  ) : (
+                    settingsForm.graceOverrides.map((row, i) => (
+                      <div key={i} className="mt-2 border rounded-lg px-3 py-2 bg-gray-50">
+                        <div className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_auto] gap-2 sm:items-end">
+                          <div>
+                            <label className="block text-[11px] text-gray-500">Date</label>
+                            <input type="date" disabled={!isSuperAdmin} value={row.date}
+                              onChange={(e) => updateGraceDay(i, { date: e.target.value })}
+                              className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-60 disabled:bg-gray-100" />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-gray-500">Window (min)</label>
+                            <input type="number" min="0" max="240" step="1" disabled={!isSuperAdmin}
+                              value={row.graceMinutes}
+                              onChange={(e) => updateGraceDay(i, { graceMinutes: e.target.value })}
+                              className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-60 disabled:bg-gray-100" />
+                          </div>
+                          {isSuperAdmin && (
+                            <button type="button" onClick={() => removeGraceDay(i)}
+                              className="text-sm text-red-600 hover:underline px-1 py-2 justify-self-start sm:justify-self-auto">
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <input type="text" maxLength={120} disabled={!isSuperAdmin} value={row.note}
+                          placeholder="Why this day was different (optional)"
+                          onChange={(e) => updateGraceDay(i, { note: e.target.value })}
+                          className="mt-2 block w-full border rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-60 disabled:bg-gray-100" />
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          {row.date && row.graceMinutes !== '' ? (
+                            <>On this day, late starts at <b>{dayEnds12(settingsForm.latePolicy, row.graceMinutes)}</b>.</>
+                          ) : (
+                            <>Pick a date and a window — a half-filled row is not saved.</>
+                          )}
+                          {row.setByName && (
+                            <> · Set by {row.setByName}{row.setAt ? ` on ${fmtDate(row.setAt)}` : ''}</>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+
+                  {/* Saving keeps the last row for a repeated date, so say so
+                      before it happens rather than after. */}
+                  {settingsForm.graceOverrides.filter((r) => r.date).length
+                    !== new Set(settingsForm.graceOverrides.filter((r) => r.date).map((r) => r.date)).size && (
+                    <p className="text-xs text-amber-700 mt-2">
+                      The same date is listed more than once — only the last window for it will be kept.
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* ---- Day minimum (SuperAdmin only) ---- */}

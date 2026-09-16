@@ -8,7 +8,7 @@ import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
 import LeaveAmendModal from './LeaveAmendModal';
 import { useAuthStore } from '../store/authStore';
-import { hasPermission } from '../config/permissions';
+import { hasPermission, isExecViewer } from '../config/permissions';
 import { promptDialog, confirmDialog } from './dialogs';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
@@ -73,6 +73,39 @@ function ChainProgress({ chain = [] }) {
   );
 }
 
+/**
+ * Every change anybody has made to this leave after it was filed, oldest first.
+ *
+ * Two kinds of line, and telling them apart is the point: an AMENDMENT corrects
+ * the ask (its dates, its type) and leaves the approvers' decision standing,
+ * while an OVERRIDE is somebody deciding over their heads — HR forcing a stuck
+ * request through, or a CEO/MD overruling an outcome. The tag is what lets a
+ * Super Admin pick the second out of a list of the first.
+ *
+ * Shown to everyone who can see the row. The trail is not the sensitive part;
+ * being able to WRITE it is, and that is gated on the server.
+ */
+function AmendTrail({ items = [] }) {
+  if (!items.length) return null;
+  return (
+    <div className="mt-1 space-y-0.5">
+      {items.map((a, i) => (
+        <div key={a.at || i} className="text-[11px] text-gray-500">
+          <span className="text-gray-400">{fmtDate(a.at)}</span>{' '}
+          {a.kind === 'Override' && (
+            <span className="px-1 mr-1 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold uppercase tracking-wide">
+              override
+            </span>
+          )}
+          {a.byName || 'Someone'}
+          {a.byRole ? ` (${a.byRole})` : ''} changed {a.summary}
+          {a.note ? ` — “${a.note}”` : ''}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const empName = (r) => `${r.employee?.user?.firstName || ''} ${r.employee?.user?.lastName || ''}`.trim() || 'Employee';
 
 export default function LeaveApprovalsInbox({ onCount }) {
@@ -89,10 +122,23 @@ export default function LeaveApprovalsInbox({ onCount }) {
   const [tab, setTab] = useState('pending'); // 'pending' | 'emergency' | 'history'
   // The request being edited, or null. One modal for every tab.
   const [amending, setAmending] = useState(null);
-  // The audit grant: see every leave's full trail, and correct one that is
-  // already decided. Without it the Edit button stops at open requests, which is
-  // exactly what the server enforces.
-  const mayEditDecided = hasPermission(useAuthStore.getState().user, 'leave.history');
+  const me = useAuthStore((s) => s.user);
+  // A CEO/MD sees every leave request in their company here, not just the ones
+  // naming them, and may overrule any of them — the server says the same
+  // (leaveController's canOverrideLeave). Read-only elsewhere in the portal;
+  // leave is one of the few decisions the office itself carries.
+  const isExec = isExecViewer(me);
+  // The audit grant does the same for HR: see every leave's full trail, and
+  // correct one that is already decided. Without either, the Edit button stops
+  // at open requests, which is exactly what the server enforces.
+  const mayEditDecided = isExec || hasPermission(me, 'leave.history');
+
+  // Whose turn is it? A request sitting on somebody else's rung can still be
+  // decided — but that is an OVERRIDE, and it goes through the override route,
+  // which records it as one, voids the rungs it jumped and tells those approvers
+  // it happened. The inbox route would simply refuse it: that one only ever
+  // accepts the person whose turn it actually is.
+  const isMyTurn = (r) => String(r.currentApprover || '') === String(me?._id || '');
 
   const load = async () => {
     setLoading(true); setError('');
@@ -114,16 +160,41 @@ export default function LeaveApprovalsInbox({ onCount }) {
 
   useEffect(() => { load(); }, []);
 
-  const decide = async (id, action) => {
-    const note = await promptDialog({ message: `Optional note for ${action}:` });
+  const decide = async (r, action) => {
+    const id = r._id;
+    const mine = isMyTurn(r);
+    // Deciding somebody else's rung is a different act from deciding your own,
+    // so it asks twice: once to be sure, and once for the reason — which is not
+    // optional here, because the approvers who were skipped and the employee are
+    // both told, and "no reason given" is not something either can act on.
+    if (!mine && !(await confirmDialog({
+      title: 'Decide this out of turn?',
+      message: `${empName(r)}'s leave is waiting on someone else. Overriding settles it now, `
+        + 'skips the approvers who had not answered yet, and tells them it went over their heads. '
+        + 'It is recorded against your name.',
+      tone: action === 'reject' ? 'danger' : 'default',
+      confirmText: `Override & ${action}`,
+      // A read-only CEO/MD DOES get to do this one, so the dialog must ask them
+      // rather than answer for them — which is what it does for a view-only
+      // account by default (see dialogs.jsx).
+      allowViewOnly: true,
+    }))) return;
+    const note = await promptDialog({
+      message: mine
+        ? `Optional note for ${action}:`
+        : 'Why are you deciding this out of turn? The approvers and the employee are shown it.',
+    });
     if (note === null) return; // cancelled the prompt
+    if (!mine && !note.trim()) { setError('An override needs a reason.'); return; }
     setBusyId(id); setError('');
     try {
-      await api.patch(`/approvals/leave/${id}/${action}`, { note });
+      await (mine
+        ? api.patch(`/approvals/leave/${id}/${action}`, { note })
+        : api.patch(`/leave/requests/${id}/${action}`, { note }));
       // Take the decided row out of the queue in place. `await load()` here
       // unmounted the entire panel behind a "Loading…" line and dropped the
       // reviewer back at the top of a list they were working down.
-      setPending((prev) => prev.filter((r) => r._id !== id));
+      setPending((prev) => prev.filter((x) => x._id !== id));
       // The history tab still has to catch up, but quietly: never through
       // `loading`, which is what caused the collapse.
       api.get('/approvals/leave?scope=history')
@@ -262,7 +333,9 @@ export default function LeaveApprovalsInbox({ onCount }) {
       {tab === 'pending' && (
         <div>
           {pending.length === 0 ? (
-            <ApprovalsEmpty hint="Leave requests appear here when someone in your reporting line applies." />
+            <ApprovalsEmpty hint={isExec
+              ? 'Every leave request in your company appears here while it is undecided — including the ones waiting on someone else.'
+              : 'Leave requests appear here when someone in your reporting line applies.'} />
           ) : (
             <ul className="divide-y divide-gray-100">
               {pending.map((r) => (
@@ -278,6 +351,10 @@ export default function LeaveApprovalsInbox({ onCount }) {
                       {r.reason ? ` · “${r.reason}”` : ''}
                     </div>
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
+                    {/* A request somebody has already edited is not the request
+                        that was filed, and whoever is about to decide it should
+                        not have to find that out afterwards. */}
+                    <AmendTrail items={r.amendments} />
                   </div>
                   <div className="flex gap-2 shrink-0">
                     {/* Correcting the ask is a third answer alongside yes and
@@ -285,10 +362,17 @@ export default function LeaveApprovalsInbox({ onCount }) {
                         not need rejecting, it needs fixing. */}
                     <button onClick={() => setAmending(r)} disabled={busyId === r._id}
                       className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">Edit</button>
-                    <button onClick={() => decide(r._id, 'approve')} disabled={busyId === r._id}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
-                    <button onClick={() => decide(r._id, 'reject')} disabled={busyId === r._id}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-red-600 hover:bg-red-50 disabled:opacity-50">Reject</button>
+                    {/* The wording changes with whose turn it is, because the act
+                        does: "Approve" answers a question put to you, "Override"
+                        takes one off somebody else's desk. */}
+                    <button onClick={() => decide(r, 'approve')} disabled={busyId === r._id}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
+                      {isMyTurn(r) ? 'Approve' : 'Override & approve'}
+                    </button>
+                    <button onClick={() => decide(r, 'reject')} disabled={busyId === r._id}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-red-600 hover:bg-red-50 disabled:opacity-50">
+                      {isMyTurn(r) ? 'Reject' : 'Override & reject'}
+                    </button>
                   </div>
                 </li>
               ))}
@@ -408,18 +492,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
                         from the decision is the one an audit asks about. Shown
                         to everyone who can see the row: the trail is the point
                         of a history tab, and the GRANT is about changing it. */}
-                    {(r.amendments || []).length > 0 && (
-                      <div className="mt-1 space-y-0.5">
-                        {r.amendments.map((a, i) => (
-                          <div key={a.at || i} className="text-[11px] text-gray-500">
-                            <span className="text-gray-400">{fmtDate(a.at)}</span>{' '}
-                            {a.byName || 'Someone'}
-                            {a.byRole ? ` (${a.byRole})` : ''} changed {a.summary}
-                            {a.note ? ` \\u2014 \\u201c${a.note}\\u201d` : ''}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <AmendTrail items={r.amendments} />
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -461,4 +534,4 @@ export default function LeaveApprovalsInbox({ onCount }) {
   );
 }
 
-export { ChainProgress };
+export { ChainProgress, AmendTrail };

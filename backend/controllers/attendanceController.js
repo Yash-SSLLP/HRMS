@@ -23,6 +23,7 @@ const {
   lateMinutes, statusFromHours, settleStatus, effectiveHours, halfDayCutoffPassed,
   getMinPresentHours, setMinPresentHours, normalizeMinPresentHours,
   getLateAllowance, setLateAllowance, normalizeLateAllowance,
+  getGraceOverrides, setGraceOverrides, normalizeGraceOverrides, graceMinutesFor,
 } = require('../utils/workday');
 const { resolveShiftDay, openShiftRecord } = require('../services/shiftResolver');
 const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow');
@@ -1395,6 +1396,9 @@ const listAll = asyncHandler(async (req, res) => {
       // threshold the next time anyone saved the office address.
       latePolicy: settings.latePolicy,
       minPresentHours: settings.minPresentHours,
+      // For the same reason: the modal posts the whole form back, so a day list
+      // it never received would be a day list it silently cleared on save.
+      graceOverrides: settings.graceOverrides,
     },
   });
 });
@@ -2107,8 +2111,11 @@ const presenceBoard = asyncHandler(async (req, res) => {
   // arithmetic as the manager board, so the two can never disagree about when an
   // absence is worth raising.
   const policy = getLatePolicy();
+  // The grace window asked for is THIS day's: on a day with an exception the
+  // cut-off moves for everyone, and a board that ignored it would start calling
+  // people absent while they were still inside the window they were promised.
   const cutoffAt = new Date(today.getTime()
-    + ((policy.hour * 60) + policy.minute + (policy.graceMinutes || 0)) * 60000);
+    + ((policy.hour * 60) + policy.minute + graceMinutesFor(today)) * 60000);
 
   res.json({
     date: today,
@@ -2321,6 +2328,7 @@ const getSettings = asyncHandler(async (req, res) => {
     geofenceThresholdM: s.geofenceThresholdM,
     attendanceReminders: s.attendanceReminders,
     latePolicy: s.latePolicy,
+    graceOverrides: s.graceOverrides,
     minPresentHours: s.minPresentHours,
     lateAllowance: s.lateAllowance,
     regularizationLimit: s.regularizationLimit,
@@ -2346,10 +2354,11 @@ const canSetRegularizationLimit = (req) => hasExplicitPermission(req.user, 'regu
  * @param {Object} [req.body.office] - {lat, lng, label}
  * @param {number} [req.body.geofenceThresholdM] - clamped >= 0; SuperAdmin only
  * @param {Object} [req.body.latePolicy] - {hour, minute, graceMinutes}; SuperAdmin only
+ * @param {Array} [req.body.graceOverrides] - [{date:'YYYY-MM-DD', graceMinutes, note}]; days with their own window; SuperAdmin only
  * @param {number} [req.body.minPresentHours] - day-minimum hours, 0-6; SuperAdmin only
  * @param {number} [req.body.lateAllowance] - free late arrivals a month, 0-31; SuperAdmin only
  * @param {number} [req.body.regularizationLimit] - regularizations an employee may raise a month, 0-31 (0 = unlimited); needs regularizationHierarchy.manage
- * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy, minPresentHours, lateAllowance, regularizationLimit}}
+ * @returns {{office, geofenceThresholdM, attendanceReminders, latePolicy, graceOverrides, minPresentHours, lateAllowance, regularizationLimit}}
  */
 // PUT /api/attendance/settings  (HR/Admin)
 // Update the office coordinates/label and/or the geofence threshold (metres).
@@ -2406,6 +2415,33 @@ const updateSettings = asyncHandler(async (req, res) => {
     s.latePolicy = normalizeLatePolicy({ ...(s.latePolicy || {}), ...req.body.latePolicy });
   }
 
+  // The days that get their own grace window. Same gate and same reasoning as
+  // the block above: on those days it is this number, not the standing one, that
+  // decides who is charged for arriving late.
+  //
+  // Only touched when the KEY IS PRESENT. Both settings screens post the whole
+  // form back, so a client that predates this list — an older APK, most likely —
+  // would otherwise wipe every exception the moment somebody saved an office
+  // address, and nothing on their screen would have mentioned days at all.
+  if (req.body.graceOverrides !== undefined && req.user.role === 'SuperAdmin') {
+    const before = new Map((s.graceOverrides || []).map((o) => [o.date, o]));
+    s.graceOverrides = normalizeGraceOverrides(req.body.graceOverrides).map((row) => {
+      const prev = before.get(row.date);
+      // A row whose WINDOW is unchanged keeps the name and time it was first
+      // granted under — re-saving the page, or fixing a typo in the note, must
+      // not quietly reassign somebody else's decision to whoever saved last.
+      if (prev && prev.graceMinutes === row.graceMinutes) {
+        return { ...row, setBy: prev.setBy, setByName: prev.setByName, setAt: prev.setAt };
+      }
+      return {
+        ...row,
+        setBy: req.user._id,
+        setByName: req.user.fullName || req.user.firstName || req.user.email || '',
+        setAt: new Date(),
+      };
+    });
+  }
+
   // Same gate, same reasoning, one step further: below this many hours the day is
   // not short, it is absent, and payroll charges the day as loss of pay.
   if (req.body.minPresentHours !== undefined && req.user.role === 'SuperAdmin') {
@@ -2438,11 +2474,13 @@ const updateSettings = asyncHandler(async (req, res) => {
   setLatePolicy(s.latePolicy);
   setMinPresentHours(s.minPresentHours);
   setLateAllowance(s.lateAllowance);
+  setGraceOverrides(s.graceOverrides);
   res.json({
     office: s.office,
     geofenceThresholdM: s.geofenceThresholdM,
     attendanceReminders: s.attendanceReminders,
     latePolicy: getLatePolicy(),
+    graceOverrides: getGraceOverrides(),
     minPresentHours: getMinPresentHours(),
     lateAllowance: getLateAllowance(),
     regularizationLimit: s.regularizationLimit,

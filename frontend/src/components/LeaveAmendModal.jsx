@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
-import { hasPermission } from '../config/permissions';
+import { hasPermission, isExecViewer } from '../config/permissions';
 
 /**
  * Change a leave request's TYPE or DURATION on the employee's behalf.
@@ -23,7 +23,10 @@ export default function LeaveAmendModal({ request, onClose, onSaved }) {
   // Only the audit grant may overrule the approvers, so the field is not even
   // drawn without it — the server refuses it either way.
   const me = useAuthStore((s) => s.user);
-  const maySetStatus = hasPermission(me, 'leave.history');
+  // Changing what the record SAYS HAPPENED overrules the approvers, so it needs
+  // the audit grant — or the office: a CEO/MD carries it without one, the same
+  // rule the server applies (leaveController's canOverrideLeave).
+  const maySetStatus = isExecViewer(me) || hasPermission(me, 'leave.history');
   const [form, setForm] = useState({
     status: request.status,
     leaveType: request.leaveType,

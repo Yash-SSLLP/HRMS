@@ -142,6 +142,18 @@ const leaveRequestSchema = new mongoose.Schema(
         summary: { type: String, trim: true, maxlength: 600 },
         // Why — the employee is shown this.
         note: { type: String, trim: true, maxlength: 500 },
+        // WAS THIS A DECISION OVER SOMEBODY'S HEAD? 'Override' marks an entry
+        // that settled the request out of turn — a CEO/MD or HR deciding while
+        // it was somebody else's rung, or reversing an outcome already given.
+        // 'Amendment' is a correction to the ask itself (its type or its dates)
+        // that leaves the outcome exactly where the approvers put it.
+        //
+        // The distinction is the whole point of the trail: an edit is
+        // housekeeping, an override is authority being used, and only the second
+        // is something a Super Admin should be able to pick out of a list. Rows
+        // written before this existed default to 'Amendment', which is what they
+        // were — the override path did not write here at all.
+        kind: { type: String, enum: ['Amendment', 'Override'], default: 'Amendment' },
       }, { _id: false })],
       default: [],
     },

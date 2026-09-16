@@ -29,7 +29,9 @@ const DocumentChangeRequest = require('../models/DocumentChangeRequest');
 const Payroll = require('../models/Payroll');
 const { CHANGE_INBOX_ROLES } = require('./changeRequestController');
 const { canReadOthersDocs } = require('./documentController');
-const { hasPermission, isPortalViewer, canApproveSelfPayslip } = require('../middleware/authMiddleware');
+const {
+  hasPermission, isPortalViewer, isExecViewer, canApproveSelfPayslip,
+} = require('../middleware/authMiddleware');
 const { scopeEmployeeFilter, scopeUserField } = require('../utils/employeeScope');
 
 /**
@@ -48,6 +50,24 @@ const { scopeEmployeeFilter, scopeUserField } = require('../utils/employeeScope'
  * @returns {boolean}
  */
 const seesAllApprovals = (user) => user?.role === 'SuperAdmin';
+
+/**
+ * Does this account see EVERY leave request, rather than only its own rung?
+ *
+ * The Backend does, for the reason above — and so does a CEO or MD, which is the
+ * one place the rule is wider than seesAllApprovals. Leave deliberately does not
+ * ask an executive to sign each request, but it does let them overrule any of
+ * them (leaveController's canOverrideLeave), and an authority you cannot see the
+ * subject of is not an authority anyone can use. The queue is walled by COMPANY
+ * instead of by rung — see listMyLeaveApprovals.
+ *
+ * Still only leave: exits, regularizations and clearances keep the narrow rule,
+ * because nobody asked for those and widening them would put every resignation
+ * in an inbox that was never meant to hold one.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+const seesAllLeave = (user) => seesAllApprovals(user) || isExecViewer(user);
 
 /**
  * The inbox filter for a chain-driven request type.
@@ -79,7 +99,7 @@ function chainInboxFilter(user, scope) {
  * @returns {Object} a Mongo filter
  */
 function emergencyReviewFilter(user) {
-  const mine = seesAllApprovals(user) ? {} : {
+  const mine = seesAllLeave(user) ? {} : {
     $or: [
       { 'approvalChain.approver': user._id },
       { execsToNotify: user._id },
@@ -147,9 +167,15 @@ function populateLeave(query) {
 const listMyLeaveApprovals = asyncHandler(async (req, res) => {
   await healOrphanChains();
   const scope = ['history', 'emergency'].includes(req.query.scope) ? req.query.scope : 'pending';
-  const filter = scope === 'emergency'
-    ? emergencyReviewFilter(req.user)
-    : chainInboxFilter(req.user, scope);
+  const all = seesAllLeave(req.user);
+  let filter;
+  if (scope === 'emergency') filter = emergencyReviewFilter(req.user);
+  else if (all) filter = scope === 'history' ? {} : { status: 'Pending' };
+  else filter = chainInboxFilter(req.user, scope);
+  // A queue that is not scoped by RUNG has to be scoped by COMPANY instead —
+  // otherwise one company's executive would open the inbox on the other's
+  // people. The Backend is unrestricted and this is a no-op for them.
+  if (all) filter = await scopeEmployeeFilter(req, filter);
   const requests = await populateLeave(LeaveRequest.find(filter));
   res.json({ scope, count: requests.length, requests });
 });
@@ -552,12 +578,22 @@ const countMyApprovals = asyncHandler(async (req, res) => {
   const all = seesAllApprovals(req.user);
   const mine = all ? {} : { currentApprover: me };
   const section = all ? { completed: false } : { assignedTo: me, completed: false };
+  // Leave has its own, wider rule (an executive sees the company's, not their
+  // rung's), and the badge has to be counted with exactly the filter the list
+  // uses or the tab says 3 and opens on 11.
+  const allLeave = seesAllLeave(req.user);
+  const leaveFilter = allLeave
+    ? await scopeEmployeeFilter(req, { status: 'Pending' })
+    : { ...mine, status: 'Pending' };
+  const emergencyFilter = allLeave
+    ? await scopeEmployeeFilter(req, emergencyReviewFilter(req.user))
+    : emergencyReviewFilter(req.user);
   const [leave, emergencyLeave, exits, clearances, regularizations, workOnLeave] = await Promise.all([
-    LeaveRequest.countDocuments({ ...mine, status: 'Pending' }),
+    LeaveRequest.countDocuments(leaveFilter),
     // Its own tally, never folded into `leave`: these are days already taken,
     // waiting only on somebody agreeing they should have been. Same filter the
     // list uses, so the badge and the queue cannot disagree.
-    LeaveRequest.countDocuments(emergencyReviewFilter(req.user)),
+    LeaveRequest.countDocuments(emergencyFilter),
     ExitRequest.countDocuments({ ...mine, status: 'Pending' }),
     ExitRequest.countDocuments({
       status: 'InClearance',
@@ -609,7 +645,12 @@ const countHrApprovals = asyncHandler(async (req, res) => {
   const NONE = Promise.resolve(0);
 
   // GET /leave/requests?status=Pending        (leave.manage)      employee = EmployeeProfile
-  const leaveQ = may('leave.manage')
+  // Counted for an EXECUTIVE too, on the same company wall. They have always
+  // been able to read that list (a portal viewer passes every capability guard
+  // on a GET), and they can now decide from it — so a badge that stayed at 0
+  // while the tab held eleven requests was telling them the opposite of the
+  // truth. Same shape as the document-swap count below.
+  const leaveQ = may('leave.manage') || isExecViewer(req.user)
     ? LeaveRequest.countDocuments(await scopeEmployeeFilter(req, { status: 'Pending' }))
     : NONE;
   // GET /expenses?status=Pending              (expenses.manage)   employee = User

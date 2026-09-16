@@ -20,7 +20,7 @@
 const Setting = require('../models/Setting');
 const {
   setLatePolicy, getLatePolicy, setMinPresentHours, getMinPresentHours,
-  setLateAllowance, getLateAllowance,
+  setLateAllowance, getLateAllowance, setGraceOverrides, getGraceOverrides,
 } = require('../utils/workday');
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -42,6 +42,10 @@ async function refreshLatePolicy() {
     // the same synchronous code, and a second timer for one more number would
     // just be a second thing to forget.
     setLateAllowance(s.lateAllowance);
+    // And the days that get their own grace window. Same singleton, same
+    // synchronous reader (lateMinutes), so the same poll carries it — a day
+    // announced as a 20-minute morning must not depend on a restart to apply.
+    setGraceOverrides(s.graceOverrides);
     return setLatePolicy(s.latePolicy);
   } catch (err) {
     console.error('late policy refresh failed, keeping the cached one:', err.message);
@@ -69,6 +73,14 @@ function startWorker() {
     console.log(allow
       ? `Late allowance loaded: ${allow} free late arrival${allow === 1 ? '' : 's'} per month`
       : 'Late allowance loaded: none — every late arrival is charged');
+    const days = getGraceOverrides();
+    if (days.length) {
+      console.log(
+        `Grace exceptions loaded: ${days.length} day${days.length === 1 ? '' : 's'} `
+        + `with their own window (${days.map((d) => `${d.date}: ${d.graceMinutes}m`).slice(-5).join(', ')}`
+        + `${days.length > 5 ? ', …' : ''})`
+      );
+    }
   });
   intervalHandle = setInterval(refreshLatePolicy, REFRESH_INTERVAL_MS);
   if (intervalHandle.unref) intervalHandle.unref();

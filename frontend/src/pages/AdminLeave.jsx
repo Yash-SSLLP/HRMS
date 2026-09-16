@@ -18,8 +18,8 @@ import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { hasLeft } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
-import { hasExplicitPermission, hasPermission } from '../config/permissions';
-import { ChainProgress } from '../components/LeaveApprovalsInbox';
+import { hasExplicitPermission, hasPermission, isExecViewer } from '../config/permissions';
+import { ChainProgress, AmendTrail } from '../components/LeaveApprovalsInbox';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import LeaveAmendModal from '../components/LeaveAmendModal';
 
@@ -67,8 +67,10 @@ function RequestsTab({ onRefreshing }) {
   // The request being edited, or null.
   const [amending, setAmending] = useState(null);
   // The audit grant: correct a leave that is already decided, and change what
-  // its outcome says. The server enforces the same rule.
-  const mayEditDecided = hasPermission(useAuthStore((s) => s.user), 'leave.history');
+  // its outcome says. A CEO/MD holds the same power by office rather than by
+  // grant. The server enforces the same rule (leaveController's canOverrideLeave).
+  const me = useAuthStore((s) => s.user);
+  const mayEditDecided = isExecViewer(me) || hasPermission(me, 'leave.history');
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
 
@@ -76,9 +78,23 @@ function RequestsTab({ onRefreshing }) {
   // "Leave Approvals" page). This force-decides a stuck request regardless of
   // whose turn it is — a safety valve, so confirm before using it.
   const decide = async (id, action) => {
-    if (!(await confirmDialog({ message: `Override the reporting hierarchy and force-${action} this request?`, tone: 'danger', confirmText: `Force ${action}` }))) return;
-    const note = await promptDialog({ message: `Optional note for the override ${action}:`, initialValue: '' });
+    // allowViewOnly: a read-only CEO/MD may force this decision — the server
+    // says so — and a confirm that answered itself would take that away.
+    if (!(await confirmDialog({
+      message: `Override the reporting hierarchy and force-${action} this request?`,
+      tone: 'danger',
+      confirmText: `Force ${action}`,
+      allowViewOnly: true,
+    }))) return;
+    // Required, not optional: the approvers who were skipped and the employee
+    // are both told, and the line this writes to the request's trail is what a
+    // Super Admin reads afterwards to find out why it was taken out of turn.
+    const note = await promptDialog({
+      message: `Why is it being force-${action === 'approve' ? 'approved' : 'rejected'}? The approvers and the employee are shown this.`,
+      initialValue: '',
+    });
     if (note === null) return;
+    if (!note.trim()) { toast.error('An override needs a reason.'); return; }
     try {
       await api.patch(`/leave/requests/${id}/${action}`, { note });
       await load();
@@ -213,6 +229,11 @@ function RequestsTab({ onRefreshing }) {
                       {r.decisionAt ? ` · ${fmtDate(r.decisionAt)}` : ''}
                     </div>
                   )}
+                  {/* Who has changed this request since it was filed, and which
+                      of those changes were somebody overruling the approvers.
+                      This page is where the whole company's leave is reviewed,
+                      so it is where that question gets asked. */}
+                  <AmendTrail items={r.amendments} />
                 </td>
                 <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                   {/* Correcting a request is not an override and carries no
@@ -226,7 +247,7 @@ function RequestsTab({ onRefreshing }) {
                   )}
                   {r.status === 'Pending' && (
                     <>
-                      <div className="text-[11px] text-gray-400 mb-1">HR override</div>
+                      <div className="text-[11px] text-gray-400 mb-1">Override</div>
                       <button onClick={() => decide(r._id, 'approve')} className="text-green-700 hover:underline">Force approve</button>
                       <button onClick={() => decide(r._id, 'reject')} className="text-red-600 hover:underline">Force reject</button>
                     </>

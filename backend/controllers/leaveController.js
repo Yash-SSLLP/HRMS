@@ -18,10 +18,38 @@ const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
 const { enqueueMail } = require('../services/email');
 const { notify, notifyMany, notifyBackend } = require('../services/notify');
-const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audience');
+const { usersHoldingAny, usersInRoles, scopeRecipientsToCompany } = require('../services/audience');
 const { daysInclusive, currentYear, startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 const { daysOnPayroll, prorateAllowance } = require('../utils/monthlyQuota');
-const { hasPermission } = require('../middleware/authMiddleware');
+const { hasPermission, isExecViewer } = require('../middleware/authMiddleware');
+
+/**
+ * May this account overrule a leave decision — decide one that is somebody
+ * else's turn, or reverse an outcome already given?
+ *
+ * TWO KINDS OF HOLDER, for two different reasons:
+ *
+ *  · A CEO or MD, by virtue of the office. Leave deliberately does not ask them
+ *    to sign each request (see NON_APPROVER_ROLES — a ladder that ended at the
+ *    MD would put every holiday on the MD's desk), but not being asked is not
+ *    the same as not being able to answer. They are told about every request in
+ *    their company and can take any of them out of the ladder. This holds
+ *    whether or not a Super Admin has switched the account into edit mode:
+ *    overruling leave is the executive's own call, the same exception cash
+ *    advances already make (see canApproveAdvances).
+ *  · Anyone holding `leave.history`, the audit grant, which is what has always
+ *    let HR correct a settled record.
+ *
+ * Every use of it is written to the request's own `amendments` trail as an
+ * Override, and the status change is picked up by the portal audit log on top of
+ * that — so "who overruled this, and why" is answerable from the record itself.
+ *
+ * It is NOT a read gate: who may SEE a request is a separate question, answered
+ * by assertLeaveReviewer and by the company wall.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+const canOverrideLeave = (user) => isExecViewer(user) || hasPermission(user, 'leave.history');
 
 // Company leave policy: 2 PAID leave days per calendar month, settled monthly
 // (no carry-forward). Any leave day beyond the 2/month quota is Loss of Pay
@@ -235,6 +263,28 @@ async function buildLeaveRouting(profile) {
     else chain.push(hr);
   }
 
+  // EVERY executive in the company, not only the ones this applicant happens to
+  // sit under on the chart. A CEO/MD can overrule any leave decision in their
+  // company (canOverrideLeave), and hearing only about their own reports' leave
+  // would have made that a power they could not use without going looking for
+  // it. Company-walled like every other fan-out, so one company's leave never
+  // reaches the other's executive.
+  //
+  // Best-effort: a failure here must not stop somebody applying for leave. The
+  // approvals inbox asks the same question by role at read time, so an executive
+  // still sees the request even if this list was never written.
+  try {
+    const everyExec = await scopeRecipientsToCompany(
+      await usersInRoles(...NON_APPROVER_ROLES),
+      profile.company
+    );
+    for (const id of everyExec) {
+      if (!execsToNotify.some((x) => String(x) === String(id))) execsToNotify.push(id);
+    }
+  } catch (err) {
+    console.error('exec leave routing failed:', err.message);
+  }
+
   chain.forEach((step, i) => { step.order = i; step.status = 'Waiting'; });
   return { chain, execsToNotify, hrApprover: hr };
 }
@@ -344,6 +394,59 @@ async function notifyChainQueued(request, chain, applicantName) {
 // Tell the applicant that ONE rung of the ladder has decided, while the request
 // is still travelling. Without this the employee heard nothing between applying
 // and the final decision, which on a 3-rung chain can be days of silence.
+/**
+ * Tell the executives that a leave has been FILED.
+ *
+ * The same KIND of notice notifyChainQueued sends the managers further up the
+ * ladder — here is a request, somebody else is answering it — and sent for the
+ * same reason: being in the loop from the start rather than at the outcome.
+ *
+ * What makes it worth sending to an executive in particular is that they can
+ * actually answer it (canOverrideLeave). Hearing only once a request had been
+ * decided would leave them holding a power they could use only by accident, and
+ * the queue alone would mean going to look.
+ *
+ * Every CEO/MD in the employee's company sits on `execsToNotify`
+ * (buildLeaveRouting), so this reaches all of them and nobody else. In-app only:
+ * an ordinary application is not the emergency leave above, which mails them
+ * because the days have already been taken.
+ *
+ * Best-effort — a notification must never be the reason an application fails.
+ *
+ * @param {Object} request - the saved LeaveRequest
+ * @param {string} applicantName
+ * @param {*} actorId - whoever filed it; never notified about their own request
+ * @returns {Promise<void>}
+ */
+async function notifyExecsFiled(request, applicantName, actorId) {
+  try {
+    const ids = new Set((request.execsToNotify || []).map(String));
+    if (actorId) ids.delete(String(actorId));
+    if (!ids.size) return;
+    const fmt = (d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const span = String(request.startDate) === String(request.endDate)
+      ? fmt(request.startDate)
+      : `${fmt(request.startDate)} – ${fmt(request.endDate)}`;
+    const days = `${request.totalDays} day${request.totalDays === 1 ? '' : 's'}`;
+    // Whose turn it is right now, by name — the one fact that tells an executive
+    // whether this needs them at all.
+    const withWhom = (request.approvalChain || []).find((s) => s.status === 'Pending')?.approverName;
+    await notifyMany([...ids], {
+      type: 'leave',
+      audience: 'admin',
+      title: 'Leave applied',
+      body: `${applicantName} has applied for ${leaveLabel(request.leaveType)} (${days}, ${span}).`
+        + (withWhom
+          ? ` It is with ${withWhom} to approve.`
+          : ' There is nobody above them on the chart, so HR will decide it.')
+        + ' No action is needed — you are told because you can decide it yourself if you want to.',
+      link: 'approvals',
+    });
+  } catch (err) {
+    console.error('exec leave-filed notify failed:', err.message);
+  }
+}
+
 async function notifyEmployeeStep(request, step, next, note) {
   try {
     const prof = await EmployeeProfile.findById(request.employee).select('user');
@@ -442,8 +545,10 @@ async function notifyHrInformational(request, verb, actorId, excludeIds = []) {
     // A CEO/MD switched into edit mode holds every capability, so taking them
     // OFF the chain quietly moved them INTO this capability-derived audience —
     // they started hearing the applied/rejected/cancelled chatter the chain
-    // exclusion used to spare them. Their one touchpoint is the outcome notice
-    // (notifyExecsFinalApproval); this keeps it that way.
+    // exclusion used to spare them. The executives have notices of their own —
+    // one when a request is filed (notifyExecsFiled) and one at the outcome
+    // (notifyExecsFinalApproval) — so this keeps them to those two rather than
+    // letting them hear the same events twice.
     for (const id of request.execsToNotify || []) ids.delete(String(id));
     if (actorId) ids.delete(String(actorId));
     const applicantUserId = prof?.user?._id || prof?.user;
@@ -1332,6 +1437,14 @@ const applyForLeave = asyncHandler(async (req, res) => {
       console.error('no-chain HR notify failed:', err.message);
     }
   }
+  // OUTSIDE the branch on purpose: an executive hears about every application in
+  // their company, including one filed by somebody with no manager at all —
+  // which is exactly the request most likely to sit unanswered.
+  //
+  // Emergency leave never reaches here (it returns above, already granted);
+  // notifyEmergencyTaken tells the same executives, and mails them too, because
+  // by then the days have been taken rather than asked for.
+  await notifyExecsFiled(request, applicantName, req.user._id);
 
   res.status(201).json({ request, split: { paidDays: split.paidDays, lopDays: split.lopDays, perMonth: split.perMonth } });
 });
@@ -1410,18 +1523,23 @@ async function assertLeaveReviewer(req, res, request, action) {
     .some((s) => s.approver && String(s.approver) === String(req.user._id))
     || (request.execsToNotify || []).some((id) => String(id) === String(req.user._id));
   const isHrActor = hasPermission(req.user, 'leave.manage');
-  if (!isHrActor && !onLadder) {
+  // A CEO/MD reaches every request in their company whether or not this one
+  // names them. Requests filed before executives were routed onto all of them
+  // carry a short `execsToNotify`, and an executive's authority over a leave
+  // cannot depend on which list a request was stamped with months ago.
+  const isExec = isExecViewer(req.user);
+  if (!isHrActor && !onLadder && !isExec) {
     res.status(403);
-    throw new Error(`Only this employee's managers or HR can ${action}.`);
+    throw new Error(`Only this employee's managers, HR or an executive can ${action}.`);
   }
-  if (isHrActor && !onLadder) {
+  if ((isHrActor || isExec) && !onLadder) {
     const prof = await EmployeeProfile.findById(request.employee).select('hrPartner company');
     if (cannotManageProfile(req, prof)) {
       res.status(403);
       throw new Error('You can only manage employees assigned to you');
     }
   }
-  return { onLadder, isHrActor };
+  return { onLadder, isHrActor, isExec };
 }
 
 const setDoubleCut = asyncHandler(async (req, res) => {
@@ -1670,7 +1788,7 @@ const amendLeaveRequest = asyncHandler(async (req, res) => {
   // than the day-to-day one. Pending and Approved stay open to any manager on
   // the ladder, which is what makes fixing a typo cheap.
   const decided = ['Rejected', 'Cancelled'].includes(request.status);
-  if (decided && !hasPermission(req.user, 'leave.history')) {
+  if (decided && !canOverrideLeave(req.user)) {
     res.status(403);
     throw new Error(`This leave is ${request.status.toLowerCase()}. Correcting a decided leave needs the "All leave history" permission.`);
   }
@@ -1732,7 +1850,7 @@ const amendLeaveRequest = asyncHandler(async (req, res) => {
     // Changing the OUTCOME is the audit act — it overrules the approvers — so it
     // needs the same grant that correcting a decided leave does, even when the
     // request being changed is still open.
-    if (!hasPermission(req.user, 'leave.history')) {
+    if (!canOverrideLeave(req.user)) {
       res.status(403);
       throw new Error('Changing a leave\'s status needs the "All leave history" permission.');
     }
@@ -1811,6 +1929,10 @@ const amendLeaveRequest = asyncHandler(async (req, res) => {
   const byName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
   request.amendments.push({
     at: new Date(), by: req.user._id, byName, byRole: req.user.role, summary, note,
+    // Changing the OUTCOME is an override — somebody overruled what the
+    // approvers said. Changing only the dates or the type is a correction to the
+    // ask, and leaves their decision standing.
+    kind: changedStatus ? 'Override' : 'Amendment',
   });
 
   if (willBeApproved) {
@@ -2358,10 +2480,12 @@ async function notifyExecsFinalApproval(request, actorId) {
   }
 }
 
-// HR/SuperAdmin emergency OVERRIDE — force a final decision regardless of where
-// the request sits in the chain (safety valve for stuck requests). Records an
-// override rung and voids any pending/waiting rungs. Mutates + saves; throws
-// Error with `.status` on a bad transition or insufficient balance.
+// HR / SuperAdmin / CEO / MD OVERRIDE — force a final decision regardless of
+// where the request sits in the chain (a safety valve for stuck requests, and
+// the executive's standing authority over any leave in their company). Records
+// an override rung, an entry in the request's own `amendments` trail, and voids
+// any pending/waiting rungs. Mutates + saves; throws Error with `.status` on a
+// bad transition or insufficient balance.
 async function applyLeaveDecision(request, userId, action, note) {
   if (request.status !== 'Pending') {
     const err = new Error(`Cannot ${action} from status ${request.status}`);
@@ -2403,10 +2527,37 @@ async function applyLeaveDecision(request, userId, action, note) {
   request.approver = userId;
   request.decisionAt = new Date();
   request.decisionNote = note;
+  // ...and the same fact on the trail the screens read, so one list answers
+  // "who has overruled this request, and why" whether the override settled a
+  // pending request (here) or reversed a settled one (amendLeaveRequest). The
+  // chain rung above says it happened; this says it in words, next to every
+  // other change anybody has made to this leave.
+  (request.amendments = request.amendments || []).push({
+    at: new Date(),
+    by: userId,
+    byName: actorName || '',
+    byRole: actor?.role || '',
+    kind: 'Override',
+    summary: `status Pending → ${request.status}`
+      + (overridden.length
+        ? `, over ${overridden.length} pending approver${overridden.length === 1 ? '' : 's'}`
+        : ''),
+    note: note || '',
+  });
   await request.save();
   if (action === 'approve') await stampLeaveAttendance(request);
   await notifyEmployeeDecision(request, note);
-  await notifyChainVoided(request, overridden, `${action === 'approve' ? 'approved' : 'rejected'} by HR override`);
+  // NAMED, not "by HR override". The people being told are the approvers whose
+  // turn it was, and the one thing they want from the notice is who took the
+  // decision off their desk — which is no longer always HR now that a CEO/MD can
+  // do it. The role is worth carrying too: "by Priya S (MD)" and "by Priya S
+  // (HRManager)" are not the same fact to a manager reading it.
+  await notifyChainVoided(
+    request,
+    overridden,
+    `${action === 'approve' ? 'approved' : 'rejected'} by ${actorName || 'HR'}`
+      + `${actor?.role ? ` (${actor.role})` : ''}`
+  );
   // An override approval is still a final approval, so the SuperAdmin-named HR
   // recipients get the detailed notice — then they are excluded from the generic
   // one below rather than hearing about the same event twice.
@@ -2414,7 +2565,8 @@ async function applyLeaveDecision(request, userId, action, note) {
     action === 'approve' ? await notifyHrFinalApproval(request, userId, { configuredOnly: true }) : [];
   await notifyHrInformational(
     request,
-    `${action === 'approve' ? 'approved' : 'rejected'} (HR override)`,
+    `${action === 'approve' ? 'approved' : 'rejected'} (override by ${actorName || 'HR'}`
+      + `${actor?.role ? ` (${actor.role})` : ''})`,
     userId,
     toldInDetail
   );
@@ -2426,14 +2578,31 @@ async function applyLeaveDecision(request, userId, action, note) {
 }
 
 /**
- * HR override approve — force-approve a Pending request regardless of chain position.
- * @route PATCH /api/leave/requests/:id/approve  (HR/SuperAdmin)
+ * Who may force a decision here: HR (the `leave.manage` crowd) or an executive.
+ *
+ * The route sits ABOVE the leave.manage gate — the same arrangement the
+ * emergency-review and amend routes use — because a CEO/MD holds no
+ * capabilities while read-only, and this is a decision the office carries rather
+ * than one a grant confers. Everything past this still runs the company wall.
+ * @param {object} req
+ * @param {object} res
+ */
+function assertMayForceDecision(req, res) {
+  if (hasPermission(req.user, 'leave.manage') || isExecViewer(req.user)) return;
+  res.status(403);
+  throw new Error('Only HR or an executive can decide a request out of turn.');
+}
+
+/**
+ * Override approve — force-approve a Pending request regardless of chain position.
+ * @route PATCH /api/leave/requests/:id/approve  (HR/SuperAdmin/CEO/MD)
  * @param {string} req.params.id - request id
  * @param {string} [req.body.note]
  * @returns {{request: Object}}; 400 on bad transition or insufficient balance
  */
 // PATCH /api/leave/requests/:id/approve
 const approveRequest = asyncHandler(async (req, res) => {
+  assertMayForceDecision(req, res);
   const request = await LeaveRequest.findById(req.params.id);
   if (!request) {
     res.status(404);
@@ -2454,14 +2623,15 @@ const approveRequest = asyncHandler(async (req, res) => {
 });
 
 /**
- * HR override reject — force-reject a Pending request regardless of chain position.
- * @route PATCH /api/leave/requests/:id/reject  (HR/SuperAdmin)
+ * Override reject — force-reject a Pending request regardless of chain position.
+ * @route PATCH /api/leave/requests/:id/reject  (HR/SuperAdmin/CEO/MD)
  * @param {string} req.params.id - request id
  * @param {string} [req.body.note]
  * @returns {{request: Object}}
  */
 // PATCH /api/leave/requests/:id/reject
 const rejectRequest = asyncHandler(async (req, res) => {
+  assertMayForceDecision(req, res);
   const request = await LeaveRequest.findById(req.params.id);
   if (!request) {
     res.status(404);
