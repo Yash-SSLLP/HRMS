@@ -1590,6 +1590,7 @@ const myPoints = asyncHandler(async (req, res) => {
   const profile = await EmployeeProfile.findOne({ user: req.user._id }).select('_id employeeCode').lean();
   const empty = {
     hasIncentive: false, month: '', points: 0, paidPoints: 0, unpaidPoints: 0, days: 0, lifetimePoints: 0,
+    currentPoints: 0, lifetimePaidPoints: 0,
   };
   // CEO/MD/SuperAdmin have no employee record at all, so there is nothing to
   // total — answer plainly rather than 404, since the caller is a home screen.
@@ -1657,6 +1658,22 @@ const myPoints = asyncHandler(async (req, res) => {
   }).select('points').lean();
   const paidPoints = paise(paidRows.reduce((s, r) => s + (r.points || 0), 0));
 
+  // WHAT THIS PERSON ACTUALLY HOLDS — everything ever earned, less everything
+  // ever settled. The same "current points" the leaderboards rank beside, and
+  // the figure a home screen should lead with.
+  //
+  // WHY THE MONTH FIGURE WAS NOT ENOUGH. `unpaidPoints` above is this month's
+  // earnings less this month's payments, which reads correctly for the Boys tab
+  // because a roller earns on most days of most months. Billing does not work
+  // like that: the billing system settles per CALENDAR MONTH and its figures
+  // land in one lump, after the fact. So for the first stretch of every month —
+  // and for any month the feed has not been filled in yet — a billing person's
+  // chip said 0 while they were owed tens of thousands of points, which is the
+  // one thing a home-screen number must never do (user decision 2026-09-16).
+  const allPaidRows = await IncentivePayment.find({ employee: profile._id }).select('points').lean();
+  const lifetimePaid = paise(allPaidRows.reduce((s, r) => s + (r.points || 0), 0));
+  const lifetimePoints = paise(share(allEntries) + creditTotal(allCredits) + billingLifetime);
+
   res.json({
     // True for anybody with an employee record — see the note above.
     hasIncentive: true,
@@ -1668,7 +1685,12 @@ const myPoints = asyncHandler(async (req, res) => {
     paidPoints,
     unpaidPoints: paise(points - paidPoints),
     days: monthEntries.length,
-    lifetimePoints: paise(share(allEntries) + creditTotal(allCredits) + billingLifetime),
+    lifetimePoints,
+    // Lifetime earned less lifetime settled. Never clamped at zero: a negative
+    // figure means somebody was paid for points a later correction removed, and
+    // hiding it would hide the only sign of it they ever see.
+    currentPoints: paise(lifetimePoints - lifetimePaid),
+    lifetimePaidPoints: lifetimePaid,
     // True when a billing month could not be read, so the figures above are
     // short by an unknown amount and a screen can say so instead of implying
     // the person has earned less than they have.
@@ -1847,6 +1869,7 @@ const myHistory = asyncHandler(async (req, res) => {
         points: 0, teamPoints: 0, creditPoints: 0, paidPoints: 0, unpaidPoints: 0, days: 0, sheets: 0, pending: 0,
       },
       lifetimePoints: 0,
+      currentPoints: 0,
     });
   }
 
@@ -1947,6 +1970,16 @@ const myHistory = asyncHandler(async (req, res) => {
   const points = paise(teamPoints + creditPoints + billingPoints);
   const paidPoints = paise(paidRows.reduce((s, r) => s + (r.points || 0), 0));
 
+  // The two LIFETIME figures, which the month above cannot answer: everything
+  // ever earned, and everything ever settled. `paidRows` is this month's only.
+  const lifetimePoints = paise(
+    share(allEntries)
+    + allCredits.reduce((s, c) => s + (c.points || 0), 0)
+    + (billLife.byCode.get(myCode)?.points || 0)
+  );
+  const allPaid = await IncentivePayment.find({ employee: profile._id }).select('points').lean();
+  const lifetimeSettled = paise(allPaid.reduce((s, r) => s + (r.points || 0), 0));
+
   res.json({
     hasIncentive: true,
     month: monthParam,
@@ -1976,11 +2009,13 @@ const myHistory = asyncHandler(async (req, res) => {
       sheets,
       pending,
     },
-    lifetimePoints: paise(
-      share(allEntries)
-      + allCredits.reduce((s, c) => s + (c.points || 0), 0)
-      + (billLife.byCode.get(myCode)?.points || 0)
-    ),
+    lifetimePoints,
+    // What they are HOLDING — the figure the home-screen chip leads with, sent
+    // here too so the screen somebody lands on after tapping it confirms the
+    // number rather than appearing to contradict it. The month tiles above can
+    // all read 0 (every billing person, for the first stretch of a month) while
+    // this is in the tens of thousands, and that is not a disagreement.
+    currentPoints: paise(lifetimePoints - lifetimeSettled),
     billingUnavailable: [...(billMonth.failed || []), ...(billLife.failed || [])].length > 0,
   });
 });

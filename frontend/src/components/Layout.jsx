@@ -745,12 +745,19 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
 }
 
 /**
- * What the company still owes ME in incentive points, in the top bar.
+ * What I am HOLDING in incentive points, in the top bar.
  *
- * UNPAID rather than earned: the earned figure only ever goes up and answers
- * nothing, while this is the number somebody actually wants at a glance. Zero is
- * a real and good answer — "all settled" — so it stays put rather than appearing
- * and vanishing as payments land.
+ * `currentPoints` — everything I have ever earned less everything the company
+ * has settled with me, the same figure the leaderboards call Current Points.
+ * Not the lifetime earned figure, which only ever goes up and answers nothing;
+ * and no longer THIS MONTH's unpaid figure, which is the subtler of the two
+ * mistakes. The month read correctly for the Boys tab, where somebody rolls on
+ * most days of most months — but billing settles per calendar month and its
+ * figures land in one lump after the fact, so for the first stretch of every
+ * month this chip told the billing team they held nothing while they were owed
+ * tens of thousands of points (user decision 2026-09-16). Zero is still a real
+ * and good answer — "all settled" — so it stays put rather than appearing and
+ * vanishing as payments land.
  *
  * Fed by `GET /incentives/me`, the one route in that module an ordinary employee
  * may call (everything else needs a role in it). Shown to EVERY employee, zero
@@ -777,15 +784,21 @@ function PointsPill() {
   // other figure. Accounts with no employee record (CEO/MD/Backend) earn no
   // points at all, and the server says so with hasIncentive:false.
   if (!mine || mine.hasIncentive === false) return null;
-  const value = Math.round((Number(mine.unpaidPoints) || 0) * 100) / 100;
+  // The month figure is the fallback, not the answer: a server that predates
+  // `currentPoints` still knows what this month is owed, and reading the new
+  // field straight would print NaN until it was deployed.
+  const held = mine.currentPoints !== undefined && mine.currentPoints !== null
+    ? mine.currentPoints
+    : (mine.unpaidPoints || 0);
+  const value = Math.round((Number(held) || 0) * 100) / 100;
   return (
     <span
       className="hidden md:inline-flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200"
-      title={`${value} incentive point${value === 1 ? '' : 's'} not yet paid to you`}
+      title={`${value} incentive point${value === 1 ? '' : 's'} you are holding — earned, less anything settled with you`}
     >
       <FiStar size={12} aria-hidden="true" />
       <strong className="tabular-nums">{value}</strong>
-      <span className="font-normal">unpaid</span>
+      <span className="font-normal">points</span>
     </span>
   );
 }

@@ -193,10 +193,18 @@ export default function EmployeeIncentive() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          {/* Three of these are about the MONTH on screen and two are about all
+              time, which is the distinction to keep. "Holding now" is the figure
+              the top-bar chip shows, and it is here so the page somebody opens
+              from that chip confirms it: the three month tiles can all read 0 —
+              which is every billing person for the first stretch of a month,
+              because billing settles per month and lands in one lump — while
+              this one is in the tens of thousands. That is not a disagreement. */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
             <Stat label="Earned this month" value={points(totals?.points)} />
             <Stat label="Paid" value={points(totals?.paidPoints)} tone="text-green-700" />
             <Stat label="Still owed" value={points(totals?.unpaidPoints)} tone="text-violet-700" />
+            <Stat label="Holding now" value={points(history?.currentPoints ?? history?.lifetimePoints)} tone="text-amber-700" />
             <Stat label="Since you started" value={points(history?.lifetimePoints)} tone="text-gray-500" />
           </div>
 
