@@ -804,7 +804,7 @@ export default function AdminEmployees() {
       const payload = { ...form, workLocationRef: form.workLocationRef || null };
       // `form` is seeded by spreading the whole stored profile, so it carries the
       // leave ladder as well — which this modal does not show and cannot edit
-      // (it lives on Leave → Approval hierarchy). Sending it back unchanged only
+      // (it lives on Permissions → Leave approvals). Sending it back unchanged only
       // ever asks the server to re-validate a field nobody touched, so drop it.
       delete payload.leaveApprovers;
       delete payload.leaveFinalHrRecipients;

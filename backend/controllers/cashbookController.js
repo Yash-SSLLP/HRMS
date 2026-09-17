@@ -905,4 +905,8 @@ module.exports = {
   overview, daybook, summary, exportExcel, getReceipt,
   // reused by the expense→cashbook sync (never-drift balance recompute)
   recomputeBalance,
+  // reused by the sidebar's pending-voucher badge — a cashbook entry is walled
+  // by which cash ACCOUNTS the viewer may touch, not by which people they may
+  // see, so the badge has to use this and not an employee-scope helper.
+  scopeEntryAccounts,
 };

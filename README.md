@@ -21,7 +21,7 @@ HRMS/
 ├── backend/     Node + Express API (controllers, routes, models, services, scripts)
 ├── frontend/    React + Vite web SPA (admin + employee portals)
 ├── Mobile App/  the released Android APK - committed, and served to phones as the update
-├── docs/        Project docs
+├── docs/        Project docs  (see docs/task-module.md for the Task & Workflow module)
 └── uploads/     Local file storage (fallback when Cloudinary is unconfigured)
 ```
 

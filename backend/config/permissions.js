@@ -43,7 +43,7 @@ const PERMISSIONS = [
   // Time & attendance
   { key: 'attendance.manage', label: 'Attendance, shifts, regularization', group: 'Time & Attendance' },
   { key: 'leave.manage', label: 'Leave (override), comp-off, holidays', group: 'Time & Attendance' },
-  // Who signs off whose leave (Leave → Approval hierarchy). Its own key rather
+  // Who signs off whose leave (Permissions → Leave approvals). Its own key rather
   // than part of leave.manage: overriding one request is a day's decision, and
   // rewiring who approves an employee's leave from now on is a standing one.
   // Granted per account — an HR Manager does NOT get it by being HR.
@@ -62,7 +62,7 @@ const PERMISSIONS = [
   // capability, so it is handed out deliberately rather than inherited by being
   // HR.
   { key: 'leave.history', label: 'All leave history (approvals + edits) & correct decided leave', group: 'Time & Attendance' },
-  // The Regularization -> Approval setup tab: who signs off whose attendance
+  // The Permissions -> Regularization approvals tab: who signs off whose attendance
   // corrections, and how many corrections a month each employee may raise. Its
   // own key for the same reason leaveHierarchy.manage is: deciding one request
   // is a day's work, deciding whose yes counts from now on is a standing one.
@@ -127,6 +127,13 @@ const PERMISSIONS = [
   // Work management
   { key: 'projects.manage', label: 'Projects', group: 'Work Management' },
   { key: 'tasks.manage', label: 'Tasks', group: 'Work Management' },
+  // How every FUTURE task is routed: the workflow builder, the templates, and
+  // the recurring schedules. Its own key rather than part of tasks.manage for
+  // the same reason leaveHierarchy.manage is separate from leave.manage —
+  // running today's tasks is a day's work, and deciding who approves what
+  // from now on is a standing decision. An HR Manager does NOT get it by being
+  // HR; a Super Admin ticks it per account.
+  { key: 'tasks.workflow', label: 'Task workflows, templates & recurrence', group: 'Work Management' },
   { key: 'assets.manage', label: 'Assets', group: 'Work Management' },
   { key: 'documents.manage', label: 'Documents', group: 'Work Management' },
 

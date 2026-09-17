@@ -31,6 +31,58 @@ const effectiveDueDate = (profile) => {
 };
 
 /**
+ * How far ahead a confirmation counts as "coming up". The screen has always
+ * flagged this window; it is named here because the sidebar badge counts the
+ * same rows and the two must not be able to disagree about what "due" means.
+ */
+const DUE_WINDOW_DAYS = 30;
+const MS_PER_DAY = 86400000;
+
+/**
+ * Is this person's confirmation waiting on somebody — due inside the window, or
+ * already past it?
+ *
+ * THE ONE PLACE THIS IS DECIDED. It used to live only in the browser, as a
+ * `days <= 30` test inside the table's render, which was fine while the table
+ * was the only thing that asked. The sidebar badge asks too now, and the due
+ * date is not a stored field — it is `confirmationDueDate` OR joining +
+ * probation months, in CALENDAR months. Rebuilding that in an aggregation would
+ * have given a second answer for free: Mongo's `$dateAdd` clamps 31 Jan + 1
+ * month to 28 Feb, JavaScript's `setMonth` rolls it to 3 March. So the rule is
+ * evaluated once, here, in JS, and both the list and the count call it.
+ *
+ * Already confirmed is never due — there is nothing left to do — and neither is
+ * somebody with no joining date, because nothing says when they would be.
+ * @param {Object} profile - an EmployeeProfile (lean is fine)
+ * @param {Date} [asOf] - defaults to now
+ * @returns {boolean}
+ */
+function isConfirmationDue(profile, asOf = new Date()) {
+  if (profile.confirmationStatus === 'Confirmed') return false;
+  const due = effectiveDueDate(profile);
+  if (!due || Number.isNaN(due.getTime())) return false;
+  return Math.ceil((due.getTime() - asOf.getTime()) / MS_PER_DAY) <= DUE_WINDOW_DAYS;
+}
+
+/**
+ * How many confirmations are due for this admin — for the sidebar badge.
+ *
+ * Reads the rows rather than counting them, because the due date is computed
+ * (see above). Four small fields over the people this admin may see, which is
+ * the same wall and the same collection the list itself uses.
+ * @param {import('express').Request} req
+ * @returns {Promise<number>}
+ */
+async function countDueConfirmations(req) {
+  const profiles = await EmployeeProfile
+    .find({ ...employeeProfileScope(req), confirmationStatus: { $ne: 'Confirmed' } })
+    .select('confirmationStatus confirmationDueDate dateOfJoining probationMonths')
+    .lean();
+  const now = new Date();
+  return profiles.filter((p) => isConfirmationDue(p, now)).length;
+}
+
+/**
  * List employees for confirmation tracking with their effective due date.
  * @route GET /api/lifecycle/confirmations
  * @param {string} [req.query.status] - Probation|Extended|Confirmed
@@ -59,6 +111,10 @@ const listConfirmations = asyncHandler(async (req, res) => {
       probationMonths: p.probationMonths,
       confirmationStatus: p.confirmationStatus,
       dueDate: effectiveDueDate(p),
+      // The server's verdict, so the row the table flags and the row the sidebar
+      // badge counted are the same row. The table still works out the WORDING
+      // ("3d overdue" / "in 12d") from dueDate itself.
+      dueSoon: isConfirmationDue(p),
       confirmedOn: p.confirmedOn,
       confirmationNote: p.confirmationNote,
     };
@@ -131,6 +187,14 @@ const updateConfirmation = asyncHandler(async (req, res) => {
   if (note != null) profile.confirmationNote = note;
 
   await profile.save();
+
+  // Confirmation paperwork, from whatever templates are wired to it. Only on
+  // a real confirmation — extending or resetting probation is not a thing that
+  // needs a plan. Fire-and-forget, as every task event is.
+  if (action === 'confirm') {
+    require('../services/taskEvents').employeeConfirmed(profile, req.user).catch(() => {});
+  }
+
   res.json({ profile });
 });
 
@@ -194,4 +258,6 @@ module.exports = {
   updateConfirmation,
   nextEmployeeCode,
   computeNextEmployeeCode,
+  countDueConfirmations,
+  DUE_WINDOW_DAYS,
 };

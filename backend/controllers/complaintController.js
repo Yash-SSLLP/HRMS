@@ -296,4 +296,24 @@ const deleteComplaint = asyncHandler(async (req, res) => {
   res.json({ ok: true, id: req.params.id });
 });
 
-module.exports = { createComplaint, myComplaints, assignedComplaints, updateComplaint, deleteComplaint };
+/**
+ * How many complaints are OPEN in this person's inbox — for the sidebar badge.
+ *
+ * Built from exactly the filter assignedComplaints uses, plus `status: 'open'`,
+ * so the number on the menu row and the number of rows still to deal with on the
+ * page cannot disagree. A role with no inbox counts 0 rather than throwing: a
+ * badge must never break the menu it sits in.
+ * @param {import('express').Request} req
+ * @returns {Promise<number>}
+ */
+async function countOpenComplaints(req) {
+  if (!COMPLAINT_VIEWER_ROLES.includes(req.user?.role)) return 0;
+  const filter = { against: { $ne: req.user._id }, status: 'open' };
+  await scopeUserField(req, filter, 'complainant');
+  return Complaint.countDocuments(filter);
+}
+
+module.exports = {
+  createComplaint, myComplaints, assignedComplaints, updateComplaint, deleteComplaint,
+  COMPLAINT_VIEWER_ROLES, countOpenComplaints,
+};

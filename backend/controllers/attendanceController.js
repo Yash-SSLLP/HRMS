@@ -2337,7 +2337,7 @@ const getSettings = asyncHandler(async (req, res) => {
 
 /**
  * May this account set the org-wide regularization limit? The same grant that
- * opens Regularization -> Approval setup, where the number is edited —
+ * opens Permissions -> Regularization approvals, where the number is edited —
  * `hierarchy.manage` passes too, mirroring canSetRegularizationSetup in
  * employeeController. hasExplicitPermission, so an unconfigured HR Manager is
  * not swept in by the "HR can do everything" default.
@@ -2457,7 +2457,7 @@ const updateSettings = asyncHandler(async (req, res) => {
 
   // How many regularizations an employee may raise for one month. NOT the
   // SuperAdmin gate the three blocks above use — this one costs nobody money,
-  // and it is edited from Regularization -> Approval setup by whoever a Super
+  // and it is edited from Permissions -> Regularization approvals by whoever a Super
   // Admin gave that tab to. Ignored for anyone else rather than refused, the
   // same way those blocks are.
   if (req.body.regularizationLimit !== undefined && canSetRegularizationLimit(req)) {

@@ -770,30 +770,55 @@ const monthCalendar = asyncHandler(async (req, res) => {
     });
   }
 
-  // --- Task deadlines (assigned to, or created by, the viewer) ---
+  // --- Task deadlines (the viewer's own tasks, and ones they set) ---
+  //
+  // THIS IS THE ONLY CALENDAR TASKS APPEAR ON. The module deliberately has no
+  // calendar of its own (user decision 2026-09-17): the portal already has one
+  // board that holds holidays, festivals, events, birthdays, interviews and
+  // reminders, and a second month grid inside the Tasks page would be a second
+  // place to look for the same answer.
+  //
+  // `assignees.user` as well as `assignedTo`: a task can have several people on
+  // it, and a contributor who is not the primary assignee still has the deadline.
+  // Archived tasks are out, as they are everywhere else.
   const Task = require('../models/Task');
+  const { normaliseStatus, statusLabel, isTerminal } = require('../config/taskWorkflow');
   const tasks = await Task.find({
-    $or: [{ assignedTo: req.user._id }, { createdBy: req.user._id }],
+    $or: [
+      { assignedTo: req.user._id },
+      { 'assignees.user': req.user._id },
+      { createdBy: req.user._id },
+    ],
     dueDate: { $gte: monthStart, $lt: monthEnd },
+    archived: { $ne: true },
   })
     .populate('project', 'name')
     .populate('assignedTo', 'firstName lastName')
     .sort({ dueDate: 1 });
+  const now = new Date();
   for (const t of tasks) {
     const assignee = `${t.assignedTo?.firstName || ''} ${t.assignedTo?.lastName || ''}`.trim();
+    const status = normaliseStatus(t.status) || t.status;
+    const mine = String(t.assignedTo?._id || t.assignedTo || '') === String(req.user._id)
+      || (t.assignees || []).some((a) => String(a.user) === String(req.user._id));
     events.push({
       day: istParts(t.dueDate).d,
       type: 'task',
       label: t.title,
       meta: {
         taskId: String(t._id),
-        status: t.status,
+        // The quotable reference, so a tile can be matched to the row somebody
+        // is being asked about. Absent on tasks that predate the rework.
+        code: t.code || '',
+        status,
+        statusLabel: statusLabel(status),
         priority: t.priority,
         project: t.project?.name || '',
-        assignedTo: String(t.assignedTo?._id || t.assignedTo || '') === String(req.user._id)
-          ? 'You'
-          : (assignee || '—'),
-        done: t.status === 'Done',
+        assignedTo: mine ? 'You' : (assignee || '—'),
+        // `done` drives the strike-through on the tile. Terminal, not just
+        // completed: a cancelled or declined task is not still owed either.
+        done: isTerminal(status),
+        overdue: !isTerminal(status) && t.dueDate < now,
       },
     });
   }

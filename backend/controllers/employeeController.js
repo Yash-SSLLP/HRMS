@@ -945,7 +945,7 @@ const createEmployee = asyncHandler(async (req, res) => {
   if (!canSetLeaveChain(req)) {
     // Who signs off an employee's leave, and which HR is told once it is fully
     // approved. Behind its own grant — see canSetLeaveChain. Set from the
-    // Leave → Approval hierarchy screen, which writes through this route.
+    // Permissions → Leave approvals screen, which writes through this route.
     delete req.body.leaveApprovers;
     delete req.body.leaveFinalHrRecipients;
   }
@@ -983,6 +983,13 @@ const createEmployee = asyncHandler(async (req, res) => {
   await assertWorkLocationCompany(req.body.workLocationRef, req.body.company, null);
 
   const profile = await EmployeeProfile.create(req.body);
+
+  // Onboarding work, from whatever task templates HR has wired to this event.
+  // Fire-and-forget and error-swallowing by design (see services/taskEvents):
+  // the employee is created either way, and a task that cannot be made must
+  // never turn a successful create into an error response. Nothing happens at
+  // all until somebody sets up a template, so this is inert on day one.
+  require('../services/taskEvents').employeeCreated(profile, req.user).catch(() => {});
 
   // Flag a new joiner with no salary basis to whoever runs payroll. Not awaited:
   // the profile is created either way, and a notification hiccup must not turn a

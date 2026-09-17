@@ -13,7 +13,8 @@
  * colour tile, and a footer with the colour key and the month's roll-up.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { FiVideo, FiFileText, FiX, FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
+import { FiVideo, FiFileText, FiX, FiPlus, FiEdit2, FiTrash2, FiCheckSquare } from 'react-icons/fi';
+import { Link, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
@@ -77,6 +78,12 @@ const BLANK_REMINDER = {
 export default function Calendar() {
   const user = useAuthStore((s) => s.user);
   const canBroadcast = !!user && BROADCAST_ROLES.includes(user.role);
+
+  // Which portal this page is mounted in. Taken from the PATH, not the role:
+  // an HR Manager reads this page in both, and a link out of it must land in
+  // the one they are actually in.
+  const { pathname } = useLocation();
+  const portalBase = pathname.startsWith('/admin') ? '/admin' : '/employee';
 
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
@@ -225,7 +232,11 @@ export default function Calendar() {
       if (m.priority && m.priority !== 'Normal') rows.push(['Priority', m.priority]);
       if (m.notes) rows.push(['Notes', m.notes]);
     } else if (e.type === 'task') {
-      rows.push(['Status', m.status]);
+      // `statusLabel` is the server's own wording for the lifecycle state; the
+      // raw key ('IN_PROGRESS') is a database value, not something to show a
+      // person. Older rows carry no label, so the key is the fallback.
+      if (m.code) rows.push(['Task ID', m.code]);
+      rows.push(['Status', m.overdue ? `${m.statusLabel || m.status} — overdue` : (m.statusLabel || m.status)]);
       if (m.priority) rows.push(['Priority', m.priority]);
       if (m.project) rows.push(['Project', m.project]);
       if (m.assignedTo) rows.push(['Assigned to', m.assignedTo]);
@@ -589,6 +600,7 @@ export default function Calendar() {
         const tm = metaFor(e.type);
         const isInterview = e.type === 'interview';
         const isReminder = e.type === 'reminder' || e.type === 'hrReminder';
+        const isTask = e.type === 'task';
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]"
             onMouseDown={() => setSelected(null)}>
@@ -659,6 +671,21 @@ export default function Calendar() {
                       Join meeting
                     </a>
                   )}
+                </div>
+              )}
+
+              {/* Task actions — the calendar is where task deadlines live, so a
+                  tile has to be able to take you to the task itself. The path is
+                  taken from the URL rather than from the role: this one page is
+                  mounted in BOTH portals, and following a link should never
+                  silently switch which one you are in. */}
+              {isTask && m.taskId && (
+                <div className="px-5 pb-5 pt-1 flex items-center gap-2">
+                  <Link to={`${portalBase}/tasks/${m.taskId}`} onClick={() => setSelected(null)}
+                    className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 text-white text-sm font-medium shadow-sm">
+                    <FiCheckSquare size={15} />
+                    Open task
+                  </Link>
                 </div>
               )}
             </div>

@@ -16,8 +16,8 @@
  * Mounted route groups: everything under /api/*
  *
  * Startup (after connectDB): email, celebration, attendance, push-reminder,
- * exit and late-policy workers; a one-off HR-profile backfill; then app.listen
- * on PORT (default 5000).
+ * exit, late-policy, task-reminder and task-recurrence workers; a one-off
+ * HR-profile backfill; then app.listen on PORT (default 5000).
  * The workers own their own cron schedules internally.
  */
 
@@ -36,6 +36,8 @@ const { startWorker: startAttendanceWorker } = require('./services/attendanceWor
 const { startWorker: startPushReminderWorker } = require('./services/pushReminderWorker');
 const { startWorker: startExitWorker } = require('./services/exitWorker');
 const { startWorker: startLatePolicySync } = require('./services/latePolicy');
+const { startWorker: startTaskReminderWorker } = require('./services/taskReminderWorker');
+const { startWorker: startTaskRecurrenceWorker } = require('./services/taskRecurrenceWorker');
 
 const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
@@ -165,6 +167,9 @@ app.use('/api/companies', require('./routes/companyRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/projects', require('./routes/projectRoutes'));
 app.use('/api/tasks', require('./routes/taskRoutes'));
+// Workflows, templates and recurring schedules — the standing configuration
+// behind its own 'tasks.workflow' capability, kept apart from the tasks themselves.
+app.use('/api/task-workflows', require('./routes/taskWorkflowRoutes'));
 app.use('/api/recruitment', require('./routes/recruitmentRoutes'));
 
 app.use('/api/assets', require('./routes/assetRoutes'));
@@ -234,6 +239,11 @@ connectDB()
     // Loads the SuperAdmin-set late-marking cut-off into utils/workday's cache
     // and keeps it refreshed; until it lands, lateness uses the 10:00 AM default.
     startLatePolicySync();
+    // Task deadlines, escalations and recurring generation. Both are
+    // idempotent (see the workers) so a restart cannot replay a day of
+    // reminders or mint the same recurring instance twice.
+    startTaskReminderWorker();
+    startTaskRecurrenceWorker();
 
     // One-time HR profile backfill
     backfillHrProfiles().catch((err) => {

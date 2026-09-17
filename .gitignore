@@ -54,3 +54,7 @@ letter-backups/
 # Local JSON backups taken before a khata deletion (scripts/deleteKhataForEmployees).
 # Real employee financial records — never commit these.
 khata-backups/
+
+# Local JSON backup of the tasks collection, taken before the v2 migration
+# (scripts/migrateTasksV2). Real employee data — never committed.
+task-backups/

@@ -195,15 +195,27 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
  * @route GET /api/password-reset-requests  (HR / Admin)
  * @returns {{count: number, requests: Object[]}} with populated resolvedBy
  */
-// GET /api/password-reset-requests  (HR / Admin)
-const listPasswordResetRequests = asyncHandler(async (req, res) => {
-  let requests = await PasswordResetRequest.find()
-    .populate('resolvedBy', 'firstName lastName email role')
-    .sort({ createdAt: -1 });
-  // Company wall: requests are keyed only by the typed-in email, so map each to
-  // an account and hide the ones belonging to another company's people. A
-  // request matching NO account stays visible to every admin — somebody has to
-  // deal with it, and it contains nothing beyond what the requester typed.
+/**
+ * The requests this admin may see, walled by company.
+ *
+ * ITS OWN FUNCTION because the sidebar badge needs the same wall the list uses,
+ * and this one cannot be expressed as a Mongo filter: a request is keyed only by
+ * the address somebody typed on the login screen, so the wall is resolved in JS
+ * after the rows are read. Counting it any other way would give the menu a
+ * number the page does not show.
+ * @param {import('express').Request} req
+ * @param {Object} [extra] - extra Mongo filter (the badge passes `status: 'Open'`)
+ * @param {boolean} [populate] - populate `resolvedBy` (the list does; the count does not)
+ * @returns {Promise<Object[]>}
+ */
+async function walledResetRequests(req, extra = {}, populate = false) {
+  const q = PasswordResetRequest.find(extra).sort({ createdAt: -1 });
+  if (populate) q.populate('resolvedBy', 'firstName lastName email role');
+  let requests = await q;
+  // Company wall: map each typed-in address to an account and hide the ones
+  // belonging to another company's people. A request matching NO account stays
+  // visible to every admin — somebody has to deal with it, and it contains
+  // nothing beyond what the requester typed.
   const allowed = await allowedUserIds(req);
   if (allowed) {
     const emails = [...new Set(requests.map((r) => r.email).filter(Boolean))];
@@ -224,6 +236,21 @@ const listPasswordResetRequests = asyncHandler(async (req, res) => {
       return !owners || !owners.length || owners.some((id) => allowed.includes(id));
     });
   }
+  return requests;
+}
+
+/**
+ * How many reset requests are still OPEN for this admin — for the sidebar badge.
+ * @param {import('express').Request} req
+ * @returns {Promise<number>}
+ */
+async function countOpenResetRequests(req) {
+  return (await walledResetRequests(req, { status: 'Open' })).length;
+}
+
+// GET /api/password-reset-requests  (HR / Admin)
+const listPasswordResetRequests = asyncHandler(async (req, res) => {
+  const requests = await walledResetRequests(req, {}, true);
   res.json({ count: requests.length, requests });
 });
 
@@ -317,4 +344,5 @@ module.exports = {
   listPasswordResetRequests,
   resolvePasswordResetRequest,
   resetUserPassword,
+  countOpenResetRequests,
 };

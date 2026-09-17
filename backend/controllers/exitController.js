@@ -277,6 +277,13 @@ async function advanceExitApproval(exit, userId, action, note, actor) {
   await notifyEmployeeExitDecision(exit, true, note);
   await notifyHrBeginClearance(exit, name);
   await notifyAssignedSections(exit, name);
+
+  // The exit work itself — asset recovery, IT access removal, the interview,
+  // clearance, settlement — from whatever task templates are wired to this
+  // event. Fire-and-forget: the resignation is accepted either way, and a
+  // task that cannot be made must never leave a resignation half-decided.
+  require('../services/taskEvents').exitApproved(exit, { _id: userId }).catch(() => {});
+
   return exit;
 }
 

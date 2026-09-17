@@ -35,6 +35,17 @@ import { TbCashBanknote, TbReceipt, TbCurrencyRupee } from 'react-icons/tb';
 // `feature: 'chat'` = hide unless the org-wide chat switch is on, so the whole
 // module disappears together (top-bar launcher, dock and this) rather than
 // leaving a stray chat page behind.
+// `anyExplicitPerm` = show if the user was EXPLICITLY granted any of these keys.
+// Unlike `anyPerm` it does not pass an HR Manager who simply has no permissions
+// array (which `hasPermission` reads as "everything") — the right question for a
+// grant somebody had to be given one account at a time, and the same one the
+// page behind it asks (see hasExplicitPermission).
+// `badge` = which live pending count this row wears as a red number. The value
+// is a key of the counts in store/navCountsStore.js — or a LIST of keys, summed,
+// for a page holding more than one queue (Employee Cashbook has two, behind two
+// different gates). NavList (components/Layout.jsx) reads it. A COLLAPSED group
+// header shows the sum of its visible children's, so a shut category still says
+// how much is waiting inside it.
 // `keywords` = extra lower-case terms the global search should match that do not
 // appear in the label — the other names people actually type ("khatabook" for
 // Employee Cashbook). They never render; GlobalSearch is the only consumer.
@@ -48,26 +59,24 @@ export const adminNav = [
   // Approvals spans leave, resignations, no-dues clearance AND attendance
   // regularizations, so it outgrew the Leave category it used to sit in.
   // Pinned like Dashboard: it is a daily inbox, not an occasional lookup.
-  { to: '/admin/approvals', label: 'Approvals', icon: FiCheckSquare },
+  { to: '/admin/approvals', label: 'Approvals', icon: FiCheckSquare, badge: 'mine' },
   { group: 'Attendance & Shifts', icon: FiClock, items: [
     { to: '/admin/presence', label: "Who's In / On Leave", icon: FiUserCheck, perm: 'attendance.manage' },
     { to: '/admin/attendance', label: 'Attendance', icon: FiClock, perm: 'attendance.manage' },
     { to: '/admin/attendance-month', label: 'Monthly View', icon: FiCalendar, perm: 'attendance.manage' },
     { to: '/admin/attendance-report', label: 'Attendance Report', icon: FiActivity, perm: 'attendance.manage' },
+    // One screen now: who APPROVES a correction is configured on Permissions.
     { to: '/admin/regularizations', label: 'Regularization', icon: FiTool, perm: 'attendance.manage',
-      // The setup tab is SuperAdmin-only (see AdminRegularizations) — gated here
-      // too so search never offers a tab the page would refuse to open.
-      tabs: [{ id: 'requests', label: 'Requests' },
-        { id: 'setup', label: 'Approval setup', roles: ['SuperAdmin'] }] },
+      badge: 'regularization',
+      keywords: ['correction', 'punch correction', 'missed punch', 'regularise', 'regularize'] },
     { to: '/admin/roster', label: 'Shifts & Roster', icon: FiCalendar, perm: 'attendance.manage' },
     { to: '/admin/punch-map', label: 'Punch Map', icon: FiMap, perm: 'attendance.manage' },
   ] },
   { group: 'Leave & Holidays', icon: FiUmbrella, items: [
+    // Two tabs now: who APPROVES leave is configured on Permissions.
     { to: '/admin/leave', label: 'Leave', icon: FiUmbrella, perm: 'leave.manage',
-      // The hierarchy tab is SuperAdmin-only (see AdminLeave) — gated here too so
-      // search never offers a tab the page would refuse to open.
-      tabs: [{ id: 'requests', label: 'Requests' }, { id: 'balances', label: 'Balances' },
-        { id: 'hierarchy', label: 'Approval hierarchy', roles: ['SuperAdmin'] }] },
+      badge: 'leave',
+      tabs: [{ id: 'requests', label: 'Requests' }, { id: 'balances', label: 'Balances' }] },
     { to: '/admin/holidays', label: 'Holidays & Festivals', icon: FiSun, perm: 'leave.manage' },
   ] },
   { group: 'People & Organization', icon: FiUsers, items: [
@@ -80,19 +89,35 @@ export const adminNav = [
     { to: '/admin/departments', label: 'Departments', icon: FiGrid, perm: 'org.manage' },
     { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap, perm: 'org.manage' },
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },
-    { to: '/admin/permissions', label: 'Permissions', icon: FiShield, roles: ['SuperAdmin'],
-      keywords: ['access', 'grants', 'capabilities', 'manager grant'] },
+    // EVERY ACCESS DECISION IN ONE PLACE. The module-access matrix (Super Admins
+    // only), plus the two approval ladders that used to hide as setup tabs on
+    // Leave and Regularization. Reachable by a Super Admin OR by whoever was
+    // granted one of the ladders — each tab keeps its own grant, and the page
+    // shows only the tabs the account holds.
+    { to: '/admin/permissions', label: 'Permissions', icon: FiShield,
+      // hasExplicitPermission already passes a Super Admin (and an exec in edit
+      // mode) for any key, so they are not named here.
+      anyExplicitPerm: ['leaveHierarchy.manage', 'regularizationHierarchy.manage', 'hierarchy.manage'],
+      keywords: ['access', 'grants', 'capabilities', 'manager grant', 'hierarchy',
+        'approval hierarchy', 'approval setup', 'who approves', 'ladder', 'chain'],
+      tabs: [{ id: 'access', label: 'Module access', roles: ['SuperAdmin'] },
+        { id: 'leave', label: 'Leave approvals', anyExplicitPerm: ['leaveHierarchy.manage'] },
+        { id: 'regularization', label: 'Regularization approvals', anyExplicitPerm: ['regularizationHierarchy.manage', 'hierarchy.manage'] }] },
   ] },
   { group: 'Payroll & Salary', icon: TbCurrencyRupee, items: [
     { to: '/admin/payroll', label: 'Payroll', icon: TbCurrencyRupee, perm: 'payroll.manage',
       keywords: ['salary', 'payslip'] },
     // The release queue: employees ask for their payslip, HR checks and hands it over.
     { to: '/admin/payslip-requests', label: 'Payslip Requests', icon: TbReceipt, perm: 'payroll.manage',
+      // Two queues on one page: what employees asked for, and the slips an HR
+      // prepared for themselves, frozen until an executive sanctions them.
+      badge: ['payslipRequest', 'selfPayslip'],
       tabs: [{ id: 'pending', label: 'Needs action' }, { id: 'released', label: 'Released' }] },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders, perm: 'payroll.manage' },
     { to: '/admin/payroll-run', label: 'Salary Revisions', icon: FiRepeat, perm: 'payroll.manage' },
-    { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard, perm: 'loans.manage' },
-    { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent, perm: 'declarations.manage' },
+    { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard, perm: 'loans.manage', badge: 'loan' },
+    { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent, perm: 'declarations.manage',
+      badge: 'declaration' },
     { to: '/admin/compliance', label: 'Compliance', icon: FiCheckCircle, perm: 'compliance.view',
       tabs: [{ id: 'pf', label: 'PF' }, { id: 'esi', label: 'ESI' }, { id: 'pt', label: 'PT' },
         { id: 'tds', label: 'TDS' }, { id: 'form16', label: 'Form 16' }] },
@@ -101,8 +126,9 @@ export const adminNav = [
   // bare section link with no icon (see the single-item branch in NavList).
   // Folded in with the other money-out modules so it gets a real nav row.
   { group: 'Expenses & Cashbook', icon: FiShoppingBag, items: [
-    { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage' },
+    { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage', badge: 'expense' },
     { to: '/admin/cashbook', label: 'Company Accounts', icon: TbCashBanknote, perm: 'cashbook.manage',
+      badge: 'voucher',
       keywords: ['cashbook', 'company cashbook', 'petty cash', 'voucher', 'cash account', 'tin'],
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'ledger', label: 'Ledger' }, { id: 'vouchers', label: 'Vouchers' },
         { id: 'accounts', label: 'Accounts' }, { id: 'categories', label: 'Categories' }, { id: 'reports', label: 'Reports' }] },
@@ -113,6 +139,11 @@ export const adminNav = [
     // id and a tab missing from here is a tab nobody can be sent to. The order
     // matches TABS in pages/AdminKhata.jsx.
     { to: '/admin/khata', label: 'Employee Cashbook', icon: TbReceipt, perm: 'khata.manage',
+      // ALL THREE of its queues, because they are three different questions on
+      // one page: payouts waiting to be made, spending waiting to be confirmed
+      // (both khata.manage), and advances waiting to be sanctioned (CEO/MD/
+      // Backend). Three gates, one row — so one number.
+      badge: ['khata', 'khataConfirm', 'khataSanction'],
       keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'cash ledger', 'book', 'books', 'cashbook'],
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'people', label: 'People' }, { id: 'ledger', label: 'Ledger' },
         { id: 'sanctions', label: 'Advance approvals', roles: ['SuperAdmin', 'CEO', 'MD'] },
@@ -122,7 +153,7 @@ export const adminNav = [
     // take, expenses they file) lives here in the admin portal.
     { to: '/admin/my-khata', label: 'My Cashbook', icon: TbReceipt, roles: ['CEO', 'MD'],
       keywords: ['khata', 'advance', 'book', 'books', 'cashbook'] },
-    { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage' },
+    { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage', badge: 'travel' },
   ] },
   // TWO UNRELATED INCENTIVES live here, and there will be more: the daily rolling
   // one the Boys department records for itself, and the billing team's, which is
@@ -187,23 +218,43 @@ export const adminNav = [
     { to: '/admin/my-interviews', label: 'My Interviews', icon: FiVideo, roles: ['CEO', 'MD'],
       keywords: ['interview', 'interviews', 'panel', 'candidate', 'feedback', 'round', 'rounds'] },
     { to: '/admin/onboarding', label: 'Onboarding Checklist', icon: FiCheckSquare, perm: 'onboarding.manage' },
-    { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage' },
+    // Probations due inside 30 days, or already past. The server decides which
+    // ones those are (isConfirmationDue), so this number and the rows the table
+    // flags are the same rows.
+    { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage',
+      badge: 'confirmation' },
   ] },
   { group: 'Performance & Learning', icon: FiTrendingUp, items: [
     { to: '/admin/performance', label: 'Performance', icon: FiTrendingUp, perm: 'performance.manage' },
     { to: '/admin/review-cycles', label: 'Appraisals', icon: FiEdit, perm: 'performance.manage' },
-    { to: '/admin/courses', label: 'Courses', icon: FiBook, perm: 'courses.manage', ld: true },
+    // Three queues, one number: joining requests, reported issues, comments to
+    // moderate — all worked from the side panels of this one page.
+    { to: '/admin/courses', label: 'Courses', icon: FiBook, perm: 'courses.manage', ld: true,
+      badge: 'course' },
     { to: '/admin/training', label: 'Training', icon: FiBookOpen, perm: 'training.manage' },
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [
     { to: '/admin/projects', label: 'Projects', icon: FiFolder, perm: 'projects.manage' },
-    { to: '/admin/tasks', label: 'Tasks', icon: FiList, perm: 'tasks.manage' },
-    { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage' },
+    { to: '/admin/tasks', label: 'Tasks', icon: FiList, perm: 'tasks.manage',
+      badge: 'taskApproval',
+      keywords: ['task', 'tasks', 'to do', 'todo', 'work', 'assignment', 'kanban', 'board', 'approval', 'submit', 'overdue', 'workload', 'timesheet'],
+      tabs: [{ id: 'list', label: 'List' }, { id: 'board', label: 'Board' },
+        { id: 'approvals', label: 'Approvals' }, { id: 'workload', label: 'Workload' },
+        { id: 'incentives', label: 'Incentives' }] },
+    // How every FUTURE task is routed, rather than any single piece of work —
+    // its own page behind its own 'tasks.workflow' grant, for the same reason
+    // the leave approval hierarchy is separate from deciding leave.
+    { to: '/admin/task-workflows', label: 'Task Workflows', icon: FiGitBranch, perm: 'tasks.workflow',
+      keywords: ['workflow', 'workflows', 'template', 'templates', 'recurring', 'repeat', 'route', 'approval chain', 'task'],
+      tabs: [{ id: 'workflows', label: 'Workflows' }, { id: 'templates', label: 'Templates' },
+        { id: 'recurring', label: 'Recurring' }] },
+    { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage', badge: 'docswap' },
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
       tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' }] },
   ] },
   { group: 'Communication & Culture', icon: FiVolume2, items: [
-    { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },
+    { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar, highlight: true,
+      keywords: ['calendar', 'month', 'deadline', 'deadlines', 'task deadline', 'holiday', 'event', 'birthday', 'reminder'] },
     { to: '/admin/announcements', label: 'Announcements', icon: FiVolume2, perm: 'announcements.manage' },
     { to: '/admin/events', label: 'Events', icon: FiFlag, perm: 'events.manage' },
     { to: '/admin/rnr', label: 'Rewards & Recognition', icon: FiAward, perm: 'announcements.manage' },
@@ -242,12 +293,16 @@ export const adminNav = [
   ] },
   { group: 'My Account & Requests', icon: FiKey, items: [
     { to: '/admin/account', label: 'My Account', icon: FiKey },
-    { to: '/admin/change-requests', label: 'Change Requests', icon: FiEdit3 },
-    { to: '/admin/complaints', label: 'Complaints', icon: FiAlertTriangle },
-    { to: '/admin/password-resets', label: 'Password Resets', icon: FiKey, perm: 'users.manage' },
+    { to: '/admin/change-requests', label: 'Change Requests', icon: FiEdit3, badge: 'change' },
+    { to: '/admin/complaints', label: 'Complaints', icon: FiAlertTriangle, badge: 'complaint' },
+    { to: '/admin/password-resets', label: 'Password Resets', icon: FiKey, perm: 'users.manage',
+      badge: 'passwordReset' },
   ] },
   { group: 'Exits', icon: FiLogOut, items: [
+    // Resignations nobody has decided yet. NOT the ones serving notice — that
+    // runs for a month by design, and a badge nobody can clear stops being read.
     { to: '/admin/exits', label: 'Exits', icon: FiLogOut, perm: 'exit.manage',
+      badge: 'exit',
       keywords: ['resignation', 'clearance', 'relieving', 'offboarding'] },
   ] },
   // Last entry in the sidebar. A single-item group renders as a plain top-level
@@ -265,21 +320,22 @@ export const adminNav = [
 // HR L&D (LDManager) is an LMS-only admin: they enter the admin portal but see
 // only the Courses page. A flat, single-item nav keeps the sidebar unambiguous.
 export const ldNav = [
-  { to: '/admin/courses', label: 'Courses', end: true, icon: FiBook },
+  { to: '/admin/courses', label: 'Courses', end: true, icon: FiBook, badge: 'course' },
 ];
 
 // Account Manager (AccountsManager) is a cashbook-only admin: they enter the
 // admin portal but see only the Cashbook page. Same flat-nav pattern as ldNav.
 export const accountsNav = [
-  { to: '/admin/cashbook', label: 'Company Accounts', end: true, icon: TbCashBanknote,
+  { to: '/admin/cashbook', label: 'Company Accounts', end: true, icon: TbCashBanknote, badge: 'voucher',
     keywords: ['cashbook', 'company cashbook', 'petty cash', 'voucher', 'cash account'] },
   // Account Managers settle reimbursements, so they get the expense queue too.
-  { to: '/admin/expenses', label: 'Expenses', end: true, icon: FiShoppingBag },
+  { to: '/admin/expenses', label: 'Expenses', end: true, icon: FiShoppingBag, badge: 'expense' },
   // Handing cash to staff is the other half of the accounts job. Global search
   // reads whichever nav the signed-in role was given, so the aliases have to be
   // repeated here or an Accounts Manager typing "cashbook" finds only the
   // company cashbook and not the one their own team runs.
   { to: '/admin/khata', label: 'Employee Cashbook', end: true, icon: TbReceipt,
+    badge: ['khata', 'khataConfirm', 'khataSanction'],
     keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'book', 'books', 'cashbook'] },
 ];
 
@@ -298,7 +354,10 @@ export const employeeNav = [
     { to: '/employee/leave', label: 'Leave', icon: FiUmbrella },
   ] },
   { group: 'My Work', icon: FiCheckSquare, items: [
-    { to: '/employee/approvals', label: 'Approvals', icon: FiCheckSquare },
+    // Any employee can be somebody's manager in the org chart, which is why this
+    // row is not role-gated — and why it earns the same red count the admin
+    // portal's inbox wears. Both open the same reporting-chain queue.
+    { to: '/employee/approvals', label: 'Approvals', icon: FiCheckSquare, badge: 'mine' },
     { to: '/employee/team', label: 'My Team', icon: FiUsers, roles: ['Manager'] },
     { to: '/employee/interviews', label: 'My Interviews', icon: FiUserCheck },
     { to: '/employee/onboarding', label: 'Onboarding', icon: FiClipboard },
@@ -363,7 +422,8 @@ export const employeeNav = [
     { to: '/employee/learning', label: 'Learning', icon: FiBookOpen },
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [
-    { to: '/employee/tasks', label: 'Tasks', icon: FiList },
+    { to: '/employee/tasks', label: 'Tasks', icon: FiList,
+      keywords: ['task', 'tasks', 'to do', 'todo', 'my work', 'assignment', 'submit', 'accept', 'overdue', 'deadline'] },
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
     { to: '/employee/assets', label: 'Assets', icon: FiPackage },
     // The register, for holders of the standalone Assets grant with no admin

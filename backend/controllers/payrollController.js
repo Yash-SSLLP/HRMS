@@ -423,16 +423,45 @@ async function myPayslipOrFail(req, res) {
  * Ask HR to release this month's payslip.
  * @route POST /api/payroll/me/:id/request  (employee)
  * @param {string} req.params.id - payslip id
+ * @param {string} req.body.note - what they need it for (required)
  * @returns {{release: Object}}
  * @sideeffect notifies everyone holding payroll.manage
  */
 const requestMyPayslip = asyncHandler(async (req, res) => {
   const payslip = await myPayslipOrFail(req, res);
-  markPayslipRequested(payslip, req, res);
+  const note = readPayslipPurpose(req, res);
+  markPayslipRequested(payslip, req, res, note);
   await payslip.save();
   await announcePayslipRequest(payslip, req);
   res.json({ release: payslip.release });
 });
+
+/**
+ * The PURPOSE the employee gives for wanting the slip — required on both
+ * request routes.
+ *
+ * It is compulsory because of what HR does with it. A payslip is prepared by
+ * hand for months payroll has not been run for, and the queue is worked in the
+ * order the purpose justifies: a visa appointment on Friday is not a "sometime
+ * this month" job and a curiosity is not an emergency. Without it every request
+ * looked identical and HR had to go and ask, one person at a time — which is
+ * also how a request that could have waited jumped one that could not.
+ *
+ * Both routes, not just the month picker: the per-row Request button asks for
+ * exactly the same thing, and a rule one button can walk around is not a rule.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {string} the trimmed purpose
+ * @throws 400 when it is blank
+ */
+function readPayslipPurpose(req, res) {
+  const note = String(req.body?.note || '').trim().slice(0, 500);
+  if (!note) {
+    res.status(400);
+    throw new Error('Please say what you need the payslip for — HR works through these in the order the reason calls for.');
+  }
+  return note;
+}
 
 /**
  * Move a payslip into 'Requested', or refuse with the reason.
@@ -489,7 +518,7 @@ function announcePayslipRequest(payslip, req) {
  *
  * @route POST /api/payroll/me/:year/:month/request  (employee)
  * @param {string} req.params.year / req.params.month
- * @param {string} [req.body.note] - why they need it (shown to HR)
+ * @param {string} req.body.note - what they need it for (required, shown to HR)
  * @returns {{request: Object}} 201
  * @sideeffect notifies everyone holding payroll.manage in the employee's company
  */
@@ -506,7 +535,7 @@ const requestPayslipForMonth = asyncHandler(async (req, res) => {
     throw new Error(check.reason);
   }
 
-  const note = String(req.body?.note || '').trim().slice(0, 500) || undefined;
+  const note = readPayslipPurpose(req, res);
 
   // Bound the queue: one person catching up on two years of slips must not bury
   // everybody else's ask. They work through these and come back.
@@ -2905,6 +2934,16 @@ const giveHike = asyncHandler(async (req, res) => {
     if (newStructure) profile.salaryStructure = newStructure;
   }
   await profile.save();
+
+  // The paperwork a revision drags behind it — the HRIS update, the payroll
+  // change, the letter — from whatever task templates are wired to this event.
+  // Fire-and-forget: the revision is recorded either way, and a task that
+  // cannot be made must never fail a CTC change that has already been saved.
+  require('../services/taskEvents').employeePromoted(profile, req.user, {
+    from: prevCtc.toLocaleString('en-IN'),
+    to: newCtc.toLocaleString('en-IN'),
+  }).catch(() => {});
+
   res.json({ profile, applied: effectiveNow, entry });
 });
 

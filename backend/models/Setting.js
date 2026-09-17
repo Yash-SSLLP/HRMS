@@ -160,8 +160,8 @@ const settingSchema = new mongoose.Schema(
     //
     // An individual can be raised or lowered off this number with
     // EmployeeProfile.regularizationMonthlyLimit. Unlike lateAllowance this is
-    // NOT SuperAdmin-only — it costs nobody money, and it is edited from the
-    // regularization Approval setup tab by whoever holds
+    // NOT SuperAdmin-only — it costs nobody money, and it is edited from
+    // Permissions -> Regularization approvals by whoever holds
     // regularizationHierarchy.manage.
     regularizationLimit: { type: Number, default: 0, min: 0, max: 31 },
 

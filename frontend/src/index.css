@@ -628,8 +628,9 @@ html.dark .topbar-icon-btn { color: var(--dk-ink-4); }
 html.dark .card-title { color: var(--dk-ink-1); }
 
 /* ---------------------------------------------------------------------------
-   Segmented control — a raised pill on a recessed track (the Regularization
-   page's "Requests / Approval setup" switch).
+   Segmented control — a raised pill on a recessed track (the Permissions page's
+   "Module access / Leave approvals / Regularization approvals" switch, and the
+   Leave page's "Requests / Balances").
 
    Its own component class rather than neutral Tailwind utilities, for two
    reasons:
@@ -1097,6 +1098,88 @@ html.dark .welcome-action:hover { box-shadow: 0 6px 18px -8px rgba(0, 0, 0, .75)
 }
 /* (the dark variant lives with the other dark nav rules below, so it isn't
    overridden by the generic `html.dark .nav-link` colour that follows it) */
+
+/* ---------------------------------------------------------------------------
+   .nav-count — the red pending count on a sidebar row or category.
+
+   THE SIDEBAR'S ONLY RED, and that is what makes it work. Every other colour in
+   this nav is the portal accent doing navigation — saying where things are.
+   This says something is STOPPED until somebody acts: a leave request nobody has
+   decided, an expense nobody has settled, a payslip somebody asked for. One
+   meaning, one colour, so a glance down the sidebar answers "is anything waiting
+   on me?" without opening a single dropdown.
+
+   PREMIUM, NOT ALARMING. A flat #ef4444 circle is what a phone notification dot
+   looks like, and against a white sidebar it shouts. This is a deep crimson with
+   a faint vertical lift, a hairline of its own colour around it and a soft halo
+   beneath — the same treatment the top bar's pills get. It reads as a
+   considered part of the design at a glance and as a number on closer look,
+   which is the difference between "premium" and "loud".
+   --------------------------------------------------------------------------- */
+.nav-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 0.36rem;
+  border-radius: 9999px;
+  font-size: 0.67rem;
+  font-weight: 700;
+  line-height: 1;
+  /* The group header is uppercase with 0.07em tracking; a number inherits that
+     and comes out looking spaced-out and broken. */
+  letter-spacing: normal;
+  text-transform: none;
+  /* So 11 and 99 are the same width and the badges down the sidebar line up. */
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background-image: linear-gradient(180deg, #e8394a 0%, #c81e3a 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .22),
+    0 1px 2px rgba(200, 30, 58, .38),
+    0 0 0 1px rgba(200, 30, 58, .18);
+}
+
+/* A CATEGORY header is 0.72rem uppercase — two type sizes below a nav row — so
+   the same pill reads as oversized there, and at a 256px sidebar its extra
+   width is paid for by the label (these names were already truncating before
+   any badge existed). Scaled to the type it sits beside. */
+.nav-group-header .nav-count,
+.nav-section-link .nav-count {
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.3rem;
+  font-size: 0.62rem;
+}
+
+/* On an ACTIVE row the accent wash sits underneath, so the badge needs a rim of
+   the row's own surface to stay crisp against it rather than blending into the
+   tint. */
+.nav-link-active .nav-count,
+.nav-section-link.is-active .nav-count {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .22),
+    0 1px 2px rgba(200, 30, 58, .38),
+    0 0 0 1.5px var(--surface);
+}
+
+/* Dark mode: the same hue, lifted, because #c81e3a on a near-black sidebar loses
+   most of its contrast and reads brown. The halo goes — a glow on dark is haze. */
+html.dark .nav-count {
+  background-image: linear-gradient(180deg, #f2586a 0%, #d92d46 100%);
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .18),
+    0 0 0 1px rgba(0, 0, 0, .35);
+}
+html.dark .nav-link-active .nav-count,
+html.dark .nav-section-link.is-active .nav-count {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .18),
+    0 0 0 1.5px var(--surface);
+}
 
 /* Collapsible sidebar category groups — minimal, separator-led accordion
    (matches the reference design): a hairline between sections, an uppercase
@@ -1980,6 +2063,116 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
     pointer-events: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   .table-pane — a table that is both WIDE and LONG, in a window of its own.
+
+   The rules above let a card scroll sideways, which is enough for a table of
+   ten rows. It is not enough for a matrix of sixty: the card grows to the full
+   height of the table, so its horizontal scrollbar sits at the BOTTOM of the
+   whole card — thousands of pixels down the page — and the column headings
+   have scrolled off the top long before you reach it. You end up reading a
+   switch with no heading above it and no name beside it, on a screen whose
+   entire job is saying who may do what.
+
+   The pane is the fix, and it has to scroll in BOTH directions to be one.
+   `position: sticky` resolves against the nearest scrollport, so a thead can
+   only stick to a box that scrolls VERTICALLY — pinning it to the viewport
+   instead is impossible once any ancestor scrolls sideways (CSS computes the
+   other axis to `auto` and the box clips). Capping the height is therefore not
+   a nicety here; it is what makes a frozen header possible at all, and it puts
+   the horizontal scrollbar on screen at the same time.
+
+   Apply it to a plain div WRAPPING the table, inside the card, with the card's
+   toolbar as its sibling — not its child. Everything below keys off `> table`,
+   and a toolbar inside the pane would scroll away with the rows.
+   --------------------------------------------------------------------------- */
+.table-pane {
+  /* Beats the `overflow-x: auto !important` the generic `:has(> table)` rule
+     above sets — that one deliberately pins overflow-y to hidden. */
+  overflow: auto !important;
+  /* 21rem is the page chrome this pane never gets: the 1px brand strip, the
+     64px sticky top bar, the page header, the tab strip, the toolbar row and
+     the card's own margins. dvh, not vh, so a phone's retracting address bar
+     does not leave the last row under it. The floor keeps the pane usable on a
+     short laptop in a split window, where the calc can go comically small. */
+  max-height: max(24rem, calc(100dvh - 21rem));
+  /* A pane that scrolls its own rows must not hand the gesture back to the page
+     the moment it bottoms out — that reads as the table jumping. */
+  overscroll-behavior: contain;
+}
+
+/* A pane exists because the table is wide, so the table is allowed to BE wide at
+   every width — not only under the 1599px cap the generic rules use. Combined
+   with the `min-w-full` these tables carry, this reads as "the wider of the
+   content and the pane", so a huge monitor still gets no scrollbar it does not
+   need. */
+.table-pane > table { min-width: max-content; }
+
+/* The heading row stays put. `th` rather than `thead`, because a sticky <thead>
+   is not honoured in every engine; the cells are.
+   z-index 2 keeps it over ordinary body cells (z-index 1 on the frozen column
+   below), and the background is load-bearing: a sticky cell is transparent, so
+   without it the rows would scroll straight through the headings. */
+.table-pane > table > thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--surface-2);
+}
+
+/* And a hairline under it, since `border-b` on a sticky cell is painted at the
+   cell's original place in some engines. */
+.table-pane > table > thead > tr > th::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background-color: var(--border);
+}
+
+/* The first column is WHO the row is about, so it is frozen at every width in
+   here — not only below lg, the way the generic rule does it. A grant with no
+   name beside it is unreadable at any screen size, and this pane is only ever
+   used by tables wide enough to need the help. */
+.table-pane > table > :is(thead, tbody) > tr > :is(th, td):first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: var(--surface);
+}
+/* The corner cell is both, so it has to outrank both. */
+.table-pane > table > thead > tr > th:first-child {
+  z-index: 3;
+  background-color: var(--surface-2);
+}
+/* A row that states its own colour keeps it through the frozen column. */
+.table-pane > table > tbody > tr[class*="bg-"] > :is(th, td):first-child {
+  background-color: inherit;
+}
+/* The seam, so the frozen column reads as an edge rather than as paint. */
+.table-pane > table > tbody > tr > :is(th, td):first-child::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: -1px;
+  width: 1px;
+  background-color: var(--border);
+  pointer-events: none;
+}
+
+/* Both scrollbars slim, matching the in-card one above. */
+.table-pane::-webkit-scrollbar { width: 8px; height: 8px; }
+.table-pane::-webkit-scrollbar-track { background: transparent; }
+.table-pane::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, .38);
+  border-radius: 9999px;
+}
+.table-pane::-webkit-scrollbar-thumb:hover { background-color: rgba(100, 116, 139, .6); }
+html.dark .table-pane::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, .18); }
 
 /* Modal dialogs (full-screen overlay → inner panel): keep the panel inside the
    viewport and let it scroll, so tall forms like the employee editor are fully

@@ -141,7 +141,7 @@ const employeeProfileSchema = new mongoose.Schema(
     // field engineer who genuinely misses punches, or somebody being held to a
     // tighter line. null (the default) means "follow the org number", which is
     // NOT the same as 0: zero is a real cap that blocks every request.
-    // Set from Regularization -> Approval setup, behind the same grant as the
+    // Set from Permissions -> Regularization approvals, behind the same grant as the
     // approver ladder above.
     regularizationMonthlyLimit: {
       type: Number,

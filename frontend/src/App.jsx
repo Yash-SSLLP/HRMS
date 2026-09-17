@@ -71,6 +71,8 @@ const AdminCompanies = lazy(() => import('./pages/AdminCompanies.jsx'));
 const AdminOverview = lazy(() => import('./pages/AdminOverview.jsx'));
 const AdminProjects = lazy(() => import('./pages/AdminProjects.jsx'));
 const AdminTasks = lazy(() => import('./pages/AdminTasks.jsx'));
+const TaskDetail = lazy(() => import('./pages/TaskDetail.jsx'));
+const AdminTaskWorkflows = lazy(() => import('./pages/AdminTaskWorkflows.jsx'));
 const AdminRecruitment = lazy(() => import('./pages/AdminRecruitment.jsx'));
 const AdminAssets = lazy(() => import('./pages/AdminAssets.jsx'));
 const AdminPerformance = lazy(() => import('./pages/AdminPerformance.jsx'));
@@ -288,6 +290,10 @@ export default function App() {
         <Route path="documents" element={<AdminDocuments />} />
         <Route path="projects" element={<AdminProjects />} />
         <Route path="tasks" element={<AdminTasks />} />
+        {/* The same detail page both portals use; `base` keeps a link inside
+            the portal it was followed from. */}
+        <Route path="tasks/:id" element={<TaskDetail base="/admin/tasks" />} />
+        <Route path="task-workflows" element={<AdminTaskWorkflows />} />
         <Route path="recruitment" element={<AdminRecruitment />} />
         {/* CEO/MD take interview rounds too, and have no employee portal to
             record them from — same page as /employee/interviews, which
@@ -369,6 +375,7 @@ export default function App() {
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<EmployeeTasks />} />
+        <Route path="tasks/:id" element={<TaskDetail base="/employee/tasks" />} />
         <Route path="assets" element={<EmployeeAssets />} />
         {/* Asset register for holders of the standalone Assets grant who have
             no admin portal — the same page /admin/assets serves, mounted here.

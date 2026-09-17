@@ -18,21 +18,39 @@ const {
   recordClearanceSection,
 } = require('./exitController');
 // Everything below this line serves countHrApprovals only — the HR-WIDE inbox
-// tally. Each import belongs to one of the seven queues the admin Approvals
-// screen lists, and each is counted with that queue's own gate and company-wall
-// helper (see that function).
+// tally. Each import belongs to one of the queues the admin Approvals screen
+// lists (or, for payslip requests, to the sidebar badge on its own page), and
+// each is counted with that queue's own gate and company-wall helper (see that
+// function).
 const Expense = require('../models/Expense');
 const TravelRequest = require('../models/TravelRequest');
 const Loan = require('../models/Loan');
 const ChangeRequest = require('../models/ChangeRequest');
 const DocumentChangeRequest = require('../models/DocumentChangeRequest');
 const Payroll = require('../models/Payroll');
+// THE EMPLOYEE LEDGER IS A DISCRIMINATOR, NOT ITS OWN COLLECTION, and models/
+// KhataEntry.js is the LEGACY model it replaced — an empty collection nothing
+// writes to any more. Import that one by its obvious name and every khata badge
+// counts 0 for ever, with nothing to show for it. The controller that owns these
+// queues resolves it exactly this way (see khataController's own require).
+const KhataEntry = require('../models/CashbookEntry').EmployeeLedgerEntry;
+// The BASE model, deliberately: it spans both ledgers, and so does the Vouchers
+// tab this badges (GET /cashbook/entries?status=Pending queries the base too).
+// The badge has to show what the page shows.
+const CashbookEntry = require('../models/CashbookEntry');
+const InvestmentDeclaration = require('../models/InvestmentDeclaration');
+const { Enrollment, CourseReport, CourseComment } = require('../models/Course');
 const { CHANGE_INBOX_ROLES } = require('./changeRequestController');
 const { canReadOthersDocs } = require('./documentController');
+const { countOpenComplaints } = require('./complaintController');
+const { countOpenResetRequests } = require('./passwordResetRequestController');
+const { countMyTaskApprovals } = require('./taskWorkController');
+const { countDueConfirmations } = require('./lifecycleController');
 const {
-  hasPermission, isPortalViewer, isExecViewer, canApproveSelfPayslip,
+  hasPermission, isPortalViewer, isExecViewer, canApproveSelfPayslip, canApproveAdvances,
 } = require('../middleware/authMiddleware');
 const { scopeEmployeeFilter, scopeUserField } = require('../utils/employeeScope');
+const { scopeEntryAccounts } = require('./cashbookController');
 
 /**
  * Does this account see EVERY inbox, not just its own rung?
@@ -616,7 +634,7 @@ const countMyApprovals = asyncHandler(async (req, res) => {
 });
 
 /**
- * How many items sit in the HR-WIDE approvals inbox — the seven category tabs of
+ * How many items sit in the HR-WIDE approvals inbox — the category tabs of
  * the admin Approvals screen (mobile: screens/admin/ApprovalsScreen). Feeds the
  * count badge on the menu row and the console tile that open it, so a queue can
  * announce itself without being opened.
@@ -625,12 +643,12 @@ const countMyApprovals = asyncHandler(async (req, res) => {
  * (things addressed to you personally). The two are different queues and their
  * two badges deliberately show different numbers.
  *
- * WHY SEVEN QUERIES AND NOT ONE. Each category is a different collection behind a
+ * WHY ONE QUERY PER CATEGORY AND NOT ONE FOR ALL. Each category is a different collection behind a
  * different capability and a different slice of the company wall. So each tally
  * is built with the SAME gate and the SAME scope helper its own list route uses —
  * named in the comment on each line — rather than with one invented filter that
  * would quietly drift from what the screen actually lists. A category the caller
- * may not see counts 0, never 403: the client fetches all seven and swallows
+ * may not see counts 0, never 403: the client fetches them all and swallows
  * failures already, and a badge must never break the menu it sits in.
  *
  * The keys are mobile ApprovalsScreen's CATEGORIES[].key, so the entry badge and
@@ -699,8 +717,116 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     ? Payroll.countDocuments(await scopeEmployeeFilter(req, { 'selfApproval.status': 'Pending' }))
     : NONE;
 
-  const [leave, expense, travel, regularization, loan, change, docswap, selfPayslip] = await Promise.all([
+  // GET /khata/pending                       (khata.manage)       employee = User
+  // The Approvals tab's own list: an advance to pay out, a settlement to pay
+  // back, or a payout somebody raised above their operator limit.
+  const khataQ = may('khata.manage')
+    ? KhataEntry.countDocuments(await scopeUserField(req, { status: 'Pending' }))
+    : NONE;
+  // GET /khata/entries?movement=expense,refund&status=Approved&confirmed=false
+  //                                           (khata.manage)       employee = User
+  // THE OTHER HALF OF THE SAME TAB, and a different query — which is exactly why
+  // it is counted separately instead of being assumed. "Expenses and refunds to
+  // confirm" is money the employee has ALREADY spent against their advance: it
+  // posted on the spot (holding it only made the wallet lie about what was
+  // left), so it is Approved, not Pending, and what is waiting is somebody
+  // checking it. `$ne: true` and not `false`, because rows written before the
+  // flag existed carry no `confirmedByCompany` at all — same test listEntries
+  // makes for `?confirmed=false`.
+  const khataConfirmQ = may('khata.manage')
+    ? KhataEntry.countDocuments(await scopeUserField(req, {
+      movement: { $in: ['expense', 'refund'] },
+      status: 'Approved',
+      confirmedByCompany: { $ne: true },
+    }))
+    : NONE;
+  // GET /khata/advance-approvals              (canApproveAdvances)  employee = User
+  // The other queue on the SAME page, behind a different gate: an advance an
+  // employee has asked for, waiting on a CEO/MD/Super Admin to sanction it. Kept
+  // a separate key because the two audiences barely overlap — an executive holds
+  // no khata capability, and the operators who confirm expenses cannot sanction.
+  // The sidebar row adds them up; the page keeps them on their own tabs.
+  const khataSanctionQ = canApproveAdvances(req.user)
+    ? KhataEntry.countDocuments(await scopeUserField(req, { status: 'AwaitingApproval' }))
+    : NONE;
+  // GET /cashbook/entries?status=Pending      (cashbook.manage)     walled by ACCOUNT
+  // Petty-cash vouchers staff have filed, waiting on finance to post them.
+  // `scopeEntryAccounts`, not a people wall: a cashbook entry belongs to a cash
+  // account, and which accounts an operator may touch is its own list.
+  const voucherQ = may('cashbook.manage')
+    ? CashbookEntry.countDocuments(await scopeEntryAccounts(req, { status: 'Pending' }))
+    : NONE;
+  // GET /exits?status=Pending                 (exit.manage)        employee = EmployeeProfile
+  // Resignations nobody has decided. Deliberately NOT the InClearance ones as
+  // well: a notice period legitimately runs for a month, and a badge that cannot
+  // be cleared for a month is a badge people stop reading.
+  const exitQ = may('exit.manage')
+    ? ExitRequest.countDocuments(await scopeEmployeeFilter(req, { status: 'Pending' }))
+    : NONE;
+  // GET /complaints/assigned                  (leadership roles)   complainant = User
+  // Counted by the complaints controller itself, from the same filter its inbox
+  // uses — including the rule that nobody sees a complaint raised against them.
+  const complaintQ = countOpenComplaints(req).catch(() => 0);
+  // GET /password-reset-requests              (users.manage)       walled in JS
+  // Its wall cannot be written as a Mongo filter (a request is keyed by the
+  // address somebody typed, not by an account), so its own controller counts it.
+  const passwordResetQ = may('users.manage')
+    ? countOpenResetRequests(req).catch(() => 0)
+    : NONE;
+  // GET /declarations?status=Submitted        (declarations.manage) employee = User
+  const declarationQ = may('declarations.manage')
+    ? InvestmentDeclaration.countDocuments(await scopeUserField(req, { status: 'Submitted' }))
+    : NONE;
+  // GET /courses/enrollments/pending + the two moderation queues (courses.manage)
+  // THREE QUERIES, ONE NUMBER, because they are one job and one screen: somebody
+  // asking to join a course, an issue reported against one, and a comment
+  // awaiting moderation. They are not company-walled — neither are the lists
+  // they badge (a course is org-wide), so the badge matches what opens.
+  const courseQ = may('courses.manage')
+    ? Promise.all([
+      Enrollment.countDocuments({ approvalStatus: 'Pending' }),
+      CourseReport.countDocuments({ status: 'Open' }),
+      CourseComment.countDocuments({ status: 'Pending' }),
+    ]).then(([a, b, c]) => a + b + c).catch(() => 0)
+    : NONE;
+  // GET /lifecycle/confirmations              (lifecycle.manage)   EmployeeProfile
+  // Probations landing inside the next 30 days, or already past. NOT a
+  // countDocuments: the due date is not stored — it is `confirmationDueDate` OR
+  // joining + probation months — so rebuilding it in an aggregation would give a
+  // second answer for free (Mongo clamps 31 Jan + 1 month to 28 Feb, JS rolls it
+  // to 3 March). Its own controller evaluates the one rule the list uses.
+  const confirmationQ = may('lifecycle.manage')
+    ? countDueConfirmations(req).catch(() => 0)
+    : NONE;
+  // GET /tasks/approvals                      (nobody — a personal inbox)
+  // No capability gate on purpose: anyone can be named the approver of a task,
+  // which is why that route has none either. Counted from the very filter the
+  // list is built from (approvalInboxFilter).
+  const taskApprovalQ = countMyTaskApprovals(req).catch(() => 0);
+
+  // GET /payroll?releaseStatus=Requested,Approved,ChangeRequested  (payroll.manage)
+  // The "Needs action" tab of Payslip Requests: an employee has asked for a
+  // slip and it is not in their hands yet. The three states are HR's three
+  // steps (check, finalise, re-finalise after a query), which is why they count
+  // as one number rather than three — the badge answers "is there payslip work
+  // waiting", and the tab it opens shows which kind.
+  //
+  // The list route also adds back the operator's OWN payslips regardless of
+  // scope (includeOwnPayslips); the badge does not, so an HR looking at a
+  // request they filed themselves sees it in the queue without it inflating the
+  // count of other people's work.
+  const payslipRequestQ = may('payroll.manage')
+    ? Payroll.countDocuments(await scopeEmployeeFilter(req, {
+      'release.status': { $in: ['Requested', 'Approved', 'ChangeRequested'] },
+    }))
+    : NONE;
+
+  const [leave, expense, travel, regularization, loan, change, docswap, selfPayslip,
+    payslipRequest, khata, khataConfirm, khataSanction, voucher, exit, complaint,
+    passwordReset, declaration, course, confirmation, taskApproval] = await Promise.all([
     leaveQ, expenseQ, travelQ, regularizationQ, loanQ, changeQ, docswapQ, selfPayslipQ,
+    payslipRequestQ, khataQ, khataConfirmQ, khataSanctionQ, voucherQ, exitQ, complaintQ,
+    passwordResetQ, declarationQ, courseQ, confirmationQ, taskApprovalQ,
   ]);
   res.json({
     leave,
@@ -711,6 +837,23 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     change,
     docswap,
     selfPayslip,
+    payslipRequest,
+    khata,
+    khataConfirm,
+    khataSanction,
+    voucher,
+    exit,
+    complaint,
+    passwordReset,
+    declaration,
+    course,
+    confirmation,
+    taskApproval,
+    // `total` is the APPROVALS SCREEN's tally and deliberately counts only the
+    // categories that screen lists. Everything added after `selfPayslip` badges
+    // its own module in the sidebar instead, so folding it in here would badge
+    // the Approvals screen with work it cannot show — a number that opens on
+    // nothing.
     total: leave + expense + travel + regularization + loan + change + docswap + selfPayslip,
   });
 });

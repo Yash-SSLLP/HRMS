@@ -39,8 +39,11 @@ import {
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import ToggleSwitch from '../components/ToggleSwitch';
+import { useTabParam } from '../hooks/useTabParam';
+import LeaveApprovalHierarchy from '../components/permissions/LeaveApprovalHierarchy';
+import RegularizationApprovalSetup from '../components/permissions/RegularizationApprovalSetup';
 import { roleLabel } from '../config/roles';
-import { GRANTABLE_ROLES, INCENTIVE_MODULES, INCENTIVE_ROLE_LABELS } from '../config/permissions';
+import { GRANTABLE_ROLES, INCENTIVE_MODULES, INCENTIVE_ROLE_LABELS, hasExplicitPermission } from '../config/permissions';
 import { useAuthStore } from '../store/authStore';
 
 /**
@@ -125,16 +128,20 @@ function SettingRow({ title, description, checked, onChange, busy, onLabel, offL
   );
 }
 
-export default function AdminPermissions() {
-  const me = useAuthStore((s) => s.user);
-  const isSuperAdmin = me?.role === 'SuperAdmin';
+/**
+ * The people × grants matrix, plus the org-wide settings above it.
+ *
+ * `showGuide` is owned by the page shell because its BUTTON is in the page
+ * header, which the shell draws — the header has to be one element across all
+ * three tabs or the title would jump as you switch.
+ */
+function AccessTab({ showGuide, setShowGuide }) {
 
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
-  const [showGuide, setShowGuide] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
@@ -442,42 +449,12 @@ export default function AdminPermissions() {
       && (!t || `${u.firstName} ${u.lastName} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(t)));
   }, [users, q, roleFilter]);
 
-  if (!isSuperAdmin) {
-    return (
-      <div>
-        <PageHeader title="Permissions" subtitle="Access control" />
-        <div className="card p-6 flex items-start gap-3">
-          <FiAlertCircle className="text-amber-600 mt-0.5 shrink-0" size={18} />
-          <div>
-            <p className="text-sm font-medium text-gray-900">Super Admins only</p>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Granting access is the one thing that stays with the accounts that administer the system.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Account, Role, Company Accounts, Expenses, Assets, Loans, Incentive,
   // Employee Cashbook, Attendance, CEO/MD, Manager profiles, Capabilities.
   const COLS = 12;
 
   return (
     <div>
-      <PageHeader
-        title="Permissions"
-        subtitle="Who can reach which module, and what each account may do inside it.">
-        <button
-          type="button"
-          onClick={() => setShowGuide((v) => !v)}
-          aria-expanded={showGuide}
-          className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors
-            ${showGuide ? 'accent-bg text-white border-transparent' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
-          <FiInfo size={15} /> What these grants mean
-        </button>
-      </PageHeader>
-
       {error && (
         <div className="mb-4 flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-lg">
           <FiAlertCircle className="mt-0.5 shrink-0" size={16} />
@@ -595,9 +572,16 @@ export default function AdminPermissions() {
       </section>
 
       {/* ---------------- People × grants ---------------- */}
-      {/* Toolbar and table share one wrapper on purpose: the global responsive
-          rule pins a card's non-table child to the left edge, so the filters
-          stay put while a narrow screen scrolls the matrix sideways. */}
+      {/* THE TOOLBAR IS OUTSIDE THE SCROLLER, and that is the fix.
+          It used to share one wrapper with the table, which made the card
+          itself the horizontal scroller — so the only left/right scrollbar was
+          at the very BOTTOM of sixty-odd rows, four thousand pixels down the
+          page, and the column headings scrolled out of sight long before you
+          reached it. The table now sits in `.table-pane` (index.css): a pane
+          capped to the viewport, scrolling in BOTH directions, with its head
+          row and its Account column frozen. The scrollbar is on screen wherever
+          you are in the matrix, and every switch stays attached to a name and a
+          column heading. */}
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <div className="px-4 py-3.5 border-b border-gray-100 flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[13rem] max-w-sm">
@@ -621,6 +605,7 @@ export default function AdminPermissions() {
           </span>
         </div>
 
+        <div className="table-pane">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
@@ -839,6 +824,7 @@ export default function AdminPermissions() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {permUser && (
@@ -993,6 +979,115 @@ export default function AdminPermissions() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============ Page shell ============
+
+/**
+ * EVERY ACCESS DECISION IN THE PORTAL, ON ONE SCREEN.
+ *
+ * The two approval ladders used to live on the modules they route — the leave
+ * one as a third tab on Leave, the regularization one as a second tab on
+ * Regularization. Both are access decisions: they name who may decide somebody
+ * else's request. Answering "who can do what around here?" meant touring three
+ * screens and knowing which two of them hid a setup tab. They are tabs here now,
+ * and only here.
+ *
+ * WHO SEES WHICH TAB. Each tab keeps the grant it always had, so nobody gains or
+ * loses anything by the move: Module access is Super Admins only (the
+ * `/admin/users/...` endpoints behind every switch are restrictTo('SuperAdmin')),
+ * the leave ladder needs `leaveHierarchy.manage`, the regularization ladder
+ * needs `regularizationHierarchy.manage` (or the older `hierarchy.manage`).
+ * hasExplicitPermission passes a Super Admin and an exec in edit mode, so this
+ * is the same gate each tab enforced on its old page.
+ *
+ * WHICH IS WHY THE PAGE IS NO LONGER SUPER-ADMIN-ONLY, and the sidebar entry is
+ * gated on the same three keys (`anyExplicitPerm` in config/nav.jsx) rather than
+ * on the role. An HR Manager given one of the ladders has to be able to reach
+ * the screen that holds it. They see that tab and nothing else — no strip at
+ * all, since there is nothing to switch between.
+ *
+ * An account holding none of the three gets the refusal card; the nav never
+ * offers them the page, so they typed the URL.
+ */
+export default function AdminPermissions() {
+  const me = useAuthStore((s) => s.user);
+  const isSuperAdmin = me?.role === 'SuperAdmin';
+  const canLeaveLadder = hasExplicitPermission(me, 'leaveHierarchy.manage');
+  // Two keys, because `hierarchy.manage` governed this ladder before it was
+  // given a key of its own. Same pair the old tab tested.
+  const canRegLadder = hasExplicitPermission(me, 'regularizationHierarchy.manage')
+    || hasExplicitPermission(me, 'hierarchy.manage');
+
+  const tabs = [
+    ...(isSuperAdmin ? [{ id: 'access', label: 'Module access' }] : []),
+    ...(canLeaveLadder ? [{ id: 'leave', label: 'Leave approvals' }] : []),
+    ...(canRegLadder ? [{ id: 'regularization', label: 'Regularization approvals' }] : []),
+  ];
+  // useTabParam keeps the tab in the URL, which is what lets global search and a
+  // shared link land on one. Falls back to whichever tab this account HAS.
+  const [tab, setTab] = useTabParam(tabs[0]?.id || 'access', tabs.map((t) => t.id));
+  // Owned here so the button can sit in the page header — see AccessTab.
+  const [showGuide, setShowGuide] = useState(false);
+
+  if (!tabs.length) {
+    return (
+      <div>
+        <PageHeader title="Permissions" subtitle="Access control" />
+        <div className="card p-6 flex items-start gap-3">
+          <FiAlertCircle className="text-amber-600 mt-0.5 shrink-0" size={18} />
+          <div>
+            <p className="text-sm font-medium text-gray-900">Super Admins only</p>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Granting access is the one thing that stays with the accounts that administer the system.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title="Permissions"
+        subtitle="Who can reach which module, what each account may do inside it, and who signs off whose requests.">
+        {tab === 'access' && (
+          <button
+            type="button"
+            onClick={() => setShowGuide((v) => !v)}
+            aria-expanded={showGuide}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors
+              ${showGuide ? 'accent-bg text-white border-transparent' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+            <FiInfo size={15} /> What these grants mean
+          </button>
+        )}
+      </PageHeader>
+
+      {/* Same segmented control the module pages these tabs came from used, so
+          the screens still feel like the ones people learned. No strip at all
+          for an account that holds exactly one of them — there is nothing to
+          switch between. */}
+      {tabs.length > 1 && (
+        <div className="mb-5">
+          <nav className="seg-track">
+            {tabs.map((t) => (
+              <button key={t.id} type="button" onClick={() => setTab(t.id)}
+                aria-current={tab === t.id ? 'page' : undefined}
+                className={`seg-btn${tab === t.id ? ' is-active' : ''}`}>
+                {t.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
+
+      {tab === 'leave' && canLeaveLadder ? <LeaveApprovalHierarchy />
+        : tab === 'regularization' && canRegLadder ? <RegularizationApprovalSetup />
+        : isSuperAdmin ? <AccessTab showGuide={showGuide} setShowGuide={setShowGuide} />
+        : null}
     </div>
   );
 }

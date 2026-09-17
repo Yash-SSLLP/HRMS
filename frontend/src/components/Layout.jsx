@@ -21,7 +21,8 @@ import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock,
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
-import { hasPermission, hasAnyPermission, isViewOnly, isViewOnlyAccount, canUseAdminPortal } from '../config/permissions';
+import { hasPermission, hasAnyPermission, hasExplicitPermission, isViewOnly, isViewOnlyAccount, canUseAdminPortal } from '../config/permissions';
+import { useNavCountsStore } from '../store/navCountsStore';
 import { formatDateTime12 } from '../utils/time';
 
 const ChatDock = lazy(() => import('./ChatDock'));
@@ -57,8 +58,38 @@ function UserAvatar({ user }) {
   );
 }
 
+/**
+ * The red count on a sidebar row: how many things are waiting there.
+ *
+ * WHY IT EARNS THE ONLY RED IN THE SIDEBAR. Everything else in this nav is
+ * navigation — it says where things are. This says something is STUCK until
+ * somebody acts, which is the one message worth interrupting a scan for. It is
+ * deliberately a deep crimson with a soft halo rather than a flat pillarbox
+ * circle: the point is "notice me", not "alarm".
+ *
+ * Caps at 99+ so a queue nobody has touched in a month cannot widen the row and
+ * push the label into an ellipsis. The full number is in the title either way.
+ * @param {{n: number, label: string, className?: string}} props
+ */
+function NavCount({ n, label, className = '' }) {
+  if (!n) return null;
+  const text = n > 99 ? '99+' : String(n);
+  return (
+    <span
+      className={`nav-count ${className}`}
+      title={`${n} ${n === 1 ? 'item needs' : 'items need'} attention in ${label}`}
+      aria-label={`${n} pending in ${label}`}
+    >
+      {text}
+    </span>
+  );
+}
+
 // A single sidebar link. `item.icon` is a react-icon component.
-function NavLeaf({ item, onNavigate }) {
+// `count` is the live pending tally for `item.badge`, already resolved by the
+// list — a leaf never reads the store itself, or every row in the sidebar would
+// re-render on every poll instead of the handful that carry a number.
+function NavLeaf({ item, onNavigate, count = 0 }) {
   const Icon = item.icon;
   return (
     <NavLink
@@ -69,7 +100,10 @@ function NavLeaf({ item, onNavigate }) {
         `nav-link ${item.danger ? 'nav-link-danger' : ''} ${item.highlight ? 'nav-link-highlight' : ''} ${isActive ? 'nav-link-active' : ''}`}
     >
       <span className="nav-icon" aria-hidden="true">{Icon ? <Icon size={15} /> : null}</span>
-      <span className="truncate">{item.label}</span>
+      {/* min-w-0 so a long label gives way to the badge rather than shoving it
+          off the row — `truncate` alone does not shrink a flex item. */}
+      <span className="truncate min-w-0">{item.label}</span>
+      <NavCount n={count} label={item.label} className="ml-auto" />
     </NavLink>
   );
 }
@@ -81,6 +115,17 @@ function NavList({ items, user, onNavigate }) {
   const { pathname } = useLocation();
   // Org-wide chat switch — feature-gated items disappear with the module.
   const chatEnabled = useAuthStore((s) => s.features?.chatEnabled);
+  // The live pending tallies (see store/navCountsStore). Read once, here, and
+  // handed down: a row with no `badge` key never sees them.
+  const counts = useNavCountsStore((s) => s.counts);
+  // `badge` may name SEVERAL keys, because one page can hold more than one
+  // queue behind different gates — Employee Cashbook has expenses to confirm
+  // (khata.manage) and advances to sanction (CEO/MD), on two tabs. The row is
+  // one row, so it wears one number: the sum of the queues this account can
+  // actually see. The server answers 0 for the ones it cannot.
+  const countFor = (i) => (i.badge
+    ? [].concat(i.badge).reduce((t, k) => t + (counts[k] || 0), 0)
+    : 0);
   // A grouped nav may also carry bare items (no `group`) pinned at the top —
   // Dashboard is one — so detect grouping across the list, not just its head.
   const grouped = items.some((i) => !!i.group);
@@ -88,6 +133,11 @@ function NavList({ items, user, onNavigate }) {
     if (i.roles && !i.roles.includes(user?.role)) return false;
     if (i.perm && !hasPermission(user, i.perm)) return false;
     if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
+    // EXPLICITLY granted, which is a different question: an HR Manager with no
+    // permissions array holds everything by default, and a grant that has to be
+    // ticked per account must not be swept in by that default. Mirrors the gate
+    // the page itself uses (Permissions is the one that needs this).
+    if (i.anyExplicitPerm && !i.anyExplicitPerm.some((c) => hasExplicitPermission(user, c))) return false;
     // Feature-switched items (chat) go when the module is off.
     if (i.feature === 'chat' && !chatEnabled) return false;
     return true;
@@ -115,14 +165,16 @@ function NavList({ items, user, onNavigate }) {
   }, [pathname]);
 
   if (!grouped) {
-    return visible(items).map((item) => <NavLeaf key={item.to} item={item} onNavigate={onNavigate} />);
+    return visible(items).map((item) => (
+      <NavLeaf key={item.to} item={item} onNavigate={onNavigate} count={countFor(item)} />
+    ));
   }
 
   return items.map((g) => {
     // Pinned top-level link — rendered before, and outside, every category.
     if (isLeaf(g)) {
       return visible([g]).length
-        ? <NavLeaf key={g.to} item={g} onNavigate={onNavigate} />
+        ? <NavLeaf key={g.to} item={g} onNavigate={onNavigate} count={countFor(g)} />
         : null;
     }
 
@@ -152,12 +204,20 @@ function NavList({ items, user, onNavigate }) {
         >
           <span className="nav-icon" aria-hidden="true">{Icon ? <Icon size={15} /> : null}</span>
           <span className="truncate min-w-0">{g.group}</span>
+          <NavCount n={countFor(only)} label={g.group} className="ml-auto" />
         </NavLink>
       );
     }
 
     const isOpen = !!open[g.group];
     const hasHighlight = children.some((i) => i.highlight);
+    // What is waiting INSIDE this category, so a collapsed section still says so
+    // — which is the whole point: you should not have to open nine dropdowns to
+    // find out whether anything needs you.
+    //
+    // Only counts rows this account can SEE, because `children` is the filtered
+    // list: a header must never promise work behind a row that is not there.
+    const groupCount = children.reduce((n, i) => n + countFor(i), 0);
     return (
       <div key={g.group} className={`nav-group ${isOpen ? 'is-open' : ''}`}>
         <button
@@ -165,9 +225,16 @@ function NavList({ items, user, onNavigate }) {
           onClick={() => setOpen((o) => ({ ...o, [g.group]: !o[g.group] }))}
           className={`nav-group-header ${isOpen ? 'is-open' : ''} ${hasHighlight ? 'nav-group-header-highlight' : ''}`}
           aria-expanded={isOpen}
+          // These names truncate in a 256px sidebar (they did before the badge
+          // was ever added), so the full one is always one hover away.
+          title={groupCount ? `${g.group} — ${groupCount} waiting` : g.group}
         >
           <span className="truncate flex-1 text-left min-w-0">{g.group}</span>
           <span className="nav-group-toggle">
+            {/* Closed only. With the category open every row below carries its
+                own count, and repeating their sum one line above reads as a
+                duplicate rather than as a summary. */}
+            {!isOpen && <NavCount n={groupCount} label={g.group} />}
             {isOpen
               ? <FiMinus className="nav-group-pm" aria-hidden="true" />
               : <FiPlus className="nav-group-pm" aria-hidden="true" />}
@@ -175,7 +242,9 @@ function NavList({ items, user, onNavigate }) {
         </button>
         <div className={`nav-group-body ${isOpen ? 'is-open' : ''}`}>
           <div className="nav-group-inner space-y-0.5">
-            {children.map((item) => <NavLeaf key={item.to} item={item} onNavigate={onNavigate} />)}
+            {children.map((item) => (
+              <NavLeaf key={item.to} item={item} onNavigate={onNavigate} count={countFor(item)} />
+            ))}
           </div>
         </div>
       </div>
@@ -423,29 +492,11 @@ function NavPill({ to, icon, label }) {
 // you act), so the badge is the point: without it you'd have to open the inbox
 // to discover there is nothing to do. Polls on the same cadence as the bell.
 function ApprovalsPill({ to }) {
-  const [pending, setPending] = useState(0);
-
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const { data } = await api.get('/approvals/count');
-        if (alive) setPending(data.total || 0);
-      } catch {
-        /* best effort — a failed count must never break the top bar */
-      }
-    };
-    load();
-    // Same visibility gate as the bell — a background tab polls nothing.
-    const t = setInterval(() => { if (!document.hidden) load(); }, NOTIF_POLL_MS);
-    const onVisibility = () => { if (!document.hidden) load(); };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      alive = false;
-      clearInterval(t);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, []);
+  // The same tally the sidebar's Approvals row wears, out of the same store —
+  // this used to run its own twenty-second poll of the same endpoint, so the
+  // pill and the row could show different numbers for up to twenty seconds.
+  // Layout owns the polling now (see the effect in <Layout/>).
+  const pending = useNavCountsStore((s) => s.counts.mine);
 
   const label = pending > 0 ? `Approvals (${pending} pending)` : 'Approvals';
   return (
@@ -538,6 +589,7 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
       if (i.roles && !i.roles.includes(user?.role)) return false;
       if (i.perm && !hasPermission(user, i.perm)) return false;
       if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
+      if (i.anyExplicitPerm && !i.anyExplicitPerm.some((c) => hasExplicitPermission(user, c))) return false;
       // …and out of search too, or the page it hides is still one keystroke away.
       if (i.feature === 'chat' && !chatEnabled) return false;
       return true;
@@ -562,7 +614,7 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
             to: `${i.to}?tab=${t.id}`,
             label: t.label,
             icon: i.icon,
-            group: i.label,          // shows as "Regularization › Approval setup"
+            group: i.label,          // shows as "Permissions › Leave approvals"
             parent: i.label,
           });
         });
@@ -942,6 +994,10 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // console logs the sign-out; it clears the local session either way.
   const handleLogout = async () => {
     setConfirmLogout(false);
+    // Zustand stores outlive a route change, so the badges have to be cleared by
+    // hand — otherwise the next person to sign in on this browser sees the
+    // previous account's pending counts until the first poll answers.
+    useNavCountsStore.getState().reset();
     await signOut();
     navigate('/login', { replace: true });
   };
@@ -976,6 +1032,46 @@ export default function Layout({ navItems = [], sectionTitle }) {
   useEffect(() => {
     document.documentElement.setAttribute('data-portal', portal);
   }, [portal]);
+
+  /*
+   * THE ONE POLL BEHIND EVERY RED COUNT in the shell — the sidebar row badges,
+   * the category totals and the top bar's Approvals pill. It lives here, at the
+   * shell, rather than in the components that read it: they mount and unmount
+   * with the drawer and the breakpoint, and a poll that restarts every time the
+   * mobile menu is opened is a poll nobody can reason about.
+   *
+   * Re-run on `pathname` as well as on the interval: acting on a request takes
+   * you to another page, and the badge for the queue you just emptied should be
+   * right when you land, not up to twenty seconds later. `refresh` de-duplicates
+   * inside a 5s window, so a burst of navigation is still one request.
+   *
+   * `admin` decides whether the HR-wide tally is asked for at all. In My Portal
+   * there is no row that wears one, so it would be a request per tick for
+   * numbers nothing reads.
+   */
+  const refreshNavCounts = useNavCountsStore((s) => s.refresh);
+  useEffect(() => {
+    if (!user) return undefined;
+    const isAdminPortal = portal === 'admin';
+    // THE FIRST FETCH IS NOT GATED ON VISIBILITY, only the poll is. A session
+    // restored into a BACKGROUND tab — a reopened browser, a middle-clicked
+    // link — starts life with document.hidden true, and a guard here meant the
+    // sidebar sat badge-less until the tab happened to be focused. It is one
+    // request; the repeat is what needs a gate. Same shape as the bell above.
+    refreshNavCounts({ admin: isAdminPortal });
+    const t = setInterval(() => {
+      if (!document.hidden) refreshNavCounts({ admin: isAdminPortal, force: true });
+    }, NOTIF_POLL_MS);
+    // Coming back to the tab is the moment the numbers are most likely stale.
+    const onVisibility = () => {
+      if (!document.hidden) refreshNavCounts({ admin: isAdminPortal, force: true });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [refreshNavCounts, portal, user?._id, pathname]);
 
   // Close the mobile drawer whenever the route changes.
   const closeMobile = () => setMobileOpen(false);

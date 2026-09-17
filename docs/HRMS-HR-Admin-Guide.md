@@ -144,7 +144,7 @@ Bulk tools cover export to Excel, an import template, import from Excel, a ZIP e
 
 This is also where the **approval hierarchies** are configured, each independently of the org chart:
 
-- **Leave approvers** — an ordered ladder of up to four people. Leave climbs it one rung at a time. Left empty, leave falls back to walking the reporting-manager chain.
+- **Leave approvers** — an ordered ladder of up to four people. Leave climbs it one rung at a time. Left empty, leave falls back to walking the reporting-manager chain. Set it on **Permissions → Leave approvals** (who signs off whose attendance corrections is the tab beside it, **Regularization approvals**) — every access decision in the portal is made on that one page.
 - **Regularization approvers** — one or two people. Left empty, the request stays on the flat HR-review path.
 - **Final HR recipients** — who is told in detail when a leave is fully approved.
 

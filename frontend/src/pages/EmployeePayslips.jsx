@@ -76,6 +76,9 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
   if (!open) return null;
 
   const available = months.filter((m) => m.canRequest);
+  // Not `busyKey === chosen`: both are null before a month is picked, so the
+  // button read “Sending…” the moment the dialog opened.
+  const sending = !!chosen && busyKey === chosen;
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8"
       onClick={onClose}>
@@ -90,8 +93,8 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
           <div>
             <h2 className="card-title">Request a payslip</h2>
             <p className="text-xs text-gray-500 mt-1">
-              Pick the month you need. HR is told, and prepares it — including for
-              months payroll has not been run for yet.
+              Pick the month you need and say what it is for. HR is told, and prepares it —
+              including for months payroll has not been run for yet.
             </p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="topbar-icon-btn shrink-0">×</button>
@@ -129,31 +132,43 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
 
         {available.length > 0 && (
           <div className="px-6 pb-2">
-            <label className="block text-sm text-gray-700">Why do you need it? <span className="text-gray-400">(optional)</span></label>
+            <label className="block text-sm text-gray-700" htmlFor="payslip-purpose">
+              Purpose <span className="text-red-600" aria-hidden="true">*</span>
+            </label>
             <input
+              id="payslip-purpose"
               value={note}
               onChange={(e) => setNote(e.target.value)}
               maxLength={500}
+              required
+              aria-required="true"
               placeholder="Home loan, visa application…"
               className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm"
             />
-            <p className="text-xs text-gray-500 mt-1">Shown to HR, so they know how urgent it is.</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Shown to HR, so they know what the slip is for and how urgent it is.
+            </p>
           </div>
         )}
 
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100">
           <button type="button" onClick={onClose}
             className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+          {/* Both halves of the ask are required, so the button says which one
+              is missing rather than sitting greyed out with no explanation —
+              "Send request" that does nothing is the most common way a form
+              wastes somebody's time. */}
           <button
             type="button"
-            disabled={!chosen || busyKey === chosen}
+            disabled={!chosen || !note.trim() || sending}
+            title={!chosen ? 'Pick a month first' : (!note.trim() ? 'Say what the payslip is for' : undefined)}
             onClick={() => {
               const m = months.find((x) => `${x.year}-${x.month}` === chosen);
               if (m) onPick(m, note.trim());
             }}
             className="px-4 py-2 text-sm accent-bg text-white rounded-lg disabled:opacity-45"
           >
-            {busyKey === chosen ? 'Sending…' : 'Send request'}
+            {sending ? 'Sending…' : 'Send request'}
           </button>
         </div>
       </div>
@@ -321,6 +336,50 @@ function Details({ slip, counts }) {
 // Asking HR to correct a released payslip. The note is required — "something is
 // wrong" gives HR nothing to act on, so the button stays disabled until there is
 // something to send.
+/**
+ * The purpose behind a per-row Request.
+ *
+ * The month picker collects one; this button had to as well, or the rule would
+ * hold for months payroll has not run yet and not for the ones it has — and HR
+ * would be back to guessing which half of the queue is urgent. Same field, same
+ * wording, one line of typing.
+ * @param {{slip: object|null, busy: boolean, onSubmit: (note: string) => void, onClose: () => void}} props
+ */
+function RequestPurposeModal({ slip, busy, onSubmit, onClose }) {
+  const [note, setNote] = useState('');
+  useEffect(() => { setNote(''); }, [slip?._id]);
+  if (!slip) return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
+        <h2 className="card-title mb-1">Request this payslip</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          {MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear} — tell HR what you need it for.
+          They work through requests in the order the reason calls for.
+        </p>
+        <label className="block text-sm text-gray-700" htmlFor="payslip-row-purpose">
+          Purpose <span className="text-red-600" aria-hidden="true">*</span>
+        </label>
+        <input
+          id="payslip-row-purpose"
+          value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} autoFocus
+          required aria-required="true"
+          placeholder="Home loan, visa application…"
+          className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm"
+        />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={() => onSubmit(note.trim())} disabled={busy || !note.trim()}
+            title={!note.trim() ? 'Say what the payslip is for' : undefined}
+            className="px-4 py-2 text-sm accent-bg text-white rounded-lg disabled:opacity-45">
+            {busy ? 'Sending…' : 'Send request'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ChangeRequestModal({ slip, busy, onSubmit, onClose }) {
   const [note, setNote] = useState('');
   useEffect(() => { setNote(''); }, [slip?._id]);
@@ -390,6 +449,8 @@ export default function EmployeePayslips() {
   const [selected, setSelected] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [changeFor, setChangeFor] = useState(null);
+  // The row whose Request button was pressed, waiting on its purpose.
+  const [requestFor, setRequestFor] = useState(null);
   // The months this employee may ask for, and what they are already waiting on.
   // Both come from the server already decided — see the note in the header.
   const [months, setMonths] = useState([]);
@@ -412,10 +473,11 @@ export default function EmployeePayslips() {
   };
   useEffect(() => { load(); }, []);
 
-  const requestSlip = async (p) => {
+  const requestSlip = async (p, note) => {
     setBusyId(p._id); setError('');
     try {
-      await api.post(`/payroll/me/${p._id}/request`);
+      await api.post(`/payroll/me/${p._id}/request`, { note });
+      setRequestFor(null);
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not send the request');
@@ -428,7 +490,7 @@ export default function EmployeePayslips() {
   const requestMonth = async (m, note) => {
     setBusyId(`${m.year}-${m.month}`); setError('');
     try {
-      await api.post(`/payroll/me/${m.year}/${m.month}/request`, note ? { note } : {});
+      await api.post(`/payroll/me/${m.year}/${m.month}/request`, { note });
       setPicking(false);
       await load();
     } catch (err) {
@@ -582,7 +644,7 @@ export default function EmployeePayslips() {
                 <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
                   <button onClick={() => setSelected(p)} className="text-blue-600 hover:underline">View</button>
                   {releaseOf(p) === 'NotRequested' && (
-                    <button onClick={() => requestSlip(p)} disabled={busyId === p._id}
+                    <button onClick={() => setRequestFor(p)} disabled={busyId === p._id}
                       className="text-blue-600 hover:underline disabled:opacity-50">
                       {busyId === p._id ? 'Requesting…' : 'Request'}
                     </button>
@@ -614,6 +676,13 @@ export default function EmployeePayslips() {
         busyKey={busyId}
         onPick={requestMonth}
         onClose={() => setPicking(false)}
+      />
+
+      <RequestPurposeModal
+        slip={requestFor}
+        busy={busyId === requestFor?._id}
+        onSubmit={(note) => requestSlip(requestFor, note)}
+        onClose={() => setRequestFor(null)}
       />
 
       <PayslipDetail slip={selected} onClose={() => setSelected(null)} />

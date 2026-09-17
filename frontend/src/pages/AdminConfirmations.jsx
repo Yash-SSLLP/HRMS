@@ -2,7 +2,9 @@
  * AdminConfirmations — probation & confirmation tracking (admin portal). Lists
  * employees with their probation due dates from GET /lifecycle/confirmations
  * (filterable by status) and confirms or extends probation via
- * PATCH /lifecycle/confirmations/:id. Rows due within 30 days are flagged.
+ * PATCH /lifecycle/confirmations/:id. Rows due within 30 days are flagged — the
+ * server decides which those are (`dueSoon`), because the sidebar's count badge
+ * asks the same question and the two must not be able to answer differently.
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -113,7 +115,15 @@ export default function AdminConfirmations() {
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No employees</td></tr>
             ) : items.map((row) => {
               const days = daysUntil(row.dueDate);
-              const flagged = row.confirmationStatus !== 'Confirmed' && days != null && days <= 30;
+              // WHETHER it is due is the server's answer (`dueSoon`, from
+              // isConfirmationDue in lifecycleController), so the rows flagged
+              // here are exactly the rows the sidebar badge counted. The
+              // fallback is for an older server that does not send the field —
+              // it is the same test this line used to make on its own. How many
+              // days that is stays a local sum, because it is only wording.
+              const flagged = row.dueSoon != null
+                ? !!row.dueSoon
+                : (row.confirmationStatus !== 'Confirmed' && days != null && days <= 30);
               const dueClass = flagged
                 ? (days < 0 ? 'text-red-700 font-semibold' : 'text-amber-700 font-semibold')
                 : 'text-gray-600';
