@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const COMPANY = require('../config/company');
 const { setupFonts } = require('./pdfFonts');
+const { inkBox } = require('../utils/pngInk');
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -157,6 +158,52 @@ function para(doc, F, text, opts = {}) {
 }
 
 /**
+ * Draw an uploaded signature or stamp so that the MARK is `h` points tall, its
+ * left edge sits exactly on `x`, and it rests on `bottom`.
+ *
+ * The uploads are scans, and a scan is mostly border: pdfkit can only fit the
+ * whole FILE, which shrinks the mark by however much blank surrounds it and
+ * pushes it in from the margin by however much of that blank sits on its left.
+ * Measuring the ink (utils/pngInk) and scaling from that makes the height asked
+ * for the height printed, and the margin the margin.
+ *
+ * The border is still drawn rather than cropped away — it is transparent, and
+ * cutting it out would mean re-encoding the file — so it hangs outside the clip.
+ *
+ * @param {PDFDocument} doc
+ * @param {Buffer} image - the uploaded image bytes
+ * @param {number} x - the left edge the mark starts on
+ * @param {number} bottom - the y the mark rests on
+ * @param {number} h - how tall the mark itself should print
+ * @param {number} maxW - the column width; a wide mark is scaled down to fit it
+ * @returns {number} the width the mark was drawn at, so a caption can be
+ *   centred under the mark rather than under the file that carried it
+ */
+function drawMark(doc, image, x, bottom, h, maxW) {
+  const box = inkBox(image);
+  if (!box) {
+    // Unmeasurable (a JPEG, an interlaced PNG, a blank file): fit it as before,
+    // rather than printing no signature at all.
+    doc.image(image, x, bottom - h, { fit: [maxW, h], valign: 'bottom' });
+    const img = doc.openImage(image);
+    return img.width * Math.min(maxW / img.width, h / img.height);
+  }
+  // Points per source pixel: enough to make the ink `h` tall, dialled back if
+  // that would run the mark past the end of the column.
+  const ppp = Math.min(h / box.h, maxW / box.w);
+  doc.save();
+  // Clip to the ink: a speck out in the border would otherwise print in the
+  // page margin, where there is no explaining it.
+  doc.rect(x, bottom - box.h * ppp, box.w * ppp, box.h * ppp).clip();
+  doc.image(image, x - box.x * ppp, bottom - (box.y + box.h) * ppp, {
+    width: box.fileW * ppp,
+    height: box.fileH * ppp,
+  });
+  doc.restore();
+  return box.w * ppp;
+}
+
+/**
  * Signing block — "For <Company>", then one signature column per uploaded
  * signatory (HR left, CEO right, as on the printed letters), and optionally the
  * candidate's acceptance stub.
@@ -169,8 +216,12 @@ function para(doc, F, text, opts = {}) {
  * That matters: the offer letter's one-page fit loop compresses type and gaps,
  * and a fixed-height image would have made the block un-shrinkable and pushed
  * the letter to two pages no matter how far the loop dialled down.
+ *
+ * `opts.markInkH` asks for the signature ITSELF — rather than the scan it
+ * arrives inside — to print that many points tall and flush with the text
+ * margin; see drawMark for why those are not the same thing.
  */
-function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, brand = {}) {
+function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, brand = {}, opts = {}) {
   const s = S(F);
   const sigs = brand.signatures || {};
 
@@ -181,11 +232,25 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
   if (sigs.hr) columns.push({ slot: 'hr', fallbackTitle: 'Human Resources', ...sigs.hr });
   if (right) columns.push({ slot: 'ceo', fallbackTitle: sigs.ceo ? 'CEO' : 'Managing Director', ...right });
 
+  // How tall the mark prints, and how much room to leave under it.
+  //
+  // Without `markInkH` the whole uploaded file is fitted into a 60pt box. The
+  // uploads are scans with a wide blank border, so that prints a mark smaller
+  // than the box asked for and indented from the margin by whatever blank the
+  // scan carries on its left — on the HR stamp, 40pt of ink pushed 25pt in.
+  // With it, the measured mark is exactly that tall and starts on the margin.
+  const markInkH = (opts.markInkH || 0) * s;
+  const imgH = markInkH || 60 * s;          // both scale with the fit loop
+  // A measured mark ends on its own baseline and needs a gap of its own; a
+  // fitted scan brings its blank bottom margin along as one.
+  const nameGap = (markInkH ? 10 : 4) * s;
+
   // The signing block must never be split — a signature on one page and its
   // acceptance stub alone on the next reads as a printing error. Reserve the
   // whole thing up front (greeting + columns +, when present, the stub) and
   // break the page once, here, if it will not fit.
-  const needed = (columns.length ? 156 : 110) * s + (withAcceptance ? 78 * s : 0);
+  const needed = (columns.length ? 60 * s + 6 * s + imgH + nameGap + 26 * s : 110 * s)
+    + (withAcceptance ? 78 * s : 0);
   ensureRoom(doc, needed);
 
   doc.moveDown(1 * s);
@@ -199,7 +264,6 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
     para(doc, F, signatoryTitle || COMPANY.defaultSignatoryTitle, { bold: true, gap: 0.1 });
     para(doc, F, signatoryName || COMPANY.defaultSignatoryName, { bold: true });
   } else {
-    const imgH = 60 * s;              // scales with the fit loop
     const colW = columns.length > 1 ? (CW - 40) / 2 : CW * 0.46;
     const top = doc.y + 6 * s;
 
@@ -207,7 +271,8 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
       const x = X0 + i * (colW + 40);
       if (c.image) {
         try {
-          doc.image(c.image, x, top, { fit: [colW, imgH], align: 'left', valign: 'bottom' });
+          if (markInkH) drawMark(doc, c.image, x, top + imgH, markInkH, colW);
+          else doc.image(c.image, x, top, { fit: [colW, imgH], align: 'left', valign: 'bottom' });
         } catch (err) {
           // The name and title below still print, so the column survives — but
           // say so, otherwise a corrupt upload silently disappears from every
@@ -217,7 +282,7 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
       }
       // No rule under the image: the signature/stamp sits directly above the
       // name, the way it does on the company's printed and hand-signed letters.
-      const nameY = top + imgH + 4 * s;
+      const nameY = top + imgH + nameGap;
       doc.font(F.bold).fontSize(10 * s).fillColor(INK)
         .text(c.name || signatoryName || COMPANY.defaultSignatoryName, x, nameY, { width: colW, lineBreak: false });
       doc.font(F.regular).fontSize(9 * s).fillColor(MUTED)
@@ -226,7 +291,7 @@ function signatureBlock(doc, F, signatoryName, signatoryTitle, withAcceptance, b
 
     // Both columns were drawn from the same `top`, so put the cursor below the
     // taller one rather than wherever the last column happened to end.
-    doc.y = top + imgH + 30 * s;
+    doc.y = top + imgH + nameGap + 26 * s;
     doc.x = X0;
     doc.fillColor(INK);
   }
@@ -339,6 +404,14 @@ const bodyOrDefault = (data, fallback) => {
   return custom.length ? custom : fallback;
 };
 
+// The offer and relieving letters print their signature at DOUBLE the size it
+// used to be, and flush with the text margin. 80pt is that double: the old code
+// fitted the whole 601x415 HR scan into a 60pt box, which put 40pt of actual
+// mark on the page and pushed it 25pt in — the blank border around the mark
+// was doing both. Measured against the ink (see drawMark) the number now means
+// what it says, whatever border the next upload happens to arrive with.
+const LETTER_MARK_H = 80;
+
 // One pass at a given compression. Resolves { buffer, pages }.
 function renderOfferOnce(data, scale) {
   return new Promise((resolve, reject) => {
@@ -365,7 +438,7 @@ function renderOfferOnce(data, scale) {
 
     drawBlocks(doc, F, bodyOrDefault(data, offerBody(data, R)));
 
-    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true, brand);
+    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, true, brand, { markInkH: LETTER_MARK_H });
 
     doc.end();
   });
@@ -783,11 +856,23 @@ const A_CELL_PAD = 3;
 const A_TEXT_LINE = A_BODY_PT * 1.36 + A_LINE_GAP;
 const A_GUTTER = 24;        // between two side-by-side columns
 
-// The uploaded mark prints at a size a reader can actually see — the HR stamp
-// (601x415) comes out ~145pt wide at this height, about 5cm on paper.
-const A_MARK_H = 100;
+// How tall the MARK prints, measured against the ink rather than the file it
+// arrives in (see drawMark). The 601x415 HR scan used to be fitted into a 100pt
+// box, which put 67pt of actual stamp on the page, 40pt in from the column edge;
+// 104 is half as much again, and it now starts on the edge. A_MARK_W caps how
+// far a broad mark may run across its column.
+//
+// Not doubled, as the offer and relieving letters are: the signing block and the
+// employee acceptance travel as one unit, and past about 105pt they stop fitting
+// under the last clause and the contract grows a seventh sheet. 104 is the most
+// mark that keeps them on the clause page — with nothing to spare, so a clause
+// edit that adds a line will cost that sheet anyway.
+const A_MARK_INK_H = 104;
 const A_MARK_W = 190;
 const A_LINE_W = 170;       // the signing line where there is no mark
+// The annexure shrinks its mark to whatever room the compensation tables leave.
+// Below this it stops reading as a signature, so the sheet gives way instead.
+const A_MARK_MIN_H = 60;
 
 // Flat monthly professional tax. Mirrors PROFESSIONAL_TAX in the payroll
 // controller — Karnataka's Rs.200 a month — so the figure a candidate is shown
@@ -1016,7 +1101,7 @@ function apptColumns(data, brand) {
  * at the bottom of the box and a signing line at the bottom edge.
  */
 function apptSignatory(doc, F, c, o = {}) {
-  const markH = o.markH || A_MARK_H;
+  const markH = o.markH || A_MARK_INK_H;
   const x = o.x ?? A_X0;
   apptGap(doc, o.before ?? 8);
   const boxTop = doc.y;
@@ -1024,12 +1109,10 @@ function apptSignatory(doc, F, c, o = {}) {
   let drew = false;
   if (c.image) {
     try {
-      // Measured before drawing: fit[] scales to the smaller ratio, and a mark
-      // wider than it is tall comes out narrower than the box. openImage only
-      // parses the header and the same buffer is handed to doc.image() below.
-      const img = doc.openImage(c.image);
-      markW = img.width * Math.min(A_MARK_W / img.width, markH / img.height);
-      doc.image(c.image, x, boxTop, { fit: [A_MARK_W, markH], align: 'left', valign: 'bottom' });
+      // drawMark hands back the width it actually drew, which is what the name
+      // below centres under — the blank border the scan arrived in is no
+      // longer part of it.
+      markW = drawMark(doc, c.image, x, boxTop + markH, markH, A_MARK_W);
       drew = true;
     } catch (err) {
       // The name and title below still print, so the column survives — but say
@@ -1057,7 +1140,7 @@ function apptSignatory(doc, F, c, o = {}) {
 }
 
 /** Height one signatory costs (mark area, name, title, gaps). */
-const apptSignatoryHeight = (markH = A_MARK_H, lines = 2) =>
+const apptSignatoryHeight = (markH = A_MARK_INK_H, lines = 2) =>
   8 + markH + 3 + lines * A_TEXT_LINE + A_P_AFTER;
 
 /** "For <Company>" over the signatories side by side. */
@@ -1301,12 +1384,12 @@ function apptAnnexure(doc, F, data, columns) {
   const auth = { slot: 'hr', image: hr && hr.image, name: 'Authorised Signatory', title: '' };
   const fixed = 8 + 14 + A_P_AFTER + apptSignatoryHeight(0, 1);
   const spare = doc.page.maxY() - doc.y - fixed;
-  const markH = Math.max(60, Math.min(A_MARK_H, spare));
-  if (spare < 60) {
+  const markH = Math.max(A_MARK_MIN_H, Math.min(A_MARK_INK_H, spare));
+  if (spare < A_MARK_MIN_H) {
     // Not a crash, but the annexure has just become two sheets and somebody
     // should know why rather than wondering. Says how much it was short by.
     console.warn(
-      `Annexure I overflowed: ${Math.round(60 - spare)}pt short of fitting its signing block on one sheet. `
+      `Annexure I overflowed: ${Math.round(A_MARK_MIN_H - spare)}pt short of fitting its signing block on one sheet. `
       + 'The compensation table has more rows than the sheet can carry.'
     );
   }
@@ -1454,7 +1537,7 @@ function renderRelievingOnce(data, scale) {
     // No acceptance stub: an offer is accepted, a relieving letter is not — it
     // certifies something that already happened. The block still prints both
     // signature columns from the uploaded branding (HR left, CEO/MD right).
-    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, false, brand);
+    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, false, brand, { markInkH: LETTER_MARK_H });
 
     doc.end();
   });
