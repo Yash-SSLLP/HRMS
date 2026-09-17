@@ -37,6 +37,33 @@ export function gateSec(checkpoints, cleared) {
 }
 
 /**
+ * The shortest stretch worth sending somebody back over. Under this there is
+ * nothing to re-watch, so a wrong answer just asks again.
+ */
+export const MIN_REWATCH_SEC = 2;
+
+/**
+ * Where the video goes back to when this question is answered wrongly: the
+ * timestamp of the question BEFORE it, or the very start when there isn't one.
+ *
+ * That span — previous question to this one — is exactly the stretch of the
+ * lesson that holds the answer, which is why it is the one they re-watch.
+ *
+ * Strictly earlier, deliberately. Two questions pinned to the same second would
+ * otherwise send the video back to a point where THIS question is due again, and
+ * a wrong answer would bounce between the two forever. `null` means there is
+ * nothing to go back to and the card should just offer another go.
+ */
+export function rewindTarget(checkpoints, cp) {
+  const at = Number(cp?.atSec) || 0;
+  const earlier = (checkpoints || [])
+    .map((c) => Number(c.atSec) || 0)
+    .filter((sec) => sec < at);
+  const back = earlier.length ? Math.max(...earlier) : 0;
+  return at - back >= MIN_REWATCH_SEC ? back : null;
+}
+
+/**
  * The question due at playhead `t`, if any. A quarter-second of slack so a
  * question pinned at 30s fires on the tick that reports 29.98.
  */

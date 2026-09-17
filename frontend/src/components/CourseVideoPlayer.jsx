@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api, { getBaseURL } from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import CheckpointQuestion from './CheckpointQuestion';
-import { dueCheckpoint, gateSec, pendingCheckpoints } from '../utils/checkpoints';
+import { dueCheckpoint, gateSec, pendingCheckpoints, rewindTarget } from '../utils/checkpoints';
 
 // In-portal player for a course video streamed from the backend Drive proxy.
 // The raw Drive URL is never exposed; the <video> hits our authenticated stream
@@ -23,6 +23,10 @@ import { dueCheckpoint, gateSec, pendingCheckpoints } from '../utils/checkpoints
 // enforced server-side (watch credit stops there too), so this is UX, not the
 // security boundary.
 //
+// Get one wrong and the video goes BACK to the previous question and plays from
+// there — the stretch between the two is the part of the lesson that holds the
+// answer. The question stays uncleared, so it comes round again on the way past.
+//
 // Props:
 //   courseId, module ({ _id, title, content, durationSec, checkpoints })
 //   preview  — admin preview mode: play only, no progress reporting, free seek,
@@ -35,6 +39,9 @@ import { dueCheckpoint, gateSec, pendingCheckpoints } from '../utils/checkpoints
 //                     no questions on a re-watch
 //   onProgress(enrollment) — called with the updated enrollment after a save
 //   onError() — called when the video fails to load (so the page can prompt a report)
+//   onDuration(sec) — the real length, once the browser has the metadata. The
+//                     course editor uses it to scale its question timeline for a
+//                     lesson saved before the length was being recorded.
 export default function CourseVideoPlayer({
   courseId,
   module,
@@ -45,6 +52,7 @@ export default function CourseVideoPlayer({
   moduleCompleted = false,
   onProgress,
   onError,
+  onDuration,
 }) {
   const token = useAuthStore((s) => s.token);
   const videoRef = useRef(null);
@@ -189,7 +197,10 @@ export default function CourseVideoPlayer({
 
   const onLoadedMetadata = () => {
     const v = videoRef.current;
-    if (v && Number.isFinite(v.duration) && v.duration > 0) setDuration(v.duration);
+    if (v && Number.isFinite(v.duration) && v.duration > 0) {
+      setDuration(v.duration);
+      onDuration?.(v.duration);
+    }
   };
 
   // A question pinned at (or past) the end of the video never comes due from a
@@ -225,6 +236,35 @@ export default function CourseVideoPlayer({
     const v = videoRef.current;
     if (v) { lastTimeRef.current = v.currentTime; v.play().catch(() => {}); }
   };
+
+  // A wrong answer sends them back over the stretch that holds it and plays from
+  // there. The question is deliberately left UNCLEARED, so it comes round again
+  // on the way past — and the server gate is untouched, because that is keyed on
+  // what has been cleared, never on where the playhead is.
+  //
+  // The backward seek passes onSeeking freely (that only ever blocks jumping
+  // FORWARD), and lastTimeRef is moved with it so the jump is not credited as
+  // watched time.
+  //
+  // THE WATERMARK COMES BACK WITH IT, which is what makes this more than a
+  // gesture: maxAllowedRef is the furthest they may seek to, so leaving it where
+  // it was would let them scrub straight back to the question and answer again
+  // without watching a second of it. Pulled back, the stretch has to be played
+  // through again — and it regrows as they do.
+  const rewind = (sec) => {
+    activeRef.current = null;
+    setActiveCp(null);
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = Math.max(0, sec);
+    lastTimeRef.current = v.currentTime;
+    maxAllowedRef.current = v.currentTime;
+    v.play().catch(() => {});
+  };
+
+  // null when there is nothing to re-watch — the first question in the lesson,
+  // or one pinned within a couple of seconds of the one before it.
+  const rewindSec = activeCp ? rewindTarget(checkpoints, activeCp) : null;
 
   const pct = duration > 0 ? Math.min(100, Math.round((watchedSec / duration) * 100)) : 0;
   const questionCount = (module?.checkpoints || []).length;
@@ -270,6 +310,8 @@ export default function CourseVideoPlayer({
             onSubmit={submitAnswer}
             onContinue={resume}
             onSkip={preview ? resume : undefined}
+            rewindSec={rewindSec || 0}
+            onRewind={rewindSec === null ? undefined : () => rewind(rewindSec)}
           />
         )}
       </div>

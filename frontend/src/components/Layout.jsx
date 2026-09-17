@@ -17,7 +17,7 @@ import api, { signOut } from '../api/client';
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare, FiStar } from 'react-icons/fi';
+import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare, FiStar, FiVideo, FiList } from 'react-icons/fi';
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
@@ -487,23 +487,28 @@ function NavPill({ to, icon, label }) {
   );
 }
 
-// Approvals shortcut — the same pill as NavPill, plus a live count of what is
-// waiting on this user. Approving is time-sensitive (someone is blocked until
-// you act), so the badge is the point: without it you'd have to open the inbox
-// to discover there is nothing to do. Polls on the same cadence as the bell.
-function ApprovalsPill({ to }) {
-  // The same tally the sidebar's Approvals row wears, out of the same store —
-  // this used to run its own twenty-second poll of the same endpoint, so the
-  // pill and the row could show different numbers for up to twenty seconds.
-  // Layout owns the polling now (see the effect in <Layout/>).
-  const pending = useNavCountsStore((s) => s.counts.mine);
+// A NavPill that also wears a live red count of what is waiting on this user.
+//
+// Two of them: Approvals (somebody is blocked until you decide) and Interviews
+// (a round is booked with you and not written up). In both cases the badge is
+// the whole point — without it you would have to open the page to discover there
+// is nothing to do.
+//
+// `countKey` names a key in the shared counts store, the same contract the
+// sidebar rows use with `badge: '<key>'`. Reading it here rather than being
+// handed a number keeps the subscription narrow: a pill re-renders only when its
+// own number moves. Layout owns the polling (see the effect in <Layout/>) — each
+// pill used to run its own, so a pill and its sidebar row could disagree for up
+// to twenty seconds.
+function CountPill({ to, label, icon, countKey, waitingWord = 'pending' }) {
+  const count = useNavCountsStore((s) => s.counts[countKey]);
 
-  const label = pending > 0 ? `Approvals (${pending} pending)` : 'Approvals';
+  const title = count > 0 ? `${label} (${count} ${waitingWord})` : label;
   return (
     <Link
       to={to}
-      title={label}
-      aria-label={label}
+      title={title}
+      aria-label={title}
       className="nav-pill relative inline-flex items-center justify-center gap-1.5 shrink-0 rounded-full px-3 sm:px-3.5 py-1.5 text-sm font-semibold transition-all duration-150 hover:brightness-110 active:scale-95"
       style={{
         background: 'var(--pill-bg)',
@@ -511,14 +516,14 @@ function ApprovalsPill({ to }) {
         boxShadow: '0 2px 6px color-mix(in srgb, var(--pill-bg) 32%, transparent)',
       }}
     >
-      <FiCheckSquare size={16} strokeWidth={2.2} />
-      <span className="hidden 2xl:inline">Approvals</span>
-      {pending > 0 && (
+      {icon}
+      <span className="hidden 2xl:inline">{label}</span>
+      {count > 0 && (
         <span
           className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none"
           style={{ boxShadow: '0 0 0 2px var(--surface)' }}
         >
-          {pending > 9 ? '9+' : pending}
+          {count > 9 ? '9+' : count}
         </span>
       )}
     </Link>
@@ -1024,11 +1029,23 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const calendarPath = portal === 'admin' ? '/admin/calendar' : '/employee/calendar';
   const attendancePath = portal === 'admin' ? '/admin/attendance' : '/employee/attendance';
   const approvalsPath = portal === 'admin' ? '/admin/approvals' : '/employee/approvals';
+  // The rounds booked with this person, and their own work. Both pages exist in
+  // each portal and authorise on IDENTITY rather than on a role, so the target
+  // just follows whichever portal is open — CEO/MD only ever see the admin one
+  // (they have no employee record), a Manager gets whichever they are in.
+  const interviewsPath = portal === 'admin' ? '/admin/my-interviews' : '/employee/interviews';
+  const tasksPath = portal === 'admin' ? '/admin/tasks' : '/employee/tasks';
   // Who gets the Approvals shortcut: the roles that actually decide things — a
   // Manager (reporting-chain approver), HR and SuperAdmin. Execs are included
   // because CEO/MD sit at the top of every chain, and the approvals routes are
   // open to them even while they are read-only elsewhere (see approvalRoutes.js).
   const showApprovals = ['SuperAdmin', 'HRManager', 'Manager', 'CEO', 'MD'].includes(user?.role);
+  // Interviews and Tasks as shortcuts, for the three roles that carry their own
+  // work alongside other people's: CEO and MD sit on final rounds and have no
+  // employee portal to reach them from, and a Manager is running their team's
+  // tasks and interviews as well as their own. Everyone else already reaches
+  // both from the sidebar of the portal they live in.
+  const showOwnWork = ['CEO', 'MD', 'Manager'].includes(user?.role);
   useEffect(() => {
     document.documentElement.setAttribute('data-portal', portal);
   }, [portal]);
@@ -1174,7 +1191,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
               cluster off the edge (min-w-0 is what lets it shrink at all). */}
           {/* The padding is not decoration: `overflow-x-auto` forces overflow-y
               to `auto` as well (CSS won't let one axis scroll while the other
-              stays visible), so this box CLIPS. ApprovalsPill's badge hangs
+              stays visible), so this box CLIPS. CountPill's badge hangs
               -top-1/-right-1 outside its pill plus a 2px ring, which landed
               exactly on the clip edge and had its top shaved off. py-2/px-1.5
               give that overhang room; -mx-1.5 cancels the horizontal padding so
@@ -1190,8 +1207,36 @@ export default function Layout({ navItems = [], sectionTitle }) {
               <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
             )}
             {/* Approvals, for the roles that actually decide. Carries a live
-                pending count — see ApprovalsPill. */}
-            {showApprovals && <ApprovalsPill to={approvalsPath} />}
+                pending count — see CountPill. */}
+            {showApprovals && (
+              <CountPill
+                to={approvalsPath}
+                label="Approvals"
+                icon={<FiCheckSquare size={16} strokeWidth={2.2} />}
+                countKey="mine"
+              />
+            )}
+            {/* The rounds booked with this person, badged the same way: an
+                interview is a commitment in somebody's diary, so "is there one
+                waiting on me" has to be answerable without opening the page. */}
+            {showOwnWork && (
+              <CountPill
+                to={interviewsPath}
+                label="Interviews"
+                icon={<FiVideo size={16} strokeWidth={2.2} />}
+                countKey="interviews"
+                waitingWord="waiting"
+              />
+            )}
+            {/* Tasks carries no badge: unlike an approval or an interview it is
+                not a queue that empties, and a permanent number beside two that
+                mean "act on me" would flatten both. Gated in the admin portal
+                exactly as Attendance is above — /admin/tasks is behind
+                tasks.manage, so without it this would be a shortcut to a 403.
+                In My Portal it is the person's own work and always applies. */}
+            {showOwnWork && (portal === 'employee' || hasPermission(user, 'tasks.manage')) && (
+              <NavPill to={tasksPath} label="Tasks" icon={<FiList size={16} strokeWidth={2.2} />} />
+            )}
             {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in
                 config/nav.jsx) and is reached often enough to earn a shortcut. */}
             {user?.role === 'SuperAdmin' && (

@@ -9,7 +9,7 @@
  * public-share leads/feedback and comment moderation, each hitting the relevant
  * /courses/* endpoint.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -21,11 +21,15 @@ import { downloadTableXlsx } from '../api/download';
 import { fmtClock, parseClock } from '../utils/checkpoints';
 
 const CATEGORIES = ['Technical', 'Soft Skills', 'Compliance', 'Leadership', 'Onboarding', 'Other'];
-// Cloudinary's per-file ceiling on the plan this runs on. Checked before a byte
-// moves — the server never sees the file, so a too-big one otherwise uploads for
-// minutes and then dies as an unexplained "network error". Same cap the phone
-// applies (mobile CoursesAdminScreen).
-const MAX_VIDEO_MB = 100;
+// THERE IS NO SIZE LIMIT OF OUR OWN ON A COURSE VIDEO. A lesson can be as big as
+// the Cloudinary plan allows. What remains is a protocol rule, not a policy one:
+// Cloudinary's upload endpoint accepts 100 MB in ONE request and refuses
+// anything larger, so a bigger file goes up as a run of chunks tied together by
+// a shared X-Unique-Upload-Id. 20 MB is Cloudinary's own default chunk, and
+// every chunk but the last must be over 5 MB. The phone uses the same two
+// numbers (mobile CoursesAdminScreen).
+const SINGLE_REQUEST_MAX = 100 * 1024 * 1024;
+const CHUNK_BYTES = 20 * 1024 * 1024;
 
 // Mirror of backend utils/drive.parseDriveFileId for live link validation.
 const parseDriveId = (input) => {
@@ -50,13 +54,15 @@ const blankCheckpoint = () => ({
 const blank = () => ({ title: '', description: '', category: 'Other', courseType: 'internal', durationHours: 0, deadlineDays: 0, active: true, modules: [] });
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 
-// Direct browser → Cloudinary signed upload. Uses a raw XHR (not the api axios
-// instance, which would attach our JWT + baseURL). Resolves with the parsed
-// Cloudinary response ({ public_id, version, format, bytes, ... }).
-function uploadToCloudinary(sig, file, onProgress) {
+// One POST to Cloudinary — the whole file, or one chunk of it. A raw XHR rather
+// than the api axios instance, which would attach our JWT + baseURL to somebody
+// else's host. The signed fields are repeated on EVERY chunk: Cloudinary
+// validates each request on its own, and it is the two headers, not the body,
+// that tie a run of chunks into one asset.
+function postToCloudinary({ sig, blob, fileName, uploadId, start, total }, onLoaded) {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
-    fd.append('file', file);
+    fd.append('file', blob, fileName);
     fd.append('api_key', sig.apiKey);
     fd.append('timestamp', sig.timestamp);
     fd.append('signature', sig.signature);
@@ -64,8 +70,17 @@ function uploadToCloudinary(sig, file, onProgress) {
     fd.append('type', sig.type);
     const xhr = new XMLHttpRequest();
     xhr.open('POST', sig.uploadUrl);
+    if (uploadId) {
+      // Neither header is on the browser's forbidden list, so both go out as
+      // written. The end offset is INCLUSIVE — off by one here and Cloudinary
+      // answers "Chunk size doesn't match upload size".
+      xhr.setRequestHeader('X-Unique-Upload-Id', uploadId);
+      xhr.setRequestHeader('Content-Range', `bytes ${start}-${start + blob.size - 1}/${total}`);
+    }
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      // Progress is reported against the WHOLE file, not this chunk, so the bar
+      // climbs once from 0 to 100 however many requests it takes.
+      if (e.lengthComputable) onLoaded(start + e.loaded);
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -78,15 +93,52 @@ function uploadToCloudinary(sig, file, onProgress) {
       }
     };
     // Cloudinary cuts the connection rather than answering when a file is over
-    // the account's per-file ceiling, so a bare "network error" is usually a
-    // too-big file — say so, and name the other things that cause it.
+    // the ACCOUNT's ceiling — which chunking does not lift, it only lifts the
+    // per-request one. So a bare "network error" still often means too big.
     xhr.onerror = () => reject(new Error(
-      'The upload could not reach Cloudinary. Usually that means the file is too large for the plan '
-      + `(the limit is ${MAX_VIDEO_MB} MB), or something on this network or a browser extension blocked the request.`
+      'The upload could not reach Cloudinary. That is usually this network or a browser extension '
+      + 'blocking it — or the file being larger than the Cloudinary plan itself allows.'
     ));
     xhr.onabort = () => reject(new Error('Upload cancelled.'));
     xhr.send(fd);
   });
+}
+
+/**
+ * Direct browser → Cloudinary signed upload, in chunks once the file is past the
+ * endpoint's per-request ceiling. Resolves with the parsed Cloudinary response
+ * ({ public_id, version, format, bytes, ... }).
+ *
+ * ONE signature covers the whole run, which is what Cloudinary's own SDKs do for
+ * upload_large. The practical consequence: a signature is good for an hour, so
+ * an upload slow enough to run past that would fail part-way rather than at the
+ * start. Re-minting per chunk is not worth the round trip until that shows up.
+ */
+async function uploadToCloudinary(sig, file, onProgress) {
+  const total = file.size;
+  const report = (loaded) => onProgress(Math.min(100, Math.round((loaded / total) * 100)));
+
+  if (total <= SINGLE_REQUEST_MAX) {
+    return postToCloudinary({ sig, blob: file, fileName: file.name, start: 0, total }, report);
+  }
+
+  // Sent strictly one at a time. Cloudinary assembles the asset from the ranges
+  // as they land, and firing them in parallel only races that assembly.
+  const uploadId = `hrms-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  let last = null;
+  for (let start = 0; start < total; start += CHUNK_BYTES) {
+    const blob = file.slice(start, Math.min(start + CHUNK_BYTES, total));
+    // eslint-disable-next-line no-await-in-loop
+    last = await postToCloudinary({ sig, blob, fileName: file.name, uploadId, start, total }, report);
+  }
+  // Every chunk but the last answers `{ done: false }`; the last answers with
+  // the asset. No public_id means Cloudinary took the bytes but never finished
+  // the file — saving that onto the lesson would give it a video id that plays
+  // nothing.
+  if (!last?.public_id) {
+    throw new Error('Cloudinary accepted the video but did not finish assembling it. Please upload it again.');
+  }
+  return last;
 }
 
 const fmtBytes = (n) => {
@@ -206,13 +258,6 @@ export default function AdminCourses() {
       patchModule(idx, { _uploadError: 'Please choose a video file.' });
       return;
     }
-    if (file.size > MAX_VIDEO_MB * 1024 * 1024) {
-      patchModule(idx, {
-        _uploadError: `That file is ${(file.size / (1024 * 1024)).toFixed(1)} MB - over the ${MAX_VIDEO_MB} MB limit. `
-          + 'Compress it or split the lesson in two.',
-      });
-      return;
-    }
     patchModule(idx, { _uploadPct: 0, _uploadError: '' });
     try {
       const { data: sig } = await api.post('/courses/upload-signature');
@@ -222,6 +267,10 @@ export default function AdminCourses() {
         cloudinaryVersion: result.version,
         cloudinaryFormat: result.format,
         videoSizeBytes: result.bytes || file.size,
+        // Cloudinary reports the length of a video it has just taken. It is the
+        // only moment we learn it for free, and the question timeline below has
+        // nothing to scale itself against without it.
+        durationSec: Math.round(Number(result.duration) || 0) || undefined,
         _uploadName: file.name,
         _uploadPct: null,
       });
@@ -232,6 +281,15 @@ export default function AdminCourses() {
 
   const save = async (e) => {
     e.preventDefault();
+    // A large lesson uploads for minutes with the Save button sitting right
+    // there. Without this the save goes through with the asset id still empty
+    // and the author is told the lesson has no video — which reads as the upload
+    // having failed, when it is still running.
+    const uploadingIdx = form.modules.findIndex((m) => m._uploadPct !== null && m._uploadPct !== undefined);
+    if (uploadingIdx >= 0) {
+      setError(`Module ${uploadingIdx + 1} is ${form.modules[uploadingIdx]._uploadPct}% uploaded. Wait for it to finish.`);
+      return;
+    }
     // Client-side guard: every video module needs a source — an uploaded
     // Cloudinary asset, or a resolvable Drive link.
     const badVideo = form.modules.findIndex((m) => {
@@ -504,7 +562,7 @@ export default function AdminCourses() {
                                   )}
                                   {m._uploadError && <div className="text-xs text-red-600">✗ {m._uploadError}</div>}
                                   {!m.cloudinaryPublicId && !uploading && !m._uploadError && (
-                                    <div className="text-xs text-gray-400">MP4/MOV/WebM up to {MAX_VIDEO_MB} MB. Uploads straight to Cloudinary (private).</div>
+                                    <div className="text-xs text-gray-400">MP4/MOV/WebM, any size. Uploads straight to Cloudinary (private); anything large goes up in chunks.</div>
                                   )}
                                 </div>
                               ) : (
@@ -532,11 +590,20 @@ export default function AdminCourses() {
                                   courseId={editingId}
                                   module={{ _id: m._id, title: m.title, checkpoints: (m.checkpoints || []).filter((c) => c._id) }}
                                   preview
+                                  // Lessons uploaded before the length was being
+                                  // recorded have none, and the timeline cannot
+                                  // scale without one. Opening the preview is the
+                                  // one place the browser learns it. Only ever
+                                  // filled into a blank, so this cannot loop.
+                                  onDuration={(sec) => {
+                                    if (!m.durationSec) patchModule(idx, { durationSec: Math.round(sec) });
+                                  }}
                                 />
                               )}
                               <textarea rows={2} placeholder="Notes shown under the video (optional)" value={m.content} onChange={(e) => updateModule(idx, 'content', e.target.value)} className="block w-full border rounded-lg px-3 py-2 text-sm" />
                               <CheckpointEditor
                                 checkpoints={m.checkpoints || []}
+                                durationSec={m.durationSec || 0}
                                 onChange={(next) => updateModule(idx, 'checkpoints', next)}
                               />
                             </>
@@ -582,11 +649,76 @@ const QUESTION_TYPES = [
   ['text', 'Type the answer'],
 ];
 
-function CheckpointEditor({ checkpoints, onChange }) {
+/**
+ * The lesson drawn to scale, with a yellow tick wherever a question is pinned.
+ *
+ * Typing "7:20" into a box tells an author nothing about whether the questions
+ * are spread through the lesson or bunched in the first minute of it. This is the
+ * one view that does. Clicking a tick jumps to that question's card.
+ *
+ * A tick sitting PAST the end of the video is drawn red at the far right rather
+ * than quietly clamped: the player only raises such a question when the video
+ * ends, which is almost never what the author meant.
+ */
+function QuestionTimeline({ durationSec, checkpoints, focusIdx, onPick }) {
+  const known = Number(durationSec) > 0;
+  const marks = (checkpoints || []).map((c, i) => ({ i, at: Math.max(0, Number(c.atSec) || 0), q: c.question }));
+  const latest = marks.reduce((n, m) => Math.max(n, m.at), 0);
+  // With no recorded length the bar is scaled to the last question plus a
+  // quarter of headroom. The spacing between ticks is still true; only the end
+  // is a guess, and the caption says so rather than drawing a length we'd be
+  // inventing.
+  const span = known ? Number(durationSec) : Math.max(latest * 1.25, 60);
+
+  return (
+    <div className="mt-2.5">
+      <div className="relative h-7">
+        <div className="absolute inset-x-0 top-2.5 h-2 rounded-full bg-gray-200" />
+        {marks.map((m) => {
+          const over = known && m.at > span;
+          const pct = Math.min(100, Math.max(0, (m.at / span) * 100));
+          return (
+            <button
+              key={m.i}
+              type="button"
+              onClick={() => onPick(m.i)}
+              style={{ left: `${pct}%` }}
+              title={`${fmtClock(m.at)}${m.q ? ` — ${m.q}` : ''}${over ? ' (after the video ends)' : ''}`}
+              className="absolute top-0 -translate-x-1/2 h-7 w-4 flex items-center justify-center"
+            >
+              <span className={`block w-1.5 rounded-sm ${focusIdx === m.i ? 'h-6' : 'h-5'} ${
+                over ? 'bg-red-500 ring-1 ring-red-700' : 'bg-amber-400 ring-1 ring-amber-600'
+              }`} />
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between text-[10px] text-gray-400 -mt-0.5">
+        <span>0:00</span>
+        <span>
+          {known
+            ? `${fmtClock(span)} · tap a marker to jump to its question`
+            : 'Video length not recorded — scaled to the last question. Open Preview to measure it.'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
+  // Which question the author last picked off the timeline: it gets a ring and
+  // is scrolled to. Purely a pointer, never saved.
+  const [focusIdx, setFocusIdx] = useState(null);
+  const cardRefs = useRef([]);
+
   const patch = (i, p) => onChange(checkpoints.map((c, n) => (n === i ? { ...c, ...p } : c)));
   const patchOpt = (i, oi, p) => patch(i, {
     options: (checkpoints[i].options || []).map((o, n) => (n === oi ? { ...o, ...p } : o)),
   });
+  const pick = (i) => {
+    setFocusIdx(i);
+    cardRefs.current[i]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
 
   return (
     <div className="border border-dashed border-gray-300 rounded-lg p-3 bg-white">
@@ -599,6 +731,15 @@ function CheckpointEditor({ checkpoints, onChange }) {
           className="text-xs text-blue-600 hover:underline">+ Add question</button>
       </div>
 
+      {checkpoints.length > 0 && (
+        <QuestionTimeline
+          durationSec={durationSec}
+          checkpoints={checkpoints}
+          focusIdx={focusIdx}
+          onPick={pick}
+        />
+      )}
+
       {checkpoints.length === 0 ? (
         <p className="text-[11px] text-gray-400 mt-1">
           None yet. A question pauses the video at its timestamp — the learner can’t carry on until they answer it.
@@ -608,7 +749,13 @@ function CheckpointEditor({ checkpoints, onChange }) {
           {checkpoints.map((c, i) => {
             const graded = (c.options || []).some((o) => o.correct && String(o.text || '').trim());
             return (
-              <div key={i} className="border rounded-lg p-3 bg-gray-50/60 space-y-2">
+              <div
+                key={i}
+                ref={(el) => { cardRefs.current[i] = el; }}
+                className={`border rounded-lg p-3 bg-gray-50/60 space-y-2 ${
+                  focusIdx === i ? 'ring-2 ring-amber-400 border-amber-300' : ''
+                }`}
+              >
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-500 shrink-0">Pause at</span>
                   <input

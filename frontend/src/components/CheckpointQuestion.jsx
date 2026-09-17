@@ -14,7 +14,14 @@ import { fmtClock } from '../utils/checkpoints';
 //                       { correct, graded, cleared, explanation, attempt }
 //   onContinue() — called when they may carry on (playback resumes)
 //   onSkip — admin preview only: dismiss without answering
-export default function CheckpointQuestion({ checkpoint, onSubmit, onContinue, onSkip }) {
+//   onRewind() — a wrong answer sends the video back over the stretch that holds
+//                the answer. Omitted when there is nothing to re-watch (the
+//                first question, or one pinned seconds after another), and the
+//                card then just offers another go.
+//   rewindSec — where it goes back to, for the wording
+export default function CheckpointQuestion({
+  checkpoint, onSubmit, onContinue, onSkip, onRewind, rewindSec = 0,
+}) {
   const [picked, setPicked] = useState([]); // option indexes
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -113,7 +120,10 @@ export default function CheckpointQuestion({ checkpoint, onSubmit, onContinue, o
               : 'bg-red-50 border-red-200 text-red-700'
           }`}>
             <div className="font-medium">
-              {!result.cleared ? 'Not quite - have another go.'
+              {!result.cleared
+                ? (onRewind
+                  ? `Not quite - the video goes back to ${fmtClock(rewindSec)} so you can watch that part again.`
+                  : 'Not quite - have another go.')
                 : result.graded ? (result.correct ? '✓ Correct' : 'Answer recorded.')
                   : '✓ Thanks - answer recorded.'}
             </div>
@@ -132,6 +142,14 @@ export default function CheckpointQuestion({ checkpoint, onSubmit, onContinue, o
               <button type="button" onClick={onContinue}
                 className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
                 Continue watching →
+              </button>
+            ) : wrong && onRewind ? (
+              // The only way on from a wrong answer: back over the stretch that
+              // holds it. The question is still uncleared, so it comes round
+              // again when the playhead reaches it.
+              <button type="button" onClick={onRewind}
+                className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700">
+                ↻ Watch that part again
               </button>
             ) : (
               <button type="button" onClick={submit} disabled={busy || !answered}

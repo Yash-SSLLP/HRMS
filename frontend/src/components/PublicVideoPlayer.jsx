@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import CheckpointQuestion from './CheckpointQuestion';
-import { dueCheckpoint, gateSec, pendingCheckpoints } from '../utils/checkpoints';
+import { dueCheckpoint, gateSec, pendingCheckpoints, rewindTarget } from '../utils/checkpoints';
 
 // Public (no-login) video player. Streams from a given `src` (the tokenised
 // public endpoint) and enforces the same no-skip rule as the internal player:
@@ -11,7 +11,9 @@ import { dueCheckpoint, gateSec, pendingCheckpoints } from '../utils/checkpoints
 // In-video questions work exactly as they do for employees: playback stops at
 // the first checkpoint the viewer hasn't cleared and the question card covers
 // the video (controls included) until they answer it. Answers are logged against
-// their lead session, so the admin sees who said what.
+// their lead session, so the admin sees who said what. A wrong answer sends the
+// video back to the previous question — the stretch in between is the part that
+// holds the answer — exactly as it does for an employee.
 //
 // Props: src, durationSec, checkpoints, cleared (Set of ids), onAnswer(cp, payload),
 //        onCleared(cpId), onEnded(), onError()
@@ -120,6 +122,28 @@ export default function PublicVideoPlayer({
     if (v) { lastTimeRef.current = v.currentTime; v.play().catch(() => {}); }
   };
 
+  // Wrong answer → back over the stretch that holds it. The question stays
+  // uncleared, so it comes round again on the way past. A backward seek is never
+  // blocked by onSeeking (that only stops forward jumps), and lastTimeRef moves
+  // with it so the jump isn't read as playback.
+  // The watermark comes back with it, or the rewind is a gesture: maxAllowedRef
+  // is the furthest they may seek to, so leaving it put would let them scrub
+  // straight back to the question without watching any of it again.
+  const rewind = (sec) => {
+    activeRef.current = null;
+    setActiveCp(null);
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = Math.max(0, sec);
+    lastTimeRef.current = v.currentTime;
+    maxAllowedRef.current = v.currentTime;
+    v.play().catch(() => {});
+  };
+
+  // null when there is nothing to re-watch (the lesson's first question, or one
+  // pinned within a couple of seconds of the one before it).
+  const rewindSec = activeCp ? rewindTarget(checkpoints, activeCp) : null;
+
   return (
     <div className="relative bg-black">
       <video
@@ -143,7 +167,13 @@ export default function PublicVideoPlayer({
         </div>
       )}
       {activeCp && (
-        <CheckpointQuestion checkpoint={activeCp} onSubmit={submitAnswer} onContinue={resume} />
+        <CheckpointQuestion
+          checkpoint={activeCp}
+          onSubmit={submitAnswer}
+          onContinue={resume}
+          rewindSec={rewindSec || 0}
+          onRewind={rewindSec === null ? undefined : () => rewind(rewindSec)}
+        />
       )}
     </div>
   );

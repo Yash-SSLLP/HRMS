@@ -38,6 +38,7 @@ const KhataEntry = require('../models/CashbookEntry').EmployeeLedgerEntry;
 // tab this badges (GET /cashbook/entries?status=Pending queries the base too).
 // The badge has to show what the page shows.
 const CashbookEntry = require('../models/CashbookEntry');
+const Candidate = require('../models/Candidate');
 const InvestmentDeclaration = require('../models/InvestmentDeclaration');
 const { Enrollment, CourseReport, CourseComment } = require('../models/Course');
 const { CHANGE_INBOX_ROLES } = require('./changeRequestController');
@@ -585,9 +586,10 @@ const rejectWorkOnLeave = decideWorkOnLeaveRoute('reject');
  * null) is not counted here until an inbox load heals it.
  * @route GET /api/approvals/count
  * @returns {{leave, emergencyLeave, exits, clearances, regularizations,
- *   workOnLeave, total}} — `emergencyLeave` is days already taken awaiting a
- *   confirm/reject, counted separately from `leave` because they are not the
- *   same kind of waiting.
+ *   workOnLeave, interviews, total}} — `emergencyLeave` is days already taken
+ *   awaiting a confirm/reject, counted separately from `leave` because they are
+ *   not the same kind of waiting. `interviews` is NOT an approval and is
+ *   deliberately OUTSIDE `total` — see below.
  */
 const countMyApprovals = asyncHandler(async (req, res) => {
   const me = req.user._id;
@@ -606,7 +608,9 @@ const countMyApprovals = asyncHandler(async (req, res) => {
   const emergencyFilter = allLeave
     ? await scopeEmployeeFilter(req, emergencyReviewFilter(req.user))
     : emergencyReviewFilter(req.user);
-  const [leave, emergencyLeave, exits, clearances, regularizations, workOnLeave] = await Promise.all([
+  const [
+    leave, emergencyLeave, exits, clearances, regularizations, workOnLeave, interviews,
+  ] = await Promise.all([
     LeaveRequest.countDocuments(leaveFilter),
     // Its own tally, never folded into `leave`: these are days already taken,
     // waiting only on somebody agreeing they should have been. Same filter the
@@ -621,6 +625,21 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     Attendance.countDocuments({
       ...(all ? {} : { 'workOnLeave.approver': me }), 'workOnLeave.status': 'Pending',
     }),
+    // Interview rounds booked with this person and not yet written up. Counted
+    // here because this route IS the "waiting on you personally" tally and it is
+    // already polled by every signed-in user — a second endpoint would be a
+    // second request every twenty seconds for one number.
+    //
+    // ALWAYS `me`, never widened by `all`: sitting at the top of every approval
+    // chain does not put somebody else's interview in your diary.
+    //
+    // `$nin` rather than `$in: ['Pending','Scheduled']`, to match the page
+    // exactly (EmployeeInterviews splits on DECIDED = Cleared|Rejected). A round
+    // whose status was never set is shown there as Pending, so it has to be
+    // counted here too — `$in` would silently miss it.
+    Candidate.countDocuments({
+      rounds: { $elemMatch: { interviewer: me, status: { $nin: ['Cleared', 'Rejected'] } } },
+    }),
   ]);
   res.json({
     leave,
@@ -629,6 +648,10 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     clearances,
     regularizations,
     workOnLeave,
+    interviews,
+    // OUTSIDE the total, deliberately. `total` is what the Approvals pill wears,
+    // and an interview is not something you approve — folding it in would put a
+    // number on a badge that opens an inbox not holding it.
     total: leave + emergencyLeave + exits + clearances + regularizations + workOnLeave,
   });
 });

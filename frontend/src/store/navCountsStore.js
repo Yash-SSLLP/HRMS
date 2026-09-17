@@ -44,6 +44,7 @@ let lastAt = 0;
  */
 const EMPTY = {
   mine: 0,
+  interviews: 0,
   leave: 0,
   expense: 0,
   travel: 0,
@@ -68,6 +69,14 @@ const EMPTY = {
 
 /** Read one key out of a server payload, defaulting anything odd to 0. */
 const n = (v) => Number(v) || 0;
+
+/**
+ * The keys that come out of the PERSONAL answer (GET /approvals/count) rather
+ * than the HR-wide one. They have to be listed, because the loop below fills
+ * every other key from the HR payload — and `interviews` is not in it, so
+ * without this it would be overwritten with 0 on every single poll.
+ */
+const PERSONAL = ['mine', 'interviews'];
 
 export const useNavCountsStore = create((set) => ({
   counts: EMPTY,
@@ -96,8 +105,16 @@ export const useNavCountsStore = create((set) => ({
         const d = hr.data || {};
         // Rebuilt from EMPTY every time, so a key the server stops answering
         // falls back to 0 instead of keeping the last number it ever sent.
-        const next = { ...EMPTY, mine: n(mine.data?.total) };
-        Object.keys(EMPTY).forEach((k) => { if (k !== 'mine') next[k] = n(d[k]); });
+        const next = {
+          ...EMPTY,
+          mine: n(mine.data?.total),
+          // Interview rounds booked with this user and not yet written up. It
+          // rides along on the personal answer (one request, not two) and is
+          // deliberately NOT part of that answer's `total` — an interview is
+          // not an approval, so the Approvals pill must not count it.
+          interviews: n(mine.data?.interviews),
+        };
+        Object.keys(EMPTY).forEach((k) => { if (!PERSONAL.includes(k)) next[k] = n(d[k]); });
         set({ counts: next });
         lastAt = Date.now();
       } catch {
