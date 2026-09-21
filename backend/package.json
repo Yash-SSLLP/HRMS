@@ -22,6 +22,8 @@
     "test:salary-import": "node scripts/testSalaryStructureImport.js",
     "test:salary-excel": "node scripts/testSalaryStructureExcel.js",
     "test:org": "node scripts/testOrgChart.js",
+    "test:tasks": "node scripts/testTasks.js",
+    "test:org-order": "node scripts/testOrgChartOrder.js",
     "test:recruitment": "node scripts/testRecruitmentRules.js",
     "test:sender-cc": "node scripts/testSenderCc.js",
     "audit:accounts": "node scripts/auditImportedAccounts.js",

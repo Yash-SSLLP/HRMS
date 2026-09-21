@@ -998,12 +998,11 @@ const createEmployee = asyncHandler(async (req, res) => {
 
   const profile = await EmployeeProfile.create(req.body);
 
-  // Onboarding work, from whatever task templates HR has wired to this event.
-  // Fire-and-forget and error-swallowing by design (see services/taskEvents):
-  // the employee is created either way, and a task that cannot be made must
-  // never turn a successful create into an error response. Nothing happens at
-  // all until somebody sets up a template, so this is inert on day one.
-  require('../services/taskEvents').employeeCreated(profile, req.user).catch(() => {});
+  // NO AUTOMATIC ONBOARDING TASKS. Creating an employee used to raise tasks
+  // from whatever templates were wired to the event (services/taskEvents),
+  // which was inert until somebody set a template up and was never set up.
+  // Removed with the 2026-09-21 rework: HR sets onboarding work from a saved
+  // template like any other task, which is one click and visible.
 
   // Flag a new joiner with no salary basis to whoever runs payroll. Not awaited:
   // the profile is created either way, and a notification hiccup must not turn a

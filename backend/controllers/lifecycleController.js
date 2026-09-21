@@ -188,12 +188,9 @@ const updateConfirmation = asyncHandler(async (req, res) => {
 
   await profile.save();
 
-  // Confirmation paperwork, from whatever templates are wired to it. Only on
-  // a real confirmation — extending or resetting probation is not a thing that
-  // needs a plan. Fire-and-forget, as every task event is.
-  if (action === 'confirm') {
-    require('../services/taskEvents').employeeConfirmed(profile, req.user).catch(() => {});
-  }
+  // Confirmation paperwork is set from a saved task template rather than
+  // raised automatically — the event hook went with the 2026-09-21 task
+  // rework (see employeeController.createEmployee).
 
   res.json({ profile });
 });

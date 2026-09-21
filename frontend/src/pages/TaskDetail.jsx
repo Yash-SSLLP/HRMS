@@ -1,952 +1,618 @@
 /**
- * One task, in full (section 41).
+ * One task — everything about it, and its whole history.
  *
- * ONE PAGE, BOTH PORTALS. The same task is reachable from the admin board and
- * from My Tasks, and it is the same page in both — mounted at two routes, told
- * which portal it is in by `base`. Two copies would be two places to fix
- * everything, and the difference between them is genuinely only which tabs
- * there is any point showing.
+ * REWRITTEN 2026-09-21, down from 952 lines and six tabs (overview, evidence,
+ * workflow, time, comments, activity). It is now one column of facts and one
+ * column of feed, because the six tabs were six places to look for the answer
+ * to "what is happening with this".
  *
- * WHAT YOU SEE IS WHAT YOU MAY DO. The server returns `can` and `transitions`
- * alongside the task — what THIS person may do with it right now — and the
- * buttons are drawn from that rather than from the client re-deriving the rules.
- * That is what stops a button appearing that the server then refuses, and it
- * means a permission change on the server needs no change here.
+ * THE BUTTONS COME FROM THE SERVER. `can.transitions` is computed by
+ * services/taskAccess.capabilitiesFor and drawn as-is. This page has NO opinion
+ * about who may do what — the version it replaces derived the buttons from the
+ * status and the user's id in the browser, and the phone derived them again,
+ * differently.
  *
- * Built around the timeline, as the spec asks: the header says where the task
- * is, the rail says what is still ahead, and the Activity tab says what has
- * already happened. Sections the reader has no business in are simply not shown.
+ * THE FEED IS ONE LIST. A status move and a remark are the same row
+ * (models/TaskUpdate); the only difference on screen is that a move carries a
+ * chip saying what it became. Three collections merged in the browser is how
+ * the old page ended up with a history that could not be paged.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import {
-  FiArrowLeft, FiCheck, FiX, FiPlay, FiUpload, FiClock, FiPaperclip,
-  FiMessageSquare, FiCalendar, FiAward, FiMapPin, FiUsers, FiList,
-  FiGitBranch, FiActivity, FiRepeat, FiAlertTriangle, FiDownload, FiPlus,
+  FiArrowLeft, FiUser, FiUsers, FiEye, FiTag, FiFlag, FiCalendar, FiRepeat,
+  FiAward, FiBell, FiPaperclip, FiLink, FiMessageSquare, FiTrash2, FiEdit2,
+  FiPlay, FiCheck, FiRotateCcw, FiXCircle, FiCornerUpRight, FiClock, FiDownload,
+  FiThumbsUp, FiThumbsDown, FiAlertTriangle,
 } from 'react-icons/fi';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog, promptDialog } from '../components/dialogs';
-import WorkflowRail from '../components/task/WorkflowRail';
-import TaskTimeline from '../components/task/TaskTimeline';
-import TaskTimer from '../components/task/TaskTimer';
-import SubmitModal from '../components/task/SubmitModal';
-import { StatusChip, PriorityChip, DueChip, ProgressBar } from '../components/task/TaskChips';
 import useViewOnly from '../hooks/useViewOnly';
 import { useAuthStore } from '../store/authStore';
+import AuthImage from '../components/AuthImage';
+import { VoicePlayer } from '../components/task/VoiceNote';
+import TaskUpdateModal from '../components/task/TaskUpdateModal';
+import AssignTaskModal from '../components/task/AssignTaskModal';
+import { StatusChip, PriorityChip, DueChip, PointsChip } from '../components/task/TaskChips';
+import SubtaskList from '../components/task/SubtaskList';
 import * as T from '../api/tasks';
-import { formatDateTime12 } from '../utils/time';
 import {
-  statusLabel, formatMinutes, personName, isOverdue, INCENTIVE_OUTCOME_LABELS,
+  statusLabel, repeatLabel, reminderLabel, timeAgo, assigneeNames, personName,
+  FREQUENCY_LABELS,
 } from '../utils/taskLifecycle';
-import api from '../api/client';
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', {
-  day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata',
-}) : '—');
+/** The icon and wording of each move a server may offer. */
+const MOVE_UI = {
+  IN_PROGRESS: { icon: FiPlay, label: 'Start working', tone: 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100' },
+  COMPLETED: { icon: FiCheck, label: 'Mark complete', tone: 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100' },
+  PENDING: { icon: FiRotateCcw, label: 'Send back', tone: 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' },
+  CANCELLED: { icon: FiXCircle, label: 'Cancel it', tone: 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100' },
+};
 
-/**
- * @param {object} props
- * @param {string} [props.base] - '/admin/tasks' or '/employee/tasks'
- */
-export default function TaskDetail({ base = '/admin/tasks' }) {
+/** The same buttons, worded for a request. */
+const REQUEST_LABELS = {
+  IN_PROGRESS: 'Looking into it',
+  COMPLETED: 'Mark answered',
+  PENDING: 'Reopen',
+  CANCELLED: 'Withdraw',
+};
+
+export default function TaskDetail({ base = '/employee/tasks' }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const viewOnly = useViewOnly();
-  const me = useAuthStore((s) => s.user);
+  // Whose pieces are whose — SubtaskList greys the boxes that are not this
+  // person's. The SERVER is what enforces it.
+  const me = useAuthStore((st) => st.user?._id);
 
-  const [data, setData] = useState(null);
+  const [task, setTask] = useState(null);
+  const [updates, setUpdates] = useState([]);
+  const [can, setCan] = useState({ transitions: [] });
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [tab, setTab] = useState('overview');
-  const [acting, setActing] = useState('');
-  const [showSubmit, setShowSubmit] = useState(false);
-  const [comment, setComment] = useState('');
-  const [commentFiles, setCommentFiles] = useState([]);
-  const [internal, setInternal] = useState(false);
-  const [timer, setTimer] = useState(null);
+  const [meta, setMeta] = useState(null);
 
-  /**
-   * Reload.
-   *
-   * The FIRST load blanks the page; every later one keeps what is on screen and
-   * just marks it stale. Setting `loading` again swapped the whole page for a
-   * skeleton after every action, which threw the reader back to the top — the
-   * same refetch-collapse this portal has already fixed elsewhere.
-   */
-  const load = useCallback(async (first = false) => {
-    if (first) setLoading(true); else setRefreshing(true);
-    setError('');
+  const [moving, setMoving] = useState(null);   // the target status
+  const [remarking, setRemarking] = useState(false);
+  // Delegating opens the SAME box, already in its delegate mode.
+  const [delegating, setDelegating] = useState(false);
+  const [asking, setAsking] = useState(false);
+
+  const load = useCallback(async () => {
     try {
-      const [detail, mine] = await Promise.all([
-        T.getTask(id),
-        T.myTimer().catch(() => ({ entry: null })),
-      ]);
-      setData(detail);
-      setTimer(mine.entry || null);
+      const data = await T.getTask(id);
+      setTask(data.task);
+      setUpdates(data.updates || []);
+      setCan(data.can || { transitions: [] });
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not load this task');
+      toast.error(err?.response?.data?.message || 'Could not open that task.');
+      navigate(base);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [id]);
+  }, [id, base, navigate]);
 
-  useEffect(() => { load(true); }, [load]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { T.taskMeta().then(setMeta).catch(() => {}); }, []);
 
-  const task = data?.task;
-  const can = data?.can || {};
-
-  /** Run an action, reload, and turn any refusal into a toast the person can read. */
-  const run = useCallback(async (name, fn, successText) => {
-    setActing(name);
+  const accept = useCallback(async () => {
     try {
-      await fn();
-      if (successText) toast.success(successText);
-      await load();
+      await T.acceptTask(id);
+      toast.success('Accepted.');
+      load();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'That did not work');
-    } finally {
-      setActing('');
+      toast.error(err?.response?.data?.message || 'Could not accept that task.');
     }
-  }, [load]);
+  }, [id, load]);
 
-  // The timer entry that belongs to THIS task, as against one running elsewhere.
-  const myEntryHere = useMemo(() => {
-    if (!timer) return null;
-    const timerTaskId = String(timer.task?._id || timer.task || '');
-    return timerTaskId === String(id) ? timer : null;
-  }, [timer, id]);
+  /** The reason is required by the server — see services/taskEngine.decline. */
+  const decline = useCallback(async () => {
+    const reason = await promptDialog({
+      title: 'Cannot take this on?',
+      message: 'Say why, so it can be given to somebody else. They will see this.',
+      placeholder: 'e.g. I am on leave from Thursday',
+    });
+    if (!reason || !reason.trim()) return;
+    try {
+      await T.declineTask(id, reason.trim());
+      toast.success('Declined. Whoever set it has been told.');
+      load();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Could not decline that task.');
+    }
+  }, [id, load]);
 
-  const timerElsewhere = timer && !myEntryHere ? timer : null;
+  /**
+   * Remove it — archive by default.
+   *
+   * A SuperAdmin is additionally offered a real DELETE. The two are kept as
+   * separate confirmations rather than a checkbox inside one, because
+   * "archive" and "gone for ever" should not be one slip apart.
+   */
+  const remove = useCallback(async (purge = false) => {
+    const yes = await confirmDialog({
+      title: purge ? 'Delete this task for good?' : 'Remove this task?',
+      message: purge
+        ? 'The task and its whole history are erased. This cannot be undone. '
+          + 'If anybody has already been credited points for it, the server will refuse.'
+        : 'It disappears from every list. The history and any points already credited stay on file.',
+      confirmText: purge ? 'Delete for good' : 'Remove',
+      tone: 'danger',
+    });
+    if (!yes) return;
+    try {
+      const res = await T.deleteTask(id, { purge });
+      toast.success(res?.message || 'Removed.');
+      navigate(base);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Could not remove that task.');
+    }
+  }, [id, base, navigate]);
 
-  const tabs = useMemo(() => {
-    if (!task) return [];
-    const list = [['overview', 'Overview', FiList]];
-    if ((data.workflow || []).length) list.push(['workflow', 'Workflow', FiGitBranch]);
-    if ((task.assignees || []).length > 1) list.push(['people', 'Assignees', FiUsers]);
-    if ((task.checklist || []).length) list.push(['checklist', 'Checklist', FiCheck]);
-    if (can.work || can.review || can.manage) list.push(['time', 'Time', FiClock]);
-    if ((data.submissions || []).length) list.push(['submissions', 'Submissions', FiUpload]);
-    list.push(['comments', `Comments${task.commentCount ? ` (${task.commentCount})` : ''}`, FiMessageSquare]);
-    if ((task.attachments || []).length) list.push(['files', 'Files', FiPaperclip]);
-    if ((data.extensions || []).length || can.work) list.push(['extensions', 'Extensions', FiCalendar]);
-    if (task.incentive?.enabled) list.push(['incentive', 'Incentive', FiAward]);
-    if ((task.location?.captured || []).length) list.push(['location', 'Location', FiMapPin]);
-    if ((data.subtasks || []).length) list.push(['subtasks', 'Subtasks', FiList]);
-    list.push(['activity', 'Activity', FiActivity]);
-    return list;
-  }, [task, data, can]);
+  const isRequest = task?.kind === 'REQUEST';
 
   if (loading) {
     return (
-      <div>
-        <PageHeader title="Task" />
-        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-3">
-          <div className="skeleton h-6 rounded w-1/3" />
-          <div className="skeleton h-4 rounded w-2/3" />
-          <div className="skeleton h-4 rounded w-1/2" />
-        </div>
+      <div className="space-y-3">
+        <div className="h-10 w-48 animate-pulse rounded-lg bg-gray-100" />
+        <div className="h-64 animate-pulse rounded-2xl bg-gray-100" />
       </div>
     );
   }
-
-  if (error || !task) {
-    return (
-      <div>
-        <PageHeader title="Task" />
-        <div className="bg-white rounded-lg border border-gray-200 p-6 text-center">
-          <p className="text-sm text-gray-600">{error || 'That task does not exist.'}</p>
-          <Link to={base} className="mt-3 inline-block text-sm text-blue-600 hover:underline">Back to tasks</Link>
-        </div>
-      </div>
-    );
-  }
-
-  // ===== the actions bar =====
-  const actions = [];
-  if (!viewOnly) {
-    if (can.work && task.status === 'ASSIGNED') {
-      actions.push({
-        key: 'accept', label: 'Accept', icon: FiCheck, primary: true,
-        run: () => run('accept', async () => {
-          const pos = (task.location?.captureOn || []).includes('accept') ? await T.currentPosition() : null;
-          await T.acceptTask(id, pos ? { location: pos } : {});
-        }, 'Task accepted'),
-      });
-      actions.push({
-        key: 'decline', label: 'Decline', icon: FiX,
-        run: async () => {
-          const reason = await promptDialog({
-            message: 'Why can you not take this task on?',
-            placeholder: 'Your reason — the person who set it will see this',
-            confirmText: 'Decline task',
-          });
-          if (!reason) return;
-          await run('decline', () => T.declineTask(id, reason), 'Task declined');
-        },
-      });
-    }
-
-    if (can.work && ['ASSIGNED', 'ACCEPTED', 'REJECTED', 'BLOCKED'].includes(task.status)) {
-      actions.push({
-        key: 'start', label: task.status === 'REJECTED' ? 'Work on it again' : 'Start', icon: FiPlay, primary: true,
-        run: () => run('start', async () => {
-          const wantsPos = (task.location?.captureOn || []).includes('start')
-            || (task.location?.enforceOn || []).includes('start');
-          const pos = wantsPos ? await T.currentPosition() : null;
-          await T.startTask(id, pos ? { location: pos } : {});
-        }, 'Started'),
-      });
-    }
-
-    if (can.work && ['ACCEPTED', 'IN_PROGRESS', 'REJECTED'].includes(task.status)) {
-      actions.push({
-        key: 'submit', label: 'Submit', icon: FiUpload, primary: true,
-        run: () => setShowSubmit(true),
-      });
-    }
-
-    if (can.review && ['SUBMITTED', 'UNDER_REVIEW'].includes(task.status)) {
-      actions.push({
-        key: 'approve', label: 'Approve', icon: FiCheck, primary: true,
-        run: async () => {
-          const note = await promptDialog({
-            message: 'Approve this task?', placeholder: 'Remark (optional)',
-            confirmText: 'Approve',
-          });
-          if (note === null) return;
-          await run('approve', () => T.approveTask(id, { note }), 'Approved');
-        },
-      });
-      actions.push({
-        key: 'reject', label: 'Send back', icon: FiX,
-        run: async () => {
-          const note = await promptDialog({
-            message: 'What needs changing?',
-            placeholder: 'The assignee will see this',
-            confirmText: 'Send back',
-          });
-          if (!note) return;
-          await run('reject', () => T.rejectTask(id, note), 'Sent back');
-        },
-      });
-    }
-  }
-
-  // Anything else the server says this person may do, that is not already a
-  // button above. Drawn from `transitions`, so the list is the server's answer
-  // and not a second copy of the rules.
-  const shown = new Set(['ACCEPTED', 'DECLINED', 'IN_PROGRESS', 'SUBMITTED', 'APPROVED', 'REJECTED']);
-  const extraMoves = viewOnly ? [] : (data.transitions || []).filter((t) => !shown.has(t.to));
+  if (!task) return null;
 
   return (
     <div>
-      <PageHeader
-        title={
-          <span className="flex items-center gap-2">
-            <button type="button" onClick={() => navigate(base)}
-              className="text-gray-400 hover:text-gray-700" aria-label="Back">
-              <FiArrowLeft size={18} />
-            </button>
-            {task.title}
-          </span>
-        }
-        subtitle={[task.code, task.taskType, task.department].filter(Boolean).join(' · ')}
+      <Link
+        to={base}
+        className="mb-3 inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-blue-600 min-h-[32px]"
       >
-        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
-        {actions.map((a) => (
-          <button key={a.key} type="button" onClick={a.run} disabled={!!acting}
-            className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg disabled:opacity-60 ${
-              a.primary ? 'bg-gray-900 text-white hover:bg-gray-700' : 'border border-gray-300 hover:bg-gray-50'}`}
-            style={{ minHeight: 40 }}>
-            <a.icon size={14} />
-            {acting === a.key ? '…' : a.label}
-          </button>
-        ))}
-        {extraMoves.length > 0 && (
-          <select value="" disabled={!!acting}
-            onChange={async (e) => {
-              const move = extraMoves.find((m) => m.to === e.target.value);
-              if (!move) return;
-              let note = '';
-              if (move.needsReason) {
-                note = await promptDialog({
-                  message: `Why is this task being marked ${move.label.toLowerCase()}?`,
-                  confirmText: move.label,
-                });
-                if (!note) return;
-              }
-              await run('move', () => T.changeStatus(id, move.to, note), `Marked ${move.label.toLowerCase()}`);
-            }}
-            className="border rounded-lg px-3 py-2 text-sm" style={{ minHeight: 40 }}>
-            <option value="">More…</option>
-            {extraMoves.map((m) => <option key={m.to} value={m.to}>{m.label}</option>)}
-          </select>
-        )}
+        <FiArrowLeft size={14} /> Back to tasks
+      </Link>
+
+      <PageHeader title={task.title} subtitle={task.code || undefined}>
+        <StatusChip task={task} />
+        <PriorityChip priority={task.priority} always />
+        {!isRequest && <PointsChip points={task.points} earned={task.status === 'COMPLETED'} />}
       </PageHeader>
 
-      {/* ===== the header card ===== */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <StatusChip status={task.status} />
-          <PriorityChip priority={task.priority} always />
-          {isOverdue(task) && (
-            <span className="inline-flex items-center gap-1 text-xs text-red-600 font-medium">
-              <FiAlertTriangle size={12} /> Overdue
-            </span>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        {/* ══ Left: what it is, and what has happened ══════════ */}
+        <div className="space-y-4">
+          {/* ── Actions ───────────────────────────────────── */}
+          {/* THE HANDOVER, unanswered. Drawn as a banner rather than two more
+              buttons in the row below, because "do you accept this?" is a
+              different question from "how is it going?" and the answer decides
+              whether the rest of the page is even relevant. */}
+          {!viewOnly && can.canAccept && (
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="min-w-[10rem] flex-1">
+                <p className="text-sm font-medium text-amber-900">
+                  {isRequest ? 'Can you help with this?' : 'Will you take this on?'}
+                </p>
+                <p className="text-xs text-amber-700">
+                  {task.createdByName || 'Somebody'} is waiting to hear.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={accept}
+                className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                <FiThumbsUp size={14} /> Accept
+              </button>
+              {can.canDecline && (
+                <button
+                  type="button"
+                  onClick={decline}
+                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-white px-4 text-sm font-medium text-gray-700 hover:border-red-300 hover:text-red-600"
+                >
+                  <FiThumbsDown size={14} /> Cannot
+                </button>
+              )}
+            </div>
           )}
-          {task.extensionCount > 0 && (
-            <span className="text-xs text-gray-400">
-              {task.extensionCount} extension{task.extensionCount === 1 ? '' : 's'}
-            </span>
+
+          {/* Everybody on it has said no. The person who set it has to act, so
+              the reasons are on the page rather than buried in the feed. */}
+          {task.declined && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+              <p className="flex items-center gap-1.5 text-sm font-medium text-red-800">
+                <FiAlertTriangle size={14} /> Nobody has taken this on
+              </p>
+              <ul className="mt-1.5 space-y-1">
+                {(task.assignees || [])
+                  .filter((a) => a.acceptance === 'REJECTED')
+                  .map((a) => (
+                    <li key={a._id} className="text-xs text-red-700">
+                      <strong>{a.name || personName(a.user)}:</strong> {a.declineReason || 'no reason given'}
+                    </li>
+                  ))}
+              </ul>
+              {can.canEdit && (
+                <p className="mt-2 text-xs text-red-600">
+                  Give it to somebody else, or call it off.
+                </p>
+              )}
+            </div>
           )}
-          {task.rejectionCount > 0 && (
-            <span className="text-xs text-amber-600">
-              sent back {task.rejectionCount}×
-            </span>
+
+          {!viewOnly && can.transitions?.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {can.transitions.map(({ to }) => {
+                const ui = MOVE_UI[to];
+                if (!ui) return null;
+                const Icon = ui.icon;
+                return (
+                  <button
+                    key={to}
+                    type="button"
+                    onClick={() => setMoving(to)}
+                    className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border px-4 text-sm font-medium transition ${ui.tone}`}
+                  >
+                    <Icon size={14} />
+                    {isRequest ? (REQUEST_LABELS[to] || ui.label) : ui.label}
+                  </button>
+                );
+              })}
+              {/* Delegating opens the SAME update box the status moves do, in
+                  its delegate mode — one screen, three things it can do. */}
+              {can.canDelegate && (
+                <button
+                  type="button"
+                  onClick={() => setDelegating(true)}
+                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-gray-200 px-4 text-sm font-medium text-gray-600 transition hover:border-gray-400 hover:text-blue-600"
+                >
+                  <FiCornerUpRight size={14} /> Delegate
+                </button>
+              )}
+            </div>
           )}
+
+          {/* ── What was asked for ────────────────────────── */}
+          {(task.description || task.voiceNote?.storagePath || task.links?.length > 0) && (
+            <section className="rounded-2xl border border-gray-200 bg-white p-4">
+              {task.description && (
+                <p className="whitespace-pre-wrap text-sm text-gray-700">{task.description}</p>
+              )}
+
+              {task.voiceNote?.storagePath && (
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-medium text-gray-500">
+                    Voice note from {task.voiceNote.recordedByName || 'the assigner'}
+                  </p>
+                  <VoicePlayer
+                    path={T.taskVoiceUrl(task._id)}
+                    durationMs={task.voiceNote.durationMs}
+                  />
+                </div>
+              )}
+
+              {task.links?.length > 0 && (
+                <ul className="mt-3 space-y-1">
+                  {task.links.map((l) => (
+                    <li key={l._id || l.url}>
+                      <a
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="inline-flex items-center gap-1.5 text-xs accent-text hover:underline"
+                      >
+                        <FiLink size={11} /> {l.label || l.url}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
+          {/* ── Files ─────────────────────────────────────── */}
+          {task.attachments?.length > 0 && (
+            <section className="rounded-2xl border border-gray-200 bg-white p-4">
+              <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+                <FiPaperclip size={12} /> Files
+              </h2>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {task.attachments.map((f) => (
+                  <a
+                    key={f._id}
+                    href={`#${f._id}`}
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      try {
+                        const url = await T.blobUrl(T.fileUrl(task._id, f._id));
+                        window.open(url, '_blank', 'noopener');
+                      } catch { toast.error('That file could not be opened.'); }
+                    }}
+                    className="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-xs hover:border-gray-400"
+                  >
+                    <FiPaperclip className="shrink-0 text-gray-400" size={13} />
+                    <span className="min-w-0 flex-1 truncate text-gray-700">{f.name}</span>
+                    <FiDownload className="shrink-0 text-gray-400" size={12} />
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* ── The feed ──────────────────────────────────── */}
+          <SubtaskList
+            task={task}
+            can={can}
+            me={me}
+            viewOnly={viewOnly}
+            onChanged={load}
+          />
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+                <FiMessageSquare size={12} /> History
+              </h2>
+              {!viewOnly && can.canComment && (
+                <button
+                  type="button"
+                  onClick={() => setRemarking(true)}
+                  className="rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-600 hover:border-gray-400 hover:text-blue-600 min-h-[32px]"
+                >
+                  Add a remark
+                </button>
+              )}
+            </div>
+
+            {updates.length === 0 ? (
+              <p className="py-6 text-center text-xs text-gray-400">Nothing has happened yet.</p>
+            ) : (
+              <ol className="space-y-3">
+                {updates.map((u) => (
+                  <FeedRow key={u._id} update={u} task={task} />
+                ))}
+              </ol>
+            )}
+          </section>
         </div>
 
-        <div className="mb-3"><ProgressBar value={task.progress} /></div>
+        {/* ══ Right: the facts ═════════════════════════════════ */}
+        <aside className="space-y-3">
+          <section className="space-y-2.5 rounded-2xl border border-gray-200 bg-white p-4 text-sm">
+            <Fact icon={FiUser} label={isRequest ? 'Asked by' : 'Assigned by'}>
+              {task.createdByName || personName(task.createdBy) || '—'}
+            </Fact>
 
-        <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 text-sm">
-          <div>
-            <dt className="text-xs text-gray-500">Assigned to</dt>
-            <dd className="text-gray-900">
-              {(task.assignees || []).map((a) => personName(a.user) || a.name).filter(Boolean).join(', ') || '—'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-gray-500">Supervisor</dt>
-            <dd className="text-gray-900">{personName(task.supervisor) || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-gray-500">Due</dt>
-            <dd className="text-gray-900">
-              {task.dueDate ? formatDateTime12(task.dueDate) : '—'}
-              {/* An extension moved the deadline; the ORIGINAL is never deleted,
-                  so it is shown rather than quietly replaced. */}
-              {task.originalDueDate && task.dueDate
-                && new Date(task.originalDueDate).getTime() !== new Date(task.dueDate).getTime() && (
-                <span className="block text-xs text-gray-400 line-through">
-                  was {fmtDate(task.originalDueDate)}
-                </span>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-gray-500">Time logged</dt>
-            <dd className="text-gray-900">
-              {formatMinutes(task.minutesLogged)}
-              {task.estimatedMinutes > 0 && (
-                <span className="text-gray-400"> of {formatMinutes(task.estimatedMinutes)}</span>
-              )}
-            </dd>
-          </div>
-        </dl>
-
-        {task.stateNote && (
-          <div className="mt-3 text-sm text-gray-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            {task.stateNote}
-          </div>
-        )}
-
-        {(data.blockers || []).length > 0 && (
-          <div className="mt-3 text-sm text-orange-800 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
-            Waiting on {data.blockers.map((b) => `"${b.title}"`).join(', ')} — this task cannot start until
-            {data.blockers.length === 1 ? ' it is' : ' they are'} done.
-          </div>
-        )}
-      </div>
-
-      {/* ===== tabs ===== */}
-      <div className="topbar-scroll flex gap-1 border-b border-gray-200 mb-4 overflow-x-auto">
-        {tabs.map(([key, label, Icon]) => (
-          <button key={key} type="button" onClick={() => setTab(key)}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ${
-              tab === key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-            style={{ minHeight: 40 }}>
-            <Icon size={13} /> {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        {tab === 'overview' && (
-          <div className="space-y-4">
-            {task.description ? (
-              <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.description}</p>
-            ) : (
-              <p className="text-sm text-gray-400">No description.</p>
-            )}
-
-            {(data.requirements || []).length > 0 && (
-              <div>
-                <div className="text-xs font-medium text-gray-500 mb-1">Submission must carry</div>
-                <div className="flex flex-wrap gap-2">
-                  {data.requirements.map((r) => (
-                    <span key={r.key} className="inline-flex items-center rounded-lg bg-gray-100 text-gray-700 px-2 py-0.5 text-xs"
-                      style={{ minHeight: 22 }}>
-                      {r.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {(task.customFields || []).length > 0 && (
-              <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                {task.customFields.map((f) => (
-                  <div key={f.key}>
-                    <dt className="text-xs text-gray-500">{f.label || f.key}</dt>
-                    <dd className="text-gray-900">{f.value == null || f.value === '' ? '—' : String(f.value)}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-
-            {(task.tags || []).length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {task.tags.map((t) => (
-                  <span key={t} className="inline-flex items-center rounded-lg bg-gray-100 text-gray-600 px-2 py-0.5 text-xs"
-                    style={{ minHeight: 22 }}>#{t}</span>
-                ))}
-              </div>
-            )}
-
-            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm pt-3 border-t border-gray-100">
-              <div><dt className="text-xs text-gray-500">Set by</dt><dd>{personName(task.createdBy) || '—'}</dd></div>
-              <div><dt className="text-xs text-gray-500">Started</dt><dd>{task.startedAt ? formatDateTime12(task.startedAt) : '—'}</dd></div>
-              <div><dt className="text-xs text-gray-500">Submitted</dt><dd>{task.submittedAt ? formatDateTime12(task.submittedAt) : '—'}</dd></div>
-              <div><dt className="text-xs text-gray-500">Completed</dt><dd>{task.completedAt ? formatDateTime12(task.completedAt) : '—'}</dd></div>
-            </dl>
-          </div>
-        )}
-
-        {tab === 'workflow' && (
-          <WorkflowRail
-            steps={data.workflow}
-            name={task.workflowName}
-            version={task.workflowVersion}
-            deciding={acting === 'step'}
-            canDecide={(step) => !viewOnly && step.status === 'Pending'
-              && (step.actors || []).some((a) => String(a.user) === String(me?._id) && !a.decision)}
-            onDecide={async (step, decision) => {
-              const note = await promptDialog({
-                message: decision === 'approved' ? `Approve "${step.name}"?` : `Reject "${step.name}"?`,
-                placeholder: decision === 'rejected' ? 'Say why' : 'Remark (optional)',
-                confirmText: decision === 'approved' ? 'Approve' : 'Reject',
-              });
-              if (decision === 'rejected' && !note) return;
-              if (note === null) return;
-              await run('step', () => T.decideStep(id, step.key, decision, note), 'Recorded');
-            }}
-          />
-        )}
-
-        {tab === 'people' && (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Person</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Role</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Their part</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Status</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Progress</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Time</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
+            <Fact icon={FiUsers} label={isRequest ? 'Asked of' : 'Assigned to'}>
+              <div className="space-y-1">
                 {(task.assignees || []).map((a) => (
-                  <tr key={String(a._id || a.user?._id || a.user)}>
-                    <td className="px-3 py-2 font-medium text-gray-900">{personName(a.user) || a.name}</td>
-                    <td className="px-3 py-2 text-gray-600">{a.role}</td>
-                    <td className="px-3 py-2 text-gray-600">{a.responsibility || '—'}</td>
-                    <td className="px-3 py-2"><StatusChip status={a.status} /></td>
-                    <td className="px-3 py-2 w-32"><ProgressBar value={a.progress} /></td>
-                    <td className="px-3 py-2 text-gray-600 tabular-nums">{formatMinutes(a.minutesLogged)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {tab === 'checklist' && (
-          <ul className="space-y-1.5">
-            {(task.checklist || []).map((item) => (
-              <li key={item._id} className="flex items-start gap-2">
-                <input type="checkbox" checked={!!item.done}
-                  disabled={viewOnly || !(can.work || can.manage)}
-                  onChange={(e) => run('check', () => T.setChecklistItem(id, item._id, e.target.checked))}
-                  className="mt-1 h-4 w-4 rounded border-gray-300" />
-                <span className="flex-1">
-                  <span className={`text-sm ${item.done ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
-                    {item.text}
-                  </span>
-                  {item.mandatory === false && <span className="ml-2 text-xs text-gray-400">optional</span>}
-                  {item.done && item.doneByName && (
-                    <span className="block text-xs text-gray-400">
-                      {item.doneByName} · {formatDateTime12(item.doneAt)}
+                  <div key={a._id || a.user?._id} className="flex items-center justify-between gap-2">
+                    <span className="truncate text-gray-700">{a.name || personName(a.user)}</span>
+                    <span className="shrink-0 text-[11px] text-gray-400">
+                      {statusLabel(a.status, task.kind)}
+                      {a.completedLate && ' · late'}
                     </span>
-                  )}
+                  </div>
+                ))}
+              </div>
+            </Fact>
+
+            {task.loopUsers?.length > 0 && (
+              <Fact icon={FiEye} label="In the loop">
+                {task.loopUsers.map((u) => personName(u)).filter(Boolean).join(', ')}
+              </Fact>
+            )}
+
+            <Fact icon={FiCalendar} label={task.dueDate ? 'Due' : 'Deadline'}>
+              <DueChip task={task} />
+            </Fact>
+
+            {task.completedAt && (
+              <Fact icon={FiCheck} label="Finished">
+                <span className={task.completedLate ? 'text-orange-600' : 'text-green-600'}>
+                  {new Date(task.completedAt).toLocaleString('en-IN', {
+                    day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+                  })}
+                  {task.completedLate ? ' · delayed' : ' · in time'}
                 </span>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {tab === 'time' && (
-          <div className="space-y-4">
-            {can.work && !viewOnly && (
-              <TaskTimer
-                task={task}
-                entry={myEntryHere}
-                elsewhere={timerElsewhere}
-                totalMinutes={task.minutesLogged}
-                disabled={!['ACCEPTED', 'IN_PROGRESS', 'REJECTED'].includes(task.status)}
-                onAction={async (action) => {
-                  try {
-                    if (action === 'start') await T.startTimer(id);
-                    else await T.timerAction(id, action);
-                    await load();
-                  } catch (err) {
-                    toast.error(err.response?.data?.message || 'The timer did not move');
-                    throw err;
-                  }
-                }}
-                onManual={async () => {
-                  const mins = await promptDialog({
-                    message: 'How many minutes did you work?',
-                    placeholder: 'e.g. 90',
-                    confirmText: 'Record',
-                  });
-                  if (!mins) return;
-                  const when = new Date(Date.now() - Number(mins) * 60000).toISOString();
-                  await run('manual', () => T.addManualTime(id, {
-                    startedAt: when, minutes: Number(mins),
-                  }), 'Time recorded');
-                }}
-              />
+              </Fact>
             )}
 
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Person</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Started</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Worked</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Break</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">How</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Approval</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {(data.timeEntries || []).length === 0 ? (
-                    <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-500">No time logged yet.</td></tr>
-                  ) : data.timeEntries.map((e) => (
-                    <tr key={e._id}>
-                      <td className="px-3 py-2">{e.userName || '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">{formatDateTime12(e.startedAt)}</td>
-                      <td className="px-3 py-2 tabular-nums">{formatMinutes(e.activeMinutes)}</td>
-                      <td className="px-3 py-2 tabular-nums text-gray-500">{e.breakMinutes ? formatMinutes(e.breakMinutes) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-500">{e.source}</td>
-                      <td className="px-3 py-2">
-                        {!e.approvalStatus ? <span className="text-gray-400">—</span>
-                          : e.approvalStatus === 'Pending' && can.review && !viewOnly ? (
-                            <span className="flex gap-1">
-                              <button type="button" onClick={() => run('timeok', () => T.decideTimeEntry(e._id, 'approve'), 'Approved')}
-                                className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50" style={{ minHeight: 30 }}>
-                                Approve
-                              </button>
-                              <button type="button" onClick={() => run('timeno', () => T.decideTimeEntry(e._id, 'reject'), 'Rejected')}
-                                className="text-xs px-2 py-1 rounded border border-red-200 text-red-700 hover:bg-red-50" style={{ minHeight: 30 }}>
-                                Reject
-                              </button>
-                            </span>
-                          ) : <span className="text-xs text-gray-600">{e.approvalStatus}</span>}
-                      </td>
-                    </tr>
+            {task.category && <Fact icon={FiTag} label="Category">{task.category}</Fact>}
+            <Fact icon={FiFlag} label="Priority">{task.priority}</Fact>
+
+            {task.repeat?.frequency && task.repeat.frequency !== 'ONCE' && (
+              <Fact icon={FiRepeat} label="Repeats">{repeatLabel(task.repeat)}</Fact>
+            )}
+
+            {!isRequest && (
+              <Fact icon={FiAward} label="Worth">
+                {task.points} points each
+                {meta && !meta.pointsArePaid && (
+                  <span className="block text-[11px] text-gray-400">scoring only — not paid out</span>
+                )}
+              </Fact>
+            )}
+
+            {task.linkedTask && (
+              <Fact icon={FiCornerUpRight} label="About">
+                <Link to={`${base}/${task.linkedTask._id} accent-text hover:underline`}>
+                  {task.linkedTask.code || task.linkedTask.title}
+                </Link>
+              </Fact>
+            )}
+
+            {task.delegations?.length > 0 && (
+              <Fact icon={FiCornerUpRight} label="Passed on">
+                <div className="space-y-0.5">
+                  {task.delegations.map((d) => (
+                    <p key={d._id} className="text-xs text-gray-600">
+                      {d.fromName} <span className="text-gray-400">to</span> {d.toName}
+                      {d.note ? <span className="block text-[11px] text-gray-400">{d.note}</span> : null}
+                    </p>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {tab === 'submissions' && (
-          <div className="space-y-3">
-            {(data.submissions || []).map((s) => (
-              <div key={s._id} className="border border-gray-200 rounded-lg p-3">
-                <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <span className="text-sm font-medium text-gray-900">{s.submittedByName}</span>
-                  <span className="text-xs text-gray-400">attempt {s.attempt}</span>
-                  <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs ${
-                    s.status === 'Approved' ? 'bg-green-100 text-green-800'
-                      : s.status === 'Rejected' ? 'bg-red-100 text-red-800'
-                        : 'bg-amber-100 text-amber-800'}`} style={{ minHeight: 22 }}>
-                    {s.status}
-                  </span>
-                  <span className="text-xs text-gray-400 ml-auto">{formatDateTime12(s.submittedAt)}</span>
                 </div>
-                {s.remarks && <p className="text-sm text-gray-700 whitespace-pre-wrap">{s.remarks}</p>}
-                {(s.evidence || []).length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {s.evidence.map((f) => (
-                      <button key={f._id} type="button"
-                        onClick={() => openFile(id, f)}
-                        className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded-lg hover:bg-gray-50"
-                        style={{ minHeight: 30 }}>
-                        <FiPaperclip size={11} /> {f.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {(s.urls || []).length > 0 && (
-                  <ul className="mt-2 space-y-0.5">
-                    {s.urls.map((u) => (
-                      <li key={u}>
-                        <a href={u} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline break-all">{u}</a>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {s.location && s.location.lat != null && (
-                  <div className="mt-2 text-xs text-gray-400 inline-flex items-center gap-1">
-                    <FiMapPin size={11} />
-                    {s.location.address || `${s.location.lat.toFixed(5)}, ${s.location.lng.toFixed(5)}`}
-                    {s.location.distanceM != null && (
-                      <span className={s.location.insideFence ? 'text-green-600' : 'text-red-600'}>
-                        · {s.location.distanceM} m {s.location.insideFence ? 'inside' : 'outside'}
-                      </span>
-                    )}
-                  </div>
-                )}
-                {s.reviewNote && (
-                  <div className="mt-2 text-sm bg-gray-50 border border-gray-100 rounded px-2 py-1">
-                    <span className="text-gray-400 text-xs">{s.reviewedByName}:</span>{' '}
-                    <span className="text-gray-700">{s.reviewNote}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === 'comments' && (
-          <div className="space-y-4">
-            <div className="space-y-3 max-h-[420px] overflow-y-auto">
-              {(data.comments || []).length === 0 && <p className="text-sm text-gray-400">No comments yet.</p>}
-              {(data.comments || []).map((c) => (
-                <div key={c._id} className={`rounded-lg p-3 ${c.internal ? 'bg-violet-50 border border-violet-100' : 'bg-gray-50'}`}>
-                  <div className="flex items-baseline gap-2 mb-0.5">
-                    <span className="text-sm font-medium text-gray-900">{c.authorName || personName(c.author)}</span>
-                    {c.authorRole && <span className="text-xs text-gray-400">{c.authorRole}</span>}
-                    {c.internal && <span className="text-xs text-violet-600">internal</span>}
-                    <span className="text-xs text-gray-400 ml-auto">{formatDateTime12(c.createdAt)}</span>
-                  </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{c.body}</p>
-                  {(c.attachments || []).length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {c.attachments.map((f) => (
-                        <button key={f._id} type="button" onClick={() => openFile(id, f)}
-                          className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white hover:bg-gray-50"
-                          style={{ minHeight: 30 }}>
-                          <FiPaperclip size={11} /> {f.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {!viewOnly && (
-              <form className="space-y-2" onSubmit={async (e) => {
-                e.preventDefault();
-                if (!comment.trim()) return;
-                await run('comment', async () => {
-                  await T.addComment(id, { body: comment, files: commentFiles, internal });
-                  setComment('');
-                  setCommentFiles([]);
-                });
-              }}>
-                <textarea rows={2} value={comment} onChange={(e) => setComment(e.target.value)}
-                  placeholder="Add a remark…" className="block w-full border rounded-lg px-3 py-2 text-sm" />
-                <div className="flex flex-wrap items-center gap-2">
-                  <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 px-2 py-1 border rounded-lg cursor-pointer hover:bg-gray-50"
-                    style={{ minHeight: 32 }}>
-                    <FiPaperclip size={12} />
-                    {commentFiles.length ? `${commentFiles.length} file${commentFiles.length === 1 ? '' : 's'}` : 'Attach'}
-                    <input type="file" multiple className="hidden"
-                      onChange={(e) => { setCommentFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
-                  </label>
-                  {can.review && (
-                    <label className="inline-flex items-center gap-1.5 text-xs text-gray-600" style={{ minHeight: 32 }}>
-                      <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)}
-                        className="h-3.5 w-3.5 rounded border-gray-300" />
-                      Internal — the assignee will not see this
-                    </label>
-                  )}
-                  <button type="submit" disabled={!comment.trim() || acting === 'comment'}
-                    className="ml-auto px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60"
-                    style={{ minHeight: 40 }}>
-                    {acting === 'comment' ? 'Posting…' : 'Comment'}
-                  </button>
-                </div>
-              </form>
+              </Fact>
             )}
-          </div>
-        )}
 
-        {tab === 'files' && (
-          <div className="space-y-2">
-            {(task.attachments || []).map((f) => (
-              <div key={f._id} className="flex items-center gap-2 text-sm border border-gray-200 rounded-lg px-3 py-2">
-                <FiPaperclip size={13} className="text-gray-400 shrink-0" />
-                <span className="flex-1 truncate">{f.name}</span>
-                <span className="text-xs text-gray-400 shrink-0">{f.uploadedByName}</span>
-                <button type="button" onClick={() => openFile(id, f)}
-                  className="text-blue-600 hover:underline text-xs shrink-0">Open</button>
-              </div>
-            ))}
-            {!viewOnly && (can.work || can.manage) && (
-              <label className="inline-flex items-center gap-1.5 text-sm px-3 py-2 border rounded-lg cursor-pointer hover:bg-gray-50"
-                style={{ minHeight: 40 }}>
-                <FiPlus size={14} /> Add files
-                <input type="file" multiple className="hidden"
-                  onChange={async (e) => {
-                    const files = Array.from(e.target.files || []);
-                    e.target.value = '';
-                    if (files.length) await run('attach', () => T.addAttachments(id, files), 'Attached');
-                  }} />
-              </label>
-            )}
-          </div>
-        )}
-
-        {tab === 'extensions' && (
-          <div className="space-y-3">
-            {can.work && !viewOnly && ['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'REJECTED', 'BLOCKED'].includes(task.status) && (
-              <ExtensionForm taskId={id} currentDue={task.dueDate} onDone={load} />
-            )}
-            {(data.extensions || []).map((x) => (
-              <div key={x._id} className="border border-gray-200 rounded-lg p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-gray-900">{x.requestedByName}</span>
-                  <span className="text-xs text-gray-400">
-                    {fmtDate(x.currentDueDate)} → {fmtDate(x.requestedDueDate)}
-                  </span>
-                  <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs ml-auto ${
-                    x.status === 'Approved' ? 'bg-green-100 text-green-800'
-                      : x.status === 'Rejected' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}
-                    style={{ minHeight: 22 }}>
-                    {x.status}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-gray-700">{x.reason}</p>
-                {x.approvedDueDate && x.status === 'Approved' && (
-                  <p className="mt-1 text-xs text-gray-500">Granted to {fmtDate(x.approvedDueDate)}</p>
-                )}
-                {x.decisionNote && <p className="mt-1 text-xs text-gray-500">{x.decidedByName}: {x.decisionNote}</p>}
-                {x.status === 'Pending' && can.review && !viewOnly && (
-                  <div className="mt-2 flex gap-2">
-                    <button type="button"
-                      onClick={() => run('ext', () => T.decideExtension(x._id, { decision: 'approve' }), 'Extension granted')}
-                      className="px-3 py-1.5 text-xs rounded-lg bg-gray-900 text-white hover:bg-gray-700" style={{ minHeight: 32 }}>
-                      Grant
-                    </button>
-                    <button type="button"
-                      onClick={async () => {
-                        const note = await promptDialog({ message: 'Why not?', confirmText: 'Refuse' });
-                        if (!note) return;
-                        await run('ext', () => T.decideExtension(x._id, { decision: 'reject', note }), 'Refused');
-                      }}
-                      className="px-3 py-1.5 text-xs rounded-lg border border-red-200 text-red-700 hover:bg-red-50" style={{ minHeight: 32 }}>
-                      Refuse
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-            {(data.extensions || []).length === 0 && <p className="text-sm text-gray-400">No extensions asked for.</p>}
-          </div>
-        )}
-
-        {tab === 'incentive' && (
-          <div className="space-y-3">
-            <div className="text-sm text-gray-600">
-              This task is worth <span className="font-medium text-gray-900">{task.incentive.points} points</span>
-              {task.incentive.setByName && <span className="text-gray-400">, set by {task.incentive.setByName}</span>}
-              {task.incentive.distribution === 'share' && (task.assignees || []).length > 1
-                && <span className="text-gray-400"> — split between the people on it</span>}.
-            </div>
-            {(data.incentives || []).length === 0 ? (
-              <p className="text-sm text-gray-400">
-                Nothing is worked out until the task is done and approved.
-              </p>
-            ) : (
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Person</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Outcome</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">How it was worked out</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Points</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {data.incentives.map((a) => (
-                    <tr key={a._id}>
-                      <td className="px-3 py-2">{a.name}</td>
-                      <td className="px-3 py-2 text-gray-600">{INCENTIVE_OUTCOME_LABELS[a.outcome] || a.outcome}</td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{a.basis}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">{a.approvedPoints ?? a.points}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs ${
-                          a.status === 'Credited' ? 'bg-green-100 text-green-800'
-                            : a.status === 'Rejected' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}
-                          style={{ minHeight: 22 }}>{a.status}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            <p className="text-xs text-gray-400">
-              Points are approved on the Tasks page (Incentives) and join the same company-wide pool as every
-              other incentive.
-            </p>
-          </div>
-        )}
-
-        {tab === 'location' && (
-          <div className="space-y-2">
-            {(task.location.captured || []).map((c, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-2 text-sm border border-gray-200 rounded-lg px-3 py-2">
-                <FiMapPin size={13} className="text-gray-400" />
-                <span className="text-gray-700">{c.userName || '—'}</span>
-                <span className="text-xs text-gray-400">{c.event}</span>
-                <span className="text-xs text-gray-500 tabular-nums">
-                  {c.address || `${(c.lat ?? 0).toFixed(5)}, ${(c.lng ?? 0).toFixed(5)}`}
+            <Fact icon={FiClock} label="Set">
+              {timeAgo(task.createdAt)}
+              {task.extensionCount > 0 && (
+                <span className="block text-[11px] text-amber-600">
+                  deadline moved {task.extensionCount}×
                 </span>
-                {c.distanceM != null && (
-                  <span className={`text-xs ${c.insideFence ? 'text-green-600' : 'text-red-600'}`}>
-                    {c.distanceM} m {c.insideFence ? 'inside' : 'outside'}
-                  </span>
-                )}
-                <span className="text-xs text-gray-400 ml-auto">{formatDateTime12(c.at)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+              )}
+            </Fact>
+          </section>
 
-        {tab === 'subtasks' && (
-          <div className="space-y-2">
-            {(data.subtasks || []).map((s) => (
-              <Link key={s._id} to={`${base}/${s._id}`}
-                className="flex flex-wrap items-center gap-2 text-sm border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50">
-                <span className="flex-1 font-medium text-gray-900">{s.title}</span>
-                <span className="text-xs text-gray-500">{personName(s.assignedTo)}</span>
-                <StatusChip status={s.status} />
-                <DueChip task={s} />
-              </Link>
-            ))}
-          </div>
-        )}
+          {task.reminders?.length > 0 && (
+            <section className="rounded-2xl border border-gray-200 bg-white p-4">
+              <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+                <FiBell size={12} /> Reminders
+              </h2>
+              <ul className="space-y-1 text-xs text-gray-600">
+                {task.reminders.map((r, i) => (
+                  <li key={i} className="flex items-center gap-1.5">
+                    <span className="h-1 w-1 shrink-0 rounded-full bg-gray-300" />
+                    {r.channel === 'EMAIL' ? 'Email' : 'App'} · {reminderLabel(r)}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
-        {tab === 'activity' && <TaskTimeline activity={data.activity} />}
+          {!viewOnly && (
+            <div className="flex flex-wrap gap-2">
+              {/* Anybody on the task can raise a request about it — the "I need
+                  X to finish this" case the direction rule exists to serve. */}
+              <button
+                type="button"
+                onClick={() => setAsking(true)}
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-gray-200 px-3 text-xs font-medium text-gray-600 hover:border-gray-400 hover:text-blue-600 min-h-[38px]"
+              >
+                <FiCornerUpRight size={12} /> Ask for help
+              </button>
+              {can.canDelete && (
+                <button
+                  type="button"
+                  onClick={() => remove(false)}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 px-3 text-xs font-medium text-gray-500 hover:border-red-300 hover:text-red-600 min-h-[38px]"
+                >
+                  <FiTrash2 size={12} /> Remove
+                </button>
+              )}
+              {/* A SuperAdmin may delete ANY task outright (user decision,
+                  2026-09-21). Kept as its own button rather than a checkbox
+                  inside Remove, because "archive" and "gone for ever" should
+                  not be one slip apart. The server refuses it once points have
+                  been credited. */}
+              {can.canPurge && (
+                <button
+                  type="button"
+                  onClick={() => remove(true)}
+                  title="Delete for good — Super Admin only"
+                  className="min-h-[38px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 px-3 text-xs font-medium text-red-600 hover:bg-red-50"
+                >
+                  <FiAlertTriangle size={12} /> Delete
+                </button>
+              )}
+            </div>
+          )}
+        </aside>
       </div>
 
-      {showSubmit && (
-        <SubmitModal
-          task={task}
-          onClose={() => setShowSubmit(false)}
-          onSubmit={async (payload) => {
-            await T.submitTask(id, payload);
-            setShowSubmit(false);
-            toast.success('Submitted for review');
-            await load();
-          }}
-        />
-      )}
+      <TaskUpdateModal
+        open={Boolean(moving) || remarking || delegating}
+        onClose={() => { setMoving(null); setRemarking(false); setDelegating(false); }}
+        task={task}
+        to={moving}
+        meta={meta}
+        can={can}
+        initialMode={delegating ? 'delegate' : 'update'}
+        onDone={load}
+      />
+
+      <AssignTaskModal
+        open={asking}
+        onClose={() => setAsking(false)}
+        onCreated={() => toast.success('Request sent.')}
+        meta={meta}
+        forceRequest
+        linkedTask={task._id}
+        prefill={{ title: `Need help with: ${task.title}` }}
+      />
+    </div>
+  );
+}
+
+function Fact({ icon: Icon, label, children }) {
+  return (
+    <div className="flex gap-2">
+      <Icon className="mt-0.5 shrink-0 text-gray-400" size={13} />
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] text-gray-400">{label}</p>
+        <div className="text-sm text-gray-700">{children}</div>
+      </div>
     </div>
   );
 }
 
 /**
- * Open a task file in a new tab.
+ * One line of history.
  *
- * Fetched through axios rather than linked directly, because the endpoint is
- * authenticated and a plain <a href> carries no Authorization header — the same
- * reason AuthImage exists for avatars.
+ * A status move and a remark are the same row; the move just carries a chip.
+ * System rows (a reminder that fired, an occurrence that was minted) are drawn
+ * quieter, because they are a record rather than somebody saying something.
  */
-async function openFile(taskId, file) {
-  try {
-    const res = await api.get(T.fileUrl(taskId, file._id), { responseType: 'blob' });
-    const url = URL.createObjectURL(res.data);
-    window.open(url, '_blank', 'noopener');
-    // Give the new tab time to take the blob before the URL is revoked.
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-  } catch {
-    toast.error('Could not open that file');
-  }
-}
-
-/** Ask for more time. Its own component so the date field can hold its own state. */
-function ExtensionForm({ taskId, currentDue, onDone }) {
-  const [open, setOpen] = useState(false);
-  const [date, setDate] = useState('');
-  const [reason, setReason] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50"
-        style={{ minHeight: 40 }}>
-        <FiCalendar size={14} /> Ask for more time
-      </button>
-    );
-  }
-
+function FeedRow({ update, task }) {
+  const moved = Boolean(update.to) && update.kind === 'STATUS';
   return (
-    <form className="border border-gray-200 rounded-lg p-3 space-y-2"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setSaving(true);
-        try {
-          await T.requestExtension(taskId, { requestedDueDate: date, reason });
-          toast.success('Asked for an extension');
-          setOpen(false);
-          setDate('');
-          setReason('');
-          await onDone();
-        } catch (err) {
-          toast.error(err.response?.data?.message || 'Could not ask');
-        } finally {
-          setSaving(false);
-        }
-      }}>
-      <div className="text-xs text-gray-500">
-        Currently due {currentDue ? fmtDate(currentDue) : 'with no deadline'}
+    <li className={`flex gap-3 ${update.system ? 'opacity-60' : ''}`}>
+      <div className="flex flex-col items-center">
+        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+          moved ? 'accent-bg' : 'bg-gray-300'
+        }`} />
+        <span className="mt-1 w-px flex-1 bg-gray-100" />
       </div>
-      <input type="datetime-local" required value={date} onChange={(e) => setDate(e.target.value)}
-        className="block w-full border rounded-lg px-3 py-2 text-sm" style={{ minHeight: 40 }} />
-      <textarea required rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
-        placeholder="Why do you need longer?" className="block w-full border rounded-lg px-3 py-2 text-sm" />
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={() => setOpen(false)}
-          className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50" style={{ minHeight: 36 }}>Cancel</button>
-        <button type="submit" disabled={saving}
-          className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60"
-          style={{ minHeight: 36 }}>{saving ? 'Asking…' : 'Ask'}</button>
+
+      <div className="min-w-0 flex-1 pb-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-sm font-medium text-gray-800">{update.byName || 'System'}</span>
+          {moved && (
+            <StatusChip status={update.to} kind={task.kind} />
+          )}
+          <span className="text-[11px] text-gray-400">{timeAgo(update.createdAt)}</span>
+        </div>
+
+        {update.note && (
+          <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{update.note}</p>
+        )}
+
+        {update.voiceNote?.storagePath && (
+          <VoicePlayer
+            className="mt-2"
+            path={T.updateVoiceUrl(task._id, update._id)}
+            durationMs={update.voiceNote.durationMs}
+          />
+        )}
+
+        {update.files?.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {update.files.map((f) => (
+              <button
+                key={f._id}
+                type="button"
+                onClick={async () => {
+                  try {
+                    const url = await T.blobUrl(T.fileUrl(task._id, f._id));
+                    window.open(url, '_blank', 'noopener');
+                  } catch { toast.error('That file could not be opened.'); }
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:border-gray-400"
+              >
+                <FiPaperclip size={10} /> {f.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-    </form>
+    </li>
   );
 }

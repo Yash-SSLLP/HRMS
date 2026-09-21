@@ -4,6 +4,13 @@
  * SuperAdmin can click a person to set who they report to (PUT /employees/:id)
  * or change their system role (PUT /admin/users/:id); others see it read-only.
  *
+ * The left-to-right order of a branch is the server's (orgController sorts every
+ * sibling list, so the web and the phone draw the same chart). A SuperAdmin
+ * rearranges one from the panel below: the ◀ ▶ buttons move the selected card
+ * among the people who share its manager and save the whole branch's order with
+ * PUT /org/chart/order. Unarranged, the executives bookend the top row — CEO on
+ * the left, MD on the right.
+ *
  * Multi-company: the chart spans EVERY company by default and the dropdown
  * narrows it to one — reporting lines are the point of an org chart, so the
  * unfiltered hierarchy is what you see first rather than being made to pick a
@@ -64,20 +71,30 @@ function flatten(nodes, acc = []) {
   return acc;
 }
 
-// A node with no department is treated as "unassigned".
-const isUnassigned = (n) => !n.department || !n.department.trim();
+// THE ORDER CARDS ARE DRAWN IN IS THE SERVER'S. This page used to re-sort every
+// branch itself (unassigned first, then by name), which meant the phone drew the
+// same chart in a different order and a SuperAdmin's arrangement would have been
+// overwritten on arrival. The rule now lives in one place — orgController's
+// `compareSiblings` — and the tree is rendered exactly as it comes.
 
-// Order each group of siblings so unassigned employees sit on the LEFT,
-// then everyone else by name. Pure (returns new nodes), applied recursively.
-function sortTree(nodes) {
-  return [...nodes]
-    .map((n) => ({ ...n, reports: n.reports?.length ? sortTree(n.reports) : n.reports }))
-    .sort((a, b) => {
-      const ua = isUnassigned(a);
-      const ub = isUnassigned(b);
-      if (ua !== ub) return ua ? -1 : 1; // unassigned first → leftmost
-      return (a.name || '').localeCompare(b.name || '');
-    });
+/**
+ * The branch a card sits in: the manager everybody in it reports to (null for
+ * the top row) and every card in it, in drawn order. The server stores a saved
+ * position against its branch, so the move below has to name the branch as well
+ * as the order. Returns an empty branch if the id is not on the chart at all.
+ */
+function branchOf(roots, id) {
+  if (roots.some((n) => n.id === id)) return { parentId: null, list: roots };
+  const walk = (nodes) => {
+    for (const n of nodes) {
+      const kids = n.reports || [];
+      if (kids.some((k) => k.id === id)) return { parentId: n.id, list: kids };
+      const deeper = walk(kids);
+      if (deeper) return deeper;
+    }
+    return null;
+  };
+  return walk(roots) || { parentId: null, list: [] };
 }
 
 // The person card alone (no <li>, no branch) — shared between the normal tree
@@ -320,7 +337,40 @@ export default function AdminOrgChart() {
         : COMPANY_NAME);
 
   const everyone = flatten(roots);
-  const sortedRoots = sortTree(roots);
+  // The selected card's own branch, and where it sits in it. This is what the
+  // ◀ ▶ buttons move it through: a card only ever changes places with the people
+  // it already shares a manager with, so arranging a branch can never be
+  // mistaken for re-drawing a reporting line.
+  const branch = selected ? branchOf(roots, selected.id) : { parentId: null, list: [] };
+  const siblings = branch.list;
+  const position = selected ? siblings.findIndex((n) => n.id === selected.id) : -1;
+
+  /**
+   * Move the selected card one place left or right within its own branch.
+   *
+   * The WHOLE branch is sent, and named — the server stores each position
+   * against the branch it was given for, and gives every card in it one, so a
+   * branch is either arranged or it isn't. The chart is reloaded afterwards
+   * rather than re-sorted here, which keeps the drawn order the server's answer
+   * and not this page's guess at it.
+   */
+  const onMove = async (delta) => {
+    const from = position;
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= siblings.length) return;
+    const ids = siblings.map((n) => n.id);
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    setSavingId(selected.id);
+    setError('');
+    try {
+      await api.put('/org/chart/order', { branch: branch.parentId, order: ids });
+      await load();
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Could not move this person.');
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   const onSetManager = async (node, managerUserId) => {
     // Reporting across departments is allowed, but never silently: the server
@@ -493,6 +543,29 @@ export default function AdminOrgChart() {
           >
             {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </select>
+          {/* WHERE THE CARD SITS AMONG ITS OWN SIBLINGS. Hidden when it has
+              none to trade places with — a lone child has only one position and
+              two dead buttons would say otherwise. Same padding as the zoom
+              control in the header so the segmented pair matches the selects
+              beside it rather than sitting a few pixels short. */}
+          {siblings.length > 1 && position >= 0 && (
+            <>
+              <span className="text-gray-700">· position:</span>
+              <div className="inline-flex items-stretch rounded-lg border border-gray-300 overflow-hidden">
+                <button type="button" onClick={() => onMove(-1)}
+                  disabled={savingId === selected.id || position === 0}
+                  aria-label="Move left" title="Move one place left, among the people who share this manager"
+                  className="px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">◀</button>
+                <span className="px-2 py-1.5 text-xs tabular-nums text-gray-600 border-x border-gray-300 self-center">
+                  {position + 1} of {siblings.length}
+                </span>
+                <button type="button" onClick={() => onMove(1)}
+                  disabled={savingId === selected.id || position === siblings.length - 1}
+                  aria-label="Move right" title="Move one place right, among the people who share this manager"
+                  className="px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">▶</button>
+              </div>
+            </>
+          )}
           {/* hover:underline is the portal's row-action convention, not a
               decoration: index.css turns it into the standard compact outlined
               pill, which is how this ends up the same height as the two selects
@@ -532,7 +605,7 @@ export default function AdminOrgChart() {
                     </span>
                   </div>
                   <ul>
-                    {sortedRoots.map((node) => (
+                    {roots.map((node) => (
                       <TreeNode
                         key={node.id}
                         node={node}

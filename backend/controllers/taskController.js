@@ -1,1375 +1,1288 @@
 /**
- * Task controller — the task itself: creating it, changing it, handing it over,
- * and every move along its lifecycle.
+ * Tasks — the whole API.
  *
- * The rest of the module lives next door: submissions, approvals, comments,
- * time and extensions in taskWorkController.js; workflows, templates and
- * recurrence in taskWorkflowController.js; dashboards and exports in
- * taskAnalyticsController.js. Splitting it that way keeps each file about one
- * job, and keeps this one about the task.
+ * REWRITTEN 2026-09-21, replacing taskController (1375 lines), taskWorkController
+ * (1158) and taskWorkflowController (485). Three controllers existed because the
+ * module had three vocabularies: the task, the work done on it, and the workflow
+ * it ran through. There is now one of each, so there is one file.
  *
- * NOTHING IN HERE MOVES A STATUS BY HAND. Every transition goes through
- * services/taskEngine.transition, which is what enforces the legal moves, the
- * concurrency guard, the server-side timestamps and the activity trail. A
- * handler that wrote `task.status = 'COMPLETED'` would bypass all four, so none
- * of them does.
+ * The shape of every list endpoint is the same and is worth stating once:
+ *
+ *   scope    which pile     — mine | delegated | loop | all | requests
+ *   range    which window   — today | yesterday | week | month | nextWeek | all | custom
+ *   filters  category, assignedTo, assignedBy, frequency, priority, status, q
+ *
+ * …and every one of them runs ON THE SERVER. The brief's app shows a live
+ * counter row above the list (Overdue / Pending / In Progress / Completed, and
+ * Completed split In Time / Delayed) which must agree with the rows below it, so
+ * counts and rows come from ONE filter built once — `buildQuery` — and the
+ * counters are an aggregation over that same filter rather than a tally of the
+ * page that happens to be loaded.
  */
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 
 const Task = require('../models/Task');
-const TaskSubmission = require('../models/TaskSubmission');
-const TaskTimeEntry = require('../models/TaskTimeEntry');
-const TaskActivity = require('../models/TaskActivity');
-const TaskComment = require('../models/TaskComment');
-const TaskExtension = require('../models/TaskExtension');
-const TaskIncentive = require('../models/TaskIncentive');
+const TaskUpdate = require('../models/TaskUpdate');
+const TaskCategory = require('../models/TaskCategory');
 const TaskTemplate = require('../models/TaskTemplate');
+const RecurringTask = require('../models/RecurringTask');
 const User = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 
 const engine = require('../services/taskEngine');
 const access = require('../services/taskAccess');
-const flow = require('../services/taskWorkflow');
-const incentives = require('../services/taskIncentive');
 const notify = require('../services/taskNotify');
-const { buildTaskFromTemplate } = require('../services/taskTemplates');
+const points = require('../services/taskPoints');
+const storage = require('../services/storage');
 
-const { pickablePeople } = require('../utils/peoplePicker');
+const { pickableUserFilter } = require('../utils/peoplePicker');
+const { viewerCompanyScope } = require('../utils/employeeScope');
 const {
-  TASK_STATUS, TASK_PRIORITY, BOARD_COLUMNS, ASSIGNEE_ROLES,
-  normaliseStatus, statusLabel, isTerminal, ACCEPT_WINDOW_HOURS,
-} = require('../config/taskWorkflow');
+  KIND_TASK, KIND_REQUEST, TASK_KINDS, STATUS, TASK_STATUS, TASK_PRIORITY,
+  DEFAULT_PRIORITY, FREQUENCY, FREQUENCIES, FREQUENCY_LABELS, WEEKDAYS,
+  REMINDER_CHANNELS, REMINDER_UNITS, REMINDER_WHENS, REMINDER_CHANNEL_LABELS,
+  MAX_TASK_POINTS, evidenceKindFor, statusLabel, isOverdue, isTerminal,
+  isDeclined, isAwaitingAcceptance, ACCEPTANCE_LABELS,
+} = require('../config/tasks');
 
-const USER_FIELDS = 'firstName lastName email role photo';
-const { httpError, fullName } = engine;
+// ===== Small shared helpers =====
 
-// ===== Shared helpers =====
+const oid = (v) => (mongoose.Types.ObjectId.isValid(v) ? new mongoose.Types.ObjectId(v) : null);
+const personName = (u) => [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim();
+
+function bad(res, message, status = 400) {
+  res.status(status);
+  throw new Error(message);
+}
+
+/** A comma-separated query parameter as a clean array. */
+function listParam(v) {
+  if (!v) return [];
+  return String(v).split(',').map((s) => s.trim()).filter(Boolean);
+}
 
 /**
- * Turn whatever the client sent for "who is on this task" into assignee rows,
- * with the names frozen onto them.
+ * The date window the chip bar asks for.
  *
- * Accepts three shapes, because three clients send three: a bare id (the old
- * API and the current Android build), an array of ids, and the full objects the
- * new web form posts. One function so a caller never has to care which.
- *
- * @param {Array|string} input
- * @param {object} [opts]
- * @param {boolean} [opts.markOwner] - force the first row to be the Owner
- * @returns {Promise<Array>} assignee rows
+ * Computed in the SERVER's timezone, which is the portal's — a browser in
+ * another zone asking for "today" means the company's today, not its own.
+ * Returns null for "all time", which is not a filter at all.
  */
-async function buildAssignees(input, opts = {}) {
-  const raw = Array.isArray(input) ? input : (input ? [input] : []);
-  const rows = raw
-    .map((x) => (typeof x === 'string' || x instanceof mongoose.Types.ObjectId
-      ? { user: String(x) }
-      : { ...x, user: String(x.user || x._id || '') }))
-    .filter((x) => x.user && mongoose.isValidObjectId(x.user));
+function rangeWindow(range, fromRaw, toRaw) {
+  const now = new Date();
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const today = startOfDay(now);
 
-  if (!rows.length) return [];
+  switch (range) {
+    case 'today': return { $gte: today, $lt: addDays(today, 1) };
+    case 'yesterday': return { $gte: addDays(today, -1), $lt: today };
+    case 'week': {
+      // Monday-first, matching how the rest of the portal reads a week.
+      const dow = (today.getDay() + 6) % 7;
+      const monday = addDays(today, -dow);
+      return { $gte: monday, $lt: addDays(monday, 7) };
+    }
+    case 'nextWeek': {
+      const dow = (today.getDay() + 6) % 7;
+      const monday = addDays(today, -dow + 7);
+      return { $gte: monday, $lt: addDays(monday, 7) };
+    }
+    case 'month': {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { $gte: first, $lt: new Date(now.getFullYear(), now.getMonth() + 1, 1) };
+    }
+    case 'custom': {
+      const from = fromRaw ? new Date(fromRaw) : null;
+      const to = toRaw ? new Date(toRaw) : null;
+      if (!from && !to) return null;
+      const w = {};
+      if (from && !Number.isNaN(from.getTime())) w.$gte = startOfDay(from);
+      if (to && !Number.isNaN(to.getTime())) w.$lt = addDays(startOfDay(to), 1);
+      return Object.keys(w).length ? w : null;
+    }
+    default: return null; // 'all'
+  }
+}
 
-  const ids = rows.map((r) => r.user);
-  const [users, profiles] = await Promise.all([
-    User.find({ _id: { $in: ids } }).select('firstName lastName').lean(),
-    EmployeeProfile.find({ user: { $in: ids } }).select('user employeeCode').lean(),
+/**
+ * ONE filter, used by the list AND by the counters above it.
+ *
+ * If these two were built separately they would drift, and a counter that
+ * disagrees with the rows underneath it is worse than no counter — it makes
+ * people stop trusting the page.
+ */
+async function buildQuery(req, overrides = {}) {
+  const {
+    scope = 'all', range = 'all', from, to,
+    category, assignedTo, assignedBy, frequency, priority, status, q, kind, overdue, late,
+    // `overrides` lets a caller pin one parameter without faking a request
+    // object. Spreading an Express `req` copies own properties only and quietly
+    // loses `user`, which is how the dashboard first lost its company wall.
+  } = { ...req.query, ...overrides };
+
+  const filter = await access.visibleFilter(req, scope === 'requests' ? 'all' : scope);
+  const and = [filter];
+
+  // A request is its own pile: it never appears among the tasks, because "what
+  // is on my plate" and "what have I asked for" are different questions.
+  if (scope === 'requests') and.push({ kind: KIND_REQUEST });
+  else if (kind && TASK_KINDS.includes(kind)) and.push({ kind });
+  else and.push({ kind: KIND_TASK });
+
+  const window = rangeWindow(range, from, to);
+  // The window applies to the DEADLINE, which is what the chip bar means: "this
+  // week" is the work due this week, not the work created this week.
+  if (window) and.push({ dueDate: window });
+
+  const cats = listParam(category);
+  if (cats.length) and.push({ category: { $in: cats } });
+
+  const doers = listParam(assignedTo).map(oid).filter(Boolean);
+  if (doers.length) and.push({ 'assignees.user': { $in: doers } });
+
+  const setters = listParam(assignedBy).map(oid).filter(Boolean);
+  if (setters.length) and.push({ createdBy: { $in: setters } });
+
+  const freqs = listParam(frequency).filter((f) => FREQUENCIES.includes(f));
+  if (freqs.length) and.push({ 'repeat.frequency': { $in: freqs } });
+
+  const prios = listParam(priority).filter((p) => TASK_PRIORITY.includes(p));
+  if (prios.length) and.push({ priority: { $in: prios } });
+
+  const states = listParam(status).filter((s) => TASK_STATUS.includes(s));
+  if (states.length) and.push({ status: { $in: states } });
+
+  // Overdue is derived, so it is a query rather than a status: open, and past
+  // its deadline. Asking for it alongside `status=COMPLETED` correctly returns
+  // nothing, which is the honest answer.
+  if (overdue === 'true' || overdue === '1') {
+    and.push({ status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] }, dueDate: { $lt: new Date() } });
+  }
+
+  // The In Time / Delayed split, for when somebody clicks one of those two
+  // figures. Reads the FROZEN flag rather than comparing dates, so it returns
+  // exactly the rows the counter counted — a task whose deadline was moved
+  // after it was finished must not appear under one figure and be counted
+  // under the other. `$ne: true` rather than `false`, because rows written
+  // before the field existed have no value at all and were on time.
+  if (late === 'true' || late === '1') and.push({ completedLate: true });
+  else if (late === 'false' || late === '0') and.push({ completedLate: { $ne: true } });
+
+  const search = String(q || '').trim();
+  if (search) {
+    const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    and.push({ $or: [{ title: rx }, { description: rx }, { code: rx }, { category: rx }] });
+  }
+
+  return and.length === 1 ? and[0] : { $and: and };
+}
+
+/**
+ * The counter row: the figures above every list.
+ *
+ * One aggregation over the SAME filter the rows use, and the boxes DO NOT
+ * OVERLAP — every task is counted in exactly one of them, so they sum to the
+ * total and the row can be trusted. Overdue wins over Pending and In Progress:
+ * a task that is late is late, and listing it under both makes the red figure
+ * meaningless and the arithmetic wrong.
+ *
+ *   overdue      open (pending or in progress) and past its deadline
+ *   pending      not started, not late
+ *   inProgress   started, not late
+ *   completed    done — split into inTime / delayed
+ *   cancelled    called off
+ *
+ * The In Time / Delayed split reads the FROZEN `completedLate` flag rather than
+ * comparing dates now: the deadline may have been moved after the fact, and a
+ * late delivery must not become punctual because somebody granted an extension
+ * afterwards (see models/Task).
+ */
+async function countersFor(filter) {
+  const now = new Date();
+  // "Open and past its deadline" — spelled once, used three times below.
+  const late = {
+    $and: [
+      { $in: ['$status', [STATUS.PENDING, STATUS.IN_PROGRESS]] },
+      { $ne: ['$dueDate', null] },
+      { $lt: ['$dueDate', now] },
+    ],
+  };
+  const countIf = (cond) => ({ $sum: { $cond: [cond, 1, 0] } });
+
+  const rows = await Task.aggregate([
+    { $match: filter },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        overdue: countIf(late),
+        pending: countIf({ $and: [{ $eq: ['$status', STATUS.PENDING] }, { $not: late }] }),
+        inProgress: countIf({ $and: [{ $eq: ['$status', STATUS.IN_PROGRESS] }, { $not: late }] }),
+        completed: countIf({ $eq: ['$status', STATUS.COMPLETED] }),
+        cancelled: countIf({ $eq: ['$status', STATUS.CANCELLED] }),
+        inTime: countIf({
+          $and: [{ $eq: ['$status', STATUS.COMPLETED] }, { $ne: ['$completedLate', true] }],
+        }),
+        delayed: countIf({
+          $and: [{ $eq: ['$status', STATUS.COMPLETED] }, { $eq: ['$completedLate', true] }],
+        }),
+      },
+    },
   ]);
-  const byUser = new Map(users.map((u) => [String(u._id), u]));
-  const codeOf = new Map(profiles.map((p) => [String(p.user), p.employeeCode]));
+  const c = rows[0] || {};
+  return {
+    total: c.total || 0,
+    overdue: c.overdue || 0,
+    pending: c.pending || 0,
+    inProgress: c.inProgress || 0,
+    completed: c.completed || 0,
+    inTime: c.inTime || 0,
+    delayed: c.delayed || 0,
+    cancelled: c.cancelled || 0,
+  };
+}
 
-  const out = rows.map((r, i) => {
-    const u = byUser.get(r.user);
-    return {
-      user: r.user,
-      name: u ? fullName(u) : undefined,
-      employeeCode: codeOf.get(r.user),
-      role: ASSIGNEE_ROLES.includes(r.role) ? r.role : (i === 0 && opts.markOwner !== false ? 'Owner' : 'Contributor'),
-      responsibility: r.responsibility,
-      dueDate: r.dueDate || undefined,
-      status: 'ASSIGNED',
-      incentiveEligible: r.incentiveEligible !== false,
-    };
+/** What a list row needs, and nothing more. Keeps a 200-row page small. */
+const LIST_FIELDS = 'code kind title category priority status points dueDate startDate '
+  + 'completedAt completedLate createdBy createdByName assignedTo assignees loopUsers '
+  + 'repeat voiceNote attachments links reminders updateCount stateNote createdAt linkedTask '
+  // A row has to show "2 of 5 done" and "not yet accepted" without a second
+  // query, so the pieces and the delegation trail come down with the list.
+  + 'subtasks delegations originalAssignees';
+
+/**
+ * Decorate a lean row with the derived bits every client would compute anyway.
+ *
+ * Everything here is DERIVED, never stored — `overdue`, `declined` and the
+ * subtask progress all change without anybody writing to the row, and a stored
+ * copy would go stale the moment a clock ticked or somebody was added.
+ */
+function decorate(row) {
+  const subtasks = row.subtasks || [];
+  return {
+    ...row,
+    statusLabel: statusLabel(row.status, row.kind),
+    overdue: isOverdue(row),
+    frequencyLabel: FREQUENCY_LABELS[row.repeat?.frequency || FREQUENCY.ONCE],
+    hasVoiceNote: Boolean(row.voiceNote?.storagePath),
+    attachmentCount: (row.attachments || []).length,
+    // Everybody still on it has said no — the task is owed and nobody is doing
+    // it, which is a different thing from any of the three statuses.
+    declined: isDeclined(row),
+    // Somebody has not answered the handover yet.
+    awaitingAcceptance: isAwaitingAcceptance(row),
+    subtaskCount: subtasks.length,
+    subtasksDone: subtasks.filter((st) => st.done).length,
+    delegationCount: (row.delegations || []).length,
+  };
+}
+
+// ===== Reading =====
+
+/**
+ * GET /api/tasks — one page of rows, plus the counters that must agree with it.
+ */
+const listTasks = asyncHandler(async (req, res) => {
+  const filter = await buildQuery(req);
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+
+  // Soonest deadline first, undated last — the order somebody would sort by
+  // hand. `_id` breaks ties so paging cannot repeat or skip a row.
+  const sort = { dueDate: 1, _id: -1 };
+
+  const [rows, total, counters] = await Promise.all([
+    Task.find(filter)
+      .select(LIST_FIELDS)
+      .populate('assignees.user', 'firstName lastName photo')
+      .populate('createdBy', 'firstName lastName photo')
+      .sort(sort)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Task.countDocuments(filter),
+    countersFor(filter),
+  ]);
+
+  res.json({
+    // `can` per row, not just on the detail response.
+    //
+    // The list draws Accept / Decline / In progress / Complete straight on the
+    // row, and it opens the same update box the detail page does — so it needs
+    // the same answer to "what may this person do to this task". It is pure
+    // in-memory work over at most 200 rows and no extra query, and the
+    // alternative is the client re-deriving the rules, which is exactly the
+    // split-brain this module was rebuilt to end.
+    tasks: rows.map((row) => ({
+      ...decorate(row),
+      can: access.capabilitiesFor(req.user, row),
+    })),
+    page,
+    limit,
+    total,
+    pages: Math.ceil(total / limit) || 1,
+    counters,
   });
+});
 
-  // Exactly one Owner. Several clients can each believe they are setting the
-  // primary, and `assignedTo` mirrors whoever holds the badge — two of them
-  // would make which one it mirrors depend on array order.
-  if (!out.some((a) => a.role === 'Owner')) out[0].role = 'Owner';
-  let seenOwner = false;
-  for (const a of out) {
-    if (a.role !== 'Owner') continue;
-    if (seenOwner) a.role = 'Contributor';
-    seenOwner = true;
+/** GET /api/tasks/counters — the figures alone, for a badge. */
+const taskCounters = asyncHandler(async (req, res) => {
+  res.json(await countersFor(await buildQuery(req)));
+});
+
+/**
+ * GET /api/tasks/:id — the task, its feed, and what this caller may do to it.
+ *
+ * `can` is computed on the SERVER (services/taskAccess.capabilitiesFor) and the
+ * clients draw what they are told. Both used to derive the buttons themselves,
+ * in two places, with two sets of bugs.
+ */
+const getTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+
+  const task = await Task.findById(req.params.id)
+    .populate('assignees.user', 'firstName lastName photo email')
+    .populate('createdBy', 'firstName lastName photo')
+    .populate('loopUsers', 'firstName lastName photo')
+    .populate('linkedTask', 'code title status');
+  if (!task) bad(res, 'That task no longer exists.', 404);
+  access.assertCanSee(req.user, task);
+
+  const updates = await TaskUpdate.find({ task: task._id })
+    .populate('by', 'firstName lastName photo')
+    .sort({ createdAt: -1 })
+    .limit(200)
+    .lean();
+
+  res.json({
+    task: decorate(task.toObject()),
+    updates,
+    can: access.capabilitiesFor(req.user, task),
+  });
+});
+
+/** GET /api/tasks/:id/updates — the feed on its own, for paging it. */
+const taskFeed = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const task = await Task.findById(req.params.id).select('createdBy assignees loopUsers assignedTo');
+  if (!task) bad(res, 'That task no longer exists.', 404);
+  access.assertCanSee(req.user, task);
+
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const before = req.query.before ? new Date(req.query.before) : null;
+  const filter = { task: task._id };
+  if (before && !Number.isNaN(before.getTime())) filter.createdAt = { $lt: before };
+
+  const updates = await TaskUpdate.find(filter)
+    .populate('by', 'firstName lastName photo')
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  res.json({ updates });
+});
+
+// ===== Writing =====
+
+/** Normalise a reminder rule off the wire; drop anything nonsensical. */
+function cleanReminders(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r) => ({
+      channel: REMINDER_CHANNELS.includes(r?.channel) ? r.channel : 'APP',
+      amount: Math.max(0, Math.min(365, Number(r?.amount) || 0)),
+      unit: REMINDER_UNITS.includes(r?.unit) ? r.unit : 'DAYS',
+      when: REMINDER_WHENS.includes(r?.when) ? r.when : 'BEFORE',
+    }))
+    .filter((r) => r.amount > 0)
+    // Two identical rules would fire once (they share an idempotence key) and
+    // look like a bug. De-duplicate at the door.
+    .filter((r, i, all) => all.findIndex((o) => o.channel === r.channel && o.amount === r.amount
+      && o.unit === r.unit && o.when === r.when) === i)
+    .slice(0, 10);
+}
+
+function cleanRepeat(raw) {
+  const frequency = FREQUENCIES.includes(raw?.frequency) ? raw.frequency : FREQUENCY.ONCE;
+  const out = { frequency };
+  if (frequency === FREQUENCY.WEEKLY) {
+    const days = (Array.isArray(raw?.weekdays) ? raw.weekdays : [])
+      .map((d) => Number(d))
+      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+    out.weekdays = [...new Set(days)].sort();
+  }
+  if (frequency === FREQUENCY.MONTHLY || frequency === FREQUENCY.YEARLY) {
+    const d = Number(raw?.monthDay);
+    if (Number.isInteger(d) && d >= 1 && d <= 31) out.monthDay = d;
+  }
+  if (frequency === FREQUENCY.YEARLY) {
+    const m = Number(raw?.month);
+    if (Number.isInteger(m) && m >= 1 && m <= 12) out.month = m;
+  }
+  if (/^\d{1,2}:\d{2}$/.test(String(raw?.time || ''))) out.time = raw.time;
+  if (raw?.until) {
+    const u = new Date(raw.until);
+    if (!Number.isNaN(u.getTime())) out.until = u;
+  }
+  return out;
+}
+
+function cleanLinks(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((l) => ({ url: String(l?.url || '').trim(), label: String(l?.label || '').trim() }))
+    .filter((l) => /^https?:\/\//i.test(l.url))
+    .slice(0, 20);
+}
+
+/** Store uploaded files in GridFS and return the metadata rows. */
+async function storeFiles(files, taskId, user) {
+  const out = [];
+  for (const file of files || []) {
+    const { storagePath, sizeBytes } = await storage.saveBuffer({
+      buffer: file.buffer,
+      ownerType: 'task',
+      ownerId: String(taskId),
+      originalName: file.originalname,
+    });
+    out.push({
+      name: file.originalname,
+      storagePath,
+      mimeType: file.mimetype,
+      sizeBytes,
+      kind: evidenceKindFor(file.mimetype, file.originalname),
+      uploadedBy: user?._id,
+      uploadedByName: personName(user),
+    });
   }
   return out;
 }
 
 /**
- * The company a task belongs to, for the wall.
+ * Pull the voice note out of an upload.
  *
- * Taken from the primary assignee's employee record, falling back to the
- * creator's. Snapshot onto the task so a list query does not have to join
- * through EmployeeProfile on every row.
- * @param {*} primaryUserId
- * @param {object} actor - req.user
- * @returns {Promise<*|undefined>}
+ * It arrives as a field named `voice` on the same multipart request as the
+ * attachments, because a browser cannot send two requests atomically and a task
+ * that saved without the recording somebody just made is a bad surprise.
  */
-async function resolveCompany(primaryUserId, actor) {
-  const candidates = [primaryUserId, actor && actor._id].filter(Boolean);
-  for (const id of candidates) {
-    const prof = await EmployeeProfile.findOne({ user: id }).select('company department').lean();
-    if (prof && prof.company) return { company: prof.company, department: prof.department };
-  }
-  if (actor && actor.scopeCompanyId) return { company: actor.scopeCompanyId };
-  return {};
-}
-
-/** The fields an assignee is told about when a manager edits their task. */
-const WATCHED_FIELDS = [
-  ['title', 'title'],
-  ['description', 'description'],
-  ['priority', 'priority'],
-  ['dueDate', 'due date'],
-  ['startDate', 'start date'],
-  ['status', 'status'],
-  ['project', 'project'],
-  ['estimatedMinutes', 'estimated time'],
-];
-
-/**
- * Are two task field values the same thing?
- *
- * The admin form PUTs the whole task on every save, so "what changed" can only
- * be answered by comparing against the pre-update document — and the values
- * arrive in three shapes: a Date against an ISO string from a date input, an
- * ObjectId against its hex string, and plain strings. Compared naively, every
- * save would look like a change and notify the assignee about nothing.
- * @returns {boolean}
- */
-function sameValue(a, b) {
-  if (a == null && b == null) return true;
-  if (a instanceof Date || b instanceof Date) {
-    const ta = a ? new Date(a).getTime() : null;
-    const tb = b ? new Date(b).getTime() : null;
-    return ta === tb;
-  }
-  return String(a ?? '') === String(b ?? '');
-}
-
-/** The position a client sent with an action, if any, as plain numbers. */
-function readPosition(body = {}) {
-  const src = body.location || body;
-  const lat = Number(src.lat ?? src.latitude);
-  const lng = Number(src.lng ?? src.longitude);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return {
-    lat,
-    lng,
-    accuracy: Number(src.accuracy) || undefined,
-    address: src.address ? String(src.address).slice(0, 300) : undefined,
-  };
-}
-
-// ===== Listing =====
-
-/**
- * List tasks the caller may see, filtered and paged.
- *
- * SERVER-SIDE EVERYTHING (section 46). The filters, the search, the sort and the
- * paging all run in Mongo; the client never receives more than one page, which
- * is what keeps this usable when a company has fifty thousand tasks rather than
- * fifty.
- *
- * @route GET /api/tasks
- * @param {string} [req.query.status] - one status, or several comma-separated
- * @param {string} [req.query.view] - 'mine' | 'team' | 'created' | 'approvals' | 'overdue' | 'dueToday'
- * @param {string} [req.query.q] - free text over code, title, description, tags
- * @returns {{count:number, total:number, page:number, pages:number, tasks:Object[]}}
- */
-const listTasks = asyncHandler(async (req, res) => {
-  const {
-    status, priority, department, project, assignedTo, supervisor, workflow,
-    taskType, category, tag, view, q, from, to, parentTask, archived,
-    page = 1, limit = 50, sort = '-createdAt',
-  } = req.query;
-
-  const filter = { ...(await access.visibilityFilter(req)) };
-  const and = [];
-
-  if (status) {
-    const wanted = String(status).split(',').map((s) => normaliseStatus(s.trim())).filter(Boolean);
-    if (wanted.length) {
-      // Both vocabularies, so an un-migrated row still matches its own filter.
-      const all = wanted.flatMap((s) => engine.legacyAliases(s));
-      and.push({ status: { $in: all } });
-    }
-  }
-  if (priority) and.push({ priority: { $in: String(priority).split(',') } });
-  if (department) and.push({ department });
-  if (taskType) and.push({ taskType });
-  if (category) and.push({ category });
-  if (tag) and.push({ tags: tag });
-  if (project && mongoose.isValidObjectId(project)) and.push({ project });
-  if (workflow && mongoose.isValidObjectId(workflow)) and.push({ workflowRef: workflow });
-  if (assignedTo && mongoose.isValidObjectId(assignedTo)) {
-    and.push({ $or: [{ assignedTo }, { 'assignees.user': assignedTo }] });
-  }
-  if (supervisor && mongoose.isValidObjectId(supervisor)) and.push({ supervisor });
-  if (parentTask) {
-    and.push(parentTask === 'none' ? { parentTask: null } : { parentTask });
-  }
-
-  // Archived is OUT of every list unless asked for — an archive that still
-  // showed up everywhere would not be an archive.
-  if (archived === 'true') and.push({ archived: true });
-  else if (archived !== 'all') and.push({ archived: { $ne: true } });
-
-  const me = req.user._id;
-  const now = new Date();
-  switch (view) {
-    case 'mine':
-      and.push({ $or: [{ assignedTo: me }, { 'assignees.user': me }] });
-      break;
-    case 'created':
-      and.push({ createdBy: me });
-      break;
-    case 'team': {
-      const reports = await access.directReportUserIds(me);
-      and.push({
-        $or: [
-          { supervisor: me }, { manager: me },
-          ...(reports.length ? [{ assignedTo: { $in: reports } }, { 'assignees.user': { $in: reports } }] : []),
-        ],
-      });
-      break;
-    }
-    case 'approvals':
-      and.push({ pendingApprovers: me });
-      break;
-    case 'overdue':
-      and.push({ dueDate: { $lt: now }, status: { $nin: ['COMPLETED', 'CANCELLED', 'DECLINED', 'Done'] } });
-      break;
-    case 'dueToday': {
-      const { istDayRange } = require('../utils/istDate');
-      const { istDateString } = require('../utils/istDate');
-      const { start, end } = istDayRange(istDateString(now));
-      and.push({ dueDate: { $gte: start, $lte: end }, status: { $nin: ['COMPLETED', 'CANCELLED', 'DECLINED', 'Done'] } });
-      break;
-    }
-    default:
-      break;
-  }
-
-  if (from || to) {
-    const range = {};
-    if (from) range.$gte = new Date(from);
-    if (to) range.$lte = new Date(`${to}T23:59:59.999`);
-    and.push({ dueDate: range });
-  }
-
-  if (q && String(q).trim()) {
-    // Escaped, so a search for "C++" or "50% (draft)" is a search and not a
-    // regex the user accidentally wrote.
-    const safe = String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(safe, 'i');
-    and.push({ $or: [{ code: re }, { title: re }, { description: re }, { tags: re }, { taskType: re }] });
-  }
-
-  if (and.length) filter.$and = and;
-
-  const perPage = Math.min(200, Math.max(1, Number(limit) || 50));
-  const skip = (Math.max(1, Number(page) || 1) - 1) * perPage;
-  const order = String(sort).startsWith('-')
-    ? { [String(sort).slice(1)]: -1 }
-    : { [String(sort)]: 1 };
-
-  const [tasks, total] = await Promise.all([
-    Task.find(filter)
-      .populate('assignedTo', USER_FIELDS)
-      .populate('assignees.user', USER_FIELDS)
-      .populate('supervisor', 'firstName lastName')
-      .populate('project', 'name status')
-      .sort(order)
-      .skip(skip)
-      .limit(perPage)
-      .lean(),
-    Task.countDocuments(filter),
-  ]);
-
-  res.json({
-    count: tasks.length,
-    total,
-    page: Number(page) || 1,
-    pages: Math.ceil(total / perPage) || 1,
-    tasks: tasks.map(decorate),
+async function storeVoiceNote(files, taskId, user, durationMs) {
+  const file = (files || []).find((f) => f.fieldname === 'voice');
+  if (!file) return null;
+  const { storagePath, sizeBytes } = await storage.saveBuffer({
+    buffer: file.buffer,
+    ownerType: 'task',
+    ownerId: String(taskId),
+    originalName: file.originalname || 'voice-note.webm',
   });
-});
-
-/**
- * Add the derived facts every client needs and none should compute for itself —
- * whether a task is late, how late, and which board column it sits in.
- * @param {object} task - a lean task
- * @returns {object}
- */
-function decorate(task) {
-  const status = normaliseStatus(task.status) || task.status;
-  const open = !isTerminal(status);
-  const overdue = !!(open && task.dueDate && new Date(task.dueDate) < new Date());
   return {
-    ...task,
-    status,
-    statusLabel: statusLabel(status),
-    overdue,
-    hoursLate: overdue
-      ? Math.round((Date.now() - new Date(task.dueDate).getTime()) / 36000) / 100
-      : 0,
-    column: require('../config/taskWorkflow').columnOf(status),
+    storagePath,
+    mimeType: file.mimetype || 'audio/webm',
+    sizeBytes,
+    durationMs: Number(durationMs) || undefined,
+    recordedBy: user?._id,
+    recordedByName: personName(user),
   };
 }
 
 /**
- * The same tasks, grouped into board columns (section 27's Kanban view).
- * @route GET /api/tasks/board
+ * The body of an assign form, however it arrived.
+ *
+ * A multipart POST (one with a voice note or files) sends every field as a
+ * string, so arrays and objects come through JSON-encoded. Parsing here rather
+ * than at four call sites is the difference between one place that knows and
+ * four that nearly do.
  */
-const taskBoard = asyncHandler(async (req, res) => {
-  const filter = { ...(await access.visibilityFilter(req)), archived: { $ne: true } };
-  if (req.query.view === 'mine') {
-    filter.$and = [{ $or: [{ assignedTo: req.user._id }, { 'assignees.user': req.user._id }] }];
+function parseBody(req) {
+  const b = { ...req.body };
+  for (const key of ['assignees', 'loopUsers', 'reminders', 'repeat', 'links', 'mentions']) {
+    if (typeof b[key] === 'string') {
+      try { b[key] = JSON.parse(b[key]); } catch { /* leave it; validation will speak */ }
+    }
   }
-  const tasks = await Task.find(filter)
-    .populate('assignedTo', USER_FIELDS)
-    .select('code title status priority dueDate progress assignedTo department taskType')
-    .sort({ dueDate: 1, createdAt: -1 })
-    .limit(500)
-    .lean();
+  return b;
+}
 
-  const columns = BOARD_COLUMNS.map((c) => ({ ...c, tasks: [] }));
-  const byKey = new Map(columns.map((c) => [c.key, c]));
-  for (const t of tasks) {
-    const d = decorate(t);
-    const col = byKey.get(d.column);
-    if (col) col.tasks.push(d);
-  }
-  res.json({ columns });
-});
+/** Snapshot the people onto the task — names survive a departure. */
+async function buildAssignees(userIds) {
+  const ids = [...new Set((userIds || []).map(String))].filter(mongoose.Types.ObjectId.isValid);
+  if (!ids.length) return [];
+  const users = await User.find({ _id: { $in: ids } }).select('firstName lastName').lean();
+  const profiles = await EmployeeProfile.find({ user: { $in: ids } })
+    .select('user employeeCode').lean();
+  const codeOf = new Map(profiles.map((p) => [String(p.user), p.employeeCode || '']));
+  const byId = new Map(users.map((u) => [String(u._id), u]));
+  // Preserve the order they were picked in: the first is the primary assignee.
+  return ids
+    .filter((id) => byId.has(id))
+    .map((id) => ({
+      user: id,
+      name: personName(byId.get(id)),
+      employeeCode: codeOf.get(id) || '',
+      status: STATUS.PENDING,
+    }));
+}
 
 /**
- * One task, with everything the detail page shows.
+ * POST /api/tasks — hand work over, or ask for something.
  *
- * Deliberately one request rather than nine. The page has ten tabs and a person
- * clicking between them should not wait for the network each time; the heavy
- * lists (activity, submissions, comments) are capped here and paged by their own
- * endpoints when somebody scrolls.
- *
- * @route GET /api/tasks/:id
- */
-const getTask = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id);
-
-  const [activity, submissions, comments, timeEntries, extensions, award, subtasks, blockers] = await Promise.all([
-    TaskActivity.find({ task: task._id }).sort({ at: 1 }).limit(200).lean(),
-    TaskSubmission.find({ task: task._id }).sort({ submittedAt: -1 }).limit(50).lean(),
-    TaskComment.find({ task: task._id, deletedAt: null }).sort({ createdAt: 1 }).limit(200).lean(),
-    TaskTimeEntry.find({ task: task._id }).sort({ startedAt: -1 }).limit(200).lean(),
-    TaskExtension.find({ task: task._id }).sort({ requestedAt: -1 }).lean(),
-    TaskIncentive.find({ task: task._id }).lean(),
-    Task.find({ parentTask: task._id }).select('code title status priority dueDate progress assignedTo')
-      .populate('assignedTo', USER_FIELDS).lean(),
-    engine.unmetDependencies(task),
-  ]);
-
-  const roles = engine.actorRoles(task, req.user);
-  const status = normaliseStatus(task.status) || task.status;
-
-  res.json({
-    task: {
-      ...task.toObject(),
-      status,
-      statusLabel: statusLabel(status),
-      overdue: task.isOverdue(),
-    },
-    // What THIS person may do with it right now. The clients draw their buttons
-    // from this rather than re-deriving the rules, which is what stops a button
-    // appearing that the server then refuses.
-    can: {
-      edit: roles.includes('admin') || String(task.createdBy?._id || task.createdBy) === String(req.user._id)
-        || String(task.supervisor?._id || task.supervisor) === String(req.user._id),
-      review: task.isReviewer(req.user._id) || roles.includes('admin'),
-      work: task.isAssignee(req.user._id),
-      manage: roles.includes('admin'),
-    },
-    roles,
-    transitions: require('../config/taskWorkflow').transitionsFrom(status)
-      .filter((t) => t.actors.some((a) => roles.includes(a)))
-      .map((t) => ({ to: t.to, label: statusLabel(t.to), needsReason: !!t.reason })),
-    workflow: flow.outline(task),
-    requirements: engine.requirementLabels(task),
-    activity,
-    submissions,
-    comments: comments.filter((c) => !c.internal || task.isReviewer(req.user._id) || roles.includes('admin')),
-    timeEntries,
-    extensions,
-    incentives: award,
-    subtasks: subtasks.map(decorate),
-    blockers,
-  });
-});
-
-// ===== Creating =====
-
-/**
- * Create a task.
- *
- * @route POST /api/tasks
- * @param {string} req.body.title - required
- * @param {Array} [req.body.assignees] - ids or {user, role, responsibility, dueDate}
- * @param {string} [req.body.assignedTo] - the old single-assignee shape; still accepted
- * @param {boolean} [req.body.assignToAll] - one task EACH for every employee
- * @param {string} [req.body.template] - build from a TaskTemplate
- * @param {string} [req.body.workflow] - run it through a workflow
- * @returns {{count:number, task?:Object, tasks?:Object[]}} 201
+ * The direction rule decides which of those it is: see
+ * services/taskAccess.resolveAssignmentKind. There is no separate "raise a
+ * request" endpoint, because whether an ask is upward is a fact about the org
+ * chart and not something a client should be trusted to assert.
  */
 const createTask = asyncHandler(async (req, res) => {
-  const body = { ...req.body };
+  const body = parseBody(req);
 
-  // From a template: the template supplies the shape, the body overrides it.
-  if (body.template && mongoose.isValidObjectId(body.template)) {
-    const tpl = await TaskTemplate.findById(body.template);
-    if (!tpl) throw httpError(400, 'That template does not exist.');
-    const built = await buildTaskFromTemplate(tpl, {
-      actor: req.user,
-      subject: body.subject,
-      overrides: body,
-    });
-    Object.assign(body, built, { template: tpl._id });
-  }
+  const title = String(body.title || '').trim();
+  if (!title) bad(res, 'Give the task a title.');
 
-  if (!String(body.title || '').trim()) throw httpError(400, 'A task needs a title.');
+  const wanted = (body.assignees || []).map(String).filter(Boolean);
+  if (!wanted.length) bad(res, 'Choose at least one person for this task.');
 
-  const { assignToAll, assignees, assignedTo, workflow, subtasks, ...fields } = body;
+  // Direction first — it decides what we are even creating.
+  const { kind } = await access.resolveAssignmentKind(
+    req.user,
+    wanted,
+    body.kind === KIND_REQUEST ? KIND_REQUEST : null
+  );
 
-  // ===== "Everyone" is a task EACH =====
-  // A task is something ONE person marks done; a shared row would be done by
-  // whoever got there first. Built on the server rather than looped by the
-  // client so the recipient list obeys the same rules as every other people list
-  // — active accounts, no system logins, no executives unless a SuperAdmin
-  // opted them in, nobody serving out a notice period, and the caller's own
-  // company only.
-  if (assignToAll) {
-    if (!access.canManage(req.user)) {
-      throw httpError(403, 'Only somebody who manages tasks can set one for everybody.');
-    }
-    const people = await pickablePeople(req);
-    if (!people.length) throw httpError(400, 'There is nobody to assign this task to.');
+  const assignees = await buildAssignees(wanted);
+  if (!assignees.length) bad(res, 'None of the people chosen are available any more.');
 
-    const made = [];
-    for (const person of people) {
-      const rows = await buildAssignees([person._id]);
-      const { company, department } = await resolveCompany(person._id, req.user);
-      const task = new Task({
-        ...fields,
-        assignees: rows,
-        createdBy: req.user._id,
-        company: fields.company || company,
-        department: fields.department || department,
-        supervisor: fields.supervisor || req.user._id,
-      });
-      await task.save();
-      made.push(task);
-      engine.logActivity({
-        task: task._id,
-        kind: 'created',
-        by: req.user,
-        message: `${fullName(req.user)} created the task and assigned it to ${rows[0].name || 'somebody'}`,
-        ip: req.ip,
-      });
-    }
+  const dueDate = body.dueDate ? new Date(body.dueDate) : null;
+  if (dueDate && Number.isNaN(dueDate.getTime())) bad(res, 'That due date is not a date.');
 
-    // One message, many recipients — notifyMany writes the rows in one insert
-    // and pushes once, instead of a per-person round trip for a fan-out that can
-    // be the whole company.
-    notify.assigned(made[0], made.map((t) => t.assignedTo), req.user).catch(() => {});
+  const repeat = cleanRepeat(body.repeat);
+  const recurring = repeat.frequency !== FREQUENCY.ONCE;
+  // On a repeating task the date the assigner picked is the START, and the
+  // first occurrence's deadline is computed from the schedule — the brief's
+  // "this due date gets converted to a start date".
+  const startDate = recurring ? (dueDate || new Date()) : undefined;
 
-    return res.status(201).json({ count: made.length, tasks: made });
-  }
+  const settings = await points.taskSettings();
+  let pts = body.points === undefined || body.points === null || body.points === ''
+    ? settings.defaultPoints
+    : Number(body.points);
+  if (!Number.isFinite(pts) || pts < 0) bad(res, 'Points must be a number, 0 or more.');
+  pts = Math.min(MAX_TASK_POINTS, Math.round(pts));
 
-  const rows = await buildAssignees(assignees || assignedTo);
-  const primary = rows.length ? rows[0].user : null;
-  const { company, department } = await resolveCompany(primary, req.user);
+  const reminders = body.reminders !== undefined
+    ? cleanReminders(body.reminders)
+    : settings.defaultReminders;
+
+  const companyScope = await viewerCompanyScope(req);
 
   const task = new Task({
-    ...fields,
-    assignees: rows,
+    kind,
+    title,
+    description: String(body.description || '').trim(),
+    category: String(body.category || '').trim(),
+    company: req.user.company || companyScope?.[0] || null,
     createdBy: req.user._id,
-    company: fields.company || company,
-    department: fields.department || department,
-    // The person who set the task watches it unless somebody else was named.
-    supervisor: fields.supervisor || req.user._id,
+    createdByName: personName(req.user),
+    assignees,
+    loopUsers: [...new Set((body.loopUsers || []).map(String))]
+      .filter(mongoose.Types.ObjectId.isValid),
+    priority: TASK_PRIORITY.includes(body.priority) ? body.priority : DEFAULT_PRIORITY,
+    points: kind === KIND_TASK ? pts : 0,
+    dueDate: recurring ? undefined : dueDate,
+    startDate,
+    repeat,
+    reminders,
+    links: cleanLinks(body.links),
+    linkedTask: engine.validId(body.linkedTask) ? body.linkedTask : undefined,
   });
 
-  // The manager who assigns the task is the one who sets its incentive, so the
-  // proposal is stamped with their name whatever the client sent.
-  if (task.incentive && task.incentive.enabled) {
-    task.incentive.setBy = req.user._id;
-    task.incentive.setByName = fullName(req.user);
-  }
-
-  if (workflow && mongoose.isValidObjectId(workflow)) {
-    await flow.start(task, workflow);
-  }
-
+  // The id has to exist before files can be filed under it.
   await task.save();
 
-  await engine.logActivity({
+  const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
+  if (uploaded.length) task.attachments = await storeFiles(uploaded, task._id, req.user);
+  const voice = await storeVoiceNote(req.files, task._id, req.user, body.voiceDurationMs);
+  if (voice) task.voiceNote = voice;
+  if (uploaded.length || voice) await task.save();
+
+  await TaskUpdate.create({
     task: task._id,
-    kind: 'created',
-    by: req.user,
-    message: `${fullName(req.user)} created the task`
-      + (rows.length ? ` and assigned it to ${rows.map((r) => r.name).filter(Boolean).join(', ')}` : ''),
-    ip: req.ip,
+    kind: 'CREATED',
+    by: req.user._id,
+    byName: personName(req.user),
+    to: task.status,
+    note: kind === KIND_REQUEST ? 'Raised this request.' : 'Set this task.',
   });
 
-  // Subtasks named on the creating form (or brought in by a template).
-  if (Array.isArray(subtasks) && subtasks.length) {
-    for (const st of subtasks) {
-      if (!String(st.title || '').trim()) continue;
-      const stRows = await buildAssignees(st.assignees || st.assignedTo || primary);
-      const child = new Task({
-        title: st.title,
-        description: st.description,
-        parentTask: task._id,
-        project: task.project,
-        department: task.department,
-        company: task.company,
-        priority: st.priority || task.priority,
-        dueDate: st.dueDate || task.dueDate,
-        assignees: stRows,
-        supervisor: task.supervisor,
-        createdBy: req.user._id,
-      });
-      await child.save();
-      notify.assigned(child, stRows.map((r) => r.user), req.user).catch(() => {});
-    }
-    await engine.recomputeRollups(task._id);
+  // A repeating task becomes a schedule, and the worker mints the occurrences.
+  if (recurring) {
+    const schedule = await RecurringTask.create({
+      title: task.title,
+      description: task.description,
+      category: task.category,
+      priority: task.priority,
+      points: task.points,
+      assignees: assignees.map((a) => a.user),
+      loopUsers: task.loopUsers,
+      voiceNote: task.voiceNote,
+      links: task.links,
+      reminders: task.reminders,
+      frequency: repeat.frequency,
+      weekdays: repeat.weekdays,
+      monthDay: repeat.monthDay,
+      month: repeat.month,
+      time: repeat.time || '18:00',
+      startDate: startDate,
+      until: repeat.until,
+      company: task.company,
+      createdBy: req.user._id,
+      createdByName: personName(req.user),
+    });
+    task.recurringTask = schedule._id;
+    // The row just created IS the first occurrence — mint its deadline now
+    // rather than leaving a dateless task sitting until the worker next runs.
+    const { firstDueDate } = require('../services/taskRecurrenceWorker');
+    task.dueDate = firstDueDate(schedule);
+    task.occurrenceKey = require('../services/taskRecurrenceWorker').occurrenceKeyFor(task.dueDate);
+    await task.save();
   }
 
-  if (rows.length) notify.assigned(task, rows.map((r) => r.user), req.user).catch(() => {});
+  notify.assigned(task, req.user).catch((e) => console.error('task notify failed:', e.message));
 
-  const saved = await Task.findById(task._id)
-    .populate('assignedTo', USER_FIELDS)
-    .populate('assignees.user', USER_FIELDS);
-
-  res.status(201).json({ count: 1, task: saved });
+  res.status(201).json({ task: decorate(task.toObject()) });
 });
 
-// ===== Editing =====
-
 /**
- * Update a task's substance. Not its status — that is `changeStatus`.
+ * PATCH /api/tasks/:id — change the task itself.
  *
- * @route PATCH /api/tasks/:id
- * @route PUT /api/tasks/:id   (the old shape; same handler)
+ * Only the assigner (or an admin). A doer changes STATUS, never the terms of
+ * the job — see services/taskAccess.canEdit.
  */
 const updateTask = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertCanEdit(req, task);
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const task = await Task.findById(req.params.id);
+  if (!task) bad(res, 'That task no longer exists.', 404);
+  access.assertCanEdit(req.user, task);
 
-  // Fields a client may never set directly. `status` has its own gated route so
-  // the state machine cannot be walked around; the stamps and counters are the
-  // server's (section 37); `code` is quoted in emails and never rewritten.
-  const FORBIDDEN = [
-    'code', 'createdBy', 'status', 'progress', 'originalDueDate',
-    'assignedAt', 'acceptedAt', 'startedAt', 'submittedAt', 'approvedAt',
-    'completedAt', 'closedAt', 'firstOverdueAt', 'minutesLogged',
-    'rejectionCount', 'extensionCount', 'handoverCount', 'commentCount',
-    'subtaskCount', 'subtaskDoneCount', 'firedReminders', 'escalationLevel',
-    'workflowSteps', 'currentStepKey', 'pendingApprovers', 'workflowVersion',
-    'recurringTask', 'occurrenceKey',
-  ];
-  const body = { ...req.body };
-  for (const f of FORBIDDEN) delete body[f];
+  const body = parseBody(req);
+  const changed = [];
 
-  const was = {
-    assignees: (task.assignees || []).map((a) => String(a.user)),
-    ...Object.fromEntries(WATCHED_FIELDS.map(([f]) => [f, task[f]])),
-  };
+  if (body.title !== undefined) {
+    const t = String(body.title).trim();
+    if (!t) bad(res, 'A task needs a title.');
+    if (t !== task.title) { task.title = t; changed.push('title'); }
+  }
+  if (body.description !== undefined) task.description = String(body.description).trim();
+  if (body.category !== undefined) task.category = String(body.category).trim();
+  if (body.priority !== undefined && TASK_PRIORITY.includes(body.priority)) {
+    if (body.priority !== task.priority) { task.priority = body.priority; changed.push('priority'); }
+  }
 
-  // Assignees arrive as a whole list; merge rather than replace, so a person who
-  // has already accepted and logged four hours does not have their row — and
-  // their history on this task — silently rebuilt from scratch.
+  if (body.points !== undefined && task.kind === KIND_TASK) {
+    const p = Number(body.points);
+    if (!Number.isFinite(p) || p < 0) bad(res, 'Points must be a number, 0 or more.');
+    const rounded = Math.min(MAX_TASK_POINTS, Math.round(p));
+    if (rounded !== task.points) {
+      // Changing the figure after somebody has already been credited would put
+      // the task and the credit out of step, and the credit is the one that is
+      // money. Refuse rather than quietly disagree.
+      if ((task.assignees || []).some((a) => a.pointsAwardedAt)) {
+        bad(res, 'Points cannot be changed once somebody has completed this task and been credited.');
+      }
+      task.points = rounded;
+      changed.push('points');
+    }
+  }
+
+  if (body.dueDate !== undefined) {
+    const d = body.dueDate ? new Date(body.dueDate) : null;
+    if (d && Number.isNaN(d.getTime())) bad(res, 'That due date is not a date.');
+    const was = task.dueDate ? new Date(task.dueDate).getTime() : null;
+    if ((d ? d.getTime() : null) !== was) {
+      if (was && d) task.extensionCount = (task.extensionCount || 0) + 1;
+      task.dueDate = d || undefined;
+      // A moved deadline is a fresh chase: the rules that already fired against
+      // the old date must be allowed to fire again against the new one.
+      task.firedReminders = [];
+      changed.push('deadline');
+    }
+  }
+
+  if (body.reminders !== undefined) {
+    task.reminders = cleanReminders(body.reminders);
+    task.firedReminders = [];
+  }
+  if (body.links !== undefined) task.links = cleanLinks(body.links);
+
+  if (body.loopUsers !== undefined) {
+    task.loopUsers = [...new Set((body.loopUsers || []).map(String))]
+      .filter(mongoose.Types.ObjectId.isValid);
+  }
+
+  // Changing WHO is on it goes through the direction rule again — an edit must
+  // not be a way around a check the create path makes.
   if (body.assignees !== undefined) {
-    const wanted = await buildAssignees(body.assignees);
+    const wanted = (body.assignees || []).map(String).filter(Boolean);
+    if (!wanted.length) bad(res, 'A task needs at least one person on it.');
+    await access.resolveAssignmentKind(req.user, wanted, task.kind);
+    const fresh = await buildAssignees(wanted);
+    // Keep the progress of anybody who is staying: re-assigning a five-person
+    // task must not reset the two people who have already finished.
     const existing = new Map((task.assignees || []).map((a) => [String(a.user), a]));
-    task.assignees = wanted.map((w) => {
-      const prev = existing.get(String(w.user));
-      if (!prev) return w;
-      prev.role = w.role;
-      prev.responsibility = w.responsibility;
-      prev.dueDate = w.dueDate;
-      prev.incentiveEligible = w.incentiveEligible;
-      return prev;
-    });
-    delete body.assignees;
+    task.assignees = fresh.map((f) => existing.get(String(f.user)) || f);
+    changed.push('who is on it');
   }
 
-  // Moving the deadline by editing is still an extension of sorts — but it is
-  // the MANAGER moving it, not the employee asking, so it is recorded on the
-  // trail rather than routed through an approval.
-  const movingDue = body.dueDate !== undefined && !sameValue(task.dueDate, body.dueDate);
-
-  Object.assign(task, body);
-
-  if (task.incentive && task.incentive.enabled && task.isModified('incentive')) {
-    task.incentive.setBy = req.user._id;
-    task.incentive.setByName = fullName(req.user);
+  const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
+  if (uploaded.length) {
+    task.attachments.push(...await storeFiles(uploaded, task._id, req.user));
   }
+  const voice = await storeVoiceNote(req.files, task._id, req.user, body.voiceDurationMs);
+  if (voice) task.voiceNote = voice;
 
   await task.save();
 
-  const nowIds = (task.assignees || []).map((a) => String(a.user));
-  const added = nowIds.filter((id) => !was.assignees.includes(id));
-  const removed = was.assignees.filter((id) => !nowIds.includes(id));
-
-  const changed = WATCHED_FIELDS
-    .filter(([f]) => !sameValue(was[f], task[f]))
-    .map(([, label]) => label);
-
-  if (changed.length || added.length || removed.length) {
-    await engine.logActivity({
+  if (changed.length) {
+    await TaskUpdate.create({
       task: task._id,
-      kind: added.length || removed.length ? 'reassigned' : 'updated',
-      by: req.user,
-      message: `${fullName(req.user)} updated the task`
-        + (changed.length ? ` — ${changed.join(', ')}` : '')
-        + (added.length ? `; added ${added.length} assignee${added.length === 1 ? '' : 's'}` : '')
-        + (removed.length ? `; removed ${removed.length}` : ''),
-      field: movingDue ? 'dueDate' : undefined,
-      from: movingDue ? was.dueDate : undefined,
-      to: movingDue ? task.dueDate : undefined,
-      ip: req.ip,
+      kind: 'EDITED',
+      by: req.user._id,
+      byName: personName(req.user),
+      note: `Changed ${changed.join(', ')}.`,
     });
+    notify.edited(task, req.user, `Changed ${changed.join(', ')}`)
+      .catch((e) => console.error('task notify failed:', e.message));
   }
 
-  // A new owner is a new assignment, not an edit — naming the fields that moved
-  // would mean nothing to somebody who has never seen the task.
-  if (added.length) notify.assigned(task, added, req.user).catch(() => {});
-  const told = nowIds.filter((id) => !added.includes(id));
-  if (changed.length && told.length) notify.edited(task, told, changed, req.user).catch(() => {});
-
-  const saved = await Task.findById(task._id)
-    .populate('assignedTo', USER_FIELDS)
-    .populate('assignees.user', USER_FIELDS);
-  res.json({ task: saved });
+  res.json({ task: decorate(task.toObject()) });
 });
 
 /**
- * Archive or delete a task.
+ * POST /api/tasks/:id/status — the one endpoint that moves anything.
  *
- * ARCHIVING IS THE DEFAULT and deleting needs `tasks.manage` plus an explicit
- * ask, because a task is the anchor for its submissions, its time entries, its
- * trail and possibly an incentive somebody has been paid for. A task that has
- * ever been credited is never deleted — the credit would be left pointing at
- * nothing.
- *
- * @route DELETE /api/tasks/:id
- * @param {string} [req.query.hard] - 'true' to really delete
- */
-const deleteTask = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertCanEdit(req, task);
-
-  const hard = String(req.query.hard) === 'true';
-  if (!hard) {
-    task.archived = true;
-    await task.save();
-    await engine.logActivity({
-      task: task._id, kind: 'archived', by: req.user,
-      message: `${fullName(req.user)} archived the task`, ip: req.ip,
-    });
-    return res.json({ id: task._id, archived: true });
-  }
-
-  if (!access.canManage(req.user)) {
-    throw httpError(403, 'Only somebody who manages tasks can delete one. You can archive it instead.');
-  }
-  const credited = await TaskIncentive.countDocuments({ task: task._id, status: 'Credited' });
-  if (credited) {
-    throw httpError(409, 'Points have already been credited for this task, so it cannot be deleted. Archive it instead.');
-  }
-  const children = await Task.countDocuments({ parentTask: task._id });
-  if (children) {
-    throw httpError(409, `This task has ${children} subtask${children === 1 ? '' : 's'}. Delete or move ${children === 1 ? 'it' : 'them'} first.`);
-  }
-
-  // The trail outlives the task deliberately — it is the record that the task
-  // existed and who deleted it. Everything else that only makes sense with the
-  // task goes with it.
-  await Promise.all([
-    TaskSubmission.deleteMany({ task: task._id }),
-    TaskTimeEntry.deleteMany({ task: task._id }),
-    TaskComment.deleteMany({ task: task._id }),
-    TaskExtension.deleteMany({ task: task._id }),
-    TaskIncentive.deleteMany({ task: task._id, status: { $ne: 'Credited' } }),
-  ]);
-  await engine.logActivity({
-    task: task._id, kind: 'archived', by: req.user,
-    message: `${fullName(req.user)} DELETED the task "${task.title}"`, ip: req.ip,
-  });
-  await task.deleteOne();
-  res.json({ id: req.params.id, deleted: true });
-});
-
-// ===== Lifecycle =====
-
-/**
- * Move a task to any status the caller is entitled to move it to.
- *
- * The general-purpose route. The named ones below (accept, decline, start) exist
- * because they do more than move a status — they carry a location, check a
- * geofence, or touch the assignee's own row — but they all end up here.
- *
- * @route POST /api/tasks/:id/status
- * @param {string} req.body.status
- * @param {string} [req.body.note] - required for some moves
+ * Body: { to, note, voiceDurationMs?, mentions? } plus optional files. Every
+ * client uses this; there is no /start, /complete or /accept, because four
+ * endpoints doing one thing is four places for the rule to be slightly
+ * different.
  */
 const changeStatus = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  const to = normaliseStatus(req.body.status);
-  if (!to) throw httpError(400, `Status must be one of: ${TASK_STATUS.join(', ')}.`);
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
 
-  const from = normaliseStatus(task.status) || task.status;
-  const updated = await engine.transition(task, to, req.user, {
-    note: req.body.note,
-    ip: req.ip,
-    idempotent: true,
+  const to = String(body.to || body.status || '').trim().toUpperCase();
+  if (!TASK_STATUS.includes(to)) bad(res, 'That is not a status a task can be in.');
+
+  const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
+  const files = uploaded.length ? await storeFiles(uploaded, req.params.id, req.user) : [];
+  const voice = await storeVoiceNote(req.files, req.params.id, req.user, body.voiceDurationMs);
+
+  const result = await engine.move({
+    taskId: req.params.id,
+    user: req.user,
+    to,
+    note: body.note,
+    voiceNote: voice,
+    files,
+    mentions: (body.mentions || []).filter(mongoose.Types.ObjectId.isValid),
   });
 
-  // A single-assignee task's row IS the task, so keep them in step.
-  if ((updated.assignees || []).length === 1) {
-    engine.syncAssigneeStatus(updated, to);
-    await updated.save();
-  }
+  const task = await Task.findById(req.params.id)
+    .populate('assignees.user', 'firstName lastName photo')
+    .populate('createdBy', 'firstName lastName photo');
 
-  const who = access.audienceOf(updated);
-  if (task.isAssignee(req.user._id) && !access.canManage(req.user)) {
-    let watchers = who.reviewers;
-    if (!watchers.length) watchers = await access.managerBench(updated, req.user.scopeCompanyId);
-    notify.movedByAssignee(updated, watchers, req.user, from, to).catch(() => {});
-  } else {
-    notify.edited(updated, who.assignees, ['status'], req.user).catch(() => {});
-  }
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    unchanged: Boolean(result.unchanged),
+    awarded: (result.awarded || []).map((a) => ({ points: a.points, credited: a.credited })),
+  });
+});
 
-  if (to === 'COMPLETED') await onCompleted(updated, req.user);
+/** POST /api/tasks/:id/updates — a remark, with or without a recording. */
+const addUpdate = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
 
-  res.json({ task: updated });
+  const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
+  const files = uploaded.length ? await storeFiles(uploaded, req.params.id, req.user) : [];
+  const voice = await storeVoiceNote(req.files, req.params.id, req.user, body.voiceDurationMs);
+
+  const { update } = await engine.comment({
+    taskId: req.params.id,
+    user: req.user,
+    note: body.note,
+    voiceNote: voice,
+    files,
+    mentions: (body.mentions || []).filter(mongoose.Types.ObjectId.isValid),
+  });
+
+  const full = await TaskUpdate.findById(update._id).populate('by', 'firstName lastName photo').lean();
+  res.status(201).json({ update: full });
 });
 
 /**
- * Everything that follows a task being completed.
+ * POST /api/tasks/:id/accept — take it on.
+ * POST /api/tasks/:id/decline — refuse it, with a reason.
+ * POST /api/tasks/:id/delegate — pass your own piece to somebody else.
  *
- * Kept in one function rather than repeated at the three places a task can
- * reach COMPLETED (a direct move, the last workflow step, an approval with no
- * workflow), because a completion that skipped the incentive or the parent
- * roll-up would be a silent loss rather than an error anybody notices.
- * @param {object} task
- * @param {object} actor
+ * The doer's three answers to being handed work. All three are IDENTITY-gated
+ * inside the engine: only somebody actually on the task may use them, so an
+ * assigner cannot accept on a doer's behalf (which would make acceptance
+ * meaningless) and a bystander cannot pass on work that was never theirs.
  */
-async function onCompleted(task, actor) {
-  try {
-    engine.syncAssigneeStatus(task, 'COMPLETED');
-    await task.save();
+const acceptTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const { task, unchanged } = await engine.accept({
+    taskId: req.params.id,
+    user: req.user,
+    note: parseBody(req).note,
+  });
+  res.json({ task: decorate(task.toObject()), can: access.capabilitiesFor(req.user, task), unchanged: Boolean(unchanged) });
+});
 
-    const who = access.audienceOf(task);
-    notify.completed(task, who.assignees).catch(() => {});
+const declineTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const { task } = await engine.decline({
+    taskId: req.params.id,
+    user: req.user,
+    reason: body.reason || body.note,
+  });
+  res.json({ task: decorate(task.toObject()), can: access.capabilitiesFor(req.user, task) });
+});
 
-    // Points, if the manager set any. Proposed only — somebody else sanctions.
-    const awards = await incentives.evaluate(task);
-    const worth = awards.filter((a) => a.status === 'Pending' && a.points > 0);
-    if (worth.length) {
-      const bench = await access.managerBench(task, task.company);
-      for (const a of worth) {
-        notify.incentivePending(task, bench, a.points, a.name || 'an employee').catch(() => {});
-      }
-    }
+const delegateTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const { task, delegatedTo } = await engine.delegate({
+    taskId: req.params.id,
+    user: req.user,
+    to: body.to,
+    note: body.note,
+  });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    delegatedTo: { user: String(delegatedTo.user), name: delegatedTo.name },
+  });
+});
 
-    // A parent's progress is its children's.
-    if (task.parentTask) await engine.recomputeRollups(task.parentTask);
+// ===== Subtasks =====
 
-    // Anything waiting on this one can now be started; tell whoever holds it.
-    const unblocked = await Task.find({
-      'dependencies.task': task._id,
-      status: { $nin: ['COMPLETED', 'CANCELLED', 'DECLINED'] },
-    }).select('title code assignees assignedTo dueDate priority').lean();
-    for (const other of unblocked) {
-      const still = await engine.unmetDependencies(other);
-      if (still.length) continue;
-      notify.assigned(other, [other.assignedTo], actor, 'Task unblocked').catch(() => {});
-    }
-  } catch (err) {
-    console.error('Post-completion work failed:', err.message);
+/**
+ * POST /api/tasks/:id/subtasks — split it up.
+ *
+ * Body: `{ items: [{ title, assignee? }] }`, or `{ title, assignee? }` for one.
+ * An item with no `assignee` is open to everybody on the task — the user's
+ * "any assignee can do any subtask".
+ */
+const addSubtasks = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const items = Array.isArray(body.items) ? body.items : [body];
+  const { task, added } = await engine.addSubtasks({
+    taskId: req.params.id,
+    user: req.user,
+    items,
+  });
+  res.status(201).json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    added: added.length,
+  });
+});
+
+/** PATCH /api/tasks/:id/subtasks/:subId — tick it off, or un-tick it. */
+const setSubtask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const { task, unchanged, progress } = await engine.setSubtaskDone({
+    taskId: req.params.id,
+    subtaskId: req.params.subId,
+    user: req.user,
+    done: body.done !== false && body.done !== 'false',
+  });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    unchanged: Boolean(unchanged),
+    progress,
+  });
+});
+
+/** DELETE /api/tasks/:id/subtasks/:subId */
+const removeSubtask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const { task } = await engine.removeSubtask({
+    taskId: req.params.id,
+    subtaskId: req.params.subId,
+    user: req.user,
+  });
+  res.json({ task: decorate(task.toObject()), can: access.capabilitiesFor(req.user, task) });
+});
+
+/**
+ * DELETE /api/tasks/:id — remove it.
+ *
+ * TWO KINDS OF REMOVAL, and the difference matters:
+ *
+ *   ARCHIVE (the default)  the row keeps its feed, its files and any points it
+ *                          credited, and simply stops appearing anywhere. Open
+ *                          to whoever set the task, to `tasks.manage`, and — at
+ *                          the user's request, 2026-09-21 — to a SuperAdmin on
+ *                          ANY task, whoever set it.
+ *   PURGE (`?purge=1`)     really gone. SuperAdmin alone, and REFUSED once
+ *                          points have been credited against it: the
+ *                          IncentiveCredit would outlive the only record of
+ *                          what it was for, and somebody would eventually ask.
+ */
+const deleteTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const task = await Task.findById(req.params.id);
+  if (!task) bad(res, 'That task no longer exists.', 404);
+  if (!access.canDelete(req.user, task)) {
+    bad(res, 'Only the person who set this task, or a Super Admin, can remove it.', 403);
   }
+
+  const purge = req.query.purge === '1' || req.query.purge === 'true';
+  if (purge) {
+    if (!access.canPurge(req.user)) bad(res, 'Only a Super Admin can delete a task for good.', 403);
+
+    const credited = (task.assignees || []).filter((a) => a.pointsAwardedAt);
+    if (credited.length) {
+      bad(res,
+        `${credited.length} person${credited.length === 1 ? ' has' : 's have'} already been credited `
+        + 'points for this task. Reopen it first to take those back, then delete it.');
+    }
+
+    await TaskUpdate.deleteMany({ task: task._id });
+    await Task.deleteOne({ _id: task._id });
+    return res.json({ ok: true, purged: true, message: 'Deleted for good.' });
+  }
+
+  task.archived = true;
+  await task.save();
+  await TaskUpdate.create({
+    task: task._id,
+    kind: 'EDITED',
+    by: req.user._id,
+    byName: personName(req.user),
+    note: 'Removed this task.',
+  });
+  res.json({ ok: true, purged: false, message: 'Removed.' });
+});
+
+// ===== Files =====
+
+/** GET /api/tasks/:id/files/:fileId — stream one attachment or the voice note. */
+const downloadFile = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That file is not there.', 404);
+  const task = await Task.findById(req.params.id)
+    .select('createdBy assignees assignedTo loopUsers attachments voiceNote');
+  if (!task) bad(res, 'That file is not there.', 404);
+  access.assertCanSee(req.user, task);
+
+  let file = null;
+  if (req.params.fileId === 'voice') {
+    file = task.voiceNote
+      ? { storagePath: task.voiceNote.storagePath, mimeType: task.voiceNote.mimeType, name: 'voice-note' }
+      : null;
+  } else {
+    file = (task.attachments || []).find((a) => String(a._id) === String(req.params.fileId));
+    if (!file) {
+      // It may belong to an update rather than the task itself.
+      const upd = await TaskUpdate.findOne({ task: task._id, 'files._id': req.params.fileId })
+        .select('files voiceNote').lean();
+      file = (upd?.files || []).find((f) => String(f._id) === String(req.params.fileId)) || null;
+    }
+  }
+  if (!file) bad(res, 'That file is not there.', 404);
+
+  res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${(file.name || 'file').replace(/"/g, '')}"`);
+  const ok = await storage.streamTo(file.storagePath, res);
+  if (!ok && !res.headersSent) bad(res, 'That file is not there.', 404);
+});
+
+/** GET /api/tasks/:id/updates/:updateId/voice — a remark's recording. */
+const downloadUpdateVoice = asyncHandler(async (req, res) => {
+  const upd = await TaskUpdate.findById(req.params.updateId).select('task voiceNote').lean();
+  if (!upd?.voiceNote?.storagePath) bad(res, 'That recording is not there.', 404);
+  const task = await Task.findById(upd.task).select('createdBy assignees assignedTo loopUsers');
+  if (!task) bad(res, 'That recording is not there.', 404);
+  access.assertCanSee(req.user, task);
+
+  res.setHeader('Content-Type', upd.voiceNote.mimeType || 'audio/webm');
+  const ok = await storage.streamTo(upd.voiceNote.storagePath, res);
+  if (!ok && !res.headersSent) bad(res, 'That recording is not there.', 404);
+});
+
+// ===== Reference data =====
+
+/**
+ * GET /api/tasks/meta — everything the assign form needs, in one call.
+ *
+ * The form used to open with five requests in flight (people, categories,
+ * templates, settings, my own permissions) and drew itself progressively as
+ * they landed. On a phone against Android's five-connections-per-host that was
+ * the difference between instant and a second and a half — the same trap the
+ * app's launch sequence already had to be fixed for.
+ */
+const taskMeta = asyncHandler(async (req, res) => {
+  const [people, categories, settings] = await Promise.all([
+    User.find(await pickableUserFilter(req))
+      .select('firstName lastName role photo')
+      .sort({ firstName: 1 })
+      .lean(),
+    TaskCategory.find({ isActive: true, ...(req.user.company ? { $or: [{ company: req.user.company }, { company: null }] } : {}) })
+      .select('name color')
+      .sort({ name: 1 })
+      .lean(),
+    points.taskSettings(),
+  ]);
+
+  // Which of them may be given a task, and which may only be asked. Computed
+  // once here so the picker can mark them, rather than the client guessing.
+  const assignable = new Set(await access.assignableUserIds(req, people.map((p) => p._id)));
+  const canAsk = new Set(await access.requestableUserIds(req));
+
+  res.json({
+    people: people.map((p) => ({
+      _id: p._id,
+      name: personName(p),
+      role: p.role,
+      photo: p.photo || null,
+      canAssign: assignable.has(String(p._id)),
+      canRequest: canAsk.has(String(p._id)),
+    })),
+    categories,
+    priorities: TASK_PRIORITY,
+    frequencies: FREQUENCIES.map((f) => ({ key: f, label: FREQUENCY_LABELS[f] })),
+    weekdays: WEEKDAYS,
+    reminderChannels: REMINDER_CHANNELS.map((c) => ({ key: c, label: REMINDER_CHANNEL_LABELS[c] })),
+    reminderUnits: REMINDER_UNITS,
+    defaultPoints: settings.defaultPoints,
+    defaultReminders: settings.defaultReminders,
+    pointsArePaid: settings.pointsToPool,
+    isAdmin: access.seesEverything(req.user),
+    // Renaming or removing a category is a SuperAdmin's alone — adding one is
+    // everybody's. Sent so the form can offer the manage button rather than the
+    // client guessing from a role string (see routes/taskRoutes).
+    canManageCategories: req.user.role === 'SuperAdmin',
+  });
+});
+
+/** POST /api/tasks/categories — the + beside the category picker. */
+const createCategory = asyncHandler(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) bad(res, 'Give the category a name.');
+  if (name.length > 80) bad(res, 'That category name is too long.');
+
+  const company = req.user.company || null;
+  // Case-insensitive, so a second "sales" cannot appear beside "Sales" — the
+  // exact problem models/TaskCategory exists to end.
+  const existing = await TaskCategory.findOne({ company, name })
+    .collation({ locale: 'en', strength: 2 });
+  if (existing) return res.status(200).json({ category: existing, existed: true });
+
+  const category = await TaskCategory.create({
+    name,
+    company,
+    createdBy: req.user._id,
+    createdByName: personName(req.user),
+  });
+  res.status(201).json({ category });
+});
+
+/**
+ * GET /api/tasks/categories
+ *
+ * `?withCounts=1` adds how many tasks are filed under each — what the manage
+ * list needs so a SuperAdmin about to remove one can see they are hiding the
+ * label on 212 rows rather than on nothing.
+ */
+const listCategories = asyncHandler(async (req, res) => {
+  const filter = { isActive: true };
+  if (req.user.company) filter.$or = [{ company: req.user.company }, { company: null }];
+  const categories = await TaskCategory.find(filter).sort({ name: 1 }).lean();
+
+  if (req.query.withCounts !== '1' && req.query.withCounts !== 'true') {
+    return res.json({ categories });
+  }
+
+  // One aggregation over the whole collection rather than a count per row: a
+  // list of forty categories would otherwise be forty round trips.
+  const used = await Task.aggregate([
+    { $match: { archived: { $ne: true }, category: { $nin: [null, ''] } } },
+    { $group: { _id: '$category', count: { $sum: 1 } } },
+  ]);
+  // Matched case-insensitively, the way the unique index treats them, so a
+  // stray "sales" is counted against "Sales" rather than reading as unused.
+  const counts = new Map(used.map((u) => [String(u._id).trim().toLowerCase(), u.count]));
+
+  res.json({
+    categories: categories.map((c) => ({
+      ...c,
+      taskCount: counts.get(String(c.name).trim().toLowerCase()) || 0,
+    })),
+  });
+});
+
+/**
+ * PATCH /api/tasks/categories/:id — rename one, SuperAdmin only.
+ *
+ * The tasks store the NAME, not the id, so a rename has to carry the tasks with
+ * it or two hundred rows are left filed under a label that no longer appears in
+ * any picker. Done in one `updateMany` AFTER the category itself is saved: if
+ * the save fails there is nothing to undo, and if the sweep fails the category
+ * is right and the tasks can be swept again.
+ */
+const renameCategory = asyncHandler(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) bad(res, 'Give the category a name.');
+  if (name.length > 80) bad(res, 'That category name is too long.');
+
+  const cat = await TaskCategory.findById(req.params.id);
+  if (!cat) bad(res, 'That category is gone.', 404);
+
+  const was = cat.name;
+  if (was === name) return res.json({ category: cat, movedTasks: 0 });
+
+  const clash = await TaskCategory.findOne({ company: cat.company, name, _id: { $ne: cat._id } })
+    .collation({ locale: 'en', strength: 2 });
+  if (clash) bad(res, `There is already a category called "${clash.name}".`);
+
+  cat.name = name;
+  await cat.save();
+
+  const swept = await Task.updateMany(
+    { category: was },
+    { $set: { category: name } }
+  );
+  res.json({ category: cat, movedTasks: swept.modifiedCount || 0 });
+});
+
+/**
+ * How many tasks are ON this person right now — the sidebar badge.
+ *
+ * Their own open rows, overdue ones included. Called by approvalController's
+ * one-shot counts fan-out, so it must be a single cheap query and must never
+ * throw: a badge that fails takes the whole counts response down with it.
+ *
+ * Counted from `assignees.status` rather than the task's rolled-up status, so a
+ * five-person task that two people have finished still badges for the three who
+ * have not.
+ */
+async function countMyOpenTasks(req) {
+  return Task.countDocuments({
+    archived: { $ne: true },
+    assignees: {
+      $elemMatch: {
+        user: req.user._id,
+        status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] },
+      },
+    },
+  });
 }
 
 /**
- * Accept a task you were given (section 10).
- * @route POST /api/tasks/:id/accept
+ * DELETE /api/tasks/categories/:id — SuperAdmin only.
+ *
+ * TWO DIFFERENT DELETES, and which one happens depends on whether anything is
+ * filed under it:
+ *
+ *   NOTHING USES IT   the row is really removed. A category somebody created by
+ *                     mistake — "temp", a typo — should disappear, not sit
+ *                     deactivated forever occupying its own name in the unique
+ *                     index so the right spelling cannot be created.
+ *   SOMETHING USES IT  it is DEACTIVATED, and the tasks keep the label they
+ *                     were filed under. Wiping `category` off two hundred rows
+ *                     to tidy a dropdown is destroying records to fix a list.
+ *
+ * `?moveTo=<name>` refiles them first, which is the honest way to merge two
+ * categories that should always have been one. `?force=1` removes the row even
+ * though it is in use, leaving the tasks' label as free text — offered because
+ * a SuperAdmin tidying a list knows better than this handler does, but never
+ * the default.
  */
-const acceptTask = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertIsAssignee(req, task);
+const deleteCategory = asyncHandler(async (req, res) => {
+  const cat = await TaskCategory.findById(req.params.id);
+  if (!cat) bad(res, 'That category is already gone.', 404);
 
-  const position = await engine.checkGeofence(task, 'accept', readPosition(req.body), req.user._id);
+  const moveTo = String(req.query.moveTo || '').trim();
+  let moved = 0;
 
-  const updated = await engine.transition(task, 'ACCEPTED', req.user, {
-    note: req.body.note,
-    location: position,
-    locationEvent: 'accept',
-    ip: req.ip,
-    idempotent: true,
-  });
-
-  engine.syncAssigneeStatus(updated, 'ACCEPTED', req.user._id);
-  await updated.save();
-
-  const who = access.audienceOf(updated);
-  notify.movedByAssignee(updated, who.reviewers, req.user, 'ASSIGNED', 'ACCEPTED').catch(() => {});
-  res.json({ task: updated });
-});
-
-/**
- * Refuse a task, with a reason (section 10).
- * @route POST /api/tasks/:id/decline
- */
-const declineTask = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertIsAssignee(req, task);
-
-  const reason = String(req.body.reason || req.body.note || '').trim();
-  if (!reason) throw httpError(400, 'Say why you cannot take this task.');
-
-  const row = task.assigneeRow(req.user._id);
-  if (row) {
-    row.status = 'DECLINED';
-    row.declinedAt = new Date();
-    row.declineReason = reason.slice(0, 500);
+  if (moveTo) {
+    if (moveTo === cat.name) bad(res, 'That is the same category.');
+    const target = await TaskCategory.findOne({ company: cat.company, name: moveTo })
+      .collation({ locale: 'en', strength: 2 });
+    if (!target) bad(res, `There is no category called "${moveTo}" to move these into.`);
+    const swept = await Task.updateMany({ category: cat.name }, { $set: { category: target.name } });
+    moved = swept.modifiedCount || 0;
   }
 
-  // On a task with several people, one person declining is their row changing,
-  // not the whole task being refused — the others carry on.
-  const everyone = (task.assignees || []).filter((a) => a.role !== 'Observer');
-  const allDeclined = everyone.length > 0 && everyone.every((a) => a.status === 'DECLINED');
+  const stillUsed = await Task.countDocuments({ category: cat.name, archived: { $ne: true } });
+  const force = req.query.force === '1' || req.query.force === 'true';
 
-  let updated = task;
-  if (allDeclined || everyone.length <= 1) {
-    updated = await engine.transition(task, 'DECLINED', req.user, { note: reason, ip: req.ip });
-    // The row edits above were made on `task`; re-apply them to the document the
-    // conditional update handed back, or they are lost.
-    const fresh = updated.assigneeRow(req.user._id);
-    if (fresh) {
-      fresh.status = 'DECLINED';
-      fresh.declinedAt = new Date();
-      fresh.declineReason = reason.slice(0, 500);
-    }
-    await updated.save();
-  } else {
-    await task.save();
-    await engine.logActivity({
-      task: task._id, kind: 'declined', by: req.user,
-      message: `${fullName(req.user)} declined their part of the task`, note: reason, ip: req.ip,
+  if (stillUsed > 0 && !force) {
+    // Hidden from every picker and filter, but the tasks keep reading right.
+    cat.isActive = false;
+    await cat.save();
+    return res.json({
+      ok: true,
+      removed: false,
+      hidden: true,
+      movedTasks: moved,
+      stillUsed,
+      message: `Hidden. ${stillUsed} task${stillUsed === 1 ? '' : 's'} stay filed under "${cat.name}".`,
     });
   }
 
-  let watchers = access.audienceOf(updated).reviewers;
-  if (!watchers.length) watchers = await access.managerBench(updated, req.user.scopeCompanyId);
-  notify.declined(updated, watchers, req.user, reason).catch(() => {});
-
-  res.json({ task: updated });
-});
-
-/**
- * Start work. Where the dependency and geofence gates actually bite.
- * @route POST /api/tasks/:id/start
- */
-const startTask = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertIsAssignee(req, task);
-
-  await engine.assertDependenciesMet(task);
-  const position = await engine.checkGeofence(task, 'start', readPosition(req.body), req.user._id);
-
-  const from = normaliseStatus(task.status) || task.status;
-  const updated = await engine.transition(task, 'IN_PROGRESS', req.user, {
-    location: position,
-    locationEvent: 'start',
-    ip: req.ip,
-    idempotent: true,
-  });
-
-  engine.syncAssigneeStatus(updated, 'IN_PROGRESS', req.user._id);
-  await updated.save();
-
-  const who = access.audienceOf(updated);
-  notify.movedByAssignee(updated, who.reviewers, req.user, from, 'IN_PROGRESS').catch(() => {});
-  res.json({ task: updated });
-});
-
-/**
- * Tick or untick a checklist item (section 18).
- * @route PATCH /api/tasks/:id/checklist/:itemId
- */
-const setChecklistItem = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  const item = (task.checklist || []).id(req.params.itemId);
-  if (!item) throw httpError(404, 'That checklist item is not on this task.');
-
-  // An item addressed to one person is theirs to tick. An unaddressed one is
-  // anybody's who is on the task.
-  const mine = !item.assignee || String(item.assignee) === String(req.user._id);
-  if (!mine && !access.canManage(req.user) && !task.isReviewer(req.user._id)) {
-    throw httpError(403, 'That checklist item belongs to somebody else.');
-  }
-  if (!task.isAssignee(req.user._id) && !task.isReviewer(req.user._id) && !access.canManage(req.user)) {
-    throw httpError(403, 'Only somebody on this task can work through its checklist.');
-  }
-
-  const done = req.body.done !== false;
-  if (item.done === done) return res.json({ task });
-
-  item.done = done;
-  item.doneBy = done ? req.user._id : undefined;
-  item.doneByName = done ? fullName(req.user) : undefined;
-  item.doneAt = done ? new Date() : undefined;
-  await task.save();
-
-  await engine.logActivity({
-    task: task._id,
-    kind: 'checklist',
-    by: req.user,
-    message: `${fullName(req.user)} ${done ? 'ticked' : 'unticked'} "${item.text}"`,
-    ip: req.ip,
-  });
-
-  res.json({ task, progress: task.progress });
-});
-
-/**
- * Set your own progress figure on a task that measures progress that way.
- * @route PATCH /api/tasks/:id/progress
- */
-const setProgress = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertIsAssignee(req, task);
-
-  const pct = Math.max(0, Math.min(100, Number(req.body.progress)));
-  if (!Number.isFinite(pct)) throw httpError(400, 'Progress must be a number between 0 and 100.');
-
-  const row = task.assigneeRow(req.user._id);
-  const was = row ? row.progress : task.progress;
-  if (row) row.progress = pct;
-  await task.save();
-
-  await engine.logActivity({
-    task: task._id, kind: 'progress', by: req.user,
-    message: `${fullName(req.user)} set progress to ${pct}%`,
-    field: 'progress', from: was, to: pct, ip: req.ip,
-  });
-  res.json({ task, progress: task.progress });
-});
-
-// ===== Assignees & handover =====
-
-/**
- * Add somebody to a task (section 5 — a supervisor may "add assignee").
- * @route POST /api/tasks/:id/assignees
- */
-const addAssignee = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertCanEdit(req, task);
-
-  const rows = await buildAssignees(req.body.assignees || req.body.user || req.body.userId, { markOwner: false });
-  if (!rows.length) throw httpError(400, 'Say who to add.');
-
-  const have = new Set((task.assignees || []).map((a) => String(a.user)));
-  const fresh = rows.filter((r) => !have.has(String(r.user)));
-  if (!fresh.length) throw httpError(409, 'They are already on this task.');
-
-  task.assignees.push(...fresh);
-  await task.save();
-
-  await engine.logActivity({
-    task: task._id, kind: 'assigned', by: req.user,
-    message: `${fullName(req.user)} added ${fresh.map((r) => r.name).filter(Boolean).join(', ')} to the task`,
-    ip: req.ip,
-  });
-  notify.assigned(task, fresh.map((r) => r.user), req.user).catch(() => {});
-
-  res.json({ task });
-});
-
-/**
- * Take somebody off a task.
- * @route DELETE /api/tasks/:id/assignees/:userId
- */
-const removeAssignee = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-  access.assertCanEdit(req, task);
-
-  const before = (task.assignees || []).length;
-  const gone = (task.assignees || []).find((a) => String(a.user) === String(req.params.userId));
-  if (!gone) throw httpError(404, 'They are not on this task.');
-  if (before === 1) {
-    throw httpError(409, 'A task needs somebody on it. Hand it over instead, or cancel the task.');
-  }
-
-  task.assignees = (task.assignees || []).filter((a) => String(a.user) !== String(req.params.userId));
-  await task.save();
-
-  await engine.logActivity({
-    task: task._id, kind: 'unassigned', by: req.user,
-    message: `${fullName(req.user)} removed ${gone.name || 'somebody'} from the task`, ip: req.ip,
-  });
-  res.json({ task });
-});
-
-/**
- * Hand a task from one person to another (section 22).
- *
- * The task keeps its id, its code and its whole history — that is the point of a
- * handover rather than "cancel and re-create". The outgoing person's row is kept
- * on the task as a former assignee would be lost otherwise, along with the hours
- * they logged and the work they did.
- *
- * @route POST /api/tasks/:id/handover
- * @param {string} req.body.to - the new assignee
- * @param {string} req.body.reason - required
- * @param {string} [req.body.from] - who to replace; default the primary
- * @param {string} [req.body.remaining] - what is left to do
- */
-const handoverTask = asyncHandler(async (req, res) => {
-  const task = await access.loadVisibleTask(req, req.params.id, { populate: false });
-
-  // The person holding the task may hand it on, and so may anyone who could
-  // edit it. An assignee handing their own work over is the common case and
-  // should not need an administrator.
-  const isMine = task.isAssignee(req.user._id);
-  if (!isMine) access.assertCanEdit(req, task);
-
-  const reason = String(req.body.reason || '').trim();
-  if (!reason) throw httpError(400, 'Say why the task is being handed over.');
-  if (!mongoose.isValidObjectId(req.body.to)) throw httpError(400, 'Say who is taking it on.');
-
-  const fromId = req.body.from && mongoose.isValidObjectId(req.body.from)
-    ? String(req.body.from)
-    : String(isMine ? req.user._id : (task.assignedTo || ''));
-
-  const outgoing = (task.assignees || []).find((a) => String(a.user) === fromId);
-  if (!outgoing) throw httpError(400, 'That person is not on this task.');
-  if (String(req.body.to) === fromId) throw httpError(400, 'That is the same person.');
-  if ((task.assignees || []).some((a) => String(a.user) === String(req.body.to))) {
-    throw httpError(409, 'They are already on this task.');
-  }
-
-  const [incoming] = await buildAssignees([{
-    user: req.body.to,
-    role: outgoing.role,
-    responsibility: outgoing.responsibility,
-    dueDate: outgoing.dueDate,
-  }], { markOwner: false });
-  if (!incoming) throw httpError(400, 'That person does not exist.');
-
-  // The incoming person starts where a new assignment starts — they have not
-  // accepted anything yet, whatever the outgoing person had reached.
-  incoming.status = 'ASSIGNED';
-  incoming.progress = outgoing.progress || 0;
-
-  task.assignees = (task.assignees || []).map((a) => (String(a.user) === fromId ? incoming : a));
-  task.handoverCount = (task.handoverCount || 0) + 1;
-  await task.save();
-
-  const outName = outgoing.name || 'somebody';
-  await engine.logActivity({
-    task: task._id,
-    kind: 'handover',
-    by: req.user,
-    message: `${fullName(req.user)} handed the task from ${outName} to ${incoming.name || 'somebody'}`,
-    note: [reason, req.body.remaining && `Remaining: ${req.body.remaining}`].filter(Boolean).join(' — '),
-    field: 'assignedTo',
-    from: outName,
-    to: incoming.name,
-    ip: req.ip,
-  });
-
-  if (req.body.remaining || reason) {
-    await TaskComment.create({
-      task: task._id,
-      author: req.user._id,
-      authorName: fullName(req.user),
-      authorRole: req.user.role,
-      context: 'handover',
-      body: [reason, req.body.remaining && `Remaining work: ${req.body.remaining}`].filter(Boolean).join('\n\n'),
-    });
-  }
-
-  notify.handedOver(task, incoming.user, { firstName: outName }, req.user, req.body.remaining).catch(() => {});
-
-  res.json({ task });
-});
-
-// ===== Employee self-service =====
-
-/**
- * The signed-in person's own tasks.
- *
- * Kept as its own route rather than a filter on the list because it is the one
- * every employee client calls on load — the web My Tasks page and the app's home
- * screen — and it should be one indexed query with no permission reasoning at
- * all.
- *
- * @route GET /api/tasks/me
- */
-const listMyTasks = asyncHandler(async (req, res) => {
-  const { status, includeDone } = req.query;
-  const filter = {
-    $or: [{ assignedTo: req.user._id }, { 'assignees.user': req.user._id }],
-    archived: { $ne: true },
-  };
-  if (status) {
-    const wanted = String(status).split(',').map((s) => normaliseStatus(s.trim())).filter(Boolean);
-    if (wanted.length) filter.status = { $in: wanted.flatMap(engine.legacyAliases) };
-  } else if (includeDone !== 'true') {
-    filter.status = { $nin: ['COMPLETED', 'CANCELLED', 'DECLINED', 'Done'] };
-  }
-
-  const tasks = await Task.find(filter)
-    .populate('project', 'name status')
-    .populate('supervisor', 'firstName lastName')
-    .sort({ dueDate: 1, createdAt: -1 })
-    .limit(300)
-    .lean();
-
-  res.json({ count: tasks.length, tasks: tasks.map(decorate) });
-});
-
-/**
- * The counts an employee's dashboard shows (section 29).
- *
- * One aggregate rather than seven list calls — the mistake that made the app's
- * launch fire twenty requests. Nothing here returns a task; it returns numbers.
- *
- * @route GET /api/tasks/me/summary
- */
-const myTaskSummary = asyncHandler(async (req, res) => {
-  const me = req.user._id;
-  const { istDateString, istDayRange } = require('../utils/istDate');
-  const today = istDayRange(istDateString(new Date()));
-  const mine = { $or: [{ assignedTo: me }, { 'assignees.user': me }], archived: { $ne: true } };
-  const openStatuses = { $nin: ['COMPLETED', 'CANCELLED', 'DECLINED', 'Done'] };
-
-  const [byStatus, dueToday, overdue, pendingApprovals, awaitingAccept, points, running] = await Promise.all([
-    Task.aggregate([{ $match: mine }, { $group: { _id: '$status', n: { $sum: 1 } } }]),
-    Task.countDocuments({ ...mine, status: openStatuses, dueDate: { $gte: today.start, $lte: today.end } }),
-    Task.countDocuments({ ...mine, status: openStatuses, dueDate: { $lt: new Date() } }),
-    Task.countDocuments({ pendingApprovers: me, archived: { $ne: true } }),
-    Task.countDocuments({ ...mine, status: { $in: ['ASSIGNED', 'Todo'] } }),
-    TaskIncentive.aggregate([
-      { $match: { user: new mongoose.Types.ObjectId(String(me)) } },
-      { $group: { _id: '$status', points: { $sum: '$points' } } },
-    ]),
-    TaskTimeEntry.findOne({ user: me, status: { $in: ['running', 'paused'] } }).lean(),
-  ]);
-
-  const counts = {};
-  for (const row of byStatus) {
-    const key = normaliseStatus(row._id) || row._id;
-    counts[key] = (counts[key] || 0) + row.n;
-  }
-  const total = Object.values(counts).reduce((t, n) => t + n, 0);
-  const completed = counts.COMPLETED || 0;
-
-  const pointsBy = Object.fromEntries(points.map((p) => [p._id, Math.round(p.points * 100) / 100]));
-
+  await TaskCategory.deleteOne({ _id: cat._id });
   res.json({
-    counts,
-    total,
-    open: total - completed - (counts.CANCELLED || 0) - (counts.DECLINED || 0),
-    completed,
-    dueToday,
-    overdue,
-    pendingApprovals,
-    awaitingAccept,
-    // On-time completion, as a plain honest percentage of completed tasks that
-    // had a deadline — not a "productivity score" (section 49 warns against
-    // inventing one).
-    incentive: { earned: pointsBy.Credited || 0, pending: pointsBy.Pending || 0 },
-    runningTimer: running ? { task: running.task, startedAt: running.startedAt, status: running.status } : null,
-  });
-});
-
-// ===== Bulk (section 44) =====
-
-/**
- * Act on many tasks at once.
- *
- * Every operation is applied task by task through the same guards a single call
- * would go through — a bulk route that wrote straight to the collection would be
- * a way around every permission and every transition rule in the module. It is
- * slower, and it is the only version that is correct.
- *
- * Partial success is reported rather than rolled back: with fifty tasks and two
- * refusals, undoing the other forty-eight helps nobody.
- *
- * @route POST /api/tasks/bulk
- * @param {string[]} req.body.ids
- * @param {string} req.body.action - 'assign'|'status'|'dueDate'|'priority'|'archive'|'supervisor'
- */
-const bulkAction = asyncHandler(async (req, res) => {
-  const { ids, action, value, note } = req.body;
-  if (!Array.isArray(ids) || !ids.length) throw httpError(400, 'Choose some tasks first.');
-  if (ids.length > 200) throw httpError(400, 'That is too many tasks at once — 200 is the limit.');
-
-  const done = [];
-  const failed = [];
-
-  for (const id of ids) {
-    try {
-      const task = await access.loadVisibleTask(req, id, { populate: false });
-      switch (action) {
-        case 'status': {
-          const to = normaliseStatus(value);
-          if (!to) throw httpError(400, 'Unknown status.');
-          await engine.transition(task, to, req.user, { note, ip: req.ip, idempotent: true });
-          break;
-        }
-        case 'assign': {
-          access.assertCanEdit(req, task);
-          const rows = await buildAssignees(value);
-          if (!rows.length) throw httpError(400, 'Say who to assign to.');
-          task.assignees = rows;
-          await task.save();
-          notify.assigned(task, rows.map((r) => r.user), req.user).catch(() => {});
-          await engine.logActivity({
-            task: task._id, kind: 'reassigned', by: req.user,
-            message: `${fullName(req.user)} reassigned the task in a bulk change`, note, ip: req.ip,
-          });
-          break;
-        }
-        case 'dueDate': {
-          access.assertCanEdit(req, task);
-          const was = task.dueDate;
-          task.dueDate = value ? new Date(value) : undefined;
-          await task.save();
-          await engine.logActivity({
-            task: task._id, kind: 'updated', by: req.user,
-            message: `${fullName(req.user)} changed the due date in a bulk change`,
-            field: 'dueDate', from: was, to: task.dueDate, note, ip: req.ip,
-          });
-          notify.edited(task, access.audienceOf(task).assignees, ['due date'], req.user).catch(() => {});
-          break;
-        }
-        case 'priority': {
-          access.assertCanEdit(req, task);
-          if (!TASK_PRIORITY.includes(value)) throw httpError(400, 'Unknown priority.');
-          task.priority = value;
-          await task.save();
-          break;
-        }
-        case 'supervisor': {
-          access.assertCanEdit(req, task);
-          if (!mongoose.isValidObjectId(value)) throw httpError(400, 'Say who supervises.');
-          task.supervisor = value;
-          await task.save();
-          break;
-        }
-        case 'archive': {
-          access.assertCanEdit(req, task);
-          task.archived = value !== false;
-          await task.save();
-          await engine.logActivity({
-            task: task._id, kind: task.archived ? 'archived' : 'restored', by: req.user,
-            message: `${fullName(req.user)} ${task.archived ? 'archived' : 'restored'} the task`, ip: req.ip,
-          });
-          break;
-        }
-        default:
-          throw httpError(400, `"${action}" is not something this can do in bulk.`);
-      }
-      done.push(id);
-    } catch (err) {
-      failed.push({ id, message: err.message });
-    }
-  }
-
-  res.json({
-    updated: done.length,
-    failed,
-    message: failed.length
-      ? `${done.length} updated, ${failed.length} could not be.`
-      : `${done.length} task${done.length === 1 ? '' : 's'} updated.`,
-  });
-});
-
-/**
- * The lists and catalogues the task forms need, in one call.
- * @route GET /api/tasks/meta
- */
-const taskMeta = asyncHandler(async (req, res) => {
-  const cfg = require('../config/taskWorkflow');
-  const Workflow = require('../models/Workflow');
-  const [workflows, templates, types] = await Promise.all([
-    Workflow.find({ active: true, activeVersion: { $ne: null } }).select('name activeVersion taskTypes').lean(),
-    TaskTemplate.find({ active: true }).select('name taskType description trigger').lean(),
-    Task.distinct('taskType'),
-  ]);
-  res.json({
-    statuses: cfg.TASK_STATUS.map((s) => ({ key: s, label: cfg.statusLabel(s) })),
-    priorities: cfg.TASK_PRIORITY,
-    columns: cfg.BOARD_COLUMNS,
-    assigneeRoles: cfg.ASSIGNEE_ROLES,
-    requirements: Object.entries(cfg.REQUIREMENT_LABELS).map(([key, label]) => ({ key, label })),
-    evidenceKinds: cfg.EVIDENCE_KINDS,
-    locationEvents: cfg.LOCATION_EVENTS,
-    geofenceRules: cfg.GEOFENCE_RULES,
-    incentiveOutcomes: Object.entries(cfg.INCENTIVE_OUTCOME_LABELS).map(([key, label]) => ({ key, label })),
-    defaultSplit: cfg.DEFAULT_INCENTIVE_SPLIT,
-    acceptWindowHours: ACCEPT_WINDOW_HOURS,
-    workflows,
-    templates,
-    taskTypes: types.filter(Boolean).sort(),
-    // The HRMS events a template can be wired to, so the template form offers
-    // the real list rather than a copy of it that goes stale.
-    triggers: require('../services/taskEvents').TRIGGERS,
-    can: {
-      manage: access.canManage(req.user),
-      configure: access.canConfigure(req.user),
-    },
+    ok: true,
+    removed: true,
+    hidden: false,
+    movedTasks: moved,
+    stillUsed,
+    message: moved
+      ? `Removed. ${moved} task${moved === 1 ? '' : 's'} moved to "${moveTo}".`
+      : 'Removed.',
   });
 });
 
 module.exports = {
   listTasks,
-  taskBoard,
+  taskCounters,
   getTask,
+  taskFeed,
   createTask,
   updateTask,
-  deleteTask,
   changeStatus,
+  addUpdate,
   acceptTask,
   declineTask,
-  startTask,
-  setChecklistItem,
-  setProgress,
-  addAssignee,
-  removeAssignee,
-  handoverTask,
-  listMyTasks,
-  myTaskSummary,
-  bulkAction,
+  delegateTask,
+  addSubtasks,
+  setSubtask,
+  removeSubtask,
+  deleteTask,
+  downloadFile,
+  downloadUpdateVoice,
   taskMeta,
-  // Shared with the other task controllers and the workers.
-  buildAssignees,
-  resolveCompany,
+  listCategories,
+  createCategory,
+  renameCategory,
+  deleteCategory,
+  countMyOpenTasks,
+  // shared with the dashboard controller
+  buildQuery,
+  countersFor,
   decorate,
-  readPosition,
-  onCompleted,
-  USER_FIELDS,
+  parseBody,
+  storeFiles,
+  storeVoiceNote,
+  cleanReminders,
+  cleanRepeat,
+  cleanLinks,
+  buildAssignees,
+  personName,
 };

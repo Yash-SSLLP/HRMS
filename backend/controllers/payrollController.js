@@ -2935,14 +2935,9 @@ const giveHike = asyncHandler(async (req, res) => {
   }
   await profile.save();
 
-  // The paperwork a revision drags behind it — the HRIS update, the payroll
-  // change, the letter — from whatever task templates are wired to this event.
-  // Fire-and-forget: the revision is recorded either way, and a task that
-  // cannot be made must never fail a CTC change that has already been saved.
-  require('../services/taskEvents').employeePromoted(profile, req.user, {
-    from: prevCtc.toLocaleString('en-IN'),
-    to: newCtc.toLocaleString('en-IN'),
-  }).catch(() => {});
+  // The paperwork a revision drags behind it is set from a saved task template
+  // rather than raised automatically — the event hook went with the
+  // 2026-09-21 task rework (see employeeController.createEmployee).
 
   res.json({ profile, applied: effectiveNow, entry });
 });

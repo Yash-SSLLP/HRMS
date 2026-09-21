@@ -236,6 +236,52 @@ const settingSchema = new mongoose.Schema(
       },
     },
 
+    // ===== Tasks =====
+    // The handful of company-wide choices the task module makes. Everything
+    // else about a task is decided by the person setting it (config/tasks.js).
+    tasks: {
+      // What a new task is worth before the assigner changes it. 100 by
+      // default — a round number to divide, so half a job is 50 (user
+      // decision, 2026-09-21).
+      defaultPoints: { type: Number, default: 100, min: 0 },
+
+      // DOES FINISHING A TASK PAY? Off by default, and deliberately so.
+      //
+      // Points are the portal's one currency and they are settled in rupees
+      // (rupeePerPoint above). Crediting every completed task into that pool
+      // automatically would turn a tick on a to-do list into money owed,
+      // silently, at whatever rate somebody typed into the assign form. So the
+      // figure is always RECORDED — it scores the dashboard, the leaderboard
+      // and each person's report — and joins the payable pool only when a
+      // SuperAdmin turns this on.
+      //
+      // When it is on, completing a task writes an IncentiveCredit and
+      // reopening the task takes it back (services/taskPoints).
+      pointsToPool: { type: Boolean, default: false },
+
+      // The reminders a task gets when the assigner sets none of their own.
+      // Empty means no chasing at all, which is a defensible choice and is why
+      // this is a list rather than a boolean.
+      defaultReminders: {
+        type: [
+          new mongoose.Schema(
+            {
+              channel: { type: String, default: 'APP' },
+              amount: { type: Number, default: 1 },
+              unit: { type: String, default: 'DAYS' },
+              when: { type: String, default: 'BEFORE' },
+            },
+            { _id: false }
+          ),
+        ],
+        default: () => ([{ channel: 'APP', amount: 1, unit: 'DAYS', when: 'BEFORE' }]),
+      },
+
+      // The evening summary — "you have 4 tasks pending" — as "HH:mm" in
+      // portal time. Blank switches it off.
+      dailyDigestAt: { type: String, default: '18:00', trim: true },
+    },
+
     // Letterhead branding, uploaded by a SuperAdmin from Admin → Email & Letter
     // Templates and applied to every generated document (offer, appointment,
     // payslip). Images are GridFS keys, same as User.photo — see services/storage.js.

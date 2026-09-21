@@ -235,19 +235,19 @@ export const adminNav = [
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [
     { to: '/admin/projects', label: 'Projects', icon: FiFolder, perm: 'projects.manage' },
-    { to: '/admin/tasks', label: 'Tasks', icon: FiList, perm: 'tasks.manage',
+    // NO `perm` — everybody can set a task, and everybody has tasks. What
+    // `tasks.manage` buys is the All Tasks tab and the team dashboard, which
+    // the page itself decides from GET /tasks/meta (2026-09-21 rework).
+    // The separate Task Workflows page went with the workflow builder;
+    // templates and repeating schedules are tabs here now.
+    { to: '/admin/tasks', label: 'Tasks', icon: FiList,
       badge: 'taskApproval',
-      keywords: ['task', 'tasks', 'to do', 'todo', 'work', 'assignment', 'kanban', 'board', 'approval', 'submit', 'overdue', 'workload', 'timesheet'],
-      tabs: [{ id: 'list', label: 'List' }, { id: 'board', label: 'Board' },
-        { id: 'approvals', label: 'Approvals' }, { id: 'workload', label: 'Workload' },
-        { id: 'incentives', label: 'Incentives' }] },
-    // How every FUTURE task is routed, rather than any single piece of work —
-    // its own page behind its own 'tasks.workflow' grant, for the same reason
-    // the leave approval hierarchy is separate from deciding leave.
-    { to: '/admin/task-workflows', label: 'Task Workflows', icon: FiGitBranch, perm: 'tasks.workflow',
-      keywords: ['workflow', 'workflows', 'template', 'templates', 'recurring', 'repeat', 'route', 'approval chain', 'task'],
-      tabs: [{ id: 'workflows', label: 'Workflows' }, { id: 'templates', label: 'Templates' },
-        { id: 'recurring', label: 'Recurring' }] },
+      keywords: ['task', 'tasks', 'to do', 'todo', 'work', 'assignment', 'assign', 'delegate',
+        'request', 'overdue', 'template', 'templates', 'recurring', 'repeat', 'reminder',
+        'voice note', 'dashboard', 'points'],
+      tabs: [{ id: 'mine', label: 'My Tasks' }, { id: 'delegated', label: 'Delegated' },
+        { id: 'all', label: 'All Tasks' }, { id: 'requests', label: 'Requests' },
+        { id: 'templates', label: 'Templates' }, { id: 'dashboard', label: 'Dashboard' }] },
     { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage', badge: 'docswap' },
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
       tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' }] },

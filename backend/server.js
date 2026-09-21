@@ -170,10 +170,10 @@ app.use('/api/companies', require('./routes/companyRoutes'));
 
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/projects', require('./routes/projectRoutes'));
+// Templates, the directory, repeating schedules and the dashboard are all
+// inside this one router now — the separate /api/task-workflows mount went with
+// the workflow builder in the 2026-09-21 rework.
 app.use('/api/tasks', require('./routes/taskRoutes'));
-// Workflows, templates and recurring schedules — the standing configuration
-// behind its own 'tasks.workflow' capability, kept apart from the tasks themselves.
-app.use('/api/task-workflows', require('./routes/taskWorkflowRoutes'));
 app.use('/api/recruitment', require('./routes/recruitmentRoutes'));
 
 app.use('/api/assets', require('./routes/assetRoutes'));

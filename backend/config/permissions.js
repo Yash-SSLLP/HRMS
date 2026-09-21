@@ -126,14 +126,16 @@ const PERMISSIONS = [
 
   // Work management
   { key: 'projects.manage', label: 'Projects', group: 'Work Management' },
-  { key: 'tasks.manage', label: 'Tasks', group: 'Work Management' },
-  // How every FUTURE task is routed: the workflow builder, the templates, and
-  // the recurring schedules. Its own key rather than part of tasks.manage for
-  // the same reason leaveHierarchy.manage is separate from leave.manage —
-  // running today's tasks is a day's work, and deciding who approves what
-  // from now on is a standing decision. An HR Manager does NOT get it by being
-  // HR; a Super Admin ticks it per account.
-  { key: 'tasks.workflow', label: 'Task workflows, templates & recurrence', group: 'Work Management' },
+  // EVERYBODY can set a task; this is not the grant that lets them. Since the
+  // 2026-09-21 rework assigning is open to all — narrowed only by direction,
+  // which is the org chart's business rather than a capability's (see
+  // services/taskAccess). What `tasks.manage` buys is the wide view: All
+  // Tasks, the team dashboard, and removing a category everyone can see.
+  //
+  // 'tasks.workflow' was retired with it. It gated a workflow builder that no
+  // longer exists; templates and repeating schedules are now anybody's to make,
+  // because saving a task you will set again is not a standing decision.
+  { key: 'tasks.manage', label: 'Tasks — see every task & the team dashboard', group: 'Work Management' },
   { key: 'assets.manage', label: 'Assets', group: 'Work Management' },
   { key: 'documents.manage', label: 'Documents', group: 'Work Management' },
 

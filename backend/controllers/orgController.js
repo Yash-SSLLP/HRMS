@@ -14,6 +14,49 @@ const { viewerCompanyScope } = require('../utils/employeeScope');
 const { hasDeparted } = require('../utils/departed');
 
 /**
+ * How one branch is laid out, left to right (top to bottom on the phone).
+ *
+ * AN ARRANGED BRANCH KEEPS ITS ARRANGEMENT. `node.order` is the position a
+ * SuperAdmin gave a card inside its OWN branch — resolved from
+ * User.orgChartOrder, and only while the card is still in the branch it was
+ * given for — so a card that has one always sits where it was put. A card
+ * without one, somebody who joined after the branch was arranged, falls in
+ * behind them under the default rules below rather than silently displacing
+ * anyone. Two numbers from different branches are never compared: this only
+ * ever sorts one sibling list at a time.
+ *
+ * THE DEFAULT, for a branch nobody has arranged: the executives bookend it —
+ * CEO at the left end, MD at the right — then the people with no department,
+ * then everybody else by name. The executive rule only bites at the top level,
+ * which is the only place a CEO or MD appears.
+ *
+ * This used to live in the web page (`sortTree`), which left the phone showing
+ * a different order for the same chart. It is one rule now, and it is here.
+ */
+const compareSiblings = (a, b) => {
+  const ra = Number.isFinite(a.order) ? a.order : null;
+  const rb = Number.isFinite(b.order) ? b.order : null;
+  if (ra !== null || rb !== null) {
+    if (ra === null) return 1; // unarranged cards go behind the arranged ones
+    if (rb === null) return -1;
+    if (ra !== rb) return ra - rb;
+  }
+  // -1 pulls to the left end, +1 pushes to the right end, 0 is everybody else.
+  const end = (n) => (n.role === 'CEO' ? -1 : n.role === 'MD' ? 1 : 0);
+  if (end(a) !== end(b)) return end(a) - end(b);
+  const assigned = (n) => (n.department && n.department.trim() ? 1 : 0);
+  if (assigned(a) !== assigned(b)) return assigned(a) - assigned(b);
+  return (a.name || '').localeCompare(b.name || '');
+};
+
+/** Apply `compareSiblings` to a branch and to every branch beneath it. */
+const sortBranch = (list) => {
+  list.sort(compareSiblings);
+  for (const n of list) if (n.reports?.length) sortBranch(n.reports);
+  return list;
+};
+
+/**
  * Return the reporting hierarchy as a forest of nodes for the org-chart view.
  *
  * COMPANIES. Every node carries the company it belongs to, and `?company=<id>`
@@ -30,10 +73,16 @@ const { hasDeparted } = require('../utils/departed');
  * read every other company's people straight off it while the employee
  * directory correctly refused them.
  *
+ * ORDER WITHIN A BRANCH. Cards that share a manager are drawn in the order a
+ * SuperAdmin arranged them (User.orgChartOrder), and in the chart's own order
+ * where nobody has — executives bookending the top row, then the people with no
+ * department, then by name. See `compareSiblings` below. PUT /chart/order is
+ * what arranges a branch.
+ *
  * @route GET /api/org/chart
  * @param {string} [req.query.company] - Company id to narrow the chart to.
  * @returns {{roots: Object[], companies: Object[]}} each node
- *   {id, profileId, name, designation, department, companyId, companyName, role, managerId, reports[]}
+ *   {id, profileId, name, designation, department, companyId, companyName, role, managerId, order, reports[]}
  */
 // GET /api/org/chart
 // Builds a read-only reporting hierarchy from EmployeeProfile records.
@@ -66,7 +115,7 @@ const orgChart = asyncHandler(async (req, res) => {
 
   const profiles = await EmployeeProfile.find(filter)
     .select('user reportingManager designation department company dateOfExit')
-    .populate('user', 'firstName lastName email photo role isActive')
+    .populate('user', 'firstName lastName email photo role isActive orgChartOrder')
     .populate('company', 'name')
     .lean();
 
@@ -80,7 +129,9 @@ const orgChart = asyncHandler(async (req, res) => {
     managerOfUser.set(String(p.user._id), p.reportingManager ? String(p.reportingManager) : null);
   }
 
-  // Build one node per employee, keyed by the user id.
+  // Build one node per employee, keyed by the user id. The stored positions are
+  // collected alongside and applied further down, once every branch is settled.
+  const savedOrder = new Map();
   const nodes = new Map();
   for (const p of profiles) {
     if (!p.user) continue; // skip orphaned profiles with no linked user
@@ -90,6 +141,7 @@ const orgChart = asyncHandler(async (req, res) => {
     if (hasDeparted(p.user, p)) continue;
     const id = p.user._id.toString();
     const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim();
+    savedOrder.set(id, p.user.orgChartOrder || null);
     nodes.set(id, {
       id,
       profileId: p._id.toString(), // EmployeeProfile id — used by SuperAdmin to reassign the manager
@@ -101,6 +153,8 @@ const orgChart = asyncHandler(async (req, res) => {
       hasPhoto: Boolean(p.user.photo),
       role: p.user.role,
       managerId: p.reportingManager ? p.reportingManager.toString() : null,
+      // Filled in below, once the branch this card lands in is settled.
+      order: null,
       reports: [],
     });
   }
@@ -112,7 +166,7 @@ const orgChart = asyncHandler(async (req, res) => {
   // the node as read-only (you don't reassign whom the CEO reports to).
   const hiddenSet = new Set(hidden.map(String));
   const execs = await User.find({ role: { $in: ['CEO', 'MD'] }, isActive: true })
-    .select('firstName lastName photo role companies')
+    .select('firstName lastName photo role companies orgChartOrder')
     .lean();
   // Which company an exec belongs to is their OWN assignment list, not a
   // profile they do not have. An exec with no list covers every company, so
@@ -130,6 +184,7 @@ const orgChart = asyncHandler(async (req, res) => {
     const id = u._id.toString();
     if (nodes.has(id) || hiddenSet.has(id)) continue;
     if (!execCovers(u)) continue;
+    savedOrder.set(id, u.orgChartOrder || null);
     nodes.set(id, {
       id,
       profileId: null,
@@ -142,6 +197,7 @@ const orgChart = asyncHandler(async (req, res) => {
       hasPhoto: Boolean(u.photo),
       role: u.role,
       managerId: null,
+      order: null, // see the resolve pass below
       reports: [],
     });
   }
@@ -168,6 +224,20 @@ const orgChart = asyncHandler(async (req, res) => {
   for (const node of nodes.values()) {
     if (!node.profileId) continue; // execs have no reporting line of their own
     node.managerId = liveManagerOf(node.id);
+  }
+
+  // NOW RESOLVE EACH CARD'S POSITION, and not a line earlier: a saved position
+  // belongs to ONE branch (User.orgChartOrder.branch), and the branch a card
+  // actually lands in is only settled by the walk above — somebody whose manager
+  // has left climbs to a different one. A position given for a branch this card
+  // is no longer in is simply not applied, which is how a reporting-line change
+  // drops a stale arrangement without anything having to clean up after it.
+  for (const node of nodes.values()) {
+    const saved = savedOrder.get(node.id);
+    node.order = saved && Number.isFinite(saved.index)
+      && String(saved.branch || '') === String(node.managerId || '')
+      ? saved.index
+      : null;
   }
 
   // Link each node to its manager; collect roots.
@@ -206,6 +276,12 @@ const orgChart = asyncHandler(async (req, res) => {
     }
   }
 
+  // LAY EACH BRANCH OUT. Everything above is the hierarchy as the data has it;
+  // this is where it is put in order — the top row and every branch under it,
+  // by the one rule in compareSiblings. It runs here, after the cycle guard has
+  // finished rebuilding `reports`, so nothing it sorts can still change.
+  sortBranch(safeRoots);
+
   // The dropdown's options travel with the chart, so the client needs one call.
   // Narrowed to what this viewer may pick, for the same reason as above.
   const companyQuery = scope ? { _id: { $in: scope.ids } } : {};
@@ -218,4 +294,55 @@ const orgChart = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { orgChart };
+/**
+ * Arrange one branch: the left-to-right order its cards are drawn in.
+ *
+ * The whole branch is sent, not the one card that moved, and every id in it is
+ * given a position — see User.orgChartOrder for why a half-arranged branch is
+ * not a thing. Nothing about the hierarchy changes here: this is where the cards
+ * sit beside each other, never who reports to whom.
+ *
+ * `branch` is the manager they all report to, or null for the top row, and it is
+ * STORED WITH each position: the chart only honours a position while the person
+ * is still in the branch it was given for, so moving somebody under a new
+ * manager drops their old place instead of carrying it into a team they have
+ * just joined.
+ *
+ * A branch arranged while the chart is FILTERED to one company only carries
+ * positions for the cards that were on screen. That is the honest outcome — the
+ * operator arranged what they could see — and the cards they could not see keep
+ * whatever they had, so they appear after the arranged ones on the full chart.
+ *
+ * @route PUT /api/org/chart/order  (SuperAdmin)
+ * @param {string[]} req.body.order - user ids, in the order they should appear
+ * @param {string|null} [req.body.branch] - the manager they share; null = top row
+ * @returns {{branch: string|null, order: string[]}}
+ */
+const setChartOrder = asyncHandler(async (req, res) => {
+  const ids = Array.isArray(req.body.order) ? req.body.order.map((x) => String(x)) : [];
+  if (ids.length === 0 || ids.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+    res.status(400);
+    throw new Error('Send the branch as a list of people, in the order they should appear.');
+  }
+  if (new Set(ids).size !== ids.length) {
+    res.status(400);
+    throw new Error('The same person appears twice in that branch.');
+  }
+  // An absent or empty `branch` is the TOP ROW — the one branch that genuinely
+  // has no manager. A junk id is REFUSED rather than quietly read as the top
+  // row: it could only come from a client bug, and storing it would make every
+  // position in the branch unmatchable, so the arrangement would never appear
+  // at all and nobody would know why.
+  const asked = req.body.branch;
+  const branch = asked && mongoose.Types.ObjectId.isValid(String(asked)) ? String(asked) : null;
+  if (asked && !branch) {
+    res.status(400);
+    throw new Error('That is not a manager this branch could belong to.');
+  }
+  await User.bulkWrite(ids.map((id, i) => ({
+    updateOne: { filter: { _id: id }, update: { $set: { orgChartOrder: { branch, index: i } } } },
+  })));
+  res.json({ branch, order: ids });
+});
+
+module.exports = { orgChart, setChartOrder };

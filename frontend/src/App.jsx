@@ -70,14 +70,15 @@ const AdminWorkLocations = lazy(() => import('./pages/AdminWorkLocations.jsx'));
 const AdminCompanies = lazy(() => import('./pages/AdminCompanies.jsx'));
 const AdminOverview = lazy(() => import('./pages/AdminOverview.jsx'));
 const AdminProjects = lazy(() => import('./pages/AdminProjects.jsx'));
-const AdminTasks = lazy(() => import('./pages/AdminTasks.jsx'));
+// ONE page for both portals since the 2026-09-21 rework. The difference
+// between an admin and an employee here is which TABS they get, not which page
+// they open — see pages/Tasks.jsx.
+const Tasks = lazy(() => import('./pages/Tasks.jsx'));
 const TaskDetail = lazy(() => import('./pages/TaskDetail.jsx'));
-const AdminTaskWorkflows = lazy(() => import('./pages/AdminTaskWorkflows.jsx'));
 const AdminRecruitment = lazy(() => import('./pages/AdminRecruitment.jsx'));
 const AdminAssets = lazy(() => import('./pages/AdminAssets.jsx'));
 const AdminPerformance = lazy(() => import('./pages/AdminPerformance.jsx'));
 const AdminTraining = lazy(() => import('./pages/AdminTraining.jsx'));
-const EmployeeTasks = lazy(() => import('./pages/EmployeeTasks.jsx'));
 const EmployeeAssets = lazy(() => import('./pages/EmployeeAssets.jsx'));
 const EmployeeGoals = lazy(() => import('./pages/EmployeeGoals.jsx'));
 const AdminExpenses = lazy(() => import('./pages/AdminExpenses.jsx'));
@@ -289,11 +290,10 @@ export default function App() {
         <Route path="travel" element={<AdminTravel />} />
         <Route path="documents" element={<AdminDocuments />} />
         <Route path="projects" element={<AdminProjects />} />
-        <Route path="tasks" element={<AdminTasks />} />
+        <Route path="tasks" element={<Tasks base="/admin/tasks" />} />
         {/* The same detail page both portals use; `base` keeps a link inside
             the portal it was followed from. */}
         <Route path="tasks/:id" element={<TaskDetail base="/admin/tasks" />} />
-        <Route path="task-workflows" element={<AdminTaskWorkflows />} />
         <Route path="recruitment" element={<AdminRecruitment />} />
         {/* CEO/MD take interview rounds too, and have no employee portal to
             record them from — same page as /employee/interviews, which
@@ -374,7 +374,7 @@ export default function App() {
         <Route path="my-incentive" element={<EmployeeIncentive />} />
         <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
-        <Route path="tasks" element={<EmployeeTasks />} />
+        <Route path="tasks" element={<Tasks base="/employee/tasks" />} />
         <Route path="tasks/:id" element={<TaskDetail base="/employee/tasks" />} />
         <Route path="assets" element={<EmployeeAssets />} />
         {/* Asset register for holders of the standalone Assets grant who have

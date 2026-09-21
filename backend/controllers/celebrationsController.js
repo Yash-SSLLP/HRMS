@@ -782,7 +782,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   // it, and a contributor who is not the primary assignee still has the deadline.
   // Archived tasks are out, as they are everywhere else.
   const Task = require('../models/Task');
-  const { normaliseStatus, statusLabel, isTerminal } = require('../config/taskWorkflow');
+  const { normaliseStatus, statusLabel, isTerminal } = require('../config/tasks');
   const tasks = await Task.find({
     $or: [
       { assignedTo: req.user._id },

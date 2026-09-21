@@ -1,215 +1,239 @@
 /**
- * The recurring-task generator (section 23).
+ * Minting the occurrences of a repeating task.
  *
- * Wakes every fifteen minutes, finds the schedules that are due, and creates the
- * next instance of each one from its template. Twelve monthly tasks in a year
- * are twelve ordinary Tasks, each with its own code, deadline and history,
- * pointing back at the schedule through `Task.recurringTask`.
+ * REWRITTEN 2026-09-21. "90% of the tasks you give are repetitive" — the daily
+ * invoice, Friday's report, the monthly stock count. A RecurringTask is the
+ * schedule; this turns it into ordinary Tasks, one per occurrence, which are
+ * then worked, scored and reported exactly like a one-off. Nothing else in the
+ * module knows recurrence exists.
  *
- * IT CANNOT MINT THE SAME DAY TWICE, and not because the worker is careful.
- * Every generated task carries `occurrenceKey` — the IST day the occurrence is
- * FOR — and Task has a UNIQUE index on (recurringTask, occurrenceKey). A
- * restart mid-sweep, two API instances, or a clock stepping backwards all end
- * with the database refusing the duplicate, which this file then treats as "it
- * already exists" rather than as an error. Idempotence in the schema beats
- * idempotence in a function.
+ * THE OCCURRENCE KEY IS THE WHOLE SAFETY MECHANISM. Every minted task carries
+ * `occurrenceKey` — the IST day it is FOR — under a UNIQUE compound index with
+ * `recurringTask` (models/Task). A worker that restarts, two server instances,
+ * a catch-up over a week the machine was down: all of them try to insert a key
+ * that already exists and get a duplicate-key error instead of a second copy of
+ * Monday's task. Idempotence by database constraint rather than by remembering
+ * to check — the only kind that survives a redeploy at the wrong moment.
+ *
+ * IT CATCHES UP, BUT NOT FOREVER. A schedule that has not run for a month mints
+ * the occurrences it missed, capped at CATCHUP_DAYS. Uncapped, restoring a
+ * backup from last quarter would hand somebody ninety tasks in one push — which
+ * is very close to the trap this module's first version fell into, when a
+ * backlog sweep fired 51 overdue notifications on day one.
  */
 const RecurringTask = require('../models/RecurringTask');
-const TaskTemplate = require('../models/TaskTemplate');
 const Task = require('../models/Task');
-const { nextOccurrence, occurrenceKeyFor } = require('../models/RecurringTask');
-const { buildTaskFromTemplate } = require('./taskTemplates');
-const engine = require('./taskEngine');
-const flow = require('./taskWorkflow');
+const TaskUpdate = require('../models/TaskUpdate');
 const notify = require('./taskNotify');
+const { FREQUENCY } = require('../config/tasks');
 
-const POLL_INTERVAL_MS = 15 * 60 * 1000;
+/** How far back a sleeping schedule may catch up. See the docblock. */
+const CATCHUP_DAYS = 7;
+/** How often the sweep runs. A schedule is never more urgent than this. */
+const TICK_MS = 15 * 60 * 1000;
+
+const IST = 'Asia/Kolkata';
+
+/** "2026-09-21" for a date, in IST — the occurrence key's format. */
+function occurrenceKeyFor(date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: IST, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(date));
+}
+
+/** A date at the schedule's time of day, in the server's zone. */
+function atTime(date, hhmm = '18:00') {
+  const [h, m] = String(hhmm).split(':').map((n) => parseInt(n, 10));
+  const d = new Date(date);
+  d.setHours(Number.isFinite(h) ? h : 18, Number.isFinite(m) ? m : 0, 0, 0);
+  return d;
+}
+
+const addDays = (d, n) => {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+};
+
+/** Does this schedule fall due on this day? */
+function fallsOn(schedule, day) {
+  switch (schedule.frequency) {
+    case FREQUENCY.DAILY:
+      return true;
+    case FREQUENCY.WEEKLY: {
+      const days = schedule.weekdays?.length ? schedule.weekdays : [new Date(schedule.startDate).getDay()];
+      return days.includes(day.getDay());
+    }
+    case FREQUENCY.MONTHLY: {
+      const want = schedule.monthDay || new Date(schedule.startDate).getDate();
+      // 29–31 clamp to the last day of a short month, so a "31st" schedule
+      // still fires in February rather than silently skipping it.
+      const lastOfMonth = new Date(day.getFullYear(), day.getMonth() + 1, 0).getDate();
+      return day.getDate() === Math.min(want, lastOfMonth);
+    }
+    case FREQUENCY.YEARLY: {
+      const wantM = (schedule.month || new Date(schedule.startDate).getMonth() + 1) - 1;
+      const wantD = schedule.monthDay || new Date(schedule.startDate).getDate();
+      const lastOfMonth = new Date(day.getFullYear(), wantM + 1, 0).getDate();
+      return day.getMonth() === wantM && day.getDate() === Math.min(wantD, lastOfMonth);
+    }
+    default:
+      return false;
+  }
+}
 
 /**
- * Create the next instance of one schedule, if one is due.
+ * The deadline of the FIRST occurrence of a schedule.
  *
- * @param {object} rule - a RecurringTask document
- * @param {object} [opts]
- * @param {boolean} [opts.force] - make the next one now, whatever the clock says
- * @param {object} [opts.actor] - who asked (for a manual run)
- * @returns {Promise<object|null>} the task, or null when nothing was due
+ * Used by the create path so a freshly-repeating task has a date on it
+ * immediately, rather than sitting dateless until the worker next wakes.
  */
-async function generateOne(rule, opts = {}) {
-  const now = new Date();
-
-  if (!rule.active && !opts.force) return null;
-  if (rule.maxOccurrences && rule.generatedCount >= rule.maxOccurrences) return null;
-  if (rule.endsOn && now > new Date(rule.endsOn) && !opts.force) return null;
-
-  // Which occurrence are we making? The next one at or after whatever we last
-  // made — not "now" — so a worker that was down for a day still catches up
-  // rather than silently skipping the day it missed.
-  const from = rule.lastGeneratedAt
-    ? new Date(new Date(rule.lastGeneratedAt).getTime() + 60000)
-    : new Date(rule.startsOn);
-  const occurrence = nextOccurrence(rule, from);
-  if (!occurrence) return null;
-
-  // Not yet, unless it is inside the lead time (a monthly audit that appears a
-  // week early is useful) or somebody asked for it by hand.
-  const dueAt = occurrence.getTime() - (rule.leadDays || 0) * 86400000;
-  if (!opts.force && dueAt > now.getTime()) {
-    if (!rule.nextRunAt || rule.nextRunAt.getTime() !== occurrence.getTime()) {
-      rule.nextRunAt = occurrence;
-      await rule.save();
-    }
-    return null;
+function firstDueDate(schedule) {
+  const start = new Date(schedule.startDate || Date.now());
+  for (let i = 0; i < 400; i += 1) {
+    const day = addDays(start, i);
+    if (fallsOn(schedule, day)) return atTime(day, schedule.time);
   }
+  return atTime(start, schedule.time);
+}
 
-  const tpl = await TaskTemplate.findById(rule.template);
-  if (!tpl) {
-    console.error(`Recurring "${rule.name}": its template is gone; deactivating the schedule.`);
-    rule.active = false;
-    await rule.save();
-    return null;
-  }
-
-  const key = occurrenceKeyFor(occurrence);
-
-  // Cheap pre-check so the common case does not rely on catching an error. The
-  // unique index is still what guarantees it.
-  const already = await Task.findOne({ recurringTask: rule._id, occurrenceKey: key }).select('_id').lean();
-  if (already) {
-    rule.lastOccurrenceKey = key;
-    rule.lastGeneratedAt = occurrence;
-    rule.nextRunAt = nextOccurrence(rule, new Date(occurrence.getTime() + 60000));
-    await rule.save();
-    return null;
-  }
-
-  const fields = await buildTaskFromTemplate(tpl, {
-    actor: opts.actor || { _id: rule.createdBy },
-    subject: rule.subject,
-    at: occurrence,
-  });
-
-  const { subtasks, workflow, ...taskFields } = fields;
-
-  const task = new Task({
-    ...taskFields,
-    createdBy: rule.createdBy,
-    company: taskFields.company || rule.company,
-    recurringTask: rule._id,
-    occurrenceKey: key,
-  });
-
-  if (workflow) {
-    try {
-      await flow.start(task, workflow);
-    } catch (err) {
-      // A workflow that cannot start must not stop the task existing — the work
-      // still has to be done, and an unrouted task is far better than none.
-      console.error(`Recurring "${rule.name}": workflow could not start — ${err.message}`);
-    }
-  }
-
+/** Build one occurrence from a schedule. Returns null if it already exists. */
+async function mintOccurrence(schedule, dueDate) {
+  const occurrenceKey = occurrenceKeyFor(dueDate);
   try {
-    await task.save();
+    const task = await Task.create({
+      title: schedule.title,
+      description: schedule.description,
+      category: schedule.category,
+      company: schedule.company,
+      createdBy: schedule.createdBy,
+      createdByName: schedule.createdByName,
+      assignees: (schedule.assignees || []).map((u) => ({ user: u })),
+      loopUsers: schedule.loopUsers,
+      priority: schedule.priority,
+      points: schedule.points,
+      dueDate,
+      // Copied, not referenced: explaining the weekly report once is the whole
+      // saving, and the recording has to be on the row the doer opens.
+      voiceNote: schedule.voiceNote,
+      links: schedule.links,
+      reminders: schedule.reminders,
+      repeat: {
+        frequency: schedule.frequency,
+        weekdays: schedule.weekdays,
+        monthDay: schedule.monthDay,
+        month: schedule.month,
+        time: schedule.time,
+      },
+      recurringTask: schedule._id,
+      occurrenceKey,
+    });
+
+    await TaskUpdate.create({
+      task: task._id,
+      kind: 'CREATED',
+      byName: 'System',
+      to: task.status,
+      note: `Raised automatically — ${String(schedule.frequency).toLowerCase()} task.`,
+      system: true,
+    });
+
+    notify.assigned(task, { _id: schedule.createdBy, firstName: schedule.createdByName || 'Your manager' })
+      .catch((e) => console.error('recurring task notify failed:', e.message));
+
+    return task;
   } catch (err) {
-    if (err && err.code === 11000) {
-      // Somebody else won the race. Exactly what the index is for.
-      return null;
-    }
+    // 11000 = the unique index did its job. Not an error: it means somebody
+    // (another instance, an earlier run) already minted this day.
+    if (err.code === 11000) return null;
     throw err;
   }
-
-  rule.lastOccurrenceKey = key;
-  rule.lastGeneratedAt = occurrence;
-  rule.generatedCount = (rule.generatedCount || 0) + 1;
-  rule.nextRunAt = nextOccurrence(rule, new Date(occurrence.getTime() + 60000));
-  await rule.save();
-
-  await engine.logActivity({
-    task: task._id,
-    kind: 'created',
-    by: opts.actor,
-    system: !opts.actor,
-    message: `Created automatically from the schedule "${rule.name}"`,
-    refModel: 'RecurringTask',
-    refId: rule._id,
-  });
-
-  // The subtasks the template asked for.
-  for (const st of subtasks || []) {
-    if (!String(st.title || '').trim()) continue;
-    const child = new Task({
-      title: st.title,
-      description: st.description,
-      parentTask: task._id,
-      department: task.department,
-      company: task.company,
-      priority: st.priority || task.priority,
-      dueDate: st.dueDate || task.dueDate,
-      assignees: (st.assignees || []).map((u, i) => ({ user: u, role: i === 0 ? 'Owner' : 'Contributor' })),
-      supervisor: task.supervisor,
-      createdBy: rule.createdBy,
-    });
-    await child.save();
-  }
-  if ((subtasks || []).length) await engine.recomputeRollups(task._id);
-
-  if ((task.assignees || []).length) {
-    notify.assigned(task, task.assignees.map((a) => a.user), opts.actor || null).catch(() => {});
-  }
-
-  await TaskTemplate.updateOne({ _id: tpl._id }, { $inc: { usageCount: 1 } });
-
-  return task;
 }
 
-/**
- * One pass over every schedule that is due.
- *
- * `nextRunAt` is what the query filters on, so a hundred dormant schedules cost
- * one indexed lookup rather than a hundred date computations.
- * @returns {Promise<{created:number}>}
- */
-async function tick() {
-  try {
-    const now = new Date();
-    const due = await RecurringTask.find({
-      active: true,
-      $or: [{ nextRunAt: { $lte: now } }, { nextRunAt: null }],
-    }).limit(200);
+/** Mint everything one schedule owes, up to today. */
+async function runSchedule(schedule, now = new Date()) {
+  const made = [];
+  const start = new Date(schedule.startDate);
+  if (start > now) return made;
+  if (schedule.until && new Date(schedule.until) < now) {
+    // Expired. Switch it off so the sweep stops looking at it.
+    await RecurringTask.updateOne({ _id: schedule._id }, { $set: { isActive: false } });
+    return made;
+  }
 
-    let created = 0;
-    for (const rule of due) {
-      try {
-        // A catch-up loop: a worker that was down for a week makes the instances
-        // it missed rather than only the latest. Capped, so a schedule with a
-        // start date years ago cannot produce a thousand tasks in one tick.
-        for (let i = 0; i < 10; i += 1) {
-          const task = await generateOne(rule);
-          if (!task) break;
-          created += 1;
-        }
-      } catch (err) {
-        console.error(`Recurring task "${rule.name}" failed:`, err.message);
+  // The window: from the later of the start date and the catch-up floor, to
+  // today. Never further back — see the docblock.
+  const floor = addDays(now, -CATCHUP_DAYS);
+  let cursor = start > floor ? new Date(start) : floor;
+  cursor.setHours(0, 0, 0, 0);
+
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  while (cursor <= end) {
+    if (fallsOn(schedule, cursor)) {
+      if (!schedule.until || cursor <= new Date(schedule.until)) {
+        const task = await mintOccurrence(schedule, atTime(cursor, schedule.time));
+        if (task) made.push(task);
       }
     }
-
-    if (created) console.log(`Recurring tasks: created ${created}`);
-    return { created };
-  } catch (err) {
-    console.error('Task recurrence worker tick failed:', err.message);
-    return { created: 0 };
+    cursor = addDays(cursor, 1);
   }
+
+  if (made.length) {
+    await RecurringTask.updateOne(
+      { _id: schedule._id },
+      {
+        $set: { lastRunAt: now, lastOccurrenceKey: occurrenceKeyFor(made[made.length - 1].dueDate) },
+        $inc: { generatedCount: made.length },
+      }
+    );
+  } else {
+    await RecurringTask.updateOne({ _id: schedule._id }, { $set: { lastRunAt: now } });
+  }
+  return made;
 }
 
-/**
- * Start the generator: a catch-up tick shortly after boot, then every quarter
- * of an hour.
- * @returns {void}
- */
+/** One sweep over every live schedule. */
+async function tick() {
+  const now = new Date();
+  let minted = 0;
+  try {
+    const schedules = await RecurringTask.find({ isActive: true, startDate: { $lte: now } }).lean();
+    for (const schedule of schedules) {
+      try {
+        minted += (await runSchedule(schedule, now)).length;
+      } catch (err) {
+        // One bad schedule must not stop the rest — the same rule every worker
+        // in this portal follows.
+        console.error(`Recurring task ${schedule._id} failed:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('Task recurrence sweep failed:', err.message);
+  }
+  if (minted) console.log(`Task recurrence: raised ${minted} task(s).`);
+  return minted;
+}
+
+let timer = null;
+
 function startWorker() {
-  setTimeout(tick, 45_000);
-  setInterval(tick, POLL_INTERVAL_MS);
-  console.log('Task recurrence worker started (every 15 minutes)');
+  if (timer) return;
+  // A first sweep shortly after boot rather than immediately: the database
+  // connection and the models settle first, and a restart loop does not turn
+  // into a mint loop.
+  setTimeout(() => { tick().catch(() => {}); }, 30 * 1000);
+  timer = setInterval(() => { tick().catch(() => {}); }, TICK_MS);
+  console.log('Task recurrence worker started.');
 }
 
-module.exports = { startWorker, tick, generateOne };
+function stopWorker() {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
+
+module.exports = {
+  startWorker, stopWorker, tick, runSchedule, mintOccurrence,
+  firstDueDate, occurrenceKeyFor, fallsOn, atTime, CATCHUP_DAYS,
+};

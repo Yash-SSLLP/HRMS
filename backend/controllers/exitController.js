@@ -278,11 +278,10 @@ async function advanceExitApproval(exit, userId, action, note, actor) {
   await notifyHrBeginClearance(exit, name);
   await notifyAssignedSections(exit, name);
 
-  // The exit work itself — asset recovery, IT access removal, the interview,
-  // clearance, settlement — from whatever task templates are wired to this
-  // event. Fire-and-forget: the resignation is accepted either way, and a
-  // task that cannot be made must never leave a resignation half-decided.
-  require('../services/taskEvents').exitApproved(exit, { _id: userId }).catch(() => {});
+  // Exit work — asset recovery, IT access, clearance, settlement — is set from
+  // a saved task template rather than raised automatically. See the note in
+  // employeeController.createEmployee; the event hook went with the
+  // 2026-09-21 task rework.
 
   return exit;
 }

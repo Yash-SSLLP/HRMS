@@ -1,187 +1,114 @@
 const mongoose = require('mongoose');
 const {
   TASK_PRIORITY,
-  ASSIGNEE_ROLES,
-  LOCATION_EVENTS,
-  GEOFENCE_RULES,
-  INCENTIVE_OUTCOMES,
-  DEFAULT_INCENTIVE_SPLIT,
-} = require('../config/taskWorkflow');
+  DEFAULT_PRIORITY,
+  DEFAULT_TASK_POINTS,
+  MAX_TASK_POINTS,
+  FREQUENCY,
+  FREQUENCIES,
+  REMINDER_CHANNELS,
+  REMINDER_UNITS,
+  REMINDER_WHENS,
+} = require('../config/tasks');
 
 /**
- * A task worth creating more than once (section 24).
+ * A task worth setting more than once.
  *
- * Employee onboarding, an exit, a payroll run, a monthly attendance audit — the
- * same shape every time, with the same checklist, the same workflow and the same
- * people. A template holds all of it, and creating a task from one is a copy.
+ * REWRITTEN 2026-09-21. The version this replaces described a task in RELATIVE
+ * terms — "due N working days after the trigger event", with a workflow
+ * attached, an evidence contract and a placeholder resolver that turned
+ * `{{reportingManager}}` into a person at mint time. It was a small programming
+ * language, and the two places it was used had both been filled in by hand.
  *
- * A COPY, NOT A LINK. The task keeps `template` so a report can ask "how do
- * tasks from this template perform?", but nothing about a running task is READ
- * from here: editing a template must not reach into work already under way, for
- * the same reason editing a workflow must not. What a template changes is the
- * next task made from it.
+ * A template here is simply a task with the dates left off. You save one from
+ * any task row ("Create template"), and using it opens the assign form already
+ * filled in — you pick the people and the deadline, which are the two things
+ * that are different every time. Nothing is resolved, substituted or computed.
  *
- * DEADLINES ARE RELATIVE, not absolute — "due 3 days after it starts" rather
- * than a date, because a template used in March has to work in April. Same for
- * a checklist item's own deadline.
+ * THE DIRECTORY IS THE SAME THING, SHARED. `directory: true` marks a starter
+ * template that everybody in the company can see and copy, grouped by the
+ * department it belongs to — the ready-to-use library a new manager can work
+ * from on day one instead of facing an empty page. Copying one gives you your
+ * own editable row; the shared original is never touched. One model rather than
+ * two, because "a template" and "a template somebody else wrote" differ by a
+ * boolean and nothing else.
  */
 
-// Who a template's assignee slot resolves to when a task is made from it. The
-// same vocabulary the workflow's assigneeRule uses, deliberately: one idea, one
-// set of words.
-const ASSIGNEE_KINDS = [
-  'user',              // the named people
-  'role',              // everyone holding one of `roles`
-  'permission',        // everyone holding `permission`
-  'department',        // everyone in `department`
-  'subject',           // the person the task is ABOUT (the new joiner, the leaver)
-  'reportingManager',  // the subject's reporting manager
-  'hrPartner',         // the subject's HR partner
-  'creator',
-];
-
-const slotSchema = new mongoose.Schema(
+const reminderSchema = new mongoose.Schema(
   {
-    kind: { type: String, enum: ASSIGNEE_KINDS, default: 'user' },
-    users: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    roles: [String],
-    permission: { type: String, trim: true },
-    department: { type: String, trim: true },
-    taskRole: { type: String, enum: ASSIGNEE_ROLES, default: 'Contributor' },
-    responsibility: { type: String, trim: true, maxlength: 300 },
-    // Days after the task starts that THIS person's part is due. Null = the
-    // task's own due date.
-    dueAfterDays: Number,
+    channel: { type: String, enum: REMINDER_CHANNELS, default: 'APP' },
+    amount: { type: Number, min: 0, default: 1 },
+    unit: { type: String, enum: REMINDER_UNITS, default: 'DAYS' },
+    when: { type: String, enum: REMINDER_WHENS, default: 'BEFORE' },
   },
   { _id: false }
 );
 
-const templateChecklistSchema = new mongoose.Schema(
+const taskTemplateSchema = new mongoose.Schema(
   {
-    text: { type: String, required: true, trim: true, maxlength: 300 },
-    mandatory: { type: Boolean, default: true },
-    requiresEvidence: { type: Boolean, default: false },
-    dueAfterDays: Number,
-    order: { type: Number, default: 0 },
-  },
-  { _id: false }
-);
+    name: { type: String, required: true, trim: true, maxlength: 200 },
 
-const templateSchema = new mongoose.Schema(
-  {
-    name: { type: String, required: true, trim: true },
-    description: { type: String, trim: true, maxlength: 2000 },
-    // What the tasks it makes are called. Supports the same placeholders the
-    // event hooks fill in: {employee}, {month}, {department}, {company}.
-    titleTemplate: { type: String, trim: true },
-    bodyTemplate: { type: String, trim: true, maxlength: 4000 },
-
-    taskType: { type: String, trim: true, default: 'General' },
+    // ===== The task it makes =====
+    title: { type: String, required: true, trim: true, maxlength: 300 },
+    description: { type: String, trim: true, maxlength: 5000 },
     category: { type: String, trim: true },
-    department: { type: String, trim: true },
+    priority: { type: String, enum: TASK_PRIORITY, default: DEFAULT_PRIORITY },
+    points: { type: Number, min: 0, max: MAX_TASK_POINTS, default: DEFAULT_TASK_POINTS },
+
+    // The ONE relative thing that survived, because it is the one that is
+    // genuinely the same every time: "this is always a three-day job". The
+    // assign form offers it as a pre-filled deadline the assigner can move.
+    dueInDays: { type: Number, min: 0 },
+
+    repeat: {
+      type: new mongoose.Schema(
+        {
+          frequency: { type: String, enum: FREQUENCIES, default: FREQUENCY.ONCE },
+          weekdays: { type: [Number], default: undefined },
+          monthDay: Number,
+          month: Number,
+          time: { type: String, trim: true },
+        },
+        { _id: false }
+      ),
+      default: () => ({ frequency: FREQUENCY.ONCE }),
+    },
+
+    reminders: { type: [reminderSchema], default: [] },
+
+    links: {
+      type: [new mongoose.Schema({ url: String, label: String }, { _id: true })],
+      default: [],
+    },
+
+    // Usual suspects — pre-selected in the picker, never forced. A template
+    // that assigns itself to somebody who has since moved teams is worse than
+    // one that asks.
+    defaultAssignees: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    defaultLoopUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+
+    // ===== Where it lives =====
     company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', index: true },
-    priority: { type: String, enum: TASK_PRIORITY, default: 'Medium' },
-    tags: [{ type: String, trim: true }],
+    // Whose template this is. A directory row has none.
+    owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+    /** A shared starter template rather than somebody's own. See the docblock. */
+    directory: { type: Boolean, default: false, index: true },
+    /** The directory's grouping — "Sales", "HR", "Accounts". */
+    department: { type: String, trim: true, index: true },
+    /** The directory's industry filter — "Manufacturing", "Retail". */
+    industry: { type: String, trim: true, index: true },
 
-    // ===== People =====
-    assigneeSlots: [slotSchema],
-    supervisorSlot: { type: slotSchema, default: undefined },
-    managerSlot: { type: slotSchema, default: undefined },
-
-    // ===== Timing, all relative =====
-    startAfterDays: { type: Number, default: 0 },
-    dueAfterDays: { type: Number, default: 3 },
-    estimatedMinutes: Number,
-
-    // ===== The rest of the task's shape =====
-    workflow: { type: mongoose.Schema.Types.ObjectId, ref: 'Workflow' },
-    checklist: [templateChecklistSchema],
-    requirements: {
-      remarks: { type: Boolean, default: false },
-      checklist: { type: Boolean, default: false },
-      attachment: { type: Boolean, default: false },
-      photo: { type: Boolean, default: false },
-      location: { type: Boolean, default: false },
-      signature: { type: Boolean, default: false },
-      minPhotos: { type: Number, default: 0 },
-      minAttachments: { type: Number, default: 0 },
-      note: { type: String, trim: true, maxlength: 500 },
-    },
-    location: {
-      captureOn: [{ type: String, enum: LOCATION_EVENTS }],
-      enforceOn: [{ type: String, enum: GEOFENCE_RULES }],
-      workLocation: { type: mongoose.Schema.Types.ObjectId, ref: 'WorkLocation' },
-      radiusM: Number,
-    },
-    requiresApproval: { type: Boolean, default: false },
-    reminders: {
-      beforeDueHours: { type: [Number], default: undefined },
-      afterDue: {
-        type: [new mongoose.Schema({
-          hours: Number, to: String, severity: String,
-        }, { _id: false })],
-        default: undefined,
-      },
-      acceptWithinHours: Number,
-    },
-    incentive: {
-      enabled: { type: Boolean, default: false },
-      points: { type: Number, min: 0, default: 0 },
-      split: {
-        type: new mongoose.Schema(
-          Object.fromEntries(INCENTIVE_OUTCOMES.map((k) => [k, { type: Number, min: 0, max: 1 }])),
-          { _id: false }
-        ),
-        default: () => ({ ...DEFAULT_INCENTIVE_SPLIT }),
-      },
-      distribution: { type: String, trim: true, default: 'share' },
-    },
-    customFields: [{
-      key: { type: String, trim: true },
-      label: { type: String, trim: true },
-      type: { type: String, trim: true, default: 'text' },
-      required: { type: Boolean, default: false },
-      options: [String],
-      defaultValue: mongoose.Schema.Types.Mixed,
-    }],
-
-    // Subtasks this template creates alongside the parent, each a small template
-    // of its own. One level deep on purpose — a tree of templates is a workflow,
-    // and workflows are the thing that already exists for that.
-    subtasks: [{
-      title: { type: String, trim: true },
-      description: { type: String, trim: true },
-      assigneeSlot: { type: slotSchema, default: undefined },
-      dueAfterDays: Number,
-      priority: { type: String, enum: TASK_PRIORITY },
-    }],
-
-    // Which HRMS event creates tasks from this template automatically
-    // (section 31). Null = manual only. See services/taskEvents.js for the
-    // catalogue of events and what each one passes in.
-    trigger: { type: String, trim: true, default: null, index: true },
-
-    active: { type: Boolean, default: true, index: true },
-    // A template the module itself seeded. Protected from deletion so the event
-    // hooks cannot be broken by a tidy-up, though its contents stay editable.
-    system: { type: Boolean, default: false },
-
-    usageCount: { type: Number, default: 0 },
+    useCount: { type: Number, default: 0 },
+    lastUsedAt: Date,
+    isActive: { type: Boolean, default: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    createdByName: { type: String, trim: true },
   },
   { timestamps: true }
 );
 
-templateSchema.index({ active: 1, name: 1 });
-templateSchema.index({ trigger: 1, active: 1 });
+// "My templates" and "the directory, by department" — the two lists there are.
+taskTemplateSchema.index({ owner: 1, isActive: 1, name: 1 });
+taskTemplateSchema.index({ directory: 1, industry: 1, department: 1 });
 
-templateSchema.plugin(require('./plugins/auditStatus'), {
-  entity: 'TaskTemplate',
-  fields: ['active'],
-  label: (d) => d.name,
-});
-
-module.exports = mongoose.model('TaskTemplate', templateSchema);
-module.exports.ASSIGNEE_KINDS = ASSIGNEE_KINDS;
-module.exports.slotSchema = slotSchema;
+module.exports = mongoose.model('TaskTemplate', taskTemplateSchema);

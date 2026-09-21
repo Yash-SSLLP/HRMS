@@ -1,404 +1,275 @@
 /**
- * The reminder and escalation worker (sections 19–20).
+ * Chasing — so that nobody has to.
  *
- * Wakes every few minutes and does four passes over the open tasks:
- *   1. deadlines coming up      → nudge the assignee;
- *   2. deadlines gone past      → nudge, then climb the ladder to the
- *                                 supervisor, the manager, and finally the
- *                                 `tasks.manage` bench;
- *   3. tasks nobody accepted    → nudge, then tell whoever handed it over;
- *   4. workflow steps past SLA  → tell the approver, then escalate;
- *      and 'wait' steps whose time is up, which it advances.
+ * REWRITTEN 2026-09-21. "Till now you were reminding your teammates; now the
+ * system reminds your teammates." A task carries a list of rules — "1 day
+ * before", "4 hours before", "1 day after" — and this fires them.
  *
- * IT CANNOT REPLAY, AND THAT IS THE WHOLE DESIGN. Every notification is keyed
- * ('due:24', 'over:2', 'accept:1', 'step:onboarding-hr:sla') and the key is
- * written onto `Task.firedReminders` in the SAME update that decides to send it.
- * A restart, a second API instance, or a clock stepping backwards therefore
- * cannot fire the same reminder twice — which is exactly the trap the push
- * reminder worker hit, where a restart replayed a whole day of pushes at
- * everybody at once.
+ * THREE RULES, AND EACH OF THEM IS THERE BECAUSE SOMETHING WENT WRONG ONCE.
  *
- * Same lightweight pattern as the other five workers in this app: an interval
- * tick, started from server.js, that is idempotent and logs what it did.
+ * 1. A RULE FIRES AT MOST ONCE. Every fired rule is recorded on the task as a
+ *    `config/tasks.reminderKey` string in `firedReminders`, and the claim is
+ *    made with a CONDITIONAL update ($ne on that key) so two instances racing
+ *    the same tick cannot both send it. This is the trap the attendance push
+ *    worker hit: a restart replayed a day of notifications at everybody.
+ *
+ * 2. NOTHING OLDER THAN THE WINDOW FIRES AT ALL. A rule whose moment passed
+ *    more than FIRING_WINDOW_MIN ago is marked fired WITHOUT being sent. A
+ *    server that was down overnight must not wake up and deliver yesterday's
+ *    four reminders at breakfast, and a task module's first version really did
+ *    send 51 overdue pushes on its first morning.
+ *
+ * 3. AFTER-DEADLINE REMINDERS GO UP, NOT JUST ACROSS. A "before" reminder goes
+ *    to the people doing the work. An "after" one goes to them AND to whoever
+ *    set it and whoever is in the loop, because at that point it is news the
+ *    assigner needs rather than a nudge the doer has already ignored.
  */
 const Task = require('../models/Task');
+const User = require('../models/User');
 const notify = require('./taskNotify');
 const engine = require('./taskEngine');
-const access = require('./taskAccess');
-const flow = require('./taskWorkflow');
-const { ACCEPT_WINDOW_HOURS, isTerminal, normaliseStatus } = require('../config/taskWorkflow');
+const points = require('./taskPoints');
+const { enqueueMail } = require('./email');
+const {
+  STATUS, OPEN_STATUS, reminderOffsetMinutes, reminderKey, reminderLabel,
+  REMINDER_WHEN, REMINDER_CHANNEL, statusLabel, KIND_REQUEST,
+} = require('../config/tasks');
 
-// Five minutes. Fine enough that "15 minutes before due" means roughly that,
-// coarse enough that a portal with fifty thousand tasks is not re-scanned
-// constantly — the query is indexed and only looks at what is actually open.
-const POLL_INTERVAL_MS = 5 * 60 * 1000;
+/** How late a reminder may be and still be worth sending. See rule 2. */
+const FIRING_WINDOW_MIN = 90;
+/** How often the sweep runs. */
+const TICK_MS = 5 * 60 * 1000;
 
-// How far before a deadline to nudge, when a task does not say. The spec's own
-// ladder: a day, four hours, an hour, a quarter of an hour.
-const DEFAULT_BEFORE_DUE_HOURS = [24, 4, 1, 0.25];
+const fmt = (d) => new Date(d).toLocaleString('en-IN', {
+  day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+  hour12: true, timeZone: 'Asia/Kolkata',
+});
 
-// Who hears about a deadline that has passed, and how long after. The rungs are
-// the spec's: the assignee first, twice; then the supervisor; then the manager;
-// then HR.
-const DEFAULT_AFTER_DUE = [
-  { hours: 0.25, to: 'assignee', severity: 'HIGH' },
-  { hours: 1, to: 'assignee', severity: 'HIGH' },
-  { hours: 2, to: 'supervisor', severity: 'HIGH' },
-  { hours: 24, to: 'manager', severity: 'HIGH' },
-  { hours: 48, to: 'admin', severity: 'CRITICAL' },
-];
-
-// How far past its deadline a task can be, with no reminder ever fired, before
-// this worker treats it as BACKLOG rather than as news — see the backlog rule
-// in sweepDeadlines. Two days: a task that goes overdue while the worker is
-// running has its first rung claimed within five minutes, so anything this
-// late with a clean slate went past while nothing was watching.
-const BACKLOG_GRACE_HOURS = Number(process.env.TASK_REMINDER_BACKLOG_HOURS) || 48;
-
-// Statuses a reminder is pointless on. A submitted task is not the assignee's
-// problem any more — chasing them for it would be telling somebody off for work
-// they have already handed in.
-const NOT_CHASED = ['SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'COMPLETED', 'CANCELLED', 'DECLINED', 'ON_HOLD', 'Done'];
+const noun = (task) => (task.kind === KIND_REQUEST ? 'request' : 'task');
+const taskName = (task) => (task.code ? `${task.code} — ${task.title}` : `"${task.title}"`);
 
 /**
- * Claim a reminder key for a task, atomically.
+ * Claim a rule for sending.
  *
- * `$addToSet` with the key absent from the filter is a single conditional update:
- * whoever wins the write gets `true` and sends, and every other caller — another
- * instance, the same instance after a restart — gets `false` and stays quiet.
- * This is the whole idempotence story, and it lives in the database rather than
- * in a variable this process holds.
- *
- * @param {*} taskId
- * @param {string} key
- * @returns {Promise<boolean>} true when this caller should send
+ * The conditional update IS the lock: if the key is already in `firedReminders`
+ * nothing matches, and the caller knows somebody else has it.
  */
 async function claim(taskId, key) {
-  const result = await Task.updateOne(
+  const r = await Task.updateOne(
     { _id: taskId, firedReminders: { $ne: key } },
     { $addToSet: { firedReminders: key } }
   );
-  return result.modifiedCount === 1;
+  return r.modifiedCount > 0;
 }
 
-/** Who to send an overdue notice to, for a rung of the ladder. */
-async function rungRecipients(task, to) {
-  const who = access.audienceOf(task);
-  switch (to) {
-    case 'assignee':
-      return who.assignees;
-    case 'supervisor':
-      return [task.supervisor].filter(Boolean);
-    case 'manager':
-      return [task.manager || task.supervisor].filter(Boolean);
-    case 'admin':
-    default: {
-      const bench = await access.managerBench(task, task.company);
-      return bench.length ? bench : [task.createdBy].filter(Boolean);
-    }
-  }
+/** Who hears about this rule. See rule 3. */
+function audienceFor(task, rule) {
+  const doers = (task.assignees || [])
+    .filter((a) => !['COMPLETED', 'CANCELLED'].includes(a.status))
+    .map((a) => String(a.user));
+
+  if (rule.when !== REMINDER_WHEN.AFTER) return { to: doers, portal: 'employee' };
+
+  const overseers = [
+    String(task.createdBy || ''),
+    ...(task.loopUsers || []).map(String),
+  ].filter(Boolean);
+  return { to: doers, portal: 'employee', alsoTo: [...new Set(overseers)] };
 }
 
-/**
- * One pass over tasks with a deadline in the next day or already past it.
- * @returns {Promise<{reminded:number, escalated:number}>}
- */
-async function sweepDeadlines() {
-  const now = Date.now();
-  const horizon = new Date(now + 25 * 3600000); // the widest default is 24h
+/** Send one rule's reminder. */
+async function fire(task, rule) {
+  const { to, alsoTo } = audienceFor(task, rule);
+  const when = reminderLabel(rule);
+  const label = noun(task);
 
-  const tasks = await Task.find({
-    archived: { $ne: true },
-    dueDate: { $ne: null, $lte: horizon },
-    status: { $nin: NOT_CHASED },
-  })
-    .select('code title dueDate priority status assignees assignedTo supervisor manager createdBy company firedReminders escalationLevel firstOverdueAt reminders')
-    .limit(2000)
-    .lean();
+  if (to.length) {
+    const title = rule.when === REMINDER_WHEN.AFTER
+      ? `Overdue: ${taskName(task)}`
+      : `Reminder: ${taskName(task)}`;
+    const body = rule.when === REMINDER_WHEN.AFTER
+      ? `This ${label} was due ${fmt(task.dueDate)} and is still ${statusLabel(task.status, task.kind).toLowerCase()}.`
+      : `Due ${fmt(task.dueDate)} — ${when}.`;
 
-  let reminded = 0;
-  let escalated = 0;
-  let adopted = 0;
-
-  for (const task of tasks) {
-    const due = new Date(task.dueDate).getTime();
-    const hoursToDue = (due - now) / 3600000;
-
-    // ----- coming up -----
-    if (hoursToDue > 0) {
-      const ladder = (task.reminders && task.reminders.beforeDueHours && task.reminders.beforeDueHours.length)
-        ? task.reminders.beforeDueHours
-        : DEFAULT_BEFORE_DUE_HOURS;
-      // Only the CLOSEST rung that has been reached — otherwise a task created
-      // an hour before its deadline would fire all four at once.
-      const reached = ladder.filter((h) => hoursToDue <= h).sort((a, b) => a - b)[0];
-      if (reached != null) {
-        const key = `due:${reached}`;
-        if (await claim(task._id, key)) {
-          const who = access.audienceOf(task);
-          await notify.dueSoon(task, who.assignees, reached);
-          reminded += 1;
-        }
-      }
-      continue;
-    }
-
-    // ----- gone past -----
-    const hoursLate = (now - due) / 3600000;
-
-    // Stamp the first time it went late. Kept even if an extension later moves
-    // the deadline: it DID miss one, and an extension must not quietly rewrite
-    // that (it is what the analytics count).
-    if (!task.firstOverdueAt) {
-      await Task.updateOne({ _id: task._id, firstOverdueAt: null }, { $set: { firstOverdueAt: new Date() } });
-    }
-
-    // ----- THE BACKLOG RULE -----
-    // A task that is days overdue and has NEVER had a single overdue reminder
-    // fired went past its deadline while nothing was watching. That is backlog,
-    // not news: chasing it now would fire a wave of "overdue!" pushes at people
-    // about work from last week, all at once, the moment this worker first runs
-    // — which is exactly what happened here, where 51 open tasks were carried
-    // over from before the module was reworked.
-    //
-    // So it is ADOPTED QUIETLY: every rung it has already passed is claimed
-    // without sending anything, and the task is chased normally from here on if
-    // it slips further. A task that goes overdue while the worker IS running has
-    // its first rung claimed within five minutes, so it can never look like
-    // backlog — which is what makes "no `over:` key at all" a safe signal even
-    // after a long outage.
-    const everChased = (task.firedReminders || []).some((k) => k.startsWith('over:'));
-    if (!everChased && hoursLate > BACKLOG_GRACE_HOURS) {
-      const ladder = (task.reminders && task.reminders.afterDue && task.reminders.afterDue.length)
-        ? task.reminders.afterDue
-        : DEFAULT_AFTER_DUE;
-      const passed = ladder.filter((r) => hoursLate >= r.hours).map((r) => `over:${r.hours}:${r.to}`);
-      if (passed.length) {
-        await Task.updateOne({ _id: task._id }, { $addToSet: { firedReminders: { $each: passed } } });
-        adopted += 1;
-      }
-      continue;
-    }
-
-    const ladder = (task.reminders && task.reminders.afterDue && task.reminders.afterDue.length)
-      ? task.reminders.afterDue
-      : DEFAULT_AFTER_DUE;
-
-    // The furthest rung reached, one at a time per tick, so a task that has been
-    // late for a week does not fire five notices in one go.
-    const rung = [...ladder]
-      .filter((r) => hoursLate >= r.hours)
-      .sort((a, b) => b.hours - a.hours)[0];
-    if (!rung) continue;
-
-    const key = `over:${rung.hours}:${rung.to}`;
-    if (!(await claim(task._id, key))) continue;
-
-    const recipients = await rungRecipients(task, rung.to);
-    if (!recipients.length) continue;
-
-    await notify.overdue(task, recipients, { hoursLate, to: rung.to, severity: rung.severity });
-
-    if (rung.to !== 'assignee') {
-      escalated += 1;
-      await Task.updateOne(
-        { _id: task._id },
-        { $set: { escalationLevel: (task.escalationLevel || 0) + 1, lastEscalatedAt: new Date() } }
-      );
-      await engine.logActivity({
-        task: task._id,
-        kind: 'escalated',
-        system: true,
-        message: `Escalated to ${rung.to} — ${Math.round(hoursLate)} hours overdue`,
-      });
+    if (rule.channel === REMINDER_CHANNEL.EMAIL) {
+      await mailTo(to, title, body, task);
     } else {
-      reminded += 1;
-      await engine.logActivity({
-        task: task._id,
-        kind: 'reminder',
-        system: true,
-        message: `Overdue reminder sent — ${Math.round(hoursLate)} hours late`,
-      });
+      await notify.reminder(task, to, { title, body, portal: 'employee' });
     }
   }
 
-  return { reminded, escalated, adopted };
-}
-
-/**
- * One pass over tasks handed out and not yet accepted (section 10).
- * @returns {Promise<{chased:number}>}
- */
-async function sweepUnaccepted() {
-  const now = Date.now();
-  const tasks = await Task.find({
-    archived: { $ne: true },
-    status: { $in: ['ASSIGNED', 'Todo'] },
-    assignedAt: { $ne: null },
-  })
-    .select('code title priority status assignees assignedTo supervisor manager createdBy company assignedAt firedReminders reminders dueDate')
-    .limit(2000)
-    .lean();
-
-  let chased = 0;
-  let adopted = 0;
-  for (const task of tasks) {
-    const window = (task.reminders && task.reminders.acceptWithinHours)
-      || ACCEPT_WINDOW_HOURS[task.priority]
-      || ACCEPT_WINDOW_HOURS.Medium;
-    const waiting = (now - new Date(task.assignedAt).getTime()) / 3600000;
-    if (waiting < window) continue;
-
-    // The same backlog rule sweepDeadlines applies, for the same reason. A task
-    // handed over days ago and never accepted, with no acceptance reminder ever
-    // fired, was handed over while nothing was watching — chasing it now would
-    // fire a wave at everybody at once. Adopt it quietly and chase it from here.
-    const everChased = (task.firedReminders || []).some((k) => k.startsWith('accept:'));
-    if (!everChased && waiting > BACKLOG_GRACE_HOURS) {
-      await Task.updateOne(
-        { _id: task._id },
-        { $addToSet: { firedReminders: { $each: ['accept:assignee', 'accept:supervisor'] } } }
-      );
-      adopted += 1;
-      continue;
-    }
-
-    // The assignee first; whoever handed it over once the window has doubled.
-    const stage = waiting >= window * 2 ? 'supervisor' : 'assignee';
-    const key = `accept:${stage}`;
-    if (!(await claim(task._id, key))) continue;
-
-    const who = access.audienceOf(task);
-    const recipients = stage === 'assignee'
-      ? who.assignees
-      : (who.reviewers.length ? who.reviewers : await access.managerBench(task, task.company));
-    if (!recipients.length) continue;
-
-    await notify.notAccepted(task, recipients, { to: stage, hours: waiting });
-    await engine.logActivity({
-      task: task._id,
-      kind: stage === 'assignee' ? 'reminder' : 'escalated',
-      system: true,
-      message: `Not accepted after ${Math.round(waiting)} hours — ${stage === 'assignee' ? 'reminded the assignee' : 'told the supervisor'}`,
-    });
-    chased += 1;
-  }
-  return { chased, adopted };
-}
-
-/**
- * One pass over open workflow steps: chase the ones past their SLA, and advance
- * the 'wait' steps whose time is up.
- * @returns {Promise<{chased:number, advanced:number}>}
- */
-async function sweepWorkflowSteps() {
-  const now = new Date();
-  const tasks = await Task.find({
-    archived: { $ne: true },
-    currentStepKey: { $ne: null },
-    status: { $nin: ['COMPLETED', 'CANCELLED', 'DECLINED'] },
-    'workflowSteps.dueAt': { $lte: now },
-  }).limit(500);
-
-  let chased = 0;
-  let advanced = 0;
-
-  for (const task of tasks) {
-    const open = (task.workflowSteps || []).filter((s) => s.status === 'Pending' && s.dueAt && s.dueAt <= now);
-    for (const step of open) {
-      // A 'wait' step is not late — its time has simply come.
-      if (step.type === 'wait') {
-        step.status = 'Done';
-        step.completedAt = now;
-        await engine.logActivity({
-          task: task._id, kind: 'stepDecided', system: true,
-          message: `"${step.name}" finished waiting`,
-        });
-        const result = await flow.open(task, flow.nextStepOf(task, step));
-        await task.save();
-        if (result.done) {
-          try {
-            const done = await engine.transition(task, 'APPROVED', null, { system: true, message: 'Workflow finished' });
-            const completed = await engine.transition(done, 'COMPLETED', null, { system: true, message: 'Workflow finished' });
-            const { onCompleted } = require('../controllers/taskController');
-            await onCompleted(completed, null);
-          } catch (err) {
-            // A task that cannot legally reach APPROVED from where it is (it was
-            // cancelled while waiting, say) is not an error — the workflow is
-            // simply no longer the thing deciding.
-            console.log(`Task workflow finished but the task could not complete: ${err.message}`);
-          }
-        }
-        advanced += 1;
-        continue;
-      }
-
-      const hoursLate = (now.getTime() - new Date(step.dueAt).getTime()) / 3600000;
-      const level = hoursLate >= 48 ? 3 : hoursLate >= 24 ? 2 : 1;
-      const key = `step:${step.key}:${level}`;
-      if (!(await claim(task._id, key))) continue;
-
-      const recipients = level === 1
-        ? (step.actors || []).map((a) => a.user)
-        : level === 2
-          ? [task.supervisor, task.manager].filter(Boolean)
-          : await access.managerBench(task, task.company);
-      if (!recipients.length) continue;
-
-      await notify.escalated(task, recipients, level, `"${step.name}" has been waiting ${Math.round(hoursLate)} hours`);
-      await engine.logActivity({
-        task: task._id, kind: 'escalated', system: true,
-        message: `"${step.name}" is ${Math.round(hoursLate)} hours past its deadline — escalated (level ${level})`,
-      });
-      chased += 1;
-    }
+  if (alsoTo?.length) {
+    const who = (task.assignees || []).map((a) => a.name).filter(Boolean).join(', ');
+    const title = `Still not done: ${taskName(task)}`;
+    const body = `Due ${fmt(task.dueDate)}${who ? ` · ${who}` : ''}.`;
+    if (rule.channel === REMINDER_CHANNEL.EMAIL) await mailTo(alsoTo, title, body, task);
+    else await notify.reminder(task, alsoTo, { title, body, portal: 'admin' });
   }
 
-  return { chased, advanced };
+  // The feed records that the chase happened, so "did anybody tell them?" is
+  // answerable from the task rather than from a log nobody can read.
+  await engine.systemUpdate(
+    task._id,
+    `Reminder sent — ${when}${rule.channel === REMINDER_CHANNEL.EMAIL ? ' (email)' : ''}.`
+  );
 }
 
-/**
- * One full tick. Every pass is independent and swallows its own errors, so a
- * failure in one does not stop the others — a broken escalation must not also
- * silence every reminder.
- * @returns {Promise<void>}
- */
-async function tick() {
-  const results = [];
-  for (const [name, fn] of [
-    ['deadlines', sweepDeadlines],
-    ['acceptance', sweepUnaccepted],
-    ['workflow steps', sweepWorkflowSteps],
-  ]) {
-    try {
-      results.push([name, await fn()]);
-    } catch (err) {
-      console.error(`Task reminder worker (${name}) failed:`, err.message);
+/** Email reminders go through the existing queue, not a direct send. */
+async function mailTo(userIds, subject, body, task) {
+  try {
+    const users = await User.find({ _id: { $in: userIds }, isActive: true })
+      .select('email firstName').lean();
+    for (const u of users) {
+      if (!u.email) continue;
+      await enqueueMail({
+        to: u.email,
+        subject,
+        html: `<p>Hi ${u.firstName || ''},</p><p>${body}</p>`
+          + `<p><strong>${taskName(task)}</strong></p>`
+          + (task.description ? `<p>${String(task.description).slice(0, 500)}</p>` : ''),
+        // Nobody triggered this, so nobody is Cc'd. Said explicitly rather than
+        // relying on the request context being empty: a worker that ever runs
+        // inside one would otherwise copy whoever happened to be signed in.
+        selfCopy: false,
+      }, { type: 'Task', id: task._id });
     }
+  } catch (err) {
+    console.error('Task reminder email failed:', err.message);
   }
-
-  const summary = results
-    .map(([name, r]) => {
-      const bits = Object.entries(r).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`);
-      return bits.length ? `${name}: ${bits.join(', ')}` : null;
-    })
-    .filter(Boolean);
-  if (summary.length) console.log(`Task reminders — ${summary.join('; ')}`);
 }
 
 /**
- * Start the worker: a catch-up tick shortly after boot, then every five minutes.
+ * One sweep.
  *
- * The delay matters. Every other worker in this app does the same, and for the
- * same reason: the database connection has to be up, and a boot that coincides
- * with a deployment should not have three instances all sweeping at once —
- * though the `claim` guard means that would be harmless if it did.
- * @returns {void}
+ * Only tasks that are OPEN and have both a deadline and at least one rule are
+ * even looked at — everything else cannot produce a reminder, and scanning it
+ * every five minutes is work for nothing.
  */
-function startWorker() {
-  setTimeout(tick, 30_000);
-  setInterval(tick, POLL_INTERVAL_MS);
-  console.log('Task reminder & escalation worker started (every 5 minutes)');
+async function tick(now = new Date()) {
+  let sent = 0;
+  try {
+    const tasks = await Task.find({
+      status: { $in: OPEN_STATUS },
+      dueDate: { $ne: null },
+      'reminders.0': { $exists: true },
+      archived: { $ne: true },
+    })
+      .select('code kind title description status dueDate reminders firedReminders assignees '
+        + 'createdBy loopUsers')
+      .limit(2000)
+      .lean();
+
+    for (const task of tasks) {
+      const due = new Date(task.dueDate).getTime();
+      for (const rule of task.reminders || []) {
+        const key = reminderKey(rule);
+        if ((task.firedReminders || []).includes(key)) continue;
+
+        const at = due + reminderOffsetMinutes(rule) * 60 * 1000;
+        if (at > now.getTime()) continue;              // not yet
+
+        const lateBy = (now.getTime() - at) / 60000;
+        if (lateBy > FIRING_WINDOW_MIN) {
+          // Rule 2: too old to be useful. Burn the key so it never fires, and
+          // say nothing.
+          await claim(task._id, key);
+          continue;
+        }
+
+        if (!(await claim(task._id, key))) continue;   // somebody else has it
+        try {
+          await fire(task, rule);
+          sent += 1;
+        } catch (err) {
+          console.error(`Task reminder ${task._id} ${key} failed:`, err.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Task reminder sweep failed:', err.message);
+  }
+  if (sent) console.log(`Task reminders: sent ${sent}.`);
+  return sent;
 }
 
-module.exports = { startWorker, tick, sweepDeadlines, sweepUnaccepted, sweepWorkflowSteps, claim };
+/**
+ * The evening summary — "you have 4 tasks pending".
+ *
+ * One notification per person instead of one per task, fired once a day at the
+ * time a SuperAdmin set (Setting.tasks.dailyDigestAt). Guarded by the same
+ * window rule: a server that boots at midnight does not deliver the six
+ * o'clock digest six hours late.
+ */
+let lastDigestDay = null;
+
+async function digestTick(now = new Date()) {
+  const { dailyDigestAt } = await points.taskSettings();
+  if (!dailyDigestAt) return 0;
+
+  const [h, m] = dailyDigestAt.split(':').map((n) => parseInt(n, 10));
+  if (!Number.isFinite(h)) return 0;
+
+  const at = new Date(now);
+  at.setHours(h, m || 0, 0, 0);
+  const lateBy = (now.getTime() - at.getTime()) / 60000;
+  if (lateBy < 0 || lateBy > FIRING_WINDOW_MIN) return 0;
+
+  const day = now.toDateString();
+  if (lastDigestDay === day) return 0;
+  lastDigestDay = day;
+
+  const rows = await Task.aggregate([
+    {
+      $match: {
+        status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] },
+        archived: { $ne: true },
+      },
+    },
+    { $unwind: '$assignees' },
+    { $match: { 'assignees.status': { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] } } },
+    {
+      $group: {
+        _id: '$assignees.user',
+        pending: { $sum: 1 },
+        overdue: {
+          $sum: {
+            $cond: [
+              { $and: [{ $ne: ['$dueDate', null] }, { $lt: ['$dueDate', now] }] },
+              1, 0,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  let sent = 0;
+  for (const r of rows) {
+    try {
+      await notify.digest(r._id, { pending: r.pending, overdue: r.overdue });
+      sent += 1;
+    } catch (err) {
+      console.error('Task digest failed:', err.message);
+    }
+  }
+  if (sent) console.log(`Task digest: sent ${sent}.`);
+  return sent;
+}
+
+let timer = null;
+
+function startWorker() {
+  if (timer) return;
+  timer = setInterval(() => {
+    tick().catch(() => {});
+    digestTick().catch(() => {});
+  }, TICK_MS);
+  console.log('Task reminder worker started.');
+}
+
+function stopWorker() {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
+
+module.exports = { startWorker, stopWorker, tick, digestTick, fire, FIRING_WINDOW_MIN };

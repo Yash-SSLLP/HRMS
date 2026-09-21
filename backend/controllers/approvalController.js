@@ -45,7 +45,7 @@ const { CHANGE_INBOX_ROLES } = require('./changeRequestController');
 const { canReadOthersDocs } = require('./documentController');
 const { countOpenComplaints } = require('./complaintController');
 const { countOpenResetRequests } = require('./passwordResetRequestController');
-const { countMyTaskApprovals } = require('./taskWorkController');
+const { countMyOpenTasks } = require('./taskController');
 const { countDueConfirmations } = require('./lifecycleController');
 const {
   hasPermission, isPortalViewer, isExecViewer, canApproveSelfPayslip, canApproveAdvances,
@@ -821,11 +821,13 @@ const countHrApprovals = asyncHandler(async (req, res) => {
   const confirmationQ = may('lifecycle.manage')
     ? countDueConfirmations(req).catch(() => 0)
     : NONE;
-  // GET /tasks/approvals                      (nobody — a personal inbox)
-  // No capability gate on purpose: anyone can be named the approver of a task,
-  // which is why that route has none either. Counted from the very filter the
-  // list is built from (approvalInboxFilter).
-  const taskApprovalQ = countMyTaskApprovals(req).catch(() => 0);
+  // GET /tasks?scope=mine                     (nobody — a personal list)
+  // No capability gate on purpose: everybody has tasks. Since the 2026-09-21
+  // rework a task has no approval step, so what this badge counts is what is
+  // ON somebody — their open tasks, overdue ones included. The key is still
+  // `taskApproval` because the sidebar and the app's hub read it by that name;
+  // renaming it would be a three-repo change for a word.
+  const taskApprovalQ = countMyOpenTasks(req).catch(() => 0);
 
   // GET /payroll?releaseStatus=Requested,Approved,ChangeRequested  (payroll.manage)
   // The "Needs action" tab of Payslip Requests: an employee has asked for a

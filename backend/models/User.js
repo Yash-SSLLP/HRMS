@@ -207,6 +207,34 @@ const userSchema = new mongoose.Schema(
     // Here rather than on EmployeeProfile so an account with no profile (CEO/MD,
     // SuperAdmin) can pin too, and so it follows the person to a new phone.
     homePins: { type: [String], default: undefined },
+
+    // WHERE THIS PERSON SITS AMONG THEIR SIBLINGS ON THE ORG CHART. A position
+    // within one branch, not a rank in the company: index 0 is the leftmost card
+    // under a manager (the topmost on the phone's vertical tree), and it means
+    // nothing outside that one group of people who share that manager.
+    //
+    // `index: null` — the default, and what everybody starts as — means nobody
+    // has arranged this person's branch, and the chart falls back to its own
+    // order: executives bookend the top row (CEO left, MD right), then the
+    // people with no department, then by name. A SuperAdmin arranging a branch
+    // writes a position for EVERY card in it, so a branch is either arranged or
+    // it is not; somebody who joins an arranged branch later has none and lands
+    // after the arranged cards rather than silently displacing anyone.
+    //
+    // `branch` IS THE POINT OF THE PAIR: the manager everybody in that branch
+    // reports to (null for the top row). A position is only honoured while the
+    // person is still in the branch it was given for, so moving somebody under a
+    // new manager drops their old position instead of carrying it across and
+    // landing them at an arbitrary place in a team they just joined. Nothing has
+    // to clean up after a reporting-line change — the mismatch does it.
+    //
+    // Here rather than on EmployeeProfile because the chart is keyed by user id
+    // and CEO/MD have no profile at all — they are exactly the two cards the
+    // first request to arrange this was about.
+    orgChartOrder: {
+      branch: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      index: { type: Number, default: null },
+    },
   },
   { timestamps: true }
 );
