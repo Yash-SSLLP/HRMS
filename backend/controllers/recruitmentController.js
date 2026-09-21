@@ -11,12 +11,21 @@ const asyncHandler = require('express-async-handler');
 const path = require('path');
 const crypto = require('crypto');
 const Job = require('../models/Job');
+const { jobLocations } = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const {
   CANDIDATE_STAGES, ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS,
   ASSESSMENT_RATINGS, ROUND_RECOMMENDATIONS,
+  REAPPLY_HOLD_MONTHS, reapplyOn, withinReapplyHold,
 } = require('../models/Candidate');
 const User = require('../models/User');
+const { hasPermission } = require('../middleware/authMiddleware');
+// The recruitment rules that are pure string/date decisions, with a self-check
+// of their own (scripts/testRecruitmentRules.js).
+const {
+  normalizeJobLocations, matchJobLocation, keepLocationForJob,
+  identityClauses, sameIdentity, rejectedAtOf, reapplyVerdict, summarizePriorRejections,
+} = require('../services/recruitmentRules');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
@@ -32,7 +41,7 @@ const { renderOfferLetter, renderAppointmentLetter, letterBodyDefaults, resolveL
 const { renderMail } = require('../services/templates');
 const { getBranding } = require('../services/branding');
 const { enqueueMail, sendMail } = require('../services/email');
-const { notify } = require('../services/notify');
+const { notify, notifyMany } = require('../services/notify');
 const googleCalendar = require('../services/googleCalendar');
 const { computeNextEmployeeCode } = require('./lifecycleController');
 const { viewerCompanyScope } = require('../utils/employeeScope');
@@ -104,6 +113,210 @@ function parseCcList(raw, exclude = []) {
   )].filter((e) => !skip.has(e));
 }
 
+// ===== Job locations =====
+// One requisition is routinely open in more than one place, so a job carries a
+// LIST (Job.locations) and an applicant picks from it (Candidate.location). The
+// string rules live in services/recruitmentRules.js, which has a self-check;
+// what is left here is turning a refusal into the 400 the caller reads.
+
+/**
+ * The location to file an application/candidate against, checked against the
+ * job's own list. Returns the job's own spelling, so "delhi" and "Delhi" never
+ * end up as two different branches in a report.
+ * @param {Object} job - the job (needs `locations`/`location`)
+ * @param {*} value - the submitted location
+ * @param {import('express').Response} res
+ * @param {{required?: boolean}} [opts] - required is for the public form, where
+ *   an unanswered branch question is the whole point of asking it
+ * @returns {string}
+ * @throws 400 when the value is off the job's list, or missing while required
+ */
+function resolveCandidateLocation(job, value, res, { required = false } = {}) {
+  const hit = matchJobLocation(job, value);
+  if (hit.missing && required) {
+    res.status(400);
+    throw new Error(`Please choose the location you are applying for: ${hit.allowed.join(', ')}.`);
+  }
+  if (!hit.ok) {
+    res.status(400);
+    throw new Error(`This opening is hiring in ${hit.allowed.join(', ')} — pick one of those.`);
+  }
+  return hit.value;
+}
+
+// ===== Prior applications: the reapply hold and the flag =====
+// A rejection is held for REAPPLY_HOLD_MONTHS (models/Candidate.js). Inside the
+// window the same person cannot re-apply for the same opening through the public
+// form; outside it they can. Either way, anybody carrying an earlier REJECTION is
+// FLAGGED — to HR on the pipeline, and to the interviewer in My Interviews — with
+// the write-ups that explain why it went the way it did last time.
+//
+// A re-applicant is a NEW candidate row; the old one is the history. So there is
+// no link between the records and the match is made on contact details
+// (identityClauses / sameIdentity in services/recruitmentRules.js).
+
+/**
+ * One earlier rejected application, as the flag renders it.
+ * Carries the interview write-ups — the point of the flag is that the panel
+ * reads WHY it went the way it did last time, not merely that it did.
+ * @param {Object} row - a rejected candidate (lean, `job` populated)
+ * @param {string|null} currentJobId - the job the person is in now
+ * @param {Date} now
+ */
+function priorRejectionOut(row, currentJobId, now) {
+  const at = rejectedAtOf(row);
+  return {
+    _id: row._id,
+    jobId: row.job?._id || row.job || null,
+    jobTitle: row.job?.title || '',
+    location: row.location || '',
+    sameJob: !!currentJobId && String(row.job?._id || row.job || '') === String(currentJobId),
+    appliedAt: row.createdAt,
+    rejectedAt: at,
+    // Stamped rejections say so; a legacy one is dated from `updatedAt` and is
+    // labelled as approximate wherever it is shown.
+    rejectedAtApprox: !row.rejection?.at,
+    stageAt: row.rejection?.stageAt || '',
+    reason: row.rejection?.reason || '',
+    byName: row.rejection?.byName || '',
+    withinHold: withinReapplyHold(at, now),
+    reapplyOn: reapplyOn(at),
+    // Only the rounds that were actually used — four untouched "Pending" boxes
+    // are not history.
+    rounds: (row.rounds || [])
+      .map((r, i) => roundSummary(r, i))
+      .filter((r) => r.status !== 'Pending' || r.feedback || r.assessment.recommendation),
+  };
+}
+
+/**
+ * Earlier REJECTED applications for each of `candidates`, keyed by candidate id.
+ * One query for the whole list rather than one per row, so attaching the flag to
+ * a 200-candidate pipeline costs a single extra round trip.
+ * @param {Object[]} candidates - docs or lean rows (need email/phone/job/_id)
+ * @returns {Promise<Map<string, Object>>} id -> the flag, only for those who have one
+ */
+async function priorRejectionMap(candidates) {
+  const list = (candidates || []).filter(Boolean);
+  if (!list.length) return new Map();
+  // Every identity in the list goes into ONE `$or`.
+  const or = list.flatMap((c) => identityClauses(c));
+  if (!or.length) return new Map();
+
+  const rows = await Candidate.find({ stage: 'Rejected', $or: or })
+    .select('name email phone job location stage rejection rounds createdAt updatedAt')
+    .populate('job', 'title')
+    .lean();
+  if (!rows.length) return new Map();
+
+  const now = new Date();
+  const out = new Map();
+  for (const c of list) {
+    const mine = rows
+      .filter((r) => String(r._id) !== String(c._id) && sameIdentity(r, c))
+      .map((r) => priorRejectionOut(r, c.job?._id || c.job || null, now));
+    const flag = summarizePriorRejections(mine);
+    if (flag) out.set(String(c._id), flag);
+  }
+  return out;
+}
+
+/**
+ * Attach the prior-rejection flag to a list of candidates for a JSON response.
+ * Takes docs, returns plain objects (toJSON first, so the resume path and the
+ * letter paths are still stripped).
+ * @param {Object[]} candidates
+ * @returns {Promise<Object[]>}
+ */
+async function withPriorRejections(candidates) {
+  const flags = await priorRejectionMap(candidates);
+  return candidates.map((c) => {
+    const plain = c.toJSON ? c.toJSON() : c;
+    const flag = flags.get(String(c._id));
+    return flag ? { ...plain, priorRejection: flag } : plain;
+  });
+}
+
+/**
+ * Who hears that a previously-rejected applicant is back: the Backend, and the
+ * HR Managers who can act on candidates. Walled to the job's hiring company —
+ * an HR Manager of another company has no business in this pipeline — except for
+ * a shared (company-less) opening, which belongs to everyone.
+ * @param {Object} job - the job (needs `company`)
+ * @returns {Promise<string[]>} user ids
+ */
+async function recruitmentFlagRecipients(job) {
+  const admins = await User.find({ role: { $in: ['SuperAdmin', 'HRManager'] }, isActive: true })
+    .select('_id role permissions').lean();
+  const eligible = admins.filter((u) => u.role === 'SuperAdmin' || hasPermission(u, 'recruitment.candidates'));
+  if (!job?.company || !eligible.length) return eligible.map((u) => u._id);
+  const hrIds = eligible.filter((u) => u.role !== 'SuperAdmin').map((u) => u._id);
+  const profiles = hrIds.length
+    ? await EmployeeProfile.find({ user: { $in: hrIds } }).select('user company').lean()
+    : [];
+  const companyOf = new Map(profiles.map((p) => [String(p.user), p.company ? String(p.company) : '']));
+  return eligible
+    .filter((u) => {
+      if (u.role === 'SuperAdmin') return true;
+      const own = companyOf.get(String(u._id));
+      // No company on their own profile = unrestricted, the same rule
+      // viewerCompanyScope applies everywhere else.
+      return !own || own === String(job.company);
+    })
+    .map((u) => u._id);
+}
+
+/**
+ * The rejection stamp for a candidate being turned down now.
+ * `stageAt` is read BEFORE the new stage is assigned — a rejection at Applied is
+ * a résumé screen and one at Offer is something else entirely, and only the
+ * outgoing stage says which.
+ * @param {Object} candidate - as it stands before the stage change
+ * @param {*} reason - what HR typed (optional)
+ * @param {Object} actor - req.user
+ * @returns {Object} the `rejection` sub-document
+ */
+function stampRejection(candidate, reason, actor) {
+  return {
+    at: new Date(),
+    by: actor?._id,
+    byName: actor?.fullName,
+    reason: String(reason || '').trim().slice(0, 500) || undefined,
+    stageAt: candidate?.stage || undefined,
+  };
+}
+
+/**
+ * Tell HR that an applicant they previously rejected has applied again.
+ * Silent when there is no history — which is almost every application.
+ * @param {Object} candidate - the freshly created candidate
+ * @param {Object} job - their job (needs `company` and `title`)
+ */
+async function notifyPriorRejection(candidate, job) {
+  const flag = (await priorRejectionMap([candidate])).get(String(candidate._id));
+  if (!flag) return;
+  const recipients = await recruitmentFlagRecipients(job);
+  if (!recipients.length) return;
+  const last = flag.prior[0] || {};
+  const when = last.rejectedAt ? longDate(last.rejectedAt) : 'earlier';
+  // "for this same opening" carries more than the title would: it says they were
+  // turned down for the very role they are asking about again.
+  const forWhat = last.sameJob ? ' for this same opening'
+    : last.jobTitle ? ` for ${last.jobTitle}` : '';
+  const hold = flag.withinHold
+    ? ` — still inside the ${flag.holdMonths}-month hold`
+    : '';
+  await notifyMany(recipients, {
+    type: 'recruitment',
+    // Admin-portal notification: a dual-role HR Manager must not meet this in
+    // My Portal (the notification-audience convention).
+    audience: 'admin',
+    title: `Re-applicant: ${candidate.name} (${job.title})`,
+    body: `Rejected ${when}${forWhat}${hold}. Their earlier interview feedback is on the candidate.`,
+    link: '/admin/recruitment',
+  });
+}
+
 // ===== Jobs =====
 /**
  * List job openings with candidate counts, optionally filtered by status.
@@ -135,6 +348,7 @@ const createJob = asyncHandler(async (req, res) => {
     throw new Error('title is required');
   }
   if (req.body.company === '') req.body.company = null; // "shared" from the form
+  normalizeJobLocations(req.body);
   // A walled recruiter hires for their own company, full stop: their jobs get
   // it stamped automatically, and a crafted body cannot point elsewhere.
   const scope = viewerCompanyScope(req);
@@ -167,6 +381,9 @@ const updateJob = asyncHandler(async (req, res) => {
     throw new Error('Job not found');
   }
   if (req.body.company === '') req.body.company = null; // "shared" from the form
+  // `job` is passed so a legacy single-`location` payload cannot flatten an
+  // opening that is already running in several places.
+  normalizeJobLocations(req.body, job);
   // A walled recruiter cannot repoint a job at another company — and cannot
   // clear it to "shared" either, which would quietly expose the job and all
   // its candidates to every other company. Resending the unchanged value is
@@ -219,7 +436,7 @@ const deleteJob = asyncHandler(async (req, res) => {
  */
 // GET /api/recruitment/apply/:jobId — public job info for the application form.
 const getPublicJob = asyncHandler(async (req, res) => {
-  const job = await Job.findById(req.params.jobId).select('title department location employmentType description status');
+  const job = await Job.findById(req.params.jobId).select('title department location locations employmentType description status');
   if (!job) {
     res.status(404);
     throw new Error('This job opening was not found.');
@@ -230,6 +447,10 @@ const getPublicJob = asyncHandler(async (req, res) => {
       title: job.title,
       department: job.department,
       location: job.location,
+      // The places this opening is hiring for. The form turns these into the
+      // choice the applicant has to make, so it must send the list and not just
+      // the legacy first entry.
+      locations: jobLocations(job),
       employmentType: job.employmentType,
       description: job.description,
       open: job.status === 'Open',
@@ -270,14 +491,32 @@ const submitApplication = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Please attach your resume.');
   }
+  // Which branch they are applying to. Required whenever the opening names any,
+  // because the answer decides which office interviews them.
+  const location = resolveCandidateLocation(job, req.body.location, res, { required: true });
 
-  // One application per email per job — block re-applying with the same address.
-  // Checked before writing the resume so a rejected duplicate leaves no orphan file.
+  // One live application per person per job, and a rejected one is HELD for
+  // REAPPLY_HOLD_MONTHS before they may try this opening again. Checked before
+  // the resume is written so a refused submission leaves no orphan file.
   const normEmail = email.trim().toLowerCase();
-  const already = await Candidate.findOne({ job: job._id, email: normEmail });
-  if (already) {
+  const identity = { email: normEmail, phone };
+  const priors = await Candidate.find({ job: job._id, $or: identityClauses(identity) })
+    .select('stage rejection updatedAt').lean();
+  const verdict = reapplyVerdict(priors);
+  if (verdict.reason === 'duplicate') {
     res.status(409);
-    throw new Error('You have already applied for this position with this email address.');
+    // Not "with this email address" any more: the match is on email OR phone, so
+    // a duplicate can be caught by a number while the address is a new one.
+    throw new Error('We already have an application from you for this position.');
+  }
+  if (verdict.reason === 'held') {
+    res.status(409);
+    // Says WHEN, not just no: an applicant told "you cannot apply" writes in to
+    // ask why, and a date answers it without HR in the loop.
+    throw new Error(
+      `Your earlier application for this position was not taken forward on ${longDate(verdict.rejectedAt)}. `
+      + `We keep applications on file for ${REAPPLY_HOLD_MONTHS} months — you are welcome to apply again from ${longDate(verdict.reapplyOn)}.`
+    );
   }
 
   const candidate = await Candidate.create({
@@ -285,6 +524,7 @@ const submitApplication = asyncHandler(async (req, res) => {
     email: normEmail,
     phone: phone?.trim(),
     job: job._id,
+    location: location || undefined,
     stage: 'Applied',
     source: 'Application',
     currentCompany: currentCompany?.trim(),
@@ -299,6 +539,13 @@ const submitApplication = asyncHandler(async (req, res) => {
     resumeSizeBytes: req.file.size || req.file.buffer.length,
     rounds: defaultRounds(),
   });
+
+  // Somebody we have already turned down is back. The flag itself lives on every
+  // list that shows them (priorRejectionMap), but a flag nobody is looking for
+  // is a flag nobody sees — so HR is told when the application lands. Anything
+  // for a DIFFERENT opening arrives here too: the hold only guards this one.
+  notifyPriorRejection(candidate, job).catch((err) =>
+    console.error('recruitment prior-rejection notify failed:', err.message));
 
   res.status(201).json({ ok: true, id: candidate._id });
 });
@@ -325,9 +572,14 @@ const listCandidates = asyncHandler(async (req, res) => {
     }
   }
   const candidates = await Candidate.find(filter)
-    .populate('job', 'title department')
+    // `locations` rides along so a client editing one candidate can offer the
+    // branches their own opening hires in without fetching the jobs list too.
+    .populate('job', 'title department locations location')
     .sort({ createdAt: -1 });
-  res.json({ count: candidates.length, candidates });
+  // Anybody we have turned down before travels with that history attached — the
+  // flag HR sees on the pipeline and in the applicant queue, with the earlier
+  // rounds' write-ups inside it. One extra query for the whole list.
+  res.json({ count: candidates.length, candidates: await withPriorRejections(candidates) });
 });
 
 /**
@@ -347,15 +599,33 @@ const createCandidate = asyncHandler(async (req, res) => {
     throw new Error(`stage must be one of ${CANDIDATE_STAGES.join(', ')}`);
   }
   // Company wall: a candidate can only be filed against a job the viewer sees.
+  let job = null;
   if (req.body.job) {
-    const job = await Job.findById(req.body.job).select('company').lean();
+    job = await Job.findById(req.body.job).select('company locations location').lean();
     if (!job || jobOutOfScope(req, job)) {
       res.status(404);
       throw new Error('Job not found');
     }
   }
+  // Which of the opening's locations this candidate is for. Not forced on HR the
+  // way it is on the public form — they may be entering a walk-in before the
+  // branch is settled — but it can never name a place the job is not hiring in.
+  if (req.body.location !== undefined) {
+    req.body.location = resolveCandidateLocation(job, req.body.location, res) || undefined;
+  }
+  // The rejection trail (models/Candidate.js): stamped here as well as in
+  // updateCandidate, because HR does file the occasional candidate straight in
+  // as Rejected from a walk-in or a forwarded CV.
+  // No `stageAt`: somebody filed straight in as Rejected was never at any other
+  // stage, and recording 'Rejected' as the stage they were rejected AT says
+  // nothing.
+  const rejection = req.body.stage === 'Rejected'
+    ? stampRejection({}, req.body.rejectionReason, req.user)
+    : undefined;
+  delete req.body.rejectionReason;
   const candidate = await Candidate.create({
     ...req.body,
+    ...(rejection ? { rejection } : {}),
     rounds: defaultRounds(),
     createdBy: req.user._id,
   });
@@ -387,14 +657,46 @@ const updateCandidate = asyncHandler(async (req, res) => {
   // Same wall as createCandidate: re-filing the candidate against a job the
   // viewer cannot see would push them across the company wall (and out of the
   // viewer's own reach, with no way back).
-  if (req.body.job !== undefined && req.body.job
-    && String(req.body.job) !== String(candidate.job || '')) {
-    const nextJob = await Job.findById(req.body.job).select('company').lean();
-    if (!nextJob || jobOutOfScope(req, nextJob)) {
-      res.status(404);
-      throw new Error('Job not found');
-    }
+  const jobChanging = req.body.job !== undefined && req.body.job
+    && String(req.body.job) !== String(candidate.job || '');
+  // The job the candidate will END UP on — loaded once for both the company wall
+  // and the location check below, which both need it.
+  let targetJob = null;
+  if (jobChanging || req.body.location !== undefined) {
+    const jobId = req.body.job !== undefined ? req.body.job : candidate.job;
+    if (jobId) targetJob = await Job.findById(jobId).select('company locations location').lean();
   }
+  if (jobChanging && (!targetJob || jobOutOfScope(req, targetJob))) {
+    res.status(404);
+    throw new Error('Job not found');
+  }
+  // The location is only meaningful against a job, so it is checked against
+  // whichever job the candidate ends up on. Moving them to a different opening
+  // clears a location that one is not hiring in — keeping it would leave the
+  // record claiming a branch that does not exist for this role.
+  if (req.body.location !== undefined || jobChanging) {
+    req.body.location = req.body.location !== undefined
+      // Typed by HR: validated, and stored in the job's own spelling.
+      ? resolveCandidateLocation(targetJob, req.body.location, res)
+      // Re-filed against another opening without touching the location: keep it
+      // only if the new opening hires there.
+      : keepLocationForJob(targetJob, candidate.location);
+  }
+  // The rejection trail: stamped on the transition INTO Rejected and left alone
+  // afterwards, so reviving somebody out of Rejected keeps the record of their
+  // having been there (and of the hold it started).
+  if (req.body.stage === 'Rejected' && candidate.stage !== 'Rejected') {
+    candidate.rejection = stampRejection(candidate, req.body.rejectionReason, req.user);
+  } else if (req.body.rejectionReason !== undefined && candidate.stage === 'Rejected') {
+    // Correcting the wording afterwards, without re-dating the rejection. On a
+    // row rejected before `rejection.at` existed the date is inferred from
+    // `updatedAt`, which this very save is about to move — so it is frozen first,
+    // or editing the reason would silently restart the hold.
+    if (!candidate.rejection?.at) candidate.set('rejection.at', rejectedAtOf(candidate) || undefined);
+    candidate.set('rejection.reason', String(req.body.rejectionReason || '').trim().slice(0, 500) || undefined);
+  }
+  delete req.body.rejectionReason;
+  delete req.body.rejection;
   Object.assign(candidate, req.body);
   await candidate.save();
   res.json({ candidate });
@@ -660,13 +962,20 @@ const setRound = asyncHandler(async (req, res) => {
 // worried about, instead of interviewing the candidate cold and repeating the
 // first two panels' questions. It is context only — read-only summaries of
 // somebody else's round (roundSummary), never anything this interviewer can edit.
-function interviewItem(c, r, idx) {
+function interviewItem(c, r, idx, priorRejection = null) {
   return {
     candidateId: c._id,
     candidateName: c.name,
     candidateEmail: c.email || '',
     jobTitle: c.job?.title || '',
+    // Which branch they applied to. A panel interviewing for three cities at
+    // once has to know which one this call is about.
+    location: c.location || '',
     stage: c.stage,
+    // Rejected by us before, with the write-ups that say why. The interviewer is
+    // the person who most needs it and the last to hear about it — they are
+    // about to ask the same questions a panel already answered.
+    priorRejection: priorRejection || undefined,
     hasResume: !!(c.resumeName || c.resumePath),
     index: idx,
     label: r.label || `Round ${idx + 1}`,
@@ -696,11 +1005,14 @@ const myInterviews = asyncHandler(async (req, res) => {
   const candidates = await Candidate.find({ 'rounds.interviewer': req.user._id })
     .populate('job', 'title department')
     .sort({ updatedAt: -1 });
+  // One lookup for the whole list, not one per round: an interviewer with eight
+  // rounds across five candidates would otherwise pay for it eight times.
+  const flags = await priorRejectionMap(candidates);
   const interviews = [];
   candidates.forEach((c) => {
     (c.rounds || []).forEach((r, idx) => {
       if (r.interviewer && String(r.interviewer) === String(req.user._id)) {
-        interviews.push(interviewItem(c, r, idx));
+        interviews.push(interviewItem(c, r, idx, flags.get(String(c._id))));
       }
     });
   });
@@ -800,7 +1112,11 @@ const setMyInterviewRound = asyncHandler(async (req, res) => {
   }
 
   await candidate.save();
-  res.json({ interview: interviewItem(candidate, round, idx) });
+  // The client swaps this row straight into its list, so the flag has to ride
+  // along — returning it without would make a re-applicant's banner vanish the
+  // moment their interviewer saved an assessment.
+  const flag = (await priorRejectionMap([candidate])).get(String(candidate._id));
+  res.json({ interview: interviewItem(candidate, round, idx, flag) });
 });
 
 /**

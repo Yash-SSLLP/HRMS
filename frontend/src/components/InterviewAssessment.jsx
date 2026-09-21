@@ -322,6 +322,134 @@ export function AssessmentView({ round, dense = false }) {
  *
  * @param {{rounds: Object[], title?: string, defaultOpen?: boolean}} props
  */
+// ===== THE RE-APPLICANT FLAG =====
+// Somebody we have already turned down is in the pipeline again. A rejection is
+// held for three months (models/Candidate.js REAPPLY_HOLD_MONTHS): inside the
+// window the public form refuses a second application for the same opening, so
+// anybody who appears inside it got here another way — a different opening, or
+// HR entering them by hand — and that is exactly the case worth flagging.
+//
+// The flag is `candidate.priorRejection` / `interview.priorRejection` from the
+// server (recruitmentController priorRejectionMap). It is rendered in three
+// places from here so HR, the applicant queue and the interviewer all meet the
+// same thing: the chip on a row, and the panel with the earlier write-ups in it.
+
+/** A date on its own — the rejection is a day, not a moment. */
+const shortDate = (d) => (d
+  ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+  : '');
+
+// The one pipeline stage whose stored name is not what people call it.
+const STAGE_LABELS = { NewJoinee: 'New Joinee' };
+
+/**
+ * The one-line version, for a table row or a card header.
+ * Amber when the earlier rejection is still inside the hold, grey-red when it
+ * has lapsed — the difference is whether the pipeline is going against a
+ * decision that still stands.
+ */
+export function PriorRejectionChip({ flag, className = '' }) {
+  if (!flag) return null;
+  const tone = flag.withinHold
+    ? 'bg-amber-100 text-amber-900 border-amber-300'
+    : 'bg-red-50 text-red-700 border-red-200';
+  const last = flag.prior?.[0];
+  return (
+    <span
+      title={flag.withinHold
+        ? `Rejected ${shortDate(last?.rejectedAt)} — inside the ${flag.holdMonths}-month hold (reapply from ${shortDate(flag.reapplyOn)})`
+        : `Rejected ${shortDate(last?.rejectedAt)} — the ${flag.holdMonths}-month hold has lapsed`}
+      className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide border px-1.5 py-0.5 rounded-lg ${tone} ${className}`}
+    >
+      ⚑ {flag.withinHold ? 'Rejected · on hold' : 'Rejected before'}
+      {flag.count > 1 ? ` ×${flag.count}` : ''}
+    </span>
+  );
+}
+
+/**
+ * The full flag: why they were turned down last time, and what each round of
+ * that attempt said. Collapsed by default on a list, open where somebody is
+ * about to interview them.
+ * @param {{flag: Object, defaultOpen?: boolean, className?: string}} props
+ */
+export function PriorRejections({ flag, defaultOpen = false, className = '' }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!flag?.prior?.length) return null;
+  const tone = flag.withinHold
+    ? 'border-amber-300 bg-amber-50'
+    : 'border-red-200 bg-red-50/60';
+
+  return (
+    <div className={`border rounded-lg ${tone} ${className}`}>
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-start justify-between gap-2 px-3 py-2 text-left">
+        <span className="min-w-0">
+          <span className="text-xs font-semibold text-gray-800">
+            ⚑ Applied before and was rejected
+            {flag.count > 1 ? ` · ${flag.count} times` : ''}
+          </span>
+          <span className="block text-[11px] text-gray-600 mt-0.5">
+            {flag.withinHold
+              ? `Still inside the ${flag.holdMonths}-month hold — they may reapply from ${shortDate(flag.reapplyOn)}. Read why it went the way it did before deciding.`
+              : `The ${flag.holdMonths}-month hold has lapsed, so they are free to apply. The earlier feedback is below.`}
+            {flag.sameJob ? ' Rejected for this same opening.' : ''}
+          </span>
+        </span>
+        <span className="text-gray-400 text-xs shrink-0 pt-0.5">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {flag.prior.map((p) => (
+            <div key={p._id} className="bg-white border border-gray-200 rounded-lg p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-medium text-gray-800">
+                  {p.jobTitle || 'Opening not recorded'}
+                  {p.location ? <span className="font-normal text-gray-500"> · {p.location}</span> : null}
+                  {p.sameJob ? <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded-lg">Same opening</span> : null}
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  {/* A rejection recorded before the date was stamped is dated
+                      from the record's last change, so it says "around". */}
+                  Rejected {p.rejectedAtApprox ? 'around ' : ''}{shortDate(p.rejectedAt) || 'date not recorded'}
+                  {p.stageAt ? ` · at ${STAGE_LABELS[p.stageAt] || p.stageAt}` : ''}
+                  {p.byName ? ` · by ${p.byName}` : ''}
+                </div>
+              </div>
+              {p.reason ? (
+                <div className="mt-2 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 block">Reason given</span>
+                  {p.reason}
+                </div>
+              ) : null}
+              {p.rounds?.length ? (
+                <div className="mt-2 space-y-2">
+                  {p.rounds.map((r) => (
+                    <div key={r.index} className="border border-gray-200 rounded-lg p-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                        <span className="text-xs font-medium text-gray-700">
+                          {r.label}
+                          <span className="ml-2 font-normal text-gray-500">
+                            {r.interviewerName || r.decidedByName || 'Interviewer not recorded'}
+                          </span>
+                        </span>
+                        <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[r.status] || ROUND_STATUS_STYLES.Pending}`}>{r.status}</span>
+                      </div>
+                      <AssessmentView round={r} dense />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-[11px] text-gray-500">No interview rounds were written up on that application.</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PreviousRounds({ rounds = [], title = 'What the earlier rounds said', defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
   if (!rounds.length) return null;

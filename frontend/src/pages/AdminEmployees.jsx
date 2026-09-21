@@ -22,6 +22,7 @@ import { peopleOptions, hasLeft, peopleOptionList } from '../utils/peopleOptions
 import { ROLES, roleLabel } from '../config/roles';
 import { canAdministerEmployee, hasExplicitPermission, isEditingExec } from '../config/permissions';
 import { formatDateTime12, toYMD } from '../utils/time';
+import { docLabel } from '../utils/docCategories';
 
 const EMPLOYMENT_TYPES = ['FullTime', 'PartTime', 'Contract', 'Intern'];
 // Enums mirrored from models/EmployeeProfile.js — a value outside these fails validation.
@@ -1072,19 +1073,31 @@ This cannot be undone.`,
     });
   }, [profiles, query, filters, docStatus, sort]);
 
+  // What the employee declared instead of filing, in words. An experience letter
+  // that is absent because they said it is their first job is a different fact
+  // from one nobody has chased, and the badge should not read the same for both.
+  const declaredNote = (s) => {
+    const said = [];
+    if (s?.declarations?.firstJob) said.push('first job — no experience letter');
+    if (s?.declarations?.noOtherDocuments) said.push('no other documents');
+    return said.length ? `Declared: ${said.join('; ')}` : '';
+  };
+
   const docBadge = (p) => {
     const s = docStatus[String(p._id)];
     if (!s) return <span className="text-xs text-gray-400">-</span>;
+    const declared = declaredNote(s);
     if (s.complete) {
       return (
         <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-green-100 text-green-800"
-          title={s.verified ? 'Marked all-submitted by HR' : 'All required documents uploaded'}>
+          title={[s.verified ? 'Marked all-submitted by HR' : 'All required documents accounted for', declared].filter(Boolean).join(' · ')}>
           Complete{s.verified ? ' ✓' : ''}
         </span>
       );
     }
     return (
-      <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-red-100 text-red-800" title={`Missing: ${s.missing.join(', ')}`}>
+      <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-red-100 text-red-800"
+        title={[`Missing: ${s.missing.map((c) => docLabel(c)).join(', ')}`, declared].filter(Boolean).join(' · ')}>
         Incomplete ({s.missing.length})
       </span>
     );
@@ -1732,14 +1745,18 @@ This cannot be undone.`,
                       </div>
                     </div>
                     {(() => {
-                      const miss = docStatus[editingId]?.missing || [];
+                      const st = docStatus[editingId];
+                      const miss = st?.missing || [];
+                      const declared = declaredNote(st);
                       return miss.length > 0 ? (
                         <p className="text-xs text-amber-700 mt-1.5">
-                          Missing: {miss.join(', ')}. Share this link so they can upload the missing documents.
+                          Missing: {miss.map((c) => docLabel(c)).join(', ')}. Share this link so they can upload the missing documents.
+                          {declared ? ` (${declared}.)` : ''}
                         </p>
                       ) : (
                         <p className="text-xs text-gray-500 mt-1.5">
-                          All required documents are in. You can still share this link for re-uploads.
+                          All required documents are accounted for. You can still share this link for re-uploads.
+                          {declared ? ` (${declared}.)` : ''}
                         </p>
                       );
                     })()}

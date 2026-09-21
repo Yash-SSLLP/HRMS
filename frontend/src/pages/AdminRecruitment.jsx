@@ -22,6 +22,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import { formatDateTime12 } from '../utils/time';
 import {
   AssessmentForm, AssessmentView, PreviousRounds, RecommendationChip,
+  PriorRejectionChip, PriorRejections,
   assessmentOf, hasAssessment, averageRating,
 } from '../components/InterviewAssessment';
 
@@ -107,6 +108,86 @@ const fmtDateTime = (d) => formatDateTime12(d);
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 
 /**
+ * Ask why, and confirm the rejection in the same breath.
+ *
+ * The reason is not paperwork: a rejection is held for three months, and if this
+ * person applies again it is the first thing HR and the interviewer are shown —
+ * alongside the interview write-ups. Blank is accepted (the rounds often say it
+ * better than a one-liner can); cancelling the dialog cancels the rejection.
+ * @returns {Promise<string|null>} the reason, or null when cancelled
+ */
+const askRejectionReason = (c) => promptDialog({
+  title: `Reject ${c.name}?`,
+  message: 'Why are they not going forward? Kept for three months and shown to HR and the panel if they apply again. Leave blank if the interview feedback says it.',
+  confirmText: 'Reject',
+  initialValue: '',
+});
+
+/**
+ * The places a job is hiring for, whatever era the row was written in — mirrors
+ * jobLocations() in models/Job.js. A job posted before `locations` existed still
+ * has its one `location`, and every reader here goes through this so it reads as
+ * a one-location job rather than a locationless one.
+ */
+const jobLocationsOf = (j) => {
+  const list = (j?.locations || []).map((l) => String(l || '').trim()).filter(Boolean);
+  if (list.length) return list;
+  const one = String(j?.location || '').trim();
+  return one ? [one] : [];
+};
+
+/**
+ * The job-form locations editor: a chip per place, plus a box to add another.
+ * A requisition open in Delhi, Indore and Raipur is one job with three
+ * locations, and the applicant picks which one they are applying to.
+ */
+function LocationsField({ value = [], onChange }) {
+  const [draft, setDraft] = useState('');
+  const add = () => {
+    const name = draft.trim();
+    if (!name) return;
+    // Case-insensitive, so "delhi" cannot join "Delhi" as a second branch.
+    if (!value.some((l) => l.toLowerCase() === name.toLowerCase())) onChange([...value, name]);
+    setDraft('');
+  };
+  return (
+    <div className="sm:col-span-2">
+      <label className="block text-xs text-gray-600 mb-1">Locations</label>
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {value.map((l) => (
+            <span key={l} className="inline-flex items-center gap-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-lg pl-2.5 pr-1 py-1 min-h-[28px]">
+              {l}
+              <button type="button" aria-label={`Remove ${l}`} title={`Remove ${l}`}
+                onClick={() => onChange(value.filter((x) => x !== l))}
+                className="inline-flex items-center justify-center w-6 h-6 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          // Enter adds a location; it must not submit the whole job form, which
+          // is what a bare Enter in a text input inside a <form> does.
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+          placeholder={value.length ? 'Add another location' : 'e.g. Indore'}
+          className="flex-1 border rounded-lg px-3 py-2"
+        />
+        <button type="button" onClick={add} disabled={!draft.trim()}
+          className="px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">Add</button>
+      </div>
+      <p className="text-[11px] text-gray-500 mt-1">
+        {value.length > 1
+          ? 'Applicants choose one of these on the application form.'
+          : 'Add every place this role is open in — applicants then choose which one they are applying to.'}
+      </p>
+    </div>
+  );
+}
+
+/**
  * The interview the offer letter refers back to ("further to your interview
  * on …"). That is the LAST round the candidate actually cleared, so take the
  * latest date among cleared rounds — when it was decided if HR recorded a
@@ -131,8 +212,11 @@ const ROUND_STYLES = {
   Cleared: 'bg-green-100 text-green-700',
   Rejected: 'bg-red-100 text-red-700',
 };
-const blankJob = { title: '', department: '', location: '', employmentType: 'FullTime', openings: 1, description: '', status: 'Open', company: '' };
-const blankCand = { name: '', email: '', phone: '', job: '', stage: 'Applied', rating: 0, notes: '' };
+// `locations` is the list of places the opening is hiring for (Job.locations);
+// the legacy single `location` is not in the form at all any more — the server
+// keeps it in step as the first entry.
+const blankJob = { title: '', department: '', locations: [], employmentType: 'FullTime', openings: 1, description: '', status: 'Open', company: '' };
+const blankCand = { name: '', email: '', phone: '', job: '', location: '', stage: 'Applied', rating: 0, notes: '' };
 
 export default function AdminRecruitment() {
   // A view-only account (the God audit login, a read-only CEO/MD) reads the
@@ -264,7 +348,14 @@ export default function AdminRecruitment() {
   const openJobCreate = () => { setJobEditId(null); setJobForm(blankJob); setJobModal(true); };
   const openJobEdit = (j) => {
     setJobEditId(j._id);
-    setJobForm({ title: j.title, department: j.department || '', location: j.location || '', employmentType: j.employmentType, openings: j.openings, description: j.description || '', status: j.status, company: j.company || '' });
+    setJobForm({
+      title: j.title, department: j.department || '',
+      // jobLocationsOf(): a job saved before the list existed edits as a
+      // one-location job, not a locationless one.
+      locations: jobLocationsOf(j),
+      employmentType: j.employmentType, openings: j.openings,
+      description: j.description || '', status: j.status, company: j.company || '',
+    });
     setJobModal(true);
   };
   const saveJob = async (e) => {
@@ -292,10 +383,19 @@ export default function AdminRecruitment() {
   };
 
   // ----- Candidates -----
-  const openCandCreate = () => { setCandEditId(null); setCandForm({ ...blankCand, job: selectedJob || '' }); setCandModal(true); };
+  // The locations the candidate form may offer: whichever opening is selected in
+  // it. Derived from `jobs` rather than held in state, so editing the job's
+  // locations and reopening the form never shows a stale list.
+  const candLocations = jobLocationsOf(jobs.find((j) => j._id === candForm.job));
+  const openCandCreate = () => {
+    setCandEditId(null);
+    const places = jobLocationsOf(jobs.find((j) => j._id === selectedJob));
+    setCandForm({ ...blankCand, job: selectedJob || '', location: places.length === 1 ? places[0] : '' });
+    setCandModal(true);
+  };
   const openCandEdit = (c) => {
     setCandEditId(c._id);
-    setCandForm({ name: c.name, email: c.email || '', phone: c.phone || '', job: c.job?._id || '', stage: c.stage, rating: c.rating || 0, notes: c.notes || '' });
+    setCandForm({ name: c.name, email: c.email || '', phone: c.phone || '', job: c.job?._id || '', location: c.location || '', stage: c.stage, rating: c.rating || 0, notes: c.notes || '' });
     setCandModal(true);
   };
   const saveCand = async (e) => {
@@ -318,8 +418,13 @@ export default function AdminRecruitment() {
   // another team's screen just as the buttons do, so it hands over the same way.
   // Stages that stay inside this page (Applied…Offer, Rejected) say nothing.
   const setStage = async (c, stage) => {
+    // A rejection is the one stage move that is asked about, because the answer
+    // outlives it: it is held for three months, and it is what HR and the panel
+    // are shown if this person ever applies again.
+    const reason = stage === 'Rejected' ? await askRejectionReason(c) : undefined;
+    if (reason === null) return;
     try {
-      await api.put(`/recruitment/candidates/${c._id}`, { stage });
+      await api.put(`/recruitment/candidates/${c._id}`, { stage, ...(reason !== undefined ? { rejectionReason: reason } : {}) });
       await load();
       const handoff = STAGE_HANDOFF[stage];
       if (handoff) {
@@ -359,8 +464,10 @@ export default function AdminRecruitment() {
   // Shortlist or reject from the modal, then refresh both the modal list and the
   // job table (candidate counts / the filtered list below).
   const decideJobCand = async (c, stage) => {
+    const reason = stage === 'Rejected' ? await askRejectionReason(c) : undefined;
+    if (reason === null) return;
     try {
-      await api.put(`/recruitment/candidates/${c._id}`, { stage });
+      await api.put(`/recruitment/candidates/${c._id}`, { stage, ...(reason !== undefined ? { rejectionReason: reason } : {}) });
       // Patch both lists in place, the way setRound below already does. The
       // refetch emptied the modal's own list and threw its scroll position away
       // mid-review.
@@ -727,7 +834,9 @@ export default function AdminRecruitment() {
             ) : jobs.map((j) => (
               <tr key={j._id} className={selectedJob === j._id ? 'bg-gray-50' : ''}>
                 <td className="px-4 py-3 font-medium text-gray-900">{j.title}</td>
-                <td className="px-4 py-3 text-gray-600">{j.department || '-'}{j.location ? ` · ${j.location}` : ''}</td>
+                {/* All of them, not the first: a job open in three cities used to
+                    read as if it were open in one. */}
+                <td className="px-4 py-3 text-gray-600">{[j.department || '-', jobLocationsOf(j).join(', ')].filter(Boolean).join(' · ')}</td>
                 <td className="px-4 py-3">
                   <button onClick={() => openJobCandidates(j)}
                     title="Review applicants - shortlist or reject"
@@ -789,13 +898,20 @@ export default function AdminRecruitment() {
               <Fragment key={c._id}>
                 <tr>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900 flex items-center gap-2">
+                    <div className="font-medium text-gray-900 flex flex-wrap items-center gap-2">
                       {c.name}
                       {c.source === 'Application' && <span className="text-[10px] uppercase tracking-wide bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">Applied online</span>}
+                      {/* Turned down before. Expand the row for the reason and
+                          the write-ups from that attempt. */}
+                      <PriorRejectionChip flag={c.priorRejection} />
                     </div>
                     <div className="text-xs text-gray-500">{c.email || ''}{c.phone ? ` · ${c.phone}` : ''}</div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{c.job?.title || '-'}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {c.job?.title || '-'}
+                    {/* Which branch of a multi-location opening they are for. */}
+                    {c.location ? <div className="text-xs text-gray-500">{c.location}</div> : null}
+                  </td>
                   <td className="px-4 py-3">
                     {resumeBusyId === c._id ? (
                       <span className="text-gray-400 text-xs">Uploading…</span>
@@ -871,6 +987,14 @@ export default function AdminRecruitment() {
                 {expanded === c._id && (
                   <tr>
                     <td colSpan={6} className="px-4 pb-4 pt-0 bg-gray-50">
+                      {/* Rejected before: the reason, and every round of that
+                          attempt. Opened by default while the hold still stands
+                          — that is the case somebody has to look at. */}
+                      {c.priorRejection && (
+                        <div className="mb-3">
+                          <PriorRejections flag={c.priorRejection} defaultOpen={c.priorRejection.withinHold} />
+                        </div>
+                      )}
                       {/* Application details */}
                       {(c.currentCompany || c.experienceYears != null || c.noticePeriod || c.expectedCtc || c.coverNote) && (
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 text-sm">
@@ -1055,12 +1179,19 @@ export default function AdminRecruitment() {
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">{r.label || `Round ${idx + 1}`} · {c.name}</h3>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    {c.job?.title || 'No role'} · {r.interviewerName || 'No interviewer assigned'}
+                    {[c.job?.title || 'No role', c.location].filter(Boolean).join(' · ')} · {r.interviewerName || 'No interviewer assigned'}
                     {r.decidedAt ? ` · decided ${fmtDateTime(r.decidedAt)}` : ''}
                   </p>
                 </div>
                 <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{r.status}</span>
               </div>
+
+              {/* Above the earlier rounds of THIS attempt, because it outranks
+                  them: a previous rejection is the thing to know before asking
+                  the first question. */}
+              {c.priorRejection && (
+                <div className="mt-4"><PriorRejections flag={c.priorRejection} defaultOpen={c.priorRejection.withinHold} /></div>
+              )}
 
               {previous.length > 0 && (
                 <div className="mt-4"><PreviousRounds rounds={previous} defaultOpen={false} /></div>
@@ -1116,7 +1247,6 @@ export default function AdminRecruitment() {
               <input required placeholder="Title *" value={jobForm.title} onChange={(e) => setJobForm({ ...jobForm, title: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <DepartmentSelect value={jobForm.department} onChange={(v) => setJobForm({ ...jobForm, department: v })} className="block w-full border rounded-lg px-3 py-2" />
-                <input placeholder="Location" value={jobForm.location} onChange={(e) => setJobForm({ ...jobForm, location: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <select value={jobForm.employmentType} onChange={(e) => setJobForm({ ...jobForm, employmentType: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   {['FullTime', 'PartTime', 'Contract', 'Intern'].map((t) => <option key={t}>{t}</option>)}
                 </select>
@@ -1130,6 +1260,7 @@ export default function AdminRecruitment() {
                 <select value={jobForm.status} onChange={(e) => setJobForm({ ...jobForm, status: e.target.value })} className="block w-full border rounded-lg px-3 py-2 sm:col-span-2">
                   {JOB_STATUS.map((s) => <option key={s}>{s}</option>)}
                 </select>
+                <LocationsField value={jobForm.locations} onChange={(v) => setJobForm({ ...jobForm, locations: v })} />
               </div>
               <textarea rows={3} placeholder="Description" value={jobForm.description} onChange={(e) => setJobForm({ ...jobForm, description: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <div className="flex justify-end gap-2 pt-2">
@@ -1150,10 +1281,32 @@ export default function AdminRecruitment() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input placeholder="Email" value={candForm.email} onChange={(e) => setCandForm({ ...candForm, email: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <input placeholder="Phone" value={candForm.phone} onChange={(e) => setCandForm({ ...candForm, phone: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-                <SearchableSelect value={candForm.job} onChange={(e) => setCandForm({ ...candForm, job: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                {/* Changing the job clears a location the new opening does not
+                    hire in — the server does the same on save, and leaving the
+                    old branch visible would look like it had been kept. */}
+                <SearchableSelect value={candForm.job}
+                  onChange={(e) => {
+                    const nextJob = e.target.value;
+                    const places = jobLocationsOf(jobs.find((j) => j._id === nextJob));
+                    setCandForm((f) => ({
+                      ...f,
+                      job: nextJob,
+                      location: places.includes(f.location) ? f.location : (places.length === 1 ? places[0] : ''),
+                    }));
+                  }}
+                  className="block w-full border rounded-lg px-3 py-2">
                   <option value="">Job</option>
                   {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
                 </SearchableSelect>
+                {/* Which branch this candidate is for. Only offered when the
+                    chosen opening names any — HR adding a walk-in against a
+                    single-location job has nothing to answer. */}
+                {candLocations.length > 0 && (
+                  <select value={candForm.location} onChange={(e) => setCandForm({ ...candForm, location: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                    <option value="">{candLocations.length > 1 ? 'Location (applying for)' : 'Location'}</option>
+                    {candLocations.map((l) => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                )}
                 <select value={candForm.stage} onChange={(e) => setCandForm({ ...candForm, stage: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
                   {STAGES.map((s) => <option key={s}>{s}</option>)}
                 </select>
@@ -1474,15 +1627,25 @@ export default function AdminRecruitment() {
                   return <p className="text-sm text-gray-500 text-center py-6">No applicants awaiting a decision.</p>;
                 }
                 return pending.map((c) => (
-                  <div key={c._id} className="border border-gray-100 rounded-lg p-3 flex items-center justify-between gap-3">
+                  <div key={c._id} className="border border-gray-100 rounded-lg p-3">
+                    <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-gray-900 truncate">{c.name}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-lg ${STAGE_STYLES[c.stage] || ''}`}>{c.stage}</span>
+                        {/* The decision being made in this modal is exactly the
+                            one the flag is for — shortlist or reject. */}
+                        <PriorRejectionChip flag={c.priorRejection} />
                       </div>
                       <div className="text-xs text-gray-500 truncate">
-                        {[c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details'}
+                        {[c.location, c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details'}
                       </div>
+                      {/* Why we said no, on the record it was said about. Without
+                          this the reason is write-only until they apply again —
+                          which is the one place it was already shown. */}
+                      {c.stage === 'Rejected' && c.rejection?.reason && (
+                        <div className="text-xs text-red-700 mt-0.5">Rejected: {c.rejection.reason}</div>
+                      )}
                     </div>
                     <div className="shrink-0 flex items-center gap-2">
                       {c.hasResume && (
@@ -1502,6 +1665,12 @@ export default function AdminRecruitment() {
                           className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Shortlist instead</button>
                       )}
                     </div>
+                    </div>
+                    {/* Why they were turned down last time, in the queue where
+                        the same call is about to be made again. */}
+                    {c.priorRejection && (
+                      <PriorRejections flag={c.priorRejection} defaultOpen={false} className="mt-2" />
+                    )}
                   </div>
                 ));
               })()}

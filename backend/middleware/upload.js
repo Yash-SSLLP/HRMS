@@ -22,6 +22,10 @@
  *   });
  *   router.post('/', receiptUpload.single('receipt'), createExpense);
  */
+// Must precede the multer require: busboy captures parseDisposition when its
+// multipart parser is first loaded. See the module for what it rescues.
+require('./busboyFilenameFix');
+
 const multer = require('multer');
 const { preserveContext } = require('./requestContext');
 

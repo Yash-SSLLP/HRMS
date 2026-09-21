@@ -12,6 +12,10 @@ import BrandLockup from '../components/BrandLockup';
 const blank = {
   name: '', email: '', phone: '', currentCompany: '',
   experienceYears: '', noticePeriod: '', expectedCtc: '', coverNote: '',
+  // Which of the opening's locations they are applying to. One requisition is
+  // routinely open in several places at once, and the branch is the applicant's
+  // answer, not the posting's — see Job.locations / Candidate.location.
+  location: '',
 };
 
 // Centered card layout wrapper (company logo header) shared by all page states.
@@ -46,6 +50,10 @@ export default function ApplyForm() {
       try {
         const { data } = await api.get(`/recruitment/apply/${jobId}`);
         setJob(data.job);
+        // A single-location opening has nothing to choose: pre-select it so the
+        // form asks one fewer question and still records the branch.
+        const places = data.job?.locations || [];
+        if (places.length === 1) setForm((f) => ({ ...f, location: places[0] }));
       } catch (err) {
         setError(err.response?.data?.message || 'This opening is unavailable.');
       } finally {
@@ -55,12 +63,19 @@ export default function ApplyForm() {
   }, [jobId]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  // The places this opening is hiring for. Empty for a job posted without any,
+  // in which case the form asks nothing about it.
+  const locations = job?.locations || [];
 
   // Submit the application as multipart form-data (resume is required).
   const submit = async (e) => {
     e.preventDefault();
     setError('');
     if (!resume) { setError('Please attach your resume.'); return; }
+    // Checked here as well as on the server: the browser cannot mark a custom
+    // radio group required, and an unanswered branch is the one thing on this
+    // form the server will refuse outright.
+    if (locations.length && !form.location) { setError('Please choose the location you are applying for.'); return; }
     setSubmitting(true);
     try {
       const fd = new FormData();
@@ -109,12 +124,41 @@ export default function ApplyForm() {
       <div className="text-center mb-5">
         <h1 className="text-2xl font-bold text-gray-900">{job.title}</h1>
         <p className="text-sm text-gray-500 mt-1">
-          {[job.department, job.location, job.employmentType].filter(Boolean).join(' · ')}
+          {[job.department, locations.join(' · ') || job.location, job.employmentType].filter(Boolean).join(' · ')}
         </p>
         {job.description && <p className="text-sm text-gray-600 mt-3 whitespace-pre-wrap text-left">{job.description}</p>}
       </div>
 
       <form onSubmit={submit} className="space-y-3">
+        {/* WHICH BRANCH. Asked before anything about the applicant, because it
+            decides which office reads the rest of the form. One location is
+            stated rather than asked — there is nothing to choose. */}
+        {locations.length > 1 ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Location you are applying for *</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* font-medium and the border sit on the BASE, not on the selected
+                  state: picking a branch must not resize its own box (the
+                  layout-stability rule). min-h-[40px] is the touch floor. */}
+              {locations.map((l) => (
+                <label key={l}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 min-h-[40px] cursor-pointer text-sm font-medium ${
+                    form.location === l ? 'border-gray-900 bg-gray-50 text-gray-900' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}>
+                  <input type="radio" name="location" value={l} checked={form.location === l}
+                    onChange={() => { setError(''); setForm((f) => ({ ...f, location: l })); }} />
+                  <span className="truncate">{l}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">This opening is hiring in {locations.length} locations — pick the one you want to be considered for.</p>
+          </div>
+        ) : locations.length === 1 ? (
+          <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            Location: <span className="font-medium text-gray-800">{locations[0]}</span>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full name *</label>

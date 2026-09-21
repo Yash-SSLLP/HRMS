@@ -257,7 +257,10 @@ export default function AdminHiringOnboarding() {
       reportingManager: a.reportingManager || '',
       medical: a.medical ?? '',
       accidentInsurance: a.accidentInsurance ?? '',
-      location: a.location || '',
+      // The branch they applied to, once the letter has no location of its own —
+      // the same fallback designation and department already use, and the reason
+      // the candidate's location is captured at all.
+      location: a.location || c.location || '',
       employmentType: a.employmentType || 'Full-Time Employee',
       workingHours: a.workingHours || '',
       joiningDate: toDateInput(a.joiningDate || c.onboarding?.joiningDate || o.joiningDate),

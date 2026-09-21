@@ -10,6 +10,7 @@ import api from '../api/client';
 import BrandLockup from '../components/BrandLockup';
 import FileDropField from '../components/FileDropField';
 import DocSubmitPanel from '../components/DocSubmitPanel';
+import { docLabel } from '../utils/docCategories';
 
 // Centered card layout wrapper (company logo header) shared by all page states.
 function Shell({ children }) {
@@ -32,9 +33,9 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
-// Category keys come from the backend enum (e.g. "ExperienceLetter"); show them
-// with spaces ("Experience Letter"). The raw key is still what we submit.
-const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
+// Category keys come from the backend enum (e.g. "ExperienceLetter"); the name
+// on screen comes from utils/docCategories, topped up with the `labels` map the
+// link itself returns. The raw key is still what we submit.
 // Categories a person may legitimately have several of (past employers, degrees).
 const MULTI_CATEGORIES = new Set(['ExperienceLetter', 'RelievingLetter', 'EducationCertificate']);
 
@@ -47,11 +48,16 @@ export default function EmployeeDocSubmit() {
   const [others, setOthers] = useState([]); // File[]
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  // { firstJob, noOtherDocuments } — an ANSWER to a requirement, not a file.
+  // Held locally as well as on `info` so a tick shows immediately.
+  const [declarations, setDeclarations] = useState({});
+  const [savingDecl, setSavingDecl] = useState(null);
 
   const load = async () => {
     try {
       const { data } = await api.get(`/employees/public-docs/${token}`);
       setInfo(data);
+      setDeclarations(data.declarations || {});
     } catch (err) {
       setError(err.response?.data?.message || 'This link is unavailable.');
     } finally {
@@ -60,6 +66,21 @@ export default function EmployeeDocSubmit() {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [token]);
+
+  // Answer a requirement instead of filing it, on the same token that already
+  // lets this page upload documents to the profile. Only the one switch is sent,
+  // so the two cannot overwrite each other.
+  const setDeclaration = async (field, value) => {
+    setSavingDecl(field);
+    try {
+      const { data } = await api.patch(`/employees/public-docs/${token}/declarations`, { [field]: value });
+      setDeclarations(data.declarations || {});
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not save that.');
+    } finally {
+      setSavingDecl(null);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -108,9 +129,17 @@ export default function EmployeeDocSubmit() {
   // Anything HR already holds for a category is shown on its row, so the person
   // can see they have nothing left to do there (or that HR rejected a file and
   // wants it again) instead of re-uploading blind.
+  const humanize = (c) => docLabel(c, info.labels);
   const statusFor = (category) => (info.files || []).find((f) => f.category === category)?.status;
   const required = (info.docTypes || []).filter((t) => t !== 'Other');
-  const settled = required.filter((t) => (files[t] || []).length || statusFor(t)).length;
+  // A requirement that has been DECLARED away counts as covered: the progress
+  // bar on a first-jobber's screen must not sit at 3-of-4 for ever because of a
+  // letter that does not exist.
+  const waived = (t) => {
+    const field = (info.waivable || {})[t];
+    return !!(field && declarations[field]);
+  };
+  const settled = required.filter((t) => (files[t] || []).length || statusFor(t) || waived(t)).length;
   const pct = required.length ? Math.round((settled / required.length) * 100) : 0;
 
   return (
@@ -143,7 +172,7 @@ export default function EmployeeDocSubmit() {
         <DocSubmitPanel
           name={info.employee.name}
           subtitle={info.employee.employeeCode}
-          items={required.map((t) => ({ label: humanize(t), done: (files[t] || []).length > 0 || !!statusFor(t) }))}
+          items={required.map((t) => ({ label: humanize(t), done: (files[t] || []).length > 0 || !!statusFor(t) || waived(t) }))}
           submitting={submitting}
           note="Sent to HR for verification."
         />
@@ -170,6 +199,32 @@ export default function EmployeeDocSubmit() {
           <div className="sm:col-span-2 lg:col-span-3">
             <FileDropField label="Other documents" hint="optional, multiple" multiple files={others} onChange={setOthers} />
           </div>
+        </div>
+
+        {/* Two requirements a person can legitimately have nothing to put
+            against, answered here rather than left outstanding for ever. Saved
+            the moment they are ticked — they are not part of the file upload,
+            and somebody with nothing to attach must still be able to say so. */}
+        <div className="mt-2.5 docfield rounded-xl p-3">
+          <div className="text-sm font-semibold docfield-label mb-1.5">Nothing to submit for these?</div>
+          <label className="flex items-start gap-2 text-sm mb-1.5 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" disabled={savingDecl === 'firstJob'}
+              checked={!!declarations.firstJob}
+              onChange={(e) => setDeclaration('firstJob', e.target.checked)} />
+            <span>
+              <span className="font-medium">This is my first job.</span>{' '}
+              <span className="docfield-meta">I have no {humanize('ExperienceLetter')} from a previous employer.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-0.5" disabled={savingDecl === 'noOtherDocuments'}
+              checked={!!declarations.noOtherDocuments}
+              onChange={(e) => setDeclaration('noOtherDocuments', e.target.checked)} />
+            <span>
+              <span className="font-medium">I have no other documents to submit.</span>{' '}
+              <span className="docfield-meta">Nothing beyond the ones above.</span>
+            </span>
+          </label>
         </div>
 
         <div className="mt-2.5 space-y-2.5">

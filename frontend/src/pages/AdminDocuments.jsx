@@ -14,6 +14,7 @@ import { confirmDialog, promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
+import { docLabel } from '../utils/docCategories';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -28,8 +29,9 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
-// Show enum keys ("RelievingLetter") with spaces ("Relieving Letter").
-const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
+// Category names come from utils/docCategories — "PassportPhoto" is asked for
+// as a Passport Size Photo, which no camelCase split can know.
+const humanize = (c) => docLabel(c);
 
 // Mirrors backend/routes/documentRoutes.js's ceiling — keep the two in step.
 const MAX_UPLOAD_MB = 10;
@@ -62,7 +64,11 @@ export default function AdminDocuments() {
         api.get('/documents/categories'),
       ]);
       setEmployees(empRes.data.profiles);
-      setAllCategories(catRes.data.all || []);
+      // `all` is every value a document may CARRY, retired ones included, so a
+      // row already filed under one still renders. What may be uploaded now is
+      // that minus the retired set — see documentController.categories.
+      const retired = new Set(catRes.data.retired || []);
+      setAllCategories((catRes.data.all || []).filter((c) => !retired.has(c)));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load employees');
     }

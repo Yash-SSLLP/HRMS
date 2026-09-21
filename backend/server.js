@@ -23,6 +23,10 @@
 
 require('dotenv').config();
 
+// Before ANY router: busboy's multipart parser captures parseDisposition the
+// moment it is required, and appReleaseRoutes reaches for multer directly.
+require('./middleware/busboyFilenameFix');
+
 const express = require('express');
 const cors = require('cors');
 const compression = require('compression');

@@ -138,9 +138,34 @@ const candidateSchema = new mongoose.Schema(
     email: { type: String, trim: true, lowercase: true },
     phone: { type: String, trim: true },
     job: { type: mongoose.Schema.Types.ObjectId, ref: 'Job', index: true },
+    // WHICH OF THE JOB'S LOCATIONS this application is for. A requisition can be
+    // open in several places at once (Job.locations), and the branch is part of
+    // the application, not of the opening: two people answering the same advert
+    // are interviewing for different offices. Validated against the job's list
+    // on every write, so it can never name a place the job is not hiring in.
+    // Blank for a job posted without any locations.
+    location: { type: String, trim: true },
     stage: { type: String, enum: CANDIDATE_STAGES, default: 'Applied' },
     rating: { type: Number, min: 0, max: 5, default: 0 },
     notes: { type: String, trim: true },
+
+    // ===== WHY THEY WERE TURNED DOWN, AND WHEN =====
+    // `stage: 'Rejected'` records the fact; nothing recorded the date, so there
+    // was no way to tell a rejection from last week from one from two years ago
+    // — and the reapply hold below is entirely a question of when. Stamped on
+    // the transition INTO Rejected and left alone afterwards, so a candidate
+    // revived out of Rejected keeps the history of having been there.
+    rejection: {
+      at: { type: Date },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      byName: { type: String, trim: true },
+      // What HR typed when they rejected. The interview rounds carry the
+      // detailed write-ups; this is the one-line summary of the decision.
+      reason: { type: String, trim: true, maxlength: 500 },
+      // How far they had got when it ended — a rejection at Applied is a résumé
+      // screen, one at Offer is something else entirely.
+      stageAt: { type: String, trim: true },
+    },
 
     // How the candidate entered the pipeline.
     source: { type: String, enum: ['Portal', 'Application'], default: 'Portal' },
@@ -313,8 +338,64 @@ candidateSchema.set('toJSON', {
 // Audit-status plugin: logs `stage` transitions to AuditLog (labelled by candidate name).
 candidateSchema.plugin(require('./plugins/auditStatus'), { fields: ['stage'], label: (d) => d.name });
 
+// The prior-application lookup matches on contact details rather than on any
+// link between records (a re-applicant is a NEW candidate row — the old one is
+// the history), so both are indexed. Sparse: most of the collection has a phone,
+// not all of it, and a null-heavy index is wasted pages.
+candidateSchema.index({ email: 1, createdAt: -1 }, { sparse: true });
+candidateSchema.index({ phone: 1, createdAt: -1 }, { sparse: true });
+
+// ===== THE REAPPLY HOLD =====
+// A rejected application is HELD for this long: inside the window the same
+// person cannot re-apply for the same opening through the public form, and after
+// it they can. One constant, exported, because the number appears in the refusal
+// the applicant reads, in the date HR is shown, in the flag on a re-applicant
+// and in the app — the late-allowance lesson (a 5 hardcoded in four files) is
+// not worth relearning.
+const REAPPLY_HOLD_MONTHS = 3;
+
+/**
+ * When the hold on a rejection dated `at` lapses.
+ *
+ * Calendar months, clamped to the end of the target month: a 30 November
+ * rejection reopens on 28 (or 29) February, not 2 March — a bare setMonth
+ * overflows into the next month and would quietly hold the applicant back two
+ * days longer than the three months they were told.
+ * @param {Date|string} at
+ * @returns {Date|null} null when `at` is missing or unparseable
+ */
+function reapplyOn(at) {
+  if (!at) return null;
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return null;
+  const out = new Date(d);
+  const day = out.getDate();
+  // Land on the 1st first, so adding the months cannot overflow, then put the
+  // day back — capped at however many days that month actually has.
+  out.setDate(1);
+  out.setMonth(out.getMonth() + REAPPLY_HOLD_MONTHS);
+  const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
+  out.setDate(Math.min(day, lastDay));
+  return out;
+}
+
+/**
+ * Is a rejection dated `at` still inside the hold window?
+ * @param {Date|string} at
+ * @param {Date} [now]
+ * @returns {boolean} false when the date is missing — an unstamped rejection
+ *   (every one made before this existed) holds nobody back.
+ */
+function withinReapplyHold(at, now = new Date()) {
+  const until = reapplyOn(at);
+  return !!until && until > now;
+}
+
 module.exports = mongoose.model('Candidate', candidateSchema);
 module.exports.CANDIDATE_STAGES = CANDIDATE_STAGES;
+module.exports.REAPPLY_HOLD_MONTHS = REAPPLY_HOLD_MONTHS;
+module.exports.reapplyOn = reapplyOn;
+module.exports.withinReapplyHold = withinReapplyHold;
 module.exports.CANDIDATE_DOC_STATUS = CANDIDATE_DOC_STATUS;
 module.exports.ROUND_STATUS = ROUND_STATUS;
 module.exports.ASSESSMENT_RATINGS = ASSESSMENT_RATINGS;

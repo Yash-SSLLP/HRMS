@@ -14,6 +14,11 @@ const {
   HR_ONLY_CATEGORIES,
   PII_CATEGORIES,
   REQUIRED_DOCUMENT_CATEGORIES,
+  CATEGORY_LABELS,
+  RETIRED_CATEGORIES,
+  MULTI_UPLOAD_CATEGORIES,
+  WAIVABLE_REQUIREMENTS,
+  missingRequiredDocuments,
 } = require('../models/Document');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const DocumentChangeRequest = require('../models/DocumentChangeRequest');
@@ -63,6 +68,26 @@ async function getMyProfileOrFail(userId, res) {
   return profile;
 }
 
+/**
+ * The declarations on a profile, as a plain object that is always safe to read.
+ *
+ * Every profile saved before this existed has no `docDeclarations` at all, and
+ * the requirement rule indexes into it by name — so an absent sub-document must
+ * come back as "declared nothing", not as undefined.
+ * @param {Object|null} profile - an EmployeeProfile (doc or lean)
+ * @returns {{firstJob: boolean, firstJobAt: Date|undefined,
+ *   noOtherDocuments: boolean, noOtherDocumentsAt: Date|undefined}}
+ */
+function declarationsOf(profile) {
+  const d = profile?.docDeclarations || {};
+  return {
+    firstJob: !!d.firstJob,
+    firstJobAt: d.firstJobAt,
+    noOtherDocuments: !!d.noOtherDocuments,
+    noOtherDocumentsAt: d.noOtherDocumentsAt,
+  };
+}
+
 // The base role pair. Kept as the building block for the two gates below.
 function isAdmin(user) {
   return user.role === 'SuperAdmin' || user.role === 'HRManager';
@@ -93,20 +118,68 @@ function canReadOthersDocs(user) {
 // ===== Employee =====
 
 /**
- * List the caller's own documents, newest first.
+ * List the caller's own documents, newest first, with what is still
+ * outstanding and the declarations that can answer part of it.
+ *
+ * `missing` is computed HERE rather than by each client filtering the required
+ * list: a waived requirement and an equivalent category (a relieving letter
+ * standing in for an experience letter) are one rule, and it lives in the model.
  * @route GET /api/documents/me
- * @returns {{count: number, documents: Object[]}}
+ * @returns {{count: number, documents: Object[], missing: string[],
+ *   declarations: Object}}
  */
 // GET /api/documents/me
 const listMine = asyncHandler(async (req, res) => {
   const profile = await getMyProfileOrFail(req.user._id, res);
   const docs = await Document.find({ employee: profile._id }).sort({ createdAt: -1 });
-  res.json({ count: docs.length, documents: docs });
+  const declarations = declarationsOf(profile);
+  res.json({
+    count: docs.length,
+    documents: docs,
+    declarations,
+    missing: missingRequiredDocuments(docs.map((d) => d.category), declarations),
+  });
+});
+
+/**
+ * Set the caller's own document declarations.
+ *
+ * Each field is optional and only what is SENT is changed, so the two switches
+ * can be flipped independently without the client having to echo the other one
+ * back and race itself. The timestamp is stamped on the way to true and cleared
+ * on the way to false, so it always describes the declaration that stands.
+ * @route PATCH /api/documents/me/declarations  { firstJob?, noOtherDocuments? }
+ * @returns {{declarations: Object, missing: string[]}}
+ */
+const setMyDeclarations = asyncHandler(async (req, res) => {
+  const profile = await getMyProfileOrFail(req.user._id, res);
+  const fields = Object.values(WAIVABLE_REQUIREMENTS);
+  const given = fields.filter((f) => req.body[f] !== undefined);
+  if (!given.length) {
+    res.status(400);
+    throw new Error(`Nothing to set. Send one of: ${fields.join(', ')}`);
+  }
+  profile.docDeclarations = profile.docDeclarations || {};
+  for (const f of given) {
+    const on = req.body[f] === true || req.body[f] === 'true';
+    profile.docDeclarations[f] = on;
+    profile.docDeclarations[`${f}At`] = on ? new Date() : undefined;
+  }
+  await profile.save();
+
+  const cats = await Document.find({ employee: profile._id }).select('category').lean();
+  const declarations = declarationsOf(profile);
+  res.json({ declarations, missing: missingRequiredDocuments(cats.map((d) => d.category), declarations) });
 });
 
 /**
  * Employee uploads a document in an allowed self-upload category.
- * @route POST /api/documents/me  (multipart: file + category)
+ *
+ * Also the REPLACE path: `replaces` names a document this file supersedes, and
+ * without it an upload supersedes the single file its category already holds
+ * (a multi category simply gains one). Either way it is refused (409) when the
+ * file being replaced is Verified — that goes through requestReplacement.
+ * @route POST /api/documents/me  (multipart: file + category [+ replaces])
  * @param {File} req.file - the file (required)
  * @param {string} req.body.category - must be in SELF_UPLOAD_CATEGORIES
  * @param {string} [req.body.note]
@@ -119,23 +192,51 @@ const uploadMine = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('File is required (multipart field "file")');
   }
-  const { category, note } = req.body;
+  const { category, note, replaces } = req.body;
   if (!SELF_UPLOAD_CATEGORIES.includes(category)) {
     res.status(400);
     throw new Error(`Employees may upload only: ${SELF_UPLOAD_CATEGORIES.join(', ')}`);
   }
   const profile = await getMyProfileOrFail(req.user._id, res);
 
-  // "Fill missing" only: once a document is submitted it is locked. A category
-  // that already has a Submitted/Verified doc cannot be re-uploaded by the
-  // employee — they must ask HR to replace it. A Rejected doc is the exception:
-  // HR sent it back, so the employee may resubmit (the rejected copy is cleared).
   const existing = await Document.find({ employee: profile._id, category });
-  if (existing.some((d) => d.status !== 'Rejected')) {
-    res.status(409);
-    throw new Error('This document is already on file. To change it, ask your HR to replace it.');
+
+  // WHAT THIS UPLOAD REPLACES, if anything:
+  //   `replaces`  a named document — the Replace button on one row, which must
+  //               touch that file and no other.
+  //   otherwise   the single file the category holds, for the categories that
+  //               hold one. A multi category (a letter per past employer, a
+  //               certificate per qualification, anything under Other) just
+  //               gains a file — clearing it out to make room for one would
+  //               throw away everything already sent through the public link.
+  let superseding = [];
+  if (replaces) {
+    const target = existing.find((d) => String(d._id) === String(replaces));
+    if (!target) {
+      res.status(404);
+      throw new Error('That document is no longer on file — upload it as a new one.');
+    }
+    superseding = [target];
+  } else if (!MULTI_UPLOAD_CATEGORIES.includes(category)) {
+    superseding = existing;
   }
-  for (const stale of existing) {
+
+  // VERIFIED is the lock, and the only one. HR has checked that copy and signed
+  // it off, so undoing it is their call: that still goes through a replacement
+  // request. Everything short of it the employee replaces themselves — a file
+  // still awaiting verification, or one HR sent back — because nothing has been
+  // accepted yet, so nothing is being undone. Before this, a typo or the wrong
+  // side of a card sat there until HR got round to a request, which is a lot of
+  // ceremony for a scan nobody has looked at.
+  if (superseding.some((d) => d.status === 'Verified')) {
+    res.status(409);
+    throw new Error('This document has already been verified by HR. To change it, ask your HR to replace it.');
+  }
+  for (const stale of superseding) {
+    // Anything raised against the copy being replaced now has nothing to point
+    // at. Close it here, or it sits in HR's queue proposing a swap for a
+    // document that no longer exists.
+    await closePendingReplacements(stale._id, req.user._id);
     try { await storage.remove(stale.storagePath); } catch (_) { /* best-effort */ }
     await stale.deleteOne();
   }
@@ -320,11 +421,16 @@ const remove = asyncHandler(async (req, res) => {
       res.status(403);
       throw new Error('Not authorized to delete this document');
     }
-    // A submitted document is locked — the employee cannot delete it. Only a
-    // Rejected one (sent back by HR) may be removed so they can resubmit.
+    // Deleting is NOT the same act as replacing, so it keeps the stricter rule:
+    // an employee may replace an unverified document themselves, but removing it
+    // outright leaves a required document missing, and only a Rejected one (sent
+    // back by HR) is theirs to withdraw.
     if (doc.status !== 'Rejected') {
       res.status(403);
-      throw new Error('This document is already submitted and can no longer be removed. Ask your HR to replace it.');
+      const fix = doc.status === 'Verified'
+        ? 'Ask your HR to replace it.'
+        : 'Upload a new file in this category to replace it.';
+      throw new Error(`This document is already submitted and can no longer be removed. ${fix}`);
     }
   }
 
@@ -383,10 +489,46 @@ const categories = asyncHandler(async (req, res) => {
     hrOnly: HR_ONLY_CATEGORIES,
     all: ALL_CATEGORIES,
     required: REQUIRED_DOCUMENT_CATEGORIES,
+    // Only the keys whose on-screen name is not just the camelCase split, and
+    // which requirement each declaration answers — so a client never has to
+    // hard-code either and drift from the server.
+    labels: CATEGORY_LABELS,
+    waivable: WAIVABLE_REQUIREMENTS,
+    // Still valid on documents already filed (they are in `all`, so a status
+    // change on one saves), but nobody is offered them for a NEW upload. A
+    // picker built from `all` must subtract these.
+    retired: RETIRED_CATEGORIES,
+    // Categories that hold several files, so a client knows an upload here adds
+    // rather than replaces (and must not warn that it will overwrite).
+    multi: MULTI_UPLOAD_CATEGORIES,
   });
 });
 
 // ===== Document replacement requests =====
+
+/**
+ * Close any pending replacement request aimed at a document that is about to be
+ * superseded, discarding the file it was holding.
+ *
+ * Reachable only for requests raised before a document could be replaced
+ * directly — today one is only ever raised against a verified document, and a
+ * verified document is never superseded. It stays because leaving an orphaned
+ * request in an HR queue is worse than a few lines that rarely run.
+ * @param {import("mongoose").Types.ObjectId} docId - the document going away
+ * @param {import("mongoose").Types.ObjectId} actorId - who superseded it
+ * @returns {Promise<void>}
+ */
+async function closePendingReplacements(docId, actorId) {
+  const open = await DocumentChangeRequest.find({ targetDoc: docId, status: 'pending' });
+  for (const dcr of open) {
+    try { await storage.remove(dcr.storagePath); } catch (_) { /* best-effort */ }
+    dcr.status = 'declined';
+    dcr.decisionNote = 'Withdrawn — a new file was uploaded directly.';
+    dcr.decidedBy = actorId;
+    dcr.decidedAt = new Date();
+    await dcr.save();
+  }
+}
 
 // The HR partner (or a SuperAdmin) who decides an employee's document requests.
 async function resolveDocAssignee(profile) {
@@ -396,8 +538,9 @@ async function resolveDocAssignee(profile) {
 }
 
 /**
- * Employee requests to replace a SUBMITTED (locked) document, attaching the new
+ * Employee requests to replace a VERIFIED (locked) document, attaching the new
  * file. Routed to their HR partner; on approval the old file is swapped out.
+ * Anything not yet verified is replaced directly through uploadMine instead.
  * @route POST /api/documents/me/:id/replace-request  (multipart: file + reason)
  */
 const requestReplacement = asyncHandler(async (req, res) => {
@@ -415,9 +558,12 @@ const requestReplacement = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('This document is managed by HR — ask them to update it.');
   }
-  if (doc.status === 'Rejected') {
+  // Only a verified document needs HR to agree to the swap. Anything else the
+  // employee replaces themselves through POST /documents/me, so sending it here
+  // would put a decision in front of HR that nobody needs to make.
+  if (doc.status !== 'Verified') {
     res.status(400);
-    throw new Error('This document was rejected — just upload the corrected file directly.');
+    throw new Error('This document has not been verified yet — upload the corrected file directly instead.');
   }
   const dup = await DocumentChangeRequest.findOne({ targetDoc: doc._id, status: 'pending' });
   if (dup) {
@@ -565,6 +711,7 @@ const decideReplacement = asyncHandler(async (req, res) => {
 module.exports = {
   listMine,
   uploadMine,
+  setMyDeclarations,
   listForEmployee,
   uploadForEmployee,
   download,

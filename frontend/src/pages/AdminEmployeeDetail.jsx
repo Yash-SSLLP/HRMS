@@ -15,6 +15,7 @@ import PageHeader from '../components/PageHeader';
 import { promptDialog } from '../components/dialogs';
 import DocPreviewModal from '../components/DocPreviewModal';
 import IssueAppointmentLetter from '../components/IssueAppointmentLetter';
+import { docLabel } from '../utils/docCategories';
 
 const DOC_STATUS_STYLES = {
   Submitted: 'bg-amber-100 text-amber-800',
@@ -22,9 +23,9 @@ const DOC_STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
-// 'AppointmentLetter' -> 'Appointment Letter'. The stored categories are
-// camel-case enum values (models/Document.js) and were being printed raw.
-const humanize = (c) => String(c || '').replace(/([a-z])([A-Z])/g, '$1 $2');
+// Category names come from utils/docCategories — "PassportPhoto" is asked for
+// as a Passport Size Photo, which no camelCase split can know.
+const humanize = (c) => docLabel(c);
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';

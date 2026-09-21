@@ -9,6 +9,7 @@ const { createUpload } = require('../middleware/upload');
 const {
   listMine,
   uploadMine,
+  setMyDeclarations,
   listForEmployee,
   uploadForEmployee,
   download,
@@ -71,6 +72,11 @@ router.get('/categories', categories);
 router.get('/me', listMine);
 // POST /me — upload own document; protected + multer single 'file' (5MB allowlist).
 router.post('/me', upload.single('file'), uploadMine);
+
+// PATCH /me/declarations — the employee ANSWERS a requirement instead of filing
+// it: 'this is my first job' (no experience letter exists) and 'I have no other
+// documents'. Self-service, so it sits above the documents.manage gate.
+router.patch('/me/declarations', setMyDeclarations);
 
 // Document replacement requests — the employee raises one with the new file, the
 // assigned HR (or a SuperAdmin) decides. Auth is enforced inside the handlers,

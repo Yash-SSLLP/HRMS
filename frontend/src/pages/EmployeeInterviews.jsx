@@ -24,7 +24,7 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { formatDateTime12 } from '../utils/time';
 import {
-  AssessmentForm, AssessmentView, PreviousRounds,
+  AssessmentForm, AssessmentView, PreviousRounds, PriorRejectionChip, PriorRejections,
   ROUND_STATUS_STYLES, assessmentOf, hasAssessment, SUGGESTED_REMARK_CHARS,
 } from '../components/InterviewAssessment';
 
@@ -129,9 +129,14 @@ export default function EmployeeInterviews() {
       <div key={k} className="bg-white shadow rounded-lg p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="font-semibold text-gray-900">{iv.candidateName}</div>
+            <div className="font-semibold text-gray-900 flex flex-wrap items-center gap-2">
+              {iv.candidateName}
+              {/* We have turned this person down before. The panel is the last to
+                  hear it and the one about to repeat the questions. */}
+              <PriorRejectionChip flag={iv.priorRejection} />
+            </div>
             <div className="text-xs text-gray-500">
-              {iv.jobTitle || 'No role'} · {iv.label}
+              {[iv.jobTitle || 'No role', iv.location].filter(Boolean).join(' · ')} · {iv.label}
               {iv.scheduledAt ? ` · ${fmtDateTime(iv.scheduledAt)}` : ''}
               {iv.durationMinutes ? ` · ${iv.durationMinutes} min` : ''}
             </div>
@@ -164,6 +169,14 @@ export default function EmployeeInterviews() {
             <span className="text-[11px] text-amber-600">No write-up recorded yet</span>
           )}
         </div>
+
+        {/* Above the earlier rounds of this attempt, because it outranks them:
+            a previous rejection is the thing to know before the first question. */}
+        {iv.priorRejection && (
+          <div className="mt-3">
+            <PriorRejections flag={iv.priorRejection} defaultOpen={!DECIDED.includes(iv.status)} />
+          </div>
+        )}
 
         {/* What the earlier panels found. Above the form on purpose: it is meant
             to be read before the interview, not after the verdict is typed. */}

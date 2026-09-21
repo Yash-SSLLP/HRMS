@@ -9,7 +9,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Attendance = require('../models/Attendance');
 const { LeaveRequest } = require('../models/Leave');
 const Document = require('../models/Document');
-const { REQUIRED_DOCUMENT_CATEGORIES } = require('../models/Document');
+const { missingRequiredDocuments } = require('../models/Document');
 const Complaint = require('../models/Complaint');
 const Department = require('../models/Department');
 const Holiday = require('../models/Holiday');
@@ -50,7 +50,7 @@ const adminSummary = asyncHandler(async (req, res) => {
   // ever created made "Total employees" — and the attendance donut, whose slices
   // are derived from it — read higher than the real headcount.
   const allProfiles = await EmployeeProfile.find(empScope)
-    .select('_id department documentsVerified dateOfExit user')
+    .select('_id department documentsVerified docDeclarations dateOfExit user')
     .populate('user', 'isActive')
     .lean();
 
@@ -139,7 +139,10 @@ const adminSummary = asyncHandler(async (req, res) => {
   for (const p of profiles) {
     if (p.documentsVerified) continue;
     const have = haveByEmp.get(String(p._id)) || new Set();
-    if (REQUIRED_DOCUMENT_CATEGORIES.some((c) => !have.has(c))) documentsIncomplete += 1;
+    // The shared rule, not a filter of its own: somebody who has declared
+    // this is their first job owes no experience letter, and this tile must
+    // not go on counting them as incomplete when their own page says done.
+    if (missingRequiredDocuments(have, p.docDeclarations).length) documentsIncomplete += 1;
   }
 
   // Headcount by department (within scope).

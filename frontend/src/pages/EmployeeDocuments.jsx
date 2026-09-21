@@ -4,6 +4,12 @@
  * GET /documents/categories, self-uploads files via POST /documents/me
  * (one file per request), and downloads/deletes via /documents/:id. HR-only
  * categories (offer letter, appraisal, etc.) are read-only here.
+ *
+ * Replacing splits in two on the server's rule (documentController): until HR
+ * has VERIFIED a document the employee swaps it themselves — re-uploading into
+ * the category supersedes what is there — and only a verified one needs a
+ * request HR approves. Both start from the same Replace button, so the prompt
+ * has to say which of the two is about to happen.
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -12,6 +18,7 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { docLabel } from '../utils/docCategories';
 
 const fmtSize = (n) => {
   if (n < 1024) return `${n} B`;
@@ -27,8 +34,11 @@ const STATUS_STYLES = {
   Rejected: 'bg-red-100 text-red-800',
 };
 
-// Show enum keys ("ExperienceLetter") with spaces ("Experience Letter").
-const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
+// Category names come from utils/docCategories, topped up with whatever the
+// server sent on /documents/categories: "PassportPhoto" is asked for as a
+// Passport Size Photo, which no camelCase split can know.
+
+const humanize = (c) => docLabel(c);
 
 // Mirrors the ceiling on the server's document route (backend/routes/documentRoutes.js).
 // Kept in step by hand: the two must agree or the client either blocks a file the
@@ -39,7 +49,21 @@ export default function EmployeeDocuments() {
   const [docs, setDocs] = useState([]);
   const [categories, setCategories] = useState([]);
   const [hrOnly, setHrOnly] = useState([]);
-  const [required, setRequired] = useState([]);
+  // What is still outstanding, as the SERVER works it out. A waived requirement
+  // and a relieving letter standing in for an experience letter are one rule and
+  // it lives in models/Document.js — this page filtering `required` itself is how
+  // the page and the HR list would come to disagree about the same person.
+  const [missing, setMissing] = useState([]);
+  const [labels, setLabels] = useState({});
+  // Categories that hold SEVERAL files, where an upload adds rather than
+  // replaces — so the overwrite warning below must stay quiet for them.
+  const [multi, setMulti] = useState([]);
+  // { ExperienceLetter: 'firstJob', ... } — which declaration answers which
+  // requirement, so the page never hard-codes the pairing.
+  const [waivable, setWaivable] = useState({});
+  // { firstJob, noOtherDocuments } — an ANSWER to a requirement, not a file.
+  const [declarations, setDeclarations] = useState({});
+  const [savingDecl, setSavingDecl] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -58,9 +82,13 @@ export default function EmployeeDocuments() {
         api.get('/documents/categories'),
       ]);
       setDocs(docsRes.data.documents);
+      setMissing(docsRes.data.missing || []);
+      setDeclarations(docsRes.data.declarations || {});
       setCategories(catRes.data.selfUpload || []);
       setHrOnly(catRes.data.hrOnly || []);
-      setRequired(catRes.data.required || []);
+      setLabels(catRes.data.labels || {});
+      setMulti(catRes.data.multi || []);
+      setWaivable(catRes.data.waivable || {});
       if (!category && catRes.data.selfUpload?.length) {
         setCategory(catRes.data.selfUpload[0]);
       }
@@ -117,8 +145,26 @@ export default function EmployeeDocuments() {
 
   const onDownload = (d) => downloadFile(`/documents/${d._id}/download`, d.fileName);
 
-  // Request replacement of a locked (submitted) document: pick the new file,
-  // give a reason, and it goes to HR for approval. Uses a hidden file input.
+  // Answer a requirement instead of filing it. Only the one switch is sent, so
+  // the two cannot overwrite each other, and the server answers with the new
+  // outstanding list rather than this page guessing at it.
+  const setDeclaration = async (field, value) => {
+    setSavingDecl(true);
+    try {
+      const { data } = await api.patch('/documents/me/declarations', { [field]: value });
+      setDeclarations(data.declarations || {});
+      setMissing(data.missing || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save that');
+    } finally {
+      setSavingDecl(false);
+    }
+  };
+
+  // Replace a document: pick the new file, give a reason, and either swap it
+  // outright or send it to HR — decided off the status, because a document HR
+  // has already verified is the only one whose change is theirs to approve.
+  // Uses a hidden file input.
   const replaceRef = useRef(null);
   const [replaceDoc, setReplaceDoc] = useState(null);
   const startReplace = (d) => { setReplaceDoc(d); setTimeout(() => replaceRef.current?.click(), 0); };
@@ -128,16 +174,39 @@ export default function EmployeeDocuments() {
     const d = replaceDoc;
     setReplaceDoc(null);
     if (!file || !d) return;
-    const reason = (await promptDialog({ message: `Why replace your ${humanize(d.category)}? (optional)` })) ?? '';
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      toast.error(`${file.name} — over ${MAX_UPLOAD_MB} MB. Please attach a smaller copy.`);
+      return;
+    }
+    const direct = d.status !== 'Verified';
+    const reason = (await promptDialog({
+      message: direct
+        ? `Replace your ${humanize(d.category)} with "${file.name}"? HR has not verified it yet, so the new file takes effect straight away. Note for HR (optional):`
+        : `Why replace your ${humanize(d.category)}? HR verified it, so the swap needs their approval. (optional)`,
+    }));
+    // promptDialog resolves null on cancel. It has to STOP here, not fall
+    // through with an empty note: on the direct path the next line overwrites
+    // the file the person was still deciding about.
+    if (reason === null || reason === undefined) return;
     try {
       const fd = new FormData();
       fd.append('file', file);
       if (reason) fd.append('note', reason);
-      await api.post(`/documents/me/${d._id}/replace-request`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      toast.success('Replacement sent to HR for approval.');
+      if (direct) {
+        // The same endpoint a first upload uses. `replaces` names THIS row: a
+        // category can hold several files (a letter per past employer, anything
+        // under Other), and replacing one must not clear the rest.
+        fd.append('category', d.category);
+        fd.append('replaces', d._id);
+        await api.post('/documents/me', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+        toast.success('Document replaced. HR will verify the new file.');
+      } else {
+        await api.post(`/documents/me/${d._id}/replace-request`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+        toast.success('Replacement sent to HR for approval.');
+      }
       await load();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not send replacement request');
+      toast.error(err.response?.data?.message || (direct ? 'Could not replace the document' : 'Could not send replacement request'));
     }
   };
 
@@ -163,8 +232,6 @@ export default function EmployeeDocuments() {
       {/* Missing required documents — prompt the employee to upload what's pending. */}
       {(() => {
         if (loading) return null;
-        const submitted = new Set(docs.map((d) => d.category));
-        const missing = required.filter((c) => !submitted.has(c));
         if (missing.length === 0) {
           return docs.length > 0 ? (
             <div className="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-800">
@@ -173,12 +240,16 @@ export default function EmployeeDocuments() {
           ) : null;
         }
         const missingSelf = missing.filter((c) => categories.includes(c));
+        // Which of the outstanding ones can be ANSWERED rather than uploaded — the
+        // panel points at the tick boxes only when one of them would actually help.
+        const waivableMissing = missing.filter((c) => Object.keys(waivable).includes(c));
         const missingHr = missing.filter((c) => hrOnly.includes(c));
         return (
           <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
             <div className="text-sm font-semibold text-amber-900">Documents to submit ({missing.length})</div>
             <p className="text-xs text-amber-800 mt-0.5">
               Please upload the required documents below{missingHr.length ? ' - items marked “HR” are added for you by HR' : ''}.
+              {waivableMissing.length ? ' If one of these does not exist for you, say so below instead of uploading it.' : ''}
             </p>
             <div className="flex flex-wrap gap-2 mt-2.5">
               {missingSelf.map((c) => (
@@ -195,6 +266,36 @@ export default function EmployeeDocuments() {
           </div>
         );
       })()}
+
+      {/* Two requirements a person can legitimately have nothing to put against.
+          They live in the upload card, not the amber panel, because the panel
+          disappears once nothing is outstanding — and un-ticking a box you ticked
+          by mistake has to stay possible. */}
+      <div className="bg-white shadow rounded-lg p-5 mb-6">
+        <h2 className="card-title mb-1">Nothing to submit for these?</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Tick a box and that document stops being asked of you. HR can see what you
+          said and when. Un-tick it any time.
+        </p>
+        <label className="flex items-start gap-2 text-sm text-gray-800 mb-2 cursor-pointer">
+          <input type="checkbox" className="mt-0.5" disabled={savingDecl}
+            checked={!!declarations.firstJob}
+            onChange={(e) => setDeclaration('firstJob', e.target.checked)} />
+          <span>
+            <span className="font-medium">This is my first job.</span>{' '}
+            <span className="text-gray-600">I have no {humanize('ExperienceLetter')} from a previous employer.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm text-gray-800 cursor-pointer">
+          <input type="checkbox" className="mt-0.5" disabled={savingDecl}
+            checked={!!declarations.noOtherDocuments}
+            onChange={(e) => setDeclaration('noOtherDocuments', e.target.checked)} />
+          <span>
+            <span className="font-medium">I have no other documents to submit.</span>{' '}
+            <span className="text-gray-600">Nothing beyond the ones listed above.</span>
+          </span>
+        </label>
+      </div>
 
       <div className="bg-white shadow rounded-lg p-5 mb-6">
         <h2 className="card-title mb-3">Upload a document</h2>
@@ -220,6 +321,14 @@ export default function EmployeeDocuments() {
               placeholder="e.g. PAN card front side"
               className="mt-1 block w-full border rounded-lg px-3 py-2" />
           </div>
+          {/* Uploading into a category that already holds an unverified copy
+              REPLACES it (the server supersedes it), so say so before the file
+              goes rather than letting the old one vanish unannounced. */}
+          {!multi.includes(category) && docs.some((d) => d.category === category && d.status !== 'Verified') && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              You already have a {humanize(category)} awaiting verification — uploading here replaces it.
+            </p>
+          )}
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-500">
               Documents like Offer Letter, Appraisal etc. ({hrOnly.join(', ')}) are uploaded by HR.
@@ -250,12 +359,13 @@ export default function EmployeeDocuments() {
             ) : docs.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No documents yet</td></tr>
             ) : docs.map((d) => {
-              // A submitted document is locked — only a Rejected one (sent back by
-              // HR) can be removed and re-uploaded. To change a submitted doc, the
-              // employee asks HR to replace it.
+              // Locked means VERIFIED: HR has signed that copy off, so changing it
+              // is their decision. Anything short of that the employee replaces
+              // themselves. HR-managed categories are read-only here entirely.
               const isOwnCategory = !hrOnly.includes(d.category);
               const canDelete = isOwnCategory && d.status === 'Rejected';
-              const locked = isOwnCategory && d.status !== 'Rejected';
+              const locked = isOwnCategory && d.status === 'Verified';
+              const canReplace = isOwnCategory && !locked;
               return (
                 <tr key={d._id}>
                   <td className="px-4 py-3">
@@ -276,12 +386,16 @@ export default function EmployeeDocuments() {
                   </td>
                   <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                     <button onClick={() => onDownload(d)} className="text-blue-600 hover:underline">Download</button>
+                    {canReplace && (
+                      <button onClick={() => startReplace(d)} className="text-indigo-600 hover:underline"
+                        title="HR has not verified this yet, so your new file replaces it straight away.">Replace</button>
+                    )}
                     {canDelete && (
                       <button onClick={() => onDelete(d)} className="text-red-600 hover:underline">Delete</button>
                     )}
                     {locked && (
                       <>
-                        <span className="text-gray-400" title="Submitted documents are locked.">🔒 Locked</span>
+                        <span className="text-gray-400" title="HR has verified this document, so changing it needs their approval.">🔒 Locked</span>
                         <button onClick={() => startReplace(d)} className="text-indigo-600 hover:underline">Request replacement</button>
                       </>
                     )}

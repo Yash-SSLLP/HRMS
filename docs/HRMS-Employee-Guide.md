@@ -369,7 +369,9 @@ From the **Account** page, pick a detail. If it is empty you simply enter it and
 
 [!TIP] The screen always tells you which of the two is about to happen before you save, so you are never guessing whether you are editing something or asking for it.
 
-The same lock applies to **documents**: you upload a required document that is missing, but once it is submitted you cannot delete or replace it. To change one, use **Request replacement** on that document — attach the new file and it goes to HR to approve. A document HR has *rejected* is the one exception: you can simply re-upload that.
+The same lock applies to **documents**, but only once HR has verified them. While a document is still **Submitted** (nobody has checked it yet) — or HR has **Rejected** it — you can **Replace** it yourself: attach the new file and it takes effect straight away, and HR verifies the new one. Once a document is **Verified**, changing it is HR's decision: use **Request replacement** on it and the new file goes to them to approve. Deleting is stricter than replacing — only a rejected document can be removed outright, because replacing keeps the requirement met and deleting does not.
+
+The documents asked of you are your **PAN**, **Aadhaar**, a **Passport Size Photo**, an **Education Certificate**, an **Experience / Relieving Letter** from a previous employer, and anything you file under **Other**. The last two are the ones a person can genuinely have nothing to put against, so each has a tick box on the documents page instead: **This is my first job** (you have no letter from a previous employer) and **I have no other documents to submit**. Tick one and that document stops being counted as outstanding — for you, for your HR partner's list and for the reminder emails. HR can see what you said and when, and you can un-tick it at any time. A relieving letter and an experience letter are treated as the same document, so one of them is enough.
 
 ### 12.3 Complaints
 

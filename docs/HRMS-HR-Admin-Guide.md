@@ -156,9 +156,19 @@ This is also where the **approval hierarchies** are configured, each independent
 
 The pipeline from job post to converted employee.
 
-**Jobs** are created with a status of Open, On Hold or Closed, and each open job carries a public application link to share. Candidates apply with a résumé without logging in — one application per email per job, and only while the job is open.
+**Jobs** are created with a status of Open, On Hold or Closed, and each open job carries a public application link to share. Candidates apply with a résumé without logging in — one live application per person per job, and only while the job is open.
+
+**Locations.** A job holds a *list* of the places it is hiring for, not one place, because the same role is routinely open in several branches at once. Add every place on the job form; the application form then makes the applicant choose which one they are applying to, and the answer is stored on the candidate. A single-location opening states the place instead of asking. You pick the location too when you add a candidate by hand, and it can only ever be one of the places that job is hiring in — so re-filing somebody against a different opening clears a branch that opening has no role in. It also prefills the location on their appointment letter.
 
 **Candidates** move through Applied, Shortlisted, Screening, Interview, Offer, Onboarding, New Joinee and Hired, or are rejected.
+
+**Rejecting somebody asks why.** The reason is not paperwork: it is held with the rejection for three months and it is the first thing you and the interview panel are shown if that person ever applies again. Leave it blank if the interview feedback already says it — the write-ups travel with the rejection either way.
+
+**The three-month hold.** A rejected application is kept on file for three months. Inside that window the public form refuses a second application for the *same* opening and tells the applicant the date they may apply again; after it, they are free to apply and the form behaves normally.
+
+**Re-applicants are flagged.** Anybody carrying an earlier rejection is marked wherever they appear — on the pipeline, in the applicants queue, on their own record, and in **My Interviews** for the assigned interviewer. The flag opens into the earlier application: which opening and branch it was for, when it was rejected and by whom, the reason given, and every round of that attempt with its ratings, strengths, concerns and recommendation. It is amber while the three months are still running (they got in another way — a different opening, or entered by hand) and red once the hold has lapsed. HR is also notified the moment such an application lands, so the flag is not something anybody has to go looking for.
+
+[!NOTE] The match is made on the applicant's email address, or on a phone number typed exactly as before. A rejection recorded before this existed has no stored date, so it is dated from when the record last changed and shown as "around" that day.
 
 **Interview rounds** are scheduled after shortlisting. Each round carries a status, an assigned interviewer who then sees it under My Interviews, a written assessment, timings and a meeting link. You can generate a real meeting link and email a branded invitation with the résumé attached.
 

@@ -26,6 +26,7 @@ const {
   createDocLink,
   emailDocLink,
   getPublicDocRequest,
+  setPublicDocDeclarations,
   submitPublicDocs,
 } = require('../controllers/employeeController');
 const {
@@ -61,6 +62,9 @@ const docUpload = createUpload({
 router.get('/public-docs/:token', getPublicDocRequest);
 // POST /public-docs/:token — submit documents; public + multer array 'files' (max 20, 10MB each).
 router.post('/public-docs/:token', docUpload.array('files', 20), submitPublicDocs);
+// PATCH /public-docs/:token/declarations — answer a requirement rather than file
+// it ('this is my first job' / 'I have no other documents'); public (token-scoped).
+router.patch('/public-docs/:token/declarations', setPublicDocDeclarations);
 
 router.use(protect);
 

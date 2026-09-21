@@ -14,7 +14,11 @@ const Company = require('../models/Company');
 const WorkLocation = require('../models/WorkLocation');
 const crypto = require('crypto');
 const Document = require('../models/Document');
-const { REQUIRED_DOCUMENT_CATEGORIES, SELF_UPLOAD_CATEGORIES, PII_CATEGORIES } = require('../models/Document');
+const {
+  REQUIRED_DOCUMENT_CATEGORIES, SELF_UPLOAD_CATEGORIES, PII_CATEGORIES,
+  CATEGORY_LABELS, WAIVABLE_REQUIREMENTS,
+  missingRequiredDocuments, categoryLabel,
+} = require('../models/Document');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { writeWorkbook, parseWorkbook } = require('../services/employeeExcel');
@@ -842,7 +846,7 @@ const listEmployees = asyncHandler(async (req, res) => {
 // GET /api/employees/documents-status  (HR/Admin)
 // For each in-scope employee, report whether their required documents are complete.
 const employeesDocumentStatus = asyncHandler(async (req, res) => {
-  const profiles = await EmployeeProfile.find(scopeForHR(req)).select('_id documentsVerified');
+  const profiles = await EmployeeProfile.find(scopeForHR(req)).select('_id documentsVerified docDeclarations');
   const ids = profiles.map((p) => p._id);
 
   const docs = await Document.find({ employee: { $in: ids } }).select('employee category');
@@ -855,9 +859,19 @@ const employeesDocumentStatus = asyncHandler(async (req, res) => {
 
   const statuses = profiles.map((p) => {
     const have = byEmployee.get(String(p._id)) || new Set();
-    const missing = REQUIRED_DOCUMENT_CATEGORIES.filter((c) => !have.has(c));
+    // The shared rule: a waived requirement (first job / no other documents)
+    // and a relieving letter standing in for an experience letter both count
+    // here exactly as they do on the employee's own page.
+    const missing = missingRequiredDocuments(have, p.docDeclarations);
     const complete = p.documentsVerified || missing.length === 0;
-    return { employee: p._id, verified: !!p.documentsVerified, complete, missing };
+    // Sent so HR can see WHY something is not on the outstanding list — an
+    // absent experience letter that was declared reads very differently from
+    // one nobody has chased.
+    const declarations = {
+      firstJob: !!p.docDeclarations?.firstJob,
+      noOtherDocuments: !!p.docDeclarations?.noOtherDocuments,
+    };
+    return { employee: p._id, verified: !!p.documentsVerified, complete, missing, declarations };
   });
 
   res.json({ required: REQUIRED_DOCUMENT_CATEGORIES, statuses });
@@ -2032,21 +2046,30 @@ const emailDocLink = asyncHandler(async (req, res) => {
   const employeeName = `${profile.user?.firstName || ''} ${profile.user?.lastName || ''}`.trim() || 'there';
 
   // What is still OUTSTANDING, not a fixed checklist: an employee who has
-  // already sent five of seven documents should be asked for two, not seven.
+  // already sent four of five documents should be asked for one, not five.
   // Rejected counts as outstanding — that is the whole point of a re-request.
   const have = await Document.find({ employee: profile._id }).select('category status').lean();
   const settled = new Set(have.filter((d) => d.status !== 'Rejected').map((d) => d.category));
   // 'Other' is a catch-all bucket, not something to ask anybody for — the
   // upload page leaves it out of its checklist too.
   const askable = SELF_UPLOAD_CATEGORIES.filter((c) => c !== 'Other');
-  const outstanding = askable.filter((c) => !settled.has(c));
+  // A requirement the employee has already ANSWERED is not outstanding: asking
+  // somebody in their first job for an experience letter, by mail, after they
+  // have said they have none, is exactly the chasing the declaration exists to
+  // stop. missingRequiredDocuments knows both the waivers and the equivalent
+  // categories; anything askable beyond the required list is added plainly.
+  const stillNeeded = new Set(missingRequiredDocuments(settled, profile.docDeclarations));
+  const outstanding = askable.filter((c) => (
+    REQUIRED_DOCUMENT_CATEGORIES.includes(c) ? stillNeeded.has(c) : !settled.has(c)
+  ));
   // Nothing outstanding → this is a first/general request, so name everything
   // they may upload rather than sending a mail with an empty list in it.
   const wanted = outstanding.length ? outstanding : askable;
-  // The same wording the upload page shows ('ExperienceLetter' → 'Experience
-  // Letter'), so the list in the mail matches the page they land on.
-  const humanize = (c) => String(c).replace(/([a-z])([A-Z])/g, '$1 $2');
-  const documentList = wanted.map((c) => `  - ${humanize(c)}`).join('\n');
+  // The same wording the upload page shows ('PassportPhoto' → 'Passport Size
+  // Photo'), so the list in the mail matches the page they land on. It comes
+  // from the model rather than a local humanize(), which is how the mail used
+  // to drift from the portal the moment a category was renamed.
+  const documentList = wanted.map((c) => `  - ${categoryLabel(c)}`).join('\n');
   const hrName = req.user?.fullName || 'HR Team';
 
   const fallbackBody =
@@ -2104,7 +2127,8 @@ const emailDocLink = asyncHandler(async (req, res) => {
  * Public: fetch the document-submission context for an employee via token.
  * @route GET /api/employees/public-docs/:token  (PUBLIC, no auth)
  * @param {string} req.params.token - docToken
- * @returns {{employee, docTypes, files}}; 404 if the link is invalid
+ * @returns {{employee, docTypes, labels, required, waivable, declarations, missing, files}};
+ *   404 if the link is invalid
  */
 // GET /api/employees/public-docs/:token  (public) — what the employee sees.
 const getPublicDocRequest = asyncHandler(async (req, res) => {
@@ -2118,14 +2142,65 @@ const getPublicDocRequest = asyncHandler(async (req, res) => {
     .select('category fileName status createdAt')
     .sort({ createdAt: -1 })
     .lean();
+  const declarations = {
+    firstJob: !!profile.docDeclarations?.firstJob,
+    noOtherDocuments: !!profile.docDeclarations?.noOtherDocuments,
+  };
   res.json({
     employee: {
       name: `${profile.user?.firstName || ''} ${profile.user?.lastName || ''}`.trim(),
       employeeCode: profile.employeeCode,
     },
     docTypes: SELF_UPLOAD_CATEGORIES,
+    // The page shows names, not enum keys, and the checklist has to agree with
+    // the portal the same person will sign into next week.
+    labels: CATEGORY_LABELS,
+    required: REQUIRED_DOCUMENT_CATEGORIES,
+    waivable: WAIVABLE_REQUIREMENTS,
+    declarations,
+    missing: missingRequiredDocuments(docs.map((d) => d.category), declarations),
     files: docs.map((d) => ({ category: d.category, fileName: d.fileName, status: d.status })),
   });
+});
+
+/**
+ * Public: the employee answers a document requirement instead of filing it.
+ *
+ * The same two declarations the signed-in page offers, on the same token that
+ * already lets the holder upload documents to this profile — a new joiner is
+ * exactly who has no experience letter to give, and making them wait for a
+ * portal login to say so is what leaves HR chasing paper that does not exist.
+ * @route PATCH /api/employees/public-docs/:token/declarations  (PUBLIC)
+ * @param {boolean} [req.body.firstJob]
+ * @param {boolean} [req.body.noOtherDocuments]
+ * @returns {{declarations: Object, missing: string[]}}; 404 if the link is invalid
+ */
+const setPublicDocDeclarations = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findOne({ docToken: req.params.token });
+  if (!profile || !profile.docToken) {
+    res.status(404);
+    throw new Error('This document submission link is invalid or has expired.');
+  }
+  const fields = Object.values(WAIVABLE_REQUIREMENTS);
+  const given = fields.filter((f) => req.body[f] !== undefined);
+  if (!given.length) {
+    res.status(400);
+    throw new Error(`Nothing to set. Send one of: ${fields.join(', ')}`);
+  }
+  profile.docDeclarations = profile.docDeclarations || {};
+  for (const f of given) {
+    const on = req.body[f] === true || req.body[f] === 'true';
+    profile.docDeclarations[f] = on;
+    profile.docDeclarations[`${f}At`] = on ? new Date() : undefined;
+  }
+  await profile.save();
+
+  const cats = await Document.find({ employee: profile._id }).select('category').lean();
+  const declarations = {
+    firstJob: !!profile.docDeclarations.firstJob,
+    noOtherDocuments: !!profile.docDeclarations.noOtherDocuments,
+  };
+  res.json({ declarations, missing: missingRequiredDocuments(cats.map((d) => d.category), declarations) });
 });
 
 /**
@@ -2195,6 +2270,7 @@ module.exports = {
   updateMyBirthday,
   createDocLink,
   getPublicDocRequest,
+  setPublicDocDeclarations,
   submitPublicDocs,
   listEmployees,
   employeesDocumentStatus,

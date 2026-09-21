@@ -248,6 +248,24 @@ const employeeProfileSchema = new mongoose.Schema(
     // submitted regardless of which categories were uploaded.
     documentsVerified: { type: Boolean, default: false },
 
+    // What the employee says instead of filing a document, for the two
+    // requirements a person can legitimately have nothing to put against:
+    // somebody in their first job has no experience/relieving letter, and most
+    // people have no "other" document at all. Without a way to SAY so, both sat
+    // on the outstanding list for ever and HR chased paperwork that does not
+    // exist. See models/Document.js WAIVABLE_REQUIREMENTS, which maps each
+    // requirement to the flag that answers it.
+    //
+    // A declaration never deletes or stands in for a file: it only stops the
+    // requirement being counted as outstanding, and the dates are kept so HR can
+    // see when it was made.
+    docDeclarations: {
+      firstJob: { type: Boolean, default: false },
+      firstJobAt: Date,
+      noOtherDocuments: { type: Boolean, default: false },
+      noOtherDocumentsAt: Date,
+    },
+
     // Public, no-login document submission link. HR generates a token; the
     // employee opens /employee-docs/<token> to upload their documents.
     docToken: { type: String, index: true },
