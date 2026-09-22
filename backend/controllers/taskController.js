@@ -44,7 +44,7 @@ const {
   DEFAULT_PRIORITY, FREQUENCY, FREQUENCIES, FREQUENCY_LABELS, WEEKDAYS,
   REMINDER_CHANNELS, REMINDER_UNITS, REMINDER_WHENS, REMINDER_CHANNEL_LABELS,
   MAX_TASK_POINTS, evidenceKindFor, statusLabel, isOverdue, isTerminal,
-  isDeclined, isAwaitingAcceptance, ACCEPTANCE_LABELS,
+  isDeclined, isAwaitingAcceptance, ACCEPTANCE_LABELS, ACCEPTANCE,
   // 2026-09-22: the review state, the pieces, the colours and the sort.
   normalisePriority, LEGACY_PRIORITY_MAP, PRIORITY_COLORS, DONE_COLOR, CANCELLED_COLOR,
   accentFor, PRIORITY_RANK, BOARD_COLUMNS, SORTS, SORT_KEYS, DEFAULT_SORT,
@@ -1841,23 +1841,110 @@ async function countMyOpenTasks(req) {
    * A row I have SUBMITTED is deliberately not counted for me: it is out of my
    * hands, and counting it would leave a number I cannot make go down.
    */
-  const [doing, reviewing] = await Promise.all([
-    Task.countDocuments({
-      archived: { $ne: true },
-      assignees: {
-        $elemMatch: {
-          user: req.user._id,
-          status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] },
+  /**
+   * EVERY SPELLING, not the two current words.
+   *
+   * This is a QUERY, and a query cannot call normaliseStatus — the read-path
+   * normalisation that makes the rest of the module work on un-migrated rows
+   * (models/Task's post('init')) happens after Mongo has already decided what
+   * to return. 51 of the 61 live tasks still hold the pre-rework word, so
+   * naming PENDING and IN_PROGRESS alone counted almost nothing: the badge
+   * this feeds would have sat at 0 for people with a dozen tasks on them,
+   * which is worse than no badge at all — it is a badge that lies.
+   *
+   * `assignees[].status` carries the identical legacy vocabulary (assigneeSchema
+   * enumerates it), so the $elemMatch needs it as much as a top-level match
+   * would. And SUBMITTED has legacy spellings of its own — `Review` from before
+   * the 2026-09-17 rework and `UNDER_REVIEW` from it — so the review half was
+   * undercounting too, on exactly the rows a manager most needs to see.
+   */
+  const open = spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS);
+  const handedIn = spellingsOf(STATUS.SUBMITTED);
+  const me = req.user._id;
+
+  /**
+   * ONE COUNT, NOT TWO SUMMED.
+   *
+   * It used to be `doing + reviewing` from two countDocuments, and a single
+   * task could satisfy both — a task you set, assigned to yourself and
+   * somebody else, declined, and which they then handed in, was counted
+   * twice. A badge of 2 over a list holding one row is a badge nobody can
+   * clear. `$or` inside one query counts each document once by construction.
+   */
+  return Task.countDocuments({
+    archived: { $ne: true },
+    $or: [
+      /**
+       * WORK I HAVE TO DO — and have not refused.
+       *
+       * `acceptance` matters because declining does NOT move the row: it sets
+       * acceptance to REJECTED and leaves the status at PENDING (taskEngine's
+       * decline). Every other reader of an assignee row already skips a
+       * refuser — rollUpStatus drops them from the pool, a whole-task move
+       * excludes them — so counting them here meant a task you had turned
+       * down badged you for ever, and once a co-assignee finished it there was
+       * no move left that could clear it. `$ne` also matches a row with no
+       * acceptance field at all, so rows written before acceptance existed
+       * still count for the person holding them.
+       */
+      {
+        assignees: {
+          $elemMatch: {
+            user: me,
+            status: { $in: open },
+            acceptance: { $ne: ACCEPTANCE.REJECTED },
+          },
         },
       },
-    }),
-    Task.countDocuments({
-      archived: { $ne: true },
-      createdBy: req.user._id,
-      status: STATUS.SUBMITTED,
-    }),
-  ]);
-  return doing + reviewing;
+
+      /**
+       * WORK I HAVE TO LOOK AT — which is the APPROVER's, not the setter's.
+       *
+       * This is the one that was actually wrong rather than merely imprecise.
+       * A delegation hands the sign-off on (taskEngine: `task.approver =
+       * user._id`, "THE DELEGATOR NOW SIGNS IT OFF") and deliberately leaves
+       * `createdBy` alone, and taskAccess.actorRoleOn reads the approver as
+       * the assigner for exactly that reason. So on any delegated task the old
+       * `createdBy` match badged the original setter — who has no button and
+       * was deliberately taken off it — and gave the manager actually holding
+       * the submission nothing at all. Precisely the failure the badge exists
+       * to prevent.
+       *
+       * `{ approver: null }` matches a missing field as well as an explicit
+       * null, so a task saved before `approver` existed still counts for whoever
+       * set it. That is approverOf()'s rule — the approver if one is set,
+       * otherwise its setter — written as a query.
+       *
+       * AND NOT IF I AM ON IT. actorRoleOn answers 'doer' before it answers
+       * 'assigner', so somebody who is both an assignee and the approver gets
+       * no Approve button; counting it would be a number with nothing behind
+       * it.
+       */
+      {
+        status: { $in: handedIn },
+        assignees: { $not: { $elemMatch: { user: me } } },
+        $and: [{ $or: [{ approver: me }, { approver: null, createdBy: me }] }],
+      },
+    ],
+  });
+  /*
+   * DELIBERATELY NARROWER THAN canApprove, for two accounts.
+   *
+   * taskAccess.actorRoleOn also answers assigner to anybody holding
+   * tasks.manage (seesEverything), so a SuperAdmin or an HR Manager can in
+   * fact approve ANY submission in the company. Measured against the live
+   * data, that is the only place this count and the Approve button disagree:
+   * 57 of 59 accounts match exactly, and the two that do not are the two
+   * tasks.manage holders.
+   *
+   * That difference is the right way round. A badge says what is waiting on
+   * YOU; being able to step into anybody's review is an oversight power, not
+   * an inbox. Widening this would put a red number on an HR Manager's top bar
+   * for work between two other people that nobody has asked them to touch —
+   * the same reason countMyApprovals keeps the personal rung separate from the
+   * HR-wide tally. The wide view is the All Tasks tab, which is where somebody
+   * looking for other people's work goes.
+   */
 }
 
 /**

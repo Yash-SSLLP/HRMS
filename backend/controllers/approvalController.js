@@ -610,6 +610,7 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     : emergencyReviewFilter(req.user);
   const [
     leave, emergencyLeave, exits, clearances, regularizations, workOnLeave, interviews,
+    taskApproval,
   ] = await Promise.all([
     LeaveRequest.countDocuments(leaveFilter),
     // Its own tally, never folded into `leave`: these are days already taken,
@@ -640,6 +641,20 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     Candidate.countDocuments({
       rounds: { $elemMatch: { interviewer: me, status: { $nin: ['Cleared', 'Rejected'] } } },
     }),
+    // Tasks on this person right now, plus submissions waiting on their word.
+    //
+    // ANSWERED HERE AS OF 2026-09-22, because it belongs here: it is "what is
+    // waiting on you", counted from your own rows, and it has nothing to do
+    // with the HR-wide tally that used to be its only home. That mattered the
+    // moment the top bar got a Tasks pill for EVERYONE — /approvals/hr-count is
+    // deliberately not called in My Portal (see navCountsStore), so an employee
+    // would have worn a badge that could only ever read 0.
+    //
+    // hr-count still answers it as well, and deliberately: an Android build
+    // already in somebody's pocket reads the key from there, and an APK does
+    // not update because the server did. Same reasoning as the legacy subtask
+    // routes. Both call this one helper, so the two answers cannot drift.
+    countMyOpenTasks(req).catch(() => 0),
   ]);
   res.json({
     leave,
@@ -649,9 +664,11 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     regularizations,
     workOnLeave,
     interviews,
-    // OUTSIDE the total, deliberately. `total` is what the Approvals pill wears,
-    // and an interview is not something you approve — folding it in would put a
-    // number on a badge that opens an inbox not holding it.
+    taskApproval,
+    // OUTSIDE the total, deliberately — both of them. `total` is what the
+    // Approvals pill wears, and neither an interview nor a task is something you
+    // approve there: folding either in would put a number on a badge that opens
+    // an inbox not holding it. Each is worn by its own pill instead.
     total: leave + emergencyLeave + exits + clearances + regularizations + workOnLeave,
   });
 });

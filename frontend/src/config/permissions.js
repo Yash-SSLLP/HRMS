@@ -28,6 +28,16 @@ export function hasPermission(user, cap) {
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (cap === 'assets.manage' && user.assetsAccess === true) return true;
+  // Seeing what training is booked. Read-only, and the only grant here an
+  // ordinary Employee is expected to hold — the audience for a training
+  // calendar is the people on it. Running training implies seeing it, asked
+  // above the role branches because those return.
+  if (cap === 'training.view' && user.trainingAccess === true) return true;
+  // `&& … return true` rather than returning the answer — see the backend's
+  // note. Returning here would make the permissions.includes(cap) tests below
+  // unreachable, and `training.view` is a tickable capability.
+  if (cap === 'training.view' && hasPermission(user, 'training.manage')) return true;
+  if (cap === 'training.view' && user.role === 'LDManager') return true;
   // Deciding loans and advances is the same kind of standalone grant — the
   // person who sanctions an advance is usually in accounts, not HR.
   if (cap === 'loans.manage' && user.loansAccess === true) return true;

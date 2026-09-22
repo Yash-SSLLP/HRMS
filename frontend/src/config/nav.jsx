@@ -427,9 +427,21 @@ export const employeeNav = [
     { to: '/employee/goals', label: 'Goals', icon: FiTarget },
     { to: '/employee/reviews', label: 'My Reviews', icon: FiEdit },
     { to: '/employee/learning', label: 'Learning', icon: FiBookOpen },
+    // Instructor-led training, as opposed to the LMS courses above it. Behind
+    // the standalone `training.view` grant (User.trainingAccess) so a SuperAdmin
+    // decides per person who sees the schedule; read-only for anybody without
+    // `training.manage`.
+    { to: '/employee/training', label: 'Training', icon: FiBookOpen, perm: 'training.view',
+      keywords: ['training', 'session', 'workshop', 'trainer', 'programme', 'program', 'schedule'] },
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [
+    // The SAME badge the admin row wears. It is a personal count — your own
+    // open tasks plus anything waiting on your word — and since 2026-09-22 it
+    // is answered by /approvals/count, which every portal polls. Without it the
+    // top bar's Tasks pill showed a red 3 and the row three inches below it
+    // showed nothing, for the same page.
     { to: '/employee/tasks', label: 'Tasks', icon: FiList,
+      badge: 'taskApproval',
       keywords: ['task', 'tasks', 'to do', 'todo', 'my work', 'assignment', 'submit', 'accept', 'overdue', 'deadline'] },
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
     { to: '/employee/assets', label: 'Assets', icon: FiPackage },

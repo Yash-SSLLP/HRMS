@@ -48,7 +48,9 @@
  * That is also what a board drag lands in: `initialStatus` opens the composer
  * already set to the column the card was dropped on.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+// The status/priority menus are portalled out of the header — see MenuChip.
+import { createPortal } from 'react-dom';
 import { toast } from 'react-toastify';
 import {
   FiActivity, FiAlertTriangle, FiAward, FiBell, FiCalendar, FiCheck, FiCheckCircle,
@@ -1548,19 +1550,139 @@ function PointsLine({ task, paid }) {
  */
 function MenuChip({ label, className = '', style, dot, items = [], onPick, title }) {
   const [open, setOpen] = useState(false);
+  // Viewport coordinates for the portalled menu; null until it is placed, so it
+  // never paints for one frame in the top-left corner.
+  const [rect, setRect] = useState(null);
   const boxRef = useRef(null);
+  // The menu is NOT inside boxRef any more — it is a child of <body>. It needs
+  // its own ref or the outside-click handler below would treat every click on
+  // an option as an outside click and close the menu on mousedown, before the
+  // option's own onClick ever fired. That is the trap this pattern always has.
+  const menuRef = useRef(null);
+
+  /**
+   * Put the menu under the chip, in viewport coordinates.
+   *
+   * `position: fixed` rather than absolute, because the whole reason the menu
+   * moved to a portal is that an ancestor clips it, and fixed coordinates are
+   * the only ones that mean the same thing from inside <body>.
+   */
+  const place = useCallback(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+
+    /**
+     * HAS THE CHIP GONE? Then the menu has nothing to point at.
+     *
+     * A portalled menu does not scroll away with the thing it belongs to — it
+     * is a child of <body> now — so without this it simply hangs there. The
+     * detail body scrolls inside the task modal, and scrolling the task down
+     * left the status menu floating over the header of a task it was no longer
+     * attached to.
+     *
+     * Checked HERE, synchronously, rather than with an IntersectionObserver.
+     * An observer reads better, but place() already runs on every scroll and
+     * resize — which is exactly when the chip can leave — so the observer would
+     * be a second mechanism, delivered asynchronously on the browser's own
+     * schedule, for a decision this function is already in the right place to
+     * make. One mechanism, and it cannot be throttled behind the re-placement
+     * it has to agree with.
+     *
+     * Two ways to be gone, and both matter: out of the WINDOW, and scrolled
+     * out of a clipping ancestor while still nominally on screen — which is
+     * the common one here, the chip sliding under the modal's own header bar.
+     */
+    const offScreen = r.bottom <= 0 || r.top >= window.innerHeight
+      || r.right <= 0 || r.left >= window.innerWidth;
+    let clipped = false;
+    for (let p = el.parentElement; p && p !== document.body && !clipped; p = p.parentElement) {
+      const cs = window.getComputedStyle(p);
+      if (cs.overflowY === 'visible' && cs.overflowX === 'visible') continue;
+      const pr = p.getBoundingClientRect();
+      clipped = r.bottom <= pr.top || r.top >= pr.bottom
+        || r.right <= pr.left || r.left >= pr.right;
+    }
+    if (offScreen || clipped) { setOpen(false); return; }
+    const below = window.innerHeight - r.bottom;
+    const wanted = items.length * 44 + 8;
+    // Flip above when the chip sits too low for a usable menu — on a task
+    // opened in the modal, the header can be most of the way down a laptop
+    // screen and a menu pinned below it would be one row tall.
+    const up = below < Math.min(wanted, 200) && r.top > below;
+    // Wide enough to read a status in, never wider than the screen, and pulled
+    // back from the right edge rather than overflowing it.
+    const width = Math.min(Math.max(r.width, 176), window.innerWidth - 16);
+    setRect({
+      width,
+      left: Math.max(8, Math.min(r.left, window.innerWidth - 8 - width)),
+      // Clamped to the viewport. Following the chip on scroll means following
+      // it to wherever it has got to, and an unclamped `r.bottom + 6` goes
+      // NEGATIVE once the chip has scrolled off the top — the menu then paints
+      // upwards across the panel's own header bar and off the screen.
+      top: up ? undefined : Math.max(8, r.bottom + 6),
+      bottom: up ? Math.max(8, window.innerHeight - r.top + 6) : undefined,
+      maxHeight: Math.max(140, (up ? r.top : below) - 16),
+    });
+  }, [items.length]);
+
+
+  // Before paint, so the menu's first frame is already in the right place.
+  useLayoutEffect(() => { if (open) place(); }, [open, place]);
 
   useEffect(() => {
     if (!open) return undefined;
-    const onDown = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onDown = (e) => {
+      if (boxRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      /**
+       * …AND NOTHING ELSE ACTS ON IT.
+       *
+       * GlobalModalEscape closes the top-most overlay on Escape and bails on
+       * `e.defaultPrevented` — that is the app's convention for "this key is
+       * already spoken for" (components/GlobalModalEscape). Without this,
+       * dismissing the status menu inside the task modal dismissed the task
+       * modal too, taking any half-typed note with it. It listens on WINDOW in
+       * the bubble phase, after this document handler, so preventing here is
+       * enough.
+       */
+      e.preventDefault();
+    };
+    /**
+     * A menu nobody is looking at any more.
+     *
+     * mousedown catches a click elsewhere, but not a keyboard user tabbing on
+     * or pressing Enter on another control — and Enter fires `click` without a
+     * `mousedown`, so a menu could still be open when a modal opened behind
+     * it. At z-110 it would then sit on top of that modal.
+     */
+    const onFocus = (e) => {
+      if (boxRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    // `true` — capture, so scrolling of any container the chip sits in is
+    // followed, not just the window. The detail panel scrolls inside the modal,
+    // and without this the menu would hang in mid-air over the page.
+    const onMove = () => place();
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
+    document.addEventListener('focusin', onFocus);
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
+      document.removeEventListener('focusin', onFocus);
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
     };
-  }, [open]);
+  }, [open, place]);
 
   if (!items.length) {
     return (
@@ -1587,9 +1709,22 @@ function MenuChip({ label, className = '', style, dot, items = [], onPick, title
         <FiChevronDown size={12} className="shrink-0 opacity-70" />
       </button>
 
-      {open && (
+      {/* z-[110]: above the task modal's shell (z-[100]) so the menu is not
+          buried by the very panel it was opened from, and below a nested modal
+          (ExtensionModal, z-[120]) so asking for more time still comes first.
+          `overflow-auto` rather than hidden — the menu now has a maxHeight, and
+          a list taller than the gap under the chip has to scroll. */}
+      {open && rect && createPortal(
         <div
-          className="absolute left-0 top-full z-30 mt-1 min-w-[11rem] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+          ref={menuRef}
+          className="fixed z-[110] overflow-auto rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+          style={{
+            left: rect.left,
+            top: rect.top,
+            bottom: rect.bottom,
+            width: rect.width,
+            maxHeight: rect.maxHeight,
+          }}
           role="listbox"
         >
           {items.map((it) => (
@@ -1602,7 +1737,8 @@ function MenuChip({ label, className = '', style, dot, items = [], onPick, title
               <span className={`${CHIP} min-h-[26px] ${it.className || ''}`} style={it.style}>{it.label}</span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </span>
   );

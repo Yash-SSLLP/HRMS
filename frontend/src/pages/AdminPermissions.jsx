@@ -78,6 +78,7 @@ const GRANT_HELP = {
   cashbook: 'Open the cashbook: record money in and out of the company’s cash accounts. A standalone grant — any account can hold it, whatever their role.',
   expenses: 'Review, approve and settle staff expense claims.',
   assets: 'Issue, return and track company assets.',
+  training: 'Lets them OPEN the training schedule — what is booked, when, who is running it and who is attending — from My Portal. Read-only: scheduling, editing and cancelling stay with whoever holds the Training capability. Give it to the people who attend training, which is why it is a standalone switch rather than a capability: an Employee holds nothing from the capability list.',
   loans: 'Decide staff loans and salary advances: the queue of requests, approve or decline, raise one on somebody’s behalf, and record repayments. A standalone grant — sanctioning an advance is as often an accounts job as an HR one, and this is the only way to give it to an account that is neither.',
   incentive: 'A role per incentive tab. Manager runs it — the point rate, the yield, the sheet counts, and correcting anything saved. Picker only puts together their own team for the day, and cannot edit it once saved.',
   khata: 'Open the employee cashbook: give cash advances to staff, confirm what they spend, and settle up.',
@@ -296,6 +297,10 @@ function AccessTab({ showGuide, setShowGuide }) {
     path: 'loans-access', field: 'loansAccess', enabled: !u.loansAccess, errorText: 'Could not update loan access',
   });
 
+  const toggleTraining = (u) => toggleAccess(u, {
+    path: 'training-access', field: 'trainingAccess', enabled: !u.trainingAccess, errorText: 'Could not update training access',
+  });
+
   /**
    * Set somebody's role in ONE incentive tab.
    *
@@ -449,9 +454,12 @@ function AccessTab({ showGuide, setShowGuide }) {
       && (!t || `${u.firstName} ${u.lastName} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(t)));
   }, [users, q, roleFilter]);
 
-  // Account, Role, Company Accounts, Expenses, Assets, Loans, Incentive,
-  // Employee Cashbook, Attendance, CEO/MD, Manager profiles, Capabilities.
-  const COLS = 12;
+  // Account, Role, Company Accounts, Expenses, Assets, Loans, Training,
+  // Incentive, Employee Cashbook, Attendance, CEO/MD, Manager profiles,
+  // Capabilities. THIRTEEN — it is the colSpan of the loading skeleton and of
+  // the "no accounts match" panel, so a column added above without touching
+  // this leaves both a cell short of the table.
+  const COLS = 13;
 
   return (
     <div>
@@ -483,6 +491,7 @@ function AccessTab({ showGuide, setShowGuide }) {
               ['Expenses', GRANT_HELP.expenses],
               ['Assets', GRANT_HELP.assets],
               ['Loans & Advances', GRANT_HELP.loans],
+              ['Training', GRANT_HELP.training],
               ['Employee Cashbook · Module', GRANT_HELP.khata],
               ['Employee Cashbook · Export', GRANT_HELP.khataExport],
               ['Attendance · WFH', GRANT_HELP.wfh],
@@ -615,6 +624,7 @@ function AccessTab({ showGuide, setShowGuide }) {
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.loans}>Loans</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.training}>Training</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.incentive}>Incentive</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Employee Cashbook</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
@@ -693,6 +703,11 @@ function AccessTab({ showGuide, setShowGuide }) {
                   <td className="px-4 py-3">
                     <ToggleSwitch checked={!!u.loansAccess} busy={isBusy('loansAccess')} label="Loan approvals"
                       title={GRANT_HELP.loans} onChange={() => toggleLoans(u)} />
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <ToggleSwitch checked={!!u.trainingAccess} busy={isBusy('trainingAccess')} label="See training"
+                      title={GRANT_HELP.training} onChange={() => toggleTraining(u)} />
                   </td>
 
                   {/* One dropdown per incentive tab. A second incentive adds a

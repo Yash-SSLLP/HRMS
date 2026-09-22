@@ -28,6 +28,26 @@ const notificationSchema = new mongoose.Schema(
     // dismiss it. Used by the dashboard "Wishes for you" card, whose whole point
     // is to be a transient greeting rather than a permanent list.
     dismissedAt: { type: Date },
+    /**
+     * REMOVED FROM THE ALERTS FEED by the recipient — swipe-to-delete.
+     *
+     * A separate field from `dismissedAt`, deliberately, though the two look
+     * alike. `dismissedAt` means "take this greeting off my dashboard card",
+     * which is a statement about a transient card and NOT about the feed: a
+     * birthday wish you have waved away on the home screen is still something
+     * you may want to open later to see who sent it and to thank them, and the
+     * thanks button lives on the notification itself. Sharing one field would
+     * have made dismissing a card silently empty part of the Alerts list.
+     *
+     * The implication runs one way. Deleting from the feed is the stronger act,
+     * so it stamps BOTH — there is no sense in a greeting card for something the
+     * person has just thrown away. Dismissing the card stamps only dismissedAt.
+     *
+     * Soft, not a real delete: a notification is the only record that a wish was
+     * ever sent (see `thankedAt` and `wishFor` below, which hang off it), so
+     * removing the document would destroy history to tidy a list.
+     */
+    deletedAt: { type: Date },
     // When the recipient thanked the sender for this one. Wish-specific, and it
     // sits here for the same reason `dismissedAt` does — the wish IS a
     // notification, and there is no other document to hang it on. It does two

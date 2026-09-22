@@ -142,6 +142,21 @@ const userSchema = new mongoose.Schema(
     // recording repayments. The company wall still applies — they see only
     // their own company's people (loanController scopeUserField/cannotSeeUser).
     loansAccess: { type: Boolean, default: false },
+
+    /**
+     * SEE THE TRAINING SCHEDULE — read-only, and anybody may hold it.
+     *
+     * A standalone grant for the same reason as the four above it: the people
+     * who need to know what training is booked are the people ATTENDING it,
+     * and an Employee holds no capability from the catalogue (hasPermission
+     * answers that role from nothing but this kind of flag). `training.manage`
+     * would have been the wrong tool twice over — it is not grantable to an
+     * Employee at all, and it hands out the ability to schedule and delete.
+     *
+     * Running training implies seeing it, so this is never needed by somebody
+     * who already holds training.manage (see hasPermission).
+     */
+    trainingAccess: { type: Boolean, default: false },
     // Incentive access, per TAB. The section holds several incentives (Boys
     // today, more later) and each is run by different people, so this is not one
     // switch but a role per tab — see config/incentiveRoles.js for what a

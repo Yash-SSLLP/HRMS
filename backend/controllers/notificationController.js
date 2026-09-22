@@ -38,7 +38,11 @@ async function joinCutoff(userId) {
 // GET /api/notifications?audience=admin|employee  — recent notifications + unread count
 const listNotifications = asyncHandler(async (req, res) => {
   const meId = req.user._id;
-  const filter = { recipient: meId, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)) };
+  // `deletedAt: null` matches a missing field as well as an explicit null, so
+  // every notification written before swipe-to-delete existed still shows.
+  const filter = {
+    recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)),
+  };
   // Fifty is the ceiling AND the default: the alerts screen pages through
   // nothing, it just shows the recent ones. A home screen that renders five
   // asks for a handful instead (`?limit=`), which is the difference between a
@@ -72,7 +76,12 @@ const listNotifications = asyncHandler(async (req, res) => {
 // (correctly) does not contain them, with no way to clear the badge.
 const countNotifications = asyncHandler(async (req, res) => {
   const meId = req.user._id;
-  const filter = { recipient: meId, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)) };
+  // THE SAME FILTER AS THE LIST, `deletedAt` included — see the note above this
+  // function. A badge that counts what the list does not show is a badge nobody
+  // can clear, which is exactly the failure that note was written about.
+  const filter = {
+    recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)),
+  };
   const unreadCount = await Notification.countDocuments({ ...filter, readAt: null });
   res.json({ unreadCount });
 });
@@ -88,7 +97,10 @@ const countNotifications = asyncHandler(async (req, res) => {
 // other's unread).
 const markAllRead = asyncHandler(async (req, res) => {
   await Notification.updateMany(
-    { recipient: req.user._id, readAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)) },
+    // `deletedAt` here too: "mark all read" must mean the rows on screen. Without
+    // it the sweep would silently touch alerts the person has thrown away — and
+    // if one were ever restored it would come back already read.
+    { recipient: req.user._id, readAt: null, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)) },
     { $set: { readAt: new Date() } }
   );
   res.json({ ok: true });
@@ -114,4 +126,36 @@ const markRead = asyncHandler(async (req, res) => {
   res.json({ notification });
 });
 
-module.exports = { listNotifications, countNotifications, markAllRead, markRead };
+/**
+ * Remove one notification from the caller's feed (must belong to the caller).
+ *
+ * Soft: it stamps `deletedAt` rather than deleting the document — see the
+ * field's note on the model for why a notification is not safe to destroy.
+ * `dismissedAt` goes with it, so a wish thrown away here does not reappear as a
+ * greeting card on the dashboard.
+ *
+ * Idempotent. The phone removes the row optimistically the moment the swipe is
+ * confirmed, so a retry after a dropped connection must not be an error.
+ * @route DELETE /api/notifications/:id
+ * @param {string} req.params.id - notification id
+ * @returns {{ok: boolean, id: string}}
+ */
+// DELETE /api/notifications/:id — swipe-to-delete on the Alerts tab.
+const deleteNotification = asyncHandler(async (req, res) => {
+  const notification = await Notification.findOne({ _id: req.params.id, recipient: req.user._id });
+  if (!notification) {
+    res.status(404);
+    throw new Error('Notification not found');
+  }
+  if (!notification.deletedAt) {
+    const now = new Date();
+    notification.deletedAt = now;
+    if (!notification.dismissedAt) notification.dismissedAt = now;
+    await notification.save();
+  }
+  res.json({ ok: true, id: String(notification._id) });
+});
+
+module.exports = {
+  listNotifications, countNotifications, markAllRead, markRead, deleteNotification,
+};

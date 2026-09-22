@@ -76,7 +76,11 @@ const n = (v) => Number(v) || 0;
  * every other key from the HR payload — and `interviews` is not in it, so
  * without this it would be overwritten with 0 on every single poll.
  */
-const PERSONAL = ['mine', 'interviews'];
+// `taskApproval` joined them on 2026-09-22, when the top bar got a Tasks pill
+// for everybody. It is answered by BOTH endpoints (see countMyApprovals), and
+// listing it here is what makes the personal answer win — which is the whole
+// point, because the HR-wide one is never even asked for in My Portal.
+const PERSONAL = ['mine', 'interviews', 'taskApproval'];
 
 export const useNavCountsStore = create((set) => ({
   counts: EMPTY,
@@ -113,6 +117,10 @@ export const useNavCountsStore = create((set) => ({
           // deliberately NOT part of that answer's `total` — an interview is
           // not an approval, so the Approvals pill must not count it.
           interviews: n(mine.data?.interviews),
+          // Tasks on me, plus submissions waiting on my word. Out of the
+          // personal answer so it works in BOTH portals — an employee has
+          // tasks, and until now only the admin portal could count them.
+          taskApproval: n(mine.data?.taskApproval),
         };
         Object.keys(EMPTY).forEach((k) => { if (!PERSONAL.includes(k)) next[k] = n(d[k]); });
         set({ counts: next });

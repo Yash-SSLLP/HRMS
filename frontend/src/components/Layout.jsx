@@ -1040,11 +1040,16 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // because CEO/MD sit at the top of every chain, and the approvals routes are
   // open to them even while they are read-only elsewhere (see approvalRoutes.js).
   const showApprovals = ['SuperAdmin', 'HRManager', 'Manager', 'CEO', 'MD'].includes(user?.role);
-  // Interviews and Tasks as shortcuts, for the three roles that carry their own
-  // work alongside other people's: CEO and MD sit on final rounds and have no
-  // employee portal to reach them from, and a Manager is running their team's
-  // tasks and interviews as well as their own. Everyone else already reaches
-  // both from the sidebar of the portal they live in.
+  // INTERVIEWS as a shortcut, for the three roles that sit on rounds: CEO and MD
+  // take final ones and have no employee portal to reach them from, and a
+  // Manager interviews for their own team. Everybody else who ever interviews
+  // reaches it from the sidebar of the portal they live in.
+  //
+  // TASKS USED TO BE GATED ON THIS TOO and no longer is (user decision,
+  // 2026-09-22: "put task shortcut to nav bar for everyone"). It never fitted:
+  // everybody has tasks — that is the point of the module — and the gate meant
+  // a SuperAdmin, an HR Manager and every employee reached their own work from
+  // the sidebar while three roles got a shortcut to it.
   const showOwnWork = ['CEO', 'MD', 'Manager'].includes(user?.role);
   useEffect(() => {
     document.documentElement.setAttribute('data-portal', portal);
@@ -1228,28 +1233,39 @@ export default function Layout({ navItems = [], sectionTitle }) {
                 waitingWord="waiting"
               />
             )}
-            {/* Tasks carries no badge: unlike an approval or an interview it is
-                not a queue that empties, and a permanent number beside two that
-                mean "act on me" would flatten both.
-
-                NOT gated on `tasks.manage` (fixed 2026-09-22). It used to be,
-                by analogy with Attendance — but /admin/tasks is one of the very
-                few admin routes with NO capability behind it: the 2026-09-21
-                rework made setting a task everybody's, narrowed only by the
-                direction rule, and what `tasks.manage` buys is the wide VIEW
-                inside the page (All Tasks, the team dashboard), which the page
-                decides for itself from GET /tasks/meta. Neither App.jsx's route
-                nor the sidebar entry gates it, so this pill was hiding a page
-                Managers are entitled to — the opposite of the 403 the old
-                comment worried about. */}
-            {showOwnWork && (
-              <NavPill to={tasksPath} label="Tasks" icon={<FiList size={16} strokeWidth={2.2} />} />
-            )}
             {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in
                 config/nav.jsx) and is reached often enough to earn a shortcut. */}
             {user?.role === 'SuperAdmin' && (
               <NavPill to="/admin/permissions" label="Permissions" icon={<FiShield size={16} strokeWidth={2.2} />} />
             )}
+
+            {/* TASKS — everybody's, and LAST, so it sits against the search box
+                where it was asked for (user decision, 2026-09-22).
+
+                UNGATED, on purpose. /admin/tasks is one of the very few admin
+                routes with no capability behind it: the 2026-09-21 rework made
+                setting a task everybody's, narrowed only by the direction rule,
+                and what `tasks.manage` buys is the wide VIEW inside the page
+                (All Tasks, the team dashboard), which the page decides for
+                itself from GET /tasks/meta. Neither App.jsx's route nor either
+                sidebar entry gates it, so a gate here would only have hidden a
+                page the person is entitled to.
+
+                AND IT WEARS THE COUNT. This reverses the note that used to sit
+                here — that a task is "not a queue that empties" — because the
+                number is not a count of tasks: `taskApproval` is what is WAITING
+                ON YOU, which is your own unfinished rows plus anything somebody
+                has handed in for you to approve. Both empty, both are yours to
+                clear, and neither is visible without opening the page. It is the
+                same key the sidebar row already wears, read out of the same
+                one poll, so the pill and the row cannot disagree. */}
+            <CountPill
+              to={tasksPath}
+              label="Tasks"
+              icon={<FiList size={16} strokeWidth={2.2} />}
+              countKey="taskApproval"
+              waitingWord="waiting on you"
+            />
 
             {/* Chat is an org-wide switch a SuperAdmin controls. */}
             {chatEnabled && <ChatLauncher />}

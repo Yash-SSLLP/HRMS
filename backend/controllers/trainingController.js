@@ -7,8 +7,64 @@ const Training = require('../models/Training');
 const { TRAINING_STATUS } = require('../models/Training');
 // Company wall: Training.participants refs User, so the User-keyed helper applies.
 const { allowedUserIds } = require('../utils/employeeScope');
+// IST day boundaries — the company's calendar day, and what a bare date means.
+const { istDayRange } = require('../utils/istDate');
 
 const USER_FIELDS = 'firstName lastName email role';
+
+/**
+ * A training's start/end as an absolute instant.
+ *
+ * THE POINT OF THIS is that 'YYYY-MM-DD' and '…T09:30' do not mean the same
+ * kind of thing, and only one of them is ambiguous. `new Date('2026-09-23')`
+ * is UTC midnight — 05:30 IST — so a bare date stored as-is is indistinguishable
+ * from a training that really does start at half past five in the morning. The
+ * clients cannot tell them apart afterwards, so they must not have to: a bare
+ * date is pinned to IST midnight here, at the only place that sees the raw
+ * request, and every "no time was set" value in the collection then has one
+ * shape.
+ *
+ * Bare dates are not legacy. The Android build in people's pockets sends them,
+ * and will keep sending them until everybody updates.
+ *
+ * Anything carrying a time is already an instant and is left alone.
+ * @param {*} v
+ * @returns {Date|null|undefined} undefined when the caller did not mention the field
+ */
+const asInstant = (v) => {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return istDayRange(v)[0];
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+/**
+ * Normalise both dates on an incoming body and refuse a backwards range.
+ *
+ * Checked on the SERVER because it is the only place both clients pass through:
+ * the web form prevents it with the End input's `min`, the phone's two pickers
+ * cannot (the date picker's minimumDate says nothing about the time of day), and
+ * an API caller is bound by neither.
+ * @param {object} body - mutated in place
+ * @param {object} res
+ * @param {object} [existing] - the stored training, on an update
+ */
+const normaliseDates = (body, res, existing = {}) => {
+  const start = asInstant(body.startDate);
+  const end = asInstant(body.endDate);
+  if (start !== undefined) body.startDate = start;
+  if (end !== undefined) body.endDate = end;
+  // Compare what the document will HOLD, not only what was sent: moving just
+  // the start of an existing training can invert it against an end nobody
+  // touched.
+  const s = start !== undefined ? start : existing.startDate;
+  const e = end !== undefined ? end : existing.endDate;
+  if (s && e && new Date(e) < new Date(s)) {
+    res.status(400);
+    throw new Error('A training cannot end before it starts.');
+  }
+};
 
 /**
  * List trainings, optionally filtered by status, most recent start first.
@@ -52,6 +108,7 @@ const createTraining = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error(`status must be one of ${TRAINING_STATUS.join(', ')}`);
   }
+  normaliseDates(req.body, res);
   const training = await Training.create({ ...req.body, createdBy: req.user._id });
   res.status(201).json({ training });
 });
@@ -71,6 +128,10 @@ const updateTraining = asyncHandler(async (req, res) => {
   }
   // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
+  // Same coercion and the same backwards-range refusal as on create — and it
+  // needs the STORED training, because moving only the start can invert it
+  // against an end this request never mentioned.
+  normaliseDates(req.body, res, training);
   // Company wall, write side: the list handed a walled admin only their own
   // company's participants, so a round-tripped edit must not wipe the ones
   // they could not see. Their submission replaces only the in-wall subset;

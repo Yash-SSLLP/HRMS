@@ -9,6 +9,7 @@ const {
   countNotifications,
   markAllRead,
   markRead,
+  deleteNotification,
 } = require('../controllers/notificationController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -25,5 +26,8 @@ router.get('/count', countNotifications);
 router.patch('/read-all', markAllRead);
 // PATCH /:id/read — mark a single notification read; protected.
 router.patch('/:id/read', markRead);
+// DELETE /:id — take one alert off the caller's feed (swipe-to-delete on the
+// phone). Soft: the record survives, see the controller.
+router.delete('/:id', deleteNotification);
 
 module.exports = router;

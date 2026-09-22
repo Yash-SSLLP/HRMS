@@ -634,6 +634,29 @@ const setLoansAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke "see the training schedule".
+ *
+ * The one grant in this group that is READ-ONLY, and the one most often given
+ * to an ordinary Employee: the people who need to know what is booked are the
+ * people attending. It opens the Training page in My Portal and nothing else —
+ * scheduling, editing and deleting stay behind `training.manage`, which this
+ * does not touch.
+ * @route PATCH /api/admin/users/:id/training-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, trainingAccess}}
+ */
+const setTrainingAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.trainingAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, trainingAccess: user.trainingAccess });
+});
+
+/**
  * Give somebody a role in ONE incentive tab — or take it away.
  *
  * Not a switch: the Incentive section holds several incentives and each is run
@@ -1536,6 +1559,7 @@ module.exports = {
   setExpensesAccess,
   setAssetsAccess,
   setLoansAccess,
+  setTrainingAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,
